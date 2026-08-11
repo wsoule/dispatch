@@ -23,7 +23,7 @@ interface ReviewFileTreeProps {
 /**
  * The review's changed-files tree — @pierre/trees' `FileTree`. Viewed ticks and comment counts
  * ride on the rows themselves via `renderRowDecoration`, which takes one text-or-icon value per
- * row. The viewed *toggle* stays in `ReviewView`'s diff pane header, since a decoration cannot
+ * row. The viewed *toggle* stays in the review page's diff pane header, since a decoration cannot
  * take a click.
  */
 export function ReviewFileTree({

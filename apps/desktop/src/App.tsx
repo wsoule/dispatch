@@ -32,12 +32,12 @@ import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { withActionFeedback } from './lib/actionFeedback';
 import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
-import { deriveFeedState } from './lib/feedState';
 import type { InboxTarget } from './lib/inbox';
 import { unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
 import { isLinearConfigured } from './lib/linearSettings';
 import { basename } from './lib/projectName';
+import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
 import {
   addProject,
@@ -58,8 +58,7 @@ import { ImpactView } from './views/ImpactView';
 import { InboxView } from './views/InboxView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
-import { ReviewView } from './views/ReviewView';
-import { RunsView } from './views/RunsView';
+import { PrReviewView } from './views/PrReviewView';
 import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TaskView } from './views/TaskView';
@@ -292,25 +291,11 @@ function App() {
     setShowCreate(true);
   }, []);
 
-  // Jumps straight to the Runs view with `runId` already selected — used by both the task peek
-  // panel and the (now single-project) Agents view. There is only one project to switch to, so
-  // unlike the old cross-project `jumpToRun` this never needs a project id.
-  const jumpToRun = useCallback((runId: string) => {
-    dispatchNav({ type: 'setProjectView', view: 'runs' });
-    dispatchNav({ type: 'openRun', runId });
+  // Moves nav state to the newly (re-)dispatched run. The task view is the only run surface
+  // now, and a run that has just been created is live, so it opens on Chat.
+  const onRunDispatched = useCallback((runId: string, taskId: string) => {
+    dispatchNav({ type: 'openTask', taskId, tab: 'chat', runId });
   }, []);
-
-  // Moves nav state to the newly (re-)dispatched run — replaces the old
-  // `useDispatchProject`-internal `setSelectedRunId(meta.id)` side effect now that
-  // `navReducer`'s `activeRunId` is the single source of truth for "which run is open" (C1
-  // in the phase-8 fix report).
-  const onRunDispatched = useCallback(
-    (runId: string) => {
-      selectProjectView('runs');
-      dispatchNav({ type: 'openRun', runId });
-    },
-    [selectProjectView]
-  );
 
   const toasts = useToasts();
 
@@ -346,6 +331,21 @@ function App() {
       dispatchNav({ type: 'openTask', taskId, tab, runId: resolved });
     },
     [rawData.latestRunByTaskId]
+  );
+
+  // One run row (All agents, the merge queue) opens its task on the tab that matches what you
+  // can do with the run: a finished one's diff, a live one's transcript.
+  const jumpToRun = useCallback(
+    (runId: string) => {
+      const run = rawData.runs.find((r) => r.id === runId);
+      if (run === undefined) return;
+      openTaskView(
+        run.taskId,
+        isTerminalRunState(run.state) ? 'diff' : 'chat',
+        run.id
+      );
+    },
+    [rawData.runs, openTaskView]
   );
 
   // Every non-terminal run for this project — the "Agents" view's list and the sidebar's live
@@ -499,9 +499,8 @@ function App() {
   // listeners on every App render instead of just when the panel opens/closes.
   const closeInbox = useCallback(() => setInboxOpen(false), []);
 
-  // Click-through for an inbox row: a run transition jumps to the Runs view with that run
-  // selected; a queue-wide event (or anything without a specific run) just jumps to Runs —
-  // the same two nav shapes `onRunDispatched`/`jumpToRun` already use elsewhere in this file.
+  // Click-through for a notification row: a run transition opens that run's task, anything
+  // queue-wide lands on the Inbox, which is where "what needs me" now lives.
   // Also marks the whole inbox read again: an entry can arrive while the panel is already
   // open (opening only marks-read at that instant), and without this a fresh unread badge
   // would linger after the user just acted on the newest entry.
@@ -529,18 +528,18 @@ function App() {
         setInboxOpen(false);
         return;
       }
-      selectProjectView('runs');
       if (target.kind === 'run') {
-        dispatchNav({ type: 'openRun', runId: target.runId });
+        jumpToRun(target.runId);
+      } else {
+        // {kind:'queue'}/{kind:'runs-page'}: no one run to point at, so both
+        // land on the Inbox, which lists everything waiting and the merge
+        // queue underneath it.
+        selectProjectView('inbox');
       }
-      // {kind:'queue'} falls through to the same runs-page landing as
-      // 'runs-page': RunsView has no separate queue drawer to open — merge
-      // queue state renders inline in a selected run's own detail panel —
-      // so there's nothing further to target here.
       markNotificationInboxRead();
       setInboxOpen(false);
     },
-    [selectProjectView, markNotificationInboxRead, dispatchNav]
+    [selectProjectView, markNotificationInboxRead, dispatchNav, jumpToRun]
   );
 
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
@@ -573,10 +572,10 @@ function App() {
           run: () => selectProjectView('board'),
         },
         {
-          id: 'go-runs',
-          label: 'Go to Runs',
+          id: 'go-inbox',
+          label: 'Go to Inbox',
           kind: 'go to',
-          run: () => selectProjectView('runs'),
+          run: () => selectProjectView('inbox'),
         },
         {
           id: 'go-plans',
@@ -703,9 +702,6 @@ function App() {
             spendToday={todaySpend}
             badges={{
               board: data.readyIds.size,
-              runs: liveRuns.length,
-              review: data.runs.filter((r) => deriveFeedState(r) === 'review')
-                .length,
               inbox: inboxData.review.length + inboxData.waiting.length,
             }}
             unreadCount={unreadCount(data.notificationInbox)}
@@ -807,41 +803,35 @@ function App() {
                     <OverviewView
                       data={data}
                       projectName={activeProject?.name ?? null}
-                      onOpenRun={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('runs');
-                      }}
+                      onOpenRun={jumpToRun}
                       onReviewRun={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('review');
+                        const run = data.runs.find((r) => r.id === runId);
+                        if (run !== undefined) {
+                          openTaskView(run.taskId, 'diff', run.id);
+                        }
                       }}
                       onGoToBoard={() => selectProjectView('board')}
-                    />
-                  )}
-                  {navState.projectView === 'review' && (
-                    <ReviewView
-                      data={data}
-                      onBack={() => dispatchNav({ type: 'closeRun' })}
-                      selectedRunId={navState.activeRunId}
-                      onSelectRun={(runId) =>
-                        dispatchNav({ type: 'openRun', runId })
-                      }
-                      onOpenImpact={(subject) =>
-                        dispatchNav({ type: 'openImpact', subject })
-                      }
                     />
                   )}
                   {navState.projectView === 'inbox' && (
                     <InboxView
                       data={inboxData}
-                      portLoading={data.portLoading}
-                      portError={data.portError}
-                      portErrorDetail={data.portErrorDetail}
-                      client={data.client}
-                      onRetry={data.retryEnsureDispatchd}
+                      project={data}
                       onOpenTask={openTaskView}
+                      onOpenPr={(number) =>
+                        dispatchNav({ type: 'openPr', number })
+                      }
                     />
                   )}
+                  {navState.projectView === 'pr' &&
+                    navState.activePrNumber !== null && (
+                      <PrReviewView
+                        key={navState.activePrNumber}
+                        data={data}
+                        prNumber={navState.activePrNumber}
+                        onBack={() => dispatchNav({ type: 'back' })}
+                      />
+                    )}
                   {navState.projectView === 'impact' && (
                     // Keyed by the preselected subject so arriving with a new
                     // one (a different "open in Impact" click) resets the
@@ -897,31 +887,19 @@ function App() {
                             : undefined
                         }
                         onViewPr={(runId) => {
-                          dispatchNav({ type: 'openRun', runId });
-                          selectProjectView('review');
+                          const number = prNumberFromUrl(
+                            data.runs.find((r) => r.id === runId)?.prUrl
+                          );
+                          if (number !== null) {
+                            dispatchNav({ type: 'openPr', number });
+                          }
                         }}
                       />
                     )}
-                  {navState.projectView === 'runs' && (
-                    <RunsView
-                      data={data}
-                      selectedRunId={navState.activeRunId}
-                      onSelectRun={(runId) =>
-                        dispatchNav({ type: 'openRun', runId })
-                      }
-                      onViewPr={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('review');
-                      }}
-                    />
-                  )}
                   {navState.projectView === 'branches' && (
                     <BranchesView
                       data={data}
-                      onOpenRun={(runId) => {
-                        dispatchNav({ type: 'openRun', runId });
-                        selectProjectView('runs');
-                      }}
+                      onOpenRun={jumpToRun}
                       onOpenImpact={(subject) =>
                         dispatchNav({ type: 'openImpact', subject })
                       }

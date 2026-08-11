@@ -48,7 +48,7 @@ const NO_COMMENTS: ReviewComment[] = [];
 
 /**
  * The cache key for one PR's `GET /api/prs/:number/detail`. Exported because
- * ReviewView invalidates it from outside this hook: a PR dropping out of the
+ * `PrReviewView` invalidates it from outside this hook: a PR dropping out of the
  * open list means it merged or closed, and the status shown here is then the
  * one thing on screen that is wrong.
  */
@@ -69,10 +69,9 @@ export function repoPrDetailKey(
  * mirrored to and from GitHub rather than kept on local disk.
  *
  * Kept as its own small hook rather than folded into useDispatchProject:
- * `number` comes from ReviewView's own `selectedPrNumber` state (view-local —
- * there's no run for nav's run-keyed `activeRunId` to point at), and
- * useDispatchProject is instantiated once up in App.tsx, above where that
- * selection lives. `client` is threaded in from the same
+ * `number` comes from nav's `activePrNumber` (there is no run for the
+ * run-keyed `activeRunId` to point at), and useDispatchProject is
+ * instantiated once up in App.tsx. `client` is threaded in from the same
  * `DispatchProjectData` every other PR call already uses, and `client.baseUrl`
  * is what scopes this hook's own cache per-project. `port` is only here to
  * name useDispatchProject's repo-PRs query, which every review action has to

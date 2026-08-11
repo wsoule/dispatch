@@ -100,7 +100,7 @@ export function BoardView({
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   // Which epic's dispatch is awaiting confirmation, or null when the dialog is closed.
   const [dispatchEpicId, setDispatchEpicId] = useState<string | null>(null);
-  // "Merge all ready" toolbar button state — see RunsView's identical control
+  // "Merge all ready" toolbar button state — see the merge queue's identical control
   // for the fuller comment; this is the Board's copy of the same action.
   const [mergeAllPending, setMergeAllPending] = useState(false);
 

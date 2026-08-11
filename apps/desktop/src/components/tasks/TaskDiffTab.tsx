@@ -11,12 +11,12 @@ import { Skeleton } from '@/ui/skeleton';
 export interface TaskDiffTabProps {
   data: DispatchProjectData;
   selectedRun: RunMeta | undefined;
-  /** Jumps to the Pull requests tab — see `RunsView`'s identical prop. */
+  /** Opens the run's pull request on the PR review page. */
   onViewPr: (runId: string) => void;
 }
 
 /** The task view's Diff tab: the selected run's diff/review surface, wired exactly like
- * RunsView's Diff tab, with an empty state before any run exists and a skeleton while the
+ * The task view's Diff tab, with an empty state before any run exists and a skeleton while the
  * selected run's detail is still loading. */
 export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
   // Called unconditionally, ahead of the early returns below, even though its result is only
@@ -104,7 +104,7 @@ export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
             evidence: data.runDetail.evidence,
             mutations: data.runDetail.mutations,
             findings,
-            // The ledger-entry filter ReviewView uses (taskLedgerEntries/useEpicLedger) depends
+            // The ledger-entry filter the review case panel uses (taskLedgerEntries/useEpicLedger) depends
             // on epic plumbing this tab doesn't have wired yet — decisions stay empty here.
             decisions: [],
             onFixFindings:
@@ -123,7 +123,7 @@ export function TaskDiffTab({ data, selectedRun, onViewPr }: TaskDiffTabProps) {
 }
 
 // Resumes the run's own agent on its branch with the checked findings as the change
-// request — the exact composition ReviewView's own handler used, before the case panel
+// request — the exact composition the old Review page's handler used, before the case panel
 // moved here.
 async function composeFixFindingsRequest(
   selected: Finding[],

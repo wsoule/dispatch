@@ -12,7 +12,7 @@ import { Button } from '@/ui/button';
 import { Panel } from '@/ui/chrome';
 
 /** How the diff hands a selection to the dock. Imperative because the two sit side by side in
- * `ReviewView` and the pending attachments belong to the dock, not to the page. */
+ * the review page and the pending attachments belong to the dock, not to the page. */
 export interface ReviewChatHandle {
   attach(snippet: Snippet): void;
 }

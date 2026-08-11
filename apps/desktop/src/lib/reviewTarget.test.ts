@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test';
 
-import { reviewTargetKey } from './reviewTarget';
+import { prNumberFromUrl, reviewTargetKey } from './reviewTarget';
 
 test('a run target and a pr target never collide on the same key', () => {
   expect(reviewTargetKey({ kind: 'run', runId: '7' })).toBe('run:7');
@@ -11,4 +11,14 @@ test('a run target and a pr target never collide on the same key', () => {
 // load-bearing beyond React lists — `isSubjectRef` on the server rejects anything else.
 test('a run key is the conversation subject the store expects', () => {
   expect(reviewTargetKey({ kind: 'run', runId: 'r-abc' })).toBe('run:r-abc');
+});
+
+test('a PR number is read off the run PR url, trailing slash or not', () => {
+  expect(prNumberFromUrl('https://github.com/o/r/pull/42')).toBe(42);
+  expect(prNumberFromUrl('https://github.com/o/r/pull/42/')).toBe(42);
+});
+
+test('a run with no PR — or a url that names none — resolves to null', () => {
+  expect(prNumberFromUrl(undefined)).toBeNull();
+  expect(prNumberFromUrl('https://github.com/o/r/pulls')).toBeNull();
 });

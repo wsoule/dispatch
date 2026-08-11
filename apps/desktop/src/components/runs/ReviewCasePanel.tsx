@@ -118,7 +118,7 @@ export function ReviewCasePanel({
   }
   const openCount = judgment.reduce((n, g) => n + g.findings.length, 0);
 
-  // `h-full min-h-0`: this panel is the sole flexible child of ReviewView's own
+  // `h-full min-h-0`: this panel is the sole flexible child of the review page's own
   // `flex-1 flex-col` pane, so it has to actually claim that space itself before
   // ScrollArea's Viewport (which only ever fills its own Root, `size-full`) has
   // anything real to scroll within.
@@ -158,7 +158,7 @@ export function ReviewCasePanel({
         </section>
 
         {/* Only ever mounted when a real run is behind this panel — the caller
-          (ReviewView) always has both; this component's own tests exercise
+          (the task view's Diff tab) always has both; this component's own tests exercise
           `empty` without them, which just hides the section. */}
         {client !== undefined && runId !== undefined && (
           <section>

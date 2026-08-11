@@ -117,7 +117,7 @@ interface RunLogViewProps {
 /** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
  * a message composer whose action switches with the run's own state — "Send" while an agent
  * is actually listening (running/awaiting-approval), "Request changes" once the run is done
- * (resumes it with feedback). Always shown in RunsView's Session tab, live or terminal, so the
+ * (resumes it with feedback). Always shown in the task view's Chat tab, live or terminal, so the
  * user can see and talk to the agent regardless of which tab they're on. */
 export function RunLogView({
   meta,

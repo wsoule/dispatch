@@ -11,8 +11,8 @@ interface InboxPanelProps {
   /** Newest-first inbox entries — `data.inbox.entries`, unfiltered (read/unread both show,
    * with read rows muted). */
   entries: InboxEntry[];
-  /** Click-through — App.tsx maps this onto its existing NavActions (run → Runs view + that
-   * run selected; queue/runs-page → just the Runs view). */
+  /** Click-through — App.tsx maps this onto its existing NavActions (run → that run's task;
+   * queue/runs-page → the Inbox). */
   onNavigate: (target: InboxTarget) => void;
   /** The header's manual "Mark all read" action — separate from the auto-mark-on-open App.tsx
    * does when the panel opens, so entries that arrive while it's already open can still be

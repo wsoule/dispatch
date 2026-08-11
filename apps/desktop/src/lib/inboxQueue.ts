@@ -7,8 +7,7 @@ import {
 import { deriveFeedState } from './feedState';
 
 export interface InboxData {
-  /** Finished runs needing a look, plus open repo PRs — exactly what the
-   * Review page's queue shows today. */
+  /** Finished runs needing a look, plus open repo PRs — see `buildReviewQueue`. */
   review: ReviewQueueItem[];
   /** Live runs stalled on the user: an approval gate or an open question. */
   waiting: RunMeta[];
