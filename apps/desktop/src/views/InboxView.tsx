@@ -136,13 +136,18 @@ export function InboxView({
         </div>
       )}
 
-      <LandingView
-        data={project}
-        onOpenRun={(runId) => {
-          const run = project.runs.find((r) => r.id === runId);
-          if (run !== undefined) onOpenTask(run.taskId, 'diff', run.id);
-        }}
-      />
+      {/* `shrink-0`: LandingView now sizes to its own content, but this container's flex
+          items can otherwise still be squeezed by the flex algorithm — pin it so the queue
+          scrolls with the two lists above instead of getting compressed. */}
+      <div className="shrink-0">
+        <LandingView
+          data={project}
+          onOpenRun={(runId) => {
+            const run = project.runs.find((r) => r.id === runId);
+            if (run !== undefined) onOpenTask(run.taskId, 'diff', run.id);
+          }}
+        />
+      </div>
     </div>
   );
 }

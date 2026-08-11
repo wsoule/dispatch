@@ -28,6 +28,12 @@ const HISTORY_PREVIEW = 4;
  *
  * Nothing here simulates progress. Each entry's strip is drawn from the phase the server says
  * it is in, and an entry whose phase cannot be known shows no strip at all.
+ *
+ * Sized to content, not to a fixed height: InboxView is this view's only consumer, and it
+ * renders LandingView as the last item of its own `flex-col` scroller, below the waiting/review
+ * lists. A root that also claimed `h-full`/`overflow-y-auto` — right for a full-window page —
+ * let this section collapse to zero height once those lists filled up, making the queue
+ * unreachable exactly when it was busiest. Content sizing plus the outer scroller fixes that.
  */
 export function LandingView({ data, onOpenRun }: LandingViewProps) {
   const [showAllHistory, setShowAllHistory] = useState(false);
@@ -83,7 +89,7 @@ export function LandingView({ data, onOpenRun }: LandingViewProps) {
     : history.slice(0, HISTORY_PREVIEW);
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
+    <div className="flex flex-col gap-4">
       <div className="flex items-baseline gap-2">
         <h2 className="text-[13px] font-semibold">Landing</h2>
         <span className="text-muted-foreground text-[12px]">
