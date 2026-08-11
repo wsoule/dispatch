@@ -1,9 +1,11 @@
 import {
+  ArrowUpIcon,
   CopyIcon,
   EyeIcon,
   FileTextIcon,
   PencilIcon,
   RotateCcwIcon,
+  SparklesIcon,
   SquareIcon,
   TerminalIcon,
   XIcon,
@@ -11,6 +13,12 @@ import {
 import { type ReactNode, useState } from 'react';
 
 import { ApprovalCard, type ApprovalCardOption } from '@/ui/ai/approval-card';
+import {
+  ChatMessage,
+  type ChatMessageProps,
+  ChatPanel,
+  type ChatTab,
+} from '@/ui/ai/chat';
 import { LoadingState } from '@/ui/ai/loading-state';
 import {
   StreamingText,
@@ -203,6 +211,100 @@ function TaskRowActionButton({
     >
       <Icon aria-hidden className="size-3.5" />
     </button>
+  );
+}
+
+const CHAT_TABS: ChatTab[] = [
+  { id: 'kanban', label: 'Kanban rework' },
+  { id: 'boot-fail', label: 'Boot force-fail', unread: true },
+];
+
+const CHAT_AGENT_AVATAR = (
+  <span className="bg-accent-tint text-primary flex size-6 items-center justify-center rounded-full">
+    <SparklesIcon aria-hidden className="size-3.5" />
+  </span>
+);
+
+// Mock transcript for the two-tab story. Read from a data array (rather than
+// literal `role="user"`/`role="agent"` JSX props) so each role comes from a typed
+// field, the same shape `WardenView`/`PlansView` already pass through to their own
+// message rows.
+const CHAT_MESSAGES: Array<{
+  id: string;
+  role: ChatMessageProps['role'];
+  text: string;
+  avatar?: ReactNode;
+}> = [
+  {
+    id: 'm1',
+    role: 'user',
+    text: 'Rework the kanban columns to match the new spacing scale',
+  },
+  {
+    id: 'm2',
+    role: 'agent',
+    text: 'Reworked the column gutters and card padding on t-716d89 — columns now use the 8px scale end to end.',
+    avatar: CHAT_AGENT_AVATAR,
+  },
+  {
+    id: 'm3',
+    role: 'user',
+    text: 'Does the boot force-fail task block this?',
+  },
+  {
+    id: 'm4',
+    role: 'agent',
+    text: "No — t-cafe27 touches dispatchd's boot path only, no overlap with the kanban view.",
+  },
+];
+
+// Static stand-in for PromptBar (Task 13) — same field footprint as the showcase's
+// composer so ChatPanel's bottom slot reads correctly before the real input lands.
+function ComposerPlaceholder() {
+  return (
+    <div className="rounded-control border-border bg-field flex flex-col gap-2 border p-2.5">
+      <span className="text-muted-foreground text-[13px]">
+        Message the agent…
+      </span>
+      <div className="flex items-center justify-end">
+        <button
+          type="button"
+          aria-label="Send"
+          disabled
+          className="text-muted-foreground flex size-7 items-center justify-center rounded-[8px] bg-[var(--border-strong)]"
+        >
+          <ArrowUpIcon aria-hidden className="size-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// `ChatPanel` is fully controlled, so the gallery story needs a small stateful
+// wrapper to make clicking a tab actually switch it — same pattern as the Thinking
+// and ApprovalCard demos above.
+function ChatPanelDemo() {
+  const [activeTabId, setActiveTabId] = useState('kanban');
+  return (
+    <div className="h-90 w-95">
+      <ChatPanel
+        tabs={CHAT_TABS}
+        activeTabId={activeTabId}
+        onSelectTab={setActiveTabId}
+        onNewTab={() => {}}
+        composer={<ComposerPlaceholder />}
+      >
+        {CHAT_MESSAGES.map((message) => (
+          <ChatMessage
+            key={message.id}
+            role={message.role}
+            avatar={message.avatar}
+          >
+            {message.text}
+          </ChatMessage>
+        ))}
+      </ChatPanel>
+    </div>
   );
 }
 
@@ -411,5 +513,11 @@ export const galleryStories: GalleryStory[] = [
         />
       </TaskRowList>
     ),
+  },
+  {
+    id: 'chat-panel-two-tabs',
+    title: 'Chat panel — two tabs, mixed messages',
+    note: 'Segmented tab strip (active tab lifted, unread dot on "Boot force-fail"), right-aligned user bubbles vs. full-width agent replies, and a PromptBar placeholder pinned to the bottom. Click a tab to switch.',
+    render: () => <ChatPanelDemo />,
   },
 ];
