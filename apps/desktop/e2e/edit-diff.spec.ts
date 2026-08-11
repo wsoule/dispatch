@@ -44,6 +44,15 @@ function authedUrl(baseURL: string | undefined): string {
  * purpose — they're covered by unit/render tests in `packages/server` and
  * `apps/desktop` instead. See that plan's Testing section
  * (`docs/superpowers/specs/2026-08-04-editable-review-diff-design.md`).
+ *
+ * FIXME (branch: the task-centric consolidation, 98bf1858): the Review page
+ * this drives was retired; the run review surface now lives on a task's Diff
+ * tab, reached via Inbox (⌘5) → a "Needs review" row. That navigation is
+ * mechanical, but the file-selection step below is not: `RunReviewView`
+ * renders no changed-files tree and passes no `only` narrowing to
+ * `PierreReviewDiff`, so there is no `treeitem` to click and no guarantee of
+ * exactly one pencil. Left explicit rather than guessed at, since Playwright
+ * cannot launch in the environment this branch was written in.
  */
 test.describe('editing a run diff end to end', () => {
   // Same viewport override as `review detail` in views.spec.ts, and for the
@@ -51,19 +60,19 @@ test.describe('editing a run diff end to end', () => {
   // too narrow to show real content at the suite's shared 1036px viewport.
   test.use({ viewport: { width: 1600, height: 1100 } });
 
-  test('clicking the pencil, typing, and saving re-renders the diff', async ({
+  test.fixme('clicking the pencil, typing, and saving re-renders the diff', async ({
     page,
     baseURL,
   }) => {
-    // Starts the overview rail closed, same as `review detail` in
+    // Collapses the live-agents rail, same as `review detail` in
     // views.spec.ts — it is not part of what this test checks and would
     // otherwise compete for width alongside the widened viewport above.
     await page.addInitScript(() => {
-      window.localStorage.setItem('dispatch:overview-rail', '0');
+      window.localStorage.setItem('dispatch:live-rail', '1');
     });
     await page.goto(authedUrl(baseURL));
     await page.getByText('Dispatch').first().waitFor();
-    await page.keyboard.press('Meta+6');
+    await page.keyboard.press('Meta+5');
 
     // Same fixture run views.spec.ts's `review detail` test already relies
     // on: "Rate limit the search endpoint" is seeded `finished` with no
@@ -71,7 +80,7 @@ test.describe('editing a run diff end to end', () => {
     // gate requires (`isTerminalRunState(meta.state) && meta.reviewedAt ===
     // undefined`) for the pencil to render at all.
     const queueRow = page.getByRole('button', {
-      name: /Rate limit the search endpoint\s+\d+ turns/,
+      name: /Rate limit the search endpoint/,
     });
     await expect(
       queueRow,
@@ -82,10 +91,11 @@ test.describe('editing a run diff end to end', () => {
     ).toBeVisible();
     await queueRow.click();
 
-    // Same row views.spec.ts clicks — selecting it sets `ReviewView`'s
-    // `selected` state, which is what narrows `PierreReviewDiff`'s `only`
-    // prop to this one file (ReviewView.tsx:462) and is why exactly one
-    // pencil is expected below rather than one per changed file.
+    // Same row views.spec.ts clicks. This step is the reason the whole block
+    // is fixme'd: it used to set the retired Review page's `selected` state,
+    // which narrowed `PierreReviewDiff`'s `only` prop to this one file and is
+    // why exactly one pencil is expected below rather than one per changed
+    // file. The task Diff tab renders no such tree and no such narrowing.
     const fileRow = page.getByRole('treeitem', { name: 'rate_limit.ts' });
     await expect(
       fileRow,

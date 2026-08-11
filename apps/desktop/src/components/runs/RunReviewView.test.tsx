@@ -231,4 +231,49 @@ describe('RunReviewView — the case panel', () => {
     render(<RunReviewView {...baseProps} />);
     expect(screen.queryAllByText('widens the PATCH surface')).toHaveLength(1);
   });
+
+  // The case panel's Impact section is gated on `client` AND `runId` together, so a caller
+  // that supplies neither silently renders no blast radius and no way into ImpactView — which
+  // is exactly what happened when the panel was rehomed here from the Review page, leaving
+  // the app with no "Open in Impact" entry point anywhere.
+  it('offers Open in Impact for this run once the client and handler are wired', () => {
+    const opened: unknown[] = [];
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <RunReviewView
+          {...baseProps}
+          client={fakeClient()}
+          onOpenImpact={(subject) => opened.push(subject)}
+          casePanel={{
+            evidence: [],
+            mutations: [],
+            findings: [],
+            decisions: [],
+          }}
+        />
+      </QueryClientProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Open in Impact' }));
+    expect(opened).toEqual([{ kind: 'run', id: 'r1' }]);
+  });
+
+  it('hides the Impact section entirely when no client is wired', () => {
+    render(
+      <RunReviewView
+        {...baseProps}
+        onOpenImpact={() => {}}
+        casePanel={{
+          evidence: [],
+          mutations: [],
+          findings: [],
+          decisions: [],
+        }}
+      />
+    );
+    expect(screen.queryByRole('button', { name: 'Open in Impact' })).toBeNull();
+  });
 });

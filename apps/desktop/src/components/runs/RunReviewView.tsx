@@ -24,6 +24,7 @@ import {
 } from 'lucide-react';
 import { useCallback, useMemo, useRef, useState } from 'react';
 
+import type { ImpactSubjectRef } from '../../lib/appNav';
 import { isTerminalRunState } from '../../lib/runState';
 import { PierreReviewDiff } from './PierreReviewDiff';
 import { QueueMergeControl } from './QueueMergeControl';
@@ -98,6 +99,10 @@ interface RunReviewViewProps {
   /** Omitted by pre-consolidation call sites; the ReviewView page supplied its own until it
    * was retired. */
   reviewAgentLive?: boolean;
+  /** Navigates to the full `ImpactView` with this run preselected — the case panel's
+   * "Open in Impact" button. The retired Review page received this the same way; without it
+   * that button (and the embedded blast-radius panel above it) has no home in the app. */
+  onOpenImpact?: (subject: ImpactSubjectRef) => void;
   /** The agent's own account of the work — evidence, mutation tests, findings and the fix
    * action, escalated decisions — rendered above the comments panel. Absent hides the section
    * entirely, so pre-consolidation call sites keep compiling without it. */
@@ -143,6 +148,7 @@ export function RunReviewView({
   onSubmitReview,
   onStartAiReview,
   reviewAgentLive,
+  onOpenImpact,
   casePanel,
 }: RunReviewViewProps) {
   const [requestingChanges, setRequestingChanges] = useState(false);
@@ -297,6 +303,12 @@ export function RunReviewView({
                 onFixFindings={casePanel.onFixFindings}
                 onStartAiReview={onStartAiReview}
                 reviewAgentLive={reviewAgentLive}
+                // The Impact section's own gate: both together, or it hides. This surface
+                // always has a run, so it always has both — the retired Review page passed
+                // exactly the same pair.
+                client={client}
+                runId={meta.id}
+                onOpenImpact={onOpenImpact}
               />
             </div>
           )}
