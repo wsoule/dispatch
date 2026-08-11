@@ -183,6 +183,47 @@ test('the epic dispatch button routes through the confirmation preview', () => {
   expect(requested).toEqual(['e-1']);
 });
 
+// The land affordance follows the server's own readiness rule (every child done or
+// cancelled): a finished epic's header swaps the then-useless Work button for Land.
+test('a finished epic swaps Work for a Land button that lands it', () => {
+  const landed: string[] = [];
+  const progress = new Map([
+    [
+      'e-1',
+      {
+        epicId: 'e-1',
+        active: false,
+        children: [
+          { id: 't-1', title: 'Card one', status: 'done' },
+          { id: 't-2', title: 'Card two', status: 'cancelled' },
+          { id: 't-3', title: 'Card three', status: 'done' },
+        ],
+        liveRuns: [],
+      },
+    ],
+  ]);
+  render(
+    <Harness
+      epicProgressById={progress}
+      onLandEpic={(id) => {
+        landed.push(id);
+        return Promise.resolve();
+      }}
+    />
+  );
+  // e-1 is finished, so its lane offers Land; e-2 (no progress yet) keeps Work.
+  const land = screen.getAllByRole('button', { name: 'Land' });
+  expect(land).toHaveLength(1);
+  expect(screen.getAllByRole('button', { name: 'Work' })).toHaveLength(1);
+  fireEvent.click(land[0]);
+  expect(landed).toEqual(['e-1']);
+});
+
+test('no Land button renders without land wiring or finished progress', () => {
+  render(<Harness />);
+  expect(screen.queryByRole('button', { name: 'Land' })).toBeNull();
+});
+
 test('a column header "+" opens the create modal pre-set to that status', () => {
   const added: string[] = [];
   render(<Harness onAddTask={(status) => added.push(status)} />);

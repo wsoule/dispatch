@@ -355,6 +355,7 @@ export function BoardView({
             onDispatch={data.handleDispatch}
             onWorkEpic={data.handleWorkEpic}
             onStopEpic={data.handleStopEpic}
+            onLandEpic={data.handleLandEpic}
             onMoveStatus={data.moveTaskStatus}
             onEditTask={data.handleUpdate}
             onAddTask={onNewTask}
