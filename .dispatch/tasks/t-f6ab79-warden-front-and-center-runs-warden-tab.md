@@ -1,7 +1,7 @@
 ---
 id: t-f6ab79
 title: "Warden front and center: Runs | Warden tab toggle in the right rail"
-status: in-progress
+status: in-review
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T21:17:49.629Z
-updated: 2026-08-11T21:33:48.434Z
+updated: 2026-08-11T21:34:01.899Z
 external: null
 writes:
   - apps/desktop/src/components/shell/LiveRail.tsx
@@ -40,3 +40,4 @@ Constraints:
 ## Activity
 - 2026-08-11T21:18:14.234Z dispatched (claude, branch dispatch/t-f6ab79-warden-front-and-center-runs-warden-tab-136b66) — human:wsoule679
 - 2026-08-11T21:33:48.434Z Done in two commits: 95673f2b extracts WardenChat (transcript, composer, confirm card) from WardenView with a `compact` mode for a 15rem column — the confirm/approve path is one shared component, so rail approvals go through exactly WardenView's code path. d405ec7e gives LiveRail the Runs | Warden segmented header: tab persisted in dispatch:live-rail-tab beside the collapse flag (expand returns to the last tab), attention strip lifted above the tab content so it shows on both tabs, and a warden turn in flight renders as a Runs-tab agent row labeled 'warden' whose click opens the Warden tab. Rail tests fake the WardenSession seam with wardenThread.test.ts-style record fixtures — no module mocks. Verified: desktop suite 1309 pass / 0 fail, tsc clean, lint/knip clean; the wardenLive guard mutation-tested (1 test fails when reverted). Note: WardenChat compact carries its own "New" reset since the rail has no page header; full WardenView is unchanged visually. — none
+- 2026-08-11T21:34:01.899Z [run r-136b66] finished: finished — 5 files, $10.75 — agent:wsoule679/claude
