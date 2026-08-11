@@ -1,7 +1,7 @@
 ---
 id: t-d4995b
 title: Warden chat view in the global nav
-status: in-progress
+status: in-review
 kind: task
 parent: e-1d70ca
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-04T18:06:37.200Z
-updated: 2026-08-11T02:30:36.562Z
+updated: 2026-08-11T02:31:08.019Z
 external: null
 writes:
   - apps/desktop/src/views/WardenView.tsx
@@ -40,3 +40,4 @@ Acceptance criteria:
 - 2026-08-11T02:07:48.864Z dispatched (claude, branch dispatch/t-d4995b-warden-chat-view-in-the-global-nav-0faef1) — none
 - 2026-08-11T02:12:28.461Z Starting the Warden chat view. Design settled from reading the branch: 'warden' joins GlobalView in appNav.ts; a new lib/wardenThread.ts flattens WardenRecord into transcript rows (mirroring planThread.ts, with confirm cards emitted for still-pending actions and superseded "queued" rows skipped); a new hooks/useWardenSession.ts owns wardenId + the record query (key exported so useDispatchProject's WS handler can invalidate it on warden.changed, same wiring as plan.changed/draft.changed); Sidebar gets a Warden row in the global section; App.tsx mounts the session hook and routes globalView==='warden' to a new views/WardenView.tsx with the OverviewView DaemonUnavailable gate. Files touched: appNav.ts, wardenThread.ts(+test), useWardenSession.ts, useDispatchProject.ts, Sidebar.tsx(+test), App.tsx, WardenView.tsx. — none
 - 2026-08-11T02:30:36.562Z Done — committed 62331631 (feat(desktop): warden chat view in the global nav). All acceptance criteria met: 'warden' in GlobalView + sidebar row (Shield icon, between Sessions and Settings) + palette entry; WardenView renders transcript/composer/confirm-cards; useWardenSession owns the record and useDispatchProject invalidates wardenKey on warden.changed; DaemonUnavailable gate identical to OverviewView. Manually verified in the dev app (browser harness + fakes dispatchd on :4477): real ClaudeWarden answer to a status question (it called list_runs/pending_approvals and named the parked run); cancel_run confirm card → Deny left run awaiting-approval, Approve flipped it to cancelled with an Applied audit row; conversation survives tab switches. Evidence + 2 mutation tests recorded (both guards kill a test when reverted). Pre-existing failures untouched: webkitFloor.test.ts (fails on clean tree) and 9 lint warnings in server warden test files. — none
+- 2026-08-11T02:31:08.019Z [run r-0faef1] finished: finished — 10 files, $24.39 — agent:wsoule679/claude
