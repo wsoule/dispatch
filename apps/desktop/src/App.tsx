@@ -13,6 +13,7 @@ import {
 } from 'react';
 
 import { AddProjectDialog } from './components/shell/AddProjectDialog';
+import { BrainDumpFab } from './components/shell/BrainDumpFab';
 import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
@@ -1031,6 +1032,20 @@ function App() {
             />
           )}
         </SidebarProvider>
+
+        {/* The quick-capture brain button, pinned bottom-right on every project screen except
+            Brain dump itself (which has the full composer). Gated on a live daemon client:
+            the raw capture handler silently no-ops when `client` is null, and a capture that
+            quietly drops the thought is worse than no button. */}
+        {navState.section === 'project' &&
+          navState.projectView !== 'brain-dump' &&
+          activeProject !== null &&
+          data.client !== null && (
+            <BrainDumpFab
+              onCapture={rawData.handleCaptureInbox}
+              onOpenBrainDump={() => selectProjectView('brain-dump')}
+            />
+          )}
 
         {selectedDoc !== null && data.config !== null && (
           // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
