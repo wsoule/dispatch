@@ -36,7 +36,7 @@ function repoPr(overrides: Partial<RepoPr> = {}): RepoPr {
     headRepositoryOwner: 'example',
     reviewDecision: null,
     mergeable: 'MERGEABLE',
-    checks: { passed: 0, failed: 0, pending: 0, total: 0 },
+    checks: { passed: 0, failed: 0, pending: 0, total: 0, runs: [] },
     additions: 1,
     deletions: 0,
     changedFiles: 1,
@@ -103,7 +103,7 @@ test('a PR row shows its check rollup and review decision', () => {
         [],
         [
           repoPr({
-            checks: { passed: 2, failed: 1, pending: 0, total: 3 },
+            checks: { passed: 2, failed: 1, pending: 0, total: 3, runs: [] },
             reviewDecision: 'CHANGES_REQUESTED',
           }),
         ]

@@ -312,6 +312,14 @@ export interface GitStash {
   date: string;
 }
 
+// Mirrors PrCheckRun in packages/server/src/orchestrator/pr.ts — one named
+// check from GitHub's rollup, normalized to a single verdict string.
+export interface PrCheckRun {
+  name: string;
+  conclusion: string;
+  url: string;
+}
+
 // GitHub PR status + conversation for a run's PR — mirrors PrStatus /
 // PrConversationItem / PrDetail in packages/server/src/orchestrator/pr.ts. The
 // body of `GET /api/runs/:id/pr` (and what the review/comment POSTs return).
@@ -320,6 +328,7 @@ export interface PrCheckSummary {
   failed: number;
   pending: number;
   total: number;
+  runs: PrCheckRun[];
 }
 
 export interface PrStatus {

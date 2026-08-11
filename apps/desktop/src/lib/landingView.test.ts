@@ -35,7 +35,7 @@ function pr(over: Partial<RepoPr> = {}): RepoPr {
     headRepositoryOwner: 'o',
     reviewDecision: null,
     mergeable: 'MERGEABLE',
-    checks: { passed: 0, failed: 0, pending: 0, total: 0 },
+    checks: { passed: 0, failed: 0, pending: 0, total: 0, runs: [] },
     additions: 1,
     deletions: 1,
     changedFiles: 1,
@@ -120,7 +120,7 @@ describe('visibleLandingRows', () => {
       title: 'Failing checks',
       pr: pr({
         number: 1,
-        checks: { passed: 0, failed: 1, pending: 0, total: 1 },
+        checks: { passed: 0, failed: 1, pending: 0, total: 1, runs: [] },
       }),
       gate: { status: 'waiting-checks', detail: '1 check failing' },
     });
@@ -129,7 +129,7 @@ describe('visibleLandingRows', () => {
       title: 'Pending checks',
       pr: pr({
         number: 2,
-        checks: { passed: 0, failed: 0, pending: 1, total: 1 },
+        checks: { passed: 0, failed: 0, pending: 1, total: 1, runs: [] },
       }),
       gate: { status: 'waiting-checks', detail: 'waiting on CI · 1 running' },
     });
@@ -314,7 +314,9 @@ describe('gateChipLabel', () => {
 
   test('pending checks read Waiting on CI · N running', () => {
     const r = row({
-      pr: pr({ checks: { passed: 0, failed: 0, pending: 2, total: 2 } }),
+      pr: pr({
+        checks: { passed: 0, failed: 0, pending: 2, total: 2, runs: [] },
+      }),
       gate: { status: 'waiting-checks', detail: 'waiting on CI · 2 running' },
     });
     expect(gateChipLabel(r)).toBe('Waiting on CI · 2 running');
@@ -322,7 +324,9 @@ describe('gateChipLabel', () => {
 
   test('failing checks fall back to gate.detail', () => {
     const r = row({
-      pr: pr({ checks: { passed: 0, failed: 2, pending: 0, total: 2 } }),
+      pr: pr({
+        checks: { passed: 0, failed: 2, pending: 0, total: 2, runs: [] },
+      }),
       gate: { status: 'waiting-checks', detail: '2 checks failing' },
     });
     expect(gateChipLabel(r)).toBe('2 checks failing');
@@ -388,7 +392,9 @@ describe('landingNavBadge', () => {
       row({ id: 'pr-1', gate: { status: 'conflicts', detail: '' } }),
       row({
         id: 'pr-2',
-        pr: pr({ checks: { passed: 0, failed: 1, pending: 0, total: 1 } }),
+        pr: pr({
+          checks: { passed: 0, failed: 1, pending: 0, total: 1, runs: [] },
+        }),
         gate: { status: 'waiting-checks', detail: '1 check failing' },
       }),
       row({ id: 'pr-3', gate: { status: 'ready', detail: 'ready to merge' } }),
