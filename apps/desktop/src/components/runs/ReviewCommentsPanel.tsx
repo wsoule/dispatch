@@ -21,6 +21,8 @@ interface ReviewCommentsPanelProps {
    * where starting one doesn't make sense (a PR's review, say) — the button hides rather than
    * disabling, since there's nothing the omission leaves for the reviewer to do about it. */
   onStartAiReview?: () => Promise<void>;
+  /** Mirrors ReviewVerdictBar's prop — see liveReviewAgentFor. */
+  reviewAgentLive?: boolean;
 }
 
 /**
@@ -38,6 +40,7 @@ export function ReviewCommentsPanel({
   canPostToGitHub,
   onJumpTo,
   onStartAiReview,
+  reviewAgentLive,
 }: ReviewCommentsPanelProps) {
   return (
     <div className="flex flex-col gap-4">
@@ -53,6 +56,7 @@ export function ReviewCommentsPanel({
         onSubmit={onSubmit}
         canPostToGitHub={canPostToGitHub}
         onStartAiReview={onStartAiReview}
+        reviewAgentLive={reviewAgentLive}
       />
     </div>
   );

@@ -99,3 +99,23 @@ test('submitting posts to GitHub only once the box is ticked', async () => {
   fireEvent.click(screen.getByRole('button', { name: /submit review/i }));
   await waitFor(() => expect(calls).toEqual([false, true]));
 });
+
+// The panel is the TaskView path's only route to the verdict bar; if it
+// drops these props the task view silently loses the AI-review affordance.
+test('passes the live-review-agent state through to the verdict bar', () => {
+  render(
+    <ReviewCommentsPanel
+      comments={[]}
+      onResolve={noop}
+      onReply={noop}
+      onSubmit={submit}
+      canPostToGitHub={false}
+      onStartAiReview={noop}
+      reviewAgentLive
+    />
+  );
+  const button = screen.getByRole<HTMLButtonElement>('button', {
+    name: /agent reviewing/i,
+  });
+  expect(button.disabled).toBe(true);
+});
