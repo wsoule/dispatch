@@ -91,6 +91,7 @@ export type {
   PrDetail,
   PrReviewEvent,
   PrStatus,
+  PrWorktreeState,
   RepoPr,
   ReviewComment,
   ReviewReply,
