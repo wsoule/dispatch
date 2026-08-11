@@ -114,3 +114,29 @@ button {
 .scroll-affordance::-webkit-scrollbar-track {
   background: transparent;
 }
+
+/* Keyframes for ui/ai/ primitives (tasks 6-24): a staggered pixel-grid opacity pulse and a
+   shimmering gradient sweep across loading labels. Defined globally because Tailwind's
+   `animate-[name_...]` arbitrary values reference a `@keyframes` name, not the rule itself. */
+@keyframes pixel-on {
+  0%,
+  100% {
+    opacity: 0.15;
+  }
+  18%,
+  42% {
+    opacity: 1;
+  }
+  62% {
+    opacity: 0.15;
+  }
+}
+
+@keyframes shimmer-text {
+  0% {
+    background-position: 150%;
+  }
+  100% {
+    background-position: -50%;
+  }
+}

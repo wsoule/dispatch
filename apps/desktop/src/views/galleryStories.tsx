@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 
+import { LoadingState } from '@/ui/ai/loading-state';
 import { Button } from '@/ui/button';
 
 /** One reviewable primitive in the dev gallery: a title for the left index, an
@@ -26,6 +27,29 @@ export const galleryStories: GalleryStory[] = [
         <Button variant="destructive">Destructive</Button>
         <Button variant="link">Link</Button>
       </div>
+    ),
+  },
+  {
+    id: 'loading-state-grid',
+    title: 'Loading state — grid',
+    note: 'Pixel-grid loader with shimmer label and live elapsed time, ticking from mount.',
+    render: () => <LoadingState label="Provisioning sandbox" />,
+  },
+  {
+    id: 'loading-state-orbit',
+    title: 'Loading state — orbit',
+    note: 'Three dots orbiting instead of the pixel grid.',
+    render: () => <LoadingState label="Cloning repository" variant="orbit" />,
+  },
+  {
+    id: 'loading-state-elapsed',
+    title: 'Loading state — long-running',
+    note: 'startedAt 90s in the past, showing the m:ss readout mid-count.',
+    render: () => (
+      <LoadingState
+        label="Running agent Claude on task"
+        startedAt={Date.now() - 90_000}
+      />
     ),
   },
 ];
