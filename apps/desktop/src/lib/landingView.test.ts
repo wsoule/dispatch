@@ -427,12 +427,11 @@ describe('readLandingFilters / serializeLandingFilters', () => {
     expect(readLandingFilters('[]')).toEqual(EMPTY_FILTERS);
   });
 
-  test('an unrecognized gate value is dropped rather than trusted', () => {
-    expect(
-      readLandingFilters(
-        JSON.stringify({ query: '', author: null, gate: 'not-a-gate' })
-      )
-    ).toEqual(EMPTY_FILTERS);
+  test('an unrecognized gate value is dropped without discarding the rest', () => {
+    const result = readLandingFilters(
+      JSON.stringify({ query: 'sprocket', author: 'alice', gate: 'not-a-gate' })
+    );
+    expect(result).toEqual({ query: 'sprocket', author: 'alice', gate: null });
   });
 });
 
@@ -454,5 +453,9 @@ describe('relativeTime', () => {
   test('a week or more falls back to a locale date', () => {
     const iso = '2026-07-01T12:00:00.000Z';
     expect(relativeTime(iso, now)).toBe(new Date(iso).toLocaleDateString());
+  });
+
+  test('an unparseable timestamp falls back to an em dash', () => {
+    expect(relativeTime('not a date', now)).toBe('—');
   });
 });
