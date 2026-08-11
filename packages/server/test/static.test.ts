@@ -1,67 +1,32 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import { json } from './json.js';
 import { useTestAuth } from './testAuth.js';
 
-const moduleDir = dirname(fileURLToPath(import.meta.url));
-const webPackageDir = join(moduleDir, '..', '..', 'web');
-const webDistDir = join(webPackageDir, 'dist');
-const webIndexHtml = join(webDistDir, 'index.html');
-
-// Runs `bun run build` in packages/web and resolves with its exit code,
-// force-killing it if it runs past `timeoutMs`.
-function runWebBuild(timeoutMs: number): Promise<number> {
-  return new Promise((resolve) => {
-    const proc = spawn('bun', ['run', 'build'], {
-      cwd: webPackageDir,
-      stdio: 'inherit',
-    });
-    const timer = setTimeout(() => {
-      proc.kill();
-      resolve(1);
-    }, timeoutMs);
-    proc.on('close', (code) => {
-      clearTimeout(timer);
-      resolve(code ?? 1);
-    });
-  });
-}
-
-// This test plugs Slice S3's built web UI into the static serving Slice S1
-// already added to startServer. Root `bun run build` builds every package
-// (web included) before `bun run test` runs, but scripts/ws.ts matches
-// packages in directory order — "server" sorts before "web" — so a
-// server-only test run (or a fresh checkout that only ran `bun run test`)
-// can't assume packages/web/dist already exists. Building it here, once, up
-// front makes this test self-sufficient either way; 120s covers a cold vite
-// build plus dependency resolution.
-let distAvailable = existsSync(webIndexHtml);
-if (!distAvailable) {
-  console.log(
-    '[static.test] packages/web/dist not found — building @dispatch/web (up to 120s)...'
+// A minimal built-SPA-shell fixture, standing in for a real `dist/` (e.g.
+// the desktop bundle's) so this test exercises serveStatic without building
+// anything.
+function makeFixtureDist(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'dispatch-web-dist-'));
+  writeFileSync(
+    join(dir, 'index.html'),
+    '<html><head><title>dispatch</title></head><body><div id="root"></div></body></html>'
   );
-  const code = await runWebBuild(120_000);
-  distAvailable = code === 0 && existsSync(webIndexHtml);
-  if (!distAvailable) {
-    console.log(
-      '[static.test] @dispatch/web build did not produce dist/index.html — skipping static serving tests.'
-    );
-  }
+  mkdirSync(join(dir, 'assets'), { recursive: true });
+  writeFileSync(join(dir, 'assets', 'index.js'), 'console.log(1)\n');
+  return dir;
 }
 
-const maybeDescribe = distAvailable ? describe : describe.skip;
-
-maybeDescribe('static file serving (webDistDir)', () => {
+describe('static file serving (webDistDir)', () => {
   let root: string;
   let fakeHome: string;
+  let webDistDir: string;
   let handle: ServerHandle;
   let baseUrl: string;
   const originalDispatchHome = process.env.DISPATCH_HOME;
@@ -73,6 +38,7 @@ maybeDescribe('static file serving (webDistDir)', () => {
     process.env.DISPATCH_HOME = fakeHome;
     root = mkdtempSync(join(tmpdir(), 'dispatch-server-static-'));
     TaskStore.init(root);
+    webDistDir = makeFixtureDist();
     handle = await startServer({
       rootDir: root,
       port: 0,
@@ -89,6 +55,7 @@ maybeDescribe('static file serving (webDistDir)', () => {
     else process.env.DISPATCH_HOME = originalDispatchHome;
     rmSync(fakeHome, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
+    rmSync(webDistDir, { recursive: true, force: true });
   });
 
   it('serves the built SPA shell at /', async () => {
@@ -105,5 +72,42 @@ maybeDescribe('static file serving (webDistDir)', () => {
     const body = await json(res);
     expect(body.ok).toBe(true);
     expect(typeof body.rootDir).toBe('string');
+  });
+});
+
+describe('static file serving default (webDistDir unset)', () => {
+  let root: string;
+  let fakeHome: string;
+  let handle: ServerHandle;
+  let baseUrl: string;
+  const originalDispatchHome = process.env.DISPATCH_HOME;
+
+  beforeEach(async () => {
+    fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
+    process.env.DISPATCH_HOME = fakeHome;
+    root = mkdtempSync(join(tmpdir(), 'dispatch-server-static-default-'));
+    TaskStore.init(root);
+    // No webDistDir passed — startServer must not resolve any implicit
+    // sibling dist and must serve no UI at all.
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+  });
+
+  afterEach(async () => {
+    await handle.stop();
+    if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = originalDispatchHome;
+    rmSync(fakeHome, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it('404s at / with no webDistDir configured', async () => {
+    const res = await fetch(`${baseUrl}/`);
+    expect(res.status).toBe(404);
   });
 });

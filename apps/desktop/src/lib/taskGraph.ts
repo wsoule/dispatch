@@ -1,12 +1,10 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 
-// Mirrors packages/web/src/taskGraph.ts's `isTerminal`/`computeBlockedIds` —
-// display-only blocked-badge logic duplicated here rather than pulled from
-// @dispatch/client, since it never touches the network (unlike the
-// api/useTasks/connectEvents pieces that package extracts) and both apps
-// want it inline with their own board rendering. Never gates what's safe to
-// start — that stays server-side via GET /api/tasks/ready, whose result
-// flows into TasksPanel's readyIds.
+// Display-only blocked-badge logic (`isTerminal`/`computeBlockedIds`), kept
+// inline rather than pulled from @dispatch/client since it never touches the
+// network (unlike the api/useTasks/connectEvents pieces that package
+// extracts). Never gates what's safe to start — that stays server-side via
+// GET /api/tasks/ready, whose result flows into TasksPanel's readyIds.
 function isTerminal(doc: TaskDoc): boolean {
   return doc.meta.status === 'done' || doc.meta.status === 'cancelled';
 }

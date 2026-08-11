@@ -54,9 +54,8 @@ export function priorityTone(priority: Priority): Tone | null {
 // A task body is `## Description\n\n...\n\n## Acceptance Criteria\n\n## Activity\n` (see
 // core/store.ts's create template). Splits it into a heading -> content map so each section
 // renders as its own plain block — no markdown parser, just `white-space: pre-wrap` per the
-// design direction. Mirrors packages/web/src/components/TaskDetail.tsx's own copy of this —
-// display-only body parsing, out of @dispatch/client's extraction scope the same way
-// taskGraph.ts's blocked-badge logic is.
+// design direction. Display-only body parsing, out of @dispatch/client's
+// extraction scope the same way taskGraph.ts's blocked-badge logic is.
 export function parseTaskSections(body: string): Map<string, string> {
   const sections = new Map<string, string>();
   const parts = body.split(/^## /m).slice(1);

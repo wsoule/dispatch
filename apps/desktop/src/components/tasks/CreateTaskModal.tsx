@@ -49,9 +49,8 @@ interface CreateTaskModalProps {
 }
 
 /** Modal for creating a task. Title is the only required field; everything else has a sane
- * default so a quick "just capture this" flow stays one field deep. Mirrors
- * packages/web/src/components/CreateTask.tsx's fields, built on shadcn's `Dialog` — a true
- * modal that blocks the rest of the app, unlike the peek panel's overlay. */
+ * default so a quick "just capture this" flow stays one field deep. Built on shadcn's
+ * `Dialog` — a true modal that blocks the rest of the app, unlike the peek panel's overlay. */
 export function CreateTaskModal({
   statuses,
   epics,

@@ -5,8 +5,7 @@ import {
   TaskStore,
 } from '@dispatch/core';
 import type { CartoMode, GitReader } from '@dispatch/core';
-import { dirname, extname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { extname, join } from 'node:path';
 
 import packageJson from '../package.json';
 import {
@@ -76,11 +75,11 @@ export interface StartServerOptions {
   // 0 = ephemeral port, assigned by the OS; tests always pass this so
   // multiple server instances can run concurrently without colliding.
   port?: number;
-  // Directory of the built web UI's static assets. `null` disables static
-  // serving entirely (e.g. in server-only tests). Left `undefined`, it
-  // resolves to the sibling `@dispatch/web` package's `dist/` — which won't
-  // exist until Slice S3 builds it, in which case static serving is a no-op
-  // 404 fallthrough rather than an error.
+  // Directory of a built web UI's static assets to serve, if any. Left
+  // `undefined` (the default), no static serving happens — today's installed
+  // behavior, since the desktop app is the only shipped UI. `null` is
+  // equivalent and lets tests be explicit. A caller (e.g. a future remote-
+  // server mode) can point this at a built dist to opt in.
   webDistDir?: string | null;
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
@@ -127,10 +126,6 @@ export interface StartServerOptions {
   // a live interval.
   boardSyncPeriodicMs?: number;
 }
-
-const moduleDir = dirname(fileURLToPath(import.meta.url));
-
-const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
 
 // Rebuilds `cache` from `store`, and never lets a rebuild kill the daemon:
 // per-file parse failures are logged once each (they're also surfaced via
@@ -291,8 +286,7 @@ export async function startServer(
   opts: StartServerOptions
 ): Promise<ServerHandle> {
   const { rootDir } = opts;
-  const webDistDir =
-    opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
+  const webDistDir = opts.webDistDir ?? null;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
   const tokens = opts.tokens ?? mintDaemonTokens();
 

@@ -27,13 +27,11 @@ export type {
   LedgerKind,
 } from '@dispatch/core';
 
-// Extracted from @dispatch/web (Phase 2R Slice R2) so the same dispatchd
-// client can serve both @dispatch/web (baseUrl '' == same origin, since
-// dispatchd serves its own static files) and the Tauri desktop app (an
-// explicit http://127.0.0.1:<port> the Rust sidecar hands back from
-// `ensure_dispatchd`). Every function below takes `baseUrl` as its first
-// argument — "baseUrl-first" — rather than reading it from `import.meta.env`,
-// which was web-only and not something this package can depend on.
+// Every function below takes `baseUrl` as its first argument —
+// "baseUrl-first" — rather than reading it from `import.meta.env`, so this
+// same dispatchd client works for the Tauri desktop app (an explicit
+// http://127.0.0.1:<port> the Rust sidecar hands back from
+// `ensure_dispatchd`) as well as any future browser-served consumer.
 
 export interface HealthPayload {
   ok: boolean;

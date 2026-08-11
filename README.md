@@ -70,23 +70,13 @@ Bun monorepo (workspace catalog, tsdown builds, `bun test`, oxlint/oxfmt). From
 the repo root: `bun run build`, `bun run test`, `bun run tsc`, `bun run format`,
 `bun run lint`. Agent conventions live in `AGENTS.md` and `.agents/skills/`.
 
-### Daemon + web UI
+### Daemon + desktop UI
 
-`apps/desktop` is the product's UI and where frontend work happens;
-`packages/web` is frozen as a browser fallback.
-
-Run the daemon and the web UI's dev server side by side for live-reloading
-frontend work:
-
-    bun packages/server/src/bin.ts --root <path-to-a-dispatch-repo> --port 4771
-    bun ws web dev
-
-`bun ws web dev` proxies `/api` and `/ws` to `http://127.0.0.1:4771` (see
-`packages/web/vite.config.ts`), so the Vite dev server on its own port talks to
-a real dispatchd. For a production-style check, `bun run build` builds the web
-UI into `packages/web/dist`, then dispatchd serves it directly — no separate
-frontend server needed. `dispatch serve` / `dispatch ui` (from `@dispatch/cli`)
-wrap this daemon for end users.
+`apps/desktop` is the product's only UI. The daemon (`@dispatch/server`,
+`dispatchd`) serves no UI by default — `startServer`'s `webDistDir` option is an
+optional static-serving knob (used by tests and `apps/demo`), left unset in
+production. `dispatch serve` / `dispatch ui` (from `@dispatch/cli`) launch and
+connect to this daemon for end users.
 
 ### MCP server
 

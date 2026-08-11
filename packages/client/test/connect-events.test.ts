@@ -5,7 +5,7 @@ import type { SocketLike } from '../src/api';
 
 // Plain setTimeout-based sleep rather than `Bun.sleep` — this package's
 // tsconfig deliberately excludes the ambient `Bun` global (it targets the
-// browser, same as @dispatch/web), so tests stick to portable APIs.
+// browser, same as apps/desktop), so tests stick to portable APIs.
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
