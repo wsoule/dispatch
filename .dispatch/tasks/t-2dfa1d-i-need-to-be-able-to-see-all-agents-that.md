@@ -2,7 +2,7 @@
 id: t-2dfa1d
 title: I need to be able to see ALL agents that are runnning via the "all
   agents" page, this includes planners and task details, etc.
-status: todo
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: none
 assignee: none
 created: 2026-08-11T01:57:30.111Z
-updated: 2026-08-11T01:57:30.111Z
+updated: 2026-08-11T16:49:22.012Z
 external: null
 writes: []
 ---
@@ -23,3 +23,4 @@ writes: []
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-11T16:49:22.012Z dispatched (claude, branch dispatch/t-2dfa1d-i-need-to-be-able-to-see-all-agents-that-2e4500) — human:wsoule679
