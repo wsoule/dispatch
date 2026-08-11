@@ -1,7 +1,7 @@
 ---
 id: t-783b53
 title: Land an epic branch on main as one PR or one merge
-status: todo
+status: in-progress
 kind: task
 parent: e-b7ca6f
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T23:19:42.000Z
-updated: 2026-08-10T23:19:42.000Z
+updated: 2026-08-11T18:02:20.429Z
 external: null
 writes: []
 ---
@@ -28,3 +28,4 @@ A "land this epic" action once its tasks are done: open one PR from `epic/<id>` 
 - Partially-done epics refuse to land with a clear message rather than landing half an epic silently.
 
 ## Activity
+- 2026-08-11T18:02:20.429Z dispatched (claude, branch dispatch/t-783b53-land-an-epic-branch-on-main-as-one-pr-or-65842a) — none
