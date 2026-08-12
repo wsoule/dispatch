@@ -4,8 +4,8 @@ import { SectionLabel } from './SectionLabel';
 import { cn } from '@/lib/utils';
 
 /**
- * The app's single container shape — bordered, rounded, rows contained rather
- * than flush. Views must not spell one out; the chrome guard enforces that.
+ * The app's single container shape — `shadow-card` + rounded, rows contained
+ * rather than flush. Views must not spell one out; the chrome guard enforces that.
  */
 export function Panel({
   children,
