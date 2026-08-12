@@ -3,7 +3,13 @@ import { Plus, X } from 'lucide-react';
 
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
 
 // The blocked-by editor in the rail: current blockers as removable chips (each
 // showing the blocking task's id) plus a Select of the other tasks in the
@@ -54,10 +60,15 @@ export function BlockedByEditor({
         >
           <SelectTrigger
             size="sm"
+            aria-label="Add blocker"
             className="text-muted-foreground h-7 w-full justify-start gap-1.5 text-[12px] [&>svg]:hidden"
           >
             <Plus className="size-3.5" />
-            <span>Add blocker</span>
+            {/* The label goes through SelectValue rather than a bare span: with
+                `item-aligned` positioning Radix only places the open menu once
+                it has a value node, so a trigger without one opens the list
+                off-screen. */}
+            <SelectValue placeholder="Add blocker" />
           </SelectTrigger>
           <SelectContent>
             {addable.map((t) => (
