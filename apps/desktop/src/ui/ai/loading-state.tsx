@@ -1,3 +1,4 @@
+import { ShimmerLabel } from './shimmer';
 import { useElapsed } from './use-elapsed';
 
 export type LoadingStateProps = {
@@ -58,15 +59,7 @@ export function LoadingState({
   return (
     <div className="flex w-fit items-center gap-2.5">
       {variant === 'grid' ? <PixelGrid /> : <DotsOrbit />}
-      <span
-        className="animate-[shimmer-text_1.4s_linear_infinite] [background-size:200%_100%] bg-clip-text text-[13px] font-medium text-transparent motion-reduce:animate-none"
-        style={{
-          backgroundImage:
-            'linear-gradient(90deg, var(--text-muted) 35%, var(--text-primary) 50%, var(--text-muted) 65%)',
-        }}
-      >
-        {label}
-      </span>
+      <ShimmerLabel className="text-[13px] font-medium">{label}</ShimmerLabel>
       <span className="text-muted-foreground font-mono text-[12px] tabular-nums">
         {elapsed}
       </span>

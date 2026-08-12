@@ -1,4 +1,8 @@
-import { formatRelativeTime, sessionDisplayName } from '../../lib/format';
+import {
+  formatRelativeTime,
+  formatTokenCount,
+  sessionDisplayName,
+} from '../../lib/format';
 import { modelDisplayName } from '../../lib/models';
 import type { Session } from '../../lib/types';
 import { TaskRow, type TaskRowState } from '@/ui/ai/task-rows';
@@ -18,12 +22,11 @@ function sessionTaskRowState(status: Session['status']): TaskRowState {
 
 /**
  * Single-session summary row, rebuilt on `TaskRow`: project name as the title, model as the
- * `agent` chip, the session's own title/summary as the shimmering `detail` line, cost as the
- * trailing `progress` figure, and relative last-activity time as `elapsedLabel`. Used by the
- * Sessions hub's session list (`SessionsHubView`), optionally filtered to one project, so this
- * rendering logic lives in exactly one place. Token counts, shown in the pre-reskin row, don't
- * fit `TaskRow`'s slots and are dropped — full detail is one click away in
- * `SessionDetailModal`.
+ * `agent` chip, the session's own title/summary as the shimmering `detail` line, cost and a
+ * compact prompt+completion token count sharing the trailing `progress` figure, and relative
+ * last-activity time as `elapsedLabel`. Used by the Sessions hub's session list
+ * (`SessionsHubView`), optionally filtered to one project, so this rendering logic lives in
+ * exactly one place — full detail is one click away in `SessionDetailModal`.
  */
 export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
   return (
@@ -32,7 +35,9 @@ export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
       agent={modelDisplayName(session.model) ?? 'unknown model'}
       state={sessionTaskRowState(session.status)}
       detail={sessionDisplayName(session.title, session.summary)}
-      progress={`$${session.cost_usd.toFixed(2)}`}
+      progress={`$${session.cost_usd.toFixed(2)} · ${formatTokenCount(
+        session.prompt_tokens + session.completion_tokens
+      )}`}
       elapsedLabel={formatRelativeTime(session.last_activity_at)}
       onClick={onClick}
     />

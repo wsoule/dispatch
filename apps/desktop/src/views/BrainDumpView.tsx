@@ -19,6 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
 import {
   defaultSelectionActions,
+  selectionActionLabel,
   SelectionActionsMenu,
   useTextSelection,
 } from '@/ui/ai/selection-actions';
@@ -39,18 +40,6 @@ interface BrainDumpViewProps {
   data: DispatchProjectData;
   onPlanText: (text: string) => void;
   onOpenTask: (taskId: string) => void;
-}
-
-// Looks a selection-actions id up across the primitive's flat actions and each action's
-// own `options` (Tone's submenu), so a "not wired up yet" notice can name the exact chip
-// that was clicked rather than its raw id.
-function selectionActionLabel(actionId: string): string {
-  for (const action of defaultSelectionActions) {
-    if (action.id === actionId) return action.label;
-    const option = action.options?.find((o) => o.id === actionId);
-    if (option !== undefined) return option.label;
-  }
-  return actionId;
 }
 
 // Kind badges take existing palette tokens — a bug is the app's red, an idea its accent. None of

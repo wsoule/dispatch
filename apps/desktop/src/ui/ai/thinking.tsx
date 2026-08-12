@@ -6,7 +6,9 @@ import {
   type LucideIcon,
   SearchIcon,
 } from 'lucide-react';
-import { type ReactNode, useId } from 'react';
+import { useId } from 'react';
+
+import { ShimmerLabel } from './shimmer';
 
 export type ThinkingStep = {
   kind: 'reasoning' | 'search' | 'coding' | 'step';
@@ -43,28 +45,6 @@ function SparkGlyph({ className }: { className: string }) {
     >
       <path d="M12 2l2.4 7.2L22 12l-7.6 2.8L12 22l-2.4-7.2L2 12l7.6-2.8z" />
     </svg>
-  );
-}
-
-// Shimmering gradient-text sweep, the same treatment loading-state.tsx uses for its
-// label — reused here for the header chip and any in-progress step row.
-function ShimmerLabel({
-  children,
-  className,
-}: {
-  children: ReactNode;
-  className: string;
-}) {
-  return (
-    <span
-      className={`motion-reduce:text-foreground animate-[shimmer-text_1.4s_linear_infinite] [background-size:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none ${className}`}
-      style={{
-        backgroundImage:
-          'linear-gradient(90deg, var(--text-muted) 35%, var(--text-primary) 50%, var(--text-muted) 65%)',
-      }}
-    >
-      {children}
-    </span>
   );
 }
 

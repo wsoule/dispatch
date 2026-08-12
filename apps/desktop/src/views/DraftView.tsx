@@ -18,6 +18,7 @@ import {
 } from '../lib/taskDraft';
 import {
   defaultSelectionActions,
+  selectionActionLabel,
   SelectionActionsMenu,
   useTextSelection,
 } from '@/ui/ai/selection-actions';
@@ -25,18 +26,6 @@ import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
 import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
-
-// Looks a selection-actions id up across the primitive's flat actions and each
-// action's own `options` (Tone's submenu), so a "not wired up yet" notice can
-// still name the exact chip that was clicked rather than its raw id.
-function selectionActionLabel(actionId: string): string {
-  for (const action of defaultSelectionActions) {
-    if (action.id === actionId) return action.label;
-    const option = action.options?.find((o) => o.id === actionId);
-    if (option !== undefined) return option.label;
-  }
-  return actionId;
-}
 
 /** One labeled cell of the draft's property rail, so Status/Priority/Epic all read the same
  * way — a small uppercase caption over the shared `PropertyControls` row editor. */

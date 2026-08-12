@@ -1,5 +1,7 @@
 import type { KeyboardEvent, ReactNode } from 'react';
 
+import { ShimmerLabel } from './shimmer';
+
 export type TaskRowState = 'running' | 'waiting' | 'failed' | 'done' | 'queued';
 
 export type TaskRowProps = {
@@ -23,23 +25,6 @@ const DOT_CLASS: Record<TaskRowState, string> = {
   done: 'bg-state-review',
   queued: 'bg-state-ready',
 };
-
-// Shimmering gradient-text sweep, the same treatment thinking.tsx/tool-chips.tsx/
-// loading-state.tsx use for in-progress text — kept local so this primitive stays
-// self-contained.
-function ShimmerLabel({ children }: { children: ReactNode }) {
-  return (
-    <span
-      className="motion-reduce:text-foreground block animate-[shimmer-text_1.4s_linear_infinite] truncate [background-size:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none"
-      style={{
-        backgroundImage:
-          'linear-gradient(90deg, var(--text-muted) 35%, var(--text-primary) 50%, var(--text-muted) 65%)',
-      }}
-    >
-      {children}
-    </span>
-  );
-}
 
 /** One dense row in a task/run list: a state dot (pulsing while `running`), the
  * task's title and agent, a `detail` line that shimmers while running, an optional
@@ -98,7 +83,7 @@ export function TaskRow({
         </div>
         {detail !== undefined &&
           (isRunning ? (
-            <ShimmerLabel>{detail}</ShimmerLabel>
+            <ShimmerLabel className="block truncate">{detail}</ShimmerLabel>
           ) : (
             <p className="text-muted-foreground truncate text-[12px]">
               {detail}

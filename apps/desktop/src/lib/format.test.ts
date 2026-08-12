@@ -3,6 +3,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   formatRelativeTime,
   formatRelativeTimeFromIso,
+  formatTokenCount,
   sessionDisplayName,
 } from './format.ts';
 import { colorForProject } from './projectColor.ts';
@@ -42,6 +43,18 @@ describe('formatRelativeTimeFromIso', () => {
 
   test('returns an em dash for an unparseable timestamp', () => {
     expect(formatRelativeTimeFromIso('not-a-date')).toBe('—');
+  });
+});
+
+describe('formatTokenCount', () => {
+  test('keeps small counts exact', () => {
+    expect(formatTokenCount(0)).toBe('0 tok');
+    expect(formatTokenCount(950)).toBe('950 tok');
+  });
+
+  test('compacts thousands to one decimal', () => {
+    expect(formatTokenCount(1000)).toBe('1.0k tok');
+    expect(formatTokenCount(12345)).toBe('12.3k tok');
   });
 });
 

@@ -104,6 +104,9 @@ export function ApprovalCard({
   return (
     <div className="animate-in fade-in-0 flex flex-col gap-2 duration-150">
       <AiApprovalCard
+        // Full-width in the transcript — the primitive's gallery default is `max-w-sm`. The
+        // detail stays a plain string: a tool name isn't agent-authored markdown.
+        className="max-w-none"
         question="Waiting on approval"
         detail={
           frozenSince !== undefined

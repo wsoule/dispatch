@@ -164,6 +164,21 @@ test('a review run is labelled, a plain agent run is not', () => {
   expect(screen.queryByText('agent')).toBeNull();
 });
 
+// Cost had its own column before the reskin — it now shares TaskRow's progress slot with
+// the turn count, and must survive a run that only has one of the two.
+test('a run row shows turns and cost in the progress slot', () => {
+  mount({
+    runs: [
+      run({ id: 'r-1', taskTitle: 'Both', turns: 12, costUsd: 0.42 }),
+      run({ id: 'r-2', taskTitle: 'Cost only', costUsd: 1.5 }),
+      run({ id: 'r-3', taskTitle: 'Turns only', turns: 3 }),
+    ],
+  });
+  expect(screen.getByText('12t · $0.42')).toBeDefined();
+  expect(screen.getByText('$1.50')).toBeDefined();
+  expect(screen.getByText('3t')).toBeDefined();
+});
+
 test('the state filter narrows the list to one bucket', () => {
   mount({
     runs: [

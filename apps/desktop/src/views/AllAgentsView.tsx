@@ -74,6 +74,17 @@ function outcomeLabel(run: RunMeta): string {
   return run.state;
 }
 
+/** Turns and spend folded into TaskRow's one free-text `progress` slot ("12t · $0.42") —
+ * cost had its own column before the reskin, and a spend outlier should still be scannable
+ * down this list. */
+function runProgress(run: RunMeta): string | undefined {
+  const parts = [
+    run.turns !== undefined ? `${String(run.turns)}t` : undefined,
+    run.costUsd !== undefined ? `$${run.costUsd.toFixed(2)}` : undefined,
+  ].filter((part): part is string => part !== undefined);
+  return parts.length > 0 ? parts.join(' · ') : undefined;
+}
+
 /** One row of the merged list: a task run, or an in-memory conversation agent. Keys are
  * prefixed because the two id spaces are owned by different registries and nothing
  * guarantees they never collide. */
@@ -258,9 +269,7 @@ export function AllAgentsView({
                       : feedStateToTaskRowState(feedState)
                   }
                   detail={outcomeLabel(run)}
-                  progress={
-                    run.turns !== undefined ? `${run.turns}t` : undefined
-                  }
+                  progress={runProgress(run)}
                   elapsedLabel={formatRelativeTimeFromIso(run.updatedAt)}
                   onClick={() => onJumpToRun(run.id)}
                   actions={

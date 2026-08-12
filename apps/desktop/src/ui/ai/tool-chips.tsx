@@ -1,6 +1,8 @@
 import type { LucideIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
+import { ShimmerLabel } from './shimmer';
+
 export type ToolChipState = 'running' | 'done' | 'failed';
 
 export type ToolChipProps = {
@@ -10,22 +12,6 @@ export type ToolChipProps = {
   state?: ToolChipState;
   onClick?: () => void;
 };
-
-// Shimmering gradient-text sweep, the same treatment thinking.tsx and loading-state.tsx
-// use for in-progress labels — kept local so this primitive stays self-contained.
-function ShimmerLabel({ children }: { children: ReactNode }) {
-  return (
-    <span
-      className="motion-reduce:text-foreground animate-[shimmer-text_1.4s_linear_infinite] [background-size:200%_100%] bg-clip-text text-transparent motion-reduce:animate-none"
-      style={{
-        backgroundImage:
-          'linear-gradient(90deg, var(--text-muted) 35%, var(--text-primary) 50%, var(--text-muted) 65%)',
-      }}
-    >
-      {children}
-    </span>
-  );
-}
 
 /** One tool call as a compact inline chip: icon, label, and an optional mono `meta`
  * slot (a diff stat like `+24 −3`, a command, a filename). Running chips shimmer the
