@@ -86,7 +86,7 @@ export function SidebarNav({
                 const accessibleLabel = item.ariaLabel ?? item.label;
                 const row = (
                   <button
-                    key={collapsed ? undefined : item.id}
+                    key={item.id}
                     type="button"
                     aria-current={isActive ? 'page' : undefined}
                     aria-label={collapsed ? accessibleLabel : undefined}

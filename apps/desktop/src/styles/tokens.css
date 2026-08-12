@@ -21,9 +21,8 @@
   --border-strong: #e0e2e5;
   --border-selected: #0285ff;
 
-  /* Beautiful UI blue: the chrome's accent hue. Primary buttons, active nav, focus rings,
-     and links all key off this. `--accent-tint` is a wash for selected-row backgrounds;
-     `--accent-border` derives from it so the dark override comes for free. */
+  /* Beautiful UI blue: primary buttons, active nav, focus rings, links.
+     `--accent-tint` washes selected rows; `--accent-border` derives from it. */
   --accent: #0285ff;
   --accent-hover: #0170dd;
   --accent-contrast: #ffffff;

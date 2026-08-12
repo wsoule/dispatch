@@ -41,7 +41,7 @@ export function ChatPanel({
                 type="button"
                 aria-pressed={isActive}
                 onClick={() => onSelectTab(tab.id)}
-                className={`flex items-center gap-1.5 rounded-[6px] px-2.5 py-1 text-[13px] font-medium transition-colors duration-100 ${
+                className={`rounded-chip ease-out-expo flex items-center gap-1.5 px-2.5 py-1 text-[13px] font-medium transition-colors duration-100 ${
                   isActive
                     ? 'bg-card text-foreground shadow-btn'
                     : 'text-muted-foreground hover:text-foreground'
@@ -63,7 +63,7 @@ export function ChatPanel({
             type="button"
             aria-label="New chat"
             onClick={onNewTab}
-            className="text-muted-foreground hover:bg-surface-hover hover:text-foreground flex size-6 shrink-0 items-center justify-center rounded-[6px] transition-colors duration-100"
+            className="text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-chip ease-out-expo flex size-6 shrink-0 items-center justify-center transition-colors duration-100"
           >
             <PlusIcon aria-hidden className="size-3.5" />
           </button>
