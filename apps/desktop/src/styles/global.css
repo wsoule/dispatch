@@ -52,6 +52,13 @@ button {
   border-radius: 4px;
 }
 
+/* Text selection tinted with the accent color instead of the OS default, so highlighting a
+   passage for the Selection Actions menu (ui/ai/selection-actions.tsx) reads as part of the
+   Beautiful UI system rather than a generic browser selection. */
+::selection {
+  background: var(--accent-tint);
+}
+
 .app-shell {
   display: flex;
   height: 100vh;
