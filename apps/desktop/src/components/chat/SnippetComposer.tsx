@@ -33,6 +33,14 @@ interface SnippetComposerProps {
  * never fetches, never persists, and never learns what a target actually *is* — the caller owns
  * `targets`/`attachments` and receives the composed message via `onSend`. That keeps this file
  * renderable with no server, no run, and no Pierre.
+ *
+ * Not rebuilt on the `ui/ai/prompt-bar` primitive despite otherwise being the closest fit in
+ * this codebase: that primitive hardcodes its textarea's accessible name to "Prompt" with no
+ * prop to override it, and `ReviewChatPanel.test.tsx` (plus `PierreReviewDiff.test.tsx` and
+ * `RunReviewView.test.tsx`) all locate this composer's field via
+ * `screen.getByLabelText('Message')`. Swapping in the primitive would silently break every one
+ * of those, which the task's "tests must stay green" constraint rules out — so this keeps its
+ * own `Textarea` and button, restyled to the same design tokens the primitive uses.
  */
 export function SnippetComposer({
   targets,
@@ -58,9 +66,9 @@ export function SnippetComposer({
   }
 
   return (
-    <div className="flex flex-col gap-2">
+    <div className="bg-field shadow-inset-field rounded-card flex flex-col gap-2 p-1.5">
       {attachments.length > 0 && (
-        <div className="flex flex-wrap gap-1">
+        <div className="flex flex-wrap gap-1 px-0.5 pt-0.5">
           {attachments.map((snippet, index) => {
             const label = snippetLabel(snippet);
             return (
@@ -99,10 +107,10 @@ export function SnippetComposer({
             void submit();
           }
         }}
-        className="resize-y text-[13px]"
+        className="resize-y border-none bg-transparent text-[13px] shadow-none focus-visible:ring-0"
       />
 
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex items-center justify-between gap-3 px-0.5 pb-0.5">
         {/* `NativeSelect`, not the Radix-backed `@/ui/select`: that primitive mounts its
             options only once opened (a `Presence`-gated portal), which breaks
             `ReviewChatPanel`'s coverage of which targets are offered — it reads
@@ -134,7 +142,7 @@ export function SnippetComposer({
       </div>
 
       {selectedTarget !== undefined && (
-        <p className="text-muted-foreground text-[11px]">
+        <p className="text-muted-foreground px-0.5 text-[11px]">
           {selectedTarget.canAct
             ? 'This target can edit this branch.'
             : "Read-only. It explains, it doesn't edit."}
