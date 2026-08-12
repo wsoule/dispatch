@@ -127,6 +127,78 @@ describe('HttpLinearClient error text', () => {
   });
 });
 
+// Reads back the `query`/`variables` payload the client posted, so a query's
+// declared variable types can be asserted without a live API.
+function sentQuery(seen: { init?: RequestInit }): string {
+  const body = JSON.parse((seen.init?.body ?? '{}') as string) as {
+    query?: string;
+  };
+  return body.query ?? '';
+}
+
+// Linear types a team id by position: `team(id:)` takes String!, while the id
+// comparators inside a filter take ID. Declaring the wrong scalar makes the
+// server reject the document at validation time, so the sync fails wholesale
+// with "Variable '$teamId' of type 'String!' used in position expecting 'ID'".
+describe('HttpLinearClient teamId variable types', () => {
+  const filtered: Array<[string, (c: HttpLinearClient) => Promise<unknown>]> = [
+    ['issuesUpdatedSince', (c) => c.issuesUpdatedSince('team-1', null)],
+    ['issuesUpdatedSince since', (c) => c.issuesUpdatedSince('team-1', 'now')],
+    ['issueLinks', (c) => c.issueLinks('team-1')],
+  ];
+
+  for (const [name, call] of filtered) {
+    it(`declares $teamId as ID! for ${name}`, async () => {
+      const seen: { init?: RequestInit } = {};
+      const client = new HttpLinearClient(KEY, {
+        fetchImpl: stubFetch(
+          {
+            body: {
+              data: {
+                issues: {
+                  nodes: [],
+                  pageInfo: { hasNextPage: false, endCursor: null },
+                },
+              },
+            },
+          },
+          seen
+        ),
+      });
+      await call(client);
+
+      const query = sentQuery(seen);
+      expect(query).toContain('$teamId: ID!');
+      expect(query).not.toContain('$teamId: String!');
+    });
+  }
+
+  const lookups: Array<
+    [string, (c: HttpLinearClient) => Promise<unknown>, unknown]
+  > = [
+    [
+      'workflowStates',
+      (c) => c.workflowStates('team-1'),
+      { states: { nodes: [] } },
+    ],
+    ['labels', (c) => c.labels('team-1'), { labels: { nodes: [] } }],
+  ];
+
+  for (const [name, call, team] of lookups) {
+    it(`keeps $teamId as String! for ${name}`, async () => {
+      const seen: { init?: RequestInit } = {};
+      const client = new HttpLinearClient(KEY, {
+        fetchImpl: stubFetch({ body: { data: { team } } }, seen),
+      });
+      await call(client);
+
+      const query = sentQuery(seen);
+      expect(query).toContain('team(id: $teamId)');
+      expect(query).toContain('$teamId: String!');
+    });
+  }
+});
+
 describe('HttpLinearClient pagination', () => {
   it('follows endCursor until hasNextPage goes false', async () => {
     let call = 0;
