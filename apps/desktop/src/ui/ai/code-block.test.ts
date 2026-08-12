@@ -60,6 +60,24 @@ describe('tokenizeLine', () => {
   test('returns a single plain token for an empty line', () => {
     expect(tokenizeLine('', 'ts')).toEqual([]);
   });
+
+  test('does not treat // inside a string literal as a comment', () => {
+    expect(tokenizeLine('const url = "http://example.com";', 'ts')).toEqual([
+      { text: 'const', kind: 'keyword' },
+      { text: ' url = ', kind: 'plain' },
+      { text: '"http://example.com"', kind: 'string' },
+      { text: ';', kind: 'plain' },
+    ]);
+  });
+
+  test('does not match a keyword as a substring of a longer identifier', () => {
+    expect(tokenizeLine('constants', 'ts')).toEqual([
+      { text: 'constants', kind: 'plain' },
+    ]);
+    expect(tokenizeLine('myconstant', 'ts')).toEqual([
+      { text: 'myconstant', kind: 'plain' },
+    ]);
+  });
 });
 
 describe('revealedLines', () => {
