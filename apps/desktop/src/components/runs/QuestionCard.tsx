@@ -1,5 +1,6 @@
 import { useState } from 'react';
 
+import { Markdown } from './Markdown';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import type { ApprovalCardOption } from '@/ui/ai/approval-card';
 import { ApprovalCard } from '@/ui/ai/approval-card';
@@ -59,7 +60,10 @@ export function QuestionCard({
   return (
     <div className="animate-in fade-in-0 flex flex-col gap-2 duration-150">
       <ApprovalCard
-        question={question}
+        // Full-width in the transcript, and the question is agent-authored text — render it
+        // as markdown so lists/`code`/emphasis survive instead of flattening to plain text.
+        className="max-w-none"
+        question={<Markdown content={question} />}
         detail={
           askedAt !== undefined
             ? `asked ${formatRelativeTimeFromIso(askedAt)}`

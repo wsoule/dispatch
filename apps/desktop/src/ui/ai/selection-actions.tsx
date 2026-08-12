@@ -77,6 +77,18 @@ export const defaultSelectionActions: SelectionAction[] = [
   },
 ];
 
+/** Looks a selection-action id up across `defaultSelectionActions` and each action's own
+ * `options` (Tone's submenu), so a caller can name the exact chip that was clicked — e.g.
+ * in a "not wired up yet" notice — rather than echoing its raw id. */
+export function selectionActionLabel(actionId: string): string {
+  for (const action of defaultSelectionActions) {
+    if (action.id === actionId) return action.label;
+    const option = action.options?.find((o) => o.id === actionId);
+    if (option !== undefined) return option.label;
+  }
+  return actionId;
+}
+
 const CHIP_BUTTON_CLASS =
   'text-foreground hover:bg-surface-hover ease-out-expo inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[12px] font-normal transition-colors duration-100 active:scale-[0.96] motion-reduce:active:scale-100';
 

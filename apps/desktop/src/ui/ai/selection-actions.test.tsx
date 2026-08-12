@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   defaultSelectionActions,
   menuPlacement,
+  selectionActionLabel,
   SelectionActionsMenu,
 } from './selection-actions';
 
@@ -70,6 +71,14 @@ describe('menuPlacement', () => {
   test('leaves the horizontal anchor unclamped when no viewportWidth is given', () => {
     const nearLeftEdge = rect({ left: -50, width: 20 });
     expect(menuPlacement(nearLeftEdge).left).toBe(-40);
+  });
+});
+
+describe('selectionActionLabel', () => {
+  test('resolves top-level actions, submenu options, and unknown ids', () => {
+    expect(selectionActionLabel('improve')).toBe('Improve');
+    expect(selectionActionLabel('tone-professional')).toBe('Professional');
+    expect(selectionActionLabel('mystery')).toBe('mystery');
   });
 });
 

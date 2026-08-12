@@ -1,4 +1,7 @@
 import { CheckIcon, MessageCircleQuestionIcon } from 'lucide-react';
+import { type ReactNode, useId } from 'react';
+
+import { cn } from '@/lib/utils';
 
 export type ApprovalCardOption = {
   id: string;
@@ -8,12 +11,18 @@ export type ApprovalCardOption = {
 };
 
 export type ApprovalCardProps = {
-  question: string;
-  detail?: string;
+  /** The agent's question. A plain string renders as before; a node (e.g. agent-authored
+   * text pre-rendered through the `Markdown` component) drops in as-is — the primitive
+   * stays presentational and just renders whatever it's given. */
+  question: ReactNode;
+  detail?: ReactNode;
   options: ApprovalCardOption[];
   onSelect: (id: string) => void;
   selectedId?: string;
   disabled?: boolean;
+  /** Merged over the card frame's own classes. The default keeps the gallery's `max-w-sm`;
+   * full-width surfaces (transcript, inbox) pass `max-w-none` to lift it. */
+  className?: string;
 };
 
 // One radio-style option row. A plain `<button>` carries the keyboard behavior for free —
@@ -90,30 +99,44 @@ export function ApprovalCard({
   onSelect,
   selectedId,
   disabled = false,
+  className,
 }: ApprovalCardProps) {
   const selectedOption = options.find((option) => option.id === selectedId);
+  // `question` may be a rendered node rather than a string, so the radio group points at the
+  // question element instead of duplicating its text into an `aria-label`.
+  const questionId = useId();
 
   return (
-    <div className="bg-card rounded-card shadow-card w-full max-w-sm overflow-hidden">
+    <div
+      className={cn(
+        'bg-card rounded-card shadow-card w-full max-w-sm overflow-hidden',
+        className
+      )}
+    >
       <div className="flex items-start gap-2.5 px-4 pt-4 pb-3">
         <span className="bg-accent-tint text-primary flex size-7 shrink-0 items-center justify-center rounded-full">
           <MessageCircleQuestionIcon aria-hidden className="size-4" />
         </span>
         <div className="min-w-0 flex-1 pt-0.5">
-          <p className="text-foreground text-[13px] font-medium text-pretty">
+          {/* divs, not <p>s: a pre-rendered Markdown `question`/`detail` contains its own
+              block elements, which are invalid inside a paragraph. */}
+          <div
+            id={questionId}
+            className="text-foreground text-[13px] font-medium text-pretty"
+          >
             {question}
-          </p>
+          </div>
           {detail !== undefined && (
-            <p className="text-muted-foreground mt-1 text-[12.5px] leading-relaxed">
+            <div className="text-muted-foreground mt-1 text-[12.5px] leading-relaxed">
               {detail}
-            </p>
+            </div>
           )}
         </div>
       </div>
 
       <div
         role="radiogroup"
-        aria-label={question}
+        aria-labelledby={questionId}
         className="flex flex-col gap-1 px-2 pb-2"
       >
         {options.map((option) => (

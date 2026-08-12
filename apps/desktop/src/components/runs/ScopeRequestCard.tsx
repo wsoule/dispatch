@@ -2,6 +2,7 @@ import { RotateCw } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
+import { Markdown } from './Markdown';
 import type { ApprovalCardOption } from '@/ui/ai/approval-card';
 import { ApprovalCard } from '@/ui/ai/approval-card';
 import { Button } from '@/ui/button';
@@ -78,8 +79,11 @@ export function ScopeRequestCard({
   return (
     <div className="animate-in fade-in-0 flex flex-col gap-2 duration-150">
       <ApprovalCard
+        // Full-width in the transcript; `reason` is agent-authored text, so it renders as
+        // markdown rather than flattening to a plain string.
+        className="max-w-none"
         question="The agent wants to edit outside its scope"
-        detail={reason}
+        detail={<Markdown content={reason} />}
         options={options}
         onSelect={handleSelect}
         selectedId={selectedId}

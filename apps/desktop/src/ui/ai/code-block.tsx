@@ -100,7 +100,7 @@ const TS_KEYWORDS = [
   'object',
   'symbol',
   'bigint',
-]; // oxfmt-ignore
+];
 
 const CSS_KEYWORDS = [
   'important',
@@ -125,7 +125,7 @@ const CSS_KEYWORDS = [
   'hidden',
   'transparent',
   'currentColor',
-]; // oxfmt-ignore
+];
 
 type TokenRule = { kind: CodeTokenKind; pattern: string };
 
