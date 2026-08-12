@@ -16,6 +16,7 @@ line anywhere and Dispatch will pick it up.
 
 ## Sorted
 
+- [x] (note) get rid of this: "THESE LOOK LIKE ONE THING" from brain dump page. → t-c0f542 ^in-4d5b16
 - [x] (note) ui is bad on the runs page, when a file edits, it clips into all the text below ^in-db1618
 - [x] (task) need to be able to quickly dispatch from the epic swim lane view ^in-f417fc
 - [x] (task) this could be integrated with code.storage for a full team - need to brainstorm this ^in-50a139

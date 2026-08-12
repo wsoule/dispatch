@@ -26,5 +26,5 @@ verifySteps:
   - name: test
     command: bun run test
 models:
-  execute: claude-fable-5
+  execute: claude-opus-5
   plan: claude-opus-5
