@@ -20,9 +20,11 @@ import {
   ChatPanel,
   type ChatTab,
 } from '@/ui/ai/chat';
+import { codeBlockStories } from '@/ui/ai/code-block.stories';
 import { contextCardsStories } from '@/ui/ai/context-cards.stories';
 import { diffTableStories } from '@/ui/ai/diff-table.stories';
 import { filterTableStories } from '@/ui/ai/filter-table.stories';
+import { fineTuneCardStories } from '@/ui/ai/fine-tune-card.stories';
 import { insightCardsStories } from '@/ui/ai/insight-cards.stories';
 import { LoadingState } from '@/ui/ai/loading-state';
 import {
@@ -34,6 +36,7 @@ import {
 import { recommendationCardStories } from '@/ui/ai/recommendation-card.stories';
 import { recordsTableStories } from '@/ui/ai/records-table.stories';
 import { searchStories } from '@/ui/ai/search.stories';
+import { selectionActionsStories } from '@/ui/ai/selection-actions.stories';
 import { sidebarNavStories } from '@/ui/ai/sidebar-nav.stories';
 import {
   StreamingText,
@@ -653,4 +656,7 @@ export const galleryStories: GalleryStory[] = [
   ...sidebarNavStories,
   ...searchStories,
   ...insightCardsStories,
+  ...codeBlockStories,
+  ...fineTuneCardStories,
+  ...selectionActionsStories,
 ];
