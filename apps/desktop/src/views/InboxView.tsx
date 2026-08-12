@@ -1,6 +1,8 @@
+import type { RunMeta, RunQuestion } from '@dispatch/client';
 import { GitMerge, Inbox as InboxIcon } from 'lucide-react';
 import type { ReactNode } from 'react';
 
+import { QuestionCard } from '../components/runs/QuestionCard';
 import type { ReviewQueueItem } from '../components/runs/ReviewQueue';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
@@ -105,14 +107,18 @@ export function InboxView({
               <SectionLabel rule count={waiting.length}>
                 Waiting on you
               </SectionLabel>
-              <div className="mt-1.5 flex flex-col gap-0.5">
+              <div className="mt-1.5 flex flex-col gap-2">
                 {waiting.map((run) => (
-                  <Row
+                  <WaitingRow
                     key={run.id}
-                    title={run.taskTitle}
-                    state="waiting"
-                    updatedAt={run.updatedAt}
-                    onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
+                    run={run}
+                    question={firstOpenQuestion(
+                      project.openQuestions?.get(run.id)
+                    )}
+                    onOpenTask={onOpenTask}
+                    onAnswerQuestion={(questionId, answer) =>
+                      project.handleAnswerQuestion(run.id, questionId, answer)
+                    }
                   />
                 ))}
               </div>
@@ -157,6 +163,70 @@ export function InboxView({
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+// The question a `WaitingRow` should surface as an `ApprovalCard`-backed
+// `QuestionCard`: the oldest still-unanswered one, or — if every question the
+// map holds already carries an answer (a stale render between the answer
+// landing and the run leaving `waiting`) — the first of those, so the row
+// never silently drops back to the plain state mid-transition.
+function firstOpenQuestion(
+  questions: RunQuestion[] | undefined
+): RunQuestion | undefined {
+  if (questions === undefined || questions.length === 0) return undefined;
+  return questions.find((q) => q.answer === null) ?? questions[0];
+}
+
+/**
+ * One `waiting` run. A run blocked on an agent's question renders the actual
+ * question — `QuestionCard` (built on the `ApprovalCard` primitive) — right
+ * in the list, so answering never costs a navigation; a run only waiting on
+ * an approval gate (no question data available in bulk here — see
+ * `RunLogView`'s own `ApprovalCard`/`ScopeRequestCard` for that, which need a
+ * live per-run fetch this list doesn't do) falls back to the plain dense row.
+ */
+function WaitingRow({
+  run,
+  question,
+  onOpenTask,
+  onAnswerQuestion,
+}: {
+  run: RunMeta;
+  question: RunQuestion | undefined;
+  onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
+  onAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
+}) {
+  if (question === undefined) {
+    return (
+      <Row
+        title={run.taskTitle}
+        state="waiting"
+        updatedAt={run.updatedAt}
+        onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
+      />
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button
+        type="button"
+        onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
+        className="ease-out-expo text-muted-foreground hover:text-foreground flex items-center gap-2 self-start px-0.5 text-left text-[12px] transition-colors duration-100"
+      >
+        <span className="max-w-xs truncate">{run.taskTitle}</span>
+        <span className="dense-meta">
+          {formatRelativeTimeFromIso(run.updatedAt)}
+        </span>
+      </button>
+      <QuestionCard
+        question={question.question}
+        options={question.options}
+        askedAt={question.askedAt}
+        onAnswer={(answer) => onAnswerQuestion(question.id, answer)}
+      />
     </div>
   );
 }
@@ -245,7 +315,7 @@ function Row({
   // but there is nothing left to open.
   if (onClick === undefined) {
     return (
-      <div className="text-muted-foreground/70 flex items-center gap-2 rounded-md px-2 py-1.5">
+      <div className="text-muted-foreground/70 rounded-control flex items-center gap-2.5 px-3 py-2">
         {content}
       </div>
     );
@@ -257,8 +327,8 @@ function Row({
       variant="ghost"
       onClick={onClick}
       className={cn(
-        'h-auto w-full justify-start gap-2 rounded-md border border-transparent px-2 py-1.5 font-normal text-left',
-        'hover:bg-muted/60',
+        'ease-out-expo h-auto w-full justify-start gap-2.5 rounded-control border border-transparent px-3 py-2 font-normal text-left transition-colors duration-100',
+        'hover:bg-surface-hover',
         action !== undefined && 'flex-1'
       )}
     >

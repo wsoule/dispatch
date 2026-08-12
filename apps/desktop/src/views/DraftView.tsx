@@ -16,10 +16,27 @@ import {
   editableDraftToCreateInput,
   isDraftSaveable,
 } from '../lib/taskDraft';
+import {
+  defaultSelectionActions,
+  SelectionActionsMenu,
+  useTextSelection,
+} from '@/ui/ai/selection-actions';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
 import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
+
+// Looks a selection-actions id up across the primitive's flat actions and each
+// action's own `options` (Tone's submenu), so a "not wired up yet" notice can
+// still name the exact chip that was clicked rather than its raw id.
+function selectionActionLabel(actionId: string): string {
+  for (const action of defaultSelectionActions) {
+    if (action.id === actionId) return action.label;
+    const option = action.options?.find((o) => o.id === actionId);
+    if (option !== undefined) return option.label;
+  }
+  return actionId;
+}
 
 /** One labeled cell of the draft's property rail, so Status/Priority/Epic all read the same
  * way — a small uppercase caption over the shared `PropertyControls` row editor. */
@@ -83,6 +100,36 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [discarding, setDiscarding] = useState(false);
+
+  // Selection actions over the original prompt (the one piece of text on this page that
+  // is plain rendered prose rather than an `<input>`/`<textarea>` — the Selection API this
+  // primitive is built on cannot see a selection made inside a form control at all, so the
+  // title/description fields below are out of reach for it regardless of this page's own
+  // editable-vs-read-only distinction).
+  const promptRef = useRef<HTMLDivElement>(null);
+  const { text: selectedPromptText, rect: selectionRect } =
+    useTextSelection(promptRef);
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+
+  // Explain/Improve are the only actions with somewhere real to go: the same
+  // draft-message path `PlanQuestionsForm` above already uses to talk to the
+  // planner about this draft. Shorten/Tone/Grammar have no text-transform
+  // endpoint yet, so picking one surfaces an honest "not yet" notice instead
+  // of silently no-op'ing or faking a rewrite.
+  function handleSelectionAction(actionId: string) {
+    if (actionId === 'explain' || actionId === 'improve') {
+      setSelectionNotice(null);
+      const verb = actionId === 'explain' ? 'Explain' : 'Improve';
+      void data.handleSendDraftMessage(
+        draft.id,
+        `${verb} this: "${selectedPromptText}"`
+      );
+      return;
+    }
+    setSelectionNotice(
+      `${selectionActionLabel(actionId)} isn't wired up yet — coming soon.`
+    );
+  }
 
   // Hydrates `editable` from `task` the first time it appears — needed when a draft opens
   // still asking questions, so a proposal that lands later populates the form once.
@@ -199,10 +246,25 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
             </div>
           )}
 
-          <div className="text-muted-foreground flex items-start gap-2 text-[12px]">
+          <div
+            ref={promptRef}
+            className="text-muted-foreground flex items-start gap-2 text-[12px]"
+          >
             <Sparkles className="mt-0.5 size-3.5 shrink-0" />
             <span className="min-w-0 flex-1 italic">{draft.prompt}</span>
           </div>
+          {selectionRect !== null && (
+            <SelectionActionsMenu
+              actions={defaultSelectionActions}
+              onAction={handleSelectionAction}
+              position={selectionRect}
+            />
+          )}
+          {selectionNotice !== null && (
+            <p role="status" className="text-muted-foreground text-[11.5px]">
+              {selectionNotice}
+            </p>
+          )}
 
           {proposal !== null && proposal.tasks.length > 1 && (
             <div className="border-border bg-secondary/40 text-muted-foreground rounded-md border px-3 py-2 text-[12px]">
@@ -218,7 +280,7 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
             </div>
           )}
 
-          <div className="border-border bg-card flex flex-col gap-3 rounded-lg border p-4">
+          <div className="bg-card shadow-card rounded-card flex flex-col gap-3 p-4">
             <Input
               value={editable.title}
               onChange={(e) => editDraft({ title: e.target.value })}
@@ -278,7 +340,7 @@ export function DraftView({ data, onCreate, draft, onDone }: DraftViewProps) {
             </div>
           </div>
 
-          <div className="border-border bg-card grid grid-cols-3 gap-3 rounded-lg border p-3">
+          <div className="bg-card shadow-card rounded-card grid grid-cols-3 gap-3 p-3">
             <PropertyField label="Status">
               <StatusControl
                 value={editable.status}

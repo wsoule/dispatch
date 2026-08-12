@@ -632,7 +632,7 @@ export function BranchesView({
       )}
 
       <div className="grid min-h-0 flex-1 grid-cols-[19rem_minmax(0,1fr)] gap-3 overflow-hidden">
-        <div className="border-border flex min-h-0 flex-col overflow-hidden rounded-md border">
+        <div className="bg-card shadow-card rounded-card flex min-h-0 flex-col overflow-hidden">
           {GIT_PANEL_IDS.map((panel) => (
             <div
               key={panel}
@@ -808,7 +808,7 @@ export function BranchesView({
           ))}
         </div>
 
-        <div className="border-border min-h-0 overflow-hidden rounded-md border">
+        <div className="bg-card shadow-card rounded-card min-h-0 overflow-hidden">
           <GitRightPane
             pane={rightPane}
             status={status}

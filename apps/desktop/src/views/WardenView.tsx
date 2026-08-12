@@ -353,7 +353,7 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
       </div>
 
       {warden.conversationId === null ? (
-        <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
+        <div className="bg-card shadow-card animate-in fade-in-0 rounded-card flex flex-col gap-3 p-4 duration-150">
           <p className="text-muted-foreground text-[13px]">
             Ask about this project — runs, tasks, the merge queue, what needs
             you. The warden can also act (dispatch, cancel, approve), but every
@@ -374,7 +374,7 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
           />
         </div>
       ) : (
-        <div className="border-border bg-card animate-in fade-in-0 flex min-h-0 flex-1 flex-col gap-3 rounded-lg border p-4 duration-150">
+        <div className="bg-card shadow-card animate-in fade-in-0 rounded-card flex min-h-0 flex-1 flex-col gap-3 p-4 duration-150">
           {warden.recordError !== null && warden.record === undefined && (
             <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
               <CircleAlert className="size-4 shrink-0" />
