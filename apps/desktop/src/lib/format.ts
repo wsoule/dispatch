@@ -19,6 +19,13 @@ export function formatRelativeTime(unixSeconds: number): string {
   return `${Math.round(diffHr / 24)}d ago`;
 }
 
+/** Compact token count for dense rows: 950 → "950 tok", 12_345 → "12.3k tok". Keeps a
+ * session's prompt+completion volume scannable in a slot too narrow for "12,345 tokens". */
+export function formatTokenCount(tokens: number): string {
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}k tok`;
+  return `${String(tokens)} tok`;
+}
+
 /** Formats a task's ISO-8601 `updated`/`created` frontmatter timestamp as the same short
  * relative string `formatRelativeTime` produces from unix seconds — the board/list card
  * footer's "Updated 2d ago", the closest analog to Linear's "Created May 1" line. Returns an

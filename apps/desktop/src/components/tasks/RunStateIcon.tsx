@@ -93,6 +93,27 @@ export function runStateColorClass(state: RunStateIconState): string {
   return RUN_STATE_VISUALS[state].colorClass;
 }
 
+// `--state-*` background tokens for a solid dot, the same run-state dot language
+// `TaskRow` uses (see ui/ai/task-rows.tsx's `DOT_CLASS`) — spelled out per state because
+// Tailwind can't build `bg-${colorClass}` at runtime from the `text-*` map above.
+const RUN_STATE_DOT_CLASS: Record<RunStateIconState, string> = {
+  provisioning: 'bg-state-working',
+  running: 'bg-state-working',
+  'awaiting-approval': 'bg-state-waiting',
+  failed: 'bg-state-failed',
+  'interrupted-dirty': 'bg-state-waiting',
+  blocked: 'bg-destructive',
+  finished: 'bg-state-review',
+  cancelled: 'bg-muted-foreground/60',
+};
+
+/** Solid-dot background class for a run state, matching `TaskRow`'s dot vocabulary —
+ * for call sites (the board card) that want the dense-list dot language rather than this
+ * file's own glyph shapes. */
+export function runStateDotClass(state: RunStateIconState): string {
+  return RUN_STATE_DOT_CLASS[state];
+}
+
 export interface RunStateIconProps {
   state: RunStateIconState;
   className?: string;

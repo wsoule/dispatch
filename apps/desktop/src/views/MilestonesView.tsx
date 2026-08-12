@@ -151,7 +151,7 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
                       variant="ghost"
                       size="xs"
                       onClick={() => onOpenTask(task.meta.id)}
-                      className="hover:bg-muted/60 hover:text-foreground h-auto w-full justify-start gap-2 rounded-md px-2.5 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-2.5"
+                      className="hover:bg-surface-hover hover:text-foreground rounded-control h-auto w-full justify-start gap-2 px-2.5 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-2.5"
                     >
                       <PriorityIcon priority={task.meta.priority} />
                       <StatusIcon status={task.meta.status} />

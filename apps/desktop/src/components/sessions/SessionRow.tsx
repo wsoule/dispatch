@@ -1,9 +1,11 @@
-import { formatRelativeTime, sessionDisplayName } from '../../lib/format';
+import {
+  formatRelativeTime,
+  formatTokenCount,
+  sessionDisplayName,
+} from '../../lib/format';
 import { modelDisplayName } from '../../lib/models';
 import type { Session } from '../../lib/types';
-import { statusDotClass } from './sessionDisplay';
-import { Button } from '@/ui/button';
-import { ProjectDot } from '@/ui/chrome/ProjectDot';
+import { TaskRow, type TaskRowState } from '@/ui/ai/task-rows';
 
 interface SessionRowProps {
   session: Session;
@@ -11,47 +13,33 @@ interface SessionRowProps {
   onClick: () => void;
 }
 
+// A Claude Code session has only two states (`active`/`ended`) — no fail/waiting concept the
+// way a Dispatch run does — so it maps onto just two of `TaskRow`'s five: a still-active
+// session reads as `running` (pulsing dot, shimmering detail line), an ended one as `done`.
+function sessionTaskRowState(status: Session['status']): TaskRowState {
+  return status === 'active' ? 'running' : 'done';
+}
+
 /**
- * Single-session summary row: project + status + model on top, summary below, stats
- * (relative time / cost / tokens) on the right. Used by the Sessions hub's session list
+ * Single-session summary row, rebuilt on `TaskRow`: project name as the title, model as the
+ * `agent` chip, the session's own title/summary as the shimmering `detail` line, cost and a
+ * compact prompt+completion token count sharing the trailing `progress` figure, and relative
+ * last-activity time as `elapsedLabel`. Used by the Sessions hub's session list
  * (`SessionsHubView`), optionally filtered to one project, so this rendering logic lives in
- * exactly one place.
+ * exactly one place — full detail is one click away in `SessionDetailModal`.
  */
 export function SessionRow({ session, projectName, onClick }: SessionRowProps) {
   return (
-    <Button
-      variant="ghost"
+    <TaskRow
+      title={projectName}
+      agent={modelDisplayName(session.model) ?? 'unknown model'}
+      state={sessionTaskRowState(session.status)}
+      detail={sessionDisplayName(session.title, session.summary)}
+      progress={`$${session.cost_usd.toFixed(2)} · ${formatTokenCount(
+        session.prompt_tokens + session.completion_tokens
+      )}`}
+      elapsedLabel={formatRelativeTime(session.last_activity_at)}
       onClick={onClick}
-      className="border-border bg-card hover:bg-accent/40 flex h-auto w-full items-center justify-between gap-4 rounded-lg border p-3 text-left font-normal whitespace-normal transition-colors"
-    >
-      <div className="flex min-w-0 flex-col gap-1">
-        <div className="flex items-center gap-2">
-          <ProjectDot projectId={session.project_id} />
-          <span className="text-foreground text-[13px] font-medium">
-            {projectName}
-          </span>
-          <span className="text-muted-foreground flex items-center gap-1.5 text-[11px]">
-            <span
-              className={`size-1.5 rounded-full ${statusDotClass(session.status)}`}
-              aria-hidden="true"
-            />
-            {session.status}
-          </span>
-          <span className="text-muted-foreground font-mono text-[11px]">
-            {modelDisplayName(session.model) ?? 'unknown model'}
-          </span>
-        </div>
-        <div className="text-muted-foreground truncate text-[13px]">
-          {sessionDisplayName(session.title, session.summary)}
-        </div>
-      </div>
-      <div className="text-muted-foreground flex flex-shrink-0 flex-col items-end gap-1 text-[11px]">
-        <span>{formatRelativeTime(session.last_activity_at)}</span>
-        <span className="font-mono">${session.cost_usd.toFixed(2)}</span>
-        <span className="font-mono">
-          {session.prompt_tokens + session.completion_tokens} tokens
-        </span>
-      </div>
-    </Button>
+    />
   );
 }

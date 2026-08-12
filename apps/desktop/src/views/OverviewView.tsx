@@ -11,6 +11,8 @@ import { buildFeed, FEED_GROUPS } from '../lib/controlRoom';
 import type { FeedState } from '../lib/feedState';
 import { FEED_STATE_LABEL, isUrgentState } from '../lib/feedState';
 import { cn } from '@/lib/utils';
+import type { InsightDelta } from '@/ui/ai/insight-cards';
+import { InsightCard } from '@/ui/ai/insight-cards';
 import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
 import {
@@ -34,6 +36,38 @@ function toggle<T>(set: ReadonlySet<T>, value: T): Set<T> {
   const next = new Set(set);
   if (!next.delete(value)) next.add(value);
   return next;
+}
+
+// 'down' (red tint) whenever something needs you — the same "only look urgent when
+// non-zero" rule `ControlRibbon` follows — 'flat' (gray) once the queue is calm. Never
+// 'up': a rising "needs you" count is not good news, so the green tint would lie.
+function feedPulseDelta(counts: Record<FeedState, number>): InsightDelta {
+  const needsYou = counts.waiting + counts.failed;
+  return {
+    value: needsYou > 0 ? `${needsYou} need you` : 'All caught up',
+    direction: needsYou > 0 ? 'down' : 'flat',
+  };
+}
+
+/** The feed's per-state counts (`FEED_GROUPS` — the five run-backed states, same set
+ * `ControlRibbon` counts) as one glanceable card, so the fleet's shape reads at a glance
+ * without waiting for the ribbon/rows below to be scanned column by column. Additive:
+ * `ControlRibbon` keeps its own click-to-filter role untouched. */
+function FeedPulseCard({ counts }: { counts: Record<FeedState, number> }) {
+  const series = FEED_GROUPS.map((state) => counts[state]);
+  const total = series.reduce((sum, count) => sum + count, 0);
+  return (
+    <InsightCard
+      title="Feed pulse"
+      summary={`${total} run${total === 1 ? '' : 's'} across ${FEED_GROUPS.length} states`}
+      series={series}
+      unit="runs"
+      delta={feedPulseDelta(counts)}
+      page={0}
+      pageCount={1}
+      onPageChange={() => {}}
+    />
+  );
 }
 
 /**
@@ -148,6 +182,8 @@ export function OverviewView({
           {feed.counts.working} working · {feed.counts.waiting} waiting on you
         </span>
       </div>
+
+      <FeedPulseCard counts={feed.counts} />
 
       <ControlRibbon
         counts={feed.counts}

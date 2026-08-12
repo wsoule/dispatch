@@ -20,15 +20,18 @@ const TAG_PREFIX: Record<string, string> = {
   equal: ' ',
 };
 
+// Same row-tint language as `DiffTable`'s add/remove rows: a wash of the green/red
+// background tokens rather than the run-state palette, since these lines are a literal
+// insert/delete diff, not a run's health.
 const TAG_LINE_CLASS: Record<string, string> = {
-  insert: 'bg-state-review-surface',
-  delete: 'bg-state-failed-surface',
+  insert: 'bg-[var(--green-bg)]',
+  delete: 'bg-[var(--red-bg)]',
   equal: '',
 };
 
 const TAG_PREFIX_CLASS: Record<string, string> = {
-  insert: 'text-state-review',
-  delete: 'text-state-failed',
+  insert: 'text-green',
+  delete: 'text-red',
   equal: 'text-muted-foreground/40',
 };
 
@@ -109,8 +112,8 @@ export function DiffModal({
                 before Dispatch started storing before/after text.
               </p>
             ) : (
-              <div className="-mx-6 flex flex-col">
-                <div className="font-mono text-[13px] leading-relaxed">
+              <div className="bg-card rounded-card shadow-card flex flex-col overflow-hidden">
+                <div className="py-1 font-mono text-[13px] leading-relaxed">
                   {data.lines.map((line, i) => (
                     <div key={i} className={`flex ${TAG_LINE_CLASS[line.tag]}`}>
                       <span
@@ -125,7 +128,7 @@ export function DiffModal({
                   ))}
                 </div>
                 {data.truncated && (
-                  <p className="text-muted-foreground mx-6 mt-2 flex items-center gap-1.5 text-[13px]">
+                  <p className="text-muted-foreground shadow-hairline-top flex items-center gap-1.5 px-6 py-2 text-[13px]">
                     <Info className="size-3.5" />
                     Diff truncated — this change is too large to show in full.
                   </p>

@@ -1,3 +1,4 @@
+import { SearchIcon } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
 import type { PaletteItem } from '../../lib/paletteMatch';
@@ -56,7 +57,7 @@ export function CommandPalette({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="border-border bg-popover top-24 flex max-h-[60vh] w-[min(34rem,90vw)] max-w-none translate-y-0 flex-col gap-0 overflow-hidden rounded-lg p-0 shadow-lg duration-150 sm:max-w-none"
+        className="bg-popover rounded-card shadow-overlay top-24 flex max-h-[60vh] w-[min(34rem,90vw)] max-w-none translate-y-0 flex-col gap-0 overflow-hidden p-0 duration-150 sm:max-w-none"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>
@@ -64,18 +65,22 @@ export function CommandPalette({
           <CommandInput
             value={query}
             onValueChange={setQuery}
-            className="text-[13px]"
             placeholder="Jump to a task, dispatch work, or switch views…"
           />
-          <CommandList className="max-h-none overflow-y-auto p-1.5">
-            <CommandEmpty className="text-muted-foreground px-3 py-6 text-center text-[13px]">
-              No matches.
+          <CommandList className="max-h-none">
+            <CommandEmpty>
+              <span
+                aria-hidden
+                className="bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex size-8 items-center justify-center"
+              >
+                <SearchIcon className="size-3.5" />
+              </span>
+              <span>No matches.</span>
             </CommandEmpty>
             {ranked.map((entry) => (
               <CommandItem
                 key={entry.id}
                 value={entry.id}
-                className="text-foreground gap-2 rounded-md px-2.5 py-1.5 text-[13px]"
                 onSelect={() => {
                   onClose();
                   entry.run();

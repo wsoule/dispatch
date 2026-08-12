@@ -28,7 +28,7 @@
      *subtle* hover/fill, distinct from `primary`; tokens.css loads after this file, so an
      unprefixed `--accent` here would be overwritten and turn every shadcn skeleton/hover the
      wrong shade. */
-  --sh-accent: var(--accent-muted);
+  --sh-accent: var(--surface-hover);
   --sh-accent-foreground: var(--text-primary);
   --destructive: var(--red);
   --destructive-foreground: var(--accent-contrast);
@@ -72,7 +72,7 @@
   --color-ring: var(--ring);
 
   --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
-  --font-mono: 'IBM Plex Mono', 'Fira Code', monospace;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', monospace;
 
   /* Run-state palette, forwarded from tokens.css so dense rows can say
      `text-state-waiting bg-state-waiting-surface` instead of carrying an inline style object.
@@ -116,6 +116,31 @@
   --shadow-hairline-bottom: var(--hairline-bottom);
   --shadow-hairline-left: var(--hairline-left);
   --shadow-hairline-right: var(--hairline-right);
+
+  /* Beautiful UI reskin surfaces/chrome, forwarded from tokens.css the same way the run-state
+     palette above is: this block only re-exports, tokens.css owns the values. */
+  --color-surface-hover: var(--surface-hover);
+  --color-surface-hover-strong: var(--surface-hover-strong);
+  --color-surface-inset: var(--surface-inset);
+  --color-field: var(--field);
+  --color-accent-tint: var(--accent-tint);
+  --color-tooltip-bg: var(--tooltip-bg);
+  --color-tooltip-fg: var(--tooltip-fg);
+  --color-tooltip-muted: var(--tooltip-muted);
+  --color-tooltip-border: var(--tooltip-border);
+
+  --radius-chip: var(--radius-chip);
+  --radius-control: var(--radius-control);
+  --radius-card: var(--radius-card);
+
+  --shadow-btn: var(--shadow-btn);
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-overlay: var(--shadow-overlay);
+  --shadow-inset-field: var(--shadow-inset-field);
+
+  --ease-out-expo: var(--ease-out-expo);
+
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
