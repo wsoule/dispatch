@@ -31,6 +31,7 @@ import {
   useEpicLedger,
   useFixLoop,
   useProjectLedger,
+  useStartFixLoop,
   useTaskFindings,
   useTaskVerification,
 } from '../../../hooks/useOrchestration';
@@ -263,6 +264,29 @@ export function TaskDetailPanel({
     : taskLedgerEntries(projectLedger, doc.meta.id);
   const ledgerError = isEpic ? epicLedgerError : projectLedgerError;
   const adjudicateFinding = useAdjudicateFinding(client, port);
+  const startFixLoop = useStartFixLoop(client, port);
+  const [startingFixLoop, setStartingFixLoop] = useState(false);
+  const [startFixLoopError, setStartFixLoopError] = useState<string | null>(
+    null
+  );
+
+  // The failure this reports is the useful half of the button: the server
+  // declines when there is nothing to review yet (no implementer, one still
+  // running, or a run that committed nothing), and that reason belongs on
+  // screen rather than in a console.
+  async function handleStartFixLoop() {
+    setStartingFixLoop(true);
+    setStartFixLoopError(null);
+    try {
+      await startFixLoop(doc.meta.id);
+    } catch (err) {
+      setStartFixLoopError(
+        err instanceof Error ? err.message : 'Could not start the fix loop.'
+      );
+    } finally {
+      setStartingFixLoop(false);
+    }
+  }
 
   async function pushToLinear() {
     if (onPushToLinear === undefined) return;
@@ -689,9 +713,13 @@ export function TaskDetailPanel({
               </AlertDescription>
             </Alert>
           )}
-          {fixLoop !== null && (
-            <FixLoopSection fixLoop={fixLoop} escalation={fixLoopEscalation} />
-          )}
+          <FixLoopSection
+            fixLoop={fixLoop}
+            escalation={fixLoopEscalation}
+            onStart={() => void handleStartFixLoop()}
+            starting={startingFixLoop}
+            startError={startFixLoopError}
+          />
 
           {findingsError !== null && (
             <Alert
