@@ -1,5 +1,8 @@
 import type { ReactNode } from 'react';
 
+import { cn } from '@/lib/utils';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
+
 export type SidebarNavItem = {
   id: string;
   label: string;
@@ -31,11 +34,19 @@ export type SidebarNavProps = {
   onSelect: (id: string) => void;
   footer?: ReactNode;
   /** Icon-only rail: hides labels, section headings, counts, and hints, sizing each row
-   * to a square and exposing the label through `aria-label`/`title` instead. Task 25
-   * extension — the showcase only specs the expanded rail, but the real app sidebar has
-   * always had a collapsible icon strip and this is the minimal way to keep it without
-   * forking the primitive's markup. */
+   * to a square, exposing the label through `aria-label`/`title`, and showing it again
+   * in a themed tooltip on hover (via `ui/tooltip.tsx`) since there's nowhere left for
+   * it to sit inline. Task 25 extension — the showcase only specs the expanded rail,
+   * but the real app sidebar has always had a collapsible icon strip and this is the
+   * minimal way to keep it without forking the primitive's markup. */
   collapsed?: boolean;
+  /** Escape hatch for the root's width classes, merged in via `cn` (later classes win
+   * on conflicting Tailwind groups). Standalone uses (the gallery story) get the
+   * primitive's own animated `w-60`/`w-14`; an embedding shell that already animates
+   * its own container's width — the app's shadcn `Sidebar`, which transitions
+   * `--sidebar-width`/`--sidebar-width-icon` — should pass `"w-full"` here instead of
+   * letting two widths animate in parallel and drift out of sync. */
+  className?: string;
 };
 
 /** Workspace navigation column: an optional `header` slot (workspace switcher, quick
@@ -52,10 +63,15 @@ export function SidebarNav({
   onSelect,
   footer,
   collapsed = false,
+  className,
 }: SidebarNavProps) {
   return (
     <div
-      className={`bg-background flex h-full flex-col gap-2 p-2 ${collapsed ? 'w-14' : 'w-60'}`}
+      className={cn(
+        'bg-background ease-out-expo flex h-full flex-col gap-2 p-2 transition-[width] duration-200 motion-reduce:transition-none',
+        collapsed ? 'w-14' : 'w-60',
+        className
+      )}
     >
       {header !== undefined && <div>{header}</div>}
       <nav className="flex min-h-0 flex-1 flex-col gap-2 overflow-auto">
@@ -67,17 +83,14 @@ export function SidebarNav({
             <div className="flex flex-col gap-px">
               {section.items.map((item) => {
                 const isActive = item.id === activeId;
-                return (
+                const accessibleLabel = item.ariaLabel ?? item.label;
+                const row = (
                   <button
-                    key={item.id}
+                    key={collapsed ? undefined : item.id}
                     type="button"
                     aria-current={isActive ? 'page' : undefined}
-                    aria-label={
-                      collapsed ? (item.ariaLabel ?? item.label) : undefined
-                    }
-                    title={
-                      collapsed ? (item.ariaLabel ?? item.label) : undefined
-                    }
+                    aria-label={collapsed ? accessibleLabel : undefined}
+                    title={collapsed ? accessibleLabel : undefined}
                     disabled={item.disabled}
                     onClick={() => onSelect(item.id)}
                     className={`rounded-control ease-out-expo flex w-full items-center gap-2 px-2 py-1.5 text-left text-[13px] transition-colors duration-150 active:scale-[0.96] disabled:pointer-events-none disabled:opacity-50 motion-reduce:active:scale-100 ${
@@ -113,6 +126,21 @@ export function SidebarNav({
                       </>
                     )}
                   </button>
+                );
+                // Collapsed, the label text is gone from the row itself — `aria-label`/
+                // `title` cover accessibility and a bare hover, but the rail has always
+                // shown a themed flyout naming the row too (shadcn's `SidebarMenuButton`
+                // `tooltip` prop did this before the reskin), so it's restored here
+                // rather than left to the browser's native title tooltip alone.
+                return collapsed ? (
+                  <Tooltip key={item.id}>
+                    <TooltipTrigger asChild>{row}</TooltipTrigger>
+                    <TooltipContent side="right">
+                      {accessibleLabel}
+                    </TooltipContent>
+                  </Tooltip>
+                ) : (
+                  row
                 );
               })}
             </div>
