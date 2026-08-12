@@ -1,4 +1,4 @@
-import { DEFAULT_FIX_LOOP, TaskStore } from '@dispatch/core';
+import { DEFAULT_FIX_LOOP, TaskStore, updateConfig } from '@dispatch/core';
 import type { Finding, TaskDoc } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
@@ -308,6 +308,14 @@ function advance(body: unknown = {}): Promise<Response> {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),
+  });
+}
+
+// The "Review & fix" button's endpoint: no body, no baseSha — the server
+// derives the base from the task's own implementer.
+function startLoop(): Promise<Response> {
+  return fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop/start`, {
+    method: 'POST',
   });
 }
 
@@ -1073,8 +1081,11 @@ describe('an unreadable fix-loops.jsonl', () => {
 // call. The beforeEach task is opted out, so each test here opts it back in
 // (or leaves it out, when the opt-out itself is the subject).
 describe('auto-starting the fix loop', () => {
+  // Both gates auto-ignition checks: the task's own opt-in and the project
+  // config's `fixLoop.auto`, which ships off so nothing loops unasked.
   function optIn(): void {
     new TaskStore(root).update(taskId, { fixLoop: true });
+    updateConfig(root, { fixLoop: { auto: true } });
   }
 
   async function reviewRuns(): Promise<RunMeta[]> {
@@ -1119,11 +1130,7 @@ describe('auto-starting the fix loop', () => {
 
   it('does not ignite when config.fixLoop.auto is off, manual advance still works', async () => {
     optIn();
-    const configPath = join(root, '.dispatch', 'config.yml');
-    writeFileSync(
-      configPath,
-      `${readFileSync(configPath, 'utf8')}fixLoop:\n  auto: false\n`
-    );
+    updateConfig(root, { fixLoop: { auto: false } });
     await seedImplementerRun();
     await ignitionWindow();
 
@@ -1163,11 +1170,7 @@ describe('auto-starting the fix loop', () => {
 
   it('caps an auto-started loop and still demands adjudication', async () => {
     optIn();
-    const configPath = join(root, '.dispatch', 'config.yml');
-    writeFileSync(
-      configPath,
-      `${readFileSync(configPath, 'utf8')}fixLoop:\n  cap: 1\n`
-    );
+    updateConfig(root, { fixLoop: { cap: 1 } });
     await seedImplementerRun();
 
     const settled = await settle();
@@ -1209,5 +1212,52 @@ describe('an undeclared write', () => {
     // Batched: the paths live in `files`, so a later round adds nothing here.
     expect(undeclared[0].files).toEqual(['undeclared.ts']);
     expect(undeclared[0].severity).toBe('minor');
+  }, 30000);
+});
+
+// The button the task view puts in front of a human now that auto-ignition is
+// off by default. It opens the same loop `igniteFrom` would have, deriving the
+// base from the task's implementer, so no caller has to know a commit.
+describe('starting the fix loop by hand', () => {
+  it('opens and runs the loop with no baseSha and auto off', async () => {
+    await restartWith(new ConvergingAgent());
+    const implementerId = await seedImplementerRun();
+    // Nothing ignited on its own: the button is the only way in.
+    expect(
+      (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
+    ).toBe(404);
+
+    const res = await startLoop();
+    expect(res.status).toBe(200);
+    const opened = await json<FixLoopState>(res);
+    expect(opened.taskId).toBe(taskId);
+    expect(opened.baseSha).toBe(baseSha);
+
+    const settled = await settle();
+    expect(settled.state).toBe('complete');
+    expect(settled.round).toBe(1);
+    const fixes = await fixRuns();
+    expect(fixes[0].id).toBe(implementerId);
+  }, 30000);
+
+  it('presses again on an open loop without opening a second one', async () => {
+    await restartWith(new ConvergingAgent());
+    await seedImplementerRun();
+    const first = await json<FixLoopState>(await startLoop());
+    const again = await json<FixLoopState>(await startLoop());
+    expect(again.taskId).toBe(first.taskId);
+    expect(again.baseSha).toBe(first.baseSha);
+    expect((await settle()).state).toBe('complete');
+  }, 30000);
+
+  it('explains itself instead of opening a loop with nothing to review', async () => {
+    const res = await startLoop();
+    expect(res.status).toBe(400);
+    expect((await json<{ error: string }>(res)).error).toContain(
+      'no agent has implemented it yet'
+    );
+    expect(
+      (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
+    ).toBe(404);
   }, 30000);
 });

@@ -36,6 +36,7 @@ import {
   adjudicateFinding,
   advanceFixLoop,
   getFixLoop,
+  startFixLoop,
 } from './api/fixLoop.js';
 import {
   errorResponse,
@@ -3910,6 +3911,14 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await advanceFixLoop(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'fix-loop' &&
+        segments[3] === 'start' &&
+        method === 'POST'
+      ) {
+        return await startFixLoop(ctx, segments[1]);
       }
       if (
         segments.length === 5 &&

@@ -2021,9 +2021,12 @@ export interface ApiClient {
     head: string
   ): Promise<StartVerificationResult>;
   fetchTaskVerification(taskId: string): Promise<VerificationResult>;
+  // `startFixLoop` is the "Review & fix" button — it opens the loop off the
+  // task's own latest implementer, so no caller has to know its base commit.
   // `advanceFixLoop` drives one step (and opens the loop when `baseSha` is
   // supplied); `adjudicateFinding` is the ruling a capped loop demands.
   fetchFixLoop(taskId: string): Promise<FixLoopState>;
+  startFixLoop(taskId: string): Promise<FixLoopState>;
   advanceFixLoop(
     taskId: string,
     input?: AdvanceFixLoopInput
@@ -2555,6 +2558,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/verification`),
     fetchFixLoop: (taskId) =>
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
+    startFixLoop: (taskId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/start`,
+        { method: 'POST' }
+      ),
     advanceFixLoop: (taskId, input = {}) =>
       request(
         target,

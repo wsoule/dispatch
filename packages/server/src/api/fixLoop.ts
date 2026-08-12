@@ -47,6 +47,16 @@ export async function advanceFixLoop(
   return jsonResponse(await ctx.fixLoop.advance(taskId));
 }
 
+// POST /api/tasks/:id/fix-loop/start — the task view's "Review & fix" button.
+// Takes no body: the server derives the base from the task's own implementer,
+// which is the only thing that knows where the work forked from.
+export async function startFixLoop(
+  ctx: ApiContext,
+  taskId: string
+): Promise<Response> {
+  return jsonResponse(await ctx.fixLoop.ignite(taskId));
+}
+
 // POST /api/tasks/:id/findings/:fid/adjudicate — the ruling the cap demands.
 // Advancing afterwards is what lets a fully-parked cap settle to `complete`.
 export async function adjudicateFinding(
