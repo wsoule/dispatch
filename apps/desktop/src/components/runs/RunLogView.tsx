@@ -144,12 +144,19 @@ export function RunLogView({
   const groups = groupLogEntries(entries);
   const terminal = isTerminalRunState(meta.state);
   const canSend = SENDABLE_STATES.has(meta.state);
-  // The transcript's one genuinely live entry — the run's last entry while it's actually still
-  // producing output. Drives `TranscriptRow`'s `live` prop (StreamingText's reveal, Thinking's
-  // shimmer, ToolChip's running state); never true for a paused or finished run, and never true
-  // for anything but the last entry, so history never fakes still being written.
+  // The transcript's one genuinely live entry — the run's last *rendered* entry while it's
+  // actually still producing output. Drives `TranscriptRow`'s `live` prop (StreamingText's
+  // reveal, Thinking's shimmer, ToolChip's running state); never true for a paused or finished
+  // run, and never true for anything but the last entry, so history never fakes still being
+  // written. Derived from `groups` (post `groupLogEntries`), not the raw `entries` array —
+  // `groupLogEntries` drops `usage`-kind entries, which never render a `TranscriptRow` at all,
+  // so a `usage` entry arriving after the last visible one would otherwise make `entries.at(-1)`
+  // point at something nothing on screen matches, killing every live indicator.
+  const lastGroup = groups.length > 0 ? groups[groups.length - 1] : undefined;
   const lastEntry =
-    entries.length > 0 ? entries[entries.length - 1] : undefined;
+    lastGroup !== undefined
+      ? lastGroup.entries[lastGroup.entries.length - 1]
+      : undefined;
   const isLive = (entry: NormalizedEntry) =>
     meta.state === 'running' && entry === lastEntry;
   // Only a run that stopped short of finishing has something to *continue* —
