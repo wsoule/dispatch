@@ -113,7 +113,7 @@ export function GitRightPane(props: GitRightPaneProps) {
     if (row === undefined) return null;
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="border-border flex items-center justify-between gap-2 border-b px-3 py-2">
+        <div className="shadow-hairline-bottom flex items-center justify-between gap-2 px-3 py-2">
           <span className="truncate font-mono text-[12px]">{row.path}</span>
           <div className="flex shrink-0 items-center gap-1.5">
             <Button
@@ -175,7 +175,7 @@ export function GitRightPane(props: GitRightPaneProps) {
     return (
       <div className="flex h-full min-h-0 flex-col">
         {commit !== undefined && (
-          <div className="border-border flex items-center justify-between gap-2 border-b px-3 py-2">
+          <div className="shadow-hairline-bottom flex items-center justify-between gap-2 px-3 py-2">
             <div className="flex min-w-0 flex-col">
               <span className="truncate text-[12px]">{commit.subject}</span>
               <span className="text-muted-foreground font-mono text-[10.5px]">
@@ -259,7 +259,7 @@ export function GitRightPane(props: GitRightPaneProps) {
         </dl>
 
         {worktree?.dirty === true && (
-          <div className="flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-2.5 py-2 text-amber-700 dark:text-amber-400">
+          <div className="bg-state-waiting-surface text-state-waiting rounded-control flex items-start gap-2 px-2.5 py-2">
             <AlertTriangle className="mt-px size-3.5 shrink-0" />
             <span>
               Uncommitted changes here block reclaiming this worktree. Commit,

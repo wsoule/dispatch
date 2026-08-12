@@ -59,8 +59,8 @@ export function FilesPanel({
               data-git-selected={selected ? 'true' : undefined}
               onClick={() => onSelectIndex(index)}
               className={cn(
-                'flex cursor-pointer items-center gap-2 px-3 py-1 text-[12px]',
-                selected ? 'bg-accent' : 'hover:bg-muted/50'
+                'ease-out-expo flex cursor-pointer items-center gap-2 px-3 py-1 text-[12px] transition-colors duration-100',
+                selected ? 'bg-surface-hover' : 'hover:bg-surface-hover'
               )}
             >
               <Tooltip>

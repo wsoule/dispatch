@@ -61,11 +61,11 @@ export function ControlRibbon({
               key={state}
               value={state}
               className={cn(
-                'flex h-auto flex-col items-start gap-1.5 rounded-lg border-t-2 px-3 py-2.5 text-left whitespace-normal transition-colors duration-150',
+                'rounded-card ease-out-expo flex h-auto flex-col items-start gap-1.5 border-t-2 px-3 py-2.5 text-left whitespace-normal transition-colors duration-100',
                 // toggleVariants' base text-sm/font-medium and pressed-state bg/text
                 // are built for a pill button; all neutralized back to the stat tile.
                 'text-[length:inherit] font-[weight:inherit]',
-                'shadow-hairline hover:bg-muted/50 hover:text-inherit',
+                'shadow-hairline hover:bg-surface-hover hover:text-inherit',
                 'data-[state=on]:bg-transparent data-[state=on]:text-inherit',
                 alarmed
                   ? URGENT_SKIN[state]

@@ -7,8 +7,11 @@ import { useMemo, useState } from 'react';
 import { ImpactPanel } from '../components/impact/ImpactPanel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef } from '../lib/appNav';
+import type { HopGroup } from '../lib/impactGroups';
 import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../lib/impactSummary';
 import { resolveAffectedFilesStatus } from '../lib/impactViewStatus';
+import type { InsightDelta } from '@/ui/ai/insight-cards';
+import { InsightCard } from '@/ui/ai/insight-cards';
 import {
   EmptyState,
   HintText,
@@ -47,6 +50,36 @@ const SUBJECT_KIND_LABEL: Record<ImpactSubjectKind, string> = {
   run: 'Run',
   task: 'Task',
 };
+
+/** How the blast radius fans out by hop distance, fed straight from `groupByHop`'s already-
+ * computed buckets — one point per hop, closest first. Only worth a card once there are at
+ * least two hops: a single bucket has nothing to show that `ImpactPanel`'s direct/downstream
+ * split above doesn't already say. */
+function ReachByHopCard({ groups }: { groups: HopGroup[] }) {
+  const series = groups.map((group) => group.paths.length);
+  const total = series.reduce((sum, count) => sum + count, 0);
+  const first = series[0] ?? 0;
+  const last = series[series.length - 1] ?? 0;
+  // 'up' reads as the reach widening with distance (more files at the farthest hop than the
+  // nearest), 'down' as it narrowing, 'flat' as even — derived from the real per-hop counts,
+  // not a fabricated trend.
+  const direction: InsightDelta['direction'] =
+    last > first ? 'up' : last < first ? 'down' : 'flat';
+  const farthestHop = groups[groups.length - 1]?.hops ?? 0;
+
+  return (
+    <InsightCard
+      title="Reach by hop"
+      summary={`${total} file${total === 1 ? '' : 's'} across ${groups.length} hops`}
+      series={series}
+      unit="files"
+      delta={{ value: `${last} at hop ${farthestHop}`, direction }}
+      page={0}
+      pageCount={1}
+      onPageChange={() => {}}
+    />
+  );
+}
 
 // A stable reference for "nothing fetched yet" so the grouping `useMemo`
 // below doesn't re-run every render on a fresh `[]` literal.
@@ -238,6 +271,10 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
       ) : (
         <>
           <ImpactPanel client={data.client} subject={kind} id={id} />
+
+          {status.kind === 'entries' && status.groups.length > 1 && (
+            <ReachByHopCard groups={status.groups} />
+          )}
 
           {/* Suppressed entirely on error, and on a reason-carrying 200
               (`no-declared-writes` / `writes-match-nothing`), rather than

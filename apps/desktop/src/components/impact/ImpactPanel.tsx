@@ -4,16 +4,16 @@ import { useQuery } from '@tanstack/react-query';
 import { Waypoints } from 'lucide-react';
 
 import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../../lib/impactSummary';
+import type { InsightDelta } from '@/ui/ai/insight-cards';
+import { InsightCard } from '@/ui/ai/insight-cards';
 import { Badge } from '@/ui/badge';
 import {
   EmptyState,
   HintText,
-  MetaText,
   Panel,
   PanelHeader,
   PanelRow,
 } from '@/ui/chrome';
-import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
 import { Skeleton } from '@/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
@@ -32,25 +32,6 @@ interface ImpactPanelProps {
    *  reviewer actually saw; override only to reflect a different cap. */
   reviewCap?: number;
   className?: string;
-}
-
-/** The bar splitting a subject's direct dependents (one hop) from everything
- *  further out — the direct share as a fraction of the whole reach. */
-function HopSplitBar({
-  direct,
-  downstream,
-}: {
-  direct: number;
-  downstream: number;
-}) {
-  const total = direct + downstream;
-  return (
-    <ProgressTrack
-      value={total === 0 ? 0 : direct / total}
-      label={`${direct} direct, ${downstream} downstream`}
-      className="bg-muted [&>[data-slot=progress-indicator]]:bg-foreground h-1.5 rounded-full"
-    />
-  );
 }
 
 // A task can resolve to an empty reach for two distinct, real reasons the
@@ -204,6 +185,16 @@ function ImpactBadges({
   );
 }
 
+// Reads the direct-vs-downstream split as a direction: more downstream than direct means
+// the reach keeps fanning out past the immediate dependents ('up'), more direct means it's
+// mostly contained to one hop ('down'), equal is 'flat'. Derived straight from the two
+// counts `summarizeImpact` already computed — not a fabricated trend.
+function blastRadiusDelta(direct: number, downstream: number): InsightDelta {
+  const direction =
+    downstream > direct ? 'up' : downstream < direct ? 'down' : 'flat';
+  return { value: `${downstream} downstream`, direction };
+}
+
 function ImpactBody({
   summary,
 }: {
@@ -211,13 +202,16 @@ function ImpactBody({
 }) {
   return (
     <PanelRow className="flex-col items-stretch gap-2">
-      <div className="flex items-center justify-between gap-2">
-        <MetaText>
-          {summary.direct} direct · {summary.downstream} downstream
-        </MetaText>
-        <MetaText>{summary.label}</MetaText>
-      </div>
-      <HopSplitBar direct={summary.direct} downstream={summary.downstream} />
+      <InsightCard
+        title="Blast radius"
+        summary={summary.label}
+        series={[summary.direct, summary.downstream]}
+        unit="files"
+        delta={blastRadiusDelta(summary.direct, summary.downstream)}
+        page={0}
+        pageCount={1}
+        onPageChange={() => {}}
+      />
       {summary.analysisNote && <HintText>{summary.analysisNote}</HintText>}
       {summary.coverage && <HintText>{summary.coverage}</HintText>}
     </PanelRow>

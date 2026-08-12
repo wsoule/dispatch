@@ -27,13 +27,18 @@ function CommandInput({
   return (
     <div
       data-slot="command-input-wrapper"
-      className="flex h-9 items-center gap-2 border-b px-3"
+      // Same borderless input row as `SearchPanel`'s: a hairline shadow below rather than a
+      // layout-affecting border, a quiet search glyph, no divider between icon and text.
+      className="shadow-hairline-bottom flex h-10 shrink-0 items-center gap-2 px-3"
     >
-      <SearchIcon className="size-4 shrink-0 opacity-50" />
+      <SearchIcon
+        aria-hidden
+        className="text-muted-foreground size-3.5 shrink-0"
+      />
       <CommandPrimitive.Input
         data-slot="command-input"
         className={cn(
-          'flex h-10 w-full rounded-control bg-transparent py-3 text-sm outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50',
+          'text-foreground placeholder:text-muted-foreground flex h-10 w-full bg-transparent text-[13px] outline-hidden disabled:cursor-not-allowed disabled:opacity-50',
           className
         )}
         {...props}
@@ -50,7 +55,7 @@ function CommandList({
     <CommandPrimitive.List
       data-slot="command-list"
       className={cn(
-        'max-h-[300px] scroll-py-1 overflow-x-hidden overflow-y-auto',
+        'flex max-h-[300px] scroll-py-1 flex-col gap-0.5 overflow-x-hidden overflow-y-auto p-1',
         className
       )}
       {...props}
@@ -59,12 +64,18 @@ function CommandList({
 }
 
 function CommandEmpty({
+  className,
   ...props
 }: React.ComponentProps<typeof CommandPrimitive.Empty>) {
   return (
     <CommandPrimitive.Empty
       data-slot="command-empty"
-      className="py-6 text-center text-sm"
+      // Same quiet centered-glyph frame `SearchPanel`'s empty state uses — a search icon
+      // inset in a chip above the muted line, not a bare paragraph.
+      className={cn(
+        'text-muted-foreground flex flex-col items-center justify-center gap-1.5 px-4 py-10 text-center text-[12.5px]',
+        className
+      )}
       {...props}
     />
   );
@@ -78,7 +89,7 @@ function CommandItem({
     <CommandPrimitive.Item
       data-slot="command-item"
       className={cn(
-        "relative flex cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-hidden select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-accent data-[selected=true]:text-accent-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4 [&_svg:not([class*='text-'])]:text-muted-foreground",
+        "rounded-control ease-out-expo relative flex h-8 cursor-default items-center gap-2 px-2 text-[13px] outline-hidden transition-colors duration-100 select-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-[selected=true]:bg-surface-hover [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5 [&_svg:not([class*='text-'])]:text-muted-foreground",
         className
       )}
       {...props}
