@@ -20,6 +20,8 @@ import {
   ChatPanel,
   type ChatTab,
 } from '@/ui/ai/chat';
+import { contextCardsStories } from '@/ui/ai/context-cards.stories';
+import { diffTableStories } from '@/ui/ai/diff-table.stories';
 import { LoadingState } from '@/ui/ai/loading-state';
 import {
   PromptBar,
@@ -27,6 +29,8 @@ import {
   type PromptBarModel,
   type PromptBarReference,
 } from '@/ui/ai/prompt-bar';
+import { recommendationCardStories } from '@/ui/ai/recommendation-card.stories';
+import { recordsTableStories } from '@/ui/ai/records-table.stories';
 import {
   StreamingText,
   type StreamingTextSource,
@@ -637,4 +641,8 @@ export const galleryStories: GalleryStory[] = [
     note: 'Typing "/re" filters the command list to label-prefix matches (Retry, Review, Redirect) via matchCommands, case-insensitively.',
     render: () => <PromptBarCommandPopoverDemo />,
   },
+  ...recommendationCardStories,
+  ...contextCardsStories,
+  ...diffTableStories,
+  ...recordsTableStories,
 ];
