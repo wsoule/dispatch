@@ -42,7 +42,7 @@ export function UpdateBanner({ update, onDismiss }: UpdateBannerProps) {
   return (
     // Alert's own grid/rounded/border/padding classes are all overridden back to the flat,
     // single-row banner this was before — see the twMerge-verified overrides below.
-    <Alert className="border-border bg-secondary/60 [&>svg]:text-muted-foreground flex items-center gap-3 rounded-none border-0 border-b px-4 py-2 text-[13px] [&>svg]:translate-y-0">
+    <Alert className="bg-secondary/60 shadow-hairline-bottom [&>svg]:text-muted-foreground flex items-center gap-3 rounded-none border-0 px-4 py-2 text-[13px] [&>svg]:translate-y-0">
       <Download className="text-muted-foreground size-4 shrink-0" />
       {/* line-clamp-none cancels AlertTitle's default clamp mechanism so plain `truncate`
           (the original behavior) is the only thing controlling the single-line ellipsis. */}

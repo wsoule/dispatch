@@ -85,7 +85,7 @@ export function BrainDumpFab({
         <div
           role="dialog"
           aria-label="Add to Brain dump"
-          className="border-border bg-popover fixed right-4 bottom-16 z-50 flex w-80 flex-col gap-2 rounded-lg border p-3 shadow-lg"
+          className="bg-popover rounded-card shadow-overlay fixed right-4 bottom-16 z-50 flex w-80 flex-col gap-2 p-3"
         >
           <Textarea
             value={draft}

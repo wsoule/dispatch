@@ -18,6 +18,7 @@ import {
 } from './PropertyControls';
 import {
   runStateColorClass,
+  runStateDotClass,
   RunStateIcon,
   runStateLabel,
 } from './RunStateIcon';
@@ -143,16 +144,16 @@ export function TaskCardTile({
       tabIndex={0}
       data-focused={focused}
       className={cn(
-        'group border-border/60 bg-card flex w-full cursor-pointer flex-col gap-2 rounded-lg border p-3 text-left shadow-sm transition-colors duration-150',
-        'hover:border-border hover:bg-card/80',
+        'group bg-card rounded-card shadow-card ease-out-expo flex w-full cursor-pointer flex-col gap-2 p-3 text-left transition-colors duration-150',
+        'hover:bg-surface-hover',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
-        'data-[focused=true]:border-ring/60 data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
+        'data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
         drag?.isDragging === true && 'opacity-40',
         // The tint replaces both the resting and hover surfaces — flashing back to the
         // neutral card color on hover would read as the highlight switching off.
         needsAttention &&
           !archived &&
-          'border-state-waiting-edge bg-state-waiting-surface hover:border-state-waiting-edge hover:bg-state-waiting-surface',
+          'bg-state-waiting-surface hover:bg-state-waiting-surface',
         archived && 'cursor-default opacity-55 saturate-50 hover:bg-card'
       )}
       onClick={onClick}
@@ -265,11 +266,22 @@ export function TaskCardTile({
         {liveRunState !== undefined && (
           <span
             className={cn(
-              'inline-flex shrink-0 items-center gap-1 text-[11px] font-medium',
+              'inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium',
               runStateColorClass(liveRunState)
             )}
             title={runStateLabel(liveRunState)}
           >
+            {/* TaskRow's state-dot language: a small pulsing dot ahead of the glyph, so a
+                board card reads the same "something is happening" cue as the dense task
+                rows (SessionsHub, AllAgents). */}
+            <span
+              aria-hidden
+              className={cn(
+                'size-2 shrink-0 rounded-full',
+                runStateDotClass(liveRunState),
+                liveRunState === 'running' && 'motion-safe:animate-pulse'
+              )}
+            />
             <RunStateIcon state={liveRunState} className="size-3.5" />
             {runStateLabel(liveRunState)}
           </span>

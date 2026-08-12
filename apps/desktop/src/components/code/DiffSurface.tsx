@@ -221,18 +221,27 @@ export function DiffSurface<T = undefined>({
   // parent is a flex column, in which a percentage height can resolve to zero.
   const stateClass =
     'text-muted-foreground flex h-full min-h-0 flex-1 flex-col items-center justify-center gap-2 p-4';
+  // The icon sits inside an inset chip — same "quiet centered glyph" frame `SearchPanel`'s
+  // empty state and `ContextCard`'s header use, so an empty/error diff pane reads as the
+  // same language as the rest of the reskin rather than a bare floating icon.
+  const iconChipClass =
+    'bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex size-8 items-center justify-center';
 
   if (loading) {
     return (
       <div className={stateClass}>
-        <Loader2 className="size-4 animate-spin" />
+        <span className={iconChipClass}>
+          <Loader2 className="size-3.5 animate-spin" />
+        </span>
       </div>
     );
   }
   if (error !== null) {
     return (
       <div className={`${stateClass} text-center`}>
-        <CircleAlert className="size-5" />
+        <span className={iconChipClass}>
+          <CircleAlert className="size-3.5" />
+        </span>
         <p className="text-[13px]">Couldn&rsquo;t load the diff: {error}</p>
       </div>
     );
@@ -240,7 +249,9 @@ export function DiffSurface<T = undefined>({
   if (files.length === 0) {
     return (
       <div className={`${stateClass} text-center`}>
-        <FileX className="size-4" />
+        <span className={iconChipClass}>
+          <FileX className="size-3.5" />
+        </span>
         <p className="text-[12px]">{emptyLabel}</p>
       </div>
     );

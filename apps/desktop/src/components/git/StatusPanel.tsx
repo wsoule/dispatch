@@ -62,7 +62,7 @@ export function StatusPanel({
       )}
 
       {hasConflicts && (
-        <div className="border-destructive/40 bg-destructive/10 text-destructive flex flex-col gap-2 rounded-md border px-2.5 py-2 text-[12px]">
+        <div className="bg-state-failed-surface text-state-failed rounded-control flex flex-col gap-2 px-2.5 py-2 text-[12px]">
           <span className="flex items-center gap-1.5">
             <AlertTriangle className="size-3.5 shrink-0" />
             {status.conflicted.length} conflicted file

@@ -85,7 +85,7 @@ export function SelectionActions({
       role="toolbar"
       aria-label="Selection actions"
       className={cn(
-        'bg-popover absolute z-50 flex gap-1 rounded-md border p-1 shadow-md',
+        'bg-popover rounded-card shadow-overlay absolute z-50 flex gap-1 p-1',
         placeAbove && '-translate-y-full'
       )}
       style={style}

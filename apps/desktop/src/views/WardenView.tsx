@@ -1,13 +1,5 @@
 import type { WardenAction } from '@dispatch/client';
-import {
-  Check,
-  CircleAlert,
-  Plus,
-  Send,
-  Shield,
-  Wrench,
-  X,
-} from 'lucide-react';
+import { Check, CircleAlert, Plus, Shield, Wrench, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { Markdown } from '../components/runs/Markdown';
@@ -18,9 +10,9 @@ import { formatRelativeTimeFromIso } from '../lib/format';
 import type { WardenThreadItem } from '../lib/wardenThread';
 import { buildWardenThread } from '../lib/wardenThread';
 import { cn } from '@/lib/utils';
+import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Button } from '@/ui/button';
 import { Spinner } from '@/ui/spinner';
-import { Textarea } from '@/ui/textarea';
 
 /** One turn of the warden conversation — the same bubble treatment as the plan
  * thread: the assistant's replies are markdown (it's an agent transcript), the
@@ -361,7 +353,7 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
       </div>
 
       {warden.conversationId === null ? (
-        <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
+        <div className="bg-card shadow-card animate-in fade-in-0 rounded-card flex flex-col gap-3 p-4 duration-150">
           <p className="text-muted-foreground text-[13px]">
             Ask about this project — runs, tasks, the merge queue, what needs
             you. The warden can also act (dispatch, cancel, approve), but every
@@ -373,39 +365,16 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
               <span>{startError}</span>
             </div>
           )}
-          <Textarea
-            rows={3}
-            placeholder="What's going on with my agents?"
+          <PromptBar
             value={prompt}
-            onChange={(e) => setPrompt(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                void startConversation();
-              }
-            }}
-            aria-label="Warden opening question"
-            className="resize-y text-[13px]"
+            onChange={setPrompt}
+            onSubmit={() => void startConversation()}
+            disabled={starting}
+            placeholder="What's going on with my agents?"
           />
-          <div className="flex justify-end">
-            <Button
-              disabled={starting || prompt.trim() === ''}
-              onClick={() => void startConversation()}
-            >
-              {starting ? (
-                <>
-                  <Spinner className="size-4" /> Starting…
-                </>
-              ) : (
-                <>
-                  <Send className="size-4" /> Ask
-                </>
-              )}
-            </Button>
-          </div>
         </div>
       ) : (
-        <div className="border-border bg-card animate-in fade-in-0 flex min-h-0 flex-1 flex-col gap-3 rounded-lg border p-4 duration-150">
+        <div className="bg-card shadow-card animate-in fade-in-0 rounded-card flex min-h-0 flex-1 flex-col gap-3 p-4 duration-150">
           {warden.recordError !== null && warden.record === undefined && (
             <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
               <CircleAlert className="size-4 shrink-0" />
@@ -434,37 +403,13 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
                 ? 'The warden is answering…'
                 : 'Ask a follow-up. Actions always wait for your approval.'}
             </span>
-            <div className="flex gap-2">
-              <Textarea
-                rows={2}
-                placeholder="Ask about runs, tasks, the queue — or ask it to act…"
-                value={followUp}
-                onChange={(e) => setFollowUp(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Enter' && !e.shiftKey) {
-                    e.preventDefault();
-                    void sendFollowUp();
-                  }
-                }}
-                aria-label="Follow-up message"
-                className="min-h-0 flex-1 resize-none text-[13px]"
-              />
-              <Button
-                disabled={busy || sending || followUp.trim() === ''}
-                onClick={() => void sendFollowUp()}
-                className="self-end"
-              >
-                {sending ? (
-                  <>
-                    <Spinner className="size-4" /> Sending…
-                  </>
-                ) : (
-                  <>
-                    <Send className="size-4" /> Send
-                  </>
-                )}
-              </Button>
-            </div>
+            <PromptBar
+              value={followUp}
+              onChange={setFollowUp}
+              onSubmit={() => void sendFollowUp()}
+              disabled={busy || sending}
+              placeholder="Ask about runs, tasks, the queue — or ask it to act…"
+            />
           </div>
         </div>
       )}

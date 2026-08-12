@@ -55,7 +55,7 @@ export function CommitComposer({
     message.trim() !== '' && (stagedCount > 0 || amend) && !busy;
 
   return (
-    <div className="border-border flex flex-col gap-1.5 border-t pt-2">
+    <div className="shadow-hairline-top flex flex-col gap-1.5 pt-2">
       <div className="flex items-end gap-2">
         <Textarea
           id="git-commit-message"
@@ -102,7 +102,7 @@ export function CommitComposer({
       <p className="text-muted-foreground/70 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10.5px]">
         {LEGEND.map(({ key, label }, index) => (
           <span key={key} className="inline-flex items-center gap-1">
-            <Kbd className="border-border bg-secondary h-auto min-w-0 rounded border px-1 py-0 font-mono text-[9.5px]">
+            <Kbd className="h-auto min-w-0 px-1 py-0 font-mono text-[9.5px]">
               {key}
             </Kbd>
             <span>{label}</span>

@@ -41,8 +41,10 @@ export function CommitsPanel({
           data-git-selected={index === selectedIndex ? 'true' : undefined}
           onClick={() => onSelectIndex(index)}
           className={cn(
-            'h-auto flex-col items-start justify-start gap-0.5 rounded-none px-3 py-1.5 text-left text-[12px] font-normal hover:text-inherit',
-            index === selectedIndex ? 'bg-accent' : 'hover:bg-muted/50'
+            'ease-out-expo h-auto flex-col items-start justify-start gap-0.5 rounded-none px-3 py-1.5 text-left text-[12px] font-normal transition-colors duration-100 hover:text-inherit',
+            index === selectedIndex
+              ? 'bg-surface-hover'
+              : 'hover:bg-surface-hover'
           )}
         >
           <span className="truncate">{commit.subject}</span>

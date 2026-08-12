@@ -42,9 +42,9 @@ function RowButton({
         onClick();
       }}
       className={cn(
-        'shadow-hairline h-auto rounded-md px-2 py-1 text-[12px] font-normal whitespace-nowrap transition-colors duration-150',
+        'shadow-hairline ease-out-expo rounded-chip h-auto px-2 py-1 text-[12px] font-normal whitespace-nowrap transition-colors duration-100',
         // Ghost's own hover bg/text are neutralized so only the row's own tones move.
-        'hover:bg-muted/60 dark:hover:bg-muted/60',
+        'hover:bg-surface-hover-strong dark:hover:bg-surface-hover-strong',
         tone === 'urgent-waiting' &&
           'text-state-waiting hover:text-state-waiting',
         tone === 'urgent-failed' && 'text-state-failed hover:text-state-failed',
@@ -91,14 +91,14 @@ export function FeedRow({ row, actions }: FeedRowProps) {
         }
       }}
       className={cn(
-        'group cursor-pointer overflow-hidden rounded-lg transition-colors duration-150',
-        urgent ? URGENT_ROW[row.state] : 'hover:bg-muted/40',
+        'group/row ease-out-expo rounded-control cursor-pointer overflow-hidden transition-colors duration-100',
+        urgent ? URGENT_ROW[row.state] : 'hover:bg-surface-hover',
         urgent && 'shadow-hairline'
       )}
     >
       <div className="grid grid-cols-[130px_minmax(140px,1fr)_140px_150px_56px_auto] items-center gap-3 px-3 py-2">
         <span className="flex min-w-0 items-center gap-2">
-          <StateDot state={row.state} />
+          <StateDot state={row.state} size="md" />
           <span
             className={cn(
               'truncate text-[11px]',
@@ -186,7 +186,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
             {row.attention.reason}
           </span>
           {row.attention.detail !== null && (
-            <span className="dense-meta bg-muted rounded px-1.5 py-0.5">
+            <span className="dense-meta bg-surface-inset rounded-chip px-1.5 py-0.5 font-mono">
               {row.attention.detail}
             </span>
           )}

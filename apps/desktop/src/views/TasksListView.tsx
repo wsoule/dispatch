@@ -1,6 +1,7 @@
-import type { EpicProgress, RunMeta } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type { EpicProgress } from '@dispatch/client';
+import type { TaskDoc } from '@dispatch/core/browser';
 import { ChevronRight, SearchX, Waypoints } from 'lucide-react';
+import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { MergeLadderDot } from '../components/runs/MergeLadderDot';
@@ -14,20 +15,18 @@ import {
 import { StackBadge } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { deriveEpicPulse } from '../lib/epicPulse';
-import { formatRelativeTimeFromIso } from '../lib/format';
 import { resolveListKeyCommand } from '../lib/keyboard';
-import { Badge } from '../ui/badge';
 import { Input } from '../ui/input';
 import { cn } from '@/lib/utils';
+import {
+  type RecordsColumn,
+  type RecordsGroup,
+  type RecordsRow,
+  RecordsTable,
+} from '@/ui/ai/records-table';
 import { Button } from '@/ui/button';
-import { Checkbox } from '@/ui/checkbox';
 import { EmptyState } from '@/ui/chrome';
 import { StateDot } from '@/ui/chrome/StateDot';
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/ui/collapsible';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface TasksListViewProps {
@@ -64,18 +63,37 @@ function matchesFilter(doc: TaskDoc, filter: string): boolean {
   );
 }
 
-const MAX_VISIBLE_LABELS = 2;
+// `RecordsTable` columns for the list — priority/status/assignee are blank-labelled since
+// they render as bare inline-picker glyphs (see `renderTaskCell`), matching the dense
+// board-card/list-row anatomy those glyphs use everywhere else in the app. No column carries
+// a `RecordsCellKind` that would sort meaningfully on its own for priority/status/assignee
+// (they're objects-shaped-as-scalars edited via a picker, not compared), so — like the
+// pre-reskin row — this list has no header-click sort; `sort`/`onSortChange` are omitted.
+const COLUMNS: RecordsColumn[] = [
+  { key: 'priority', label: '' },
+  { key: 'id', label: 'ID' },
+  { key: 'status', label: 'Status' },
+  { key: 'title', label: 'Title' },
+  { key: 'tags', label: 'Tags', kind: 'tags' },
+  { key: 'assignee', label: '' },
+  { key: 'updated', label: 'Updated', kind: 'time' },
+];
 
 /**
  * Linear's dense grouped list: one section per epic (project order, "No epic" last), each a
  * full-width collapsible header (chevron + epic title + done/total progress, reusing the same
  * `epicProgressById` data `TaskBoard`'s epic cards show), then ~36px rows — priority · id ·
- * StatusIcon · title (+ epic breadcrumb, + stack badge) · labels · assignee · relative
- * "updated" time. The caller (`BoardView`, now the single "Tasks" nav destination) owns the
- * page header/New task button and the List/Board toggle; this component only ever renders
- * once there's at least one task in the project, so it doesn't duplicate that container's own
- * empty-project state — it only needs its own empty state for "the search filter matched
- * nothing."
+ * status · title (+ epic breadcrumb, + stack badge) · labels · assignee · relative "updated"
+ * time. Rendered through `RecordsTable`'s `groups`/`selectable`/`renderCell` extensions (see
+ * `records-table.tsx`) so the table styling — sticky header, hairline rows, hover wash — comes
+ * from the shared primitive while every pre-reskin capability (bulk-select + dispatch,
+ * per-epic collapsible grouping, inline priority/status/assignee pickers, the epic
+ * dependency-graph modal, the stack badge, j/k roving focus) stays intact; those live in this
+ * view, composed around/into the table rather than baked into it. The caller (`BoardView`, now
+ * the single "Tasks" nav destination) owns the page header/New task button and the List/Board
+ * toggle; this component only ever renders once there's at least one task in the project, so
+ * it doesn't duplicate that container's own empty-project state — it only needs its own empty
+ * state for "the search filter matched nothing."
  */
 export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   const [filter, setFilter] = useState('');
@@ -200,6 +218,27 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
     filter,
   ]);
 
+  // Every task currently rendered, keyed by id — `renderTaskCell` looks the full `TaskDoc` back
+  // up from a `RecordsRow`'s bare `id`, since a row's `cells` only carry plain sortable/
+  // displayable values, not the doc itself.
+  const docById = useMemo(() => {
+    const map = new Map<string, TaskDoc>();
+    for (const g of groups)
+      for (const doc of g.tasks) map.set(doc.meta.id, doc);
+    return map;
+  }, [groups]);
+
+  // Ids in the trailing "Archived" group — read by `rowClassName`/`renderTaskCell` to dim
+  // those rows and skip the attention wash, without needing every row to carry its own group
+  // back-reference.
+  const archivedRowIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const g of groups) {
+      if (g.archived === true) for (const doc of g.tasks) set.add(doc.meta.id);
+    }
+    return set;
+  }, [groups]);
+
   // j/k roving-focus + Enter-to-open only ever considers rows in expanded groups — a collapsed
   // group's tasks are no more reachable by keyboard than they are visible.
   const orderedIds = useMemo(
@@ -283,6 +322,193 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
     setFocusedTaskId(orderedIds[Math.max(nextIndex, 0)] ?? null);
   }
 
+  // The inline priority/status/title(+breadcrumb+stack badge)/assignee cells — everything a
+  // generic `kind` can't express. Returns `undefined` for every other column, falling back to
+  // `RecordsTable`'s own default rendering (id as plain text, tags as chips, updated as a
+  // relative timestamp).
+  function renderTaskCell(
+    row: RecordsRow,
+    column: RecordsColumn
+  ): ReactNode | undefined {
+    const doc = docById.get(row.id);
+    if (doc === undefined) return undefined;
+    if (column.key === 'priority') {
+      return (
+        <PriorityControl
+          value={doc.meta.priority}
+          onChange={(p) => void data.handleUpdate(doc.meta.id, { priority: p })}
+        />
+      );
+    }
+    if (column.key === 'status') {
+      return (
+        <StatusControl
+          value={doc.meta.status}
+          statuses={data.config?.statuses ?? []}
+          onChange={(status) => void data.moveTaskStatus(doc.meta.id, status)}
+        />
+      );
+    }
+    if (column.key === 'title') {
+      const epicTitle =
+        doc.meta.parent !== null
+          ? epicTitleById.get(doc.meta.parent)
+          : undefined;
+      return (
+        <span className="flex min-w-0 items-center gap-1.5">
+          <MergeLadderDot meta={data.latestRunByTaskId.get(doc.meta.id)} />
+          <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
+            {doc.meta.title}
+            {epicTitle !== undefined && (
+              <span className="text-muted-foreground"> › {epicTitle}</span>
+            )}
+          </span>
+          <StackBadge
+            tasks={data.tasksIncludingArchived}
+            taskId={doc.meta.id}
+          />
+        </span>
+      );
+    }
+    if (column.key === 'assignee') {
+      return (
+        <AssigneeControl
+          value={doc.meta.assignee}
+          onChange={(a) => void data.handleUpdate(doc.meta.id, { assignee: a })}
+        />
+      );
+    }
+    return undefined;
+  }
+
+  // Selected rows wash blue, the roving j/k cursor washes a lighter accent, an unreviewed
+  // run's row washes amber, and an archived row (read-only, from the "Archived" toggle) dims —
+  // in that priority order, matching the pre-reskin row's own ternary exactly.
+  function taskRowClassName(row: RecordsRow): string {
+    const archived = archivedRowIds.has(row.id);
+    const selected = selectedIds.has(row.id);
+    const focused = row.id === focusedTaskId;
+    const needsAttention = !archived && data.attentionByTaskId.has(row.id);
+    return cn(
+      selected
+        ? 'bg-accent/20'
+        : focused
+          ? 'bg-accent/50'
+          : needsAttention
+            ? 'bg-state-waiting-surface'
+            : '',
+      archived && 'opacity-55 saturate-50'
+    );
+  }
+
+  // Each `EpicGroup` becomes one `RecordsGroup`: the header is the same collapsible
+  // chevron/title/progress/pulse/dag-button row the pre-reskin list rendered, now spanning the
+  // table's full width instead of sitting above a plain `<div>` of rows.
+  const recordsGroups = useMemo<RecordsGroup[]>(
+    () =>
+      groups.map((group) => {
+        const key = group.epicId ?? NO_EPIC_KEY;
+        const collapsed = collapsedGroups.has(key);
+        const doneCount =
+          group.progress?.children.filter(
+            (c) => c.status === 'done' || c.status === 'cancelled'
+          ).length ?? 0;
+        const totalCount = group.progress?.children.length ?? 0;
+        const pulse = deriveEpicPulse(
+          group.tasks,
+          data.latestRunByTaskId,
+          data.readyIds
+        );
+        return {
+          key,
+          header: (
+            <div className="flex w-full items-center gap-1.5 px-1 py-1.5">
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                onClick={() => toggleGroup(key)}
+                aria-expanded={!collapsed}
+                className="group h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-0"
+              >
+                <ChevronRight
+                  className={cn(
+                    'text-muted-foreground size-3.5 shrink-0 transition-transform',
+                    !collapsed && 'rotate-90'
+                  )}
+                />
+                <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
+                  {group.title}
+                </span>
+                <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
+                  {group.tasks.length}
+                </span>
+                {totalCount > 0 && (
+                  <span className="text-muted-foreground/70 shrink-0 text-[11px]">
+                    {doneCount}/{totalCount} done
+                  </span>
+                )}
+                {/* The single most actionable fact about this epic, rather than a tally of
+                    everything — see deriveEpicPulse for why the ordering matters. */}
+                <span className="flex shrink-0 items-center gap-1.5">
+                  {pulse.state !== null && <StateDot state={pulse.state} />}
+                  <span
+                    className={cn(
+                      'dense-meta',
+                      pulse.state === 'waiting' && 'text-state-waiting'
+                    )}
+                  >
+                    {pulse.label}
+                  </span>
+                </span>
+              </Button>
+              {/* Only for a group keyed by a real, known epic (not the dangling-parent or
+                  "No epic" buckets) — there's no epic to graph otherwise. A sibling of the
+                  toggle button above, not nested inside it (button-in-button isn't valid
+                  HTML). */}
+              {group.epicId !== null && epicTitleById.has(group.epicId) && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => setDagEpicId(group.epicId)}
+                      aria-label={`View dependency graph for ${group.title}`}
+                      className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-1"
+                    >
+                      <Waypoints className="size-3.5" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>View dependency graph</TooltipContent>
+                </Tooltip>
+              )}
+            </div>
+          ),
+          rows: collapsed
+            ? []
+            : group.tasks.map((doc) => ({
+                id: doc.meta.id,
+                cells: {
+                  priority: doc.meta.priority,
+                  id: doc.meta.id,
+                  status: doc.meta.status,
+                  title: doc.meta.title,
+                  tags: doc.meta.labels,
+                  assignee: doc.meta.assignee,
+                  updated: doc.meta.updated,
+                },
+              })),
+        };
+      }),
+    [
+      groups,
+      collapsedGroups,
+      data.latestRunByTaskId,
+      data.readyIds,
+      epicTitleById,
+    ]
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-center gap-2">
@@ -307,127 +533,21 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
           onKeyDown={handleListKeyDown}
           className="min-h-0 flex-1 overflow-y-auto"
         >
-          {groups.map((group) => {
-            const key = group.epicId ?? NO_EPIC_KEY;
-            const collapsed = collapsedGroups.has(key);
-            const doneCount =
-              group.progress?.children.filter(
-                (c) => c.status === 'done' || c.status === 'cancelled'
-              ).length ?? 0;
-            const totalCount = group.progress?.children.length ?? 0;
-            const pulse = deriveEpicPulse(
-              group.tasks,
-              data.latestRunByTaskId,
-              data.readyIds
-            );
-            return (
-              // Controlled off `collapsedGroups` — that Set, not the trigger, is what
-              // `orderedIds` reads to keep j/k out of a collapsed group.
-              <Collapsible
-                key={key}
-                open={!collapsed}
-                onOpenChange={() => toggleGroup(key)}
-                className="mb-1"
-              >
-                <div className="bg-background sticky top-0 z-10 flex w-full items-center gap-1.5 px-1 py-1.5">
-                  <CollapsibleTrigger asChild>
-                    <Button
-                      variant="ghost"
-                      size="xs"
-                      // `has-[>svg]:px-0` as well as `px-0`: the chevron makes the size's own
-                      // `has-[>svg]:px-1.5` match, and that out-ranks a plain `px-0`.
-                      className="group h-auto min-w-0 flex-1 justify-start gap-1.5 px-0 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-0"
-                    >
-                      <ChevronRight className="text-muted-foreground size-3.5 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-                      <span className="text-muted-foreground min-w-0 truncate text-[11px] font-medium">
-                        {group.title}
-                      </span>
-                      <span className="text-muted-foreground/60 shrink-0 font-mono text-[11px]">
-                        {group.tasks.length}
-                      </span>
-                      {totalCount > 0 && (
-                        <span className="text-muted-foreground/70 shrink-0 text-[11px]">
-                          {doneCount}/{totalCount} done
-                        </span>
-                      )}
-                      {/* The single most actionable fact about this epic, rather than a tally of
-                          everything — see deriveEpicPulse for why the ordering matters. */}
-                      <span className="flex shrink-0 items-center gap-1.5">
-                        {pulse.state !== null && (
-                          <StateDot state={pulse.state} />
-                        )}
-                        <span
-                          className={cn(
-                            'dense-meta',
-                            pulse.state === 'waiting' && 'text-state-waiting'
-                          )}
-                        >
-                          {pulse.label}
-                        </span>
-                      </span>
-                    </Button>
-                  </CollapsibleTrigger>
-                  {/* Only for a group keyed by a real, known epic (not the dangling-parent or
-                      "No epic" buckets) — there's no epic to graph otherwise. A sibling of the
-                      toggle button above, not nested inside it (button-in-button isn't valid
-                      HTML), so no stopPropagation is needed here the way the card entry points
-                      below need it. */}
-                  {group.epicId !== null && epicTitleById.has(group.epicId) && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="ghost"
-                          size="icon-xs"
-                          onClick={() => setDagEpicId(group.epicId)}
-                          aria-label={`View dependency graph for ${group.title}`}
-                          className="text-muted-foreground hover:text-foreground size-auto shrink-0 p-1"
-                        >
-                          <Waypoints className="size-3.5" />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>View dependency graph</TooltipContent>
-                    </Tooltip>
-                  )}
-                </div>
-                <CollapsibleContent>
-                  <div className="flex flex-col">
-                    {group.tasks.map((doc) => (
-                      <TaskListRow
-                        key={doc.meta.id}
-                        doc={doc}
-                        // Archived rows need their own doc present here for
-                        // StackBadge to resolve them at all.
-                        tasks={data.tasksIncludingArchived}
-                        run={data.latestRunByTaskId.get(doc.meta.id)}
-                        epicTitle={
-                          doc.meta.parent !== null
-                            ? epicTitleById.get(doc.meta.parent)
-                            : undefined
-                        }
-                        statuses={data.config?.statuses ?? []}
-                        focused={doc.meta.id === focusedTaskId}
-                        onClick={() => onSelectTask(doc.meta.id)}
-                        onMouseEnter={() => setFocusedTaskId(doc.meta.id)}
-                        onStatusChange={(status) =>
-                          void data.moveTaskStatus(doc.meta.id, status)
-                        }
-                        onEditTask={(patch) =>
-                          void data.handleUpdate(doc.meta.id, patch)
-                        }
-                        selected={selectedIds.has(doc.meta.id)}
-                        onToggleSelect={() => toggleSelected(doc.meta.id)}
-                        archived={group.archived === true}
-                        needsAttention={
-                          group.archived !== true &&
-                          data.attentionByTaskId.has(doc.meta.id)
-                        }
-                      />
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            );
-          })}
+          <RecordsTable
+            columns={COLUMNS}
+            groups={recordsGroups}
+            sort={null}
+            onRowClick={(row) => onSelectTask(row.id)}
+            onRowMouseEnter={setFocusedTaskId}
+            selectable
+            selectedIds={selectedIds}
+            onToggleSelect={toggleSelected}
+            selectLabel={(row) =>
+              `Select ${docById.get(row.id)?.meta.title ?? row.id}`
+            }
+            renderCell={renderTaskCell}
+            rowClassName={taskRowClassName}
+          />
         </div>
       )}
 
@@ -494,134 +614,6 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
         onOpenTask={onSelectTask}
         onClose={() => setDagEpicId(null)}
       />
-    </div>
-  );
-}
-
-interface TaskListRowProps {
-  doc: TaskDoc;
-  /** Full project task list, passed through to `StackBadge` so it can derive this row's
-   * stack position without the list needing its own precomputed map. */
-  tasks: TaskDoc[];
-  /** This task's latest run, if it has one — feeds the row's merge-ladder dot. */
-  run: RunMeta | undefined;
-  epicTitle?: string;
-  statuses: string[];
-  focused: boolean;
-  onClick: () => void;
-  onMouseEnter: () => void;
-  onStatusChange: (status: string) => void;
-  onEditTask: (patch: UpdatePatch) => void;
-  selected: boolean;
-  onToggleSelect: () => void;
-  /** True for a row in the trailing "Archived" group — purely visual; the status
-   *  move itself is gated in `useDispatchProject`. */
-  archived?: boolean;
-  /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) —
-   * washes the row with the amber "waiting" surface so it stands out while scanning. */
-  needsAttention?: boolean;
-}
-
-/** A single ~36px dense row: priority · id · status · title (+ epic breadcrumb, + stack badge)
- * · labels · assignee · relative "updated" time — Linear's list-row anatomy, with
- * priority/status/assignee editable inline (click the glyph → picker). `focused` is a
- * CSS-only highlight (this list's j/k cursor never moves real DOM focus off the list
- * container itself). The row is a `div role="button"` rather than a real `<button>` precisely
- * so those inline picker triggers can be nested interactive elements without invalid
- * button-in-button markup. */
-function TaskListRow({
-  doc,
-  tasks,
-  run,
-  epicTitle,
-  statuses,
-  focused,
-  onClick,
-  onMouseEnter,
-  onStatusChange,
-  onEditTask,
-  selected,
-  onToggleSelect,
-  archived = false,
-  needsAttention = false,
-}: TaskListRowProps) {
-  const visibleLabels = doc.meta.labels.slice(0, MAX_VISIBLE_LABELS);
-  const hiddenLabelCount = doc.meta.labels.length - visibleLabels.length;
-
-  return (
-    <div
-      role="button"
-      tabIndex={-1}
-      data-row-id={doc.meta.id}
-      onMouseEnter={onMouseEnter}
-      onClick={onClick}
-      className={`group flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left transition-colors duration-150 ${
-        selected
-          ? 'bg-accent/20'
-          : focused
-            ? 'bg-accent/50'
-            : needsAttention
-              ? 'bg-state-waiting-surface hover:bg-accent/30'
-              : 'hover:bg-accent/30'
-      } ${archived ? 'opacity-55 saturate-50' : ''}`}
-    >
-      {/* Hidden until you hover or select something, so an unused affordance does not add a
-          column of empty boxes to every row. stopPropagation because selecting a task and
-          opening it are different intents. */}
-      <Checkbox
-        checked={selected}
-        aria-label={`Select ${doc.meta.title}`}
-        onClick={(e) => e.stopPropagation()}
-        onCheckedChange={() => onToggleSelect()}
-        className={`size-3.5 shrink-0 transition-opacity duration-150 ${
-          selected ? '' : 'opacity-0 group-hover:opacity-100 focus:opacity-100'
-        }`}
-      />
-      <PriorityControl
-        value={doc.meta.priority}
-        onChange={(p) => onEditTask({ priority: p })}
-      />
-      <span className="text-muted-foreground w-14 shrink-0 truncate font-mono text-[11px]">
-        {doc.meta.id}
-      </span>
-      <StatusControl
-        value={doc.meta.status}
-        statuses={statuses}
-        onChange={onStatusChange}
-      />
-      <MergeLadderDot meta={run} />
-      <span className="text-foreground min-w-0 flex-1 truncate text-[13px]">
-        {doc.meta.title}
-        {epicTitle !== undefined && (
-          <span className="text-muted-foreground"> › {epicTitle}</span>
-        )}
-      </span>
-      <StackBadge tasks={tasks} taskId={doc.meta.id} />
-      {visibleLabels.length > 0 && (
-        <span className="flex shrink-0 items-center gap-1">
-          {visibleLabels.map((label) => (
-            <Badge
-              key={label}
-              variant="outline"
-              className="text-muted-foreground h-4 rounded px-1.5 py-0 text-[10px] font-normal"
-            >
-              {label}
-            </Badge>
-          ))}
-          {hiddenLabelCount > 0 && (
-            <span className="text-muted-foreground/70 text-[10px]">
-              +{hiddenLabelCount}
-            </span>
-          )}
-        </span>
-      )}
-      <AssigneeControl
-        value={doc.meta.assignee}
-        onChange={(a) => onEditTask({ assignee: a })}
-      />
-      <span className="text-muted-foreground/70 w-14 shrink-0 text-right text-[11px]">
-        {formatRelativeTimeFromIso(doc.meta.updated)}
-      </span>
     </div>
   );
 }

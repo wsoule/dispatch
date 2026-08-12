@@ -5,6 +5,7 @@ import {
   FileText,
   Globe,
   ListTodo,
+  type LucideIcon,
   Search,
   Terminal,
   Wrench,
@@ -71,7 +72,9 @@ function CodeBlock({ text }: { text: string }) {
 }
 
 export interface ToolView {
-  icon: ReactNode;
+  /** A component reference, not a rendered element — `ToolChip` (the transcript row's
+   * click-through trigger) sizes and colors the icon itself. */
+  icon: LucideIcon;
   verb: string;
   /** The one-line target shown next to the verb (a file path, command, or pattern). */
   target?: string;
@@ -99,7 +102,7 @@ export function toolView(entry: NormalizedEntry): ToolView {
       const oldStr = field(input, 'old_string') ?? '';
       const newStr = field(input, 'new_string') ?? '';
       return {
-        icon: <FilePen className="size-3.5" />,
+        icon: FilePen,
         verb: 'Edit',
         target: filePath,
         body:
@@ -112,7 +115,7 @@ export function toolView(entry: NormalizedEntry): ToolView {
     case 'Write': {
       const content = field(input, 'content');
       return {
-        icon: <FilePlus className="size-3.5" />,
+        icon: FilePlus,
         verb: 'Write',
         target: filePath,
         body: content !== undefined ? <CodeBlock text={content} /> : undefined,
@@ -126,7 +129,7 @@ export function toolView(entry: NormalizedEntry): ToolView {
           ? ` (${offset ?? '0'}–${limit ?? 'end'})`
           : '';
       return {
-        icon: <FileText className="size-3.5" />,
+        icon: FileText,
         verb: 'Read',
         target: filePath !== undefined ? `${filePath}${range}` : undefined,
       };
@@ -134,7 +137,7 @@ export function toolView(entry: NormalizedEntry): ToolView {
     case 'Bash': {
       const command = field(input, 'command');
       return {
-        icon: <Terminal className="size-3.5" />,
+        icon: Terminal,
         verb: 'Run',
         target: command,
       };
@@ -144,7 +147,7 @@ export function toolView(entry: NormalizedEntry): ToolView {
       const pattern = field(input, 'pattern');
       const path = field(input, 'path');
       return {
-        icon: <Search className="size-3.5" />,
+        icon: Search,
         verb: name === 'Grep' ? 'Search' : 'Find',
         target:
           pattern !== undefined
@@ -154,13 +157,13 @@ export function toolView(entry: NormalizedEntry): ToolView {
     }
     case 'TodoWrite':
       return {
-        icon: <ListTodo className="size-3.5" />,
+        icon: ListTodo,
         verb: 'Update todos',
       };
     case 'WebFetch':
     case 'WebSearch':
       return {
-        icon: <Globe className="size-3.5" />,
+        icon: Globe,
         verb: name === 'WebFetch' ? 'Fetch' : 'Search web',
         target: field(input, 'url') ?? field(input, 'query'),
       };
@@ -175,7 +178,7 @@ export function toolView(entry: NormalizedEntry): ToolView {
         }
       }
       return {
-        icon: <Wrench className="size-3.5" />,
+        icon: Wrench,
         verb: name,
         body: json !== undefined ? <CodeBlock text={json} /> : undefined,
       };

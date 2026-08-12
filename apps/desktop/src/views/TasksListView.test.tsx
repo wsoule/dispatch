@@ -11,6 +11,7 @@ import { expect, test } from 'bun:test';
 import { testConfig } from '../components/settings/fixtures.test-helper';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { TasksListView } from './TasksListView';
+import { TooltipProvider } from '@/ui/tooltip';
 
 /** Every dispatch the bulk bar made, in order. */
 interface DispatchCall {
@@ -18,15 +19,20 @@ interface DispatchCall {
   batch: boolean | undefined;
 }
 
-function task(id: string, title: string): TaskDoc {
+function task(
+  id: string,
+  title: string,
+  labels: string[] = [],
+  parent: string | null = null
+): TaskDoc {
   return {
     meta: {
       id,
       title,
       status: 'todo',
       priority: 2,
-      parent: null,
-      labels: [],
+      parent,
+      labels,
       assignee: null,
       blockedBy: [],
       created: '2026-08-10T00:00:00.000Z',
@@ -36,10 +42,10 @@ function task(id: string, title: string): TaskDoc {
   } as unknown as TaskDoc;
 }
 
-/** A `DispatchProjectData` stub carrying only what TasksListView reads. */
+/** A `DispatchProjectData` stub carrying everything `TasksListView` reads. */
 function dataWith(
   tasks: TaskDoc[],
-  calls: DispatchCall[]
+  calls: DispatchCall[] = []
 ): DispatchProjectData {
   return {
     config: testConfig,
@@ -121,4 +127,136 @@ test('a bulk dispatch of one task still follows it', async () => {
 
   await waitFor(() => expect(calls.length).toBe(1));
   expect(calls[0]?.batch).toBe(false);
+});
+
+test('renders each task as a row through RecordsTable, with an inline status picker and tags', () => {
+  render(
+    <TasksListView
+      data={dataWith([task('t-1', 'First task', ['ui'])])}
+      onSelectTask={() => {}}
+    />
+  );
+
+  expect(screen.getByText('First task')).not.toBeNull();
+  expect(screen.getByText('ui')).not.toBeNull();
+  // Status is an inline icon picker (see `PropertyControls`), not a plain text label.
+  expect(screen.getByRole('button', { name: 'Change status' })).not.toBeNull();
+});
+
+// The one interaction this view is required to preserve across the RecordsTable adoption:
+// clicking a row still opens that exact task.
+test('clicking a row navigates to that task', () => {
+  const opened: string[] = [];
+  render(
+    <TasksListView
+      data={dataWith([task('t-1', 'First task'), task('t-2', 'Second task')])}
+      onSelectTask={(id) => opened.push(id)}
+    />
+  );
+
+  fireEvent.click(screen.getByText('Second task'));
+
+  expect(opened).toEqual(['t-2']);
+});
+
+test('the id/title filter narrows which rows render', () => {
+  render(
+    <TasksListView
+      data={dataWith([task('t-1', 'First task'), task('t-2', 'Second task')])}
+      onSelectTask={() => {}}
+    />
+  );
+
+  fireEvent.change(screen.getByPlaceholderText('Filter by id or title…'), {
+    target: { value: 'second' },
+  });
+
+  expect(screen.queryByText('First task')).toBeNull();
+  expect(screen.getByText('Second task')).not.toBeNull();
+});
+
+test('an empty filter result shows the no-match empty state', () => {
+  render(
+    <TasksListView
+      data={dataWith([task('t-1', 'First task')])}
+      onSelectTask={() => {}}
+    />
+  );
+
+  fireEvent.change(screen.getByPlaceholderText('Filter by id or title…'), {
+    target: { value: 'nothing matches this' },
+  });
+
+  expect(screen.getByText('No tasks match this filter.')).not.toBeNull();
+});
+
+// The pre-reskin row synced the j/k roving-focus cursor to whatever the mouse was hovering
+// (`onMouseEnter`), so a hover-then-Enter still opened the row the pointer was actually on.
+// `RecordsTable`'s `onRowMouseEnter` restores that — checked through its visible effect (the
+// focus wash `rowClassName` applies) rather than firing Enter, since Enter on a `RecordsTable`
+// row already opens it directly regardless of the roving cursor and wouldn't isolate this.
+test('hovering a row moves the keyboard roving-focus cursor to it', () => {
+  render(
+    <TasksListView
+      data={dataWith([task('t-1', 'First task'), task('t-2', 'Second task')])}
+      onSelectTask={() => {}}
+    />
+  );
+
+  const firstRow = screen.getByText('First task').closest('tr');
+  const secondRow = screen.getByText('Second task').closest('tr');
+  if (firstRow === null || secondRow === null) {
+    throw new Error('expected both task rows to render');
+  }
+
+  // Mounts with the cursor already on the first (and here, only visible-order) row.
+  expect(firstRow.className).toContain('bg-accent/50');
+  expect(secondRow.className).not.toContain('bg-accent/50');
+
+  fireEvent.mouseEnter(secondRow);
+
+  expect(secondRow.className).toContain('bg-accent/50');
+  expect(firstRow.className).not.toContain('bg-accent/50');
+});
+
+// Epic grouping: tasks bucket under their parent epic's collapsible header, "No epic" last.
+// `epic` itself still carries `parent: null`, so — matching the pre-reskin list's own
+// behavior, since `data.tasks` includes epic docs alongside plain ones (see
+// `useDispatchProject`'s `epics` derivation) — its title renders twice: once as the group
+// header, once as its own row in the "No epic" bucket.
+test('tasks group under their epic, with a "No epic" bucket for the rest', () => {
+  const epic = task('e-1', 'Payments epic');
+  const data = dataWith([
+    epic,
+    task('t-1', 'Charge card', [], 'e-1'),
+    task('t-2', 'Unrelated task'),
+  ]);
+  render(
+    <TooltipProvider>
+      <TasksListView
+        data={{ ...data, epics: [epic] } as unknown as DispatchProjectData}
+        onSelectTask={() => {}}
+      />
+    </TooltipProvider>
+  );
+
+  expect(screen.getAllByText('Payments epic').length).toBeGreaterThan(0);
+  expect(screen.getByText('No epic')).not.toBeNull();
+  expect(screen.getByText('Charge card')).not.toBeNull();
+  expect(screen.getByText('Unrelated task')).not.toBeNull();
+});
+
+// Collapsing a group's header hides its rows — and takes them out of the bulk-select pool.
+test('collapsing a group hides its rows', () => {
+  render(
+    <TasksListView
+      data={dataWith([task('t-1', 'First task'), task('t-2', 'Second task')])}
+      onSelectTask={() => {}}
+    />
+  );
+
+  expect(screen.getByText('First task')).not.toBeNull();
+  fireEvent.click(screen.getByText('No epic'));
+  expect(screen.queryByText('First task')).toBeNull();
+  expect(screen.queryByText('Second task')).toBeNull();
 });

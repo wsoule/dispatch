@@ -62,7 +62,7 @@ export function PlanQuestionsForm({
   const busy = disabled || sending;
 
   return (
-    <div className="animate-in fade-in-0 bg-state-waiting-surface border-state-waiting-edge flex flex-col gap-3 rounded-md border px-3 py-2.5 duration-150">
+    <div className="animate-in fade-in-0 bg-state-waiting-surface rounded-control flex flex-col gap-3 px-3 py-2.5 duration-150">
       <div className="flex items-center gap-2">
         <MessageCircleQuestion className="text-state-waiting size-3.5 shrink-0" />
         <span className="dense-label text-state-waiting font-medium">

@@ -20,8 +20,8 @@
     "@dispatch/client": "workspace:*",
     "@dnd-kit/core": "catalog:",
     "@dnd-kit/utilities": "catalog:",
-    "@fontsource/ibm-plex-mono": "catalog:",
     "@fontsource/inter": "catalog:",
+    "@fontsource/jetbrains-mono": "catalog:",
     "@pierre/diffs": "catalog:",
     "@pierre/trees": "catalog:",
     "@tanstack/react-query": "catalog:",
@@ -38,7 +38,6 @@
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
-    "rehype-highlight": "catalog:",
     "remark-gfm": "catalog:",
     "sonner": "catalog:",
     "tailwind-merge": "catalog:"

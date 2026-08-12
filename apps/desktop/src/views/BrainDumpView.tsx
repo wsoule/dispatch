@@ -17,6 +17,12 @@ import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
 import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
+import {
+  defaultSelectionActions,
+  selectionActionLabel,
+  SelectionActionsMenu,
+  useTextSelection,
+} from '@/ui/ai/selection-actions';
 import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
 import { Panel } from '@/ui/chrome';
@@ -83,6 +89,22 @@ export function BrainDumpView({
   // Always points at this render's `runCluster`, so the debounce effect can call the latest
   // closure without listing it as a dependency (its identity churns every render via `data`).
   const runClusterRef = useRef<(ids: string[]) => void>(() => {});
+
+  // Selection actions over a captured item's own text. Unlike a draft or a run, a raw
+  // inbox capture carries no draft/run id an agent message could attach to — there is no
+  // "chat" path this text is part of yet (that only starts once a capture becomes a task
+  // or gets handed to the planner). So every action here, Explain and Improve included,
+  // surfaces an honest "not yet" notice rather than either faking a reply or silently
+  // doing nothing.
+  const captureListRef = useRef<HTMLUListElement>(null);
+  const { rect: captureSelectionRect } = useTextSelection(captureListRef);
+  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
+
+  function handleCaptureSelectionAction(actionId: string): void {
+    setSelectionNotice(
+      `${selectionActionLabel(actionId)} isn't wired up yet — coming soon.`
+    );
+  }
 
   const inbox = data.inbox;
   const open = useMemo(() => inbox.filter((i) => !i.done), [inbox]);
@@ -418,7 +440,7 @@ export function BrainDumpView({
               Nothing captured yet. Type above — it costs nothing.
             </p>
           ) : (
-            <ul className="mt-2 flex flex-col gap-1">
+            <ul ref={captureListRef} className="mt-2 flex flex-col gap-1">
               {open.map((it) => (
                 <Fragment key={it.id}>
                   <InboxRow
@@ -481,6 +503,21 @@ export function BrainDumpView({
                 </Fragment>
               ))}
             </ul>
+          )}
+          {captureSelectionRect !== null && (
+            <SelectionActionsMenu
+              actions={defaultSelectionActions}
+              onAction={handleCaptureSelectionAction}
+              position={captureSelectionRect}
+            />
+          )}
+          {selectionNotice !== null && (
+            <p
+              role="status"
+              className="text-muted-foreground mt-1 text-[11.5px]"
+            >
+              {selectionNotice}
+            </p>
           )}
         </section>
 

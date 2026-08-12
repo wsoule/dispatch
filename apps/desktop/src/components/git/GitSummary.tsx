@@ -37,7 +37,7 @@ export function GitSummary({
   );
 
   return (
-    <div className="border-border flex flex-wrap items-center gap-x-1 gap-y-0.5 rounded-lg border px-1.5 py-1">
+    <div className="shadow-hairline rounded-card flex flex-wrap items-center gap-x-1 gap-y-0.5 px-1.5 py-1">
       {/* `type="multiple"` because the chips are laid out flat, not as a mutually exclusive
           radio strip — `value` only ever holds the one active filter, and each chip's own
           `onClick` (not the group's `onValueChange`) is what drives `onFocus`. `spacing={1}`
@@ -114,7 +114,7 @@ export function GitSummary({
           // `title` (byte/worktree count) is the only place that detail shows, and a
           // pointer-events-blocked disabled button can't receive the hover that shows it.
           // Same device as BrainDumpView's "Refresh groups" button.
-          className="border-border hover:text-foreground h-auto border px-1.5 py-0.5 text-[11px] font-normal disabled:pointer-events-auto"
+          className="shadow-hairline hover:text-foreground rounded-chip h-auto px-1.5 py-0.5 text-[11px] font-normal disabled:pointer-events-auto"
         >
           {reclaiming
             ? 'Reclaiming…'
@@ -146,7 +146,7 @@ function Stat({
     <>
       <span
         className={cn(
-          'font-mono text-[12px] leading-tight',
+          'font-mono text-[12px] leading-tight tabular-nums',
           tone === 'warn' && 'text-state-waiting',
           tone === 'bad' && 'text-state-failed'
         )}
@@ -174,7 +174,7 @@ function Stat({
       // `ToggleGroupItem`'s own size/weight/hover classes are for a taller, bolder toggle
       // button — every one that would change this chip's look is neutralized so pressed
       // state (now real radix `data-state`/`aria-pressed`) is the only thing that moved.
-      className="hover:bg-accent/60 h-auto min-w-0 justify-normal gap-1 rounded-md px-1 py-0.5 text-left text-xs font-normal whitespace-normal normal-case transition-colors duration-150 hover:text-inherit data-[state=on]:text-inherit"
+      className="hover:bg-surface-hover ease-out-expo rounded-chip h-auto min-w-0 justify-normal gap-1 px-1 py-0.5 text-left text-xs font-normal whitespace-normal normal-case transition-colors duration-100 hover:text-inherit data-[state=on]:text-inherit"
     >
       {body}
     </ToggleGroupItem>

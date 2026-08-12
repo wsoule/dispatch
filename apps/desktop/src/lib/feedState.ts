@@ -5,6 +5,7 @@ import type {
 } from '@dispatch/client';
 
 import { deriveRunDisposition } from './runState';
+import type { TaskRowState } from '@/ui/ai/task-rows';
 
 /**
  * The one vocabulary every dense surface in the app groups and colors by.
@@ -147,4 +148,40 @@ export function deriveFeedState(
 /** Task-side counterpart: a task with no live run is either startable or waiting on a dep. */
 export function deriveTaskFeedState(ready: boolean): FeedState {
   return ready ? 'ready' : 'blocked';
+}
+
+/**
+ * Maps this file's `FeedState` (Control room's dispositions, derived from `runState.ts`) onto
+ * `TaskRow`'s own state vocabulary (`ui/ai/task-rows.tsx`) — Task 26's dense-list surfaces
+ * (AllAgentsView, SessionsHubView, SessionRow) render rows through `TaskRow`, which only knows
+ * five states. Both vocabularies key off the same `--state-*` design tokens, so most of this
+ * is a rename rather than a real re-bucketing:
+ *
+ * - `working` -> `running`, `waiting` -> `waiting`, `failed` -> `failed`: same token, same
+ *   meaning, just a different label.
+ * - `review` -> `done`: both read as "the agent's part is over, look at it" and share
+ *   `bg-state-review`.
+ * - `landing` -> `done`: `TaskRow` has no separate "landing" token; a run getting merged has
+ *   at least as much finished about it as one awaiting review, so it joins `done` too.
+ * - `ready` -> `queued`: both share `bg-state-ready` and mean "hasn't started".
+ * - `blocked` -> `queued`: `TaskRow` has no "blocked" token either. A blocked task hasn't
+ *   started running any more than a ready one has — it just can't yet, rather than won't
+ *   yet — so it lands in the same bucket rather than being force-fit onto `waiting` (which
+ *   this file reserves for "waiting on a person", not "waiting on a dependency").
+ */
+export function feedStateToTaskRowState(state: FeedState): TaskRowState {
+  switch (state) {
+    case 'working':
+      return 'running';
+    case 'waiting':
+      return 'waiting';
+    case 'failed':
+      return 'failed';
+    case 'review':
+    case 'landing':
+      return 'done';
+    case 'ready':
+    case 'blocked':
+      return 'queued';
+  }
 }

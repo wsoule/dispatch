@@ -75,7 +75,7 @@ export function RunStatePill({ meta, className }: RunStatePillProps) {
       <StateDot state={RUN_STATE_TONE[state]} pulse={inFlight} />
       {RUN_STATE_LABEL[state]}
       {badge !== null && (
-        <span className="border-border text-muted-foreground rounded border px-1 py-px text-[10px] leading-none">
+        <span className="border-border text-muted-foreground rounded-chip border px-1 py-px text-[10px] leading-none">
           {badge}
         </span>
       )}

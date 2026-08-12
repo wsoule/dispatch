@@ -4,8 +4,8 @@ import { SectionLabel } from './SectionLabel';
 import { cn } from '@/lib/utils';
 
 /**
- * The app's single container shape — bordered, rounded, rows contained rather
- * than flush. Views must not spell one out; the chrome guard enforces that.
+ * The app's single container shape — `shadow-card` + rounded, rows contained
+ * rather than flush. Views must not spell one out; the chrome guard enforces that.
  */
 export function Panel({
   children,
@@ -17,7 +17,7 @@ export function Panel({
   return (
     <div
       className={cn(
-        'bg-card border-border overflow-hidden rounded-lg border',
+        'bg-card shadow-card rounded-card overflow-hidden',
         className
       )}
     >
@@ -48,7 +48,7 @@ export function PanelHeader({
   return (
     <div
       className={cn(
-        'border-border flex min-h-9 flex-wrap items-center gap-2 border-b px-3 py-2',
+        'shadow-hairline-bottom flex min-h-9 flex-wrap items-center gap-2 px-3 py-2',
         className
       )}
       {...rest}
@@ -86,8 +86,8 @@ export function PanelRow({
   onClick?: () => void;
 } & Omit<ComponentPropsWithRef<'div'>, 'children' | 'onClick'>) {
   const classes = cn(
-    'border-border flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left',
-    'border-b last:border-b-0',
+    'flex w-full flex-wrap items-center gap-2 px-3 py-2 text-left',
+    'shadow-hairline-bottom last:shadow-none',
     urgent && 'border-l-2 border-l-foreground',
     onClick &&
       'cursor-pointer hover:bg-muted/60 transition-colors duration-150',

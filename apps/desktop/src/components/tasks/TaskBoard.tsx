@@ -298,20 +298,24 @@ export function TaskBoard({
                   <div
                     key={status}
                     className={cn(
-                      'group/header flex items-center gap-1.5 px-0.5',
+                      'group/header flex items-center px-0.5',
                       COLUMN_WIDTH_CLASS
                     )}
                   >
-                    <StatusIcon status={status} />
-                    <span className="text-foreground/80 truncate text-[11px] font-medium">
-                      {statusLabel(status)}
-                    </span>
-                    <span className="text-muted-foreground/60 font-mono text-[11px]">
-                      {count.visible}
+                    {/* Filter-chip-styled column identity — same pill shape/tokens as
+                        `FilterChips`, but static (a board column isn't a toggle): a rounded
+                        `bg-surface-inset` pill carrying the status glyph, label, and count
+                        badge. */}
+                    <span className="bg-surface-inset text-muted-foreground flex h-6.5 min-w-0 items-center gap-1.5 rounded-full px-2.5 text-[12px] font-medium">
+                      <StatusIcon status={status} className="size-3.5" />
+                      <span className="truncate">{statusLabel(status)}</span>
+                      <span className="rounded-[4px] px-1 text-[10.5px] tabular-nums">
+                        {count.visible}
+                      </span>
                     </span>
                     {count.hidden > 0 && (
                       <span
-                        className="text-muted-foreground/70 bg-accent/60 rounded px-1 font-mono text-[10px] whitespace-nowrap"
+                        className="text-muted-foreground/70 bg-accent/60 ml-1.5 rounded px-1 font-mono text-[10px] whitespace-nowrap"
                         title={`${count.hidden} hidden in collapsed epics`}
                       >
                         +{count.hidden} hidden

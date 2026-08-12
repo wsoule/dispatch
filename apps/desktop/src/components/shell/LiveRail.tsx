@@ -74,7 +74,7 @@ export function LiveRail({
 
   if (collapsed) {
     return (
-      <aside className="border-border flex w-9 shrink-0 flex-col items-center gap-2 border-l py-3">
+      <aside className="shadow-hairline-left bg-background flex w-9 shrink-0 flex-col items-center gap-2 py-3">
         <Button
           type="button"
           variant="ghost"
@@ -114,7 +114,7 @@ export function LiveRail({
   }
 
   return (
-    <aside className="border-border flex w-60 shrink-0 flex-col gap-3 overflow-y-auto border-l p-3">
+    <aside className="shadow-hairline-left bg-background flex w-60 shrink-0 flex-col gap-3 overflow-y-auto p-3">
       <div className="flex items-center gap-2">
         <span className="dense-label">Live agents</span>
         <Button

@@ -57,7 +57,7 @@ export function GetStartedView({ projectPath }: GetStartedViewProps) {
 
   return (
     <div className="mx-auto flex max-w-lg flex-col items-center gap-4 pt-24 text-center">
-      <div className="bg-accent text-accent-foreground flex size-10 items-center justify-center rounded-lg">
+      <div className="bg-accent text-accent-foreground rounded-control flex size-10 items-center justify-center">
         <Terminal className="size-5" />
       </div>
       <h1 className="text-foreground text-[15px] font-medium">
@@ -87,7 +87,7 @@ export function GetStartedView({ projectPath }: GetStartedViewProps) {
       </Button>
 
       {initError !== null && (
-        <div className="border-destructive/30 bg-destructive/10 text-destructive flex w-full max-w-full items-start gap-2 rounded-lg border px-3 py-2.5 text-left text-[13px]">
+        <div className="border-destructive/30 bg-destructive/10 text-destructive flex w-full max-w-full items-start gap-2 rounded-md border px-3 py-2.5 text-left text-[13px]">
           <TriangleAlert className="mt-0.5 size-3.5 shrink-0" />
           <pre className="max-h-48 min-w-0 flex-1 overflow-auto font-mono text-[12px] break-words whitespace-pre-wrap">
             {initError}

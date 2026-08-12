@@ -90,7 +90,7 @@ export function DraftTray({
         </Button>
       </PopoverTrigger>
       <PopoverContent align="start" side="right" className="w-80 p-0">
-        <div className="border-border border-b px-3 py-2">
+        <div className="shadow-hairline-bottom px-3 py-2">
           <span className="text-foreground text-[13px] font-medium">
             AI task drafts
           </span>
@@ -102,7 +102,7 @@ export function DraftTray({
             items.map((item) => (
               <div
                 key={item.id}
-                className="border-border/60 flex items-center gap-2 border-b px-3 py-2 last:border-b-0"
+                className="shadow-hairline-bottom flex items-center gap-2 px-3 py-2 last:shadow-none"
               >
                 {item.state === 'running' && (
                   <Spinner className="text-primary size-3.5 shrink-0" />
