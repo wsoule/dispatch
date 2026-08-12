@@ -45,12 +45,12 @@ function OptionRow({
     >
       <span
         aria-hidden
-        className={`mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors duration-150 ${
+        className={`ease-out-expo mt-0.5 flex size-4 shrink-0 items-center justify-center rounded-full border transition-colors duration-150 ${
           selected ? 'border-[var(--border-selected)]' : 'border-border'
         }`}
       >
         <span
-          className={`size-1.5 rounded-full bg-[var(--border-selected)] transition-transform duration-150 ${
+          className={`ease-out-expo size-1.5 rounded-full bg-[var(--border-selected)] transition-transform duration-150 motion-reduce:transition-none ${
             selected ? 'scale-100' : 'scale-0'
           }`}
         />

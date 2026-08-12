@@ -19,7 +19,7 @@ export type StreamingTextProps = {
 };
 
 const CHIP_CLASS =
-  'rounded-chip bg-surface-inset text-muted-foreground hover:bg-surface-hover inline-flex items-center gap-1 px-1.5 py-0.5 text-[11.5px] font-medium transition-colors duration-100';
+  'ease-out-expo rounded-chip bg-surface-inset text-muted-foreground hover:bg-surface-hover inline-flex items-center gap-1 px-1.5 py-0.5 text-[11.5px] font-medium transition-colors duration-100';
 
 // One numbered citation chip. Renders as a link when the source has a URL, otherwise a
 // plain button so the row still reads as interactive and stays keyboard-focusable.
@@ -104,7 +104,7 @@ export function StreamingText({
                 key={followUp}
                 type="button"
                 onClick={() => onFollowUp?.(followUp)}
-                className="rounded-control shadow-btn bg-card hover:bg-surface-hover text-foreground flex items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px] transition-colors duration-100"
+                className="rounded-control shadow-btn bg-card hover:bg-surface-hover text-foreground ease-out-expo flex items-center gap-2 px-2.5 py-1.5 text-left text-[12.5px] transition-colors duration-100"
               >
                 <CornerDownLeftIcon
                   aria-hidden

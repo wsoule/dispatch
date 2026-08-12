@@ -92,7 +92,7 @@
   --radius-control: 8px;
   --radius-card: 10px;
 
-  /* Easing — theme-invariant. Used for panel/overlay entrance transitions. */
+  /* Easing — theme-invariant. Default for every ui/ai/ primitive's transitions/animations. */
   --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
 
   /* Run state — "what does this run want from a human", named after lib/runState.ts's
