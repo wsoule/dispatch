@@ -542,6 +542,10 @@ export function Sidebar({
       collapsible="icon"
       className="absolute h-full"
     >
+      {/* `w-full`: the shadcn shell already animates its own container between
+          `--sidebar-width`/`--sidebar-width-icon` (see `ui/sidebar.tsx`'s
+          `sidebar-gap`/`sidebar-container`), so this fills that box instead of also
+          animating its own `w-60`/`w-14` in parallel and drifting out of sync with it. */}
       <SidebarNav
         header={header}
         sections={sections}
@@ -549,6 +553,7 @@ export function Sidebar({
         onSelect={handleSelect}
         footer={footer}
         collapsed={collapsed}
+        className="w-full"
       />
     </SidebarRoot>
   );
