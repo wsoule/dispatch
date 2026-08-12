@@ -103,7 +103,11 @@ export const FIX_MODEL_TIERS: readonly string[] = ['standard', 'high'];
 // Rounds 1-3 resume the same agent; 4 and 5 hand the work to a fresh one at
 // the top tier, because an agent three rounds deep stops seeing its own shape.
 export const DEFAULT_FIX_LOOP: FixLoopConfig = {
-  auto: true,
+  // Off by default: every round dispatches a real agent run, so igniting on
+  // each finished implementer spends without anyone asking for it. The task
+  // view's "Review & fix" button opens the same loop on demand; set
+  // `fixLoop.auto: true` to go back to igniting automatically.
+  auto: false,
   cap: 5,
   escalation: [
     { round: 1, strategy: 'resume', modelTier: 'standard' },

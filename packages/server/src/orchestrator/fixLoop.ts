@@ -368,6 +368,42 @@ export class FixLoop {
     });
   }
 
+  /** The manual ignition behind the task view's "Review & fix" button: opens
+   *  the loop off the task's latest implementer exactly as auto-start would
+   *  have, so the caller needs no `baseSha` of its own. An already-open loop is
+   *  advanced instead, which is what lets one button also resume a capped one. */
+  async ignite(taskId: string): Promise<FixLoopState> {
+    if (this.ctx.fixLoopStore.get(taskId) !== null) {
+      return await this.advance(taskId);
+    }
+    this.requireTask(taskId);
+    const run = this.latestRun(taskId, 'execute');
+    if (run === null) {
+      throw new OrchestratorClientError(
+        `nothing to review on ${taskId}: no agent has implemented it yet`
+      );
+    }
+    // A still-running implementer's branch is a moving target — reviewing it
+    // would judge a half-written change and burn a round on it.
+    if (!TERMINAL_RUN_STATES.has(run.state)) {
+      throw new OrchestratorClientError(
+        `${taskId} is still being implemented — wait for run ${run.id} to finish`
+      );
+    }
+    await this.enqueue(taskId, () => this.igniteFrom(run));
+    const state = this.ctx.fixLoopStore.get(taskId);
+    if (state === null) {
+      // igniteFrom declines quietly when there is nothing to review (the run
+      // committed nothing, or a standing block already owns the task). A button
+      // press needs to say so rather than look like it did nothing.
+      throw new OrchestratorClientError(
+        `nothing to review on ${taskId}: run ${run.id} committed no changes, or` +
+          ' a blocking finding is already waiting on a ruling'
+      );
+    }
+    return state;
+  }
+
   // Opens the loop for a task. `baseSha` is supplied by the caller that knows
   // where the task's first implementer started, and never moves afterwards.
   start(taskId: string, opts: { baseSha: string; cap?: number }): FixLoopState {

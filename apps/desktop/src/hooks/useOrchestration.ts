@@ -2,6 +2,7 @@ import type {
   AdjudicateFindingInput,
   AdjudicateFindingResult,
   ApiClient,
+  FixLoopState,
 } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -142,6 +143,30 @@ export function useFixLoop(
     loading: isLoading,
     error: error instanceof Error ? error.message : null,
   };
+}
+
+/** Opens the review -> fix loop for a task, or advances an already-open one —
+ *  the task view's "Review & fix" button. Auto-ignition is off by default
+ *  (`fixLoop.auto`), so this is normally what starts a loop at all. */
+export function useStartFixLoop(
+  client: ApiClient | null,
+  port: number | undefined
+) {
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (taskId: string): Promise<FixLoopState> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const state = await client.startFixLoop(taskId);
+      void queryClient.invalidateQueries({
+        queryKey: fixLoopKey(port, taskId),
+      });
+      void queryClient.invalidateQueries({
+        queryKey: taskFindingsKey(port, taskId),
+      });
+      return state;
+    },
+    [client, queryClient, port]
+  );
 }
 
 /** A task's latest verify result — same null/error split as `useFixLoop`. */
