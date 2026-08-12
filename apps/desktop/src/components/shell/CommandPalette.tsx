@@ -56,7 +56,7 @@ export function CommandPalette({
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
       <DialogContent
-        className="border-border bg-popover top-24 flex max-h-[60vh] w-[min(34rem,90vw)] max-w-none translate-y-0 flex-col gap-0 overflow-hidden rounded-lg p-0 shadow-lg duration-150 sm:max-w-none"
+        className="bg-popover rounded-card shadow-overlay top-24 flex max-h-[60vh] w-[min(34rem,90vw)] max-w-none translate-y-0 flex-col gap-0 overflow-hidden p-0 duration-150 sm:max-w-none"
         showCloseButton={false}
       >
         <DialogTitle className="sr-only">Command palette</DialogTitle>

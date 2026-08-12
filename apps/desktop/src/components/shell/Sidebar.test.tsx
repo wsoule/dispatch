@@ -71,7 +71,9 @@ test('expanded rail shows every row with its shortcut number', () => {
     const row = screen.getByRole('button', {
       name: new RegExp(`^${label.replace(' ', '.')}.*⌘${index + 1}$`),
     });
-    expect(row.getAttribute('data-active')).toBe(String(label === 'Inbox'));
+    expect(row.getAttribute('aria-current')).toBe(
+      label === 'Inbox' ? 'page' : null
+    );
   });
   expect(screen.getByText('Workspace')).toBeTruthy();
   expect(screen.getByText('Plan')).toBeTruthy();

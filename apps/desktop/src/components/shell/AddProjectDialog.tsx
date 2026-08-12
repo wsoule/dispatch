@@ -175,7 +175,7 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
               variant="ghost"
               size="xs"
               onClick={() => void pickLocalFolder()}
-              className="border-border h-auto justify-start gap-3 rounded-lg border px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
+              className="shadow-hairline rounded-card h-auto justify-start gap-3 px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
             >
               <FolderOpen className="text-muted-foreground size-5 shrink-0" />
               <span className="flex flex-col">
@@ -192,7 +192,7 @@ export function AddProjectDialog({ onAdd, onClose }: AddProjectDialogProps) {
               variant="ghost"
               size="xs"
               onClick={() => setMode('github')}
-              className="border-border h-auto justify-start gap-3 rounded-lg border px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
+              className="shadow-hairline rounded-card h-auto justify-start gap-3 px-3 py-3 text-left text-[length:inherit] font-normal has-[>svg]:px-3"
             >
               <GitBranch className="text-muted-foreground size-5 shrink-0" />
               <span className="flex flex-col">

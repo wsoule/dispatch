@@ -715,7 +715,7 @@ function App() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-screen flex-col overflow-hidden">
+      <div className="bg-background flex h-screen flex-col overflow-hidden">
         {pendingUpdate !== null && !updateDismissed && (
           <UpdateBanner
             update={pendingUpdate}
