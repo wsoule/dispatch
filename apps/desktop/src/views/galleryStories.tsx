@@ -3,6 +3,7 @@ import {
   CopyIcon,
   EyeIcon,
   FileTextIcon,
+  GitBranchIcon,
   PencilIcon,
   RotateCcwIcon,
   SparklesIcon,
@@ -20,6 +21,12 @@ import {
   type ChatTab,
 } from '@/ui/ai/chat';
 import { LoadingState } from '@/ui/ai/loading-state';
+import {
+  PromptBar,
+  type PromptBarCommand,
+  type PromptBarModel,
+  type PromptBarReference,
+} from '@/ui/ai/prompt-bar';
 import {
   StreamingText,
   type StreamingTextSource,
@@ -308,6 +315,98 @@ function ChatPanelDemo() {
   );
 }
 
+const PROMPT_BAR_MODELS: PromptBarModel[] = [
+  { id: 'sonnet-5', label: 'Sonnet 5' },
+  { id: 'opus-5', label: 'Opus 5' },
+  { id: 'haiku-5', label: 'Haiku 5' },
+];
+
+const PROMPT_BAR_COMMANDS: PromptBarCommand[] = [
+  { id: 'retry', label: 'Retry', hint: 'Re-run the last agent turn' },
+  { id: 'review', label: 'Review', hint: 'Request a code review' },
+  { id: 'redirect', label: 'Redirect', hint: 'Steer the agent mid-run' },
+  { id: 'explain', label: 'Explain', hint: 'Explain the current diff' },
+];
+
+// `PromptBar` is fully controlled — same pattern as ChatPanelDemo above — so each
+// gallery story owns its own value/model/reference state.
+function PromptBarEmptyDemo() {
+  const [value, setValue] = useState('');
+  const [modelId, setModelId] = useState('sonnet-5');
+  return (
+    <div className="w-95">
+      <PromptBar
+        value={value}
+        onChange={setValue}
+        onSubmit={() => {}}
+        models={PROMPT_BAR_MODELS}
+        modelId={modelId}
+        onModelChange={setModelId}
+        commands={PROMPT_BAR_COMMANDS}
+      />
+    </div>
+  );
+}
+
+function PromptBarWithReferencesDemo() {
+  const [value, setValue] = useState(
+    'Patch the WebSocket reconnect suite before merging'
+  );
+  const [modelId, setModelId] = useState('opus-5');
+  const [references, setReferences] = useState<PromptBarReference[]>([
+    {
+      id: 'boot-rs',
+      label: 'dispatchd/src/boot.rs',
+      icon: <FileTextIcon aria-hidden className="size-3" />,
+    },
+    {
+      id: 'agents-md',
+      label: 'AGENTS.md',
+      icon: <FileTextIcon aria-hidden className="size-3" />,
+    },
+    {
+      id: 'branch',
+      label: 't-cafe27-boot-force-fail',
+      icon: <GitBranchIcon aria-hidden className="size-3" />,
+    },
+  ]);
+  return (
+    <div className="w-95">
+      <PromptBar
+        value={value}
+        onChange={setValue}
+        onSubmit={() => {}}
+        references={references}
+        onRemoveReference={(id) =>
+          setReferences((prev) => prev.filter((ref) => ref.id !== id))
+        }
+        models={PROMPT_BAR_MODELS}
+        modelId={modelId}
+        onModelChange={setModelId}
+        commands={PROMPT_BAR_COMMANDS}
+      />
+    </div>
+  );
+}
+
+function PromptBarCommandPopoverDemo() {
+  const [value, setValue] = useState('/re');
+  const [modelId, setModelId] = useState('sonnet-5');
+  return (
+    <div className="w-95">
+      <PromptBar
+        value={value}
+        onChange={setValue}
+        onSubmit={() => {}}
+        models={PROMPT_BAR_MODELS}
+        modelId={modelId}
+        onModelChange={setModelId}
+        commands={PROMPT_BAR_COMMANDS}
+      />
+    </div>
+  );
+}
+
 /** One reviewable primitive in the dev gallery: a title for the left index, an
  * optional caption, and the markup to render on the right. Every primitive task
  * (6-24) appends one or more of these — this file is the running catalog. */
@@ -519,5 +618,23 @@ export const galleryStories: GalleryStory[] = [
     title: 'Chat panel — two tabs, mixed messages',
     note: 'Segmented tab strip (active tab lifted, unread dot on "Boot force-fail"), right-aligned user bubbles vs. full-width agent replies, and a PromptBar placeholder pinned to the bottom. Click a tab to switch.',
     render: () => <ChatPanelDemo />,
+  },
+  {
+    id: 'prompt-bar-empty',
+    title: 'Prompt bar — empty',
+    note: 'Inset field with a focus-within accent ring, model picker, dictation affordance, and a submit button disabled until there is text. Click in and type to try it.',
+    render: () => <PromptBarEmptyDemo />,
+  },
+  {
+    id: 'prompt-bar-filled-with-references',
+    title: 'Prompt bar — filled, with reference chips',
+    note: 'Two file chips and a branch chip above the textarea, each removable; submit is enabled since there is text. Click a chip’s × to remove it.',
+    render: () => <PromptBarWithReferencesDemo />,
+  },
+  {
+    id: 'prompt-bar-command-popover',
+    title: 'Prompt bar — command popover open',
+    note: 'Typing "/re" filters the command list to label-prefix matches (Retry, Review, Redirect) via matchCommands, case-insensitively.',
+    render: () => <PromptBarCommandPopoverDemo />,
   },
 ];
