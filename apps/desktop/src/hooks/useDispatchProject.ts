@@ -1,7 +1,9 @@
 import type {
+  AgentSessionMeta,
   ApiClient,
   DraftRecord,
   EpicProgress,
+  LandingSnapshot,
   LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
@@ -86,6 +88,14 @@ export function repoPrsKey(
   port: number | undefined
 ): [string, number | undefined] {
   return ['dispatch-repo-prs', port];
+}
+
+// The unified-PR-table query key (`GET /api/landing`), exported so
+// `LandingTableView` can invalidate it itself after a worktree create/remove.
+export function landingKey(
+  port: number | undefined
+): [string, number | undefined] {
+  return ['dispatch-landing', port];
 }
 
 function readStoredShowArchived(): boolean {
@@ -226,6 +236,14 @@ export interface DispatchProjectData {
   // covers both "hasn't loaded yet" and "this project has no pr capability"
   // alike; the review queue treats both as "no PRs to show".
   repoPrs: RepoPr[] | null;
+  // The unified PR table snapshot (`GET /api/landing`) — `null` until loaded.
+  // `landingIsError` is the separate "stale" signal; see the query's comment.
+  landing: LandingSnapshot | null;
+  landingIsError: boolean;
+  // Manual retry for the first load's error state — see `landingIsError`'s
+  // comment; a background refetch already retries on its own, this is for
+  // when there is no snapshot yet to fall back on.
+  landingRefetch: () => void;
 
   runDetail: RunDetail | undefined;
   diff: import('@dispatch/client').DiffResult | undefined;
@@ -250,19 +268,6 @@ export interface DispatchProjectData {
     patch: { kind?: import('@dispatch/client').InboxKind; text?: string }
   ) => Promise<void>;
   handleDismissInbox: (ids: string[]) => Promise<void>;
-  /**
-   * Starts an AI draft that adds the detail a one-line capture is missing. Its
-   * own slot, so it can't clobber `enrichPlan`'s or `notePlanId`'s draft.
-   */
-  handleEnrichInboxItem: (id: string) => Promise<void>;
-  /** Which inbox item the open draft belongs to, so another row doesn't show it. */
-  inboxEnrichItemId: string | null;
-  inboxEnrichPlanRecord: PlanRecord | undefined;
-  /** Drops the open draft without writing anything — Dismiss, and the cleanup after Apply. */
-  handleDismissInboxEnrich: () => void;
-  /** Writes the drafted body back onto the inbox item via the ordinary PATCH /api/inbox/:id
-   * update path, then drops the draft. */
-  handleApplyInboxEnrich: (itemId: string, text: string) => Promise<void>;
   /**
    * Starts an AI draft that adds the context an under-specified task is missing. Its own slot,
    * not the note one: the detail dialog reviews `enrichPlanRecord` and patches the drafted
@@ -419,6 +424,9 @@ export interface DispatchProjectData {
   /** Every task draft currently held in memory, newest first — feeds the app-wide drafts
    * tray. Running and ready drafts survive navigation and a tray reopen; see `drafts`. */
   drafts: DraftRecord[];
+  /** Every in-memory conversation agent (planner chats, enrich agents, task drafts, warden
+   * chats), newest activity first — the non-run half of the All agents page. */
+  agentSessions: AgentSessionMeta[];
   /** Starts a background single-task draft and returns immediately with its `running`
    * record; the tray/`drafts` picks up its progress via `draft.changed`. */
   handleStartDraft: (prompt: string) => Promise<DraftRecord>;
@@ -455,6 +463,9 @@ export interface DispatchProjectData {
   handleOpenPr: (runId: string) => Promise<void>;
   handleWorkEpic: (epicId: string, concurrency: number) => Promise<void>;
   handleStopEpic: (epicId: string) => Promise<void>;
+  /** Lands a finished epic branch on the default base — one PR or one local
+   * merge, decided server-side off the project's `pr` capability. */
+  handleLandEpic: (epicId: string) => Promise<void>;
   handleSubmitPrompt: (prompt: string) => Promise<string>;
   /** Post a follow-up message onto the active plan conversation. Returns the
    * 202 record (already flipped back to `running`); the assistant's reply +
@@ -482,7 +493,7 @@ export interface DispatchProjectData {
   handleRecheckMergeQueue: () => Promise<void>;
   // Set from the `queue.drained` WS event when the queue's auto-push after a
   // drain fails (merged locally, origin didn't get the commit) — rendered as
-  // LandingView's push-failure banner, whose Retry is handleMergeAllReady.
+  // the Landing table's push-failure banner, whose Retry is handleMergeAllReady.
   // Cleared on the next successful drain-push.
   lastPushError: string | null;
 
@@ -530,14 +541,8 @@ export function useDispatchProject(
     taskId: string;
     planId: string;
   } | null>(null);
-  // The brain dump row's "Add detail" slot. Its own slot, since its proposal is
-  // patched onto that inbox item rather than confirmed into a task.
-  const [inboxEnrich, setInboxEnrich] = useState<{
-    itemId: string;
-    planId: string;
-  } | null>(null);
   // Task 8: last drain-push failure reported by `queue.drained`, for
-  // LandingView's push-failure banner — `null` once a later drain pushes
+  // the Landing table's push-failure banner — `null` once a later drain pushes
   // successfully.
   const [lastPushError, setLastPushError] = useState<string | null>(null);
   // Task 9: the Board/List/Runs "show archived" toggle — read from localStorage once on
@@ -651,6 +656,13 @@ export function useDispatchProject(
   // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
   // on `draft.changed`.
   const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
+  // The conversation-agents list (`GET /api/agents`), invalidated below on
+  // `plan.changed`, `draft.changed` and `warden.changed` — the three events
+  // that cover every kind of session it returns.
+  const agentSessionsQueryKey = useMemo(
+    () => ['dispatch-agent-sessions', port],
+    [port]
+  );
   const reviewQueryKey = useMemo(
     () => ['dispatch-review', port, selectedRunId],
     [port, selectedRunId]
@@ -664,6 +676,7 @@ export function useDispatchProject(
     [port]
   );
   const repoPrsQueryKey = useMemo(() => repoPrsKey(port), [port]);
+  const landingQueryKey = useMemo(() => landingKey(port), [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
   const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
   // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
@@ -886,6 +899,17 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // Feeds the All agents page's conversation-agent rows (planners, enrich
+  // agents, drafts, wardens); refetched on the three WS events below.
+  const { data: agentSessions } = useQuery({
+    queryKey: agentSessionsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchAgentSessions();
+    },
+    enabled: client !== null,
+  });
+
   const { data: reviewComments } = useQuery({
     queryKey: reviewQueryKey,
     queryFn: () => {
@@ -936,11 +960,6 @@ export function useDispatchProject(
     port,
     enrichPlan?.planId ?? null
   );
-  const inboxEnrichPlanRecord = usePlanRecord(
-    client,
-    port,
-    inboxEnrich?.planId ?? null
-  );
 
   // Task 6: the merge queue snapshot — same "poll on mount, refetch on the
   // matching WS event" shape as every other query here (see the
@@ -970,6 +989,22 @@ export function useDispatchProject(
     enabled: client !== null && health?.pr === true,
     staleTime: 60_000,
     refetchOnWindowFocus: true,
+  });
+
+  // `getLanding` never 409s, so this is gated on `client` only (not
+  // `health.pr`); `landingIsError` flags a failed refetch's stale `data`.
+  const {
+    data: landing,
+    isError: landingIsError,
+    refetch: landingRefetch,
+  } = useQuery({
+    queryKey: landingQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.getLanding();
+    },
+    enabled: client !== null,
+    staleTime: 15_000,
   });
 
   const epics = useMemo(
@@ -1108,6 +1143,9 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
             });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'warden.changed') {
             // The warden record query itself lives in useWardenSession; this
             // hook owns the one WS connection, so the invalidation happens
@@ -1115,10 +1153,16 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: wardenKey(port, event.conversationId),
             });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'note.changed') {
             void queryClient.invalidateQueries({ queryKey: notesQueryKey });
           } else if (event.type === 'draft.changed') {
             void queryClient.invalidateQueries({ queryKey: draftsQueryKey });
+            void queryClient.invalidateQueries({
+              queryKey: agentSessionsQueryKey,
+            });
           } else if (event.type === 'review.changed') {
             void queryClient.invalidateQueries({ queryKey: reviewQueryKey });
             // The server broadcasts this same event for a reviewer's inline edit and an
@@ -1136,6 +1180,14 @@ export function useDispatchProject(
           } else if (event.type === 'merge-queue.changed') {
             void queryClient.invalidateQueries({
               queryKey: mergeQueueQueryKey,
+            });
+            // Queue progress moves the landing table's in-queue rows too.
+            void queryClient.invalidateQueries({
+              queryKey: landingQueryKey,
+            });
+          } else if (event.type === 'landing.changed') {
+            void queryClient.invalidateQueries({
+              queryKey: landingQueryKey,
             });
           } else if (event.type === 'finding.changed') {
             void queryClient.invalidateQueries({
@@ -1301,11 +1353,13 @@ export function useDispatchProject(
     runsQueryKey,
     notesQueryKey,
     draftsQueryKey,
+    agentSessionsQueryKey,
     inboxQueryKey,
     reviewQueryKey,
     runDiffQueryKey,
     epicProgressKeyPrefix,
     mergeQueueQueryKey,
+    landingQueryKey,
     branchesQueryKey,
     questionsQueryKey,
     linearStatusQueryKey,
@@ -1519,13 +1573,17 @@ export function useDispatchProject(
     [client, queryClient, notesQueryKey]
   );
 
-  // Manual refetch for the Branches view. This surface has no polling (each row
-  // costs several git shell-outs), and git state can change entirely outside the
-  // app — the user's own terminal — so an explicit refresh is the only way to
-  // pick that up.
+  // Manual refetch for the Branches and Landed views. This surface has no
+  // polling (each row costs several git shell-outs), and git state can change
+  // entirely outside the app — the user's own terminal — so an explicit
+  // refresh is the only way to pick that up. Runs are invalidated too: both
+  // views join branch refs with run data (Landed's merged rows are run rows).
   const handleRefreshBranches = useCallback(async (): Promise<void> => {
-    await queryClient.invalidateQueries({ queryKey: branchesQueryKey });
-  }, [queryClient, branchesQueryKey]);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: branchesQueryKey }),
+      queryClient.invalidateQueries({ queryKey: runsQueryKey }),
+    ]);
+  }, [queryClient, branchesQueryKey, runsQueryKey]);
 
   // Reclaims a branch's worktree directory, keeping the branch ref so the work
   // stays recoverable. Errors are deliberately allowed to propagate: the server
@@ -1802,6 +1860,19 @@ export function useDispatchProject(
     [client, queryClient, epicProgressKeyPrefix]
   );
 
+  // Lands a finished epic branch on the default base — one PR or one local
+  // merge, decided server-side. Tasks refetch because a local land flips the
+  // epic to done immediately (the PR path flips it later, off the poller).
+  const handleLandEpic = useCallback(
+    async (epicId: string): Promise<void> => {
+      if (client === null) return;
+      await client.landEpic(epicId);
+      void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
+      void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+    },
+    [client, queryClient, tasksQueryKey, epicProgressKeyPrefix]
+  );
+
   // Returns the new plan's id so PlansView can add it to its local session history
   // immediately, without waiting on a refetch.
   const handleSubmitPrompt = useCallback(
@@ -1890,7 +1961,7 @@ export function useDispatchProject(
   );
 
   // Task 8: the "Merge all ready" toolbar action — enqueues every eligible
-  // run in the project in one call. Also doubles as LandingView's push-failure
+  // run in the project in one call. Also doubles as the Landing table's push-failure
   // Retry: called with nothing new to enqueue, this still kicks the queue's
   // pump, which retries a failed drain-push per `lastDrainPushFailed` on the
   // server (see mergeQueue.ts). The `merge-queue.changed`/`queue.drained`
@@ -1947,35 +2018,6 @@ export function useDispatchProject(
       return res;
     },
     [client, invalidateInbox, queryClient, tasksQueryKey]
-  );
-
-  // The AI half of "Add detail" on a brain dump row: the proposal lands on
-  // `inboxEnrichPlanRecord`, and nothing is written until it's applied.
-  const handleEnrichInboxItem = useCallback(
-    async (id: string): Promise<void> => {
-      if (client === null) throw new Error('dispatchd client not ready');
-      // Clear first, or the previous pass's draft stays up while this one runs.
-      setInboxEnrich(null);
-      const { planId } = await client.enrichInbox(id);
-      setInboxEnrich({ itemId: id, planId });
-    },
-    [client]
-  );
-
-  const handleDismissInboxEnrich = useCallback((): void => {
-    setInboxEnrich(null);
-  }, []);
-
-  // Writes the drafted body back onto the inbox item through the ordinary update path (the same
-  // PATCH /api/inbox/:id route the row's other edits use), then drops the draft.
-  const handleApplyInboxEnrich = useCallback(
-    async (itemId: string, text: string): Promise<void> => {
-      if (client === null) return;
-      await client.updateInbox(itemId, { text });
-      invalidateInbox();
-      setInboxEnrich(null);
-    },
-    [client, invalidateInbox]
   );
 
   // The AI half of specifying an existing task: the proposal lands on `enrichPlanRecord` for
@@ -2262,6 +2304,9 @@ export function useDispatchProject(
     attentionByTaskId,
     mergeQueue: mergeQueue ?? null,
     repoPrs: repoPrs ?? null,
+    landing: landing ?? null,
+    landingIsError,
+    landingRefetch: () => void landingRefetch(),
 
     runDetail,
     diff,
@@ -2298,6 +2343,7 @@ export function useDispatchProject(
     moveTaskStatus,
     handleCreate,
     drafts: drafts ?? [],
+    agentSessions: agentSessions ?? [],
     handleStartDraft,
     handleDismissDraft,
     handleSendDraftMessage,
@@ -2312,6 +2358,7 @@ export function useDispatchProject(
     handleOpenPr,
     handleWorkEpic,
     handleStopEpic,
+    handleLandEpic,
     handleSubmitPrompt,
     handleSendPlanMessage,
     handleConfirmPlan,
@@ -2330,11 +2377,6 @@ export function useDispatchProject(
     handleUpdateInboxItem,
     handleDismissInbox,
     handleConvertInbox,
-    handleEnrichInboxItem,
-    inboxEnrichItemId: inboxEnrich?.itemId ?? null,
-    inboxEnrichPlanRecord,
-    handleDismissInboxEnrich,
-    handleApplyInboxEnrich,
     handleEnrichTask,
     enrichTaskId: enrichPlan?.taskId ?? null,
     enrichPlanRecord,

@@ -80,6 +80,10 @@ export interface RunSurvey {
   untracked: string[];
   lastCommit: { sha: string; subject: string } | null;
   cleanTree: boolean;
+  // Commits on the run's branch authored after the run first reached `failed`
+  // — work an orphaned agent process landed after the daemon lost track of it.
+  // Newest first. Optional: surveys recorded before this field existed.
+  postFailCommits?: { sha: string; subject: string; date: string }[];
 }
 
 // Mirrors RunMeta in packages/server/src/orchestrator/types.ts.
@@ -163,8 +167,14 @@ export interface RunMeta {
 // 'active' = a live run is writing here (read-only); 'reviewable' = a terminal
 // run nobody reviewed, so nothing cleaned it up; 'leftover' = a reviewed run
 // whose ref somehow survived (a silently-failed cleanup); 'orphan' = no run
-// claims this ref at all.
-export type BranchEntryStatus = 'active' | 'reviewable' | 'leftover' | 'orphan';
+// claims this ref at all; 'epic' = an epic's integration branch (`epic/<id>`),
+// owned by the epic rather than any single run.
+export type BranchEntryStatus =
+  | 'active'
+  | 'reviewable'
+  | 'leftover'
+  | 'orphan'
+  | 'epic';
 
 // Mirrors BranchEntry in packages/server/src/orchestrator/types.ts — one row
 // of the Branches surface, joining what git knows about a `dispatch/*` ref
@@ -196,6 +206,11 @@ export interface BranchEntry {
   lastCommitAt?: string;
   /** Commits this branch has that its base does not — what deletion destroys. */
   ahead: number;
+  /** Commits the base gained since this branch diverged — how far the branch
+   * has fallen behind. Absent on merged branches, where the count no longer
+   * means anything. For 'epic' entries it is the drift signal: dispatch never
+   * updates an integration branch on its own, a human should. */
+  behindBase?: number;
   mergedIntoBase: boolean;
   runId?: string;
   taskId?: string;
@@ -312,6 +327,14 @@ export interface GitStash {
   date: string;
 }
 
+// Mirrors PrCheckRun in packages/server/src/orchestrator/pr.ts — one named
+// check from GitHub's rollup, normalized to a single verdict string.
+export interface PrCheckRun {
+  name: string;
+  conclusion: string;
+  url: string;
+}
+
 // GitHub PR status + conversation for a run's PR — mirrors PrStatus /
 // PrConversationItem / PrDetail in packages/server/src/orchestrator/pr.ts. The
 // body of `GET /api/runs/:id/pr` (and what the review/comment POSTs return).
@@ -320,6 +343,7 @@ export interface PrCheckSummary {
   failed: number;
   pending: number;
   total: number;
+  runs: PrCheckRun[];
 }
 
 export interface PrStatus {
@@ -383,6 +407,16 @@ export interface RepoPr {
   additions: number;
   deletions: number;
   changedFiles: number;
+}
+
+// Mirrors PrWorktreeState in packages/server/src/orchestrator/prWorktree.ts —
+// one PR review worktree's live state, as of the last create/list call.
+export interface PrWorktreeState {
+  prNumber: number;
+  path: string;
+  headOid: string;
+  dirty: boolean;
+  behind: boolean;
 }
 
 // The notes/triage hub — mirrors Note / NoteKind in packages/server/src/notes.ts. A
@@ -625,7 +659,13 @@ export type ServerEvent =
   // Carries its own result, unlike the *.changed events, so a live feed can
   // render the outcome without a follow-up fetch. Mirrors
   // packages/server/src/events.ts exactly.
-  | { type: 'board.sync'; result: SyncResult };
+  | { type: 'board.sync'; result: SyncResult }
+  // The PR poll's cached repo-PR set changed (a delta in number, head sha,
+  // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
+  // refetch GET /api/landing. No payload: the cache itself is the source of
+  // truth, same "go refetch" contract as task.changed. Mirrors
+  // packages/server/src/events.ts exactly.
+  | { type: 'landing.changed' };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
@@ -762,6 +802,9 @@ export interface PlanRecord {
    * whose one-liner the planner was asked to expand into a task. Confirming
    * such a plan links that note to the task it creates. */
   sourceNoteId?: string;
+  /** What the plan is about, for list rows: the task/note/capture title an
+   * enrich plan was started from. Absent on free-form plans. */
+  subject?: string;
 }
 
 // The body of `POST /api/plan/:id/confirm`.
@@ -854,6 +897,28 @@ export interface WardenRecord {
   updatedAt: string;
 }
 
+// Mirrors AgentSessionKind in packages/server/src/orchestrator/agentSessions.ts:
+// which kind of conversation agent a session row is — planner chat, enrich
+// ("add detail") agent, single-task draft, or warden chat. Task runs are not
+// part of this union; they are listed by `fetchRuns` and merged client-side.
+export type AgentSessionKind = 'plan' | 'enrich' | 'draft' | 'warden';
+
+// Mirrors AgentSessionMeta in packages/server/src/orchestrator/agentSessions.ts
+// — the body of `GET /api/agents`: every in-memory conversation agent the
+// daemon holds, normalized for a list row, newest activity first.
+export interface AgentSessionMeta {
+  id: string;
+  kind: AgentSessionKind;
+  /** What the agent is working on: an enrich plan's task/note/capture title,
+   * or the opening prompt's first line for free-form conversations. */
+  title: string;
+  /** The shared conversation lifecycle: turn in flight, settled, or errored. */
+  state: 'running' | 'ready' | 'failed';
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 // Mirrors EpicSession in packages/server/src/orchestrator/epic.ts.
 export interface EpicSession {
   epicId: string;
@@ -876,6 +941,19 @@ export interface EpicProgress {
   children: EpicProgressChild[];
   liveRuns: RunMeta[];
 }
+
+/**
+ * The body of `POST /api/epics/:id/land`. `pr`: a landing PR was opened and
+ * the server's poller will flip the epic to done once GitHub reports it
+ * merged. `merge`: the epic landed locally right now — `mergeCommit` is the
+ * merge commit's sha, absent only when the branch carried no commits and
+ * landing just closed the epic out. Not exported until a consumer needs it
+ * by name (knip gates unused exports at zero); reach it via
+ * `Awaited<ReturnType<ApiClient['landEpic']>>` meanwhile.
+ */
+type EpicLandResult =
+  | { mode: 'pr'; prUrl: string }
+  | { mode: 'merge'; mergeCommit?: string };
 
 // Mirrors InboxKind/InboxItem in packages/server/src/inbox.ts — the brain-dump inbox, which
 // replaced the notes store. `createdByRunId` is how "an agent flagged this mid-run" survives.
@@ -997,6 +1075,11 @@ export type MergeQueueEntryState =
   // staged index, wrong branch). Retryable and user-resolvable — the entry
   // stays in the queue carrying `reason`; POST /api/merge-queue/recheck retries.
   | 'blocked-environment'
+  // Held because the PR itself isn't green on GitHub (draft, conflicting,
+  // failing/pending checks, or an outstanding review verdict). Same contract
+  // as 'blocked-environment' — stays in the queue carrying `reason`, retried
+  // automatically as PrManager's poll cache updates.
+  | 'waiting-github'
   | 'rebasing'
   | 'verifying'
   | 'merging'
@@ -1056,6 +1139,70 @@ export interface MergeQueueSnapshot {
   entries: MergeQueueEntry[];
   /** Terminal entries (merged/failed), most-recent-first, capped at 20. */
   history: MergeQueueEntry[];
+}
+
+// Mirrors GateStatus in packages/server/src/landing.ts — what a landing row
+// is currently blocked on, if anything.
+export type GateStatus =
+  | 'ready'
+  | 'waiting-checks'
+  | 'waiting-review'
+  | 'conflicts'
+  | 'draft'
+  | 'queue-position'
+  | 'verifying'
+  | 'merging'
+  | 'blocked'
+  | 'none';
+
+// Mirrors LandingGate in packages/server/src/landing.ts.
+export interface LandingGate {
+  status: GateStatus;
+  detail: string;
+}
+
+// Mirrors LandingWorktree in packages/server/src/landing.ts.
+export interface LandingWorktree {
+  path: string;
+  syncState: 'synced' | 'behind' | 'dirty-hold';
+  headOid: string;
+}
+
+// The body of `GET /api/landing` — mirrors LandingRow in
+// packages/server/src/landing.ts.
+export interface LandingRow {
+  id: string;
+  kind: 'pr' | 'run-pr' | 'queue-local';
+  title: string;
+  taskId?: string;
+  runId?: string;
+  pr?: RepoPr;
+  queue?: { position: number; entry: MergeQueueEntry };
+  gate: LandingGate;
+  worktree?: LandingWorktree;
+}
+
+// Mirrors LandedRow in packages/server/src/landing.ts — one entry in the
+// landing feed's "recently landed" history.
+export interface LandedRow {
+  id: string;
+  title: string;
+  via: 'pr' | 'local';
+  prNumber?: number;
+  mergeCommit?: string;
+  finishedAt: string;
+}
+
+// Mirrors LandingGroup in packages/server/src/landing.ts — the four landing
+// sections a row's gate buckets into.
+export type LandingGroup = 'needs-you' | 'in-queue' | 'waiting-github' | 'open';
+
+// The body of `GET /api/landing` — mirrors LandingSnapshot in
+// packages/server/src/landing.ts.
+export interface LandingSnapshot {
+  rows: LandingRow[];
+  landed: LandedRow[];
+  generatedAt: string;
 }
 
 // Mirrors SyncState in packages/server/src/sync/boardSyncer.ts. No real
@@ -1456,6 +1603,11 @@ export interface ApiClient {
     opts?: { executor?: 'fake' | 'claude'; model?: string }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
+  // Every in-memory conversation agent (planner chats, enrich agents, task
+  // drafts, warden chats), newest activity first — the non-run half of the
+  // All agents page; merge with `fetchRuns` for the full picture. Refetch on
+  // `plan.changed`, `draft.changed` and `warden.changed`.
+  fetchAgentSessions(): Promise<AgentSessionMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
   fetchRunClaims(): Promise<RunClaim[]>;
   /** `scope: 'session'` also pre-approves the same tool for the rest of this run; `reason`
@@ -1600,8 +1752,6 @@ export interface ApiClient {
   ): Promise<InboxItem>;
   dismissInbox(ids: string[]): Promise<{ dismissed: number }>;
   convertInbox(ids: string[]): Promise<InboxConvertResponse>;
-  /** Starts an AI draft that turns one captured line into a properly specified task. */
-  enrichInbox(id: string): Promise<{ planId: string }>;
   /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
   enrichTask(id: string): Promise<{ planId: string }>;
   /** Model-backed grouping of related captures, run in the background. Always
@@ -1809,12 +1959,32 @@ export interface ApiClient {
   ): Promise<EpicSession>;
   stopEpic(epicId: string): Promise<EpicSession>;
   fetchEpicProgress(epicId: string): Promise<EpicProgress>;
+  // Lands a finished epic branch on the default base — one PR (when the
+  // project has the `pr` capability) or one local merge. 409s with the
+  // server's reason when the epic is only partially done.
+  landEpic(epicId: string): Promise<EpicLandResult>;
+  /** The epic branch's diff against the default base, in `fetchRunDiff`'s shape —
+   * served from the land-time snapshot once the branch is gone. */
+  fetchEpicDiff(epicId: string): Promise<DiffResult>;
   // The merge queue: serialized rebase -> verify -> merge over
   // reviewed-and-approved runs. `enqueueMergeQueue` 404/409s the same way
   // the server's MergeQueue.enqueue does (unknown run, non-terminal, already
   // reviewed, already queued); `removeFromMergeQueue` 409s only when the
   // given run is the entry actively being processed.
   fetchMergeQueue(): Promise<MergeQueueSnapshot>;
+  // The unified PR table: runs, the merge queue, and open/merged PRs joined
+  // into one feed — server's GET /api/landing. Never 409s: a project with no
+  // pr capability still gets its queue-local rows back.
+  getLanding(): Promise<LandingSnapshot>;
+  // Cuts (POST) or retires (DELETE) a PR's on-demand review worktree — the
+  // landing row's "review this locally" action. `confirmFork` mirrors
+  // startPrAgentReview's own fork-confirm contract. A dirty worktree 409s on
+  // delete; both throw an ApiError the caller can inspect for that.
+  createPrWorktree(
+    number: number,
+    opts?: { confirmFork?: boolean }
+  ): Promise<PrWorktreeState>;
+  removePrWorktree(number: number): Promise<{ removed: true }>;
   enqueueMergeQueue(runId: string): Promise<MergeQueueEntry>;
   // Enqueues every reviewable run in taskId's stack (blockedBy-connected
   // component), blockers first — server's MergeQueue.enqueueStack. 409s only
@@ -1942,6 +2112,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         }),
       }),
     fetchRuns: () => request(target, '/api/runs'),
+    fetchAgentSessions: () => request(target, '/api/agents'),
     fetchRun: (id) => request(target, `/api/runs/${id}`),
     fetchRunClaims: () => request(target, '/api/runs/claims'),
     approveRun: async (runId, requestId, allow, opts = {}) => {
@@ -2135,10 +2306,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         body: JSON.stringify({ ids }),
       }),
-    enrichInbox: (id) =>
-      request(target, `/api/inbox/${encodeURIComponent(id)}/enrich`, {
-        method: 'POST',
-      }),
     enrichTask: (id) =>
       request(target, `/api/tasks/${encodeURIComponent(id)}/enrich`, {
         method: 'POST',
@@ -2313,7 +2480,18 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/epics/${epicId}/stop`, { method: 'POST' }),
     fetchEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
+    landEpic: (epicId) =>
+      request(target, `/api/epics/${epicId}/land`, { method: 'POST' }),
+    fetchEpicDiff: (epicId) => request(target, `/api/epics/${epicId}/diff`),
     fetchMergeQueue: () => request(target, '/api/merge-queue'),
+    getLanding: () => request(target, '/api/landing'),
+    createPrWorktree: (number, opts = {}) =>
+      request(target, `/api/prs/${number}/worktree`, {
+        method: 'POST',
+        ...jsonBody(opts),
+      }),
+    removePrWorktree: (number) =>
+      request(target, `/api/prs/${number}/worktree`, { method: 'DELETE' }),
     enqueueMergeQueue: (runId) =>
       request(target, '/api/merge-queue', {
         method: 'POST',

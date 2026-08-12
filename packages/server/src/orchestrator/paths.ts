@@ -92,6 +92,15 @@ export function mergeQueuePath(rootDir: string): string {
   return join(runsDir(rootDir), 'merge-queue.json');
 }
 
+// Where PrManager's epic-PR ledger lives: the PRs opened to land whole epic
+// branches on the default base (epicId -> PR url), persisted so a daemon
+// restart keeps polling them to merged instead of forgetting an epic mid-land.
+// One file per project, same flat-alongside-the-runs placement as
+// mergeQueuePath above it.
+export function epicPrsPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'epic-prs.json');
+}
+
 // A review run's own directory: the diff package handed to it and the findings
 // JSON it writes back, beside the transcript so both outlive its worktree.
 export function reviewDir(rootDir: string, runId: string): string {

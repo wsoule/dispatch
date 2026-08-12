@@ -19,7 +19,7 @@ function detail(decision: PrDetail['status']['reviewDecision']): PrDetail {
       isDraft: false,
       reviewDecision: decision,
       mergeable: 'MERGEABLE',
-      checks: { passed: 0, failed: 0, pending: 0, total: 0 },
+      checks: { passed: 0, failed: 0, pending: 0, total: 0, runs: [] },
       additions: 1,
       deletions: 0,
       changedFiles: 1,

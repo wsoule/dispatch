@@ -1,4 +1,5 @@
-import { Inbox as InboxIcon } from 'lucide-react';
+import { GitMerge, Inbox as InboxIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import type { ReviewQueueItem } from '../components/runs/ReviewQueue';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
@@ -8,7 +9,6 @@ import type { FeedState } from '../lib/feedState';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import type { InboxData } from '../lib/inboxQueue';
 import { reviewTargetKey } from '../lib/reviewTarget';
-import { LandingView } from './LandingView';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
@@ -18,7 +18,8 @@ import { Skeleton } from '@/ui/skeleton';
 interface InboxViewProps {
   /** The two lists this view renders — see `buildInbox`. */
   data: InboxData;
-  /** The whole project, for the merge queue below the lists. */
+  /** The whole project: the daemon-availability states this view renders
+   * before either list, and the merge-queue actions on the review rows. */
   project: DispatchProjectData;
   /** Opens the full task view on a given tab, pinned to one run —
    * `openTaskView` from App.tsx. */
@@ -31,11 +32,12 @@ interface InboxViewProps {
  * A slim, list-only page of what's waiting on a human: runs stalled on an
  * approval or a question, and everything `buildReviewQueue` flags as needing a
  * look. Composed entirely from `buildInbox` — this view never re-derives which
- * runs belong here.
+ * runs belong here. Queueing a merge is offered inline, so approving never
+ * costs a navigation.
  *
- * The merge queue sits underneath, because approving from here is what puts
- * things in it — as its own destination it split one flow across two screens
- * you had to remember to check.
+ * Deliberately only the two lists: what is landing, and what already landed,
+ * is the Landing table's job — one destination for it rather than a second,
+ * partial copy of the queue under this one.
  */
 export function InboxView({
   data,
@@ -118,7 +120,24 @@ export function InboxView({
           )}
           {review.length > 0 && (
             <section>
-              <SectionLabel rule count={review.length}>
+              <SectionLabel
+                rule
+                count={review.length}
+                trailing={
+                  review.some((i) => i.target.kind === 'run') ? (
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="xs"
+                      onClick={() => void project.handleMergeAllReady()}
+                      title="Queue every ready run for the merge queue — each still runs verify before landing"
+                    >
+                      <GitMerge className="size-3" />
+                      Queue all for merge
+                    </Button>
+                  ) : undefined
+                }
+              >
                 Needs review
               </SectionLabel>
               <div className="mt-1.5 flex flex-col gap-0.5">
@@ -128,6 +147,9 @@ export function InboxView({
                     item={item}
                     onOpenTask={onOpenTask}
                     onOpenPr={onOpenPr}
+                    onQueueMerge={(runId) =>
+                      void project.handleEnqueueMerge(runId)
+                    }
                   />
                 ))}
               </div>
@@ -135,19 +157,6 @@ export function InboxView({
           )}
         </div>
       )}
-
-      {/* `shrink-0`: LandingView now sizes to its own content, but this container's flex
-          items can otherwise still be squeezed by the flex algorithm — pin it so the queue
-          scrolls with the two lists above instead of getting compressed. */}
-      <div className="shrink-0">
-        <LandingView
-          data={project}
-          onOpenRun={(runId) => {
-            const run = project.runs.find((r) => r.id === runId);
-            if (run !== undefined) onOpenTask(run.taskId, 'diff', run.id);
-          }}
-        />
-      </div>
     </div>
   );
 }
@@ -161,10 +170,13 @@ function ReviewRow({
   item,
   onOpenTask,
   onOpenPr,
+  onQueueMerge,
 }: {
   item: ReviewQueueItem;
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
   onOpenPr: (number: number) => void;
+  /** Queues one run for the merge queue without opening it first. */
+  onQueueMerge?: (runId: string) => void;
 }) {
   if (item.target.kind === 'run' && item.run !== undefined) {
     const run = item.run;
@@ -174,6 +186,21 @@ function ReviewRow({
         state="review"
         updatedAt={item.updatedAt}
         onClick={() => onOpenTask(run.taskId, 'diff', run.id)}
+        action={
+          onQueueMerge !== undefined ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              onClick={() => onQueueMerge(run.id)}
+              aria-label={`Queue merge: ${item.title}`}
+              title="Queue this run for merge"
+              className="text-muted-foreground hover:text-foreground shrink-0"
+            >
+              <GitMerge className="size-3.5" />
+            </Button>
+          ) : undefined
+        }
       />
     );
   }
@@ -194,11 +221,15 @@ function Row({
   state,
   updatedAt,
   onClick,
+  action,
 }: {
   title: string;
   state: FeedState;
   updatedAt: string;
   onClick?: () => void;
+  /** A trailing control rendered as the row button's sibling, never nested
+   * inside it — nested buttons are invalid markup and swallow clicks. */
+  action?: ReactNode;
 }) {
   const content = (
     <>
@@ -220,17 +251,25 @@ function Row({
     );
   }
 
-  return (
+  const row = (
     <Button
       type="button"
       variant="ghost"
       onClick={onClick}
       className={cn(
         'h-auto w-full justify-start gap-2 rounded-md border border-transparent px-2 py-1.5 font-normal text-left',
-        'hover:bg-muted/60'
+        'hover:bg-muted/60',
+        action !== undefined && 'flex-1'
       )}
     >
       {content}
     </Button>
+  );
+  if (action === undefined) return row;
+  return (
+    <div className="flex items-center gap-1">
+      {row}
+      {action}
+    </div>
   );
 }

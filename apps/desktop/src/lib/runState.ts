@@ -171,11 +171,36 @@ export function runSurveyNotice(
 ): RunSurveyNotice | null {
   const paths =
     survey.staged.length + survey.unstaged.length + survey.untracked.length;
-  if (paths === 0) return null;
-  return {
-    title: 'Run left uncommitted work',
-    body: `${taskTitle} · ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
-  };
+  if (paths > 0) {
+    return {
+      title: 'Run left uncommitted work',
+      body: `${taskTitle} · ${paths} uncommitted path${paths === 1 ? '' : 's'} on ${survey.branch}`,
+    };
+  }
+  // A clean tree can still carry news: the orphaned agent of a force-failed
+  // run committed after the failure (see RunSurvey.postFailCommits) — without
+  // this the run keeps reading as dead while its branch quietly has the work.
+  const commits = survey.postFailCommits ?? [];
+  if (commits.length > 0) {
+    return {
+      title: 'Work landed after a failed run',
+      body: `${taskTitle} · ${commits.length} commit${commits.length === 1 ? '' : 's'} on ${survey.branch} after the failure`,
+    };
+  }
+  return null;
+}
+
+/**
+ * The "work landed on this branch after the failure" banner text for a
+ * force-failed run whose orphaned agent kept committing, or `null` when there
+ * is nothing to flag. Shared by the run log and review surfaces so the two
+ * never word the same discovery differently.
+ */
+export function postFailWorkLabel(meta: RunMeta): string | null {
+  const commits = meta.survey?.postFailCommits ?? [];
+  if (commits.length === 0) return null;
+  const latest = commits[0];
+  return `Work landed on this branch after the failure — ${commits.length} commit${commits.length === 1 ? '' : 's'}, latest: “${latest.subject}”`;
 }
 
 /** What the halting controls should render for one run — see `deriveStopControl`. */

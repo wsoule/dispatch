@@ -8,6 +8,7 @@ import {
   ChevronsUpDown,
   Cog,
   GitBranch,
+  GitMerge,
   Inbox,
   LayoutDashboard,
   ListChecks,
@@ -83,6 +84,9 @@ const PROJECT_VIEWS: {
   { id: 'impact', label: 'Impact', icon: Waypoints },
 
   { id: 'branches', label: 'Git', icon: GitBranch, group: 'Git' },
+  // Every open PR with its gates plus what already landed — the one answer to
+  // "what lands, when, and what landed".
+  { id: 'landing', label: 'Landing', icon: GitMerge },
 ];
 
 /** The rail order is the shortcut order — cmd+1 is the first entry, and so on. */

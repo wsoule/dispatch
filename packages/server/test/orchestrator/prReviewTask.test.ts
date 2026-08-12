@@ -29,7 +29,7 @@ function makePr(overrides: Partial<RepoPr & { body: string }> = {}) {
     headRepositoryOwner: 'acme',
     reviewDecision: null,
     mergeable: 'MERGEABLE' as const,
-    checks: { passed: 0, failed: 0, pending: 0, total: 0 },
+    checks: { passed: 0, failed: 0, pending: 0, total: 0, runs: [] },
     additions: 10,
     deletions: 2,
     changedFiles: 2,

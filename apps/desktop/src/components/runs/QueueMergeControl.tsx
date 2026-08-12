@@ -16,6 +16,10 @@ const QUEUE_STATE_LABEL: Partial<Record<MergeQueueEntryState, string>> = {
   // the queue is waiting on the person, and the entry's `reason` names the
   // file or branch to deal with.
   'blocked-environment': 'Blocked on your checkout',
+  // Same non-progressive framing as 'blocked-environment': the queue is
+  // waiting on GitHub (a draft, a conflict, failing/pending checks, an
+  // outstanding review verdict), not on anything actively running here.
+  'waiting-github': 'Waiting on GitHub',
   rebasing: 'Rebasing…',
   verifying: 'Verifying…',
   merging: 'Merging…',

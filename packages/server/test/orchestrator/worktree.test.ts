@@ -678,6 +678,26 @@ describe('WorktreeManager branch enumeration', () => {
     expect(worktrees.aheadCount('dispatch/t-a-r1', 'main')).toBe(2);
   });
 
+  it('counts how far the base has moved past a branch that stood still', () => {
+    const repo = initGitRepo();
+    const worktrees = new WorktreeManager(repo);
+    worktrees.add(
+      worktreeSiblingPath(repo, 'wt-behind'),
+      'dispatch/t-a-r1',
+      'main'
+    );
+    // Two commits land on main while the branch does nothing.
+    writeFileSync(join(repo, 'main-one.txt'), 'one\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'main one']);
+    writeFileSync(join(repo, 'main-two.txt'), 'two\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'main two']);
+
+    expect(worktrees.behindCount('dispatch/t-a-r1', 'main')).toBe(2);
+    expect(worktrees.aheadCount('dispatch/t-a-r1', 'main')).toBe(0);
+  });
+
   it('reports zero ahead for a branch identical to its base', () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);

@@ -30,6 +30,11 @@ import { FindingStore } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
+import {
+  EPIC_BRANCH_PREFIX,
+  epicBranchName,
+  isEpicBranch,
+} from './epicBranch.js';
 import { JjManager } from './jj.js';
 import { collectOrientation } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -135,6 +140,17 @@ const DISPATCH_BRANCH_PREFIX = 'dispatch/';
 // scheduleClaimsRefresh.
 const CLAIMS_REFRESH_COOLDOWN_MS = 5_000;
 
+// The reason stamped onto every run reconcileOnBoot force-fails. The run's
+// agent did nothing wrong — dispatchd lost track of it across a restart — and
+// the process itself survives a daemon restart, so it may still be working.
+export const BOOT_FORCE_FAIL_ERROR =
+  'dispatchd restarted while this run was in flight; the agent process may still be running';
+
+// Minimum gap between opportunistic orphan-work re-surveys for one run — see
+// scheduleOrphanRecheck. An orphaned agent commits on human timescales
+// (minutes), so once a minute per actually-viewed run is plenty.
+const ORPHAN_RECHECK_COOLDOWN_MS = 60_000;
+
 // How long a gracefully-stopped run gets to wind down before the stop is
 // escalated to a hard cancel — see scheduleStopEscalation. Generous on purpose:
 // the agent may legitimately be mid-tool-call (a long test run, a large edit)
@@ -150,6 +166,9 @@ const STATUS_RANK: Record<BranchEntryStatus, number> = {
   orphan: 1,
   reviewable: 2,
   active: 3,
+  // Integration branches sit below the run-shaped rows: they are context, not
+  // work waiting on anyone.
+  epic: 4,
 };
 
 // How a branch ref relates to the run registry — see BranchEntryStatus for
@@ -159,6 +178,21 @@ function branchEntryStatus(meta: RunMeta | undefined): BranchEntryStatus {
   if (meta === undefined) return 'orphan';
   if (!TERMINAL_RUN_STATES.has(meta.state)) return 'active';
   return meta.reviewedAt === undefined ? 'reviewable' : 'leftover';
+}
+
+// What epicLandStatus() answers: the landing an epic's integration branch is
+// ready for, once every readiness gate has passed. `hasChanges` is what routes
+// the API between a PR (needs commits to PR) and the local close-out.
+export interface EpicLandStatus {
+  epicId: string;
+  /** The epic's integration branch, `epic/<id>`. */
+  branch: string;
+  /** The default base branch the landing targets. */
+  base: string;
+  /** The epic's title — the PR title / merge message. */
+  title: string;
+  /** Whether the branch carries any commits beyond the base at all. */
+  hasChanges: boolean;
 }
 
 /**
@@ -226,6 +260,9 @@ export class Orchestrator {
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
+  // When each failed run was last re-surveyed for orphan-landed work — see
+  // scheduleOrphanRecheck.
+  private readonly lastOrphanCheck = new Map<string, number>();
   private readonly claimsRefreshCooldownMs: number;
   // Pending "this stop has taken too long" timers, keyed by run — see
   // scheduleStopEscalation, and transition() for where they are cleared.
@@ -388,6 +425,10 @@ export class Orchestrator {
   getRun(id: string): RunDetail | null {
     const meta = this.registry.get(id);
     if (meta !== undefined) {
+      // An orphaned agent can land commits long after the boot survey ran, so
+      // one boot-time snapshot isn't enough — re-check (cooldown-gated,
+      // fire-and-forget) whenever someone actually looks at a failed run.
+      this.scheduleOrphanRecheck(meta);
       const lines = this.transcriptFor(id).read();
       const entries = lines
         .filter((line) => line.type === 'entry')
@@ -744,7 +785,6 @@ export class Orchestrator {
   private async resolveBase(
     task: TaskDoc
   ): Promise<{ base: string; stackParents: string[] }> {
-    const defaultBase = this.worktrees.defaultBaseBranch();
     const parents: string[] = [];
     for (const blockerId of task.meta.blockedBy) {
       const blocker = this.ctx.store.get(blockerId);
@@ -753,7 +793,20 @@ export class Orchestrator {
       if (branch !== null) parents.push(branch);
     }
 
-    if (parents.length === 0) return { base: defaultBase, stackParents: [] };
+    // An unblocked task under an epic is cut from the epic's integration
+    // branch (created lazily, right here, on the epic's first dispatch)
+    // instead of the default base — that is the whole epic-branch feature. A
+    // STACKED dispatch deliberately does not create or consult the epic
+    // branch: its base is its blockers' branches, and a sibling blocker's
+    // branch is already rooted on the epic branch, so the run ends up there
+    // anyway once the merge queue restacks it after the blocker lands.
+    if (parents.length === 0) {
+      const epicBase = this.ensureEpicBranchFor(task);
+      return {
+        base: epicBase ?? this.worktrees.defaultBaseBranch(),
+        stackParents: [],
+      };
+    }
     if (parents.length === 1) {
       return { base: parents[0], stackParents: parents };
     }
@@ -843,6 +896,54 @@ export class Orchestrator {
       // Fall through and append.
     }
     this.noteTaskActivity(taskId, text);
+  }
+
+  /**
+   * The epic integration branch a task should be cut from, creating it if
+   * this is the epic's first dispatch — or null when the task doesn't sit
+   * under an epic. Creation is deliberately lazy (an epic whose children
+   * never dispatch never grows a branch) and is recorded on the epic's own
+   * Activity so the branch's origin is visible where a human looks for it.
+   */
+  private ensureEpicBranchFor(task: TaskDoc): string | null {
+    if (task.meta.parent === null) return null;
+    const parent = this.ctx.store.get(task.meta.parent);
+    if (parent === null || parent.meta.kind !== 'epic') return null;
+    const branch = epicBranchName(parent.meta.id);
+    if (!this.worktrees.hasBranch(branch)) {
+      const from = this.worktrees.defaultBaseBranch();
+      try {
+        this.worktrees.createBranch(branch, from);
+      } catch (err) {
+        // Two dispatches under the same epic can race the exists-check; the
+        // loser's create fails on a branch that now exists, which is exactly
+        // the state it wanted. Anything else is a real failure.
+        if (!this.worktrees.hasBranch(branch)) throw err;
+        return branch;
+      }
+      this.noteTaskActivity(
+        parent.meta.id,
+        `[epic] integration branch ${branch} created from ${from}`
+      );
+    }
+    return branch;
+  }
+
+  /**
+   * The epic integration branch a run's own task belongs under, or null when
+   * the task has no parent epic OR that epic's branch does not (yet or any
+   * longer) exist in git. The merge queue uses this to notice a restack that
+   * would carry a run AWAY from its epic branch — see MergeQueue.restackRun.
+   */
+  epicBranchForRun(runId: string): string | null {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return null;
+    const task = this.ctx.store.get(meta.taskId);
+    if (task === null || task.meta.parent === null) return null;
+    const parent = this.ctx.store.get(task.meta.parent);
+    if (parent === null || parent.meta.kind !== 'epic') return null;
+    const branch = epicBranchName(parent.meta.id);
+    return this.worktrees.hasBranch(branch) ? branch : null;
   }
 
   // The branch of a task's most recent terminal, unreviewed run — the branch
@@ -1303,6 +1404,17 @@ export class Orchestrator {
     this.fireTerminalHooks(runId);
   }
 
+  // The moment a run FIRST reached `failed`, from its transcript. This is the
+  // cutoff for "work landed after the failure": meta.updatedAt moves every
+  // time a later survey is stamped, so using it would re-baseline each
+  // re-survey and already-flagged orphan commits would drop out again.
+  private firstFailedAt(runId: string): string | undefined {
+    for (const line of this.transcriptFor(runId).read()) {
+      if (line.type === 'state' && line.state === 'failed') return line.ts;
+    }
+    return undefined;
+  }
+
   // Surveys a run's worktree via git status/log. Degrades to an empty clean
   // survey, rather than throwing, when the worktree itself is gone.
   async surveyRun(runId: string): Promise<RunSurvey> {
@@ -1310,7 +1422,7 @@ export class Orchestrator {
     const repo = new GitRepo(meta.worktreePath);
     const [statusResult, logResult] = await Promise.all([
       repo.status(),
-      repo.log({ limit: 1 }),
+      repo.log({ limit: 50 }),
     ]);
     const staged = statusResult.ok
       ? statusResult.staged.map((f) => f.path)
@@ -1329,6 +1441,17 @@ export class Orchestrator {
       firstCommit !== undefined
         ? { sha: firstCommit.sha, subject: firstCommit.subject }
         : null;
+    // Commits an orphaned agent landed after the run was marked failed (see
+    // RunSurvey.postFailCommits). Date-parsed, not string-compared: %aI dates
+    // carry the author's local UTC offset, so lexicographic order lies.
+    const failedAt = this.firstFailedAt(runId);
+    const failedAtMs = failedAt !== undefined ? Date.parse(failedAt) : NaN;
+    const postFailCommits =
+      logResult.ok && !Number.isNaN(failedAtMs)
+        ? logResult.commits
+            .filter((c) => Date.parse(c.date) > failedAtMs)
+            .map((c) => ({ sha: c.sha, subject: c.subject, date: c.date }))
+        : [];
     return {
       runId,
       branch: meta.branch,
@@ -1338,6 +1461,7 @@ export class Orchestrator {
       lastCommit,
       cleanTree:
         staged.length === 0 && unstaged.length === 0 && untracked.length === 0,
+      postFailCommits,
     };
   }
 
@@ -1381,6 +1505,29 @@ export class Orchestrator {
     });
   }
 
+  // Cooldown-gated, fire-and-forget re-survey of a failed run, called from
+  // getRun — the way commits an orphaned agent lands AFTER boot still get
+  // noticed (the boot survey is a one-shot snapshot; see stampOrphanWork).
+  // Skips runs a human already closed out, and never doubles up on a survey
+  // already in flight.
+  private scheduleOrphanRecheck(meta: RunMeta): void {
+    if (meta.state !== 'failed' || meta.reviewedAt !== undefined) return;
+    if (this.scheduledSurveys.has(meta.id)) return;
+    const last = this.lastOrphanCheck.get(meta.id) ?? 0;
+    if (Date.now() - last < ORPHAN_RECHECK_COOLDOWN_MS) return;
+    this.lastOrphanCheck.set(meta.id, Date.now());
+    this.scheduleSurvey(meta.id);
+  }
+
+  // The recheck without its cooldown, settled rather than fire-and-forget.
+  // Public so tests can drive one deterministically. Joins a survey already in
+  // flight instead of racing a second one against it — two concurrent surveys
+  // could both pass stampOrphanWork's changed-commits check and double-note.
+  resurveyOrphanWork(runId: string): Promise<void> {
+    if (!this.scheduledSurveys.has(runId)) this.scheduleSurvey(runId);
+    return this.surveySettled(runId);
+  }
+
   // Fire-and-forget survey. No caller is left to receive a rejection, and this
   // decides `failed` vs `interrupted-dirty`, so a failure is logged, not lost.
   private scheduleSurvey(runId: string): void {
@@ -1416,13 +1563,16 @@ export class Orchestrator {
       );
       return;
     }
-    if (survey.cleanTree) return;
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.state !== 'failed') return;
     if (meta.reviewedAt !== undefined) return;
     // A resume took the worktree over while this survey was in flight, so what
     // it found is that run's tree, not a record of how this one was left.
     if (this.registry.list().some((r) => r.resumedFrom === runId)) return;
+    if (survey.cleanTree) {
+      this.stampOrphanWork(meta, survey);
+      return;
+    }
     const now = new Date().toISOString();
     this.registry.updateMeta(runId, {
       state: 'interrupted-dirty',
@@ -1444,6 +1594,36 @@ export class Orchestrator {
     this.noteTaskActivity(
       meta.taskId,
       `[run ${runId}] flagged interrupted-dirty: ${survey.staged.length + survey.unstaged.length + survey.untracked.length} uncommitted path(s) found`
+    );
+  }
+
+  // A failed run whose tree is clean but whose branch gained commits after the
+  // failure: the orphaned agent process survived the daemon restart and kept
+  // committing (see reconcileOnBoot). The run stays `failed` — its daemon
+  // really did lose it — but the survey is stamped so the UI can say "work
+  // landed on this branch after the failure" instead of showing a dead $0 run.
+  // No-ops unless the recorded commits actually changed, so the cooldown-gated
+  // re-check from getRun never re-notes the same discovery.
+  private stampOrphanWork(meta: RunMeta, survey: RunSurvey): void {
+    const commits = survey.postFailCommits ?? [];
+    if (commits.length === 0) return;
+    const known = meta.survey?.postFailCommits ?? [];
+    if (commits.length === known.length && commits[0]?.sha === known[0]?.sha) {
+      return;
+    }
+    const now = new Date().toISOString();
+    this.registry.updateMeta(meta.id, { survey, updatedAt: now });
+    // Same rule as the interrupted-dirty stamp above: the registry already
+    // carries the survey, so a transcript that can't be written must not also
+    // cost the broadcasts.
+    this.bestEffort(`appending orphan-work survey for run ${meta.id}`, () => {
+      this.transcriptFor(meta.id).appendState('failed', now, { survey });
+    });
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    this.ctx.events.broadcast({ type: 'run.survey', runId: meta.id, survey });
+    this.noteTaskActivity(
+      meta.taskId,
+      `[run ${meta.id}] work landed on this branch after the failure: ${commits.length} commit(s), latest "${commits[0].subject}"`
     );
   }
 
@@ -1798,6 +1978,20 @@ export class Orchestrator {
     now: string,
     actor: string | undefined
   ): string | undefined {
+    // A run based on an epic integration branch lands THERE, not on whatever
+    // the main checkout has checked out — via a checkout-free squash merge
+    // that never touches the user's working tree, so none of the checkout
+    // gates below apply to it. The one exception: when the user actually HAS
+    // the epic branch checked out, the plumbing path's `update-ref` would
+    // move the ref under a live working tree and leave it inconsistent, so
+    // that case falls through to the normal checkout merge below, whose gates
+    // handle exactly that situation.
+    if (
+      isEpicBranch(meta.baseBranch) &&
+      this.currentMainBranch() !== meta.baseBranch
+    ) {
+      return this.mergeRunIntoEpicBranch(meta, now, actor);
+    }
     // All three gates below describe the MAIN CHECKOUT, not this run, and all
     // three clear the moment the user commits/stashes/checks out — so they
     // throw MergeEnvironmentError rather than a plain conflict, which is what
@@ -1912,6 +2106,372 @@ export class Orchestrator {
   }
 
   /**
+   * mergeRun's epic-branch counterpart: squash-merges a run onto its epic
+   * integration branch entirely in the object database (see
+   * WorktreeManager.squashMergeIntoRef), because that branch is never checked
+   * out anywhere a `git merge` could run.
+   *
+   * Bookkeeping follows markRunMergedViaPr's shape, not the checkout path's:
+   * the task file is updated (status -> done) but NOT committed — the epic
+   * branch's commit carries exactly the run's own content, and the task edit
+   * stays as pending `.dispatch/` bookkeeping in the main checkout, which the
+   * dirty gate already treats as expected.
+   */
+  private mergeRunIntoEpicBranch(
+    meta: RunMeta,
+    now: string,
+    actor: string | undefined
+  ): string | undefined {
+    // The branch can vanish between dispatch and review — a human deleting it
+    // by hand is the only way, and the honest response is the same refusal a
+    // moved-away base gets, with the reason spelled out.
+    if (!this.worktrees.hasBranch(meta.baseBranch)) {
+      throw new OrchestratorConflictError(
+        `epic branch ${meta.baseBranch} no longer exists — recreate it or re-dispatch the task`
+      );
+    }
+    // `diffCommittedOnly` for the same reason mergeRun uses it: the squash
+    // only ever carries commits reachable from the run's branch.
+    const preMergeDiff = this.worktrees.diffCommittedOnly(
+      meta.worktreePath,
+      meta.baseBranch
+    );
+    const hasChanges = preMergeDiff.files.length > 0;
+    let mergeCommit: string | undefined;
+    if (hasChanges) {
+      try {
+        mergeCommit = this.worktrees.squashMergeIntoRef(
+          meta.baseBranch,
+          meta.branch,
+          `dispatch: ${meta.taskTitle} (run ${meta.id})`
+        );
+      } catch (err) {
+        // A content conflict (or a concurrently-moved tip) is a 409 the user
+        // can act on, never an opaque 500 — same contract as the checkout
+        // path. Nothing needs rolling back: the plumbing merge either updates
+        // the ref atomically or leaves everything untouched.
+        throw new OrchestratorConflictError((err as Error).message);
+      }
+    }
+    this.ctx.store.update(
+      meta.taskId,
+      {
+        status: 'done',
+        appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
+        activityActor: actor,
+      },
+      now
+    );
+    this.persistDiffSnapshot(meta, preMergeDiff);
+    this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+    return mergeCommit;
+  }
+
+  // ---------------------------------------------------------------------
+  // Landing a finished epic branch on the default base — the epic-level
+  // counterpart of review(id, 'merge'). POST /api/epics/:id/land routes here
+  // (local merge) or through PrManager.openEpicPr (PR), both anchored on
+  // epicLandStatus's validation.
+  // ---------------------------------------------------------------------
+
+  // `epicId` as an epic TaskDoc — 404 for an unknown id, 400 for a plain
+  // task. The orchestrator's own copy of EpicEngine's private requireEpic:
+  // the land path must not depend on a dispatch session existing.
+  private requireEpicDoc(epicId: string): TaskDoc {
+    const epic = this.ctx.store.get(epicId);
+    if (epic === null) {
+      throw new OrchestratorNotFoundError(`epic not found: ${epicId}`);
+    }
+    if (epic.meta.kind !== 'epic') {
+      throw new OrchestratorClientError(`not an epic: ${epicId}`);
+    }
+    return epic;
+  }
+
+  /**
+   * Validates that an epic's integration branch is ready to land on the
+   * default base, and describes the landing: which branch, onto what, and
+   * whether it carries any commits at all. Both land paths (local merge here,
+   * PR via PrManager) call this first, so a partially-done epic gets the same
+   * refusal whichever way the project lands.
+   *
+   * "Finished" means every child task is `done` or `cancelled` — anything at
+   * `todo`/`in-progress`/`in-review` is work that has not reached the epic
+   * branch yet, and landing now would ship half an epic. A leftover
+   * unreviewed run still based on the branch (its task cancelled by hand, or
+   * hand-flipped to done) also refuses: landing deletes the branch that
+   * run's diff and merge are anchored on.
+   */
+  epicLandStatus(epicId: string): EpicLandStatus {
+    const epic = this.requireEpicDoc(epicId);
+    if (epic.meta.status === 'done') {
+      throw new OrchestratorConflictError(`epic has already landed: ${epicId}`);
+    }
+    const branch = epicBranchName(epicId);
+    if (!this.worktrees.hasBranch(branch)) {
+      throw new OrchestratorConflictError(
+        `epic has no integration branch to land: ${branch} does not exist ` +
+          '(no child run has been dispatched under this epic)'
+      );
+    }
+    const children = this.ctx.cache
+      .query({ parent: epicId, includeArchived: true })
+      .filter((t) => t.meta.kind === 'task');
+    const unfinished = children.filter(
+      (c) => c.meta.status !== 'done' && c.meta.status !== 'cancelled'
+    );
+    if (unfinished.length > 0) {
+      const named = unfinished
+        .map((c) => `${c.meta.id}: ${c.meta.status}`)
+        .join(', ');
+      throw new OrchestratorConflictError(
+        `epic is only partially done — ${unfinished.length} of ` +
+          `${children.length} child task(s) still pending (${named}). ` +
+          'Finish or cancel them before landing.'
+      );
+    }
+    const straggler = this.registry
+      .list()
+      .find((r) => r.baseBranch === branch && r.reviewedAt === undefined);
+    if (straggler !== undefined) {
+      throw new OrchestratorConflictError(
+        `epic branch is still the base of unreviewed run ${straggler.id} ` +
+          `(task ${straggler.taskId}) — merge or discard it first`
+      );
+    }
+    const base = this.worktrees.defaultBaseBranch();
+    // Without this, a default base that origin/HEAD names but that has no
+    // local ref would make aheadCount read 0, skip both merge paths, and
+    // close the epic out — deleting its branch — with nothing landed.
+    if (!this.worktrees.hasBranch(base)) {
+      throw new OrchestratorConflictError(
+        `default base branch ${base} does not exist locally — nothing to land onto`
+      );
+    }
+    return {
+      epicId,
+      branch,
+      base,
+      title: epic.meta.title,
+      // Commit-based rather than diff-based: `gh pr create` needs commits
+      // between the refs, and a merge with no commits to bring over has
+      // nothing to do — landing then just closes the epic out.
+      hasChanges: this.worktrees.aheadCount(branch, base) > 0,
+    };
+  }
+
+  /**
+   * Lands a finished epic branch on the default base as ONE local merge
+   * commit (`--no-ff`, both parents recorded), then closes the epic out the
+   * way review-merge closes a run: diff snapshot persisted, branch deleted,
+   * epic status -> done. The API uses this when the project lacks the `pr`
+   * capability, and for the degenerate no-commits landing either way.
+   *
+   * Mirrors mergeRun's two paths: when the default base is checked out in
+   * the main repo, a working-tree merge behind the same environment gates;
+   * otherwise a checkout-free plumbing merge that never touches the user's
+   * working tree.
+   */
+  landEpicLocally(
+    epicId: string,
+    opts: { actor?: string } = {}
+  ): { epicId: string; mergeCommit?: string } {
+    const actor = opts.actor ?? this.ctx.actorContext?.humanRef;
+    const { branch, base, title, hasChanges } = this.epicLandStatus(epicId);
+    // Snapshot input computed before anything moves, same as mergeRun's
+    // preMergeDiff — after the merge the branch is gone.
+    const preDiff = this.worktrees.diffBetweenRefs(base, branch);
+    const message = `dispatch: ${title} (epic ${epicId})`;
+    const now = new Date().toISOString();
+
+    let mergeCommit: string | undefined;
+    const baseCheckedOut = this.currentMainBranch() === base;
+    if (hasChanges && !baseCheckedOut) {
+      try {
+        mergeCommit = this.worktrees.mergeCommitIntoRef(base, branch, message);
+      } catch (err) {
+        // A content conflict (main moved under the epic in a conflicting
+        // way) is a 409 the user can act on — merge the base into the epic
+        // branch by hand, then land again. The plumbing merge either updates
+        // the ref atomically or leaves everything untouched.
+        throw new OrchestratorConflictError((err as Error).message);
+      }
+    } else if (baseCheckedOut) {
+      // Same three gates as mergeRun, same reasoning: they describe the main
+      // checkout, clear the moment the user commits/stashes, and the third is
+      // satisfied by definition here.
+      const dirtyPaths = this.mainDirtyPathsOutsideDispatch();
+      if (dirtyPaths.length > 0) {
+        throw new MergeEnvironmentError(
+          Orchestrator.describeDirtyPaths(dirtyPaths)
+        );
+      }
+      if (this.worktrees.hasStagedChanges()) {
+        throw new MergeEnvironmentError(
+          'main checkout index has staged changes — commit or unstage them first'
+        );
+      }
+      if (hasChanges) {
+        try {
+          this.worktrees.mergeNoFf(branch, message);
+        } catch (err) {
+          // Restore a clean HEAD after a real conflict, exactly as mergeRun
+          // does for its squash — a wedged main checkout helps nobody.
+          Bun.spawnSync(['git', 'reset', '--merge'], { cwd: this.ctx.rootDir });
+          throw new OrchestratorConflictError((err as Error).message);
+        }
+      }
+    }
+
+    // Only now — the merge genuinely exists (or there was nothing to merge)
+    // — record the epic as done, mirroring mergeRun's ordering so a failed
+    // merge never leaves the epic closed with nothing landed.
+    this.ctx.store.update(
+      epicId,
+      {
+        status: 'done',
+        appendActivity: `${now} [epic] landed on ${base}${
+          hasChanges ? '' : ' (no commits to merge)'
+        }`,
+        activityActor: actor,
+      },
+      now
+    );
+    if (baseCheckedOut) {
+      // Fold the epic's own task-file bookkeeping into the merge commit when
+      // one exists (amend keeps both parents); otherwise the task-only commit
+      // IS the landing's entire effect — both mirroring mergeRun.
+      this.stageTaskFile(epicId);
+      const commitArgs = hasChanges
+        ? ['commit', '--amend', '--no-edit']
+        : ['commit', '-m', message];
+      Bun.spawnSync(['git', ...commitArgs], { cwd: this.ctx.rootDir });
+      if (hasChanges) mergeCommit = this.worktrees.resolveCommit('HEAD');
+    }
+
+    this.persistEpicDiffSnapshot(epicId, preDiff);
+    this.worktrees.removeBranchRef(branch);
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+    // The Branches surface just lost a row.
+    this.ctx.events.broadcast({ type: 'run.changed' });
+    return { epicId, mergeCommit };
+  }
+
+  /**
+   * The PR poller's terminal action for an epic PR — GitHub reports the PR
+   * merged, so the landing already happened on the remote. Same closing-out
+   * as landEpicLocally minus any merge: snapshot while the local branch is
+   * still here, delete it, flip the epic to done. Idempotent-ish on purpose:
+   * an epic already done (or deleted) just gets its branch cleaned up, so a
+   * poll pass repeated after a crash cannot double-close anything.
+   */
+  markEpicMergedViaPr(epicId: string, prUrl: string): void {
+    const epic = this.ctx.store.get(epicId);
+    const branch = epicBranchName(epicId);
+    if (this.worktrees.hasBranch(branch)) {
+      let base: string;
+      try {
+        base = this.worktrees.defaultBaseBranch();
+      } catch {
+        base = 'HEAD';
+      }
+      this.persistEpicDiffSnapshot(
+        epicId,
+        this.worktrees.diffBetweenRefs(base, branch)
+      );
+      this.worktrees.removeBranchRef(branch);
+    }
+    if (epic !== null && epic.meta.status !== 'done') {
+      const now = new Date().toISOString();
+      this.ctx.store.update(
+        epicId,
+        {
+          status: 'done',
+          appendActivity: `${now} [epic] landed via PR (${prUrl})`,
+          // Whoever merged did so on GitHub, outside anything dispatch can
+          // attribute — same rule as markRunMergedViaPr.
+          activityActor: 'none',
+        },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    }
+    this.ctx.events.broadcast({ type: 'run.changed' });
+  }
+
+  // The epic-level twin of diff(): the epic branch's committed diff against
+  // the default base while the branch exists, falling back to the snapshot
+  // persisted at land time once it is gone — so the review surface can still
+  // show what an epic landed after its branch was cleaned up.
+  epicDiff(epicId: string): DiffResult {
+    this.requireEpicDoc(epicId);
+    const branch = epicBranchName(epicId);
+    if (this.worktrees.hasBranch(branch)) {
+      return this.worktrees.diffBetweenRefs(
+        this.worktrees.defaultBaseBranch(),
+        branch
+      );
+    }
+    const snapshotPath = diffSnapshotPath(this.ctx.rootDir, epicId);
+    if (existsSync(snapshotPath)) {
+      // Same corrupt-snapshot tolerance as diff(): a truncated file must
+      // surface as the 409 below, never a CORS-less 500.
+      try {
+        return JSON.parse(readFileSync(snapshotPath, 'utf8')) as DiffResult;
+      } catch (err) {
+        console.error(
+          `dispatchd: failed to read diff snapshot for epic ${epicId}: ${(err as Error).message}`
+        );
+      }
+    }
+    throw new OrchestratorConflictError(
+      `epic has no integration branch or diff snapshot to diff: ${epicId}`
+    );
+  }
+
+  // Best-effort persist of the epic branch's diff against the default base —
+  // PrManager calls this when it opens an epic PR, so the review surface has
+  // something to serve even if the local branch disappears before the PR
+  // merges. A no-op when the branch is already gone.
+  snapshotEpicDiff(epicId: string): void {
+    const branch = epicBranchName(epicId);
+    if (!this.worktrees.hasBranch(branch)) return;
+    try {
+      this.persistEpicDiffSnapshot(
+        epicId,
+        this.worktrees.diffBetweenRefs(
+          this.worktrees.defaultBaseBranch(),
+          branch
+        )
+      );
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to snapshot diff for epic ${epicId}: ${(err as Error).message}`
+      );
+    }
+  }
+
+  // persistDiffSnapshot's epic twin — keyed by the epic id in the same
+  // per-project runs directory (run and epic ids live in different
+  // namespaces, so the files can never collide). Best-effort for the same
+  // reason: a full disk must never block the landing itself.
+  private persistEpicDiffSnapshot(epicId: string, diff: DiffResult): void {
+    try {
+      mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
+      writeFileSync(
+        diffSnapshotPath(this.ctx.rootDir, epicId),
+        JSON.stringify(diff)
+      );
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to snapshot diff for epic ${epicId}: ${(err as Error).message}`
+      );
+    }
+  }
+
+  /**
    * Every `dispatch/*` branch ref that exists in git right now, joined with
    * whatever the run registry knows about it — the data behind the Branches
    * surface.
@@ -1949,11 +2509,12 @@ export class Orchestrator {
       fallbackBase = 'HEAD';
     }
 
-    const entries = refs.map((ref) => {
+    const entries: BranchEntry[] = refs.map((ref) => {
       const meta = runByBranch.get(ref.branch);
       const wtPath = pathByBranch.get(ref.branch) ?? meta?.worktreePath;
       const base = meta?.baseBranch ?? fallbackBase;
       const worktreeExists = wtPath !== undefined && existsSync(wtPath);
+      const merged = this.worktrees.isMergedInto(ref.branch, base);
       return {
         branch: ref.branch,
         worktreePath: wtPath,
@@ -1965,7 +2526,13 @@ export class Orchestrator {
         dirty: wtPath !== undefined && this.worktrees.isWorktreeDirty(wtPath),
         lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
         ahead: this.worktrees.aheadCount(ref.branch, base),
-        mergedIntoBase: this.worktrees.isMergedInto(ref.branch, base),
+        // Only measured while unmerged: the count answers "how far has the
+        // base moved past this still-out work", which stops meaning anything
+        // once the work landed — and skipping it saves a git call per row.
+        behindBase: merged
+          ? undefined
+          : this.worktrees.behindCount(ref.branch, base),
+        mergedIntoBase: merged,
         runId: meta?.id,
         taskId: meta?.taskId,
         taskTitle: meta?.taskTitle,
@@ -1974,12 +2541,42 @@ export class Orchestrator {
         reviewedAt: meta?.reviewedAt,
         stackParents: meta?.stackParents,
         prUrl: meta?.prUrl,
+        // The recorded merge commit is the only reliable probe for a squash
+        // merge; a branch git itself sees as merged (hand-merged, no run, or
+        // a run without a mergeCommit) is judged by its own tip instead, so
+        // "pushed" doesn't read false just because no run claims the ref.
         pushedToOrigin:
-          meta?.mergeCommit !== undefined &&
-          this.worktrees.isOnOriginBase(meta.mergeCommit, base),
+          meta?.mergeCommit !== undefined
+            ? this.worktrees.isOnOriginBase(meta.mergeCommit, base)
+            : merged && this.worktrees.isOnOriginBase(ref.branch, base),
         status: branchEntryStatus(meta),
       } satisfies BranchEntry;
     });
+
+    // Epic integration branches (`epic/<id>`) are part of the same surface:
+    // dispatch created them, runs land on them, and a human eventually has to
+    // deal with them — so they must be visible wherever run branches are.
+    // Their `behindBase` is the drift signal: dispatch never updates an epic
+    // branch against the default base on its own, it only reports how far
+    // behind it has fallen.
+    for (const ref of this.worktrees.listBranches(EPIC_BRANCH_PREFIX)) {
+      entries.push({
+        branch: ref.branch,
+        worktreeExists: false,
+        dirty: false,
+        lastCommitAt: ref.lastCommitAt === '' ? undefined : ref.lastCommitAt,
+        ahead: this.worktrees.aheadCount(ref.branch, fallbackBase),
+        mergedIntoBase: this.worktrees.isMergedInto(ref.branch, fallbackBase),
+        behindBase: this.worktrees.behindCount(ref.branch, fallbackBase),
+        baseBranch: fallbackBase,
+        // "Pushed" for an integration branch means origin has its tip — the
+        // question a human asks before deleting the local ref. The branch
+        // name is passed as the commit-ish directly: resolving it first could
+        // throw on a ref deleted mid-listing, where this just reports false.
+        pushedToOrigin: this.worktrees.isOnOriginBase(ref.branch, ref.branch),
+        status: 'epic',
+      } satisfies BranchEntry);
+    }
 
     // Most-urgent-first within a stable order so the UI's grouping never has
     // to re-sort, and so two consecutive polls can't shuffle rows around.
@@ -2447,8 +3044,18 @@ export class Orchestrator {
           let meta = replay.meta;
           if (!TERMINAL_RUN_STATES.has(meta.state)) {
             const now = new Date().toISOString();
-            new Transcript(path).appendState('failed', now);
-            meta = { ...meta, state: 'failed', updatedAt: now };
+            // With a reason, not a bare state flip: a force-failed run shows
+            // up in the UI as "failed, $0" and the error is the only thing
+            // that explains it wasn't the agent's doing.
+            new Transcript(path).appendState('failed', now, {
+              error: BOOT_FORCE_FAIL_ERROR,
+            });
+            meta = {
+              ...meta,
+              state: 'failed',
+              updatedAt: now,
+              error: BOOT_FORCE_FAIL_ERROR,
+            };
             crashedRunIds.push(meta.id);
           }
           this.registry.create(meta);

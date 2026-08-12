@@ -25,7 +25,7 @@ import {
 import { useCallback, useMemo, useRef, useState } from 'react';
 
 import type { ImpactSubjectRef } from '../../lib/appNav';
-import { isTerminalRunState } from '../../lib/runState';
+import { isTerminalRunState, postFailWorkLabel } from '../../lib/runState';
 import { PierreReviewDiff } from './PierreReviewDiff';
 import { QueueMergeControl } from './QueueMergeControl';
 import { ReviewCasePanel } from './ReviewCasePanel';
@@ -234,8 +234,18 @@ export function RunReviewView({
       </Button>
     ) : null;
 
+  const orphanWork = postFailWorkLabel(meta);
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
+      {/* A force-failed run whose orphaned agent kept committing: the diff below IS the
+          landed work, so the reviewer must know it arrived after the recorded failure
+          rather than reading this as an ordinary dead run's leftovers. */}
+      {orphanWork !== null && (
+        <div className="border-state-review-edge bg-state-review-surface text-state-review rounded-md border px-3 py-2 text-[12px]">
+          {orphanWork}
+        </div>
+      )}
       {error !== null && (
         <Alert
           variant="destructive"
@@ -334,7 +344,7 @@ export function RunReviewView({
       {hasOpenPr ? (
         <div className="border-border flex items-center justify-between gap-2 border-t pt-3">
           <span className="text-muted-foreground text-[12px]">
-            A PR is open for this run — review it on the pull request page.
+            A PR is open for this run — Review PR opens the pull request page.
           </span>
           <div className="flex items-center gap-2">
             <QueueMergeControl

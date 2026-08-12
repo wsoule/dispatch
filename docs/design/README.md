@@ -65,8 +65,8 @@ state derivation).
 
 Every screen in the mockup now maps onto an existing view. The two that used to
 be missing have both been built: **Brain dump** (`BrainDumpView.tsx`) and
-**Landing**, the merge queue as a first-class surface (`LandingView.tsx`,
-rendered inside `ReviewView`).
+**Landing**, its own sidebar destination (`LandingTableView.tsx`) — the unified
+table of every run, PR, and queue entry in flight, plus what recently landed.
 
 ## What not to build
 

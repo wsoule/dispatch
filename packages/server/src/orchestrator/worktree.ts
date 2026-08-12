@@ -29,6 +29,7 @@ export interface WorktreeRef {
 
 interface GitResult {
   ok: boolean;
+  exitCode: number;
   stdout: string;
   stderr: string;
 }
@@ -45,6 +46,7 @@ function runGit(cwd: string, args: string[]): GitResult {
   });
   return {
     ok: result.exitCode === 0,
+    exitCode: result.exitCode,
     stdout: result.stdout.toString('utf8'),
     stderr: result.stderr.toString('utf8'),
   };
@@ -225,6 +227,29 @@ export class WorktreeManager {
     return entries;
   }
 
+  // Whether `refs/heads/<branch>` exists. Used to decide whether an epic's
+  // integration branch still needs creating (or has been deleted by hand).
+  hasBranch(branch: string): boolean {
+    return runGit(this.mainRepoDir, [
+      'rev-parse',
+      '--verify',
+      '--quiet',
+      `refs/heads/${branch}`,
+    ]).ok;
+  }
+
+  // Creates `branch` pointing at `from`, without checking it out anywhere.
+  // Used to cut an epic's integration branch from the default base on the
+  // epic's first dispatch.
+  createBranch(branch: string, from: string): void {
+    const result = runGit(this.mainRepoDir, ['branch', branch, from]);
+    if (!result.ok) {
+      throw new Error(
+        `git branch ${branch} ${from} failed: ${result.stderr.trim()}`
+      );
+    }
+  }
+
   // How many commits `branch` has that `base` does not — i.e. how much work
   // would be lost by deleting it. `base..branch` is already relative to the
   // two refs' merge base, so a base branch that moved on since the worktree
@@ -241,6 +266,13 @@ export class WorktreeManager {
     if (!result.ok) return 0;
     const parsed = Number.parseInt(result.stdout.trim(), 10);
     return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  // How many commits `base` has that `branch` does not — how far the base has
+  // moved on since this branch diverged. The mirror of aheadCount, so it
+  // inherits the same tolerance: 0 when either ref is missing.
+  behindCount(branch: string, base: string): number {
+    return this.aheadCount(base, branch);
   }
 
   // True when every commit on `branch` is already reachable from `base` —
@@ -535,6 +567,15 @@ export class WorktreeManager {
     }
   }
 
+  // The fork point of `branch` from `base`: the last commit the two still
+  // share, i.e. where the branch's own work begins even after the base has
+  // moved on. Null when either ref is missing or they share no history —
+  // callers treat that as "cannot determine a base" rather than an error.
+  mergeBase(base: string, branch: string): string | null {
+    const result = runGit(this.mainRepoDir, ['merge-base', base, branch]);
+    return result.ok ? result.stdout.trim() : null;
+  }
+
   // The commit a ref currently points at, in the main checkout. Used to pin
   // down what a stacked run was branched from at the moment it was created —
   // branch refs move, commit shas don't.
@@ -622,6 +663,166 @@ export class WorktreeManager {
     if (!commit.ok) {
       throw new Error(`git commit failed: ${commit.stderr.trim()}`);
     }
+  }
+
+  // mergeSquash's true-merge sibling: merges `branch` into the main checkout's
+  // current branch as one real merge commit (`--no-ff`, so even a
+  // fast-forwardable branch leaves a single revertible merge commit) — how a
+  // finished epic branch lands on the default base while preserving the
+  // per-task squash commits it accumulated. Same two-step shape and contract
+  // as mergeSquash: callers gate on a clean checkout first, and own conflict
+  // recovery (`git reset --merge`) when the merge itself fails.
+  mergeNoFf(branch: string, message: string): void {
+    const merge = runGit(this.mainRepoDir, [
+      'merge',
+      '--no-ff',
+      '--no-commit',
+      branch,
+    ]);
+    if (!merge.ok) {
+      const reason = [merge.stdout.trim(), merge.stderr.trim()]
+        .filter((s) => s.length > 0)
+        .join(' | ');
+      throw new Error(`git merge --no-ff failed: ${reason}`);
+    }
+    // --no-verify for the same stale-dist reason as mergeSquash. `--no-commit`
+    // above left MERGE_HEAD in place, so this commit records both parents.
+    const commit = runGit(this.mainRepoDir, [
+      'commit',
+      '--no-verify',
+      '-m',
+      message,
+    ]);
+    if (!commit.ok) {
+      throw new Error(`git commit failed: ${commit.stderr.trim()}`);
+    }
+  }
+
+  /**
+   * Squash-merges `sourceBranch` into `targetBranch` WITHOUT any checkout —
+   * the whole merge happens in the object database, so neither the user's
+   * main checkout nor any worktree is touched. This is how a run lands on an
+   * epic integration branch: that branch is never checked out anywhere, which
+   * rules out `mergeSquash` above (it merges into the main checkout's current
+   * branch).
+   *
+   * Three plumbing steps:
+   * 1. `git merge-tree --write-tree target source` — a real three-way merge
+   *    (anchored on the merge base) computed in memory. Exit 1 means content
+   *    conflicts; the conflicted paths are folded into the thrown error so
+   *    the 409 the user sees names the files, matching mergeSquash's contract.
+   * 2. `git commit-tree` — one new commit carrying the merged tree, with the
+   *    target's old tip as its ONLY parent: squash semantics, same as
+   *    `merge --squash` + `commit`.
+   * 3. `git update-ref <target> <new> <oldTip>` — compare-and-swap on the old
+   *    tip, so a target that moved between steps (another process, the user's
+   *    own terminal) fails the merge instead of silently discarding that move.
+   *
+   * Returns the new commit's sha.
+   */
+  squashMergeIntoRef(
+    targetBranch: string,
+    sourceBranch: string,
+    message: string
+  ): string {
+    return this.mergeIntoRefViaPlumbing(
+      targetBranch,
+      sourceBranch,
+      message,
+      'squash'
+    );
+  }
+
+  /**
+   * squashMergeIntoRef's true-merge sibling: identical checkout-free plumbing,
+   * but the new commit records BOTH parents — the target's old tip and the
+   * source tip — so the source branch's own history is preserved. This is how
+   * a finished epic branch lands on the default base when that base is not
+   * checked out: one revertible merge commit, per-task commits intact.
+   */
+  mergeCommitIntoRef(
+    targetBranch: string,
+    sourceBranch: string,
+    message: string
+  ): string {
+    return this.mergeIntoRefViaPlumbing(
+      targetBranch,
+      sourceBranch,
+      message,
+      'merge'
+    );
+  }
+
+  private mergeIntoRefViaPlumbing(
+    targetBranch: string,
+    sourceBranch: string,
+    message: string,
+    mode: 'squash' | 'merge'
+  ): string {
+    const oldTip = this.resolveCommit(`refs/heads/${targetBranch}`);
+    const mergeTree = runGit(this.mainRepoDir, [
+      'merge-tree',
+      '--write-tree',
+      '--name-only',
+      targetBranch,
+      sourceBranch,
+    ]);
+    const lines = mergeTree.stdout.split('\n');
+    if (mergeTree.exitCode === 1) {
+      // With --name-only the OID line is followed by the conflicted paths,
+      // then a blank line and informational messages — the paths are the part
+      // worth naming.
+      const conflicted: string[] = [];
+      for (const line of lines.slice(1)) {
+        if (line.trim() === '') break;
+        conflicted.push(line.trim());
+      }
+      throw new Error(
+        `merge into ${targetBranch} has conflicts: ${conflicted.join(', ')}`
+      );
+    }
+    if (!mergeTree.ok) {
+      throw new Error(`git merge-tree failed: ${mergeTree.stderr.trim()}`);
+    }
+    const tree = lines[0]?.trim() ?? '';
+    if (tree === '') {
+      throw new Error('git merge-tree produced no tree');
+    }
+    // Squash: the target's old tip is the only parent, so the source's
+    // commits are folded into one. Merge: the source tip rides along as the
+    // second parent, making this a real merge commit.
+    const parentArgs =
+      mode === 'squash'
+        ? ['-p', oldTip]
+        : [
+            '-p',
+            oldTip,
+            '-p',
+            this.resolveCommit(`refs/heads/${sourceBranch}`),
+          ];
+    const commit = runGit(this.mainRepoDir, [
+      'commit-tree',
+      tree,
+      ...parentArgs,
+      '-m',
+      message,
+    ]);
+    if (!commit.ok) {
+      throw new Error(`git commit-tree failed: ${commit.stderr.trim()}`);
+    }
+    const newSha = commit.stdout.trim();
+    const update = runGit(this.mainRepoDir, [
+      'update-ref',
+      `refs/heads/${targetBranch}`,
+      newSha,
+      oldTip,
+    ]);
+    if (!update.ok) {
+      throw new Error(
+        `${targetBranch} moved while merging — retry (${update.stderr.trim()})`
+      );
+    }
+    return newSha;
   }
 
   // The merge base of `baseBranch` and `HEAD` in `worktreePath` — a base
@@ -717,6 +918,31 @@ export class WorktreeManager {
     const range = `${mergeBase}...HEAD`;
     const patch = runGit(worktreePath, ['diff', range]);
     const nameStatus = runGit(worktreePath, ['diff', '--name-status', range]);
+    const files = nameStatus.stdout
+      .split('\n')
+      .filter((line) => line.trim() !== '')
+      .map((line) => {
+        const [status, ...rest] = line.split('\t');
+        return { path: rest.join('\t'), status: status ?? '' };
+      });
+    return { patch: patch.stdout, files };
+  }
+
+  // The committed diff between two refs, anchored on their merge base — what
+  // an epic integration branch carries beyond the default base, in the same
+  // DiffResult shape the worktree diffs above produce. Unlike those, no
+  // worktree is involved: an epic branch is never checked out anywhere, so
+  // this runs against the refs alone in the main repo.
+  diffBetweenRefs(base: string, branch: string): DiffResult {
+    const mergeBase = runGit(this.mainRepoDir, ['merge-base', base, branch]);
+    const anchor = mergeBase.ok ? mergeBase.stdout.trim() : base;
+    const range = `${anchor}...${branch}`;
+    const patch = runGit(this.mainRepoDir, ['diff', range]);
+    const nameStatus = runGit(this.mainRepoDir, [
+      'diff',
+      '--name-status',
+      range,
+    ]);
     const files = nameStatus.stdout
       .split('\n')
       .filter((line) => line.trim() !== '')

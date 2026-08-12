@@ -36,7 +36,6 @@ const BODYLESS_POST_ROUTES = [
   '/api/git/commit-message',
   '/api/tasks/t-1/enrich',
   '/api/notes/nt-1/enrich',
-  '/api/inbox/ib-1/enrich',
   '/api/inbox/cluster',
   '/api/merge-queue/ready',
   '/api/merge-queue/recheck',
