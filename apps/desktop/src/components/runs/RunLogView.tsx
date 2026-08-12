@@ -10,7 +10,6 @@ import {
   MessageSquare,
   MessageSquarePlus,
   Play,
-  Send,
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -28,6 +27,8 @@ import { QuestionCard } from './QuestionCard';
 import { ScopeRequestCard } from './ScopeRequestCard';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
+import { LoadingState } from '@/ui/ai/loading-state';
+import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Alert, AlertDescription } from '@/ui/alert';
 import { Button } from '@/ui/button';
 import { Textarea } from '@/ui/textarea';
@@ -143,6 +144,14 @@ export function RunLogView({
   const groups = groupLogEntries(entries);
   const terminal = isTerminalRunState(meta.state);
   const canSend = SENDABLE_STATES.has(meta.state);
+  // The transcript's one genuinely live entry — the run's last entry while it's actually still
+  // producing output. Drives `TranscriptRow`'s `live` prop (StreamingText's reveal, Thinking's
+  // shimmer, ToolChip's running state); never true for a paused or finished run, and never true
+  // for anything but the last entry, so history never fakes still being written.
+  const lastEntry =
+    entries.length > 0 ? entries[entries.length - 1] : undefined;
+  const isLive = (entry: NormalizedEntry) =>
+    meta.state === 'running' && entry === lastEntry;
   // Only a run that stopped short of finishing has something to *continue* —
   // and only one with a session id, which is the same thing the server's own
   // resume gate checks, so the button never offers what would 400.
@@ -200,16 +209,24 @@ export function RunLogView({
               there.
             </div>
           )}
-          {groups.length === 0 && (
-            <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
-              <MessageSquare className="size-5" />
-              <p className="text-[13px]">
-                {meta.state === 'provisioning'
-                  ? 'Waiting for the run to start…'
-                  : 'No log entries yet.'}
-              </p>
-            </div>
-          )}
+          {groups.length === 0 &&
+            (meta.state === 'provisioning' || meta.state === 'running' ? (
+              <div className="flex flex-1 items-center justify-center">
+                <LoadingState
+                  label={
+                    meta.state === 'provisioning'
+                      ? 'Waiting for the run to start…'
+                      : 'Working…'
+                  }
+                  startedAt={Date.parse(meta.createdAt)}
+                />
+              </div>
+            ) : (
+              <div className="text-muted-foreground flex flex-1 flex-col items-center justify-center gap-2 text-center">
+                <MessageSquare className="size-5" />
+                <p className="text-[13px]">No log entries yet.</p>
+              </div>
+            ))}
           {/* Three levels of emphasis, which is what the flat version was missing. What the
               agent SAID is the transcript's spine and gets full weight. What it DID is
               subordinate — a run of tool calls collapses into one quiet block behind a rule, so
@@ -222,24 +239,29 @@ export function RunLogView({
                 className="border-border/60 my-0.5 flex flex-col border-l pl-2"
               >
                 {group.entries.map((entry, j) => (
-                  <TranscriptRow key={j} entry={entry} />
+                  <TranscriptRow key={j} entry={entry} live={isLive(entry)} />
                 ))}
               </div>
             ) : group.entries[0].kind === 'message' ? (
               <ChatMessageBubble key={i} entry={group.entries[0]} />
             ) : (
-              <TranscriptRow key={i} entry={group.entries[0]} />
+              <TranscriptRow
+                key={i}
+                entry={group.entries[0]}
+                live={isLive(group.entries[0])}
+              />
             )
           )}
 
           {/* A live run that has not printed anything for a moment is indistinguishable from a
               wedged one without this. Only while genuinely running — never on a paused or
-              finished run, where a spinner would be a lie. */}
-          {meta.state === 'running' && (
-            <div className="text-muted-foreground flex items-center gap-2 px-1 py-1">
-              <span className="bg-state-working size-1.5 shrink-0 rounded-full motion-safe:animate-pulse" />
-              <span className="text-[12px]">Working…</span>
-            </div>
+              finished run, where a spinner would be a lie. Suppressed when the empty-state
+              LoadingState above is already showing the same "Working…" label. */}
+          {meta.state === 'running' && groups.length > 0 && (
+            <LoadingState
+              label="Working…"
+              startedAt={Date.parse(meta.createdAt)}
+            />
           )}
 
           {/* The gate belongs in the conversation, at the point it was asked: the turns above it
@@ -310,54 +332,59 @@ export function RunLogView({
                 ? 'Stopped early. Continue picks it up, or send notes to change course.'
                 : 'Done. Feedback resumes it with your notes.'}
           </span>
-          <div className="flex gap-2">
-            <Textarea
-              rows={2}
-              placeholder={
-                terminal
-                  ? 'Describe what should change…'
-                  : 'Send a follow-up message…'
-              }
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey) {
-                  e.preventDefault();
-                  void submit();
-                }
-              }}
-              disabled={sending}
-              className="min-h-0 flex-1 resize-none"
-            />
-            {canContinue && (
-              <Button
-                variant="secondary"
+          {terminal ? (
+            // Resuming a finished run offers two distinctly-labeled actions (Continue picks the
+            // session back up as-is; Request changes resumes it with feedback) that the
+            // PromptBar primitive's single fixed "Send" action can't express, so this branch
+            // keeps its own buttons rather than forcing a primitive built for one action onto a
+            // composer that genuinely has two.
+            <div className="flex gap-2">
+              <Textarea
+                rows={2}
+                placeholder="Describe what should change…"
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    void submit();
+                  }
+                }}
                 disabled={sending}
-                onClick={() => void continueRun()}
+                className="min-h-0 flex-1 resize-none"
+              />
+              {canContinue && (
+                <Button
+                  variant="secondary"
+                  disabled={sending}
+                  onClick={() => void continueRun()}
+                  className="self-end"
+                >
+                  <Play className="size-3.5" />
+                  Continue
+                </Button>
+              )}
+              <Button
+                disabled={sending}
+                onClick={() => void submit()}
                 className="self-end"
               >
-                <Play className="size-3.5" />
-                Continue
+                <MessageSquarePlus className="size-3.5" />
+                Request changes
               </Button>
-            )}
-            <Button
+            </div>
+          ) : (
+            // The live case is a genuine single-action send — this is the composer PromptBar
+            // was built for, wired to the same `submit()` (Enter-to-send, Shift+Enter newline)
+            // the terminal branch uses.
+            <PromptBar
+              value={draft}
+              onChange={setDraft}
+              onSubmit={() => void submit()}
               disabled={sending}
-              onClick={() => void submit()}
-              className="self-end"
-            >
-              {terminal ? (
-                <>
-                  <MessageSquarePlus className="size-3.5" />
-                  Request changes
-                </>
-              ) : (
-                <>
-                  <Send className="size-3.5" />
-                  Send
-                </>
-              )}
-            </Button>
-          </div>
+              placeholder="Send a follow-up message…"
+            />
+          )}
         </div>
       )}
     </div>
