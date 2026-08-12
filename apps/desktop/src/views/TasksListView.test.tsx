@@ -190,6 +190,35 @@ test('an empty filter result shows the no-match empty state', () => {
   expect(screen.getByText('No tasks match this filter.')).not.toBeNull();
 });
 
+// The pre-reskin row synced the j/k roving-focus cursor to whatever the mouse was hovering
+// (`onMouseEnter`), so a hover-then-Enter still opened the row the pointer was actually on.
+// `RecordsTable`'s `onRowMouseEnter` restores that — checked through its visible effect (the
+// focus wash `rowClassName` applies) rather than firing Enter, since Enter on a `RecordsTable`
+// row already opens it directly regardless of the roving cursor and wouldn't isolate this.
+test('hovering a row moves the keyboard roving-focus cursor to it', () => {
+  render(
+    <TasksListView
+      data={dataWith([task('t-1', 'First task'), task('t-2', 'Second task')])}
+      onSelectTask={() => {}}
+    />
+  );
+
+  const firstRow = screen.getByText('First task').closest('tr');
+  const secondRow = screen.getByText('Second task').closest('tr');
+  if (firstRow === null || secondRow === null) {
+    throw new Error('expected both task rows to render');
+  }
+
+  // Mounts with the cursor already on the first (and here, only visible-order) row.
+  expect(firstRow.className).toContain('bg-accent/50');
+  expect(secondRow.className).not.toContain('bg-accent/50');
+
+  fireEvent.mouseEnter(secondRow);
+
+  expect(secondRow.className).toContain('bg-accent/50');
+  expect(firstRow.className).not.toContain('bg-accent/50');
+});
+
 // Epic grouping: tasks bucket under their parent epic's collapsible header, "No epic" last.
 // `epic` itself still carries `parent: null`, so — matching the pre-reskin list's own
 // behavior, since `data.tasks` includes epic docs alongside plain ones (see

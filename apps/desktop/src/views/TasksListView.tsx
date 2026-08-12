@@ -538,6 +538,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
             groups={recordsGroups}
             sort={null}
             onRowClick={(row) => onSelectTask(row.id)}
+            onRowMouseEnter={setFocusedTaskId}
             selectable
             selectedIds={selectedIds}
             onToggleSelect={toggleSelected}
