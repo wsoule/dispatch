@@ -62,9 +62,9 @@ export function InboxPanel({
       ref={panelRef}
       role="dialog"
       aria-label="Notifications"
-      className="border-border bg-popover fixed bottom-20 left-16 z-50 flex max-h-[70vh] w-80 flex-col overflow-hidden rounded-lg border shadow-lg"
+      className="bg-popover rounded-card shadow-overlay fixed bottom-20 left-16 z-50 flex max-h-[70vh] w-80 flex-col overflow-hidden"
     >
-      <div className="border-border flex shrink-0 items-center justify-between border-b px-3 py-2">
+      <div className="shadow-hairline-bottom flex shrink-0 items-center justify-between px-3 py-2">
         <span className="text-foreground text-[13px] font-medium">
           Notifications
         </span>
@@ -91,7 +91,7 @@ export function InboxPanel({
               variant="ghost"
               onClick={() => onNavigate(entry.target)}
               className={cn(
-                'border-border/60 hover:bg-accent/60 flex h-auto w-full flex-col items-start justify-start gap-0.5 rounded-none border-b px-3 py-2 text-left font-normal last:border-b-0',
+                'hover:bg-accent/60 shadow-hairline-bottom flex h-auto w-full flex-col items-start justify-start gap-0.5 rounded-none px-3 py-2 text-left font-normal last:shadow-none',
                 entry.read && 'opacity-60'
               )}
             >

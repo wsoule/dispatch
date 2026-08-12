@@ -26,8 +26,12 @@ import { colorForProject } from '../../lib/projectColor';
 import { DraftTray } from './DraftTray';
 import { SyncChip } from './SyncChip';
 import { cn } from '@/lib/utils';
+import {
+  SidebarNav,
+  type SidebarNavItem,
+  type SidebarNavSection,
+} from '@/ui/ai/sidebar-nav';
 import { Button } from '@/ui/button';
-import { CountChip } from '@/ui/chrome/CountChip';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,19 +40,7 @@ import {
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 import { Kbd } from '@/ui/kbd';
-import { Separator } from '@/ui/separator';
-import {
-  SidebarContent,
-  SidebarFooter,
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarHeader,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  Sidebar as SidebarRoot,
-  useSidebar,
-} from '@/ui/sidebar';
+import { Sidebar as SidebarRoot, useSidebar } from '@/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 // `board` hosts both the Kanban and dense-list layouts behind its own in-view toggle now (see
@@ -103,7 +95,7 @@ interface ProjectViewGroup {
   entries: { view: (typeof PROJECT_VIEWS)[number]; index: number }[];
 }
 
-// `PROJECT_VIEWS` cut into its stages, one `SidebarGroup` each. The index travels with the entry
+// `PROJECT_VIEWS` cut into its stages, one nav section each. The index travels with the entry
 // because it is the cmd+N number, which counts across the whole rail rather than per stage.
 const PROJECT_VIEW_GROUPS: ProjectViewGroup[] = [];
 PROJECT_VIEWS.forEach((view, index) => {
@@ -128,6 +120,11 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
     ? [{ id: 'gallery' as const, label: 'Gallery', icon: Palette }]
     : []),
 ];
+
+// The notifications bell is not a `ProjectView`/`GlobalView` — it toggles the inbox popover
+// rather than selecting a page — so it gets an id of its own, routed by `handleSelect` below
+// instead of `onSetProjectView`/`onSetGlobalView`.
+const NOTIFICATIONS_ID = 'notifications';
 
 interface SwitchProject {
   path: string;
@@ -161,31 +158,12 @@ export function useSidebarCollapsed(): [boolean, (next: boolean) => void] {
   return [collapsed, set];
 }
 
-// `SidebarMenuButton` ships 14px rows on a fixed 2rem grid, a 2rem square in icon mode, and its
-// own accent focus ring. The rail's rows are 13px, sized by their own padding, full width in
-// both modes, and focus-ringed by the app-wide outline in global.css.
-const NAV_ROW_CLASS =
-  'h-auto rounded-md px-2 py-1.5 text-[13px] transition-colors duration-150 focus-visible:ring-0 group-data-[collapsible=icon]:h-7! group-data-[collapsible=icon]:w-full!';
-
-// The inactive row treatment: 80% foreground that does not brighten on hover, only its
-// background does.
-const NAV_ROW_INACTIVE_CLASS =
-  'text-foreground/80 hover:bg-accent/60 hover:text-foreground/80';
-
-// The stage headings above each group of rows.
-const STAGE_LABEL_CLASS =
-  'text-muted-foreground/70 h-auto pt-3.5 pb-1.5 text-[10px] font-medium tracking-[0.08em] uppercase';
-
-// The two section headings — "Project" and "Workspace" — a size up from the stage headings.
-const SECTION_LABEL_CLASS =
-  'text-muted-foreground h-auto pt-3 pb-1.5 text-[11px] font-medium tracking-wide uppercase';
-
-// `Kbd` is a filled keycap; the rail's cmd+N hints are bare mono text sitting at the end of a
-// row, so its surface, size floor, and type are stripped back here.
+// The rail's cmd+N hints — bare mono text sitting at the end of a row, not `Kbd`'s usual
+// filled keycap.
 const ROW_HINT_CLASS =
   'text-muted-foreground/50 h-auto min-w-0 bg-transparent px-0 font-mono text-[10px] font-normal';
 
-// The footer's cmd+K hint keeps its outlined-key look, which `Kbd` does not ship.
+// The footer's cmd+K hint keeps `Kbd`'s outlined-key look.
 const FOOTER_HINT_CLASS =
   'border-border h-auto min-w-0 rounded border px-1 py-0.5 font-mono text-[10px] font-normal';
 
@@ -251,9 +229,10 @@ interface SidebarProps {
  * Persistent, Linear-style left rail: wordmark, the one active project's name (not a
  * switcher — this app pivoted from a multi-project switcher to a single-project workspace),
  * that project's primary nav (Board/Tasks/Runs/Plans), and the global section (All Agents/
- * Sessions/Settings) below a divider. Built on shadcn's sidebar block — App mounts the
- * `SidebarProvider` that owns the collapsed state, and this reads it back through
- * `useSidebar` so labels, aria-labels, and the footer still branch in one place.
+ * Sessions/Settings) below it. Built on the `SidebarNav` primitive (`ui/ai/sidebar-nav.tsx`)
+ * for its rows/sections, still wrapped in the shadcn `Sidebar` shell purely for the
+ * fixed-position/icon-collapse/mobile mechanics App.tsx's `SidebarProvider` already owns —
+ * this reads that back through `useSidebar` so the icon-only strip still works.
  */
 export function Sidebar({
   projectName,
@@ -288,337 +267,289 @@ export function Sidebar({
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
 
-  return (
-    <SidebarRoot
-      id="dispatch-sidebar"
-      collapsible="icon"
-      // The block pins its rail to the viewport with `fixed`; this app stacks an update banner
-      // above the sidebar row, so the rail is pinned to that row instead. Padding lives here
-      // rather than on each section so the rail keeps a single inset, as it always has.
-      className="absolute h-full px-3 py-4 group-data-[collapsible=icon]:px-2"
-    >
-      <SidebarHeader className="gap-0 p-0">
-        <div
-          className={cn(
-            'text-foreground mb-4 flex items-center font-mono text-[13px] font-semibold',
-            collapsed ? 'justify-center' : 'gap-2 px-2'
-          )}
-        >
-          {/* The Hydrogen mark — a circle with an orbiting satellite node, matching the app
-            icon (see app-icon.svg). White tile + black mark so it reads at 20px in both themes. */}
-          <span className="border-border inline-flex size-5 shrink-0 items-center justify-center rounded-md border bg-white">
-            <svg
-              viewBox="0 0 34 36"
-              className="size-3.5"
-              fill="none"
-              aria-hidden="true"
-            >
-              <path
-                d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
-                fill="#000000"
-              />
-            </svg>
-          </span>
-          {!collapsed && 'Dispatch'}
-        </div>
-      </SidebarHeader>
+  const activeId = section === 'project' ? projectView : globalView;
 
-      {/* The block stops the rail scrolling once it is an icon strip; the rail has always
-          scrolled in both modes, and at the window's 660px minimum the footer is reachable
-          only if it still does. */}
-      <SidebarContent className="gap-0 group-data-[collapsible=icon]:overflow-auto">
-        <SidebarGroup className="p-0">
-          {!collapsed && (
-            <SidebarGroupLabel className={cn(SECTION_LABEL_CLASS, 'pt-1')}>
-              Project
-            </SidebarGroupLabel>
-          )}
-          {projectName !== null ? (
-            <DropdownMenu
-              open={switcherOpen}
-              onOpenChange={() => onToggleSwitcher()}
-            >
-              <DropdownMenuTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  title={projectPath ?? projectName}
-                  aria-label={
-                    collapsed
-                      ? `Switch project (current: ${projectName})`
-                      : undefined
-                  }
-                  className={cn(
-                    'h-auto rounded-md py-1.5 text-left text-[13px] font-medium text-foreground hover:text-foreground transition-colors duration-150',
-                    collapsed
-                      ? 'w-full px-0 has-[>svg]:px-0'
-                      : 'w-full justify-start px-2 has-[>svg]:px-2'
-                  )}
-                >
-                  <span
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ background: colorForProject(projectName) }}
-                  />
-                  {!collapsed && (
-                    <>
-                      <span className="min-w-0 flex-1 truncate">
-                        {projectName}
-                      </span>
-                      <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
-                    </>
-                  )}
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="start" className="w-56">
-                <DropdownMenuItem disabled className="text-muted-foreground">
-                  <span
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ background: colorForProject(projectName) }}
-                  />
-                  <span className="text-foreground min-w-0 flex-1 truncate">
-                    {projectName}
-                  </span>
-                  <Check className="text-primary size-3.5" />
-                </DropdownMenuItem>
-                {otherProjects.length === 0 ? (
-                  <div className="text-muted-foreground px-2 py-1.5 text-[12px]">
-                    No other dispatch projects
-                  </div>
-                ) : (
-                  otherProjects.map((p) => (
-                    <DropdownMenuItem
-                      key={p.path}
-                      title={p.path}
-                      onSelect={() => onSelectProject(p.path)}
-                    >
-                      <span
-                        className="size-2 shrink-0 rounded-full"
-                        style={{ background: colorForProject(p.name) }}
-                      />
-                      <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                    </DropdownMenuItem>
-                  ))
-                )}
-                <DropdownMenuSeparator />
-                <DropdownMenuItem onSelect={() => onAddProject()}>
-                  <Plus className="text-muted-foreground size-3.5" />
-                  <span className="flex-1">Add project</span>
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          ) : noProjectYet ? (
+  // The stage groups (Workspace/Plan/Work/Git), each mapped straight onto a `SidebarNav`
+  // section. The first stage carries no group name of its own in `PROJECT_VIEWS` (it's the
+  // rail's unlabelled top), so it's given the "Workspace" heading here rather than in the
+  // data — that heading is presentational, not part of the navigation model.
+  const projectSections: SidebarNavSection[] = PROJECT_VIEW_GROUPS.map(
+    (group, groupIndex) => ({
+      id: group.label ?? 'workspace',
+      label: groupIndex === 0 ? 'Workspace' : group.label,
+      items: group.entries.map(({ view, index }) => {
+        const Icon = view.icon;
+        const count = badges[view.id];
+        const hasCount = count !== undefined && count > 0;
+        return {
+          id: view.id,
+          label: view.label,
+          icon: <Icon strokeWidth={2} />,
+          count: hasCount ? count : undefined,
+          // Inbox's count is the "needs a human" queue — the one row-level badge that also
+          // earns the attention dot, not just a number.
+          state: view.id === 'inbox' && hasCount ? 'attention' : undefined,
+          disabled: !hasActiveProject,
+          // The shortcut lives on the thing it operates, which is the only way anyone finds
+          // out it exists.
+          hint:
+            index < 9 ? (
+              <Kbd className={ROW_HINT_CLASS}>⌘{index + 1}</Kbd>
+            ) : undefined,
+        } satisfies SidebarNavItem;
+      }),
+    })
+  );
+
+  const globalItems: SidebarNavItem[] = [
+    {
+      id: NOTIFICATIONS_ID,
+      label: 'Notifications',
+      icon: <Bell strokeWidth={2} />,
+      count:
+        unreadCount > 0 ? (unreadCount > 99 ? '99+' : unreadCount) : undefined,
+      state: unreadCount > 0 ? 'attention' : undefined,
+      ariaLabel: `Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`,
+    },
+    ...GLOBAL_VIEWS.map((item) => {
+      const Icon = item.icon;
+      const liveCount = item.id === 'all-agents' ? liveAgentCount : 0;
+      return {
+        id: item.id,
+        label: item.label,
+        icon: <Icon strokeWidth={2} />,
+        count: liveCount > 0 ? liveCount : undefined,
+      } satisfies SidebarNavItem;
+    }),
+  ];
+
+  const sections: SidebarNavSection[] = [
+    ...projectSections,
+    { id: 'global', items: globalItems },
+  ];
+
+  // `SidebarNav` has one `onSelect(id)` for every row; the notifications row isn't a
+  // navigation target (it toggles the inbox popover), so it's routed here instead of into
+  // `onSetProjectView`/`onSetGlobalView`.
+  const handleSelect = useCallback(
+    (id: string) => {
+      if (id === NOTIFICATIONS_ID) {
+        onToggleInbox();
+        return;
+      }
+      if ((PROJECT_VIEW_ORDER as string[]).includes(id)) {
+        onSetProjectView(id as ProjectView);
+        return;
+      }
+      onSetGlobalView(id as GlobalView);
+    },
+    [onToggleInbox, onSetProjectView, onSetGlobalView]
+  );
+
+  const header = (
+    <>
+      {/* The Hydrogen mark — a circle with an orbiting satellite node, matching the app icon
+        (see app-icon.svg). White tile + black mark so it reads at 20px in both themes. */}
+      <div
+        className={cn(
+          'text-foreground mb-2 flex items-center font-mono text-[13px] font-semibold',
+          collapsed ? 'justify-center' : 'gap-2 px-2'
+        )}
+      >
+        <span className="border-border inline-flex size-5 shrink-0 items-center justify-center rounded-md border bg-white">
+          <svg
+            viewBox="0 0 34 36"
+            className="size-3.5"
+            fill="none"
+            aria-hidden="true"
+          >
+            <path
+              d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
+              fill="#000000"
+            />
+          </svg>
+        </span>
+        {!collapsed && 'Dispatch'}
+      </div>
+
+      {!collapsed && <div className="dense-label px-2 pb-1">Project</div>}
+
+      {projectName !== null ? (
+        <DropdownMenu
+          open={switcherOpen}
+          onOpenChange={() => onToggleSwitcher()}
+        >
+          <DropdownMenuTrigger asChild>
             <Button
               type="button"
               variant="ghost"
-              onClick={() => onAddProject()}
+              title={projectPath ?? projectName}
+              aria-label={
+                collapsed
+                  ? `Switch project (current: ${projectName})`
+                  : undefined
+              }
               className={cn(
-                'h-auto rounded-md py-1.5 text-left text-[13px] font-normal text-muted-foreground hover:text-foreground transition-colors duration-150',
+                'h-auto rounded-md py-1.5 text-left text-[13px] font-medium text-foreground hover:text-foreground transition-colors duration-150',
                 collapsed
                   ? 'w-full px-0 has-[>svg]:px-0'
                   : 'w-full justify-start px-2 has-[>svg]:px-2'
               )}
             >
-              <Plus className="size-3.5 shrink-0" />
-              {!collapsed && <span className="flex-1">Add project…</span>}
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: colorForProject(projectName) }}
+              />
+              {!collapsed && (
+                <>
+                  <span className="min-w-0 flex-1 truncate">{projectName}</span>
+                  <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
+                </>
+              )}
             </Button>
-          ) : (
-            !collapsed && (
-              <p className="text-muted-foreground px-2 text-[13px]">
-                Resolving project…
-              </p>
-            )
-          )}
-        </SidebarGroup>
-
-        {PROJECT_VIEW_GROUPS.map((group, groupIndex) => (
-          <SidebarGroup
-            key={group.label ?? 'start'}
-            className={cn('p-0', collapsed && groupIndex === 0 && 'mt-3')}
-          >
-            {groupIndex === 0 && !collapsed && (
-              <SidebarGroupLabel className={SECTION_LABEL_CLASS}>
-                Workspace
-              </SidebarGroupLabel>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start" className="w-56">
+            <DropdownMenuItem disabled className="text-muted-foreground">
+              <span
+                className="size-2 shrink-0 rounded-full"
+                style={{ background: colorForProject(projectName) }}
+              />
+              <span className="text-foreground min-w-0 flex-1 truncate">
+                {projectName}
+              </span>
+              <Check className="text-primary size-3.5" />
+            </DropdownMenuItem>
+            {otherProjects.length === 0 ? (
+              <div className="text-muted-foreground px-2 py-1.5 text-[12px]">
+                No other dispatch projects
+              </div>
+            ) : (
+              otherProjects.map((p) => (
+                <DropdownMenuItem
+                  key={p.path}
+                  title={p.path}
+                  onSelect={() => onSelectProject(p.path)}
+                >
+                  <span
+                    className="size-2 shrink-0 rounded-full"
+                    style={{ background: colorForProject(p.name) }}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
+                </DropdownMenuItem>
+              ))
             )}
-            {/* Collapsed, a hairline is all that is left to separate one stage from the next. */}
-            {groupIndex > 0 && collapsed && (
-              <Separator className="mx-auto my-2 data-[orientation=horizontal]:w-5" />
-            )}
-            {groupIndex > 0 && !collapsed && group.label !== undefined && (
-              <SidebarGroupLabel className={STAGE_LABEL_CLASS}>
-                {group.label}
-              </SidebarGroupLabel>
-            )}
-            <SidebarMenu className="gap-0.5">
-              {group.entries.map(({ view, index }) => {
-                const Icon = view.icon;
-                const active = section === 'project' && projectView === view.id;
-                return (
-                  <SidebarMenuItem key={view.id}>
-                    <SidebarMenuButton
-                      tooltip={view.label}
-                      aria-label={collapsed ? view.label : undefined}
-                      isActive={active}
-                      disabled={!hasActiveProject}
-                      onClick={() => onSetProjectView(view.id)}
-                      className={cn(
-                        NAV_ROW_CLASS,
-                        collapsed && 'justify-center',
-                        !active && NAV_ROW_INACTIVE_CLASS,
-                        !hasActiveProject &&
-                          'text-muted-foreground/50 pointer-events-none disabled:opacity-100'
-                      )}
-                    >
-                      <Icon className="size-4 shrink-0" strokeWidth={2} />
-                      {!collapsed && (
-                        <>
-                          <span className="flex-1">{view.label}</span>
-                          <CountChip count={badges[view.id] ?? 0} />
-                          {/* The shortcut lives on the thing it operates, which is the
-                            only way anyone finds out it exists. */}
-                          {index < 9 && (
-                            <Kbd className={ROW_HINT_CLASS}>⌘{index + 1}</Kbd>
-                          )}
-                        </>
-                      )}
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroup>
-        ))}
-
-        <Separator className="my-3" />
-
-        <SidebarGroup className="p-0">
-          <DraftTray
-            drafts={drafts}
-            collapsed={collapsed}
-            onOpenDraft={onOpenDraft}
-            onDismissDraft={onDismissDraft}
-          />
-          <SidebarMenu className="gap-0.5">
-            <SidebarMenuItem>
-              <SidebarMenuButton
-                tooltip="Notifications"
-                aria-label={
-                  collapsed
-                    ? `Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`
-                    : undefined
-                }
-                onClick={() => onToggleInbox()}
-                className={cn(
-                  NAV_ROW_CLASS,
-                  NAV_ROW_INACTIVE_CLASS,
-                  collapsed && 'justify-center'
-                )}
-              >
-                <Bell className="size-4 shrink-0" strokeWidth={2} />
-                {!collapsed && (
-                  <>
-                    <span className="flex-1">Notifications</span>
-                    {unreadCount > 0 && (
-                      <span className="bg-secondary text-secondary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
-                        {unreadCount > 99 ? '99+' : unreadCount}
-                      </span>
-                    )}
-                  </>
-                )}
-              </SidebarMenuButton>
-            </SidebarMenuItem>
-
-            {GLOBAL_VIEWS.map((item) => {
-              const Icon = item.icon;
-              const active = section === 'global' && globalView === item.id;
-              return (
-                <SidebarMenuItem key={item.id}>
-                  <SidebarMenuButton
-                    tooltip={item.label}
-                    aria-label={collapsed ? item.label : undefined}
-                    isActive={active}
-                    onClick={() => onSetGlobalView(item.id)}
-                    className={cn(
-                      NAV_ROW_CLASS,
-                      collapsed && 'justify-center',
-                      !active && NAV_ROW_INACTIVE_CLASS
-                    )}
-                  >
-                    <Icon className="size-4 shrink-0" strokeWidth={2} />
-                    {!collapsed && (
-                      <>
-                        <span className="flex-1">{item.label}</span>
-                        {item.id === 'all-agents' && liveAgentCount > 0 && (
-                          <span className="bg-primary text-primary-foreground flex min-w-[1.1rem] items-center justify-center rounded-full px-1 text-[10px] font-medium">
-                            {liveAgentCount}
-                          </span>
-                        )}
-                      </>
-                    )}
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              );
-            })}
-          </SidebarMenu>
-        </SidebarGroup>
-
-        {/* The board syncer's status. Hidden when collapsed, same as the spend line below — an
-            icon-only rail has no room for a sentence. */}
-        {!collapsed && hasActiveProject && (
-          <SyncChip
-            status={syncStatus}
-            onDisableAutoCommit={onDisableAutoCommit}
-          />
-        )}
-      </SidebarContent>
-
-      <SidebarFooter className="gap-0 p-0">
-        {/* Today's spend. The mockup put this in the window titlebar, which Tauri owns and this
-            app cannot draw into — the foot of the rail is the same glanceable place we can
-            actually reach. Hidden entirely at zero rather than showing "$0.00": a running cost
-            meter is only worth the pixels once there is a cost. */}
-        {!collapsed && spendToday !== null && spendToday > 0 && (
-          <div className="text-muted-foreground px-2 pt-3 text-[11px]">
-            <span className="dense-meta">${spendToday.toFixed(2)}</span> today
-          </div>
-        )}
-
-        <div
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onSelect={() => onAddProject()}>
+              <Plus className="text-muted-foreground size-3.5" />
+              <span className="flex-1">Add project</span>
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : noProjectYet ? (
+        <Button
+          type="button"
+          variant="ghost"
+          onClick={() => onAddProject()}
           className={cn(
-            'flex items-center pt-3',
-            collapsed ? 'justify-center' : 'justify-between px-2'
+            'h-auto rounded-md py-1.5 text-left text-[13px] font-normal text-muted-foreground hover:text-foreground transition-colors duration-150',
+            collapsed
+              ? 'w-full px-0 has-[>svg]:px-0'
+              : 'w-full justify-start px-2 has-[>svg]:px-2'
           )}
         >
-          {!collapsed && (
-            <span className="text-muted-foreground text-[11px]">
-              <Kbd className={FOOTER_HINT_CLASS}>⌘K</Kbd> to jump anywhere
-            </span>
-          )}
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-                aria-expanded={!collapsed}
-                aria-controls="dispatch-sidebar"
-                onClick={() => toggleSidebar()}
-                className="text-muted-foreground hover:text-foreground shrink-0 transition-colors duration-150"
-              >
-                {collapsed ? (
-                  <ChevronRight className="size-4" />
-                ) : (
-                  <ChevronLeft className="size-4" />
-                )}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-              {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            </TooltipContent>
-          </Tooltip>
+          <Plus className="size-3.5 shrink-0" />
+          {!collapsed && <span className="flex-1">Add project…</span>}
+        </Button>
+      ) : (
+        !collapsed && (
+          <p className="text-muted-foreground px-2 text-[13px]">
+            Resolving project…
+          </p>
+        )
+      )}
+    </>
+  );
+
+  const footer = (
+    <>
+      <DraftTray
+        drafts={drafts}
+        collapsed={collapsed}
+        onOpenDraft={onOpenDraft}
+        onDismissDraft={onDismissDraft}
+      />
+
+      {/* The board syncer's status. Hidden when collapsed, same as the spend line below — an
+          icon-only rail has no room for a sentence. */}
+      {!collapsed && hasActiveProject && (
+        <SyncChip
+          status={syncStatus}
+          onDisableAutoCommit={onDisableAutoCommit}
+        />
+      )}
+
+      {/* Today's spend. The mockup put this in the window titlebar, which Tauri owns and this
+          app cannot draw into — the foot of the rail is the same glanceable place we can
+          actually reach. Hidden entirely at zero rather than showing "$0.00": a running cost
+          meter is only worth the pixels once there is a cost. */}
+      {!collapsed && spendToday !== null && spendToday > 0 && (
+        <div className="text-muted-foreground px-2 pt-3 text-[11px]">
+          <span className="dense-meta">${spendToday.toFixed(2)}</span> today
         </div>
-      </SidebarFooter>
+      )}
+
+      <div
+        className={cn(
+          'flex items-center pt-3',
+          collapsed ? 'justify-center' : 'justify-between px-2'
+        )}
+      >
+        {!collapsed && (
+          <span className="text-muted-foreground text-[11px]">
+            <Kbd className={FOOTER_HINT_CLASS}>⌘K</Kbd> to jump anywhere
+          </span>
+        )}
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-xs"
+              aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              aria-expanded={!collapsed}
+              aria-controls="dispatch-sidebar"
+              onClick={() => toggleSidebar()}
+              className="text-muted-foreground hover:text-foreground shrink-0 transition-colors duration-150"
+            >
+              {collapsed ? (
+                <ChevronRight className="size-4" />
+              ) : (
+                <ChevronLeft className="size-4" />
+              )}
+            </Button>
+          </TooltipTrigger>
+          <TooltipContent side="right">
+            {collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          </TooltipContent>
+        </Tooltip>
+      </div>
+    </>
+  );
+
+  return (
+    <SidebarRoot
+      id="dispatch-sidebar"
+      collapsible="icon"
+      className="absolute h-full"
+    >
+      <SidebarNav
+        header={header}
+        sections={sections}
+        activeId={activeId}
+        onSelect={handleSelect}
+        footer={footer}
+        collapsed={collapsed}
+      />
     </SidebarRoot>
   );
 }
