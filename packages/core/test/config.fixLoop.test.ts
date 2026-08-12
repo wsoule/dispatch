@@ -39,7 +39,7 @@ describe('fixLoop config', () => {
         '      modelTier: high\n'
     );
     expect(loadConfig(dir).fixLoop).toEqual({
-      auto: true,
+      auto: false,
       cap: 3,
       escalation: [{ round: 1, strategy: 'fresh', modelTier: 'high' }],
     });
@@ -48,16 +48,16 @@ describe('fixLoop config', () => {
   it('cap alone keeps the default escalation table', () => {
     const dir = root('fixLoop:\n  cap: 2\n');
     expect(loadConfig(dir).fixLoop).toEqual({
-      auto: true,
+      auto: false,
       cap: 2,
       escalation: DEFAULT_FIX_LOOP.escalation,
     });
   });
 
-  it('auto defaults on and an explicit false turns it off', () => {
-    expect(loadConfig(root('autoCommit: true\n')).fixLoop.auto).toBe(true);
-    expect(loadConfig(root('fixLoop:\n  auto: false\n')).fixLoop.auto).toBe(
-      false
+  it('auto defaults off and an explicit true turns it on', () => {
+    expect(loadConfig(root('autoCommit: true\n')).fixLoop.auto).toBe(false);
+    expect(loadConfig(root('fixLoop:\n  auto: true\n')).fixLoop.auto).toBe(
+      true
     );
   });
 
