@@ -108,8 +108,10 @@ export function BranchesPanel({
                 role="button"
                 tabIndex={-1}
                 className={cn(
-                  'flex flex-col gap-1 rounded-md px-2 py-1.5',
-                  index === selectedIndex ? 'bg-accent' : 'hover:bg-muted/50'
+                  'ease-out-expo rounded-control flex flex-col gap-1 px-2 py-1.5 transition-colors duration-100',
+                  index === selectedIndex
+                    ? 'bg-surface-hover'
+                    : 'hover:bg-surface-hover'
                 )}
               >
                 <div className="flex items-center gap-1.5">
@@ -124,7 +126,7 @@ export function BranchesPanel({
                   {chip !== null && (
                     <span
                       className={cn(
-                        'shrink-0 rounded border px-1.5 py-px text-[10px] font-medium',
+                        'rounded-chip shrink-0 border px-1.5 py-px text-[10px] font-medium',
                         chip.cls
                       )}
                     >
@@ -134,7 +136,7 @@ export function BranchesPanel({
                   {row.worktree?.dirty === true && (
                     <span
                       title="Uncommitted changes in this worktree"
-                      className="shrink-0 rounded border border-orange-500/40 px-1.5 py-px text-[10px] font-medium text-orange-600 dark:text-orange-400"
+                      className="rounded-chip shrink-0 border border-orange-500/40 px-1.5 py-px text-[10px] font-medium text-orange-600 dark:text-orange-400"
                     >
                       Uncommitted
                     </span>
@@ -143,7 +145,7 @@ export function BranchesPanel({
                     (row.worktree.behindBase ?? 0) > 0 && (
                       <span
                         title={`This epic branch is missing ${row.worktree.behindBase} commit(s) from ${row.worktree.baseBranch ?? 'its base'} — merge it in to update (dispatch never rewrites an epic branch on its own)`}
-                        className="shrink-0 rounded border border-amber-500/40 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-400"
+                        className="rounded-chip shrink-0 border border-amber-500/40 px-1.5 py-px text-[10px] font-medium text-amber-600 dark:text-amber-400"
                       >
                         {row.worktree.behindBase} behind{' '}
                         {row.worktree.baseBranch ?? 'base'}

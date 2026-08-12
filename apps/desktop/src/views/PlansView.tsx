@@ -149,10 +149,10 @@ function PlanMessageBubble({
   return (
     <div
       className={cn(
-        'flex max-w-[85%] flex-col gap-1 rounded-md px-3 py-2',
+        'rounded-control flex max-w-[85%] flex-col gap-1 px-3 py-2',
         fromUser
           ? 'bg-primary text-primary-foreground self-end'
-          : 'border-border bg-card self-start border'
+          : 'bg-card shadow-hairline self-start'
       )}
     >
       <div
@@ -234,7 +234,7 @@ function PlanConversation({
   }
 
   return (
-    <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
+    <div className="bg-card rounded-card shadow-card animate-in fade-in-0 flex flex-col gap-3 p-4 duration-150">
       <div
         ref={scrollRef}
         role="log"
@@ -246,7 +246,7 @@ function PlanConversation({
             return (
               <div
                 key={item.key}
-                className="border-border bg-muted/40 text-muted-foreground flex items-center gap-2 self-start rounded-md border px-3 py-2 text-[13px]"
+                className="bg-surface-inset text-muted-foreground shadow-hairline rounded-control flex items-center gap-2 self-start px-3 py-2 text-[13px]"
               >
                 <Spinner className="text-primary size-3.5" />
                 Planning — reading the codebase and updating the proposal…
@@ -257,7 +257,7 @@ function PlanConversation({
             return (
               <div
                 key={item.key}
-                className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 self-start rounded-md border px-3 py-2 text-[13px]"
+                className="bg-state-failed-surface text-state-failed rounded-control flex items-start gap-2 self-start px-3 py-2 text-[13px]"
               >
                 <CircleAlert className="size-4 shrink-0 translate-y-0.5" />
                 <span>{item.error}</span>
@@ -283,9 +283,9 @@ function PlanConversation({
         />
       )}
 
-      <div className="border-border flex flex-col gap-1.5 border-t pt-3">
+      <div className="shadow-hairline-top flex flex-col gap-1.5 pt-3">
         {error !== null && (
-          <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+          <div className="bg-state-failed-surface text-state-failed rounded-control flex items-center gap-2 px-3 py-2 text-[13px]">
             <CircleAlert className="size-4 shrink-0" />
             <span>{error}</span>
           </div>
@@ -362,7 +362,7 @@ function PlanTaskRow({
     .filter((title): title is string => title !== undefined);
 
   return (
-    <div className="border-border bg-card hover:border-muted-foreground/30 flex flex-col gap-2 rounded-lg border p-3 transition-colors duration-150">
+    <div className="bg-card rounded-card shadow-card ease-out-expo hover:bg-surface-hover flex flex-col gap-2 p-3 transition-colors duration-100">
       <div className="flex items-center gap-2">
         <span className="text-muted-foreground w-5 shrink-0 font-mono text-[11px]">
           {index + 1}
@@ -626,9 +626,9 @@ export function PlansView({
       </div>
 
       {data.planId === null ? (
-        <div className="border-border bg-card animate-in fade-in-0 flex flex-col gap-3 rounded-lg border p-4 duration-150">
+        <div className="bg-card rounded-card shadow-card animate-in fade-in-0 flex flex-col gap-3 p-4 duration-150">
           {submitError !== null && (
-            <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+            <div className="bg-state-failed-surface text-state-failed rounded-control flex items-center gap-2 px-3 py-2 text-[13px]">
               <CircleAlert className="size-4 shrink-0" />
               <span>{submitError}</span>
             </div>
@@ -677,7 +677,7 @@ export function PlansView({
         // working, so this is where the epic and its tasks are *going* to be and nothing more
         // — a second "Planning…" line here just says the same thing twice.
         <div
-          className="border-border bg-card animate-in fade-in-0 flex flex-col gap-2 rounded-lg border p-4 duration-150"
+          className="bg-card rounded-card shadow-card animate-in fade-in-0 flex flex-col gap-2 p-4 duration-150"
           aria-hidden="true"
         >
           <Skeleton className="h-4 w-2/3" />
@@ -690,7 +690,7 @@ export function PlansView({
       {draft !== null && (
         <div className="animate-in fade-in-0 flex flex-col gap-4 duration-150">
           {confirmError !== null && (
-            <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
+            <div className="bg-state-failed-surface text-state-failed rounded-control flex items-center gap-2 px-3 py-2 text-[13px]">
               <CircleAlert className="size-4 shrink-0" />
               <span>{confirmError}</span>
             </div>
@@ -708,7 +708,7 @@ export function PlansView({
           )}
 
           {draft.proposal.epic !== undefined && (
-            <div className="border-border bg-card flex flex-col gap-2 rounded-lg border p-4">
+            <div className="bg-card rounded-card shadow-card flex flex-col gap-2 p-4">
               <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
                 Epic
               </div>
@@ -748,7 +748,7 @@ export function PlansView({
             ))}
           </div>
 
-          <div className="border-border flex items-center justify-end gap-2 border-t pt-3">
+          <div className="shadow-hairline-top flex items-center justify-end gap-2 pt-3">
             <Button variant="ghost" onClick={closePlan} disabled={confirming}>
               Cancel
             </Button>
@@ -785,7 +785,7 @@ export function PlansView({
           <EmptyState
             icon={History}
             message="No plans yet."
-            className="border-border rounded-lg border border-dashed px-0 py-8 [&_[data-slot=empty-description]]:text-[13px]"
+            className="border-border rounded-card border border-dashed px-0 py-8 [&_[data-slot=empty-description]]:text-[13px]"
           />
         ) : (
           <div className="flex flex-col gap-1.5">
@@ -797,10 +797,10 @@ export function PlansView({
                 size="xs"
                 onClick={() => openHistoryEntry(entry)}
                 className={cn(
-                  'h-auto w-full items-center justify-start gap-2 rounded-md border px-3 py-2 text-left text-[length:inherit] font-normal hover:text-foreground',
+                  'rounded-control ease-out-expo h-auto w-full items-center justify-start gap-2 px-3 py-2 text-left text-[length:inherit] font-normal transition-colors duration-100 hover:text-foreground',
                   entry.id === data.planId
-                    ? 'border-primary/40 bg-accent'
-                    : 'border-border bg-card hover:border-muted-foreground/30 hover:bg-card'
+                    ? 'bg-accent ring-primary/40 ring-1'
+                    : 'bg-card shadow-hairline hover:bg-surface-hover'
                 )}
               >
                 <PlanStateDot state={entry.state} />

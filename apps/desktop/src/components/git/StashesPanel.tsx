@@ -48,8 +48,10 @@ export function StashesPanel({
           role="button"
           tabIndex={-1}
           className={cn(
-            'flex items-center gap-2 px-3 py-1.5 text-[12px]',
-            index === selectedIndex ? 'bg-accent' : 'hover:bg-muted/50'
+            'ease-out-expo flex items-center gap-2 px-3 py-1.5 text-[12px] transition-colors duration-100',
+            index === selectedIndex
+              ? 'bg-surface-hover'
+              : 'hover:bg-surface-hover'
           )}
         >
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">

@@ -63,7 +63,7 @@ export function FeedFilterBar({
           size="xs"
           onClick={onClearStates}
           // Ghost's hover bg/transition are neutralized — the old button had neither.
-          className="text-muted-foreground hover:text-foreground h-auto rounded-md px-2 py-1.5 text-[12px] font-normal transition-none hover:bg-transparent dark:hover:bg-transparent"
+          className="text-muted-foreground hover:text-foreground rounded-chip h-auto px-2 py-1.5 text-[12px] font-normal transition-none hover:bg-transparent dark:hover:bg-transparent"
         >
           Clear filter
         </Button>
@@ -76,7 +76,7 @@ export function FeedFilterBar({
         variant="ghost"
         size="xs"
         onClick={onToggleCollapseAll}
-        className="text-muted-foreground hover:bg-muted/50 hover:text-foreground dark:hover:bg-muted/50 h-auto rounded-md px-2.5 py-1.5 text-[12px] font-normal transition-colors duration-150"
+        className="text-muted-foreground hover:bg-surface-hover hover:text-foreground ease-out-expo rounded-chip h-auto px-2.5 py-1.5 text-[12px] font-normal transition-colors duration-100"
       >
         {allCollapsed ? 'Expand all' : 'Collapse all'}
       </Button>
