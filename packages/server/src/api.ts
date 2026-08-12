@@ -72,14 +72,16 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
-import type { InboxItem, InboxKind } from './inbox.js';
+import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
+import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStore } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
+import { buildAgentSessions } from './orchestrator/agentSessions.js';
 import type { EpicEngine } from './orchestrator/epic.js';
 import type { FixLoop } from './orchestrator/fixLoop.js';
 import type { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -95,6 +97,8 @@ import {
   buildPrReviewTask,
   isPrReviewTaskFor,
 } from './orchestrator/prReviewTask.js';
+import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
+import { toLandingWorktree } from './orchestrator/prWorktree.js';
 import type {
   QuestionRegistry,
   RunQuestion,
@@ -140,6 +144,9 @@ export interface ApiContext {
   wardenManager: WardenManager;
   epicEngine: EpicEngine;
   prManager: PrManager;
+  // Task 7: PR review worktrees — cut on demand, kept in sync by
+  // PrManager's poll, listed here for GET /api/landing's worktree column.
+  prWorktrees: PrWorktreeManager;
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
   inboxStore: InboxStore;
@@ -308,6 +315,8 @@ function validateTaskFields(
   if (blockedByError) return blockedByError;
   const selfReviewError = validateBooleanField(value.selfReview, 'selfReview');
   if (selfReviewError) return selfReviewError;
+  const fixLoopError = validateBooleanField(value.fixLoop, 'fixLoop');
+  if (fixLoopError) return fixLoopError;
   const archivedAtError = validateStringOrNullField(
     value.archivedAt,
     'archivedAt'
@@ -2153,6 +2162,44 @@ async function getRepoPrDetail(
   return jsonResponse(detail);
 }
 
+// GET /api/landing — the unified PR table: runs, the merge queue, and
+// open/merged PRs joined into one feed. `mergedPrs` degrades to `[]` when
+// the project lacks pr capability or `gh` fails, so a local-only repo (no
+// remote at all) still gets a 200 with its queue-local rows intact rather
+// than a 409.
+async function getLandingSnapshot(ctx: ApiContext): Promise<Response> {
+  let mergedPrs: RepoPr[] = [];
+  try {
+    mergedPrs = await ctx.prManager.listMergedPrs(20);
+  } catch (err) {
+    if (!(err instanceof OrchestratorConflictError)) throw err;
+  }
+  // list()'s own `behind` is always false (a disk-only scan has no live PR
+  // data to compare against) — recomputed here against the cache's current
+  // headRefOid, the freshest answer this route has without paying for
+  // another `gh` call (Task 7 review, IMPORTANT 3).
+  const openPrs = ctx.prManager.cachedPrs();
+  const headRefOidByNumber = new Map(
+    openPrs.map((pr) => [pr.number, pr.headRefOid])
+  );
+  const worktreeStates = await ctx.prWorktrees.list();
+  const worktrees = new Map(
+    worktreeStates.map((state) => [
+      state.prNumber,
+      toLandingWorktree(state, headRefOidByNumber.get(state.prNumber)),
+    ])
+  );
+  const snapshot = buildLandingSnapshot({
+    runs: ctx.orchestrator.list(),
+    queue: ctx.mergeQueue.snapshot(),
+    openPrs,
+    mergedPrs,
+    worktrees,
+    now: new Date().toISOString(),
+  });
+  return jsonResponse(snapshot);
+}
+
 // POST /api/prs/:number/review — submit a GitHub review on a repo PR by
 // number. Body validation mirrors POST /api/runs/:id/pr/review exactly.
 async function reviewRepoPr(
@@ -2419,6 +2466,72 @@ function rollbackSynthesizedTask(ctx: ApiContext, taskId: string): void {
 function requirePrNumberParam(numberParam: string): number | null {
   const number = Number(numberParam);
   return Number.isInteger(number) && number > 0 ? number : null;
+}
+
+// The one wording for refusing to create a worktree for a closed/merged PR
+// (Task 7 review, IMPORTANT 9) — such a worktree would just get deleted by
+// the very next poll pass (PrManager's syncPrWorktrees), so this refuses up
+// front instead of creating something already scheduled for cleanup.
+function closedPrWorktreeMessage(pr: RepoPr): string {
+  const word = pr.state === 'MERGED' ? 'merged' : 'closed';
+  return (
+    `PR #${pr.number} is ${word} on GitHub; cannot create a review ` +
+    'worktree for a pull request that is no longer open.'
+  );
+}
+
+// POST /api/prs/:number/worktree — cuts a review worktree for a repo PR,
+// running the exact fork gate startPrAgentReview does (mirrors
+// dispatchPrAgentReview's confirmFork handling) before anything touches
+// disk: fetchPrHead is what actually writes refs/dispatch/pr/<n>, and
+// PrWorktreeManager.create assumes that ref already exists. 200 with the
+// resulting PrWorktreeState.
+async function createPrWorktreeRoute(
+  req: Request,
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const parsed = await readJsonBodyOptional(req);
+  if (!parsed.ok) return parsed.response;
+  const pr = await resolveRepoPrByNumber(ctx, numberParam);
+  if (pr === null) return errorResponse(404, `PR not found: #${numberParam}`);
+  // resolveRepoPrByNumber resolves a closed/merged PR too (findRepoPr's
+  // fallback) — refused here rather than left to create a worktree the next
+  // poll pass would just delete again.
+  if (pr.state !== 'OPEN') {
+    return errorResponse(409, closedPrWorktreeMessage(pr));
+  }
+  const confirmFork = parsed.value.confirmFork === true;
+  const refused = forkGate(pr, confirmFork);
+  if (refused !== null) return refused;
+  await ctx.prManager.fetchPrHead(pr.number, { confirmFork, resolved: pr });
+  const state = await ctx.prWorktrees.create(pr.number);
+  ctx.events.broadcast({ type: 'landing.changed' });
+  return jsonResponse(state);
+}
+
+// DELETE /api/prs/:number/worktree — retires a worktree if it's clean; a
+// dirty one is kept and reported back as a 409 so the client can say why. A
+// path that exists but isn't one this manager created (Task 7 re-review)
+// throws OrchestratorConflictError out of removeIfClean, which the router's
+// catch-all maps to 409 — never a false `{removed: true}`.
+async function removePrWorktreeRoute(
+  ctx: ApiContext,
+  numberParam: string
+): Promise<Response> {
+  const number = requirePrNumberParam(numberParam);
+  if (number === null) {
+    return errorResponse(400, `invalid PR number: ${numberParam}`);
+  }
+  const kept = await ctx.prWorktrees.removeIfClean(number);
+  if (kept !== null) {
+    return jsonResponse(
+      { error: 'worktree has uncommitted changes', ...kept },
+      409
+    );
+  }
+  ctx.events.broadcast({ type: 'landing.changed' });
+  return jsonResponse({ removed: true });
 }
 
 /**
@@ -2936,6 +3049,24 @@ async function startEpic(
   return jsonResponse(session, 201);
 }
 
+// POST /api/epics/:id/land — the one action that takes a finished epic
+// branch to the default base: a PR through PrManager when the project has
+// the `pr` capability (and the branch actually carries commits to PR),
+// a local merge otherwise. All readiness validation — the partially-done
+// refusal above all — lives in Orchestrator.epicLandStatus, which both
+// paths run; its typed errors map through handleApi's outer catch.
+async function landEpic(ctx: ApiContext, epicId: string): Promise<Response> {
+  const status = ctx.orchestrator.epicLandStatus(epicId);
+  if (ctx.prCapability && status.hasChanges) {
+    const prUrl = await ctx.prManager.openEpicPr(epicId);
+    return jsonResponse({ mode: 'pr', prUrl }, 201);
+  }
+  // No remote/gh — or nothing to PR at all (a no-commits epic still needs
+  // closing out, which the local path handles without a merge).
+  const result = ctx.orchestrator.landEpicLocally(epicId);
+  return jsonResponse({ mode: 'merge', mergeCommit: result.mergeCommit });
+}
+
 // POST /api/merge-queue { runId }. Enqueues a finished, unreviewed run for
 // the serial rebase -> verify -> merge pipeline. 404/409 map straight from
 // MergeQueue.enqueue's typed errors via the shared handler below.
@@ -3270,29 +3401,6 @@ function buildNoteEnrichPrompt(note: Note): string {
 }
 
 /**
- * The prompt behind "add detail" on an inbox item.
- *
- * Same shape as the note version, and for the same reason: what a one-line capture is missing is
- * context — which files it touches, what the code does today, what "done" means. Only the framing
- * differs, because an inbox item is a raw thought rather than a filed note.
- */
-function buildInboxEnrichPrompt(item: InboxItem): string {
-  return [
-    `Someone dumped this one-line ${item.kind} into a capture inbox and wants it turned into a ` +
-      'properly specified task before an agent picks it up.',
-    `Captured: ${item.text}`,
-    'Read enough of this repository to ground it: which files and functions are actually ' +
-      'involved, what the code does today, and what would have to change. Then propose exactly ' +
-      "ONE task, and no epic. Keep the original intent — sharpen it, don't replace it — and " +
-      'write a description that gives an implementing agent the context this one-liner is ' +
-      'missing, naming concrete paths where you found them. Acceptance criteria should be ' +
-      'checkable statements about the finished work. Do not invent scope the capture never ' +
-      'asked for; if the repo contradicts it, say so in the description rather than silently ' +
-      'redesigning the work.',
-  ].join('\n\n');
-}
-
-/**
  * POST /api/inbox/cluster — ask a model which captured items are one piece of
  * work. Always 200 with `error` set, since it runs unattended in the background.
  */
@@ -3313,25 +3421,6 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
-}
-
-// POST /api/inbox/:id/enrich — AI-draft the task this captured line should become. Same async
-// contract as POST /api/plan: returns a planId immediately, the client polls
-// GET /api/plan/:id and writes nothing until POST /api/plan/:id/confirm.
-function enrichInbox(ctx: ApiContext, id: string): Response {
-  const item = ctx.inboxStore.list().find((i) => i.id === id);
-  if (item === undefined)
-    return errorResponse(404, `inbox item not found: ${id}`);
-  if (item.linkedTaskId !== null) {
-    return errorResponse(409, `already converted: ${item.linkedTaskId}`);
-  }
-  const record = ctx.planManager.startPlan(
-    buildInboxEnrichPrompt(item),
-    'claude',
-    item.id,
-    'enrich'
-  );
-  return jsonResponse({ planId: record.id }, 202);
 }
 
 /**
@@ -3383,7 +3472,8 @@ function enrichTask(ctx: ApiContext, id: string): Response {
     buildTaskEnrichPrompt(task),
     'claude',
     undefined,
-    'enrich'
+    'enrich',
+    task.meta.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -3403,7 +3493,8 @@ function enrichNote(ctx: ApiContext, id: string): Response {
     buildNoteEnrichPrompt(note),
     'claude',
     note.id,
-    'enrich'
+    'enrich',
+    note.title
   );
   return jsonResponse({ planId: record.id }, 202);
 }
@@ -4203,6 +4294,31 @@ export async function handleApi(
       ) {
         return await submitPrReview(req, ctx, segments[1]);
       }
+      // POST/DELETE /api/prs/:number/worktree — Task 7's on-demand review
+      // worktree: cut it (fork-gated, same as review-agent) or retire it.
+      if (
+        segments.length === 3 &&
+        segments[2] === 'worktree' &&
+        method === 'POST'
+      ) {
+        return await createPrWorktreeRoute(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'worktree' &&
+        method === 'DELETE'
+      ) {
+        return await removePrWorktreeRoute(ctx, segments[1]);
+      }
+    }
+
+    // GET /api/landing — the unified PR table feed (runs + merge queue +
+    // open/merged PRs). See getLandingSnapshot for the capability-loss
+    // degradation.
+    if (segments[0] === 'landing') {
+      if (segments.length === 1 && method === 'GET') {
+        return await getLandingSnapshot(ctx);
+      }
     }
 
     if (segments[0] === 'branches') {
@@ -4476,13 +4592,6 @@ export async function handleApi(
       if (segments.length === 2 && method === 'PATCH') {
         return await updateInbox(req, ctx, segments[1]);
       }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'enrich' &&
-        method === 'POST'
-      ) {
-        return enrichInbox(ctx, segments[1]);
-      }
     }
 
     if (segments[0] === 'findings') {
@@ -4508,6 +4617,20 @@ export async function handleApi(
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
       return await getImpact(ctx, url);
+    }
+
+    // GET /api/agents — every in-memory conversation agent (planner chats,
+    // enrich/"add detail" agents, task drafts, warden chats), normalized for
+    // the All agents page. Task runs are not repeated here: GET /api/runs
+    // already lists them, and the client merges the two.
+    if (segments[0] === 'agents' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(
+        buildAgentSessions(
+          ctx.planManager.listPlans(),
+          ctx.planManager.listDrafts(),
+          ctx.wardenManager.list()
+        )
+      );
     }
 
     if (segments[0] === 'plan') {
@@ -4578,6 +4701,18 @@ export async function handleApi(
         method === 'GET'
       ) {
         return jsonResponse(ctx.epicEngine.progress(segments[1]));
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'land' &&
+        method === 'POST'
+      ) {
+        return await landEpic(ctx, segments[1]);
+      }
+      // The epic branch's diff against the default base — served from the
+      // land-time snapshot once the branch itself is gone.
+      if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
+        return jsonResponse(ctx.orchestrator.epicDiff(segments[1]));
       }
     }
 

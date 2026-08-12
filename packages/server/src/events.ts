@@ -106,7 +106,12 @@ export type ServerEvent =
   // refetch, no payload beyond the id" contract as `plan.changed` — a turn
   // appends several entries, and a client rendering the thread wants the whole
   // record anyway.
-  | { type: 'warden.changed'; conversationId: string };
+  | { type: 'warden.changed'; conversationId: string }
+  // The PR poll's cached repo-PR set changed (a delta in number, head sha,
+  // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
+  // refetch GET /api/landing. No payload: the cache itself is the source of
+  // truth, same "go refetch" contract as task.changed.
+  | { type: 'landing.changed' };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

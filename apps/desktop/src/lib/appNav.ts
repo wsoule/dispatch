@@ -15,6 +15,11 @@ export type ProjectView =
   /** retired — normalized to 'inbox' */
   | 'runs'
   | 'branches'
+  /** retired — normalized to 'landing' */
+  | 'landed'
+  /** The one merge-queue destination: every open PR with its gates, plus what
+   * already landed — "what lands, when, and what landed". */
+  | 'landing'
   /** retired — normalized to 'inbox' */
   | 'review'
   /** Slim list of everything waiting on a human — the surface that replaced
@@ -112,11 +117,11 @@ interface NavEntry {
   taskTab: TaskTab;
 }
 
-/** The Runs and Review pages were retired by the task-centric consolidation
- * (2026-08-10); their ids survive so stored nav state and deep links land on
- * the Inbox instead of rendering nothing. */
+/** Retired page ids survive so stored nav state and deep links land somewhere
+ * real: Runs/Review folded into the Inbox, Landed into the Landing table. */
 function normalizeProjectView(view: ProjectView): ProjectView {
-  return view === 'runs' || view === 'review' ? 'inbox' : view;
+  if (view === 'runs' || view === 'review') return 'inbox';
+  return view === 'landed' ? 'landing' : view;
 }
 
 export const initialNavState: NavState = {

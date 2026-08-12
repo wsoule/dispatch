@@ -36,8 +36,9 @@ import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
 import type { InboxTarget } from './lib/inbox';
-import { unreadCount } from './lib/inbox';
+import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
+import { landingNavBadge } from './lib/landingView';
 import { isLinearConfigured } from './lib/linearSettings';
 import { resolveExecuteModel } from './lib/models';
 import { basename } from './lib/projectName';
@@ -61,6 +62,7 @@ import { GalleryView } from './views/GalleryView';
 import { GetStartedView } from './views/GetStartedView';
 import { ImpactView } from './views/ImpactView';
 import { InboxView } from './views/InboxView';
+import { LandingTableView } from './views/LandingTableView';
 import { OverviewView } from './views/OverviewView';
 import { PlansView } from './views/PlansView';
 import { PrReviewView } from './views/PrReviewView';
@@ -530,8 +532,8 @@ function App() {
   // listeners on every App render instead of just when the panel opens/closes.
   const closeInbox = useCallback(() => setInboxOpen(false), []);
 
-  // Click-through for a notification row: a run transition opens that run's task, anything
-  // queue-wide lands on the Inbox, which is where "what needs me" now lives.
+  // Click-through for a notification row: a run transition opens that run's task; a target
+  // that names a page rather than a record routes via `projectViewForInboxTarget`.
   // Also marks the whole inbox read again: an entry can arrive while the panel is already
   // open (opening only marks-read at that instant), and without this a fresh unread badge
   // would linger after the user just acted on the newest entry.
@@ -551,21 +553,12 @@ function App() {
         setInboxOpen(false);
         return;
       }
-      if (target.kind === 'plan') {
-        // Plans render one conversation at a time, so the view itself is the
-        // destination — there is no per-plan id to select once you are there.
-        selectProjectView('plans');
-        markNotificationInboxRead();
-        setInboxOpen(false);
-        return;
-      }
-      if (target.kind === 'run') {
+      // Everything left either names a page or names one run.
+      const pageView = projectViewForInboxTarget(target);
+      if (pageView !== null) {
+        selectProjectView(pageView);
+      } else if (target.kind === 'run') {
         jumpToRun(target.runId);
-      } else {
-        // {kind:'queue'}/{kind:'runs-page'}: no one run to point at, so both
-        // land on the Inbox, which lists everything waiting and the merge
-        // queue underneath it.
-        selectProjectView('inbox');
       }
       markNotificationInboxRead();
       setInboxOpen(false);
@@ -613,6 +606,12 @@ function App() {
           label: 'Go to Plans',
           kind: 'go to',
           run: () => selectProjectView('plans'),
+        },
+        {
+          id: 'go-landing',
+          label: 'Go to Landing',
+          kind: 'go to',
+          run: () => selectProjectView('landing'),
         }
       );
       for (const doc of paletteTasks) {
@@ -749,6 +748,8 @@ function App() {
             badges={{
               board: data.readyIds.size,
               inbox: inboxData.review.length + inboxData.waiting.length,
+              landing:
+                data.landing !== null ? landingNavBadge(data.landing) : 0,
             }}
             unreadCount={unreadCount(data.notificationInbox)}
             onToggleInbox={toggleInbox}
@@ -827,6 +828,9 @@ function App() {
                       // `visibleRuns`, not `runs`: this is the run *list* the archive filter
                       // was built for, and the only surface left that can unarchive one.
                       runs={data.visibleRuns}
+                      // The non-run agents (planners, enrich, drafts, wardens) — archiving
+                      // never applies to them, so they bypass the archive filter.
+                      sessions={data.agentSessions}
                       archivedRunCount={archivedRunCount}
                       showArchived={data.showArchived}
                       onSetShowArchived={data.setShowArchived}
@@ -882,6 +886,17 @@ function App() {
                       data={inboxData}
                       project={data}
                       onOpenTask={openTaskView}
+                      onOpenPr={(number) =>
+                        dispatchNav({ type: 'openPr', number })
+                      }
+                    />
+                  )}
+                  {navState.projectView === 'landing' && (
+                    <LandingTableView
+                      data={data}
+                      onOpenRun={(taskId, runId) =>
+                        openTaskView(taskId, 'diff', runId)
+                      }
                       onOpenPr={(number) =>
                         dispatchNav({ type: 'openPr', number })
                       }

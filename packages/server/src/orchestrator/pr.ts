@@ -1,5 +1,12 @@
 import type { ActorContext, TaskStore } from '@dispatch/core';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,7 +24,10 @@ import type {
   ReviewReply,
 } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
+import { isEpicBranch } from './epicBranch.js';
 import type { Orchestrator } from './orchestrator.js';
+import { epicPrsPath, runsDir } from './paths.js';
+import type { PrWorktreeManager } from './prWorktree.js';
 import type { RunMeta } from './types.js';
 import {
   OrchestratorClientError,
@@ -204,15 +214,35 @@ export interface PrManagerContext {
   // constructed twice: a review run's comments and a human's land in the
   // same per-target file.
   reviewComments: ReviewCommentStore;
+  // Whether the merge queue currently has an entry parked in
+  // 'waiting-github' — wired from index.ts to a snapshot of the queue.
+  // startPolling() tightens its interval to 15s while this is true, so a
+  // held PR's checks/review-decision are re-read quickly enough that the
+  // queue's own 'landing.changed' retry hook actually has something fresh to
+  // react to. Absent ⇒ always poll at the configured interval, unchanged
+  // behavior for every caller that doesn't wire the merge queue in at all.
+  hasGithubHolds?: () => boolean;
+  // Task 7: keeps review worktrees synced/retired alongside each poll's
+  // cache refresh (see pollOnce). Absent ⇒ no worktree lifecycle runs at
+  // all, so every existing test's PrManagerContext (which never wires one
+  // in) is unaffected.
+  prWorktrees?: PrWorktreeManager;
+}
+
+interface PrCheckRun {
+  name: string;
+  conclusion: string; // SUCCESS | FAILURE | PENDING | … (normalized verdict)
+  url: string;
 }
 
 // A CI check rollup summarized to counts the UI can render as a compact
 // pass/fail/pending line, instead of the raw per-check array GitHub returns.
-interface PrCheckSummary {
+export interface PrCheckSummary {
   passed: number;
   failed: number;
   pending: number;
   total: number;
+  runs: PrCheckRun[];
 }
 
 // The reviewable state of a run's GitHub PR, from `gh pr view --json …`.
@@ -411,29 +441,39 @@ export function parsePrUrl(
 }
 
 // Collapses GitHub's per-check rollup (a mix of CheckRun and StatusContext
-// nodes, each reporting completion differently) into pass/fail/pending counts.
-// A CheckRun reports `status` (COMPLETED/IN_PROGRESS/QUEUED) + `conclusion`
-// (SUCCESS/FAILURE/…); a legacy StatusContext reports `state`
+// nodes, each reporting completion differently) into pass/fail/pending counts
+// and per-check detail. A CheckRun reports `status` (COMPLETED/IN_PROGRESS/QUEUED)
+// + `conclusion` (SUCCESS/FAILURE/…); a legacy StatusContext reports `state`
 // (SUCCESS/FAILURE/PENDING/ERROR). Anything not clearly success or failure
 // counts as pending, so an in-flight run reads as pending rather than passed.
-function summarizeChecks(rollup: unknown): PrCheckSummary {
+export function summarizeChecks(rollup: unknown): PrCheckSummary {
   const summary: PrCheckSummary = {
     passed: 0,
     failed: 0,
     pending: 0,
     total: 0,
+    runs: [],
   };
   if (!Array.isArray(rollup)) return summary;
   for (const raw of rollup) {
     if (raw === null || typeof raw !== 'object') continue;
-    const check = raw as { conclusion?: unknown; state?: unknown };
-    const verdict = ghString(check.conclusion ?? check.state).toUpperCase();
+    const node = raw as {
+      name?: unknown;
+      context?: unknown;
+      conclusion?: unknown;
+      state?: unknown;
+      detailsUrl?: unknown;
+      targetUrl?: unknown;
+    };
+    const verdict = ghString(node.conclusion ?? node.state).toUpperCase();
     summary.total += 1;
+    let summaryBucket: 'passed' | 'failed' | 'pending';
     if (
       verdict === 'SUCCESS' ||
       verdict === 'NEUTRAL' ||
       verdict === 'SKIPPED'
     ) {
+      summaryBucket = 'passed';
       summary.passed += 1;
     } else if (
       verdict === 'FAILURE' ||
@@ -442,10 +482,23 @@ function summarizeChecks(rollup: unknown): PrCheckSummary {
       verdict === 'TIMED_OUT' ||
       verdict === 'ACTION_REQUIRED'
     ) {
+      summaryBucket = 'failed';
       summary.failed += 1;
     } else {
+      summaryBucket = 'pending';
       summary.pending += 1;
     }
+    const name = ghString(node.name ?? node.context);
+    summary.runs.push({
+      name: name.length > 0 ? name : 'check',
+      conclusion:
+        verdict === ''
+          ? 'PENDING'
+          : summaryBucket === 'pending'
+            ? 'PENDING'
+            : verdict,
+      url: ghString(node.detailsUrl ?? node.targetUrl),
+    });
   }
   return summary;
 }
@@ -471,7 +524,22 @@ const FILE_STATUS_LETTER: Record<string, string> = {
  * a logged-in `gh` CLI, and so a slow real call never blocks the process.
  */
 export class PrManager {
-  private pollTimer: ReturnType<typeof setInterval> | undefined;
+  private pollTimer: ReturnType<typeof setTimeout> | undefined;
+  // Guards the self-rearming chain in startPolling() against resurrecting
+  // itself: stopPolling() can run while a tick's pollOnce() is still
+  // in-flight, and clearing `pollTimer` alone would not stop that tick's
+  // `.finally(scheduleNext)` from arming a fresh timer once it settles.
+  private pollingStopped = true;
+  // The last poll's open-PR set — GET /api/landing (a later task) and the
+  // merge queue both read this instead of paying for their own `gh pr list`.
+  // Empty until pollOnce()'s first successful list call.
+  private cache: RepoPr[] = [];
+  // The previous poll's landingDeltaKey(), or undefined before any poll has
+  // succeeded — undefined never equals a real key, so the first successful
+  // fill always counts as a delta (empty -> non-empty is one too).
+  private cacheDeltaKey: string | undefined;
+  // Set once refreshCache() has succeeded at least once — see cacheReady().
+  private cacheFilled = false;
 
   constructor(
     private readonly ctx: PrManagerContext,
@@ -523,6 +591,22 @@ export class PrManager {
         `git push failed: ${commandErrorText(push)}`
       );
     }
+    // A PR against an epic integration branch needs that branch on origin too
+    // — it exists only locally until something pushes it, and `gh pr create
+    // --base` refuses a base ref origin has never seen.
+    if (isEpicBranch(meta.baseBranch)) {
+      const pushBase = await this.run(meta.worktreePath, [
+        'git',
+        'push',
+        'origin',
+        meta.baseBranch,
+      ]);
+      if (!pushBase.ok) {
+        throw new OrchestratorConflictError(
+          `git push of epic base ${meta.baseBranch} failed: ${commandErrorText(pushBase)}`
+        );
+      }
+    }
     const body = `Automated PR opened by dispatch for task ${meta.taskId} (run ${meta.id}).`;
     const create = await this.run(meta.worktreePath, [
       'gh',
@@ -567,6 +651,264 @@ export class PrManager {
     return this.ctx.orchestrator.setRunPrUrl(runId, url);
   }
 
+  // The `gh pr list --json REPO_PR_FIELDS --state open --limit 50` argv —
+  // shared by listRepoPrs() and pollOnce()'s cache refresh so both read the
+  // identical field set and page size instead of drifting apart.
+  private listRepoPrsArgv(): string[] {
+    return [
+      'gh',
+      'pr',
+      'list',
+      '--json',
+      REPO_PR_FIELDS,
+      '--state',
+      'open',
+      '--limit',
+      '50',
+    ];
+  }
+
+  // Parses a `gh pr list` JSON stdout into RepoPr[]. Shared by listRepoPrs
+  // and listMergedPrs so both use the same parse logic.
+  private parsePrList(stdout: string): RepoPr[] {
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(stdout) as Array<Record<string, unknown>>;
+    } catch {
+      throw new OrchestratorConflictError('gh pr list returned invalid JSON');
+    }
+    return raw.map((item) => toRepoPr(item));
+  }
+
+  // The `gh pr list --json REPO_PR_FIELDS --state merged --limit <limit>` argv.
+  private listMergedPrsArgv(limit: number): string[] {
+    return [
+      'gh',
+      'pr',
+      'list',
+      '--json',
+      REPO_PR_FIELDS,
+      '--state',
+      'merged',
+      '--limit',
+      String(limit),
+    ];
+  }
+
+  // GET /api/landing (a later task): recently merged PRs in the repo,
+  // sorted by updatedAt desc. 409s outright when this project lacks the `pr`
+  // capability, same as listRepoPrs — there's no gh/remote to list against.
+  async listMergedPrs(limit = 20): Promise<RepoPr[]> {
+    if (!this.capability) {
+      throw new OrchestratorConflictError(
+        'PR review requires the gh CLI and a configured git remote'
+      );
+    }
+    const result = await this.run(
+      this.ctx.rootDir,
+      this.listMergedPrsArgv(limit)
+    );
+    if (!result.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr list failed: ${commandErrorText(result)}`
+      );
+    }
+    const prs = this.parsePrList(result.stdout);
+    // Sort by updatedAt desc (newest first).
+    return prs.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  }
+
+  // The PRs opened to land whole epic branches on the default base
+  // (epicId -> PR url). Loaded lazily from epicPrsPath and written back on
+  // every change, so a daemon restart keeps polling an epic PR to merged
+  // instead of forgetting the epic mid-land — the durability RunMeta.prUrl
+  // gets from the run registry, which an epic has no entry in.
+  private epicPrRecords: Map<string, string> | null = null;
+
+  private loadEpicPrs(): Map<string, string> {
+    if (this.epicPrRecords !== null) return this.epicPrRecords;
+    this.epicPrRecords = new Map();
+    const path = epicPrsPath(this.ctx.rootDir);
+    if (existsSync(path)) {
+      // A corrupt ledger (non-atomic write interrupted by a crash) degrades
+      // to "no epic PRs known" rather than taking the poller down — the PR
+      // itself still exists on GitHub, and landing again will re-record it.
+      try {
+        const raw = JSON.parse(readFileSync(path, 'utf8')) as Record<
+          string,
+          unknown
+        >;
+        for (const [epicId, url] of Object.entries(raw)) {
+          if (typeof url === 'string') this.epicPrRecords.set(epicId, url);
+        }
+      } catch (err) {
+        console.error(
+          `dispatchd: failed to read epic PR ledger: ${(err as Error).message}`
+        );
+      }
+    }
+    return this.epicPrRecords;
+  }
+
+  private saveEpicPrs(): void {
+    const records = this.loadEpicPrs();
+    try {
+      mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
+      writeFileSync(
+        epicPrsPath(this.ctx.rootDir),
+        JSON.stringify(Object.fromEntries(records))
+      );
+    } catch (err) {
+      console.error(
+        `dispatchd: failed to write epic PR ledger: ${(err as Error).message}`
+      );
+    }
+  }
+
+  // The open landing PR for an epic, if one exists — lets the API/UI say
+  // "already landing" instead of re-validating from scratch.
+  epicPrUrl(epicId: string): string | undefined {
+    return this.loadEpicPrs().get(epicId);
+  }
+
+  /**
+   * POST /api/epics/:id/land, PR half: pushes a finished epic's integration
+   * branch and opens ONE PR from it to the default base, then leaves the
+   * existing poller (pollOnce below) to notice the merge and close the epic
+   * out via Orchestrator.markEpicMergedViaPr. Readiness — all children done,
+   * no unreviewed runs on the branch — is epicLandStatus's job, so a
+   * partially-done epic gets the same refusal the local-merge path gives.
+   */
+  async openEpicPr(epicId: string): Promise<string> {
+    if (!this.capability) {
+      throw new OrchestratorConflictError(
+        'PR review requires the gh CLI and a configured git remote'
+      );
+    }
+    const status = this.ctx.orchestrator.epicLandStatus(epicId);
+    const existing = this.loadEpicPrs().get(epicId);
+    if (existing !== undefined) {
+      throw new OrchestratorConflictError(
+        `epic already has an open landing PR: ${existing}`
+      );
+    }
+    if (!status.hasChanges) {
+      // The API routes this case to the local close-out before ever calling
+      // here; the guard stays so no other caller can ask gh to open a PR
+      // with no commits, which it refuses with a less useful message.
+      throw new OrchestratorConflictError(
+        `epic branch ${status.branch} has no commits beyond ${status.base} — nothing to open a PR for`
+      );
+    }
+    // While the branch is definitely still alive — the local ref can vanish
+    // (hand deletion) between here and the merge, and the snapshot is what
+    // the review surface falls back to.
+    this.ctx.orchestrator.snapshotEpicDiff(epicId);
+    const push = await this.run(this.ctx.rootDir, [
+      'git',
+      'push',
+      '-u',
+      'origin',
+      status.branch,
+    ]);
+    if (!push.ok) {
+      throw new OrchestratorConflictError(
+        `git push of ${status.branch} failed: ${commandErrorText(push)}`
+      );
+    }
+    const body = `Automated PR opened by dispatch to land epic ${epicId}.`;
+    const create = await this.run(this.ctx.rootDir, [
+      'gh',
+      'pr',
+      'create',
+      '--title',
+      status.title,
+      '--body',
+      body,
+      '--base',
+      status.base,
+      '--head',
+      status.branch,
+    ]);
+    if (!create.ok) {
+      throw new OrchestratorConflictError(
+        `gh pr create failed: ${commandErrorText(create)}`
+      );
+    }
+    // Same output contract openPr relies on: gh's only stdout on success is
+    // the PR's URL, as its last non-empty line.
+    const url =
+      create.stdout
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0)
+        .pop() ?? '';
+    this.loadEpicPrs().set(epicId, url);
+    this.saveEpicPrs();
+
+    const now = new Date().toISOString();
+    this.ctx.store.update(
+      epicId,
+      {
+        appendActivity: `${now} [epic] opened landing PR: ${url}`,
+        // Same attribution as openPr: only the human's land action reaches
+        // this method.
+        activityActor: this.ctx.actorContext?.humanRef,
+      },
+      now
+    );
+    this.ctx.cache.rebuild(this.ctx.store);
+    this.ctx.events.broadcast({ type: 'task.changed' });
+    return url;
+  }
+
+  // pollOnce's epic half: checks every recorded epic landing PR. MERGED
+  // closes the epic out (status done, branch cleaned up, snapshot kept);
+  // CLOSED-without-merge drops the record — with an Activity line saying so —
+  // so the epic can be landed again rather than 409ing on a dead PR forever.
+  private async pollEpicPrsOnce(): Promise<void> {
+    for (const [epicId, url] of [...this.loadEpicPrs()]) {
+      const view = await this.run(this.ctx.rootDir, [
+        'gh',
+        'pr',
+        'view',
+        url,
+        '--json',
+        'state',
+      ]);
+      if (!view.ok) continue;
+      let state: string | undefined;
+      try {
+        state = (JSON.parse(view.stdout) as { state?: string }).state;
+      } catch {
+        continue;
+      }
+      if (state === 'MERGED') {
+        // Drop the record FIRST: markEpicMergedViaPr touches the store and
+        // git, and a throw there must not leave a merged PR being re-polled
+        // (and re-closing the epic) every pass forever.
+        this.loadEpicPrs().delete(epicId);
+        this.saveEpicPrs();
+        this.ctx.orchestrator.markEpicMergedViaPr(epicId, url);
+      } else if (state === 'CLOSED') {
+        this.loadEpicPrs().delete(epicId);
+        this.saveEpicPrs();
+        const now = new Date().toISOString();
+        this.ctx.store.update(
+          epicId,
+          {
+            appendActivity: `${now} [epic] landing PR closed without merging (${url}) — land again to reopen`,
+            // Whoever closed it did so on GitHub, outside dispatch's sight.
+            activityActor: 'none',
+          },
+          now
+        );
+        this.ctx.cache.rebuild(this.ctx.store);
+        this.ctx.events.broadcast({ type: 'task.changed' });
+      }
+    }
+  }
+
   // GET /api/prs (item B): every open PR in the repo, not just the ones
   // dispatch itself opened — the client renders dispatch's own PR rows
   // separately (via each run's `prUrl`) and lists whatever's left over here
@@ -578,29 +920,13 @@ export class PrManager {
         'PR review requires the gh CLI and a configured git remote'
       );
     }
-    const result = await this.run(this.ctx.rootDir, [
-      'gh',
-      'pr',
-      'list',
-      '--json',
-      REPO_PR_FIELDS,
-      '--state',
-      'open',
-      '--limit',
-      '50',
-    ]);
+    const result = await this.run(this.ctx.rootDir, this.listRepoPrsArgv());
     if (!result.ok) {
       throw new OrchestratorConflictError(
         `gh pr list failed: ${commandErrorText(result)}`
       );
     }
-    let raw: Array<Record<string, unknown>>;
-    try {
-      raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
-    } catch {
-      throw new OrchestratorConflictError('gh pr list returned invalid JSON');
-    }
-    return raw.map((item) => toRepoPr(item));
+    return this.parsePrList(result.stdout);
   }
 
   /**
@@ -669,22 +995,38 @@ export class PrManager {
   // nothing was ever opened, so nothing needs polling.
   startPolling(intervalMs = 60000): void {
     if (!this.capability) return;
-    // setInterval's callback can't be awaited directly; pollOnce() is async
-    // now (minor fix), so each tick is fired-and-forgotten with its own
-    // rejection handler — a single poll pass failing outright (as opposed
-    // to one run's check failing, which pollOnce already isolates) must
-    // never crash the timer or the process.
-    this.pollTimer = setInterval(() => {
-      void this.pollOnce().catch((err: unknown) => {
-        console.error(
-          `dispatchd: PR poll pass failed: ${(err as Error).message}`
-        );
-      });
-    }, intervalMs);
+    // A self-rearming setTimeout chain rather than a fixed setInterval: the
+    // delay before each tick is chosen fresh (15s vs the configured
+    // interval, via hasGithubHolds) right before that tick is scheduled, so
+    // a hold that appears mid-interval tightens polling on the very next
+    // tick instead of waiting out whatever delay was in effect when polling
+    // started. pollOnce() is async, so each tick is fired-and-forgotten with
+    // its own rejection handler — a single poll pass failing outright (as
+    // opposed to one run's check failing, which pollOnce already isolates)
+    // must never crash the chain or the process.
+    this.pollingStopped = false;
+    const scheduleNext = (): void => {
+      // A tick's pollOnce() can still be in flight when stopPolling() runs;
+      // this stops that tick's `.finally` from rearming a new timer once it
+      // settles, which clearing `pollTimer` alone would not do.
+      if (this.pollingStopped) return;
+      const delay = this.ctx.hasGithubHolds?.() === true ? 15000 : intervalMs;
+      this.pollTimer = setTimeout(() => {
+        void this.pollOnce()
+          .catch((err: unknown) => {
+            console.error(
+              `dispatchd: PR poll pass failed: ${(err as Error).message}`
+            );
+          })
+          .finally(scheduleNext);
+      }, delay);
+    };
+    scheduleNext();
   }
 
   stopPolling(): void {
-    if (this.pollTimer !== undefined) clearInterval(this.pollTimer);
+    this.pollingStopped = true;
+    if (this.pollTimer !== undefined) clearTimeout(this.pollTimer);
     this.pollTimer = undefined;
   }
 
@@ -697,6 +1039,8 @@ export class PrManager {
   // long interval, and sequential checks keep at most one `gh` subprocess
   // in flight at a time.
   async pollOnce(): Promise<void> {
+    await this.refreshCache();
+    await this.syncPrWorktrees();
     for (const meta of this.ctx.orchestrator.list()) {
       if (meta.prUrl === undefined || meta.reviewedAt !== undefined) continue;
       const view = await this.run(meta.worktreePath, [
@@ -718,6 +1062,139 @@ export class PrManager {
         this.ctx.orchestrator.markRunMergedViaPr(meta.id);
       }
     }
+    // Epic landing PRs ride the same pass and the same interval — one more
+    // sequential `gh pr view` per open epic PR, usually zero.
+    await this.pollEpicPrsOnce();
+  }
+
+  // Refreshes `cache` from one `gh pr list` call (the same argv listRepoPrs()
+  // uses) and broadcasts `landing.changed` when the landing-relevant fields
+  // of the result differ from the previous poll's. Runs before the per-run
+  // merged-check loop above, and only when this project has the `pr`
+  // capability at all — mirroring startPolling's own gate, since a project
+  // with no gh/remote has nothing to list.
+  //
+  // A failed or unparseable `gh pr list` call leaves `cache` and
+  // `cacheDeltaKey` untouched: a flaky `gh` must not blank the landing table
+  // or fire a spurious event on its next successful poll.
+  private async refreshCache(): Promise<void> {
+    if (!this.capability) return;
+    const result = await this.run(this.ctx.rootDir, this.listRepoPrsArgv());
+    if (!result.ok) return;
+    let raw: Array<Record<string, unknown>>;
+    try {
+      raw = JSON.parse(result.stdout) as Array<Record<string, unknown>>;
+    } catch {
+      return;
+    }
+    const prs = raw.map((item) => toRepoPr(item));
+    const key = this.landingDeltaKey(prs);
+    this.cache = prs;
+    this.cacheFilled = true;
+    if (key !== this.cacheDeltaKey) {
+      this.cacheDeltaKey = key;
+      this.ctx.events.broadcast({ type: 'landing.changed' });
+    }
+  }
+
+  // Task 7: brings every already-cut review worktree back in line with its
+  // PR's current head, and retires any worktree whose PR is CONFIRMED
+  // merged/closed (or gone outright) — never merely absent from the open
+  // cache, which a page-50 fall-off would also produce (Task 7 review,
+  // IMPORTANT 6). No-op when this project has no PrWorktreeManager wired in
+  // (ctx.prWorktrees), same guard shape as hasGithubHolds. A single PR's
+  // sync/cleanup failing is logged and skipped, not thrown — one flaky
+  // worktree must not block the rest.
+  private async syncPrWorktrees(): Promise<void> {
+    const worktrees = this.ctx.prWorktrees;
+    if (worktrees === undefined) return;
+    for (const pr of this.cache) {
+      try {
+        await worktrees.sync(pr.number, pr.headRefOid);
+      } catch (err) {
+        console.error(
+          `dispatchd: PR worktree sync failed for #${pr.number}: ${(err as Error).message}`
+        );
+      }
+    }
+    // cacheReady() guards cleanup specifically: before the first successful
+    // list call, "not in the open cache" means "unknown", not "closed" — the
+    // same distinction MergeQueueContext.cacheReady exists to draw.
+    if (!this.cacheReady()) return;
+    const openNumbers = new Set(this.cache.map((pr) => pr.number));
+    for (const state of await worktrees.list()) {
+      if (openNumbers.has(state.prNumber)) continue;
+      try {
+        // A PR missing from the open-PR list's own page (--limit 50) reads
+        // exactly like a merged/closed one here — confirm the real state
+        // with a per-number check (findRepoPr's own `gh pr view` fallback)
+        // before deleting anything. Only a genuinely non-OPEN PR (merged,
+        // closed, or one findRepoPr can't find at all) is removed; an OPEN
+        // PR that simply fell off the page is left alone.
+        const pr = await this.findRepoPr(state.prNumber);
+        if (pr !== null && pr.state === 'OPEN') continue;
+        // Ignored files (.env, a built node_modules, …) never show up in a
+        // plain `git status --porcelain` clean check — unattended
+        // auto-removal must not silently delete them. A human pressing the
+        // DELETE route themselves can see the directory first, so this
+        // guard is poll-only.
+        if (await worktrees.hasIgnoredFiles(state.prNumber)) {
+          console.error(
+            `dispatchd: PR worktree #${state.prNumber} has ignored files (build output, .env, …) — leaving it for manual cleanup`
+          );
+          continue;
+        }
+        await worktrees.removeIfClean(state.prNumber);
+      } catch (err) {
+        console.error(
+          `dispatchd: PR worktree cleanup failed for #${state.prNumber}: ${(err as Error).message}`
+        );
+      }
+    }
+  }
+
+  // A stable JSON projection of the fields the landing page renders, sorted
+  // by PR number so a same-set reorder in gh's response never reads as a
+  // delta. Compared poll-to-poll in refreshCache() above to decide whether
+  // `landing.changed` fires.
+  private landingDeltaKey(prs: RepoPr[]): string {
+    const sorted = [...prs].sort((a, b) => a.number - b.number);
+    return JSON.stringify(
+      sorted.map((p) => ({
+        number: p.number,
+        headRefOid: p.headRefOid,
+        state: p.state,
+        mergeable: p.mergeable,
+        reviewDecision: p.reviewDecision,
+        checks: p.checks,
+        isDraft: p.isDraft,
+        updatedAt: p.updatedAt,
+      }))
+    );
+  }
+
+  // GET /api/landing (a later task) and the merge queue's read of a PR's
+  // current status — the last poll's open-PR set, with no `gh` call of its
+  // own. Empty until pollOnce()'s first successful list.
+  cachedPrs(): RepoPr[] {
+    return this.cache;
+  }
+
+  // Same cache, keyed by PR url — what the merge queue looks a specific
+  // entry's PR up by, since it holds a run's `prUrl` rather than a number.
+  cachedPrByUrl(url: string): RepoPr | undefined {
+    return this.cache.find((p) => p.url === url);
+  }
+
+  // True once refreshCache() has succeeded at least once — including an
+  // empty-but-successful list. The merge queue's GitHub gate needs this to
+  // tell "no poll has run yet" (cachedPrByUrl's undefined means "unknown",
+  // hold) apart from "this PR is no longer in the open-PR list" (cache is
+  // known fresh, so undefined means merged/closed on GitHub, not unknown —
+  // see MergeQueueContext.cacheReady). Without this distinction a
+  // waiting-github entry whose PR left the open-PR list would hold forever.
+  cacheReady(): boolean {
+    return this.cacheFilled;
   }
 
   // Resolves a run that must have an open PR, for the in-app review calls

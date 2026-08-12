@@ -2404,6 +2404,61 @@ describe('Orchestrator.listBranches', () => {
 
     expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(true);
   });
+
+  it('measures how far an unmerged branch fell behind its base, and omits the count once merged', async () => {
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    // The base moves on while the run's work sits unreviewed — the "four
+    // branches sat out for a week" situation this surface exists to expose.
+    writeFileSync(join(repo, 'mainline.txt'), 'moved\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'base moves on']);
+
+    const entry = orchestrator.listBranches()[0];
+    expect(entry.mergedIntoBase).toBe(false);
+    expect(entry.behindBase).toBe(1);
+
+    orchestrator.review(meta.id, 'merge');
+    // Same leftover simulation as above: the surviving ref now points at a
+    // landed state, so "behind" stops being a meaningful number for it.
+    runGitSync(repo, ['branch', meta.branch, 'main']);
+
+    const merged = orchestrator.listBranches()[0];
+    expect(merged.mergedIntoBase).toBe(true);
+    expect(merged.behindBase).toBeUndefined();
+  });
+
+  it('keeps pushedToOrigin false while a branch is unmerged locally, even if its tip reached origin', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    // The branch's commit lands on origin's main directly (merged from
+    // another machine, say) while the LOCAL base still doesn't have it. The
+    // branch is still "out" from this checkout's point of view, so pushed
+    // must stay false — the fix is a fetch, not a status change.
+    runGitSync(repo, ['push', 'origin', `${meta.branch}:main`]);
+    runGitSync(repo, ['fetch', 'origin', 'main']);
+
+    const entry = orchestrator.listBranches()[0];
+    expect(entry.mergedIntoBase).toBe(false);
+    expect(entry.pushedToOrigin).toBe(false);
+  });
+
+  it('reports a hand-merged ref no run claims as pushed once its tip reaches origin base', () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator } = makeOrchestrator(repo);
+    // An orphan ref sitting at main's tip: merged as far as git is concerned,
+    // but with no registry entry there is no mergeCommit to probe — the
+    // branch tip itself has to be the evidence.
+    runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
+
+    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(false);
+
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['fetch', 'origin', 'main']);
+
+    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(true);
+  });
 });
 
 // Task 6: archivedAt is the signal a `done` task can finally drop out of the

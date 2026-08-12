@@ -1,35 +1,12 @@
-import type {
-  MergeQueueEntry,
-  MergeQueueEntryState,
-  VerifyStepResult,
-} from '@dispatch/client';
+import type { MergeQueueEntryState, VerifyStepResult } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import {
-  elapsedInStateMs,
-  heldCount,
-  isMidFlight,
-  isOverdue,
   isRetryable,
   phaseSteps,
   QUEUE_PHASES,
   queueStateLabel,
-  toQueueRows,
 } from './mergeQueueView';
-
-function entry(
-  state: MergeQueueEntryState,
-  over: Partial<MergeQueueEntry> = {}
-): MergeQueueEntry {
-  return {
-    runId: 'r-1',
-    taskId: 't-1',
-    taskTitle: 'Do the thing',
-    state,
-    enqueuedAt: '2026-07-26T00:00:00.000Z',
-    ...over,
-  };
-}
 
 /** Compact view of a strip: 'p' passed, 'a' active, '.' pending. */
 function shape(state: MergeQueueEntryState): string | null {
@@ -52,6 +29,7 @@ describe('phaseSteps', () => {
     ['queued', '...'],
     ['waiting-blockers', '...'],
     ['blocked-environment', '...'],
+    ['waiting-github', '...'],
     ['rebasing', 'a..'],
     ['verifying', 'pa.'],
     ['merging', 'ppa'],
@@ -94,6 +72,7 @@ describe('retry eligibility', () => {
   test.each([
     'queued',
     'waiting-blockers',
+    'waiting-github',
     'rebasing',
     'verifying',
     'merging',
@@ -101,24 +80,6 @@ describe('retry eligibility', () => {
     'failed',
   ] as MergeQueueEntryState[])('%s is not retryable', (state) => {
     expect(isRetryable(state)).toBe(false);
-  });
-
-  test('mid-flight covers exactly the three moving phases', () => {
-    const all: MergeQueueEntryState[] = [
-      'queued',
-      'waiting-blockers',
-      'blocked-environment',
-      'rebasing',
-      'verifying',
-      'merging',
-      'merged',
-      'failed',
-    ];
-    expect(all.filter(isMidFlight)).toEqual([
-      'rebasing',
-      'verifying',
-      'merging',
-    ]);
   });
 });
 
@@ -128,6 +89,7 @@ describe('labels', () => {
       'queued',
       'waiting-blockers',
       'blocked-environment',
+      'waiting-github',
       'rebasing',
       'verifying',
       'merging',
@@ -139,98 +101,11 @@ describe('labels', () => {
     }
     expect(queueStateLabel('blocked-environment')).not.toContain('-');
   });
-});
 
-describe('toQueueRows', () => {
-  test('positions are 1-based and follow queue order', () => {
-    const rows = toQueueRows([
-      entry('merging', { runId: 'r-a' }),
-      entry('queued', { runId: 'r-b' }),
-    ]);
-    expect(rows.map((r) => [r.position, r.entry.runId])).toEqual([
-      [1, 'r-a'],
-      [2, 'r-b'],
-    ]);
-  });
-
-  test('a held entry surfaces its reason and offers a retry', () => {
-    const rows = toQueueRows([
-      entry('blocked-environment', { reason: 'working tree has changes' }),
-    ]);
-    expect(rows[0]?.reason).toBe('working tree has changes');
-    expect(rows[0]?.retryable).toBe(true);
-    expect(rows[0]?.stalled).toBe(true);
-  });
-
-  test('an entry with no reason reports null rather than an empty string', () => {
-    expect(toQueueRows([entry('queued')])[0]?.reason).toBeNull();
-  });
-
-  test('heldCount counts what one recheck would retry', () => {
-    expect(
-      heldCount([
-        entry('blocked-environment', { runId: 'r-a' }),
-        entry('blocked-environment', { runId: 'r-b' }),
-        entry('verifying', { runId: 'r-c' }),
-      ])
-    ).toBe(2);
-  });
-
-  test('an empty queue produces no rows', () => {
-    expect(toQueueRows([])).toEqual([]);
-  });
-});
-
-// The wedge this exists for: an entry sat in `verifying` for 11 minutes with no
-// process behind it. `isStalled` cannot see that — it reads the state alone, and
-// `verifying` is a legitimately busy state. Elapsed time in the CURRENT state is
-// what separates slow from wedged, which is why `enqueuedAt` cannot answer it
-// (it never moves, so it only ever says "how long since queued").
-describe('elapsedInStateMs', () => {
-  const now = new Date('2026-07-26T00:10:00.000Z').getTime();
-
-  test('measures from stateSince, not enqueuedAt', () => {
-    const e = entry('verifying', {
-      enqueuedAt: '2026-07-26T00:00:00.000Z',
-      stateSince: '2026-07-26T00:08:00.000Z',
-    });
-    // 2 minutes in `verifying`, despite 10 minutes in the queue.
-    expect(elapsedInStateMs(e, now)).toBe(120_000);
-  });
-
-  // Entries persisted before stateSince existed still have to render something
-  // rather than NaN.
-  test('falls back to enqueuedAt when stateSince is absent', () => {
-    const e = entry('verifying', { enqueuedAt: '2026-07-26T00:00:00.000Z' });
-    expect(elapsedInStateMs(e, now)).toBe(600_000);
-  });
-});
-
-describe('isOverdue', () => {
-  const now = new Date('2026-07-26T00:10:00.000Z').getTime();
-
-  test('flags a mid-flight entry stuck well past the expected window', () => {
-    const e = entry('verifying', { stateSince: '2026-07-26T00:00:00.000Z' });
-    expect(isOverdue(e, now)).toBe(true);
-  });
-
-  test('leaves a mid-flight entry alone while it is plausibly working', () => {
-    const e = entry('verifying', { stateSince: '2026-07-26T00:09:00.000Z' });
-    expect(isOverdue(e, now)).toBe(false);
-  });
-
-  // A held entry is waiting on a human by design — it is not overdue however
-  // long it sits, and flagging it would cry wolf on the normal case.
-  test('never flags a held entry, however long it has waited', () => {
-    const e = entry('blocked-environment', {
-      stateSince: '2026-07-25T00:00:00.000Z',
-    });
-    expect(isOverdue(e, now)).toBe(false);
-  });
-
-  test('never flags a queued entry waiting its turn', () => {
-    const e = entry('queued', { stateSince: '2026-07-25T00:00:00.000Z' });
-    expect(isOverdue(e, now)).toBe(false);
+  // The GitHub hold is this branch's addition to the queue's states; its label
+  // is what the Landing table's gate chip reads.
+  test('a GitHub hold reads as waiting on GitHub', () => {
+    expect(queueStateLabel('waiting-github')).toBe('Waiting on GitHub');
   });
 });
 

@@ -196,12 +196,18 @@ export function matchesDeclaredWrites(writes: string[], file: string): boolean {
 }
 
 // Changed files no declared `writes` glob covers — a planner declaration the
-// diff outgrew, surfaced rather than trusted.
+// diff outgrew, surfaced rather than trusted. `.dispatch/` bookkeeping
+// (task-file activity, board state) is dispatch's own writing riding along on
+// the branch, not agent work product — flagging it drowned real findings in
+// 20-file noise, so it is exempt here.
 export function undeclaredWrites(
   writes: string[],
   changed: string[]
 ): string[] {
-  return changed.filter((file) => !matchesDeclaredWrites(writes, file));
+  return changed.filter(
+    (file) =>
+      !file.startsWith('.dispatch/') && !matchesDeclaredWrites(writes, file)
+  );
 }
 
 // One batched title holding no path: the paths live in the finding's `files`,

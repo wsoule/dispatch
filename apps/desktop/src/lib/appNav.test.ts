@@ -386,6 +386,15 @@ describe('retired views', () => {
     }
   });
 
+  test("the retired 'landed' view normalizes to 'landing'", () => {
+    const next = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'landed',
+    });
+    expect(next.projectView).toBe('landing');
+    expect(next.history[next.historyIndex]?.projectView).toBe('landing');
+  });
+
   test('a retired view never reaches history, so back cannot land on one', () => {
     const state = navReducer(initialNavState, {
       type: 'setProjectView',

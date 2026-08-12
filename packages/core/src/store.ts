@@ -51,6 +51,8 @@ export interface CreateInput {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  // Per-task opt-out of the automatic fix loop; only `false` is recorded.
+  fixLoop?: boolean;
   writes?: string[];
   risk?: TaskRisk;
   model?: string | null;
@@ -69,6 +71,8 @@ export interface UpdatePatch {
   priority?: Priority;
   assignee?: Assignee;
   selfReview?: boolean;
+  // Per-task opt-out of the automatic fix loop; `true` restores the default.
+  fixLoop?: boolean;
   writes?: string[];
   risk?: TaskRisk;
   // null clears a per-task override, falling back to config.models.
@@ -154,6 +158,7 @@ export class TaskStore {
       updated: now,
       external: null,
       selfReview: input.selfReview ?? true,
+      ...(input.fixLoop === false ? { fixLoop: false } : {}),
       writes: input.writes ?? [],
       risk: input.risk ?? 'routine',
       model: input.model ?? null,

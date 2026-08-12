@@ -9,6 +9,7 @@ import {
   deriveStopControl,
   isTerminalRunState,
   liveReviewAgentFor,
+  postFailWorkLabel,
   runDispositionLabel,
   runSurveyNotice,
 } from './runState';
@@ -221,6 +222,60 @@ describe('runSurveyNotice', () => {
   test('a clean tree says nothing — the run already notified as failed', () => {
     expect(runSurveyNotice('Ship it', survey())).toBeNull();
     expect(runSurveyNotice('Ship it', survey({ cleanTree: false }))).toBeNull();
+  });
+
+  test('post-fail commits on a clean tree get their own notice', () => {
+    const notice = runSurveyNotice(
+      'Ship it',
+      survey({
+        postFailCommits: [
+          { sha: 'abc123', subject: 'Done, committed', date: '2026-08-04' },
+        ],
+      })
+    );
+    expect(notice).toEqual({
+      title: 'Work landed after a failed run',
+      body: 'Ship it · 1 commit on dispatch/t-1 after the failure',
+    });
+  });
+
+  // Uncommitted paths outrank post-fail commits: the commits are already safe
+  // on the branch, the uncommitted paths are the part still at risk.
+  test('uncommitted paths win when both are present', () => {
+    const notice = runSurveyNotice(
+      'Ship it',
+      survey({
+        cleanTree: false,
+        staged: ['a.ts'],
+        postFailCommits: [{ sha: 'abc123', subject: 'x', date: '2026-08-04' }],
+      })
+    );
+    expect(notice?.title).toBe('Run left uncommitted work');
+  });
+});
+
+describe('postFailWorkLabel', () => {
+  test('null when the survey recorded no post-fail commits', () => {
+    expect(postFailWorkLabel(run())).toBeNull();
+    expect(postFailWorkLabel(run({ survey: survey() }))).toBeNull();
+    expect(
+      postFailWorkLabel(run({ survey: survey({ postFailCommits: [] }) }))
+    ).toBeNull();
+  });
+
+  test('names the count and the newest commit subject', () => {
+    const meta = run({
+      state: 'failed',
+      survey: survey({
+        postFailCommits: [
+          { sha: 'def456', subject: 'Finish the feature', date: '2026-08-05' },
+          { sha: 'abc123', subject: 'WIP', date: '2026-08-04' },
+        ],
+      }),
+    });
+    expect(postFailWorkLabel(meta)).toBe(
+      'Work landed on this branch after the failure — 2 commits, latest: “Finish the feature”'
+    );
   });
 });
 

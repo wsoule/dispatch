@@ -14,6 +14,9 @@ const STATUS_RANK: Record<BranchEntryStatus, number> = {
   leftover: 0,
   reviewable: 1,
   active: 2,
+  // Integration branches are context, not work waiting on anyone — same rank
+  // as rows dispatch knows nothing about.
+  epic: 3,
 };
 
 export interface BranchRowVM {

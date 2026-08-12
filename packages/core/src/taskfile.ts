@@ -77,6 +77,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   if (raw['derived-from'] != null && typeof raw['derived-from'] !== 'string') {
     throw new TaskParseError(`invalid derived-from: expected a string`, file);
   }
+  if (raw['fix-loop'] != null && typeof raw['fix-loop'] !== 'boolean') {
+    throw new TaskParseError(`invalid fix-loop: expected a boolean`, file);
+  }
   if (raw.risk != null && !TASK_RISKS.includes(raw.risk as TaskRisk)) {
     throw new TaskParseError(`invalid risk: ${describeValue(raw.risk)}`, file);
   }
@@ -113,6 +116,9 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
     // task has explicitly opted out (see serializeTaskFile).
     selfReview: (raw['self-review'] as boolean | undefined) ?? true,
     writes: (raw.writes as string[] | undefined) ?? [],
+    // Same absent-means-on contract as self-review: only an explicit opt-out
+    // survives a round-trip, an explicit `true` normalizes back to absent.
+    ...(raw['fix-loop'] === false ? { fixLoop: false } : {}),
     risk: (raw.risk as TaskRisk | undefined) ?? 'routine',
     model: raw.model ?? null,
     exercised: (raw.exercised as boolean | undefined) ?? false,
@@ -146,6 +152,7 @@ export function serializeTaskFile(doc: TaskDoc): string {
     // Unlike blocked-by/labels, an empty writes list is meaningful ("declared
     // nothing") rather than "unset", so it always serializes.
     writes: meta.writes,
+    ...(meta.fixLoop === false ? { 'fix-loop': false } : {}),
     ...(meta.risk === 'routine' ? {} : { risk: meta.risk }),
     ...(meta.model === null ? {} : { model: meta.model }),
     ...(meta.archivedAt === undefined

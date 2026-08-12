@@ -166,6 +166,11 @@ export interface RunSurvey {
   untracked: string[];
   lastCommit: { sha: string; subject: string } | null;
   cleanTree: boolean;
+  // Commits on the run's branch authored after the run first reached `failed`
+  // — work an orphaned agent process landed after the daemon lost track of it
+  // (see Orchestrator.reconcileOnBoot). Newest first, like `git log`. Optional
+  // so surveys recorded before this field existed replay unchanged.
+  postFailCommits?: { sha: string; subject: string; date: string }[];
 }
 
 // Everything the registry/transcript/API need to describe a run, independent
@@ -287,7 +292,17 @@ export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
 // - 'orphan':     no run in the registry claims this ref at all (a
 //                 hand-deleted transcript, or a crash between creating the
 //                 ref and writing the transcript header).
-export type BranchEntryStatus = 'active' | 'reviewable' | 'leftover' | 'orphan';
+// - 'epic':       an epic's integration branch (`epic/<id>`) — owned by the
+//                 epic, not by any single run, so none of the run-shaped
+//                 statuses above apply. Deliberately distinct from 'orphan':
+//                 an epic branch with unmerged child work must never be swept
+//                 up by orphan cleanup.
+export type BranchEntryStatus =
+  | 'active'
+  | 'reviewable'
+  | 'leftover'
+  | 'orphan'
+  | 'epic';
 
 // One row of the branches surface: a join of what git knows (the ref exists,
 // here is its worktree and how far ahead it is) with what the run registry
@@ -325,6 +340,13 @@ export interface BranchEntry {
   // Commits on this branch that its base does not have — how much work
   // deleting the ref would destroy.
   ahead: number;
+  // Commits the base has gained since this branch diverged — how far unmerged
+  // work has fallen behind. Only measured while the branch is unmerged; once
+  // the work landed the count stops meaning anything, so merged rows omit it.
+  // For 'epic' entries the same count is the signal the integration branch
+  // has fallen behind the default base and a human should update it —
+  // dispatch deliberately never rebases or merges an epic branch on its own.
+  behindBase?: number;
   mergedIntoBase: boolean;
 
   // The registry half: present only when a run claims this branch.
@@ -335,9 +357,12 @@ export interface BranchEntry {
   baseBranch?: string;
   reviewedAt?: string;
   prUrl?: string;
-  // True only once this run's merge commit is reachable from origin's copy of
-  // its base branch — i.e. the merge is not just local but actually pushed.
-  // Always false when the run is unmerged or the repo has no origin remote.
+  // True only once this branch's landed work is reachable from origin's copy
+  // of its base branch — i.e. the merge is not just local but actually pushed.
+  // Judged by the run's recorded merge commit when there is one (the only
+  // truth for a squash merge, whose branch tip never becomes an ancestor of
+  // base), else by the branch tip itself (covers hand-merged refs no run
+  // claims). Always false when the branch is unmerged or there is no origin.
   pushedToOrigin: boolean;
 
   status: BranchEntryStatus;

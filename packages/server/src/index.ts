@@ -43,7 +43,13 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
-import { detectPrCapability, PrManager } from './orchestrator/pr.js';
+import {
+  defaultCommandRunner,
+  detectPrCapability,
+  PrManager,
+} from './orchestrator/pr.js';
+import { PrWorktreeManager } from './orchestrator/prWorktree.js';
+import type { PrWorktreeManagerCtx } from './orchestrator/prWorktree.js';
 import { QuestionRegistry } from './orchestrator/questions.js';
 import {
   generateRepoDigest,
@@ -69,6 +75,13 @@ export interface ServerHandle {
   // Exposed for introspection/tests; its own 60s auto-refresh timer and
   // blocked-retry timer are started/stopped by startServer itself below.
   mergeQueue: MergeQueue;
+  // Exposed for introspection/tests — e.g. calling pollOnce() directly to
+  // populate cachedPrs() deterministically instead of racing its internal
+  // poll timer (started/stopped by startServer itself below).
+  prManager: PrManager;
+  // Task 7: exposed the same way prManager is — tests assert against real
+  // git state (create/sync/removeIfClean/list) without going through HTTP.
+  prWorktrees: PrWorktreeManager;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
@@ -287,6 +300,24 @@ function makeGitReader(rootDir: string): GitReader {
  */
 function makeMergeDriverCheck(rootDir: string): () => boolean {
   return () => isMergeDriverResolvable(rootDir);
+}
+
+/**
+ * Wraps `new PrWorktreeManager` so a bad `prWorktreeDir` — its own
+ * constructor refuses one that resolves inside `rootDir` (Task 7 review,
+ * IMPORTANT 8) — degrades to the default worktree location instead of
+ * crashing boot, the same "never let an optional setting take the daemon
+ * down" posture as the guarded config reads elsewhere in this function.
+ */
+function buildPrWorktreeManager(ctx: PrWorktreeManagerCtx): PrWorktreeManager {
+  try {
+    return new PrWorktreeManager(ctx);
+  } catch (err) {
+    console.error(
+      `dispatchd: invalid prWorktreeDir config, using the default worktree location: ${(err as Error).message}`
+    );
+    return new PrWorktreeManager({ ...ctx, prWorktreeDir: undefined });
+  }
 }
 
 /**
@@ -521,7 +552,38 @@ export async function startServer(
   // same instance — a review run's comments and a human's land in the same
   // per-target file rather than two stores fighting over one file.
   const reviewComments = new ReviewCommentStore(rootDir, actorContext.humanRef);
-  const prManager = new PrManager(
+  // Task 7 review, IMPORTANT 7: guarded the same way carto's config is
+  // above — a malformed config.yml on this, the boot path, must not take
+  // the whole daemon down; a per-request loadConfig still surfaces the real
+  // error to anything that reads config afterward.
+  let prWorktreeDir: string | undefined;
+  try {
+    prWorktreeDir = loadConfig(rootDir).prWorktreeDir;
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read prWorktreeDir config, using the default worktree location: ${(err as Error).message}`
+    );
+  }
+  // Task 7: cuts/syncs/retires PR review worktrees. Constructed ahead of
+  // PrManager (whose context wires it in below) even though its own
+  // `fetchHead` closure calls back into `prManager` — the same lazy-closure
+  // trick `hasGithubHolds` uses for `mergeQueue` below: the closure only
+  // reads `prManager` once a real sync actually runs, long after the `const`
+  // it names has been assigned.
+  const prWorktrees = buildPrWorktreeManager({
+    rootDir,
+    run: opts.prCommandRunner ?? defaultCommandRunner,
+    prWorktreeDir,
+    // confirmFork: true — a worktree only exists here because its PR already
+    // passed the fork gate once (at creation); re-syncing it must not ask
+    // again.
+    fetchHead: async (n) => {
+      await prManager.fetchPrHead(n, { confirmFork: true });
+    },
+  });
+  // Annotated to break the prManager <-> mergeQueue closure inference cycle
+  // (noImplicitAny under the sandbox project's stricter tsconfig).
+  const prManager: PrManager = new PrManager(
     {
       rootDir,
       store,
@@ -530,11 +592,20 @@ export async function startServer(
       orchestrator,
       actorContext,
       reviewComments,
+      prWorktrees,
+      // Lazy closure, not a direct reference: `mergeQueue` is constructed
+      // below (it needs `prManager` itself for its own `prState` lookup), so
+      // at this point in the function it exists only as a `const` binding
+      // this closure will read once startPolling() actually calls it — long
+      // after both constructors have run.
+      hasGithubHolds: () =>
+        mergeQueue
+          .snapshot()
+          .entries.some((entry) => entry.state === 'waiting-github'),
     },
     prCapability,
     opts.prCommandRunner
   );
-  prManager.startPolling(opts.prPollIntervalMs);
 
   // Hand-merged run branches (a git merge/squash done in a plain checkout,
   // outside review() and outside any PR) never get their reviewedAt set by
@@ -550,11 +621,25 @@ export async function startServer(
   // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,
   // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
   // stub) fakes the merge queue's own gh/git calls too, not just PrManager's.
-  const mergeQueue = new MergeQueue(
-    { rootDir, store, cache, events, orchestrator, jj },
+  const mergeQueue: MergeQueue = new MergeQueue(
+    {
+      rootDir,
+      store,
+      cache,
+      events,
+      orchestrator,
+      jj,
+      prState: (url) => prManager.cachedPrByUrl(url),
+      cacheReady: () => prManager.cacheReady(),
+    },
     opts.prCommandRunner
   );
   mergeQueue.startAutoRefresh();
+  // Started only now, not right after PrManager's own construction above:
+  // startPolling() calls `hasGithubHolds()` synchronously (to size its very
+  // first tick's delay), and that closure reads `mergeQueue` — which does
+  // not exist yet at the point PrManager is constructed.
+  prManager.startPolling(opts.prPollIntervalMs);
 
   // The warden chat assistant (see orchestrator/warden.ts), assembled here
   // alongside PlanManager against the same shared peers. Its tool registry is
@@ -677,6 +762,7 @@ export async function startServer(
     wardenManager,
     epicEngine,
     prManager,
+    prWorktrees,
     mergeQueue,
     prCapability,
     noteStore: new NoteStore(rootDir),
@@ -817,6 +903,8 @@ export async function startServer(
     port,
     tokens,
     mergeQueue,
+    prManager,
+    prWorktrees,
     async stop() {
       watcher.close();
       sourceWatcher.close();

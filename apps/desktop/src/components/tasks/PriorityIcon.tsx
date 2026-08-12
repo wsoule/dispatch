@@ -96,7 +96,7 @@ export interface PriorityIconProps {
  * Linear's priority glyph: ascending signal bars for low/medium/high (1/2/3 of 3 bars
  * filled), a muted "···" for none, and a filled orange rounded square with a white "!" for
  * urgent — matching Linear's exact look rather than lucide's generic `SignalHigh`/`ChevronsUp`
- * glyphs. Shared between `TaskCardTile`, `EpicCardTile`, and the list view's row.
+ * glyphs. Shared between `TaskCardTile`, the epic lane header, and the list view's row.
  */
 export function PriorityIcon({ priority, className }: PriorityIconProps) {
   return (

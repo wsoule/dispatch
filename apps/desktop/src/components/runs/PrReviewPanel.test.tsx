@@ -18,7 +18,7 @@ const DETAIL: PrDetail = {
     isDraft: false,
     reviewDecision: null,
     mergeable: 'MERGEABLE',
-    checks: { passed: 1, failed: 0, pending: 0, total: 1 },
+    checks: { passed: 1, failed: 0, pending: 0, total: 1, runs: [] },
     additions: 10,
     deletions: 2,
     changedFiles: 1,

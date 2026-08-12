@@ -1,7 +1,11 @@
-import type { ApiClient, RunMeta } from '@dispatch/client';
+import type { AgentSessionMeta, ApiClient, RunMeta } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import {
+  agentSessionBucket,
+  agentSessionFeedState,
+} from '../lib/agentSessions';
 import { runKindLabel } from '../lib/liveRail';
 import { runStateBucket } from '../lib/runState';
 import { AllAgentsView } from './AllAgentsView';
@@ -22,9 +26,22 @@ function run(over: Partial<RunMeta> = {}): RunMeta {
   } as RunMeta;
 }
 
+function session(over: Partial<AgentSessionMeta> = {}): AgentSessionMeta {
+  return {
+    id: 'plan-1',
+    kind: 'plan',
+    title: 'plan the widget',
+    state: 'running',
+    createdAt: '2026-08-04T00:00:00.000Z',
+    updatedAt: '2026-08-04T00:00:00.000Z',
+    ...over,
+  };
+}
+
 function mount(over: Partial<Parameters<typeof AllAgentsView>[0]> = {}) {
   const props = {
     runs: [run()],
+    sessions: [] as AgentSessionMeta[],
     archivedRunCount: 0,
     showArchived: false,
     onSetShowArchived: () => {},
@@ -73,6 +90,63 @@ test('runStateBucket sorts every run into live, needs-review, or closed', () => 
     )
   ).toBe('closed');
   expect(runStateBucket(run({ state: 'cancelled' }))).toBe('closed');
+});
+
+// The mapping the session rows filter and color by: a settled turn waits on a human
+// (confirm, answer, retry), so it lands in needs-review; nothing ever lands in closed.
+test('agentSessionBucket and agentSessionFeedState cover every session state', () => {
+  expect(agentSessionBucket(session({ state: 'running' }))).toBe('live');
+  expect(agentSessionBucket(session({ state: 'ready' }))).toBe('needs-review');
+  expect(agentSessionBucket(session({ state: 'failed' }))).toBe('needs-review');
+  expect(agentSessionFeedState(session({ state: 'running' }))).toBe('working');
+  expect(agentSessionFeedState(session({ state: 'ready' }))).toBe('waiting');
+  expect(agentSessionFeedState(session({ state: 'failed' }))).toBe('failed');
+});
+
+// The point of the whole change: a planner, an enrich agent, a draft and a warden all
+// appear on the page, labelled, alongside the runs.
+test('conversation agents render alongside runs with their kind labels', () => {
+  mount({
+    runs: [run({ id: 'r-1', taskTitle: 'A task run' })],
+    sessions: [
+      session({ id: 'plan-1', kind: 'plan', title: 'Plan the widget' }),
+      session({ id: 'plan-2', kind: 'enrich', title: 'Fix the header' }),
+      session({ id: 'draft-1', kind: 'draft', title: 'Draft a task' }),
+      session({ id: 'w-1', kind: 'warden', title: 'What is running?' }),
+    ],
+  });
+  expect(screen.getByText('A task run')).toBeDefined();
+  expect(screen.getByText('Plan the widget')).toBeDefined();
+  expect(screen.getByText('planner')).toBeDefined();
+  expect(screen.getByText('Fix the header')).toBeDefined();
+  expect(screen.getByText('detail')).toBeDefined();
+  expect(screen.getByText('Draft a task')).toBeDefined();
+  expect(screen.getByText('draft')).toBeDefined();
+  expect(screen.getByText('What is running?')).toBeDefined();
+  expect(screen.getByText('warden')).toBeDefined();
+});
+
+test('the state filter applies to conversation agents too', () => {
+  mount({
+    runs: [],
+    sessions: [
+      session({ id: 'plan-1', state: 'running', title: 'Still planning' }),
+      session({ id: 'plan-2', state: 'ready', title: 'Proposal ready' }),
+    ],
+  });
+
+  fireEvent.click(screen.getByRole('button', { name: 'Live' }));
+  expect(screen.getByText('Still planning')).toBeDefined();
+  expect(screen.queryByText('Proposal ready')).toBeNull();
+
+  fireEvent.click(screen.getByRole('button', { name: 'Needs review' }));
+  expect(screen.getByText('Proposal ready')).toBeDefined();
+  expect(screen.queryByText('Still planning')).toBeNull();
+
+  // An in-memory conversation is never closed out — it is dismissed and disappears.
+  fireEvent.click(screen.getByRole('button', { name: 'Closed' }));
+  expect(screen.queryByText('Still planning')).toBeNull();
+  expect(screen.queryByText('Proposal ready')).toBeNull();
 });
 
 test('a review run is labelled, a plain agent run is not', () => {

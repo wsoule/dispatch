@@ -296,6 +296,25 @@ describe('selfReview / self-review frontmatter', () => {
     expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
   });
 
+  it('round-trips the fix-loop opt-out and omits the key when opted in', () => {
+    expect(parseTaskFile(serializeTaskFile(doc)).meta.fixLoop).toBeUndefined();
+    expect(serializeTaskFile(doc)).not.toContain('fix-loop');
+    const optedOut: TaskDoc = {
+      ...doc,
+      meta: { ...doc.meta, fixLoop: false },
+    };
+    const text = serializeTaskFile(optedOut);
+    expect(text).toContain('fix-loop: false');
+    expect(parseTaskFile(text).meta.fixLoop).toBe(false);
+    expect(serializeTaskFile(parseTaskFile(text))).toBe(text);
+  });
+
+  it('throws on a non-boolean fix-loop value', () => {
+    expect(() =>
+      parseTaskFile(FRONTMATTER.replace('---\n', '---\nfix-loop: soon\n'))
+    ).toThrow(/fix-loop/);
+  });
+
   it('round-trips archived-at and omits the key when unset', () => {
     expect(
       parseTaskFile(serializeTaskFile(doc)).meta.archivedAt

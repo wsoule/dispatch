@@ -12,7 +12,7 @@ import { JjManager } from './jj.js';
 import type { Orchestrator } from './orchestrator.js';
 import { mergeQueuePath, runsDir } from './paths.js';
 import { type CommandRunner, defaultCommandRunner } from './pr.js';
-import type { CommandResult } from './pr.js';
+import type { CommandResult, RepoPr } from './pr.js';
 import { trimWorktree } from './trim.js';
 import type { RunMeta } from './types.js';
 import {
@@ -64,11 +64,37 @@ export type MergeQueueEntryState =
   // 'waiting-blockers': the entry stays in line, carries the reason, and is
   // retried on the next pump rather than being failed out to history.
   | 'blocked-environment'
+  // Held because the PR itself isn't green on GitHub — draft, conflicting,
+  // failing/pending checks, or an outstanding review verdict (see
+  // githubHoldReason). Same display-state contract as 'blocked-environment'
+  // — stays in line, carries the reason, retried on the next pump — but the
+  // hold is per-PR rather than per-checkout, so unlike 'blocked-environment'
+  // it must never stop OTHER entries from being processed. See
+  // nextEligible()'s githubHeld exclusion for how that is kept true.
+  | 'waiting-github'
   | 'rebasing'
   | 'verifying'
   | 'merging'
   | 'merged'
   | 'failed';
+
+// Whether a PR-routed entry's live GitHub state should hold it out of
+// merge() rather than merge blind. Pure and exported for direct unit tests;
+// null means clear to merge. `pr` is undefined when PrManager hasn't polled
+// this PR yet (a fresh `gh pr create` beats the next poll tick) — that holds
+// rather than merging on faith that it's fine.
+export function githubHoldReason(pr: RepoPr | undefined): string | null {
+  if (pr === undefined) return 'PR state unknown (poll pending)';
+  if (pr.isDraft) return 'draft';
+  if (pr.mergeable === 'CONFLICTING') return 'conflicts with base';
+  if (pr.checks.failed > 0) return `${pr.checks.failed} checks failing`;
+  if (pr.checks.pending > 0) {
+    return `waiting on CI (${pr.checks.pending} running)`;
+  }
+  if (pr.reviewDecision === 'CHANGES_REQUESTED') return 'changes requested';
+  if (pr.reviewDecision === 'REVIEW_REQUIRED') return 'review required';
+  return null;
+}
 
 /** One named verify gate's outcome on a queue entry. */
 interface VerifyStepResult {
@@ -142,6 +168,20 @@ export interface MergeQueueContext {
   // object in production (see index.ts) so the queue and the orchestrator
   // never end up talking to jj through two differently-configured managers.
   jj?: JjManager;
+  // Cached PR-state lookup (PrManager.cachedPrByUrl in production) that
+  // gates a PR-routed entry's merge() on githubHoldReason. Absent ⇒ today's
+  // blind-merge behavior for every PR-routed entry — which is what keeps
+  // every pre-existing merge-queue test green untouched.
+  prState?: (url: string) => RepoPr | undefined;
+  // PrManager.cacheReady in production — true once at least one `gh pr
+  // list` poll has succeeded. Distinguishes "prState(url) is undefined
+  // because no poll has run yet" (hold — githubHoldReason's own contract)
+  // from "prState(url) is undefined because this PR dropped off the open-PR
+  // list" (merged or closed on GitHub — not a reason to hold forever). Only
+  // consulted when `prState` is also wired; absent otherwise behaves as if
+  // no poll has ever run, i.e. always holds on an absent PR — the safer
+  // default for a caller that wires `prState` but not this.
+  cacheReady?: () => boolean;
 }
 
 // Test-only override for the blocked-retry delay (see armBlockedRetry) —
@@ -283,6 +323,12 @@ export class MergeQueue {
       this.pendingStaleRuns.push(meta.id);
       this.trimIfIdle(meta);
       this.kick();
+    });
+    // PrManager's poll cache just changed — a 'waiting-github' entry's hold
+    // may have just cleared (or a fresh one may have appeared). Re-check
+    // every entry the same way onRunReviewed re-checks 'waiting-blockers'.
+    ctx.events.subscribe((event) => {
+      if (event.type === 'landing.changed') this.kick();
     });
     this.hydrate();
     // Seed the same check for every run this process inherited. The
@@ -806,6 +852,34 @@ export class MergeQueue {
     }
   }
 
+  // The GitHub merge gate's hold reason for one run, or null when clear or
+  // not applicable (no PR, or no `prState` wired). Shared by nextEligible()'s
+  // eligibility check and process()'s pre-merge gate so both agree on what
+  // an absent cache entry means: `prState(url)` returns undefined both
+  // before the first poll (genuinely unknown — hold, same as
+  // githubHoldReason(undefined)'s own contract) and forever after the PR
+  // merges or closes on GitHub (it drops out of the open-PR list — NOT a
+  // reason to hold forever). `cacheReady` is what tells those apart; without
+  // it a waiting-github entry whose PR left GitHub's open-PR list would
+  // never become eligible again, since a stale "poll pending" reading would
+  // hold it indefinitely.
+  private githubGateReason(runMeta: RunMeta | undefined): string | null {
+    if (runMeta?.prUrl === undefined || this.ctx.prState === undefined) {
+      return null;
+    }
+    const cachedPr = this.ctx.prState(runMeta.prUrl);
+    if (cachedPr !== undefined) return githubHoldReason(cachedPr);
+    // Absent from the cache. Once the cache is known fresh, that means
+    // "gone from GitHub's open-PR list" — the run proceeds to process(),
+    // which either cleans it up via the existing reviewedAt check (PrManager
+    // saw it merged and called markRunMergedViaPr) or fails loudly on
+    // `gh pr merge` (closed without merging) — both visible and retryable,
+    // unlike silently parking here forever.
+    return this.ctx.cacheReady?.() === true
+      ? null
+      : githubHoldReason(undefined);
+  }
+
   // Scans `entries` once, building a single id -> TaskDoc map up front (per
   // the performance skill: no repeated per-entry cache scans) and updating
   // every entry's display state (queued vs waiting-blockers) in that same
@@ -852,17 +926,43 @@ export class MergeQueue {
       // uncommitted file sitting there. It stays eligible either way, so a
       // baseDiscarded entry still reaches process() through this branch.
       const baseDiscarded = runsById.get(entry.runId)?.baseDiscarded === true;
+      // A GitHub hold is per-PR, not per-checkout like blocked-environment —
+      // it must not stop the sweep, only keep THIS entry from being
+      // reselected while it's still red. Re-derived fresh from the cached PR
+      // state (not merely preserved) so a hold that clears is picked up the
+      // moment nextEligible() next runs, exactly like `unmet` clearing when
+      // a blocker finishes. Only entries process() has already parked in
+      // 'waiting-github' are checked here — a never-before-seen entry stays
+      // eligible so process() gets the first crack at discovering the hold
+      // (see the gate right before merge() in process()). Also excluded once
+      // `reviewedAt` is set: a run reviewed out-of-band (PrManager's own
+      // poller saw the PR merged and called markRunMergedViaPr) must become
+      // eligible again so process()'s existing reviewedAt cleanup — not this
+      // gate — is what files it, rather than a stale hold parking it forever.
+      const runMeta = runsById.get(entry.runId);
+      const githubHeld =
+        entry.state === 'waiting-github' &&
+        runMeta?.reviewedAt === undefined &&
+        this.githubGateReason(runMeta) !== null;
       const nextState: MergeQueueEntryState =
         unmet && !baseDiscarded
           ? 'waiting-blockers'
-          : entry.state === 'blocked-environment'
-            ? 'blocked-environment'
-            : 'queued';
+          : githubHeld && !baseDiscarded
+            ? 'waiting-github'
+            : entry.state === 'blocked-environment'
+              ? 'blocked-environment'
+              : 'queued';
       if (entry.state !== nextState) {
         this.setEntryState(entry, nextState);
         changed = true;
       }
-      if ((!unmet || baseDiscarded) && eligible === null) eligible = entry;
+      if (
+        (!unmet || baseDiscarded) &&
+        (!githubHeld || baseDiscarded) &&
+        eligible === null
+      ) {
+        eligible = entry;
+      }
     }
     if (changed) this.broadcast();
     return eligible;
@@ -904,6 +1004,25 @@ export class MergeQueue {
     }
 
     try {
+      // The GitHub merge gate: a PR-routed entry only merges blind when the
+      // caller never wired a `prState` lookup (today's behavior, and every
+      // pre-existing test's harness). When one is wired, a red PR holds here
+      // instead of running rebase/verify against a draft/conflicting/failing
+      // PR — checked before rebase() so a held entry never pays for the
+      // 2-3 minute verify pipeline just to be parked afterward. Held rather
+      // than failed — nextEligible() retries it once the cached PR state
+      // clears, same resting-state contract as 'blocked-environment', minus
+      // the whole-sweep stop (see githubHeld). Shares githubGateReason with
+      // nextEligible() so both agree on what an absent cache entry means
+      // (see that method's comment). Reads only `meta` and this closure, not
+      // rebase/verify output, so it can run ahead of both unchanged.
+      const holdReason = this.githubGateReason(meta);
+      if (holdReason !== null) {
+        entry.reason = holdReason;
+        this.setEntryState(entry, 'waiting-github');
+        this.broadcast();
+        return 'done';
+      }
       await this.rebase(entry, meta);
       await this.verify(entry, meta);
       await this.merge(entry, meta);
@@ -1478,6 +1597,22 @@ export class MergeQueue {
       return;
     }
     const newBase = parent.baseBranch;
+    // A dependent whose task lives under an epic belongs on that epic's
+    // integration branch. When its blocker landed somewhere ELSE (the default
+    // branch, or another epic's branch — the cross-epic blocker case),
+    // restacking it onto `newBase` would silently carry the epic's work away
+    // from the epic branch, and restacking it onto the epic branch instead
+    // would silently drop the blocker's content, which the epic branch does
+    // not contain. Neither guess is safe, so this mirrors the baseDiscarded
+    // treatment: flag it and let a human decide.
+    const epicHome = this.ctx.orchestrator.epicBranchForRun(dependent.id);
+    if (epicHome !== null && epicHome !== newBase) {
+      this.flagDependent(
+        dependent,
+        `cannot restack automatically: this run belongs on epic branch ${epicHome}, but its blocker ${parent.branch} landed on ${newBase} — merge ${newBase} into ${epicHome} (or re-dispatch) so the blocker's work reaches the epic branch first`
+      );
+      return;
+    }
     const stackBase = dependent.stackBaseCommit;
     if (stackBase === undefined) {
       // Nothing records where this run's own commits begin, so neither path

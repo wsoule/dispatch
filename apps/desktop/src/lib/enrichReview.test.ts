@@ -1,7 +1,7 @@
 import type { PlannedTask, PlanRecord } from '@dispatch/client';
 import { describe, expect, it } from 'bun:test';
 
-import { enrichViewState, formatEnrichedInboxText } from './enrichReview.js';
+import { enrichViewState } from './enrichReview.js';
 
 function plannedTask(over: Partial<PlannedTask> = {}): PlannedTask {
   return {
@@ -122,36 +122,5 @@ describe('enrichViewState', () => {
     );
     expect(state.kind).toBe('ready');
     expect(state.kind === 'ready' && state.draft.description).toBe('first');
-  });
-});
-
-describe('formatEnrichedInboxText', () => {
-  it('joins the description and a bullet list of criteria', () => {
-    expect(
-      formatEnrichedInboxText({
-        description: 'the timer leaks on unmount',
-        acceptanceCriteria: ['clears the interval', 'covered by a test'],
-      })
-    ).toBe(
-      'the timer leaks on unmount\n\nAcceptance criteria:\n\n- clears the interval\n- covered by a test'
-    );
-  });
-
-  it('omits the criteria block when there are none', () => {
-    expect(
-      formatEnrichedInboxText({
-        description: 'just prose',
-        acceptanceCriteria: [],
-      })
-    ).toBe('just prose');
-  });
-
-  it('omits the description when it is empty', () => {
-    expect(
-      formatEnrichedInboxText({
-        description: '',
-        acceptanceCriteria: ['only criteria'],
-      })
-    ).toBe('Acceptance criteria:\n\n- only criteria');
   });
 });
