@@ -93,6 +93,12 @@ const TEAMS_QUERY = `query Teams($after: String) {
   }
 }`;
 
+// Linear splits the scalar it expects for a team id by position: the top-level
+// `team(id:)` lookup takes `String!`, while the id comparators inside a filter
+// (`IssueFilter.team.id.eq`) take `ID`. GraphQL does not coerce between the two,
+// so a query declaring the wrong one fails validation before it ever runs
+// ("Variable '$teamId' of type 'String!' used in position expecting type 'ID'").
+// Keep `String!` on the `team(id:)` queries and `ID!` on the filtered ones.
 const STATES_QUERY = `query WorkflowStates($teamId: String!) {
   team(id: $teamId) { states(first: 100) { nodes { id name type } } }
 }`;
@@ -101,7 +107,7 @@ const LABELS_QUERY = `query IssueLabels($teamId: String!) {
   team(id: $teamId) { labels(first: 250) { nodes { id name color } } }
 }`;
 
-const ISSUES_QUERY = `query IssuesUpdatedSince($teamId: String!, $since: DateTimeOrDuration, $after: String) {
+const ISSUES_QUERY = `query IssuesUpdatedSince($teamId: ID!, $since: DateTimeOrDuration, $after: String) {
   issues(
     filter: { team: { id: { eq: $teamId } }, updatedAt: { gt: $since } }
     first: 250
@@ -114,7 +120,7 @@ const ISSUES_QUERY = `query IssuesUpdatedSince($teamId: String!, $since: DateTim
   }
 }`;
 
-const ISSUES_QUERY_ALL = `query IssuesAll($teamId: String!, $after: String) {
+const ISSUES_QUERY_ALL = `query IssuesAll($teamId: ID!, $after: String) {
   issues(
     filter: { team: { id: { eq: $teamId } } }
     first: 250
@@ -127,7 +133,7 @@ const ISSUES_QUERY_ALL = `query IssuesAll($teamId: String!, $after: String) {
   }
 }`;
 
-const ISSUE_LINKS_QUERY = `query IssueLinks($teamId: String!, $after: String) {
+const ISSUE_LINKS_QUERY = `query IssueLinks($teamId: ID!, $after: String) {
   issues(
     filter: { team: { id: { eq: $teamId } } }
     first: 250
