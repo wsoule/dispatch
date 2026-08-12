@@ -49,6 +49,11 @@ export type RecordsTableProps = {
   sort: RecordsSort;
   onSortChange?: (sort: RecordsSort) => void;
   onRowClick?: (row: RecordsRow) => void;
+  /** Called when the pointer enters a row — for callers that sync a keyboard roving-focus
+   * cursor to whatever the mouse is over (`TasksListView`'s j/k navigation), matching the
+   * pre-reskin row's own `onMouseEnter`. Purely a pass-through; the table has no roving-focus
+   * concept of its own. */
+  onRowMouseEnter?: (rowId: string) => void;
   /** Adds a leading checkbox column — a bulk-selection affordance the generic `kind` cells
    * can't express on their own. */
   selectable?: boolean;
@@ -275,6 +280,7 @@ function RecordsBodyRow({
   row,
   columns,
   onRowClick,
+  onRowMouseEnter,
   selectable = false,
   selected = false,
   onToggleSelect,
@@ -285,6 +291,7 @@ function RecordsBodyRow({
   row: RecordsRow;
   columns: RecordsColumn[];
   onRowClick?: (row: RecordsRow) => void;
+  onRowMouseEnter?: (rowId: string) => void;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (rowId: string) => void;
@@ -312,6 +319,7 @@ function RecordsBodyRow({
       data-row-id={row.id}
       onClick={interactive ? () => onRowClick(row) : undefined}
       onKeyDown={interactive ? handleKeyDown : undefined}
+      onMouseEnter={onRowMouseEnter ? () => onRowMouseEnter(row.id) : undefined}
       className={`ease-out-expo shadow-hairline-bottom transition-colors duration-100 ${
         interactive ? 'hover:bg-surface-hover cursor-pointer' : ''
       } ${className ?? ''}`}
@@ -369,6 +377,7 @@ export function RecordsTable({
   sort,
   onSortChange,
   onRowClick,
+  onRowMouseEnter,
   selectable = false,
   selectedIds,
   onToggleSelect,
@@ -422,6 +431,7 @@ export function RecordsTable({
                     row={row}
                     columns={columns}
                     onRowClick={onRowClick}
+                    onRowMouseEnter={onRowMouseEnter}
                     selectable={selectable}
                     selected={selectedIds?.has(row.id) ?? false}
                     onToggleSelect={onToggleSelect}
