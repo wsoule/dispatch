@@ -15,6 +15,7 @@ import {
   listProjects,
   listSessions,
 } from '../lib/tauri';
+import { TaskRowList } from '@/ui/ai/task-rows';
 import { Badge } from '@/ui/badge';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
@@ -268,7 +269,7 @@ export function SessionsHubView() {
           )}
 
         {!sessionsLoading && !sessionsError && filteredSessions.length > 0 && (
-          <div className="flex flex-col gap-2">
+          <TaskRowList>
             {filteredSessions.map((session) => (
               <SessionRow
                 key={session.id}
@@ -277,7 +278,7 @@ export function SessionsHubView() {
                 onClick={() => setSelectedSessionId(session.id)}
               />
             ))}
-          </div>
+          </TaskRowList>
         )}
       </section>
 
