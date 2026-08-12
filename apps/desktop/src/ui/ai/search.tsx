@@ -181,7 +181,7 @@ export function SearchPanel({
                       onMouseEnter={() => setActiveId(item.id)}
                       onClick={() => onSelect(item)}
                       className={cn(
-                        'rounded-control flex h-8 w-full items-center gap-2 px-2 text-left text-[13px] transition-colors duration-100',
+                        'ease-out-expo rounded-control flex h-8 w-full items-center gap-2 px-2 text-left text-[13px] transition-colors duration-100',
                         isActive ? 'bg-surface-hover' : ''
                       )}
                     >

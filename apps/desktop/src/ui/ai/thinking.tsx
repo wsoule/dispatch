@@ -123,7 +123,7 @@ export function Thinking({
         aria-expanded={!collapsed}
         aria-controls={contentId}
         onClick={onToggle}
-        className="rounded-chip bg-muted hover:bg-surface-hover-strong -mx-1.5 flex w-fit items-center gap-2 px-1.5 py-1 transition-colors duration-100"
+        className="rounded-chip bg-muted hover:bg-surface-hover-strong ease-out-expo -mx-1.5 flex w-fit items-center gap-2 px-1.5 py-1 transition-colors duration-100"
       >
         <SparkGlyph
           className={isActive ? 'text-foreground' : 'text-muted-foreground'}

@@ -120,7 +120,7 @@ export function PromptBar({
   return (
     <div
       className={cn(
-        'bg-field shadow-inset-field rounded-card flex flex-col gap-1.5 border border-transparent p-1.5 transition-colors duration-150',
+        'bg-field shadow-inset-field rounded-card ease-out-expo flex flex-col gap-1.5 border border-transparent p-1.5 transition-colors duration-150',
         'focus-within:border-primary/50 focus-within:ring-2 focus-within:ring-primary/20'
       )}
     >
@@ -137,7 +137,7 @@ export function PromptBar({
                 type="button"
                 aria-label={`Remove ${reference.label}`}
                 onClick={() => onRemoveReference?.(reference.id)}
-                className="text-muted-foreground hover:bg-surface-hover-strong hover:text-foreground flex size-4 shrink-0 items-center justify-center rounded-full transition-colors duration-100"
+                className="text-muted-foreground hover:bg-surface-hover-strong hover:text-foreground ease-out-expo flex size-4 shrink-0 items-center justify-center rounded-full transition-colors duration-100"
               >
                 <XIcon aria-hidden className="size-3" />
               </button>
@@ -172,7 +172,7 @@ export function PromptBar({
                   <button
                     type="button"
                     onClick={() => onChange(`/${command.label} `)}
-                    className="hover:bg-surface-hover rounded-control flex w-full items-center justify-between gap-3 px-2 py-1.5 text-left text-[13px] transition-colors duration-100"
+                    className="hover:bg-surface-hover rounded-control ease-out-expo flex w-full items-center justify-between gap-3 px-2 py-1.5 text-left text-[13px] transition-colors duration-100"
                   >
                     <span className="text-foreground font-medium">
                       {command.label}
@@ -222,7 +222,7 @@ export function PromptBar({
             aria-label="Start dictation"
             aria-pressed="false"
             onClick={onMicClick}
-            className="text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-control flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-150 active:scale-[0.94]"
+            className="text-muted-foreground hover:bg-surface-hover hover:text-foreground rounded-control ease-out-expo flex size-7 shrink-0 items-center justify-center transition-[background-color,color,transform] duration-150 active:scale-[0.94] motion-reduce:active:scale-100"
           >
             <MicIcon aria-hidden className="size-3.5" />
           </button>
@@ -232,7 +232,7 @@ export function PromptBar({
             disabled={!canSubmit}
             onClick={onSubmit}
             className={cn(
-              'flex size-7 shrink-0 items-center justify-center rounded-control transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94]',
+              'ease-out-expo flex size-7 shrink-0 items-center justify-center rounded-control transition-[background-color,color,transform] duration-200 enabled:active:scale-[0.94] motion-reduce:active:scale-100',
               canSubmit
                 ? 'bg-primary text-primary-foreground'
                 : 'bg-surface-inset text-muted-foreground'

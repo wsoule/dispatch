@@ -78,7 +78,7 @@ export const defaultSelectionActions: SelectionAction[] = [
 ];
 
 const CHIP_BUTTON_CLASS =
-  'text-foreground hover:bg-surface-hover ease-out-expo inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[12px] font-normal transition-colors duration-100 active:scale-[0.96]';
+  'text-foreground hover:bg-surface-hover ease-out-expo inline-flex h-7 shrink-0 items-center gap-1 rounded-full px-2.5 text-[12px] font-normal transition-colors duration-100 active:scale-[0.96] motion-reduce:active:scale-100';
 
 // Gap kept between the selection rect and the menu, both above and below.
 const MENU_GAP = 8;
@@ -182,7 +182,7 @@ export function SelectionActionsMenu({
             type="button"
             aria-label="Back to actions"
             onClick={() => setOpenSubmenuId(null)}
-            className="text-muted-foreground hover:bg-surface-hover flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-100"
+            className="text-muted-foreground hover:bg-surface-hover ease-out-expo flex size-7 shrink-0 items-center justify-center rounded-full transition-colors duration-100"
           >
             <ChevronLeftIcon aria-hidden className={ICON_CLASS} />
           </button>

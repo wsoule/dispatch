@@ -116,7 +116,7 @@ export function TaskRow({
         </span>
       )}
       {actions !== undefined && (
-        <div className="flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100">
+        <div className="ease-out-expo flex shrink-0 items-center gap-1 opacity-0 transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100">
           {actions}
         </div>
       )}

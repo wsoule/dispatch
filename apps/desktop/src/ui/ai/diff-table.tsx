@@ -189,7 +189,7 @@ export function DiffTable({
                 </td>
               ))}
               <td className="px-3 py-2 text-right">
-                <div className="flex items-center justify-end gap-1 opacity-0 transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100">
+                <div className="ease-out-expo flex items-center justify-end gap-1 opacity-0 transition-opacity duration-150 group-focus-within/row:opacity-100 group-hover/row:opacity-100">
                   <button
                     type="button"
                     aria-label="Accept change"

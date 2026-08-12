@@ -41,7 +41,7 @@ export function ToolChip({
   const isFailed = state === 'failed';
   const isRunning = state === 'running';
 
-  const className = `rounded-chip inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 px-2 text-xs transition-colors duration-100 ${
+  const className = `ease-out-expo rounded-chip inline-flex h-6 max-w-full min-w-0 items-center gap-1.5 px-2 text-xs transition-colors duration-100 ${
     isFailed
       ? 'bg-[var(--red-bg)] text-red'
       : 'bg-surface-inset text-foreground'

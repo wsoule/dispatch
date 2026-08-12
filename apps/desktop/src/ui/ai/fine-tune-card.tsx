@@ -58,7 +58,7 @@ function SegmentedControl({
             type="button"
             aria-pressed={isActive}
             onClick={() => onChange(id, option)}
-            className={`rounded-chip px-2 py-1 text-[11.5px] font-medium capitalize transition-colors duration-150 motion-reduce:transition-none ${
+            className={`ease-out-expo rounded-chip px-2 py-1 text-[11.5px] font-medium capitalize transition-colors duration-150 motion-reduce:transition-none ${
               isActive
                 ? 'bg-card text-foreground shadow-btn'
                 : 'text-muted-foreground hover:text-foreground'

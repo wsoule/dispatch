@@ -46,7 +46,7 @@ function ConfidenceMeter({ confidence }: { confidence: number }) {
           <span
             key={index}
             aria-hidden
-            className={`h-1 w-3.5 rounded-full transition-colors duration-300 ${
+            className={`ease-out-expo h-1 w-3.5 rounded-full transition-colors duration-300 ${
               index < filled ? 'bg-primary' : 'bg-surface-inset'
             }`}
           />
@@ -100,7 +100,7 @@ export function RecommendationCard({
             type="button"
             aria-expanded={expanded}
             onClick={() => setExpanded((current) => !current)}
-            className="text-muted-foreground hover:text-foreground flex shrink-0 items-center gap-1 text-[12px] font-medium transition-colors duration-100"
+            className="text-muted-foreground hover:text-foreground ease-out-expo flex shrink-0 items-center gap-1 text-[12px] font-medium transition-colors duration-100"
           >
             {alternatives.length} alternative
             {alternatives.length === 1 ? '' : 's'}
@@ -129,7 +129,7 @@ export function RecommendationCard({
                   key={alternative.id}
                   type="button"
                   onClick={() => onPickAlternative?.(alternative.id)}
-                  className="hover:bg-surface-hover rounded-control flex w-full items-center gap-2.5 px-1.5 py-1.5 text-left transition-colors duration-100"
+                  className="hover:bg-surface-hover rounded-control ease-out-expo flex w-full items-center gap-2.5 px-1.5 py-1.5 text-left transition-colors duration-100"
                 >
                   <span className="text-foreground min-w-0 flex-1 truncate text-[12.5px]">
                     {alternative.label}

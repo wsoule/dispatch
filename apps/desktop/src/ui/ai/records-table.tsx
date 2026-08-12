@@ -264,7 +264,7 @@ function RecordsHeaderCell({
           <span className="truncate">{column.label}</span>
           <Icon
             aria-hidden
-            className={`size-3 shrink-0 transition-opacity duration-100 ${
+            className={`ease-out-expo size-3 shrink-0 transition-opacity duration-100 ${
               isActive ? 'opacity-100' : 'opacity-0 group-hover/sort:opacity-60'
             }`}
           />
