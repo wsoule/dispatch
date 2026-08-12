@@ -4,9 +4,10 @@ import {
   ChevronUp,
   type LucideIcon,
 } from 'lucide-react';
-import type { KeyboardEvent } from 'react';
+import { Fragment, type KeyboardEvent, type ReactNode } from 'react';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
+import { Checkbox } from '@/ui/checkbox';
 
 export type RecordsCellKind = 'text' | 'tags' | 'time' | 'strength';
 
@@ -23,12 +24,53 @@ export type RecordsRow = {
 
 export type RecordsSort = { key: string; dir: 'asc' | 'desc' } | null;
 
+/** One collapsible/labelled section of rows, for a table whose rows aren't a flat list —
+ * `TasksListView`'s per-epic grouping is the motivating case. Rendered as a full-width row
+ * (spanning every column) ahead of that section's own rows, inside the *same* table as every
+ * other group — one sticky column header for the whole table, not one per group. */
+export type RecordsGroup = {
+  key: string;
+  /** Arbitrary content for the section's header row — an expand/collapse trigger, counts, a
+   * secondary action button, whatever the caller needs. `null` renders no header row at all
+   * (a headerless catch-all section). The table has no opinion on what a "group" means; it
+   * only lays the header out and puts that group's rows underneath it. */
+  header: ReactNode;
+  rows: RecordsRow[];
+};
+
 export type RecordsTableProps = {
   columns: RecordsColumn[];
-  rows: RecordsRow[];
+  /** Flat row list. Mutually exclusive with `groups` (pass exactly one). */
+  rows?: RecordsRow[];
+  /** Grouped row sections — see `RecordsGroup`. Mutually exclusive with `rows`. Each group's
+   * own row order is preserved (sort still applies within a group if the caller pre-sorts
+   * each group's `rows` — the table itself never reorders what it's given). */
+  groups?: RecordsGroup[];
   sort: RecordsSort;
   onSortChange?: (sort: RecordsSort) => void;
   onRowClick?: (row: RecordsRow) => void;
+  /** Adds a leading checkbox column — a bulk-selection affordance the generic `kind` cells
+   * can't express on their own. */
+  selectable?: boolean;
+  selectedIds?: ReadonlySet<string>;
+  /** Called with a row's id when its checkbox is toggled. Required for `selectable` to do
+   * anything; the checkbox itself always reflects `selectedIds` (controlled, not local state). */
+  onToggleSelect?: (rowId: string) => void;
+  /** The checkbox's accessible name for a given row — defaults to the row id. */
+  selectLabel?: (row: RecordsRow) => string;
+  /** Escape hatch for a cell that isn't one of the four generic `kind`s — an inline picker, a
+   * badge, a composite of several fields (Linear's `t-id › Epic title` breadcrumb, say).
+   * Return `undefined` to fall back to the default kind-based rendering for that (row, column)
+   * pair; return `null` to render nothing. Keeps the table itself agnostic of what any of
+   * those richer cells actually are. */
+  renderCell?: (
+    row: RecordsRow,
+    column: RecordsColumn
+  ) => ReactNode | undefined;
+  /** Extra class names for one row's `<tr>` — e.g. a keyboard roving-focus highlight, an
+   * archived/dimmed treatment, or an attention wash. Composed alongside the row's own base
+   * classes, never replacing them. */
+  rowClassName?: (row: RecordsRow) => string | undefined;
 };
 
 // Coerces a time-cell value (ISO string, epoch ms, or Date) to epoch ms for chronological
@@ -233,10 +275,25 @@ function RecordsBodyRow({
   row,
   columns,
   onRowClick,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+  selectLabel,
+  renderCell,
+  className,
 }: {
   row: RecordsRow;
   columns: RecordsColumn[];
   onRowClick?: (row: RecordsRow) => void;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (rowId: string) => void;
+  selectLabel?: (row: RecordsRow) => string;
+  renderCell?: (
+    row: RecordsRow,
+    column: RecordsColumn
+  ) => ReactNode | undefined;
+  className?: string;
 }) {
   const interactive = onRowClick !== undefined;
 
@@ -252,42 +309,88 @@ function RecordsBodyRow({
     <tr
       role={interactive ? 'button' : undefined}
       tabIndex={interactive ? 0 : undefined}
+      data-row-id={row.id}
       onClick={interactive ? () => onRowClick(row) : undefined}
       onKeyDown={interactive ? handleKeyDown : undefined}
       className={`ease-out-expo shadow-hairline-bottom transition-colors duration-100 ${
         interactive ? 'hover:bg-surface-hover cursor-pointer' : ''
-      }`}
+      } ${className ?? ''}`}
     >
+      {selectable && (
+        <td className="px-2 py-2.5 align-middle">
+          {/* Selecting a row and opening it are different intents, so the checkbox itself
+              (a real, keyboard-operable control — unlike the plain `<td>` around it) stops
+              its click from bubbling to the row's own `onClick` above. */}
+          <Checkbox
+            checked={selected}
+            aria-label={selectLabel?.(row) ?? `Select ${row.id}`}
+            onClick={(event) => event.stopPropagation()}
+            onCheckedChange={() => onToggleSelect?.(row.id)}
+          />
+        </td>
+      )}
       {columns.map((column) => (
         <td key={column.key} className="px-3 py-2.5 align-middle">
-          <RecordsCell value={row.cells[column.key]} kind={column.kind} />
+          {renderCell?.(row, column) ?? (
+            <RecordsCell value={row.cells[column.key]} kind={column.kind} />
+          )}
         </td>
       ))}
     </tr>
   );
 }
 
+// Normalizes the `rows`/`groups` split into one shape the render below always walks: a flat
+// `rows` list becomes a single headerless group, so there's exactly one rendering path rather
+// than a duplicated flat-vs-grouped branch.
+function toSections(
+  rows: RecordsRow[] | undefined,
+  groups: RecordsGroup[] | undefined
+): RecordsGroup[] {
+  if (groups !== undefined) return groups;
+  return [{ key: '__flat__', header: null, rows: rows ?? [] }];
+}
+
 /** Full-bleed data grid: a sticky, muted header row with sort chevrons (`onSortChange`
  * cycles unsorted -> asc -> desc -> unsorted per column) over hairline-divided rows that
  * wash `bg-surface-hover` on hover when `onRowClick` is given. Cells render per their
  * column's `kind` — `tags` as a chip row, `time` as a relative, monospaced timestamp,
- * `strength` as a 3-bar meter, everything else as plain text. Matches the showcase's
- * "Records Table" primitive, adapted from its CRM-specific chrome (checkboxes, links,
- * calculation footer) to the generic columns/rows contract Task 26 renders
- * `TasksListView` through. */
+ * `strength` as a 3-bar meter, everything else as plain text (or `renderCell`'s custom
+ * content, when given). Matches the showcase's "Records Table" primitive, adapted from its
+ * CRM-specific chrome to the generic columns/rows contract `TasksListView` renders through —
+ * `selectable`/`groups`/`renderCell`/`rowClassName` are presentational extensions Task 26
+ * added on top of that base contract so a bulk-select column, per-epic grouping, inline
+ * pickers, and a keyboard roving-focus highlight could all render through this one table
+ * rather than needing a second, bespoke row renderer next to it. */
 export function RecordsTable({
   columns,
   rows,
+  groups,
   sort,
   onSortChange,
   onRowClick,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
+  selectLabel,
+  renderCell,
+  rowClassName,
 }: RecordsTableProps) {
+  const sections = toSections(rows, groups);
+  const colSpan = columns.length + (selectable ? 1 : 0);
+
   return (
     <div className="rounded-card border-border bg-card shadow-card overflow-hidden border">
       <div className="max-h-full overflow-auto">
         <table className="w-full border-collapse text-[12.5px]">
           <thead>
             <tr>
+              {selectable && (
+                <th
+                  scope="col"
+                  className="bg-surface-inset shadow-hairline-bottom sticky top-0 z-10 w-8 px-2 py-2.5"
+                />
+              )}
               {columns.map((column) => (
                 <RecordsHeaderCell
                   key={column.key}
@@ -299,13 +402,35 @@ export function RecordsTable({
             </tr>
           </thead>
           <tbody>
-            {rows.map((row) => (
-              <RecordsBodyRow
-                key={row.id}
-                row={row}
-                columns={columns}
-                onRowClick={onRowClick}
-              />
+            {sections.map((section) => (
+              <Fragment key={section.key}>
+                {section.header !== null && (
+                  <tr>
+                    {/* `top-9` approximates the sticky column header's own height, so a
+                        group header sticks directly beneath it rather than under it. */}
+                    <td
+                      colSpan={colSpan}
+                      className="bg-background sticky top-9 z-[5] p-0"
+                    >
+                      {section.header}
+                    </td>
+                  </tr>
+                )}
+                {section.rows.map((row) => (
+                  <RecordsBodyRow
+                    key={row.id}
+                    row={row}
+                    columns={columns}
+                    onRowClick={onRowClick}
+                    selectable={selectable}
+                    selected={selectedIds?.has(row.id) ?? false}
+                    onToggleSelect={onToggleSelect}
+                    selectLabel={selectLabel}
+                    renderCell={renderCell}
+                    className={rowClassName?.(row)}
+                  />
+                ))}
+              </Fragment>
             ))}
           </tbody>
         </table>
