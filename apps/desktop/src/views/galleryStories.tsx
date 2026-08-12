@@ -22,6 +22,8 @@ import {
 } from '@/ui/ai/chat';
 import { contextCardsStories } from '@/ui/ai/context-cards.stories';
 import { diffTableStories } from '@/ui/ai/diff-table.stories';
+import { filterTableStories } from '@/ui/ai/filter-table.stories';
+import { insightCardsStories } from '@/ui/ai/insight-cards.stories';
 import { LoadingState } from '@/ui/ai/loading-state';
 import {
   PromptBar,
@@ -31,6 +33,8 @@ import {
 } from '@/ui/ai/prompt-bar';
 import { recommendationCardStories } from '@/ui/ai/recommendation-card.stories';
 import { recordsTableStories } from '@/ui/ai/records-table.stories';
+import { searchStories } from '@/ui/ai/search.stories';
+import { sidebarNavStories } from '@/ui/ai/sidebar-nav.stories';
 import {
   StreamingText,
   type StreamingTextSource,
@@ -645,4 +649,8 @@ export const galleryStories: GalleryStory[] = [
   ...contextCardsStories,
   ...diffTableStories,
   ...recordsTableStories,
+  ...filterTableStories,
+  ...sidebarNavStories,
+  ...searchStories,
+  ...insightCardsStories,
 ];
