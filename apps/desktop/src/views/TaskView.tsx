@@ -11,7 +11,13 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef, TaskTab } from '../lib/appNav';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import { Button } from '@/ui/button';
-import { Select, SelectContent, SelectItem, SelectTrigger } from '@/ui/select';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/ui/select';
 import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 
 export interface TaskViewProps {
@@ -88,17 +94,25 @@ export function TaskView({
         <div className="ml-auto flex items-center gap-2">
           {tab !== 'details' && taskRuns.length > 0 && (
             <Select value={selectedRun?.id ?? ''} onValueChange={onSelectRun}>
-              <SelectTrigger size="sm" className="h-7 text-[12px]">
-                {selectedRun !== undefined ? (
-                  <span className="flex items-center gap-1.5">
-                    <RunStatePill meta={selectedRun} />
-                    <span className="font-mono text-[11px]">
-                      {selectedRun.id}
+              <SelectTrigger
+                size="sm"
+                aria-label="Session"
+                className="h-7 text-[12px]"
+              >
+                {/* The custom trigger face still goes inside SelectValue: with
+                    `item-aligned` positioning Radix only places the open menu
+                    once it has a value node, so a trigger without one opens the
+                    list off-screen instead of over the trigger. */}
+                <SelectValue placeholder="Pick a session">
+                  {selectedRun !== undefined ? (
+                    <span className="flex items-center gap-1.5">
+                      <RunStatePill meta={selectedRun} />
+                      <span className="font-mono text-[11px]">
+                        {selectedRun.id}
+                      </span>
                     </span>
-                  </span>
-                ) : (
-                  'Pick a session'
-                )}
+                  ) : null}
+                </SelectValue>
               </SelectTrigger>
               <SelectContent>
                 {taskRuns.map((r) => (
