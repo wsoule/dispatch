@@ -43,6 +43,10 @@ export type PromptBarProps = {
   onMicClick?: () => void;
   disabled?: boolean;
   placeholder?: string;
+  /** Accessible name for the textarea. Defaults to "Prompt" — override when a caller embeds
+   * more than one `PromptBar` on a page, or needs its own label for test/assistive-tech
+   * lookup. */
+  ariaLabel?: string;
 };
 
 const MIN_ROWS = 1;
@@ -94,6 +98,7 @@ export function PromptBar({
   onMicClick,
   disabled = false,
   placeholder = 'Write a message…',
+  ariaLabel = 'Prompt',
 }: PromptBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -151,7 +156,7 @@ export function PromptBar({
             onKeyDown={handleKeyDown}
             placeholder={placeholder}
             disabled={disabled}
-            aria-label="Prompt"
+            aria-label={ariaLabel}
             className="text-foreground placeholder:text-muted-foreground min-h-7 w-full resize-none bg-transparent px-1 py-[5px] text-[13px] leading-[18px] [overflow-wrap:anywhere] outline-none"
           />
         </PopoverPrimitive.Anchor>

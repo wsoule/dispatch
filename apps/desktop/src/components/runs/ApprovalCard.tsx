@@ -113,7 +113,11 @@ export function ApprovalCard({
         options={options}
         onSelect={handleSelect}
         selectedId={selectedId}
-        disabled={deciding}
+        // Disabled while composing a deny reason too, not just while deciding: the reason box
+        // asks "why not?" before anything fires, so the other two options staying clickable
+        // underneath it would let a stray click approve the very thing being denied. The
+        // pre-reskin version removed the option row outright for the same reason.
+        disabled={deciding || denying}
       />
       <ScrollArea className="border-border bg-card max-h-40 rounded-md border">
         <pre className="text-muted-foreground p-2 font-mono text-[11px] break-words whitespace-pre-wrap">
