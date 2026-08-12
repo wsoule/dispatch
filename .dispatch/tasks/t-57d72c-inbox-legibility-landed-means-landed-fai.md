@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T21:17:23.645Z
-updated: 2026-08-11T22:59:44.705Z
+updated: 2026-08-12T00:49:24.082Z
 external: null
 writes:
   - apps/desktop/src/views/InboxView.tsx
@@ -40,3 +40,4 @@ Keep everything inside LandingView/InboxView; pure derivation (which history ent
 - 2026-08-11T21:18:11.405Z dispatched (claude, branch dispatch/t-57d72c-inbox-legibility-landed-means-landed-fai-403c41) — human:wsoule679
 - 2026-08-11T22:59:10.765Z Done in be0c7178. New pure lib apps/desktop/src/lib/queueHistory.ts: groupQueueHistory splits queue history into landed (merged only) / failed (live failures) / stale (run reviewedAt set, superseded by a newer attempt, or back in the live queue — the last rule keeps a just-retried failure from headlining next to its own queue entry). LandingView: empty queue is one line ("Merge queue: empty", no Landing header), "Landed" and "Failed to land" sections, full error text on failed rows, per-row Retry via handleEnqueueMerge with inline 409 errors, stale attempts behind an "N stale attempts" disclosure. InboxView: "verify failed" badge on needs-review rows whose latest attempt failed (suppressed while re-queued). Verified: 1315 desktop tests pass across 122 files, tsc clean, lint 0 errors, knip clean. Three guard mutations recorded (2/1/1 tests killed). — none
 - 2026-08-11T22:59:44.705Z [run r-403c41] finished: finished — 6 files, $15.05 — agent:wsoule679/claude
+- 2026-08-12T00:49:24.082Z merge queue: run r-403c41 rebased with plain git rather than jj — a run stacked above this branch is still live, and a jj rewrite would detach its worktree — none
