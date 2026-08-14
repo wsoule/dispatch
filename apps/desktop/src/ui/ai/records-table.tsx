@@ -9,7 +9,7 @@ import { Fragment, type KeyboardEvent, type ReactNode } from 'react';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { Checkbox } from '@/ui/checkbox';
 
-export type RecordsCellKind = 'text' | 'tags' | 'time' | 'strength';
+type RecordsCellKind = 'text' | 'tags' | 'time' | 'strength';
 
 export type RecordsColumn = {
   key: string;

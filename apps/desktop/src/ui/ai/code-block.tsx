@@ -16,12 +16,7 @@ export type CodeBlockProps = {
   onCopy?: (code: string) => void;
 };
 
-export type CodeTokenKind =
-  | 'comment'
-  | 'string'
-  | 'keyword'
-  | 'number'
-  | 'plain';
+type CodeTokenKind = 'comment' | 'string' | 'keyword' | 'number' | 'plain';
 
 export type CodeToken = {
   text: string;

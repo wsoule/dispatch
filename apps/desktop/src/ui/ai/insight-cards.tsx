@@ -1,7 +1,7 @@
 import { MinusIcon, TrendingDownIcon, TrendingUpIcon } from 'lucide-react';
 import { type PointerEvent as ReactPointerEvent, useId, useState } from 'react';
 
-export type InsightDeltaDirection = 'up' | 'down' | 'flat';
+type InsightDeltaDirection = 'up' | 'down' | 'flat';
 
 export type InsightDelta = {
   value: string;
