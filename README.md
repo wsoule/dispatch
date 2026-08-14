@@ -66,10 +66,17 @@ review, and merge. It is local HTTP only — nothing leaves the machine.
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`
-(created or merged — existing servers and keys are preserved). Pass `--no-mcp`
-to skip this. Start the server directly with `dispatch mcp` (reads the current
-directory) or the standalone `dispatch-mcp --root <dir>` binary from
-`@dispatch/mcp`.
+(created or merged — existing servers and keys are preserved):
+
+    {
+      "mcpServers": {
+        "dispatch": { "command": "dispatch", "args": ["mcp"] }
+      }
+    }
+
+Pass `--no-mcp` to skip this. Start the server directly with `dispatch mcp`
+(reads the current directory) or the standalone `dispatch-mcp --root <dir>`
+binary from `@dispatch/mcp`.
 
 The five `task_*` tools operate directly on `.dispatch/tasks/*.md` and need no
 daemon (a running `dispatchd` picks up their file changes through its watcher
