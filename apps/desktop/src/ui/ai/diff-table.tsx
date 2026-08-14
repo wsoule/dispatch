@@ -2,17 +2,17 @@ import { CheckIcon, XIcon } from 'lucide-react';
 
 import { Button } from '@/ui/button';
 
-export type DiffTableColumn = {
+type DiffTableColumn = {
   key: string;
   label: string;
 };
 
-export type DiffCellValue = {
+type DiffCellValue = {
   old?: string;
   next?: string;
 };
 
-export type DiffTableRowKind = 'add' | 'remove' | 'change';
+type DiffTableRowKind = 'add' | 'remove' | 'change';
 
 export type DiffTableRow = {
   id: string;
