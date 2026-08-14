@@ -24,8 +24,8 @@ Or grab an installer from the
 (Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
 signed and notarized (Developer ID) as of v0.1.1.
 
-Installing the app also puts the `dispatch` CLI on your `PATH` (the cask links
-the binary bundled inside `Dispatch.app`).
+On macOS, installing the app also puts the `dispatch` CLI on your `PATH` (the
+cask links the binary bundled inside `Dispatch.app`).
 
 ## Quickstart
 
@@ -49,7 +49,7 @@ Every read command accepts `--json` for agent/script consumption.
 
 ## How it works
 
-A task is a markdown file with frontmatter — status, priority, `blockedBy`,
+A task is a markdown file with frontmatter — status, priority, `blocked-by`,
 declared `writes` paths, and more — and a human-readable body. The CLI, the
 desktop app, the MCP server, and the orchestrator all read and write those same
 files, so git is both the sync layer and the history.
