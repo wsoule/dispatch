@@ -1,12 +1,17 @@
-# Dispatch (working title)
+# Dispatch
 
-Source-available, git-native task tracking and AI-agent orchestration. Tasks are
-markdown files in your repo (`.dispatch/tasks/*.md`) — synced by git, readable
-by humans and agents alike.
+Mission control for coding agents. Create a task, dispatch an agent, watch it
+work — runs, review, and merge in one desktop app.
 
-**Status:** all six roadmap phases are complete — tracker core, CLI,
-`dispatchd`, the MCP server, the desktop app, and the orchestrator. Roadmap:
-`docs/superpowers/plans/2026-07-13-dispatch-roadmap.md`.
+<!-- TODO(asset): docs/assets/dispatch-hero.gif — task → dispatch → review loop -->
+
+- **Tasks live in your repo.** Every task is a markdown file in
+  `.dispatch/tasks/*.md` — synced by git, readable by humans and agents alike.
+- **Agents run with guardrails.** A task declares the paths it may write before
+  the agent starts; runs carry budget and turn caps, verify gates, and
+  human-gated scope escalation.
+- **Local-first.** Runs on your machine, against your checkout, with your API
+  key. No account, no server, nothing uploaded.
 
 ## Install
 
@@ -19,76 +24,46 @@ Or grab an installer from the
 (Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
 signed and notarized (Developer ID) as of v0.1.1.
 
-### Dependency graph (optional)
-
-Dispatch can use [Carto](https://github.com/theanshsonkar/carto) to compute
-which files a change can break, which narrows code-review scope to the actual
-blast radius instead of just the changed files. Without it, Dispatch falls back
-to a built-in scanner that only understands TypeScript/TSX — on a Go, Python, or
-Rust repo it finds nothing, and review scope silently shrinks to the changed
-files alone. `dispatch doctor` reports which backend is in use, including a
-warning when there's neither carto nor TypeScript to work from.
-
-carto's native dependencies (`better-sqlite3`, `tree-sitter`) don't build on
-every Node version: in our testing only `npm install -g` under Node 22 LTS
-produced a working install; newer Node lines failed to compile the bindings, and
-`bun install -g` did not produce a working native build. A half-built install is
-easy to miss, because `carto --version` answers fine without loading a single
-native module — `dispatch doctor` runs carto's own `doctor` to catch it.
-
-carto's MCP server (`carto serve`) is wired into dispatched agents' tool config
-from carto 2.1.4 onward. Earlier releases started the server without connecting
-its transport ([carto#9](https://github.com/theanshsonkar/carto/issues/9)), so
-Dispatch withholds the MCP entry below that version rather than spawning one
-that answers nothing. Blast radius is unaffected either way: that path reads the
-container as a library, not over MCP.
-
-    npm install -g carto-md
-
-`carto.enabled` in `.dispatch/config.yml` controls the policy (default `on`):
-`on` builds a carto container if one is missing, `detect` uses one only if it
-already exists, and `off` sticks to the built-in scanner. `on` is a build
-policy, not a requirement — a missing `carto` binary always degrades to the
-scanner rather than failing. Whatever builds the container — `dispatch init` or
-the daemon on a project that upgraded into this — adds the `.carto/` build
-output to `.gitignore` automatically.
+On macOS, installing the app also puts the `dispatch` CLI on your `PATH` (the
+cask links the binary bundled inside `Dispatch.app`).
 
 ## Quickstart
 
-    bun install && bun run build
-    node packages/cli/dist/cli.js init
-    node packages/cli/dist/cli.js task create "My first task" --priority high
-    node packages/cli/dist/cli.js task list
-    node packages/cli/dist/cli.js task next
-    node packages/cli/dist/cli.js doctor
+In any git repo:
+
+    dispatch init
+    dispatch task create "My first task" --priority high
+    dispatch task list
+    dispatch task next
+    dispatch doctor
+
+Then open the Dispatch app and point it at the repo: the board shows your tasks,
+and dispatching one hands it to a coding agent in an isolated git worktree —
+live output, review, and merge all happen in the app.
 
 Every read command accepts `--json` for agent/script consumption.
 
-## Development
+`dispatch init` also registers Dispatch's MCP server in the project's
+`.mcp.json`, so tools like Claude Code can read and write the same tasks — see
+[MCP server](#mcp-server).
 
-Bun monorepo (workspace catalog, tsdown builds, `bun test`, oxlint/oxfmt). From
-the repo root: `bun run build`, `bun run test`, `bun run tsc`, `bun run format`,
-`bun run lint`. Agent conventions live in `AGENTS.md` and `.agents/skills/`.
+## How it works
 
-### Daemon + web UI
+A task is a markdown file with frontmatter — status, priority, `blocked-by`,
+declared `writes` paths, and more — and a human-readable body. The CLI, the
+desktop app, the MCP server, and the orchestrator all read and write those same
+files, so git is both the sync layer and the history.
 
-`apps/desktop` is the product's UI and where frontend work happens;
-`packages/web` is frozen as a browser fallback.
+Dispatching a task runs a coding agent in an isolated git worktree, scoped to
+the task's declared `writes`. Touching anything else requires a human-gated
+scope request at runtime; runs carry budget (`maxBudgetUsd`) and turn caps, and
+verify gates check exit criteria before review. Findings, rulings, evidence, and
+decisions from each run are recorded alongside the tasks.
 
-Run the daemon and the web UI's dev server side by side for live-reloading
-frontend work:
+`dispatchd`, a local daemon, watches the repo and feeds the app live runs,
+review, and merge. It is local HTTP only — nothing leaves the machine.
 
-    bun packages/server/src/bin.ts --root <path-to-a-dispatch-repo> --port 4771
-    bun ws web dev
-
-`bun ws web dev` proxies `/api` and `/ws` to `http://127.0.0.1:4771` (see
-`packages/web/vite.config.ts`), so the Vite dev server on its own port talks to
-a real dispatchd. For a production-style check, `bun run build` builds the web
-UI into `packages/web/dist`, then dispatchd serves it directly — no separate
-frontend server needed. `dispatch serve` / `dispatch ui` (from `@dispatch/cli`)
-wrap this daemon for end users.
-
-### MCP server
+## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`
 (created or merged — existing servers and keys are preserved):
@@ -99,10 +74,9 @@ wrap this daemon for end users.
       }
     }
 
-Pass `--no-mcp` to `dispatch init` to skip this. The registration assumes
-`dispatch` is on `PATH`; a packaged installer lands in a later phase. Start the
-server directly with `dispatch mcp` (reads the current directory) or the
-standalone `dispatch-mcp --root <dir>` binary from `@dispatch/mcp`.
+Pass `--no-mcp` to skip this. Start the server directly with `dispatch mcp`
+(reads the current directory) or the standalone `dispatch-mcp --root <dir>`
+binary from `@dispatch/mcp`.
 
 The five `task_*` tools operate directly on `.dispatch/tasks/*.md` and need no
 daemon (a running `dispatchd` picks up their file changes through its watcher
@@ -134,6 +108,79 @@ given fields otherwise; `kind` and `description` take effect on create only.
 out. A `workflow://onboarding` resource briefs a connecting agent on the same
 conventions. See `docs/superpowers/plans/2026-07-20-phase-3-mcp-server.md` for
 the original design.
+
+## Dependency graph with Carto (optional)
+
+Dispatch can use [Carto](https://github.com/theanshsonkar/carto) to compute
+which files a change can break, which narrows code-review scope to the actual
+blast radius instead of just the changed files. Without it, Dispatch falls back
+to a built-in scanner that only understands TypeScript/TSX — on a Go, Python, or
+Rust repo it finds nothing, and review scope silently shrinks to the changed
+files alone. `dispatch doctor` reports which backend is in use, including a
+warning when there's neither carto nor TypeScript to work from.
+
+    npm install -g carto-md
+
+`carto.enabled` in `.dispatch/config.yml` controls the policy (default `on`):
+`on` builds a carto container if one is missing, `detect` uses one only if it
+already exists, and `off` sticks to the built-in scanner. `on` is a build
+policy, not a requirement — a missing `carto` binary always degrades to the
+scanner rather than failing. Whatever builds the container — `dispatch init` or
+the daemon on a project that upgraded into this — adds the `.carto/` build
+output to `.gitignore` automatically.
+
+<details>
+<summary>Troubleshooting the Carto install</summary>
+
+carto's native dependencies (`better-sqlite3`, `tree-sitter`) don't build on
+every Node version: in our testing only `npm install -g` under Node 22 LTS
+produced a working install; newer Node lines failed to compile the bindings, and
+`bun install -g` did not produce a working native build. A half-built install is
+easy to miss, because `carto --version` answers fine without loading a single
+native module — `dispatch doctor` runs carto's own `doctor` to catch it.
+
+carto's MCP server (`carto serve`) is wired into dispatched agents' tool config
+from carto 2.1.4 onward. Earlier releases started the server without connecting
+its transport ([carto#9](https://github.com/theanshsonkar/carto/issues/9)), so
+Dispatch withholds the MCP entry below that version rather than spawning one
+that answers nothing. Blast radius is unaffected either way: that path reads the
+container as a library, not over MCP.
+
+</details>
+
+## Development
+
+All six roadmap phases are complete — tracker core, CLI, `dispatchd`, the MCP
+server, the desktop app, and the orchestrator. Roadmap:
+`docs/superpowers/plans/2026-07-13-dispatch-roadmap.md`.
+
+To run the CLI from a checkout instead of the installed app:
+
+    bun install && bun run build
+    node packages/cli/dist/cli.js init
+    node packages/cli/dist/cli.js doctor
+
+Bun monorepo (workspace catalog, tsdown builds, `bun test`, oxlint/oxfmt). From
+the repo root: `bun run build`, `bun run test`, `bun run tsc`, `bun run format`,
+`bun run lint`. Agent conventions live in `AGENTS.md` and `.agents/skills/`.
+
+### Daemon + web UI
+
+`apps/desktop` is the product's UI and where frontend work happens;
+`packages/web` is frozen as a browser fallback.
+
+Run the daemon and the web UI's dev server side by side for live-reloading
+frontend work:
+
+    bun packages/server/src/bin.ts --root <path-to-a-dispatch-repo> --port 4771
+    bun ws web dev
+
+`bun ws web dev` proxies `/api` and `/ws` to `http://127.0.0.1:4771` (see
+`packages/web/vite.config.ts`), so the Vite dev server on its own port talks to
+a real dispatchd. For a production-style check, `bun run build` builds the web
+UI into `packages/web/dist`, then dispatchd serves it directly — no separate
+frontend server needed. `dispatch serve` / `dispatch ui` (from `@dispatch/cli`)
+wrap this daemon for end users.
 
 ## Design docs
 
