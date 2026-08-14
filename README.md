@@ -3,7 +3,7 @@
 Mission control for coding agents. Create a task, dispatch an agent, watch it
 work — runs, review, and merge in one desktop app.
 
-![Dispatch: create a task, dispatch an agent, review the run](docs/assets/dispatch-hero.gif)
+<!-- TODO(asset): docs/assets/dispatch-hero.gif — task → dispatch → review loop -->
 
 - **Tasks live in your repo.** Every task is a markdown file in
   `.dispatch/tasks/*.md` — synced by git, readable by humans and agents alike.
