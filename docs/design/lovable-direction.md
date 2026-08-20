@@ -1,160 +1,188 @@
-# Making Dispatch feel like Lovable — without stopping being task-based
+# Two front doors: the Lovable-shaped Dispatch
 
-Status: direction proposal, not a committed plan. Written 2026-08-20 against
-`main` at v0.23.2.
+Status: agreed direction. Decisions below were settled in discussion on
+2026-08-20, against `main` at v0.23.2. Sequencing is direction, not a committed
+schedule; each workstream gets its own plan when it starts.
 
-## The question
+## The question this answers
 
-"Make this more like Lovable, still task-based, and we probably need a web
-version." Those are two separable asks, and the second one is much further along
-than it looks.
+"Make Dispatch more like Lovable — still task-based — and add a web version."
+Those turned out to be four decisions, all now made:
 
-## What Lovable actually does that we don't
+1. Builder and engineer experiences both exist, as **modes**.
+2. Web comes in two stages: reach first, team collaboration later, backed by
+   **code.storage** (Pierre) for repos and **Modal** for compute. Free for
+   personal accounts; teams pay.
+3. Compressing the dispatch → review loop is a goal in itself.
+4. Long-term positioning: merge the gap between get-something-working-fast
+   (Lovable) and team-grade engineering (Dispatch today).
+
+## What Lovable has that we lack
 
 Strip the marketing and Lovable is four properties:
 
-1. **One box, zero setup.** You land on a URL, type a sentence, and something
-   real exists ~30 seconds later. No install, no `init`, no repo picking.
-2. **The running thing is the artifact.** Chat on the left, a live preview of
-   the app on the right. You judge the agent by looking at the product, not by
-   reading a diff.
-3. **Everything has a URL.** Projects are shareable by default, and anyone can
-   fork one and keep building.
-4. **Ship is one button.** Deploy and a public link are part of the loop, not a
-   separate concern.
+1. **One box, zero setup.** Type a sentence, something real exists in ~30s.
+2. **The running thing is the artifact.** You judge the agent by looking at the
+   app, not by reading a diff.
+3. **Everything has a URL.** Projects are shareable by default.
+4. **Ship is one button.**
 
-Dispatch today is the mirror image on every one of these:
+Dispatch today is the mirror image: install → init → task → dispatch, the
+artifact is a diff and a PR, everything is local, merge is the terminal state.
+Property 2 is the biggest lever and is compatible with staying task-based.
+Property 4 stays out of scope — Dispatch merges into your repo, and your repo
+has its own deploy story.
 
-1. `brew install --cask` → open app → point at a repo → `dispatch init` → create
-   a task → dispatch it.
-2. The artifact is a diff, a set of findings, and a PR. There is no way to _look
-   at_ what the agent built.
-3. Everything is local. A run exists on one machine, in one worktree.
-4. Merge is the terminal state. Deploy is out of scope.
+What we do NOT copy: the "describe an app" front door as the _only_ door, and
+autonomy without a trail. Dispatch's value is that agent work is scoped,
+budgeted, and recorded.
 
-Point 2 is the real gap, and it is the one most compatible with staying
-task-based. Points 1 and 3 are the web-version ask. Point 4 is out of scope and
-should stay out — Dispatch merges into _your_ repo, and your repo already has a
-deploy story.
+## The decomposition: lens, policy, backend
 
-## The thing we should not copy
+"Mode" bundles three things that move independently. We build the decomposition
+and ship the word "mode" on top of it as a pair of presets.
 
-Lovable's front door is "describe an app." Ours must stay "describe a change to
-this repo." Dispatch's whole value is guardrails — declared `writes` paths,
-budget and turn caps, verify gates, human-gated scope escalation, findings and
-rulings recorded next to the tasks. A prompt box that generates a whole app from
-nothing has no repo to be scoped against, so none of that machinery applies.
+**Lens** — which surfaces you see. `builder` (prompt box and live preview are
+the stage) or `engineer` (board, diffs, findings, merge queue; preview docked
+beside the diff). Lens is **per-project, set by which front door created it**: a
+project born from a prompt is a builder project; one born from a cloned repo is
+an engineer project. A settings escape hatch can switch a project's lens at any
+time — both lenses read the same state, so switching migrates nothing.
 
-So: take Lovable's _surface_ (one box, live preview, shareable URL) and keep
-Dispatch's _spine_ (a task is a markdown file with declared scope; a run is a
-scoped, budgeted agent in an isolated worktree).
+We are deliberately **not** designing for mixed teams (different members in
+different lenses on one project simultaneously). If that returns later, the
+spine supports it — lens would become per-user preference — but we are not
+paying for it up front.
 
-## What already exists (the surprising part)
+**Policy** — what the agent may do without a human gate, per-project, shared,
+visible in both lenses (builder shows a simple autonomy slider; engineer shows
+the full gate config). Both modes default toward high autonomy — engineers are
+trending to auto-accept too. The gates therefore demote from _blocking_ to
+_recording_: auto-accept scope requests, auto-retry verify, eventually
+auto-merge on green, with every decision still landing in the ledger, findings,
+and evidence trail. A small **irreversibility floor** always stays blocking
+regardless of policy: force-push, deletes outside declared `writes`, spend above
+the budget cap.
 
-Three things in this repo are much closer to a hosted Dispatch than the roadmap
-suggests.
+This is the positioning that falls out: **autonomy with receipts**. Lovable is
+autonomous and opaque; classic review tooling is legible and slow. Dispatch
+moves at Lovable speed and leaves an auditable trail, using machinery
+(`.dispatch/` findings, rulings, evidence, ledger) that already exists.
 
-**The desktop UI is already a browser app.** `apps/desktop/src` is ~66k lines of
-React across 443 files, and exactly six of them import `@tauri-apps/*`:
-`lib/tauri.ts`, `lib/updater.ts`, `lib/notifications.ts`, `App.tsx`,
-`hooks/useDataChangedEvents.ts`, and `components/shell/UpdateBanner.tsx`. Every
-IPC call in `lib/tauri.ts` already has a documented browser fallback behind
-`isTauri()`. The UI talks to `dispatchd` over plain HTTP + WebSocket for
-everything that matters; Tauri is used for project registry, native dialogs,
-editor/Finder integration, JSONL session observability, and the updater.
+**Backend** — follows where the project lives, never toggled by the user:
 
-**We already host it multi-tenant.** `apps/demo` is a working per-visitor
-sandbox host: `SessionManager` seeds a fresh repo in tmpdir, spawns a real
-`dispatchd` per visitor, health-checks it, reads its tokens off stdout, and
-`proxy.ts` fronts both HTTP and WebSocket behind `/s/<id>/`. It serves _the
-desktop Vite bundle_, with config injected into `index.html` as
-`__DISPATCH_DEMO__`. Session caps, TTL sweeps, and per-IP rate limiting are all
-there. That is the hard 70% of a hosted product, already written and shipped.
+- **Local**: filesystem + git, exactly as today. Free, unlimited, keeps the
+  README promise — your machine, your checkout, your key, nothing uploaded.
+- **Hosted**: code.storage for repos, Modal for sandboxes. Free personal
+  accounts capped by sandbox-minutes (compute is the metered cost, not storage);
+  team collaboration is the paid tier.
 
-**The daemon already has a two-tier auth model.** `api.ts` mints an `agentToken`
-(request tier) and an `appToken` (decide tier) at startup, and `requiredTier()`
-gates every route. A hosted deployment needs per-user identity on top, but the
-authorization _shape_ — who may propose vs. who may decide — is already correct
-and is exactly what a shared/observable web session needs.
+## Why code.storage fits us better than it fits Lovable
 
-**`packages/web` is a dead end, on purpose.** It is 945 lines, and the roadmap's
-standing decisions say it plainly: "`packages/web` is frozen as a browser
-fallback; new UI work happens in `apps/desktop`." Reviving it would mean
-rebuilding the board, task detail, runs, review, findings, landing table, and
-inbox from scratch against `@dispatch/client`. Do not do that. The web version
-is the desktop bundle, hosted.
+Lovable uses code.storage as a bucket for generated apps that have no repo.
+Dispatch's entire thesis is already the thing Pierre sells: tasks are markdown
+files, git is the sync layer and the history. The mapping is direct —
 
-## The proposal, in dependency order
+| Dispatch concept                             | code.storage primitive           |
+| -------------------------------------------- | -------------------------------- |
+| worktree per run                             | ephemeral branch                 |
+| epic branches, stacked dispatch, merge queue | branches and refs                |
+| findings / evidence / rulings / transcripts  | versioned files ("agent memory") |
+| task file as source of truth                 | commits                          |
+| "your repo stays canonical"                  | GitHub sync                      |
 
-### A. Live preview — the single biggest Lovable-ness lever
+GitHub sync is the row that protects positioning: the user's repo of record
+stays on GitHub; code.storage is the fast machine-facing mirror. Warm/cold
+pricing (~$1.00/GB warm, ~$0.15 cold) matches our access pattern — active tasks
+warm, landed history cold.
 
-Today a run produces a diff. Give it a running app too.
+Vendor risk is real (Pierre is young) but unusually well hedged: it's git, the
+exit is `git clone`, and GitHub sync keeps a canonical copy elsewhere at all
+times. We also already ship `@pierre/diffs` and `@pierre/trees`.
 
-Every run already executes in an isolated git worktree
-(`orchestrator/worktree.ts`). Nothing in `packages/server` currently knows the
-words "preview" or "dev server" — this is greenfield. Add a per-run dev-server
-supervisor: read a preview command from `.dispatch/config` (default: detect
-`dev` in the worktree's `package.json`), start it on an allocated port when the
-run reaches a reviewable state, proxy it through `dispatchd` at
-`/preview/<runId>/`, and render it in an iframe beside the run's output and
-diff. Stop it with the run; sweep it on daemon shutdown the way demo sessions
-are swept.
+The storage seam is small: `taskfile.ts` (parse/serialize) is pure; task I/O
+goes through the single `TaskStore` class in `packages/core/src/store.ts` (~315
+lines); only 7 of 28 core source files touch `node:fs`, and
+`packages/core/src/browser.ts` already maintains a pure entry point. Hosted mode
+means a second `TaskStore` implementation, not a rewrite.
 
-This is the change that makes the product _feel_ like Lovable, and it costs
-nothing conceptually — it is a new observation surface over machinery that
-already exists. It also improves the desktop app, so it is not web-only work.
+## What already exists toward the web version
 
-Risks worth naming up front: arbitrary child processes with real ports, install
-steps for fresh worktrees (a worktree has no `node_modules`), and preview
-commands that hang. All three are solvable but none are free.
+- **The desktop UI is already a browser app.** 6 of 443 source files in
+  `apps/desktop/src` import `@tauri-apps/*`, and every IPC call in
+  `lib/tauri.ts` has a documented `isTauri()` browser fallback. Tauri covers
+  registry, native dialogs, editor/Finder, JSONL observability, updater —
+  nothing on the task/run/review path.
+- **`apps/demo` is already a multi-tenant host**: per-visitor `dispatchd`,
+  HTTP + WS proxy behind `/s/<id>/`, session caps, TTL sweeps, rate limiting,
+  token injection via `__DISPATCH_DEMO__`. The hosted product is a
+  generalization of this (real repo in, accounts, persistence), not new
+  infrastructure.
+- **The daemon's two-tier token auth** (`agentToken` request / `appToken`
+  decide) is already the right authorization shape for a shared web session.
+- **`packages/web` stays frozen** per the roadmap's standing decisions. The web
+  version is the desktop bundle, hosted — not a revival of packages/web.
 
-### B. One box at the front — task-shaped, not app-shaped
+## The four cells, in build order
 
-`orchestrator/planner.ts` and `plan.ts` already turn a prompt into a task graph,
-and `BrainDumpView` already takes freeform text and clusters it into tasks. The
-pieces are there; the framing is not. Today you meet a board. You should meet a
-box.
+Local/hosted × builder/engineer. Local+Engineer is the shipped product. The
+rest, in order:
 
-Make the empty/first-run state of a project a single prompt field — "what do you
-want to change?" — that runs the planner, shows the proposed task graph inline,
-and dispatches on confirm. The board stays exactly as it is for everything
-after. This is mostly an information-architecture change to `GetStartedView` and
-the empty board state, not new backend work.
+### 1. Preview per run (spine — both modes, both backends)
 
-### C. Hosted Dispatch — promote the demo host to a product
+The single biggest Lovable-ness lever, and it is spine, not lens: **every run
+that reaches a reviewable state gets a dev server and a preview URL.** Builder
+makes it the stage; engineer docks it beside the diff.
 
-Generalize `apps/demo` from "seeded sandbox with a puppet teammate" to "your
-repo, cloned into a container, with a real `dispatchd`":
+Concretely: a per-run dev-server supervisor in dispatchd — preview command from
+`.dispatch/config` (default: detect `dev` in the worktree's `package.json`),
+allocated port, proxied at `/preview/<runId>/`, iframe in the app; stopped with
+the run, swept on daemon shutdown. Known costs: fresh worktrees need installs,
+arbitrary child processes need supervision, hung preview commands need timeouts.
 
-- Replace `seedSession` with a repo clone (GitHub App install → clone →
-  `dispatch init`).
-- Replace the in-memory session map with real accounts and persistence.
-- Keep the proxy, the caps, the TTL sweeper, the token plumbing, the
-  `__DISPATCH_DEMO__` injection seam (rename it `__DISPATCH_HOST__`).
-- In the desktop bundle, extend the existing `isTauri()` fallbacks: registry →
-  server-side project list, native dialog → repo picker, `openInEditor` /
-  `revealInFinder` → hidden, JSONL observability → hidden or server-fed.
+This also serves the loop-compression goal directly: hot-reload the preview on
+agent edits and the feedback loop becomes visual and near-instant, with no gate
+involved at all.
 
-The honest cost here is not the frontend. It is that Dispatch's core promise is
-"local-first, your machine, your key, nothing uploaded." Hosting inverts that,
-and it means owning containers, secrets, per-user API keys or billing, and
-someone else's source code at rest. That is a company decision, not a refactor.
+### 2. Builder front door, locally (Local+Builder — the sleeper)
 
-### D. Shareable run URLs — cheap Lovable-ness, no hosting required
+The empty/first-run state becomes a single prompt box — "what do you want to
+change?" — over the existing planner (`orchestrator/planner.ts`), showing the
+proposed task graph inline, dispatching on confirm. Mostly information
+architecture over machinery that exists; no Modal, no code.storage. This is the
+free tier's viral surface.
 
-A run's transcript, diff, findings, and rulings are already structured data. A
-`dispatch share <runId>` that publishes a static read-only page gives the "send
-someone a link" property that makes Lovable feel viral, without hosting the
-product. This is the highest ratio of perceived-Lovable to engineering cost in
-the whole list, and it is unblocked today.
+### 3. Hosted Builder (the reach play)
 
-## Recommendation
+Promote `apps/demo` to a product: repo in code.storage (created from a prompt,
+or cloned in via GitHub App + sync), agent runs in Modal sandboxes, preview
+proxied same as local. Builder sessions hold a persistent sandbox with a live
+dev server (Lovable's model); the free-tier cap is sandbox-minutes.
+`__DISPATCH_DEMO__` injection seam generalizes to `__DISPATCH_HOST__`. Extend
+the existing `isTauri()` fallbacks: registry → server-side project list, native
+dialog → repo picker, editor/Finder actions → hidden.
 
-Do **A** first, alone. It is self-contained, it improves the product we already
-ship, and it is the difference between "an agent wrote a diff" and "look at the
-thing that now works." **B** is a cheap follow-on that reframes the front door
-without touching the spine. **D** is a small, independently shippable win.
+### 4. Hosted Engineer (when teams arrive)
 
-**C** is real and mostly de-risked by `apps/demo`, but it changes what Dispatch
-_is_. Do not start it because the UI happens to be portable — start it when the
-local-first promise is deliberately traded away.
+The full board/review/merge-queue surface over hosted backends, ephemeral
+per-run sandboxes instead of persistent ones, roles and centralized billing.
+This is the paid tier and the last thing built, because it depends on everything
+above plus accounts and persistence.
+
+### Independent, cheap, any time: shareable run URLs
+
+`dispatch share <runId>` → static read-only page of transcript, diff, findings,
+rulings. Highest perceived-Lovable per unit of engineering; no hosting
+dependency.
+
+## Open questions for the next plan
+
+- Preview supervisor details: install strategy for fresh worktrees, port
+  allocation, health/timeout policy, non-web repos (no preview — what shows
+  instead).
+- The autonomy slider's exact stops, and which default _on_ in each mode's
+  preset — the irreversibility floor is fixed, everything between is open.
+- Hosted identity: accounts, GitHub App scopes, per-user API keys vs. platform
+  keys and billing.
+- Modal specifics: image strategy, snapshot/hibernate for builder sessions, cost
+  model per free-tier minute.
