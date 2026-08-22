@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T21:17:49.629Z
-updated: 2026-08-22T16:55:02.310Z
+updated: 2026-08-22T16:55:34.873Z
 external: null
 writes:
   - apps/desktop/src/components/shell/LiveRail.tsx
@@ -218,3 +218,5 @@ The fix's new Runs-tab row for a settled-but-pending warden (LiveRail.tsx:263-28
 - Do not widen the change beyond what these findings require. — none
 - 2026-08-22T16:54:42.856Z Fix round 2 committed (e8710fc9). The name collision is now fixed in the product, not just routed around: the rail's Runs | Warden header is a real tablist (role=tab + aria-selected), so it never answers a role=button query — the sidebar's "Warden" nav button is unambiguous for locators and screen readers, and warden.spec.ts's collapse now exists only for run-row count hygiene (comment updated). Mounted-but-hidden WardenChat gets a `visible` prop so the transcript re-pins to the newest row when the tab regains a layout box (scrollHeight is 0 under display:none). WardenChat's `busy` now carries the same recordError veto as the rail row — a 404'd conversation shows its banner with a live composer instead of "answering…" forever (mutation-tested, 1 fail on revert). WardenView's header "New conversation" got the same pending-action gate as the compact reset, with a new WardenView.test.tsx (mutation-tested, 1 fail on revert). The Runs-tab waiting row now shows the queued action's summary and queue time instead of the conversation's opening prompt/start (test pins summary shown, prompt absent). Scope re-declared and granted for all five out-of-fence files including the new test. Still handed off to a human session: regenerating views.spec.ts screenshot baselines and a live warden.spec.ts run — Playwright can't launch here and baselines are fixture-keyed. — none
 - 2026-08-22T16:55:02.310Z [run r-063f2a] finished: finished — 8 files, $12.90 — agent:wsoule679/claude
+
+- 2026-08-22T16:55:34.873Z merge queue: run r-063f2a rebased with plain git rather than jj — a run stacked above this branch is still live, and a jj rewrite would detach its worktree — none
