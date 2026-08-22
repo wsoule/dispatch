@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-22T18:00:48.300Z
+updated: 2026-08-22T18:03:48.403Z
 external: null
 writes:
   - packages/server/src/**
@@ -31,3 +31,5 @@ One daemon-owned feed of items awaiting a human, each with kind, task/run refere
 - 2026-08-22T17:55:26.115Z [run r-66e2c7] flagged interrupted-dirty: 6 uncommitted path(s) found — none
 - 2026-08-22T17:57:11.938Z dispatched (claude, branch dispatch/t-48a2e5-decision-feed-daemon-aggregates-everythi-0bd9bd) — human:wsoule679
 - 2026-08-22T18:00:48.299Z Recovered r-66e2c7's uncommitted work into this worktree (r-0bd9bd). It was further along than "early-stage": a complete derived-feed implementation (decisionFeed.ts), GET /api/decisions, the decisions.changed event, index.ts wiring, and two test files. Before reusing it I re-verified every assumption it made against the real code here rather than trusting it: QuestionRegistry.listOpen/askedAt, ScopeRequestRegistry.listOpen/requestedAt/paths/reason, FixLoopState (taskId/round/cap/state='capped'/stopReason/updatedAt) and that FixLoopStore.list() swallows read errors rather than throwing, Orchestrator.list()/pendingApprovals() field-for-field, RunMeta.baseDiscarded/archivedAt/reviewedAt/survey.postFailCommits, TaskDoc.meta.title, and that all ten names in TRIGGER_EVENTS are real ServerEvent types. All correct. Gates so far: server tsc clean, lint 0 errors (42 warnings, all pre-existing and none in these files), knip clean, 16/16 unit tests and 7/7 API tests pass. Now doing an adversarial self-review of the ported code before committing — inherited work gets the same scrutiny as written work. — none
+
+- 2026-08-22T18:03:48.403Z [run r-0bd9bd] flagged interrupted-dirty: 6 uncommitted path(s) found — none
