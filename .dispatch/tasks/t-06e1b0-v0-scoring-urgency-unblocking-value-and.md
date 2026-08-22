@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-22T18:03:48.489Z
+updated: 2026-08-22T18:08:01.592Z
 external: null
 writes:
   - packages/core/src/**
@@ -32,3 +32,4 @@ From the 2026-08-22 audit: the full weight function waits on the storage spine a
 - 2026-08-22T18:02:45.311Z Scoring core landed: packages/core/src/scoring.ts + test/scoring.test.ts (17 pass). Shape: private FACTORS table of {key,label,describes,read(task,ctx)} rows -> the v1 task appends `project`/`initiative`/`dueDate` rows and a ScoringContext field rather than rewriting. Each factor returns a normalized 0..1 value + a `detail` string; score is the weighted *mean* (sum(value*weight)/sum(weights)) so it always reads 0..1 regardless of weight scale and per-factor `contribution` sums back to it. Urgency derives from PRIORITY_ORDER (urgent 1.0 -> none 0). Unblocking counts *transitive* live dependents via a reversed-blockedBy walk with a seen-set (cycle-safe, diamond-deduped), curved as n/(n+3) so it never depends on batch composition. Age ramps linearly to a 30d horizon then pins. `now` injected, no node:* imports. Next: queue.weights config block, then GET /api/queue. — none
 
 - 2026-08-22T18:03:48.489Z [run r-ece301] flagged interrupted-dirty: 6 uncommitted path(s) found — none
+- 2026-08-22T18:08:01.592Z requested changes (run r-4c6efa): You were interrupted by a dispatchd restart (a dev build was bouncing the daemon — now resolved). Your worktree and progress are intact; the survey above lists what was uncommitted. Continue from where you left off, re-verifying anything mid-flight when you stopped. — human:wsoule679

@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T18:01:32.916Z
-updated: 2026-08-22T18:01:41.464Z
+updated: 2026-08-22T18:08:02.420Z
 external: null
 writes:
   - packages/server/src/**
@@ -38,3 +38,4 @@ Tests: extend packages/server/test/resilience.test.ts — restart mid-run with a
 
 ## Activity
 - 2026-08-22T18:01:41.464Z dispatched (claude, branch dispatch/t-050819-daemon-restart-must-not-lose-in-flight-r-5d4d11) — human:wsoule679
+- 2026-08-22T18:08:02.420Z requested changes (run r-a8ff69): You were interrupted by a dispatchd restart (a dev build was bouncing the daemon — now resolved). Your worktree and progress are intact; the survey above lists what was uncommitted. Continue from where you left off, re-verifying anything mid-flight when you stopped. — human:wsoule679
