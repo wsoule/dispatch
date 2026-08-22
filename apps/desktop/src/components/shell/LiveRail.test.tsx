@@ -6,6 +6,7 @@ import type {
 } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
+import { useState } from 'react';
 
 import type { WardenSession } from '../../hooks/useWardenSession';
 import { LiveRail, useLiveRailCollapsed } from './LiveRail';
@@ -65,6 +66,8 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     sendMessage: () => Promise.resolve(wardenRecord()),
     confirmAction: () => Promise.resolve(wardenRecord()),
     reset: () => {},
+    draft: '',
+    setDraft: () => {},
     ...over,
   };
 }
@@ -90,6 +93,15 @@ function railProps(over: Partial<Parameters<typeof LiveRail>[0]> = {}) {
 // test switches tabs the way the widget actually listens.
 function selectTab(name: string | RegExp) {
   fireEvent.mouseDown(screen.getByRole('tab', { name }));
+}
+
+// The rail unmounts the warden chat whenever its tab is not showing, so the
+// composer draft has to be state that outlives it — App holds it in
+// useWardenSession. This is that seam, so the draft tests exercise the real
+// arrangement rather than a chat that merely never unmounted.
+function RailWithDraft(props: Parameters<typeof LiveRail>[0]) {
+  const [draft, setDraft] = useState('');
+  return <LiveRail {...props} warden={{ ...props.warden, draft, setDraft }} />;
 }
 
 // The rail itself persists its active tab on mount, so every test must start
@@ -227,33 +239,86 @@ test('the collapse preference round-trips through dispatch:live-rail', () => {
 test('the Warden tab swaps the run list for the warden composer, and back', () => {
   render(<LiveRail {...railProps({ runs: [run()] })} />);
 
-  // Runs is the default tab: the run row shows, the composer does not exist
-  // yet (the chat only mounts once the Warden tab has been opened).
+  // Ordinary radix tab bodies: only the selected panel is mounted.
   expect(screen.getByText('Do the thing')).toBeDefined();
   expect(screen.queryByLabelText('Warden opening question')).toBeNull();
 
   selectTab('Warden');
   expect(screen.queryByText('Do the thing')).toBeNull();
-  const composer = screen.getByLabelText('Warden opening question');
-  expect(composer.closest('.hidden')).toBeNull();
+  expect(screen.getByLabelText('Warden opening question')).toBeDefined();
 
-  // Back on Runs the chat stays mounted (it holds the draft) but hidden.
   selectTab('Runs');
   expect(screen.getByText('Do the thing')).toBeDefined();
-  expect(composer.closest('.hidden')).not.toBeNull();
+  expect(screen.queryByLabelText('Warden opening question')).toBeNull();
 });
 
-// The chat's composer is local state; unmounting it on every tab flip would
-// throw away a half-typed message. The wrapper hides instead.
-test('a composer draft survives switching tabs', () => {
+// Each trigger sets aria-controls unconditionally, so a rail that renders its
+// tab bodies outside the Tabs root points them at nothing. The panel has to
+// exist, carry role=tabpanel, and name itself after its trigger.
+test('the selected tab controls a real, labelled tabpanel', () => {
   render(<LiveRail {...railProps()} />);
+
+  for (const name of ['Runs', 'Warden']) {
+    selectTab(name);
+    const trigger = screen.getByRole('tab', { name });
+    const panelId = trigger.getAttribute('aria-controls') ?? '';
+    expect(panelId).not.toBe('');
+
+    const panel = document.getElementById(panelId);
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute('role')).toBe('tabpanel');
+    expect(panel?.getAttribute('aria-labelledby')).toBe(trigger.id);
+  }
+});
+
+// The chat unmounts on every tab flip like any other tab body, so a half-typed
+// message only survives because the draft belongs to the session.
+test('a composer draft survives switching tabs', () => {
+  render(<RailWithDraft {...railProps()} />);
   selectTab('Warden');
 
-  const composer = screen.getByLabelText('Warden opening question');
-  fireEvent.change(composer, { target: { value: 'half a thought' } });
+  fireEvent.change(screen.getByLabelText('Warden opening question'), {
+    target: { value: 'half a thought' },
+  });
 
   selectTab('Runs');
   selectTab('Warden');
+  expect(
+    screen.getByLabelText<HTMLTextAreaElement>('Warden opening question').value
+  ).toBe('half a thought');
+});
+
+// Collapsing drops the whole expanded tree, chat included — the chevron sits
+// 8px from the tabs, so losing a draft to a stray click has to be impossible
+// rather than merely unlikely.
+test('a composer draft survives collapsing and expanding the rail', () => {
+  function Harness() {
+    const [draft, setDraft] = useState('');
+    const [collapsed, setCollapsed] = useState(false);
+    return (
+      <LiveRail
+        {...railProps({
+          warden: { ...wardenSession(), draft, setDraft },
+          collapsed,
+          onSetCollapsed: setCollapsed,
+        })}
+      />
+    );
+  }
+  render(<Harness />);
+  selectTab('Warden');
+  fireEvent.change(screen.getByLabelText('Warden opening question'), {
+    target: { value: 'half a thought' },
+  });
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Collapse the live agents rail' })
+  );
+  expect(screen.queryByLabelText('Warden opening question')).toBeNull();
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Expand the live agents rail' })
+  );
   expect(
     screen.getByLabelText<HTMLTextAreaElement>('Warden opening question').value
   ).toBe('half a thought');
@@ -421,7 +486,7 @@ test('the collapsed strip surfaces a queued approval and expands onto the Warden
     />
   );
   fireEvent.click(
-    screen.getByRole('button', { name: '1 warden action awaiting approval' })
+    screen.getByRole('button', { name: '1 action awaiting your approval' })
   );
   expect(collapsed).toBe(false);
 
@@ -452,14 +517,13 @@ test('a transient refetch error mid-turn keeps the running row', () => {
   expect(screen.queryByText('No agents running.')).toBeNull();
 });
 
-// Warden conversations are in-memory in dispatchd: a cached record whose
-// refetch now fails is usually a restart that wiped the conversation, so its
-// pendingActions are ghosts — no waiting row, no tab badge, no collapsed
-// badge for an action that no longer exists anywhere.
-test('a stale record with a failing refetch shows no phantom approval signals', () => {
+// A conversation dispatchd has lost arrives here as `record: undefined` —
+// useWardenSession does that veto on the 404 itself — so there is nothing left
+// to advertise: no waiting row, no tab badge, no collapsed badge.
+test('a conversation the daemon has lost shows no phantom approval signals', () => {
   const warden = wardenSession({
     conversationId: 'w-1',
-    record: wardenRecord({ state: 'ready', pendingActions: [wardenAction()] }),
+    record: undefined,
     recordError: 'warden conversation w-1 not found (404)',
   });
   const { rerender } = render(<LiveRail {...railProps({ warden })} />);
@@ -471,40 +535,26 @@ test('a stale record with a failing refetch shows no phantom approval signals', 
 
   rerender(<LiveRail {...railProps({ warden, collapsed: true })} />);
   expect(
-    screen.queryByRole('button', { name: '1 warden action awaiting approval' })
+    screen.queryByRole('button', { name: '1 action awaiting your approval' })
   ).toBeNull();
 });
 
-// The chat is display:none on the Runs tab, where scrollHeight is 0 and every
-// scroll pin is a no-op — returning to the Warden tab must re-pin the
-// transcript to the newest row. scrollHeight/scrollTop are defined by hand
-// because happy-dom has no layout.
-test('returning to the Warden tab re-pins the transcript', () => {
+// The other direction, which a blanket recordError veto used to break: the
+// action is real and still queued server-side, so every signal has to hold.
+// Going quiet here is the one failure this rail exists to prevent.
+test('a transient refetch error keeps every queued-approval signal', () => {
   const warden = wardenSession({
     conversationId: 'w-1',
-    record: wardenRecord({
-      messages: [
-        { role: 'user', text: 'status?', at: '2026-08-10T00:00:01Z' },
-        { role: 'assistant', text: 'All quiet.', at: '2026-08-10T00:00:02Z' },
-      ],
-    }),
+    record: wardenRecord({ state: 'ready', pendingActions: [wardenAction()] }),
+    recordError: 'daemon busy (500)',
   });
-  render(<LiveRail {...railProps({ warden })} />);
-  selectTab('Warden');
+  const { rerender } = render(<LiveRail {...railProps({ warden })} />);
 
-  const log = screen.getByRole('log');
-  Object.defineProperty(log, 'scrollHeight', {
-    value: 480,
-    configurable: true,
-  });
-  Object.defineProperty(log, 'scrollTop', {
-    value: 0,
-    writable: true,
-    configurable: true,
-  });
+  expect(screen.getByText('Cancel run r-1')).toBeDefined();
+  expect(screen.getByRole('tab', { name: 'Warden 1' })).toBeDefined();
 
-  selectTab('Runs');
-  expect(log.scrollTop).toBe(0);
-  selectTab('Warden');
-  expect(log.scrollTop).toBe(480);
+  rerender(<LiveRail {...railProps({ warden, collapsed: true })} />);
+  expect(
+    screen.getByRole('button', { name: '1 action awaiting your approval' })
+  ).toBeDefined();
 });

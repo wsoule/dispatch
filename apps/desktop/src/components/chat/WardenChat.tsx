@@ -66,8 +66,13 @@ interface WardenConfirmCardProps {
   action: WardenAction;
   /** The server's explanation when the last approval attempt threw. */
   failure: string | null;
-  /** A decision for *this* action is currently in flight. */
+  /** A decision for *this* action is currently in flight — this card owns the
+   * spinner. */
   deciding: boolean;
+  /** Some decision is in flight, this card's or another card's. One model turn
+   * can queue several actions, and `decide()` holds a single lock: without
+   * disabling the others, their buttons stay live and eat the click. */
+  locked: boolean;
   onDecide: (approve: boolean) => void;
 }
 
@@ -82,6 +87,7 @@ function WardenConfirmCard({
   action,
   failure,
   deciding,
+  locked,
   onDecide,
 }: WardenConfirmCardProps) {
   return (
@@ -103,7 +109,7 @@ function WardenConfirmCard({
       <div className="flex items-center gap-2">
         <Button
           size="sm"
-          disabled={deciding}
+          disabled={locked}
           onClick={() => onDecide(true)}
           aria-label={`Approve: ${action.summary}`}
         >
@@ -117,7 +123,7 @@ function WardenConfirmCard({
         <Button
           size="sm"
           variant="outline"
-          disabled={deciding}
+          disabled={locked}
           onClick={() => onDecide(false)}
           aria-label={`Deny: ${action.summary}`}
         >
@@ -177,13 +183,6 @@ interface WardenChatProps {
    * mutation from the rail goes through exactly the path the full page uses.
    */
   compact?: boolean;
-  /**
-   * Whether the chat currently has a layout box. The rail keeps it mounted but
-   * `display: none` on the Runs tab (preserving the composer draft), where
-   * scrollHeight is 0 and scroll pinning silently does nothing — this flipping
-   * back to true re-pins the transcript to the newest row.
-   */
-  visible?: boolean;
 }
 
 /**
@@ -193,16 +192,17 @@ interface WardenChatProps {
  * questions are answered directly; anything mutating shows up as a confirm
  * card in the transcript and runs only once approved there.
  */
-export function WardenChat({
-  warden,
-  compact = false,
-  visible = true,
-}: WardenChatProps) {
-  const [prompt, setPrompt] = useState('');
+export function WardenChat({ warden, compact = false }: WardenChatProps) {
+  // The composer's text is the session's, not this component's: the rail
+  // unmounts this chat on a tab flip and on collapse, and navigating to the
+  // Warden page unmounts the rail entirely. Only one of the two textareas
+  // below is ever on screen (which one depends on `conversationId`), so a
+  // single draft is unambiguous.
+  const { draft, setDraft } = warden;
+
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
 
-  const [followUp, setFollowUp] = useState('');
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
@@ -220,16 +220,14 @@ export function WardenChat({
   // Pin the transcript to the newest row — keyed on the last row's identity as
   // well as the count, since a turn settling in place (pending spinner → reply)
   // can change what's at the bottom without changing how many rows there are.
-  // Also keyed on `visible`: rows that land while the rail hides this chat
-  // set scrollTop against a zero scrollHeight, so the pin must re-run the
-  // moment the tab is shown again.
+  // Mount counts as a change: every surface that renders this chat mounts it
+  // with a real layout box, so there is no zero-scrollHeight case to skip.
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastKey = thread.length > 0 ? thread[thread.length - 1].key : '';
   useEffect(() => {
-    if (!visible) return;
     const el = scrollRef.current;
     if (el !== null) el.scrollTop = el.scrollHeight;
-  }, [thread.length, lastKey, visible]);
+  }, [thread.length, lastKey]);
 
   // A turn is in flight — dispatchd 409s a second message until it settles.
   // Confirm cards stay live on purpose: the server accepts a decision mid-turn.
@@ -244,22 +242,19 @@ export function WardenChat({
       : warden.record.state === 'running');
 
   // A queued mutation nobody has decided on. Gates the compact reset: dropping
-  // the conversation is the only way to lose the confirm card in the UI.
-  // `recordError` vetoes even a cached record here — warden conversations are
-  // in-memory in dispatchd, so a failing refetch usually means a restart wiped
-  // them, and the reset must not stay locked guarding a ghost action.
-  const hasPendingAction =
-    warden.recordError === null &&
-    (warden.record?.pendingActions.length ?? 0) > 0;
+  // the conversation is the only way to lose the confirm card in the UI. No
+  // `recordError` guard needed — useWardenSession clears `record` when the
+  // daemon says the conversation is gone, so this cannot lock on a ghost.
+  const hasPendingAction = (warden.record?.pendingActions.length ?? 0) > 0;
 
   async function startConversation() {
-    const text = prompt.trim();
+    const text = draft.trim();
     if (text === '' || starting) return;
     setStarting(true);
     setStartError(null);
     try {
       await warden.start(text);
-      setPrompt('');
+      setDraft('');
     } catch (err) {
       setStartError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -268,7 +263,7 @@ export function WardenChat({
   }
 
   async function sendFollowUp() {
-    const text = followUp.trim();
+    const text = draft.trim();
     // Re-checked here, not just on the button: the composer stays editable
     // mid-turn, so Enter must not slip a message past a turn the server
     // would 409.
@@ -277,7 +272,7 @@ export function WardenChat({
     setSendError(null);
     try {
       await warden.sendMessage(text);
-      setFollowUp('');
+      setDraft('');
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -331,6 +326,7 @@ export function WardenChat({
             action={item.action}
             failure={item.failure}
             deciding={decidingId === item.action.id}
+            locked={decidingId !== null}
             onDecide={(approve) => void decide(item.action.id, approve)}
           />
         );
@@ -389,8 +385,8 @@ export function WardenChat({
         <Textarea
           rows={compact ? 2 : 3}
           placeholder="What's going on with my agents?"
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
@@ -403,7 +399,7 @@ export function WardenChat({
         <div className="flex justify-end">
           <Button
             size={compact ? 'sm' : 'default'}
-            disabled={starting || prompt.trim() === ''}
+            disabled={starting || draft.trim() === ''}
             onClick={() => void startConversation()}
           >
             {starting ? (
@@ -471,13 +467,17 @@ export function WardenChat({
             // has no header of its own, so the reset rides the composer row.
             // Disabled while an action awaits a decision: reset() drops the
             // only UI handle on this conversation, and a pending mutation must
-            // stay decidable.
+            // stay decidable. Its accessible name deliberately omits the word
+            // "warden": the sidebar's global nav has a button named exactly
+            // "Warden", and role-name matching is case-insensitive substring
+            // by default, so any rail button carrying the word would make that
+            // name ambiguous.
             <Button
               variant="ghost"
               size="xs"
               disabled={hasPendingAction}
               onClick={() => warden.reset()}
-              aria-label="New warden conversation"
+              aria-label="Start a new conversation"
               title={
                 hasPendingAction ? 'Decide the pending action first' : undefined
               }
@@ -491,8 +491,8 @@ export function WardenChat({
           <Textarea
             rows={2}
             placeholder="Ask about runs, tasks, the queue — or ask it to act…"
-            value={followUp}
-            onChange={(e) => setFollowUp(e.target.value)}
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -504,7 +504,7 @@ export function WardenChat({
           />
           <Button
             size={compact ? 'sm' : 'default'}
-            disabled={busy || sending || followUp.trim() === ''}
+            disabled={busy || sending || draft.trim() === ''}
             onClick={() => void sendFollowUp()}
             className="self-end"
           >

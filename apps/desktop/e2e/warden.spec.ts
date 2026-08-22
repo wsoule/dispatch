@@ -129,9 +129,7 @@ test.describe('warden chat end to end', () => {
     // before load, same as any localStorage-keyed devtool. The live rail
     // starts collapsed (its own key — the retired dispatch:overview-rail is
     // deliberately ignored by LiveRail): expanded, it repeats task titles as
-    // row buttons, double-counting the Runs-view assertions below. (The
-    // rail's Runs | Warden header is no locator hazard either way — those are
-    // role=tab, so the `button` queries here never see them.)
+    // row buttons, double-counting the Runs-view assertions below.
     await page.addInitScript(() => {
       window.localStorage.setItem('dispatch.devFakeWarden', '1');
       window.localStorage.setItem('dispatch:live-rail', '1');
@@ -140,8 +138,12 @@ test.describe('warden chat end to end', () => {
     await page.getByText('Dispatch').first().waitFor();
 
     // The Warden tab lives in the sidebar's global section (no ⌘N hint, so
-    // its accessible name is exactly its label).
-    await page.getByRole('button', { name: 'Warden' }).click();
+    // its accessible name is exactly its label). `exact` because role-name
+    // matching is case-insensitive substring by default: the rail names a
+    // waiting warden row "<summary> warden <time>", and any future button
+    // mentioning the word would otherwise make this ambiguous under strict
+    // mode. Nothing else is named exactly "Warden".
+    await page.getByRole('button', { name: 'Warden', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Warden' })).toBeVisible();
 
     // --- Status round trip (scripted turn 0) ---------------------------
@@ -210,7 +212,7 @@ test.describe('warden chat end to end', () => {
         .first()
     ).toBeVisible();
     const rowsBefore = await runRows.count();
-    await page.getByRole('button', { name: 'Warden' }).click();
+    await page.getByRole('button', { name: 'Warden', exact: true }).click();
 
     // --- Ask again (scripted turn 2), approve this time ----------------
     await page
@@ -286,10 +288,10 @@ test.describe('warden chat end to end', () => {
 
     // While the approval waits, the Runs tab lists the warden as a waiting
     // agent named by the queued action, and clicking the row returns to the
-    // chat. Matched by accessible name — the chat stays mounted (hidden) on
-    // the Runs tab and strict mode counts its hidden nodes, so a bare text
-    // locator on the summary would also hit the hidden confirm card; only
-    // the row's name ends "… with the fake executor warden <time>".
+    // chat. Matched by accessible name rather than by text: the row's name
+    // ends "… with the fake executor warden <time>", which the confirm card's
+    // own summary text does not, so this stays unambiguous even if the chat
+    // is on screen.
     await page.getByRole('tab', { name: 'Runs' }).click();
     const wardenRow = page.getByRole('button', {
       name: /with the fake executor warden/,

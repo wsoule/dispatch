@@ -8,10 +8,9 @@ import { deriveFeedState } from '../../lib/feedState';
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import { buildLiveRail } from '../../lib/liveRail';
 import { WardenChat } from '../chat/WardenChat';
-import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
-import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
 
 // Persists whether the rail is collapsed to a slim strip. `dispatch:overview-rail` — the key
 // the retired MiniOverview used for its own open/closed flag — is deliberately NOT read here:
@@ -104,17 +103,6 @@ export function LiveRail({
     window.localStorage.setItem(LIVE_RAIL_TAB_STORAGE_KEY, tab);
   }, [tab]);
 
-  // Once the Warden tab has been opened, its chat stays mounted (hidden) while
-  // other tabs show, so a half-typed message survives a glance at Runs. The
-  // session itself already lives in App; the composer draft is the one piece
-  // of state that would otherwise die with the unmount.
-  const [wardenChatMounted, setWardenChatMounted] = useState(
-    () => readStoredLiveRailTab() === 'warden'
-  );
-  useEffect(() => {
-    if (tab === 'warden') setWardenChatMounted(true);
-  }, [tab]);
-
   // The warden mid-turn is an agent at work like any run — it earns a Runs-tab
   // row. `recordError` only decides the no-record case: fetch never succeeded
   // (stale id 404s, retry: false) means a broken conversation, not a turn in
@@ -128,18 +116,13 @@ export function LiveRail({
       : warden.record.state === 'running');
   // Mutations queued for the human. A settled turn with a pending action is
   // `state: 'ready'` — idle, not running — so this is a separate signal: the
-  // rail must not go quiet while an approval is stranded behind it. Here
-  // `recordError` vetoes even a cached record: warden conversations are
-  // in-memory in dispatchd, so a failing refetch usually means a restart wiped
-  // them, and these signals must not advertise (and the resets must not guard)
-  // an action that no longer exists anywhere.
-  const wardenPendingCount =
-    warden.recordError === null
-      ? (warden.record?.pendingActions.length ?? 0)
-      : 0;
+  // rail must not go quiet while an approval is stranded behind it. No
+  // `recordError` guard: useWardenSession already clears `record` when the
+  // daemon says the conversation is gone, so a pending action reachable here
+  // is one dispatchd still holds, and a mere refetch blip keeps it visible.
+  const wardenPendingCount = warden.record?.pendingActions.length ?? 0;
   // The oldest queued action — what the Runs-tab waiting row describes.
-  const firstPendingAction =
-    warden.recordError === null ? warden.record?.pendingActions[0] : undefined;
+  const firstPendingAction = warden.record?.pendingActions[0];
   const wardenRow = wardenTurnLive || wardenPendingCount > 0;
   // What "agents running" means everywhere in this rail: the run rows plus a
   // warden turn in flight — the collapsed strip and the expanded Runs tab must
@@ -148,7 +131,10 @@ export function LiveRail({
 
   if (collapsed) {
     return (
-      <aside className="border-border flex w-9 shrink-0 flex-col items-center gap-2 border-l py-3">
+      <aside
+        data-slot="live-rail"
+        className="border-border flex w-9 shrink-0 flex-col items-center gap-2 border-l py-3"
+      >
         <Button
           type="button"
           variant="ghost"
@@ -176,6 +162,8 @@ export function LiveRail({
         {wardenPendingCount > 0 && (
           // A stranded approval must survive the collapse the same way the
           // attention count does; expanding here lands on the confirm card.
+          // Its name avoids the word "warden" for the same reason the compact
+          // reset's does — the sidebar has a button named exactly that.
           <Button
             type="button"
             variant="ghost"
@@ -184,8 +172,8 @@ export function LiveRail({
               setTab('warden');
               onSetCollapsed(false);
             }}
-            aria-label={`${wardenPendingCount} warden action${wardenPendingCount === 1 ? '' : 's'} awaiting approval`}
-            title={`${wardenPendingCount} warden action${wardenPendingCount === 1 ? '' : 's'} awaiting approval`}
+            aria-label={`${wardenPendingCount} action${wardenPendingCount === 1 ? '' : 's'} awaiting your approval`}
+            title={`${wardenPendingCount} action${wardenPendingCount === 1 ? '' : 's'} awaiting your approval`}
             className="size-6 rounded-md bg-amber-500/10 p-0 text-[11px] font-medium text-amber-600 dark:text-amber-400"
           >
             {wardenPendingCount}
@@ -207,17 +195,21 @@ export function LiveRail({
   }
 
   return (
-    <aside className="border-border flex w-60 shrink-0 flex-col gap-3 border-l p-3">
-      <div className="flex items-center gap-2">
-        {/* The app's radix Tabs, same as TaskView's Details|Chat|Diff: real
-            tab semantics (roving tabindex, arrow keys) — and as role=tab
-            these never collide with the sidebar's *button* named "Warden"
-            for screen readers or role-scoped e2e locators. */}
-        <Tabs
-          value={tab}
-          onValueChange={(v) => setTab(v as LiveRailTab)}
-          className="w-fit"
-        >
+    <aside
+      data-slot="live-rail"
+      className="border-border flex w-60 shrink-0 flex-col border-l p-3"
+    >
+      {/* One radix Tabs root over the whole column, not just the header: the
+          triggers set aria-controls unconditionally, so the bodies have to be
+          real TabsContent panels or that IDREF points at nothing. Same shape
+          as TaskView's Details|Chat|Diff. As role=tab the triggers also never
+          collide with the sidebar's *button* named "Warden". */}
+      <Tabs
+        value={tab}
+        onValueChange={(v) => setTab(v as LiveRailTab)}
+        className="min-h-0 flex-1 gap-3"
+      >
+        <div className="flex items-center gap-2">
           <TabsList aria-label="Live rail sections">
             <TabsTrigger value="runs" className="px-2 text-[12px]">
               Runs
@@ -233,34 +225,35 @@ export function LiveRail({
               )}
             </TabsTrigger>
           </TabsList>
-        </Tabs>
-        <Button
-          type="button"
-          variant="ghost"
-          size="xs"
-          aria-label="Collapse the live agents rail"
-          title="Collapse the live agents rail"
-          onClick={() => onSetCollapsed(true)}
-          className="ml-auto size-6 p-0"
-        >
-          <PanelRightClose className="size-3.5" />
-        </Button>
-      </div>
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            aria-label="Collapse the live agents rail"
+            title="Collapse the live agents rail"
+            onClick={() => onSetCollapsed(true)}
+            className="ml-auto size-6 p-0"
+          >
+            <PanelRightClose className="size-3.5" />
+          </Button>
+        </div>
 
-      {attentionCount > 0 && (
-        // Above the tab content, not inside it: the strip is the rail's one
-        // always-on signal and must survive the Warden tab too.
-        <button
-          type="button"
-          onClick={onOpenInbox}
-          className="bg-state-waiting/10 text-state-waiting shrink-0 rounded-md px-2 py-1.5 text-left text-[12px] font-medium"
-        >
-          {attentionCount} waiting on you →
-        </button>
-      )}
+        {attentionCount > 0 && (
+          // Inside the Tabs root but outside both panels: the strip is the
+          // rail's one always-on signal and must survive the Warden tab too.
+          <button
+            type="button"
+            onClick={onOpenInbox}
+            className="bg-state-waiting/10 text-state-waiting shrink-0 rounded-md px-2 py-1.5 text-left text-[12px] font-medium"
+          >
+            {attentionCount} waiting on you →
+          </button>
+        )}
 
-      {tab === 'runs' && (
-        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+        <TabsContent
+          value="runs"
+          className="flex min-h-0 flex-1 flex-col overflow-y-auto"
+        >
           {live.length === 0 && !wardenRow ? (
             <p className="text-muted-foreground text-[12px]">
               No agents running.
@@ -326,30 +319,22 @@ export function LiveRail({
               })}
             </div>
           )}
-        </div>
-      )}
+        </TabsContent>
 
-      {tab === 'warden' && !daemonReady && (
-        <p className="text-muted-foreground text-[12px]">
-          The dispatch daemon isn't available, and the warden needs it. The
-          Warden page has the details and a retry.
-        </p>
-      )}
-
-      {daemonReady && wardenChatMounted && (
-        // Kept mounted once opened — `hidden`, not unmounted, on the Runs tab
-        // so the composer draft survives switching away and back. `visible`
-        // tells the chat when it regains a layout box: scroll pinning is a
-        // no-op inside display:none (scrollHeight is 0 there).
-        <div
-          className={cn(
-            'flex min-h-0 flex-1 flex-col',
-            tab !== 'warden' && 'hidden'
+        <TabsContent value="warden" className="flex min-h-0 flex-1 flex-col">
+          {daemonReady ? (
+            // Unmounted while the Runs tab shows, like any other tab body:
+            // the half-typed message that used to need a keep-alive wrapper
+            // now lives on the session, which outlives this rail entirely.
+            <WardenChat warden={warden} compact />
+          ) : (
+            <p className="text-muted-foreground text-[12px]">
+              The dispatch daemon isn't available, and the warden needs it. The
+              Warden page has the details and a retry.
+            </p>
           )}
-        >
-          <WardenChat warden={warden} compact visible={tab === 'warden'} />
-        </div>
-      )}
+        </TabsContent>
+      </Tabs>
     </aside>
   );
 }

@@ -1,6 +1,7 @@
 import type { WardenAction, WardenRecord } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
+import { useState } from 'react';
 
 import type { WardenSession } from '../../hooks/useWardenSession';
 import { WardenChat } from './WardenChat';
@@ -44,8 +45,26 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     sendMessage: () => Promise.resolve(wardenRecord()),
     confirmAction: () => Promise.resolve(wardenRecord()),
     reset: () => {},
+    draft: '',
+    setDraft: () => {},
     ...over,
   };
+}
+
+// The composer's text lives on the session now (it has to outlive the rail's
+// tab flips and its collapse), so any test that types needs real state behind
+// the fake session — the shape App gives the component in production.
+function ChatWithDraft({
+  warden,
+  compact = false,
+}: {
+  warden: WardenSession;
+  compact?: boolean;
+}) {
+  const [draft, setDraft] = useState('');
+  return (
+    <WardenChat warden={{ ...warden, draft, setDraft }} compact={compact} />
+  );
 }
 
 // The full-page (non-compact) path — the branch WardenView renders after the
@@ -58,13 +77,13 @@ test('full mode: the start card takes an opening question through warden.start',
       return Promise.resolve(wardenRecord());
     },
   });
-  render(<WardenChat warden={warden} />);
+  render(<ChatWithDraft warden={warden} />);
 
   // Full-page copy, and no compact-only reset control.
   expect(
     screen.getByText(/every mutation waits for your explicit approval/)
   ).toBeDefined();
-  expect(screen.queryByLabelText('New warden conversation')).toBeNull();
+  expect(screen.queryByLabelText('Start a new conversation')).toBeNull();
 
   fireEvent.change(screen.getByLabelText('Warden opening question'), {
     target: { value: 'status?' },
@@ -116,7 +135,7 @@ test('full mode: a follow-up goes through warden.sendMessage', () => {
       return Promise.resolve(wardenRecord());
     },
   });
-  render(<WardenChat warden={warden} />);
+  render(<ChatWithDraft warden={warden} />);
 
   fireEvent.change(screen.getByLabelText('Follow-up message'), {
     target: { value: 'and the queue?' },
@@ -155,7 +174,7 @@ test('compact mode: New resets when idle but is disabled while an action awaits 
   });
   const first = render(<WardenChat warden={idle} compact />);
   const newButton = screen.getByRole('button', {
-    name: 'New warden conversation',
+    name: 'Start a new conversation',
   });
   fireEvent.click(newButton);
   expect(resets).toBe(1);
@@ -170,7 +189,7 @@ test('compact mode: New resets when idle but is disabled while an action awaits 
   });
   render(<WardenChat warden={pending} compact />);
   const gated = screen.getByRole<HTMLButtonElement>('button', {
-    name: 'New warden conversation',
+    name: 'Start a new conversation',
   });
   expect(gated.disabled).toBe(true);
   fireEvent.click(gated);
@@ -190,14 +209,14 @@ test('a transient refetch error mid-turn still reads as the warden answering', (
   expect(screen.getByText('The warden is answering…')).toBeDefined();
 });
 
-// The reset gate must not guard a ghost: a cached record whose refetch fails
-// is usually a daemon restart that wiped the in-memory conversation, and a
-// locked reset would leave no way to start over.
-test('compact New is enabled again when the record refetch is failing', () => {
+// The reset gate must not guard a ghost. A conversation the daemon has lost
+// arrives here as `record: undefined` — useWardenSession does that veto on the
+// 404 (see its own tests) — so nothing is pending and the reset is the escape.
+test('compact New is enabled again once the conversation is gone', () => {
   let resets = 0;
   const warden = wardenSession({
     conversationId: 'w-1',
-    record: wardenRecord({ pendingActions: [wardenAction()] }),
+    record: undefined,
     recordError: 'warden conversation w-1 not found (404)',
     reset: () => {
       resets += 1;
@@ -205,29 +224,104 @@ test('compact New is enabled again when the record refetch is failing', () => {
   });
   render(<WardenChat warden={warden} compact />);
   const reset = screen.getByRole<HTMLButtonElement>('button', {
-    name: 'New warden conversation',
+    name: 'Start a new conversation',
   });
   expect(reset.disabled).toBe(false);
   fireEvent.click(reset);
   expect(resets).toBe(1);
 });
 
-// The scroll pin skips while the chat is display:none (scrollHeight is 0
-// there) and re-runs on the visible edge. scrollHeight/scrollTop are defined
-// by hand because happy-dom has no layout.
-test('the transcript re-pins when visible flips true', () => {
+// The direction the ghost guard used to break: a transient refetch failure
+// leaves the queued mutation alive server-side, and the confirm card on screen.
+// Unlocking the reset there would let one click strand it undecidable.
+test('a transient refetch error keeps the reset locked behind the pending action', () => {
+  let resets = 0;
   const warden = wardenSession({
     conversationId: 'w-1',
-    record: wardenRecord({
-      messages: [
-        { role: 'user', text: 'status?', at: '2026-08-10T00:00:01Z' },
-        { role: 'assistant', text: 'All quiet.', at: '2026-08-10T00:00:02Z' },
-      ],
-    }),
+    record: wardenRecord({ pendingActions: [wardenAction()] }),
+    recordError: 'daemon busy (500)',
+    reset: () => {
+      resets += 1;
+    },
   });
-  const { rerender } = render(
-    <WardenChat warden={warden} compact visible={false} />
+  render(<WardenChat warden={warden} compact />);
+  expect(screen.getByText('Needs your approval')).toBeDefined();
+  const reset = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'Start a new conversation',
+  });
+  expect(reset.disabled).toBe(true);
+  fireEvent.click(reset);
+  expect(resets).toBe(0);
+});
+
+// One model turn can queue two mutations, and decide() takes a single lock.
+// The second card's buttons must go with it: enabled, they would look live and
+// silently swallow the click.
+test('a decision in flight disables every confirm card, not just its own', () => {
+  const decisions: unknown[] = [];
+  const record = wardenRecord({
+    messages: [
+      {
+        role: 'action',
+        actionId: 'act-1',
+        outcome: 'pending',
+        text: 'Queued: Cancel run r-1',
+        at: '2026-08-10T00:00:02Z',
+      },
+      {
+        role: 'action',
+        actionId: 'act-2',
+        outcome: 'pending',
+        text: 'Queued: Cancel run r-2',
+        at: '2026-08-10T00:00:03Z',
+      },
+    ],
+    pendingActions: [
+      wardenAction(),
+      wardenAction({
+        id: 'act-2',
+        summary: 'Cancel run r-2',
+        input: { runId: 'r-2' },
+      }),
+    ],
+  });
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record,
+    // Never resolves: the point is what the UI looks like *during* a decision.
+    confirmAction: (actionId: string, approve: boolean) => {
+      decisions.push([actionId, approve]);
+      return new Promise<WardenRecord>(() => {});
+    },
+  });
+  render(<WardenChat warden={warden} />);
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Approve: Cancel run r-1' })
   );
+  expect(decisions).toEqual([['act-1', true]]);
+
+  const otherDeny = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'Deny: Cancel run r-2',
+  });
+  expect(otherDeny.disabled).toBe(true);
+  fireEvent.click(otherDeny);
+  expect(decisions).toEqual([['act-1', true]]);
+});
+
+// Every surface mounts this chat with a real layout box, so the pin has no
+// hidden case to skip — it just has to follow the newest row.
+// scrollHeight/scrollTop are defined by hand because happy-dom has no layout.
+test('a new transcript row re-pins to the bottom', () => {
+  const messages = [
+    { role: 'user' as const, text: 'status?', at: '2026-08-10T00:00:01Z' },
+  ];
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord({ messages }),
+  });
+  const { rerender } = render(<WardenChat warden={warden} compact />);
+
   const log = screen.getByRole('log');
   Object.defineProperty(log, 'scrollHeight', {
     value: 480,
@@ -240,6 +334,23 @@ test('the transcript re-pins when visible flips true', () => {
   });
   expect(log.scrollTop).toBe(0);
 
-  rerender(<WardenChat warden={warden} compact visible />);
+  rerender(
+    <WardenChat
+      warden={wardenSession({
+        conversationId: 'w-1',
+        record: wardenRecord({
+          messages: [
+            ...messages,
+            {
+              role: 'assistant',
+              text: 'All quiet.',
+              at: '2026-08-10T00:00:02Z',
+            },
+          ],
+        }),
+      })}
+      compact
+    />
+  );
   expect(log.scrollTop).toBe(480);
 });

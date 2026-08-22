@@ -52,6 +52,8 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     sendMessage: () => Promise.resolve(wardenRecord()),
     confirmAction: () => Promise.resolve(wardenRecord()),
     reset: () => {},
+    draft: '',
+    setDraft: () => {},
     ...over,
   };
 }
@@ -93,14 +95,14 @@ test('New conversation resets when idle but is disabled while an action awaits a
   expect(resets).toBe(1);
 });
 
-// The gate must not guard a ghost: a cached record whose refetch is failing is
-// usually a daemon restart that wiped the in-memory conversation, and a locked
-// header reset would leave no way to start over from the page either.
-test('New conversation is enabled again when the record refetch is failing', () => {
+// The gate must not guard a ghost. A conversation dispatchd has lost arrives
+// here as `record: undefined` (useWardenSession vetoes it on the 404), so
+// nothing is pending and the page's reset is the way out.
+test('New conversation is enabled again once the conversation is gone', () => {
   let resets = 0;
   const warden = wardenSession({
     conversationId: 'w-1',
-    record: wardenRecord({ pendingActions: [wardenAction()] }),
+    record: undefined,
     recordError: 'warden conversation w-1 not found (404)',
     reset: () => {
       resets += 1;
@@ -115,4 +117,28 @@ test('New conversation is enabled again when the record refetch is failing', () 
   expect(reset.disabled).toBe(false);
   fireEvent.click(reset);
   expect(resets).toBe(1);
+});
+
+// And the direction the old blanket veto broke: a refetch blip leaves the
+// queued mutation alive server-side and its confirm card on screen, so the
+// header reset must stay locked rather than offer a one-click way to strand it.
+test('New conversation stays locked through a transient refetch error', () => {
+  let resets = 0;
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord({ pendingActions: [wardenAction()] }),
+    recordError: 'daemon busy (500)',
+    reset: () => {
+      resets += 1;
+    },
+  });
+  render(
+    <WardenView data={DAEMON_UP} warden={warden} projectName="storefront" />
+  );
+  const reset = screen.getByRole<HTMLButtonElement>('button', {
+    name: /New conversation/,
+  });
+  expect(reset.disabled).toBe(true);
+  fireEvent.click(reset);
+  expect(resets).toBe(0);
 });

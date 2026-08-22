@@ -64,6 +64,14 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
   ).toHaveCount(0);
 }
 
+// STALE BASELINES (branch: the rail's Runs | Warden tab toggle): the 14 PNGs
+// under views.spec.ts-snapshots/ were captured before the live rail existed,
+// and every project view has carried it since. They need one `bun run
+// e2e:update` from an environment where Playwright can actually launch — this
+// branch's is not one (its webServer cannot `posix_spawn` git, and the
+// storefront fixture is gitignored and keyed by root path, so a worktree has
+// none to seed from). The mask below is what stops the next rail edit from
+// putting them back in this state; it does not un-stale them.
 for (const view of VIEWS) {
   test(`${view.name} renders`, async ({ page, baseURL }) => {
     await page.goto(authedUrl(baseURL));
@@ -73,7 +81,17 @@ for (const view of VIEWS) {
     // The pulse on in-flight rows is the only animation these surfaces have;
     // let it settle so it can't shift a screenshot.
     await page.waitForTimeout(1000);
-    await expect(page).toHaveScreenshot(`${view.name}.png`, { fullPage: true });
+    await expect(page).toHaveScreenshot(`${view.name}.png`, {
+      fullPage: true,
+      // The live rail is on every project screen but is not what any of these
+      // baselines is about, and it is chrome that keeps moving — the Runs |
+      // Warden tab strip alone has changed shape three times. Unmasked, each
+      // of those edits silently invalidates all 14 PNGs here (7 views x 2
+      // themes) with no CI job to catch it. Masked, the rail still occupies
+      // its 240px so a view squeezed beside it still regresses visibly, while
+      // its internals belong to LiveRail's own tests and warden.spec.ts.
+      mask: [page.locator('[data-slot="live-rail"]')],
+    });
   });
 }
 

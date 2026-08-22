@@ -1,4 +1,4 @@
-import type { ApiClient, WardenRecord } from '@dispatch/client';
+import { type ApiClient, ApiError, type WardenRecord } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useState } from 'react';
 
@@ -17,9 +17,14 @@ export function wardenKey(
 export interface WardenSession {
   /** The open conversation, or `null` before one is started (the composer state). */
   conversationId: string | null;
-  /** The live record for `conversationId` — `undefined` while it loads (or when none is open). */
+  /**
+   * The live record for `conversationId` — `undefined` while it loads, when no
+   * conversation is open, and when the fetch 404/410s (the conversation is
+   * gone). Consumers can trust it: whatever is readable here is a conversation
+   * dispatchd still has.
+   */
   record: WardenRecord | undefined;
-  /** Why `record` is missing when the fetch itself failed, not just pending. */
+  /** Why `record` is missing or stale when the fetch itself failed, not just pending. */
   recordError: string | null;
   /** Opens a conversation; resolves with the record already `running`. */
   start: (prompt: string) => Promise<WardenRecord>;
@@ -31,6 +36,16 @@ export interface WardenSession {
   confirmAction: (actionId: string, approve: boolean) => Promise<WardenRecord>;
   /** Drops back to the "start a conversation" state. Nothing is deleted server-side. */
   reset: () => void;
+  /**
+   * What the human has typed into the composer but not sent yet. It lives on
+   * the session rather than inside WardenChat because every surface that
+   * renders that composer is unmounted by something ordinary: the rail's tab
+   * toggle, the rail's collapse chevron, and navigating to the Warden page
+   * (App mounts the rail only on project views). The session outlives all
+   * three, so the draft does too.
+   */
+  draft: string;
+  setDraft: (text: string) => void;
 }
 
 /**
@@ -60,11 +75,16 @@ export function useWardenSession(
   const queryClient = useQueryClient();
   const [conversationId, setConversationId] = useState<string | null>(null);
 
+  const [draft, setDraft] = useState('');
+
   // A conversation opened against one project's dispatchd must not survive a
   // project switch — the stale id would 404 against the new daemon (the same
-  // I5 rule useDispatchProject applies to planId).
+  // I5 rule useDispatchProject applies to planId). The draft goes with it: a
+  // half-typed question about project A has no business in project B's
+  // composer.
   useEffect(() => {
     setConversationId(null);
+    setDraft('');
   }, [projectPath]);
 
   const { data: record, error } = useQuery({
@@ -145,15 +165,29 @@ export function useWardenSession(
     [client, conversationId, port, queryClient]
   );
 
-  const reset = useCallback(() => setConversationId(null), []);
+  const reset = useCallback(() => {
+    setConversationId(null);
+    setDraft('');
+  }, []);
+
+  // react-query keeps the last good `data` through a *background* refetch
+  // failure, which is right for a hiccup and wrong for a conversation the
+  // daemon no longer has (records are in-memory, so a restart 404s every id
+  // and the cached pendingActions become ghosts nobody can decide). The HTTP
+  // status is the only thing that tells the two apart, so the veto happens
+  // once here rather than as a guard on every surface that reads the record.
+  const recordGone =
+    error instanceof ApiError && (error.status === 404 || error.status === 410);
 
   return {
     conversationId,
-    record,
+    record: recordGone ? undefined : record,
     recordError: error instanceof Error ? error.message : null,
     start,
     sendMessage,
     confirmAction,
     reset,
+    draft,
+    setDraft,
   };
 }

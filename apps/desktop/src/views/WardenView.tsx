@@ -20,13 +20,10 @@ interface WardenViewProps {
  * switching tabs and coming back lands on the same transcript.
  */
 export function WardenView({ data, warden, projectName }: WardenViewProps) {
-  // Same gate (and same recordError veto) as WardenChat's compact reset: a
-  // queued mutation must stay decidable, but a failing refetch usually means
-  // a daemon restart wiped the in-memory conversation — the reset must not
-  // stay locked guarding a ghost action.
-  const hasPendingAction =
-    warden.recordError === null &&
-    (warden.record?.pendingActions.length ?? 0) > 0;
+  // Same gate as WardenChat's compact reset: a queued mutation must stay
+  // decidable. `record` is already vetoed by useWardenSession when the daemon
+  // says the conversation is gone, so this cannot lock on a ghost action.
+  const hasPendingAction = (warden.record?.pendingActions.length ?? 0) > 0;
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
