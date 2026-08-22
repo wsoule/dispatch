@@ -5,14 +5,15 @@ status: todo
 kind: epic
 parent: null
 milestone: null
-blocked-by: []
+blocked-by:
+  - e-99e113
 labels:
   - team
   - xirp-gap
 priority: high
 assignee: none
 created: 2026-08-10T22:46:27.152Z
-updated: 2026-08-10T22:46:27.152Z
+updated: 2026-08-22T16:43:40.144Z
 external: null
 writes: []
 ---
