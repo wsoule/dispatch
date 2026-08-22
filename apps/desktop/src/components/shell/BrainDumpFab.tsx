@@ -1,65 +1,49 @@
 import { Brain, Inbox } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 
 import { splitCaptureLines } from '../../lib/inboxCapture';
 import { Button } from '@/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/ui/dialog';
 import { Textarea } from '@/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface BrainDumpFabProps {
+  /** Owned by App so the ⌘B global shortcut opens the same modal the button does. */
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   /** The RAW capture handler (`rawData.handleCaptureInbox`), not the `withActionFeedback`
-   * wrapper: the wrapper swallows rejections, and this panel must keep the draft and show
+   * wrapper: the wrapper swallows rejections, and this modal must keep the draft and show
    * the error inline when a capture fails rather than clearing it as if it landed. */
   onCapture: (text: string) => Promise<void>;
-  /** Navigates to the full Brain dump view — the panel's escape hatch for when one quick
+  /** Navigates to the full Brain dump view — the modal's escape hatch for when one quick
    * line turns out to need the real composer. */
   onOpenBrainDump: () => void;
 }
 
 /**
- * The always-there capture button: a small brain in the bottom-right corner that opens a
- * one-shot version of Brain dump's composer, so a passing thought can be dropped into the
- * inbox from any screen without leaving it. Same contract as the full view — one item per
- * line, ⌘⏎ commits — and a successful capture closes the panel; the confirmation is the
- * thought being gone.
- *
- * Same "lightweight popover" pattern as InboxPanel: a plain fixed-position panel with
- * outside-click/Escape dismissal, not a Radix dialog.
+ * The always-there capture affordance: a small brain in the bottom-right corner (and ⌘B)
+ * that opens a centered one-shot version of Brain dump's composer, so a passing thought can
+ * be dropped into the inbox from any screen without leaving it. Same contract as the full
+ * view — one item per line, ⌘⏎ commits — and a successful capture closes the modal; the
+ * confirmation is the thought being gone.
  */
 export function BrainDumpFab({
+  open,
+  onOpenChange,
   onCapture,
   onOpenBrainDump,
 }: BrainDumpFabProps) {
-  const [open, setOpen] = useState(false);
   const [draft, setDraft] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Wraps both the trigger and the panel, so a click on the trigger while open counts as
-  // "inside" — otherwise mousedown would close the panel and the click would reopen it.
-  const rootRef = useRef<HTMLDivElement>(null);
 
   const pendingLines = splitCaptureLines(draft).length;
-
-  useEffect(() => {
-    if (!open) return;
-    function handlePointerDown(event: MouseEvent) {
-      if (
-        rootRef.current !== null &&
-        !rootRef.current.contains(event.target as Node)
-      ) {
-        setOpen(false);
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') setOpen(false);
-    }
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [open]);
 
   function capture(): void {
     void (async () => {
@@ -70,7 +54,7 @@ export function BrainDumpFab({
         // The draft is only dropped once it has landed; on failure it stays put above the
         // error so nothing typed is ever lost.
         setDraft('');
-        setOpen(false);
+        onOpenChange(false);
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err));
       } finally {
@@ -80,13 +64,17 @@ export function BrainDumpFab({
   }
 
   return (
-    <div ref={rootRef}>
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Add to Brain dump"
-          className="bg-popover rounded-card shadow-overlay fixed right-4 bottom-16 z-50 flex w-80 flex-col gap-2 p-3"
-        >
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="top-[30%] w-[32rem] max-w-[calc(100vw-2rem)] gap-2 p-4">
+          <DialogHeader className="gap-0.5">
+            <DialogTitle className="text-[13px] font-medium">
+              Add to Brain dump
+            </DialogTitle>
+            <DialogDescription className="sr-only">
+              Capture quick thoughts, one per line, into the Brain dump inbox.
+            </DialogDescription>
+          </DialogHeader>
           <Textarea
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
@@ -102,7 +90,7 @@ export function BrainDumpFab({
             }}
             placeholder="Dump it here…"
             autoFocus
-            className="text-foreground field-sizing-fixed min-h-[72px] resize-none border-0 bg-transparent p-0 text-[13.5px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[13.5px] dark:bg-transparent"
+            className="text-foreground field-sizing-fixed min-h-[88px] resize-none border-0 bg-transparent p-0 text-[13.5px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[13.5px] dark:bg-transparent"
           />
           {error !== null && (
             <p className="text-state-failed text-[12px]">{error}</p>
@@ -117,7 +105,7 @@ export function BrainDumpFab({
               variant="ghost"
               size="xs"
               onClick={() => {
-                setOpen(false);
+                onOpenChange(false);
                 onOpenBrainDump();
               }}
               className="text-muted-foreground hover:text-foreground h-auto px-1.5 py-1 text-[12px] font-normal hover:bg-transparent"
@@ -134,14 +122,14 @@ export function BrainDumpFab({
               Drop it
             </Button>
           </div>
-        </div>
-      )}
+        </DialogContent>
+      </Dialog>
       <Tooltip>
         <TooltipTrigger asChild>
           <Button
             type="button"
             size="icon"
-            onClick={() => setOpen((v) => !v)}
+            onClick={() => onOpenChange(!open)}
             aria-label="Add to Brain dump"
             aria-expanded={open}
             className="bg-accent text-accent-foreground hover:bg-accent/80 fixed right-4 bottom-4 z-50 size-9 rounded-full shadow-lg"
@@ -149,8 +137,8 @@ export function BrainDumpFab({
             <Brain className="size-4.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="left">Add to Brain dump</TooltipContent>
+        <TooltipContent side="left">Add to Brain dump (⌘B)</TooltipContent>
       </Tooltip>
-    </div>
+    </>
   );
 }

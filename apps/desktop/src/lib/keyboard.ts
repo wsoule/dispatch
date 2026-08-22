@@ -37,6 +37,12 @@ export type GlobalKeyCommand =
   | 'escape'
   | 'nav-back'
   | 'nav-forward'
+  /** Webview zoom, the ⌘+/⌘−/⌘0 every browser ships. */
+  | 'zoom-in'
+  | 'zoom-out'
+  | 'zoom-reset'
+  /** Open the quick brain-dump capture modal. */
+  | 'brain-dump'
   /** Jump straight to the Nth entry in the sidebar's primary rail. */
   | `goto-${1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
 
@@ -63,6 +69,24 @@ export function resolveGlobalKeyCommand(
   // the kind of thing that makes an app feel stuck.
   if (combo && /^[1-9]$/.test(input.key)) {
     return `goto-${Number(input.key) as 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9}`;
+  }
+
+  // Webview zoom. Modifier chords, so they work while typing too — resizing the UI
+  // mid-edit is exactly when you notice it's too small. `=` is the unshifted `+` key.
+  if (combo && (input.key === '=' || input.key === '+')) return 'zoom-in';
+  if (combo && input.key === '-') return 'zoom-out';
+  if (combo && input.key === '0') return 'zoom-reset';
+
+  // Quick capture. Carries a modifier but still deliberately dead while typing (⌘B is
+  // bold-adjacent muscle memory in text fields) and while any modal is up — opening a
+  // second layer over an open dialog helps nobody.
+  if (
+    combo &&
+    input.key.toLowerCase() === 'b' &&
+    !ctx.isTyping &&
+    !ctx.modalOpen
+  ) {
+    return 'brain-dump';
   }
 
   // Every other global shortcut below is a bare letter/symbol — never hijack normal typing.
