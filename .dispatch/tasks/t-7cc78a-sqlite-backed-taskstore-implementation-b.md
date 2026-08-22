@@ -1,0 +1,26 @@
+---
+id: t-7cc78a
+title: SQLite-backed TaskStore implementation behind the existing store seam
+status: todo
+kind: task
+parent: e-99e113
+milestone: null
+blocked-by: []
+labels: []
+priority: high
+assignee: none
+created: 2026-08-22T16:37:48.803Z
+updated: 2026-08-22T16:37:48.803Z
+external: null
+writes:
+  - packages/core/src/**
+  - packages/core/test/**
+---
+
+## Description
+
+Add a SQLite-backed implementation of the TaskStore interface (packages/core/src/store.ts, ~315 lines) alongside the current filesystem one. taskfile.ts parse/serialize stays pure and reused. Schema covers tasks, epics, findings, ledger entries, decisions, and evidence — everything the JSONL sidecars hold today. Selection between backends stays a construction-time choice so the daemon can adopt it next. Keep packages/core/src/browser.ts pure (no node:sqlite in the browser entry point).
+
+## Acceptance Criteria
+
+## Activity

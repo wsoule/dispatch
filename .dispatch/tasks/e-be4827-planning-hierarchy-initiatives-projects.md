@@ -5,14 +5,15 @@ status: todo
 kind: epic
 parent: null
 milestone: null
-blocked-by: []
+blocked-by:
+  - e-99e113
 labels:
   - planning-engine
   - linear-sync
 priority: high
 assignee: none
 created: 2026-08-22T16:37:20.440Z
-updated: 2026-08-22T16:37:20.440Z
+updated: 2026-08-22T16:37:42.867Z
 external: null
 writes: []
 ---
