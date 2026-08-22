@@ -1,11 +1,8 @@
-import type { DraftRecord, SyncStatus } from '@dispatch/client';
+import type { SyncStatus } from '@dispatch/client';
 import {
-  Bell,
   Brain,
-  Check,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
   Cog,
   GitBranch,
   GitMerge,
@@ -15,7 +12,6 @@ import {
   NotebookPen,
   Palette,
   Play,
-  Plus,
   Radar,
   Shield,
   Waypoints,
@@ -23,8 +19,6 @@ import {
 import { useCallback, useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
-import { colorForProject } from '../../lib/projectColor';
-import { DraftTray } from './DraftTray';
 import { SyncChip } from './SyncChip';
 import { cn } from '@/lib/utils';
 import {
@@ -33,13 +27,6 @@ import {
   type SidebarNavSection,
 } from '@/ui/ai/sidebar-nav';
 import { Button } from '@/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
 import { Kbd } from '@/ui/kbd';
 import { Sidebar as SidebarRoot, useSidebar } from '@/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
@@ -125,16 +112,6 @@ const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
     : []),
 ];
 
-// The notifications bell is not a `ProjectView`/`GlobalView` — it toggles the inbox popover
-// rather than selecting a page — so it gets an id of its own, routed by `handleSelect` below
-// instead of `onSetProjectView`/`onSetGlobalView`.
-const NOTIFICATIONS_ID = 'notifications';
-
-interface SwitchProject {
-  path: string;
-  name: string;
-}
-
 // Persists whether the left rail is collapsed to an icon-only strip, so the choice survives a
 // reload instead of resetting every time the app opens.
 const SIDEBAR_COLLAPSED_STORAGE_KEY = 'dispatch:sidebar-collapsed';
@@ -172,12 +149,6 @@ const FOOTER_HINT_CLASS =
   'border-border h-auto min-w-0 rounded border px-1 py-0.5 font-mono text-[10px] font-normal';
 
 interface SidebarProps {
-  /** Basename of the single active project, or `null` before it has resolved. One project is
-   * active at a time (single-project focus), but the row is a dropdown you can switch with. */
-  projectName: string | null;
-  /** Full path, shown as a tooltip on the project row so the exact root is always checkable
-   * even though only the basename is displayed. */
-  projectPath: string | null;
   hasActiveProject: boolean;
   section: 'project' | 'global';
   projectView: ProjectView;
@@ -188,59 +159,28 @@ interface SidebarProps {
   /** Live per-row counts. A row with no entry, or a zero, renders no badge at all — a rail of
    * "0"s is noise, and the absence of a number is itself the information. */
   badges: Partial<Record<ProjectView, number>>;
-  /** Total spend across today's runs, or `null` to show nothing. Rendered at the foot of the
-   * rail rather than in the window titlebar, which Tauri owns — same information, somewhere
-   * this app can actually put it. */
+  /** Total spend across today's runs, or `null` to show nothing. Stays at the foot of the
+   * rail (not in the custom titlebar) — a cost meter is glanceable context, not chrome. */
   spendToday: number | null;
-  /** Count of unread notification-inbox entries — the bell's badge (see InboxPanel/inbox.ts).
-   * The bell itself is not a nav row (it doesn't select a `ProjectView`/`GlobalView`); it
-   * toggles the inbox popover via `onToggleInbox` instead. */
-  unreadCount: number;
-  onToggleInbox: () => void;
-  /** Every AI task draft currently held in memory, newest first — feeds the drafts tray
-   * rendered next to the notifications bell (see `components/shell/DraftTray.tsx`). */
-  drafts: DraftRecord[];
-  /** Opens the review dialog for a ready draft. */
-  onOpenDraft: (id: string) => void;
-  onDismissDraft: (id: string) => void;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
-  /** Whether the project switcher dropdown is open (its project list is loaded lazily on
-   * open — see App). */
-  switcherOpen: boolean;
-  onToggleSwitcher: () => void;
-  /** Other dispatch-enabled projects to offer in the dropdown; empty until the list resolves
-   * (or always empty in the browser dev harness, where only the active project is reachable). */
-  switchProjects: SwitchProject[];
-  onSelectProject: (path: string) => void;
   /** The board syncer's status — `null` until it has ever loaded, in which case the chip
    * renders nothing. */
   syncStatus: SyncStatus | null;
   /** Flips `.dispatch/config.yml`'s `autoCommit` off — the sync chip's kill switch. */
   onDisableAutoCommit: () => void;
-  /** True once project resolution has settled with no active project (a genuine first run:
-   * empty registry, no launch arg, no dev checkout above the binary) — swaps the "Resolving
-   * project…" placeholder for an actionable "Add project…" row instead of leaving the sidebar
-   * stuck on a spinner with no way forward. `false` both before resolution settles and once a
-   * project is active. */
-  noProjectYet: boolean;
-  /** Opens the add-project dialog (local folder or GitHub clone) — the last item in the
-   * switcher dropdown, and also the first-run "Add project…" row when `noProjectYet`. */
-  onAddProject: () => void;
 }
 
 /**
- * Persistent, Linear-style left rail: wordmark, the one active project's name (not a
- * switcher — this app pivoted from a multi-project switcher to a single-project workspace),
- * that project's primary nav (Board/Tasks/Runs/Plans), and the global section (All Agents/
- * Sessions/Settings) below it. Built on the `SidebarNav` primitive (`ui/ai/sidebar-nav.tsx`)
+ * Persistent, Linear-style left rail: wordmark, the active project's primary nav
+ * (Board/Tasks/Runs/Plans), and the global section (All Agents/Sessions/Settings) below it.
+ * The project switcher, notifications bell, and drafts tray moved to the window titlebar
+ * (see `TitleBar.tsx`). Built on the `SidebarNav` primitive (`ui/ai/sidebar-nav.tsx`)
  * for its rows/sections, still wrapped in the shadcn `Sidebar` shell purely for the
  * fixed-position/icon-collapse/mobile mechanics App.tsx's `SidebarProvider` already owns —
  * this reads that back through `useSidebar` so the icon-only strip still works.
  */
 export function Sidebar({
-  projectName,
-  projectPath,
   hasActiveProject,
   section,
   projectView,
@@ -248,26 +188,11 @@ export function Sidebar({
   liveAgentCount,
   badges,
   spendToday,
-  unreadCount,
-  onToggleInbox,
-  drafts,
-  onOpenDraft,
-  onDismissDraft,
   onSetProjectView,
   onSetGlobalView,
-  switcherOpen,
-  onToggleSwitcher,
-  switchProjects,
-  onSelectProject,
   syncStatus,
   onDisableAutoCommit,
-  noProjectYet,
-  onAddProject,
 }: SidebarProps) {
-  // Other dispatch-enabled projects to show in the dropdown, excluding the one
-  // already active.
-  const otherProjects = switchProjects.filter((p) => p.path !== projectPath);
-
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
 
@@ -306,15 +231,6 @@ export function Sidebar({
   );
 
   const globalItems: SidebarNavItem[] = [
-    {
-      id: NOTIFICATIONS_ID,
-      label: 'Notifications',
-      icon: <Bell strokeWidth={2} />,
-      count:
-        unreadCount > 0 ? (unreadCount > 99 ? '99+' : unreadCount) : undefined,
-      state: unreadCount > 0 ? 'attention' : undefined,
-      ariaLabel: `Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`,
-    },
     ...GLOBAL_VIEWS.map((item) => {
       const Icon = item.icon;
       const liveCount = item.id === 'all-agents' ? liveAgentCount : 0;
@@ -332,22 +248,15 @@ export function Sidebar({
     { id: 'global', items: globalItems },
   ];
 
-  // `SidebarNav` has one `onSelect(id)` for every row; the notifications row isn't a
-  // navigation target (it toggles the inbox popover), so it's routed here instead of into
-  // `onSetProjectView`/`onSetGlobalView`.
   const handleSelect = useCallback(
     (id: string) => {
-      if (id === NOTIFICATIONS_ID) {
-        onToggleInbox();
-        return;
-      }
       if ((PROJECT_VIEW_ORDER as string[]).includes(id)) {
         onSetProjectView(id as ProjectView);
         return;
       }
       onSetGlobalView(id as GlobalView);
     },
-    [onToggleInbox, onSetProjectView, onSetGlobalView]
+    [onSetProjectView, onSetGlobalView]
   );
 
   const header = (
@@ -375,114 +284,11 @@ export function Sidebar({
         </span>
         {!collapsed && 'Dispatch'}
       </div>
-
-      {!collapsed && <div className="dense-label px-2 pb-1">Project</div>}
-
-      {projectName !== null ? (
-        <DropdownMenu
-          open={switcherOpen}
-          onOpenChange={() => onToggleSwitcher()}
-        >
-          <DropdownMenuTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              title={projectPath ?? projectName}
-              aria-label={
-                collapsed
-                  ? `Switch project (current: ${projectName})`
-                  : undefined
-              }
-              className={cn(
-                'h-auto rounded-md py-1.5 text-left text-[13px] font-medium text-foreground hover:text-foreground transition-colors duration-150',
-                collapsed
-                  ? 'w-full px-0 has-[>svg]:px-0'
-                  : 'w-full justify-start px-2 has-[>svg]:px-2'
-              )}
-            >
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ background: colorForProject(projectName) }}
-              />
-              {!collapsed && (
-                <>
-                  <span className="min-w-0 flex-1 truncate">{projectName}</span>
-                  <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
-                </>
-              )}
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start" className="w-56">
-            <DropdownMenuItem disabled className="text-muted-foreground">
-              <span
-                className="size-2 shrink-0 rounded-full"
-                style={{ background: colorForProject(projectName) }}
-              />
-              <span className="text-foreground min-w-0 flex-1 truncate">
-                {projectName}
-              </span>
-              <Check className="text-primary size-3.5" />
-            </DropdownMenuItem>
-            {otherProjects.length === 0 ? (
-              <div className="text-muted-foreground px-2 py-1.5 text-[12px]">
-                No other dispatch projects
-              </div>
-            ) : (
-              otherProjects.map((p) => (
-                <DropdownMenuItem
-                  key={p.path}
-                  title={p.path}
-                  onSelect={() => onSelectProject(p.path)}
-                >
-                  <span
-                    className="size-2 shrink-0 rounded-full"
-                    style={{ background: colorForProject(p.name) }}
-                  />
-                  <span className="min-w-0 flex-1 truncate">{p.name}</span>
-                </DropdownMenuItem>
-              ))
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onSelect={() => onAddProject()}>
-              <Plus className="text-muted-foreground size-3.5" />
-              <span className="flex-1">Add project</span>
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      ) : noProjectYet ? (
-        <Button
-          type="button"
-          variant="ghost"
-          onClick={() => onAddProject()}
-          className={cn(
-            'h-auto rounded-md py-1.5 text-left text-[13px] font-normal text-muted-foreground hover:text-foreground transition-colors duration-150',
-            collapsed
-              ? 'w-full px-0 has-[>svg]:px-0'
-              : 'w-full justify-start px-2 has-[>svg]:px-2'
-          )}
-        >
-          <Plus className="size-3.5 shrink-0" />
-          {!collapsed && <span className="flex-1">Add project…</span>}
-        </Button>
-      ) : (
-        !collapsed && (
-          <p className="text-muted-foreground px-2 text-[13px]">
-            Resolving project…
-          </p>
-        )
-      )}
     </>
   );
 
   const footer = (
     <>
-      <DraftTray
-        drafts={drafts}
-        collapsed={collapsed}
-        onOpenDraft={onOpenDraft}
-        onDismissDraft={onDismissDraft}
-      />
-
       {/* The board syncer's status. Hidden when collapsed, same as the spend line below — an
           icon-only rail has no room for a sentence. */}
       {!collapsed && hasActiveProject && (
@@ -492,9 +298,8 @@ export function Sidebar({
         />
       )}
 
-      {/* Today's spend. The mockup put this in the window titlebar, which Tauri owns and this
-          app cannot draw into — the foot of the rail is the same glanceable place we can
-          actually reach. Hidden entirely at zero rather than showing "$0.00": a running cost
+      {/* Today's spend. Deliberately kept at the foot of the rail rather than promoted to the
+          custom titlebar. Hidden entirely at zero rather than showing "$0.00": a running cost
           meter is only worth the pixels once there is a cost. */}
       {!collapsed && spendToday !== null && spendToday > 0 && (
         <div className="text-muted-foreground px-2 pt-3 text-[11px]">
