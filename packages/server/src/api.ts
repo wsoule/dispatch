@@ -36,7 +36,9 @@ import {
   adjudicateFinding,
   advanceFixLoop,
   getFixLoop,
+  listFixLoops,
   startFixLoop,
+  stopFixLoop,
 } from './api/fixLoop.js';
 import {
   errorResponse,
@@ -3921,6 +3923,14 @@ export async function handleApi(
         return await startFixLoop(ctx, segments[1]);
       }
       if (
+        segments.length === 4 &&
+        segments[2] === 'fix-loop' &&
+        segments[3] === 'stop' &&
+        method === 'POST'
+      ) {
+        return stopFixLoop(ctx, segments[1]);
+      }
+      if (
         segments.length === 5 &&
         segments[2] === 'findings' &&
         segments[4] === 'adjudicate' &&
@@ -3928,6 +3938,14 @@ export async function handleApi(
       ) {
         return await adjudicateFinding(req, ctx, segments[1], segments[3]);
       }
+    }
+
+    if (
+      segments[0] === 'fix-loops' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return listFixLoops(ctx);
     }
 
     if (segments[0] === 'runs') {

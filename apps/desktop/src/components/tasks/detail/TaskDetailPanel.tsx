@@ -32,6 +32,7 @@ import {
   useFixLoop,
   useProjectLedger,
   useStartFixLoop,
+  useStopFixLoop,
   useTaskFindings,
   useTaskVerification,
 } from '../../../hooks/useOrchestration';
@@ -265,6 +266,7 @@ export function TaskDetailPanel({
   const ledgerError = isEpic ? epicLedgerError : projectLedgerError;
   const adjudicateFinding = useAdjudicateFinding(client, port);
   const startFixLoop = useStartFixLoop(client, port);
+  const stopFixLoop = useStopFixLoop(client, port);
   const [startingFixLoop, setStartingFixLoop] = useState(false);
   const [startFixLoopError, setStartFixLoopError] = useState<string | null>(
     null
@@ -717,6 +719,7 @@ export function TaskDetailPanel({
             fixLoop={fixLoop}
             escalation={fixLoopEscalation}
             onStart={() => void handleStartFixLoop()}
+            onStop={() => void stopFixLoop(doc.meta.id)}
             starting={startingFixLoop}
             startError={startFixLoopError}
           />

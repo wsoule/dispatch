@@ -480,8 +480,9 @@ export interface UpdateFindingPatch {
 }
 
 // Why a stopped fix loop is not `complete`. Mirrors FixLoopStop in
-// packages/server/src/orchestrator/fixLoop.ts.
-type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+// packages/server/src/orchestrator/fixLoop.ts. `stopped` is the user's own
+// Stop button — resumable through `startFixLoop`.
+type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error' | 'stopped';
 
 // Mirrors FixLoopState in packages/server/src/orchestrator/fixLoop.ts: where a
 // task's review -> fix -> re-review loop currently stands.
@@ -2026,7 +2027,12 @@ export interface ApiClient {
   // `advanceFixLoop` drives one step (and opens the loop when `baseSha` is
   // supplied); `adjudicateFinding` is the ruling a capped loop demands.
   fetchFixLoop(taskId: string): Promise<FixLoopState>;
+  /** Every task's loop state in one read — feeds annotate rows from this. */
+  fetchFixLoops(): Promise<FixLoopState[]>;
   startFixLoop(taskId: string): Promise<FixLoopState>;
+  /** Caps the loop where it stands (`stopped`) and winds down its live runs.
+   * `startFixLoop` on a stopped loop resumes it. */
+  stopFixLoop(taskId: string): Promise<FixLoopState>;
   advanceFixLoop(
     taskId: string,
     input?: AdvanceFixLoopInput
@@ -2558,10 +2564,17 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/verification`),
     fetchFixLoop: (taskId) =>
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
+    fetchFixLoops: () => request(target, '/api/fix-loops'),
     startFixLoop: (taskId) =>
       request(
         target,
         `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/start`,
+        { method: 'POST' }
+      ),
+    stopFixLoop: (taskId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/stop`,
         { method: 'POST' }
       ),
     advanceFixLoop: (taskId, input = {}) =>

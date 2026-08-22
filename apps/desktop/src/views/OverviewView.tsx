@@ -7,12 +7,10 @@ import type { FeedRowActions } from '../components/overview/FeedRow';
 import { FeedRow } from '../components/overview/FeedRow';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { buildFeed, FEED_GROUPS } from '../lib/controlRoom';
+import { buildFeed } from '../lib/controlRoom';
 import type { FeedState } from '../lib/feedState';
 import { FEED_STATE_LABEL, isUrgentState } from '../lib/feedState';
 import { cn } from '@/lib/utils';
-import type { InsightDelta } from '@/ui/ai/insight-cards';
-import { InsightCard } from '@/ui/ai/insight-cards';
 import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
 import {
@@ -38,37 +36,14 @@ function toggle<T>(set: ReadonlySet<T>, value: T): Set<T> {
   return next;
 }
 
-// 'down' (red tint) whenever something needs you — the same "only look urgent when
-// non-zero" rule `ControlRibbon` follows — 'flat' (gray) once the queue is calm. Never
-// 'up': a rising "needs you" count is not good news, so the green tint would lie.
-function feedPulseDelta(counts: Record<FeedState, number>): InsightDelta {
-  const needsYou = counts.waiting + counts.failed;
-  return {
-    value: needsYou > 0 ? `${needsYou} need you` : 'All caught up',
-    direction: needsYou > 0 ? 'down' : 'flat',
-  };
-}
-
-/** The feed's per-state counts (`FEED_GROUPS` — the five run-backed states, same set
- * `ControlRibbon` counts) as one glanceable card, so the fleet's shape reads at a glance
- * without waiting for the ribbon/rows below to be scanned column by column. Additive:
- * `ControlRibbon` keeps its own click-to-filter role untouched. */
-function FeedPulseCard({ counts }: { counts: Record<FeedState, number> }) {
-  const series = FEED_GROUPS.map((state) => counts[state]);
-  const total = series.reduce((sum, count) => sum + count, 0);
-  return (
-    <InsightCard
-      title="Feed pulse"
-      summary={`${total} run${total === 1 ? '' : 's'} across ${FEED_GROUPS.length} states`}
-      series={series}
-      unit="runs"
-      delta={feedPulseDelta(counts)}
-      page={0}
-      pageCount={1}
-      onPageChange={() => {}}
-    />
-  );
-}
+/** The groups the collapse machinery applies to. Urgent groups (waiting/failed) are pinned
+ * open — the whole point of this screen is that what needs a human is visible the moment the
+ * screen is, so those two can be neither collapsed nor swept up by collapse-all. */
+const COLLAPSIBLE_GROUPS: readonly FeedState[] = [
+  'working',
+  'review',
+  'landing',
+];
 
 /**
  * The Control room — the app's landing view and its answer to "what the hell is going on with
@@ -108,6 +83,7 @@ export function OverviewView({
         mergeQueue: data.mergeQueue,
         pendingApprovals: data.pendingApprovals,
         openQuestions: data.openQuestions,
+        fixLoops: data.fixLoops,
         query,
         activeStates,
         collapsed,
@@ -122,6 +98,7 @@ export function OverviewView({
       data.mergeQueue,
       data.pendingApprovals,
       data.openQuestions,
+      data.fixLoops,
       query,
       activeStates,
       collapsed,
@@ -151,6 +128,7 @@ export function OverviewView({
 
   const actions: FeedRowActions = {
     onOpen: (row) => onOpenRun(row.runId),
+    onStopFixLoop: (row) => void data.handleStopFixLoop(row.taskId),
     onApprove: (row, allow) => {
       const pending = data.pendingApprovals.get(row.runId);
       // Without the request id there is nothing to answer — this window never saw the
@@ -167,7 +145,7 @@ export function OverviewView({
     onCancelLanding: (row) => void data.handleDequeueMerge(row.runId),
   };
 
-  const allCollapsed = collapsed.size >= FEED_GROUPS.length;
+  const allCollapsed = collapsed.size >= COLLAPSIBLE_GROUPS.length;
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
@@ -178,12 +156,7 @@ export function OverviewView({
             {projectName}
           </span>
         )}
-        <span className="text-muted-foreground text-[12px]">
-          {feed.counts.working} working · {feed.counts.waiting} waiting on you
-        </span>
       </div>
-
-      <FeedPulseCard counts={feed.counts} />
 
       <ControlRibbon
         counts={feed.counts}
@@ -200,7 +173,7 @@ export function OverviewView({
         total={feed.total}
         allCollapsed={allCollapsed}
         onToggleCollapseAll={() =>
-          setCollapsed(allCollapsed ? new Set() : new Set(FEED_GROUPS))
+          setCollapsed(allCollapsed ? new Set() : new Set(COLLAPSIBLE_GROUPS))
         }
       />
 
@@ -208,42 +181,10 @@ export function OverviewView({
         {feed.groups.length === 0 ? (
           <EmptyFeed filtered={query !== '' || activeStates.size > 0} />
         ) : (
-          feed.groups.map((group) => (
-            // Controlled off `collapsed` — the external `ReadonlySet` (and the collapse-all
-            // wiring above) stays the single source of truth, same as TasksListView's groups.
-            <Collapsible
-              key={group.state}
-              open={!group.collapsed}
-              onOpenChange={() =>
-                setCollapsed((prev) => toggle(prev, group.state))
-              }
-              className="mb-1"
-            >
-              <CollapsibleTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="xs"
-                  className="group text-muted-foreground hover:text-foreground h-auto w-full min-w-0 justify-start gap-2 px-1 pt-3 pb-1.5 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-1"
-                >
-                  <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
-                  <StateDot state={group.state} pulse={false} />
-                  <span
-                    className={cn(
-                      'dense-label',
-                      isUrgentState(group.state) && 'text-foreground'
-                    )}
-                  >
-                    {FEED_STATE_LABEL[group.state]}
-                  </span>
-                  <span className="dense-meta">{group.total}</span>
-                  <span
-                    aria-hidden
-                    className="ml-1 h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
-                  />
-                </Button>
-              </CollapsibleTrigger>
-
-              <CollapsibleContent>
+          feed.groups.map((group) => {
+            const pinned = isUrgentState(group.state);
+            const rows = (
+              <>
                 <div className="flex flex-col gap-0.5">
                   {group.rows.map((row) => (
                     <FeedRow key={row.runId} row={row} actions={actions} />
@@ -268,21 +209,64 @@ export function OverviewView({
                     }
                   />
                 )}
-              </CollapsibleContent>
-            </Collapsible>
-          ))
-        )}
-      </div>
+              </>
+            );
+            const headerInner = (
+              <>
+                <StateDot state={group.state} pulse={false} />
+                <span
+                  className={cn('dense-label', pinned && 'text-foreground')}
+                >
+                  {FEED_STATE_LABEL[group.state]}
+                </span>
+                <span className="dense-meta">{group.total}</span>
+                <span
+                  aria-hidden
+                  className="ml-1 h-px flex-1 bg-[linear-gradient(to_right,var(--border-default),transparent_70%)]"
+                />
+              </>
+            );
 
-      <div className="flex justify-center pb-1">
-        <Button
-          variant="ghost"
-          size="xs"
-          onClick={onGoToBoard}
-          className="text-muted-foreground hover:text-foreground h-auto px-0 py-0 text-[length:inherit] font-normal hover:bg-transparent"
-        >
-          Open the board
-        </Button>
+            // Urgent groups are pinned open: no trigger, no chevron, no way to fold away
+            // the very rows this screen exists to surface.
+            if (pinned) {
+              return (
+                <div key={group.state} className="mb-1">
+                  <div className="text-muted-foreground flex w-full min-w-0 items-center gap-2 px-1 pt-3 pb-1.5">
+                    {headerInner}
+                  </div>
+                  {rows}
+                </div>
+              );
+            }
+
+            return (
+              // Controlled off `collapsed` — the external `ReadonlySet` (and the collapse-all
+              // wiring above) stays the single source of truth, same as TasksListView's groups.
+              <Collapsible
+                key={group.state}
+                open={!group.collapsed}
+                onOpenChange={() =>
+                  setCollapsed((prev) => toggle(prev, group.state))
+                }
+                className="mb-1"
+              >
+                <CollapsibleTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    className="group text-muted-foreground hover:text-foreground h-auto w-full min-w-0 justify-start gap-2 px-1 pt-3 pb-1.5 text-left text-[length:inherit] font-normal hover:bg-transparent has-[>svg]:px-1"
+                  >
+                    <ChevronRight className="size-3 shrink-0 transition-transform group-data-[state=open]:rotate-90" />
+                    {headerInner}
+                  </Button>
+                </CollapsibleTrigger>
+
+                <CollapsibleContent>{rows}</CollapsibleContent>
+              </Collapsible>
+            );
+          })
+        )}
       </div>
     </div>
   );

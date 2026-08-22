@@ -55,7 +55,7 @@ const PROJECT_VIEWS: {
 }[] = [
   // The two pages this app is actually used from: one is where everything gets
   // captured, the other is where everything gets watched.
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'overview', label: 'Control room', icon: LayoutDashboard },
   { id: 'brain-dump', label: 'Brain dump', icon: Brain },
 
   { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },

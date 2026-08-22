@@ -57,6 +57,7 @@ function input(over: Partial<BuildFeedInput> = {}): BuildFeedInput {
     mergeQueue: null,
     pendingApprovals: new Map(),
     openQuestions: new Map(),
+    fixLoops: new Map(),
     query: '',
     activeStates: new Set(),
     collapsed: new Set(),
@@ -483,5 +484,94 @@ describe('group configuration', () => {
   test('working gets more room than the rest', () => {
     expect(groupCap('working')).toBe(7);
     expect(groupCap('review')).toBe(5);
+  });
+});
+
+describe('superseded runs collapse to one row per task', () => {
+  // Three fix-loop rounds left three finished execute runs on t-1; only the
+  // newest speaks for the task.
+  test('older review-state runs of the same task are dropped', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({
+            id: 'r-1',
+            state: 'finished',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          run({
+            id: 'r-2',
+            state: 'finished',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+          run({
+            id: 'r-3',
+            state: 'finished',
+            createdAt: '2026-07-26T02:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    const review = model.groups.find((g) => g.state === 'review');
+    expect(review?.rows.map((r) => r.runId)).toEqual(['r-3']);
+    expect(model.counts.review).toBe(1);
+  });
+
+  test('an older failed round is history once a newer run exists', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({
+            id: 'r-1',
+            state: 'failed',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          run({
+            id: 'r-2',
+            state: 'finished',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    expect(model.counts.failed).toBe(0);
+    expect(model.counts.review).toBe(1);
+  });
+
+  test('runs of different tasks never fold into each other', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({ id: 'r-1', state: 'finished' }),
+          run({
+            id: 'r-2',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'finished',
+          }),
+        ],
+      })
+    );
+    expect(model.counts.review).toBe(2);
+  });
+
+  test('rows carry the task fix-loop state for the loop status and Stop', () => {
+    const loop = {
+      taskId: 't-1',
+      round: 2,
+      cap: 5,
+      state: 'reviewing',
+      baseSha: 'abc',
+      lastReviewedSha: null,
+      updatedAt: '2026-07-26T00:00:00.000Z',
+    } as const;
+    const model = buildFeed(
+      input({
+        runs: [run({ state: 'finished' })],
+        fixLoops: new Map([['t-1', loop]]),
+      })
+    );
+    const review = model.groups.find((g) => g.state === 'review');
+    expect(review?.rows[0]?.fixLoop).toEqual(loop);
   });
 });
