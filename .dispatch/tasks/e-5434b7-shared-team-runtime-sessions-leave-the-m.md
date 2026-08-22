@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T22:46:27.152Z
-updated: 2026-08-22T16:43:40.144Z
+updated: 2026-08-22T17:33:42.428Z
 external: null
 writes: []
 ---
@@ -43,3 +43,4 @@ Key decisions recorded on t-f8aaae's amendments (full transcripts in-store; reda
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T17:33:42.428Z DECISION (Wyat, 2026-08-22, confirmed): the 2026-08-10 amendment's mechanism — all .dispatch/ state in a dedicated store repo on code.storage, pointer in the code repo — is SUPERSEDED. Locally, dispatchd owns a SQLite store (e-99e113); git demotes to a receipt log outside the project repo. This epic's goal (sessions leave the machine, shared team state) stands; delivery becomes a hosted TaskStore backed by code.storage behind the same store seam (t-aaf2a5), and this epic is blocked by e-99e113. Full reconciliation: docs/design/lovable-workstreams.md. Do not build on the store-repo/pointer design. — none

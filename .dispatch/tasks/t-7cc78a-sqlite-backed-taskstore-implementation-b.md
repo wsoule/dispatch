@@ -1,7 +1,7 @@
 ---
 id: t-7cc78a
 title: SQLite-backed TaskStore implementation behind the existing store seam
-status: todo
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:37:48.803Z
-updated: 2026-08-22T16:37:48.803Z
+updated: 2026-08-22T17:33:44.308Z
 external: null
 writes:
   - packages/core/src/**
@@ -24,3 +24,4 @@ Add a SQLite-backed implementation of the TaskStore interface (packages/core/src
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T17:33:44.308Z dispatched (claude, branch dispatch/t-7cc78a-sqlite-backed-taskstore-implementation-b-d236d7) — human:wsoule679

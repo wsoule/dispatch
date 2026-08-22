@@ -1,7 +1,7 @@
 ---
 id: t-06e1b0
 title: "v0 scoring: urgency, unblocking value, and age against the current store"
-status: todo
+status: in-progress
 kind: task
 parent: e-ba8bf1
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-22T16:58:15.804Z
+updated: 2026-08-22T17:33:47.232Z
 external: null
 writes:
   - packages/core/src/**
@@ -26,3 +26,4 @@ From the 2026-08-22 audit: the full weight function waits on the storage spine a
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T17:33:47.232Z dispatched (claude, branch dispatch/t-06e1b0-v0-scoring-urgency-unblocking-value-and-167969) — human:wsoule679

@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T16:37:28.275Z
-updated: 2026-08-22T16:58:12.659Z
+updated: 2026-08-22T17:33:47.163Z
 external: null
 writes: []
 ---
@@ -28,3 +28,4 @@ Blocked by the planning-hierarchy epic (factors reference initiative/project ran
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T17:33:47.163Z [epic] integration branch epic/e-ba8bf1 created from main — none

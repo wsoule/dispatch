@@ -1,7 +1,7 @@
 ---
 id: t-48a2e5
 title: "Decision feed: daemon aggregates everything awaiting a human"
-status: todo
+status: in-progress
 kind: task
 parent: e-6cfcc7
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-22T16:58:37.817Z
+updated: 2026-08-22T17:33:45.385Z
 external: null
 writes:
   - packages/server/src/**
@@ -26,3 +26,4 @@ One daemon-owned feed of items awaiting a human, each with kind, task/run refere
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T17:33:45.385Z dispatched (claude, branch dispatch/t-48a2e5-decision-feed-daemon-aggregates-everythi-66e2c7) — human:wsoule679
