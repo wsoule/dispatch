@@ -14,19 +14,15 @@ import { Spinner } from '@/ui/spinner';
 interface DraftTrayProps {
   /** Every draft currently held in memory, newest first — `data.drafts`. */
   drafts: DraftRecord[];
-  /** Whether the sidebar is collapsed to its icon-only strip — matches every other row's
-   * label/aria-label split. */
-  collapsed: boolean;
   /** Opens the review dialog for a ready draft. */
   onOpenDraft: (id: string) => void;
   onDismissDraft: (id: string) => void;
 }
 
-/** App-wide popover of in-flight and settled AI task drafts, reachable from the sidebar
+/** App-wide popover of in-flight and settled AI task drafts, reachable from the titlebar
  * regardless of which view is open — a draft keeps running after its composer closes. */
 export function DraftTray({
   drafts,
-  collapsed,
   onOpenDraft,
   onDismissDraft,
 }: DraftTrayProps) {
@@ -48,48 +44,33 @@ export function DraftTray({
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
+        {/* Compact titlebar trigger: icon plus the count pill when anything is pending. The
+            pill keeps its status colouring — a waiting question is the one count that doubles
+            as a state and needs to stand out even at this size. */}
         <Button
           type="button"
           variant="ghost"
           title="AI task drafts"
-          aria-label={
-            collapsed
-              ? `AI task drafts${badgeCount > 0 ? ` (${badgeCount})` : ''}${
-                  questionCount > 0 ? ', waiting on your answer' : ''
-                }`
-              : undefined
-          }
-          className={cn(
-            'h-auto mb-0.5 rounded-md py-1.5 text-left text-[13px] font-normal text-foreground/80 hover:bg-accent/60 hover:text-foreground/80 transition-colors duration-150',
-            collapsed
-              ? 'w-full px-0 has-[>svg]:px-0'
-              : 'w-full justify-start px-2 has-[>svg]:px-2'
-          )}
+          aria-label={`AI task drafts${badgeCount > 0 ? ` (${badgeCount})` : ''}${
+            questionCount > 0 ? ', waiting on your answer' : ''
+          }`}
+          className="text-foreground/80 hover:bg-accent/60 hover:text-foreground/80 h-7 shrink-0 gap-1 rounded-md px-1.5 text-[13px] font-normal transition-colors duration-150"
         >
           <Sparkles className="size-4 shrink-0" strokeWidth={2} />
-          {!collapsed && (
-            <>
-              <span className="flex-1">Drafts</span>
-              {badgeCount > 0 && (
-                // CountChip is deliberately colorless everywhere else, but this badge is the
-                // one place a count doubles as a status (a waiting question needs to stand
-                // out), so its pill styling is preserved via className, overriding
-                // dense-meta's mono/tabular-nums treatment back to the original look.
-                <CountChip
-                  count={badgeCount}
-                  className={cn(
-                    'flex min-w-[1.1rem] items-center justify-center rounded-full px-1 font-sans text-[10px] font-medium tracking-normal normal-nums',
-                    questionCount > 0
-                      ? 'bg-state-waiting-surface text-state-waiting border-state-waiting-edge border'
-                      : 'bg-secondary text-secondary-foreground'
-                  )}
-                />
+          {badgeCount > 0 && (
+            <CountChip
+              count={badgeCount}
+              className={cn(
+                'flex min-w-[1.1rem] items-center justify-center rounded-full px-1 font-sans text-[10px] font-medium tracking-normal normal-nums',
+                questionCount > 0
+                  ? 'bg-state-waiting-surface text-state-waiting border-state-waiting-edge border'
+                  : 'bg-secondary text-secondary-foreground'
               )}
-            </>
+            />
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="start" side="right" className="w-80 p-0">
+      <PopoverContent align="end" side="bottom" className="w-80 p-0">
         <div className="shadow-hairline-bottom px-3 py-2">
           <span className="text-foreground text-[13px] font-medium">
             AI task drafts
