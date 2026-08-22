@@ -1,7 +1,7 @@
 ---
 id: t-48a2e5
 title: "Decision feed: daemon aggregates everything awaiting a human"
-status: in-progress
+status: in-review
 kind: task
 parent: e-6cfcc7
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-22T18:30:35.612Z
+updated: 2026-08-22T18:30:59.442Z
 external: null
 writes:
   - packages/server/src/**
@@ -50,3 +50,4 @@ Not green, and I want this on the record rather than buried: the full packages/s
 One methodology note against myself: my first full-suite run reported a decision-feed failure, and that was my fault, not the code's — I was editing source while the suite ran, so it reached the file mid-mutation-test. I discarded that run and re-ran against stable committed files rather than reporting the tainted numbers.
 
 Scope: packages/server only, all within declared writes. No packages/core (r-664ec2/r-d236d7 have it claimed) and no packages/client method — the typed client belongs to the surface task, since this one is model-layer only. — none
+- 2026-08-22T18:30:59.442Z [run r-fe1a71] finished: finished — 6 files, $6.39 — agent:wsoule679/claude
