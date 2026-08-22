@@ -1,5 +1,5 @@
 import type { WardenAction, WardenRecord } from '@dispatch/client';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 import { useState } from 'react';
 
@@ -44,6 +44,7 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     start: () => Promise.resolve(wardenRecord()),
     sendMessage: () => Promise.resolve(wardenRecord()),
     confirmAction: () => Promise.resolve(wardenRecord()),
+    decidingActionId: null,
     reset: () => {},
     draft: '',
     setDraft: () => {},
@@ -67,9 +68,24 @@ function ChatWithDraft({
   );
 }
 
+/**
+ * Clicks a control whose handler starts a session call that actually resolves.
+ * `startConversation`/`sendFollowUp`/`decide` each clear their in-flight flag
+ * in a `finally`, which lands a microtask after the click. Outside `act` that
+ * update arrives after the test body has finished — React logs an act warning,
+ * and the setState can fire while a later test's tree is the mounted one.
+ * Tests whose fake never resolves have no such tail and click directly.
+ */
+async function clickAndSettle(button: HTMLElement): Promise<void> {
+  fireEvent.click(button);
+  await act(async () => {
+    await Promise.resolve();
+  });
+}
+
 // The full-page (non-compact) path — the branch WardenView renders after the
 // extraction, previously covered by nothing.
-test('full mode: the start card takes an opening question through warden.start', () => {
+test('full mode: the start card takes an opening question through warden.start', async () => {
   const asked: string[] = [];
   const warden = wardenSession({
     start: (prompt: string) => {
@@ -88,11 +104,11 @@ test('full mode: the start card takes an opening question through warden.start',
   fireEvent.change(screen.getByLabelText('Warden opening question'), {
     target: { value: 'status?' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Ask' }));
+  await clickAndSettle(screen.getByRole('button', { name: 'Ask' }));
   expect(asked).toEqual(['status?']);
 });
 
-test('full mode: transcript renders bubbles and the confirm card decides through the session', () => {
+test('full mode: transcript renders bubbles and the confirm card decides through the session', async () => {
   const decisions: unknown[] = [];
   const record = wardenRecord({
     messages: [
@@ -121,11 +137,13 @@ test('full mode: transcript renders bubbles and the confirm card decides through
   expect(screen.getByText('cancel r-1')).toBeDefined();
   expect(screen.getByText('Queuing that.')).toBeDefined();
   expect(screen.getByText('Needs your approval')).toBeDefined();
-  fireEvent.click(screen.getByRole('button', { name: 'Deny: Cancel run r-1' }));
+  await clickAndSettle(
+    screen.getByRole('button', { name: 'Deny: Cancel run r-1' })
+  );
   expect(decisions).toEqual([['act-1', false]]);
 });
 
-test('full mode: a follow-up goes through warden.sendMessage', () => {
+test('full mode: a follow-up goes through warden.sendMessage', async () => {
   const sent: string[] = [];
   const warden = wardenSession({
     conversationId: 'w-1',
@@ -140,8 +158,58 @@ test('full mode: a follow-up goes through warden.sendMessage', () => {
   fireEvent.change(screen.getByLabelText('Follow-up message'), {
     target: { value: 'and the queue?' },
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  await clickAndSettle(screen.getByRole('button', { name: 'Send' }));
   expect(sent).toEqual(['and the queue?']);
+});
+
+// sendMessage ends with invalidateQueries, which waits on a real refetch once
+// the record query has an observer. Clearing the draft after that await lands a
+// whole round trip late, so anything typed while the send was in flight got
+// wiped. The composer is cleared up front instead.
+test('typing while a send is in flight is not wiped when it lands', async () => {
+  let settle: (() => void) | undefined;
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord(),
+    sendMessage: () =>
+      new Promise<WardenRecord>((resolve) => {
+        settle = () => resolve(wardenRecord());
+      }),
+  });
+  render(<ChatWithDraft warden={warden} />);
+
+  const composer =
+    screen.getByLabelText<HTMLTextAreaElement>('Follow-up message');
+  fireEvent.change(composer, { target: { value: 'and the queue?' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  // The sent text is gone the moment it is handed off, not a round trip later.
+  expect(composer.value).toBe('');
+
+  fireEvent.change(composer, { target: { value: 'next thought' } });
+  await act(async () => {
+    settle?.();
+    await Promise.resolve();
+  });
+  expect(composer.value).toBe('next thought');
+});
+
+// The other half of clearing up front: a send that fails has to give the text
+// back, or the message is simply lost.
+test('a failed send returns the text to the composer', async () => {
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord(),
+    sendMessage: () => Promise.reject(new Error('daemon unreachable')),
+  });
+  render(<ChatWithDraft warden={warden} />);
+
+  const composer =
+    screen.getByLabelText<HTMLTextAreaElement>('Follow-up message');
+  fireEvent.change(composer, { target: { value: 'and the queue?' } });
+  await clickAndSettle(screen.getByRole('button', { name: 'Send' }));
+
+  expect(composer.value).toBe('and the queue?');
+  expect(screen.getByText('daemon unreachable')).toBeDefined();
 });
 
 // A permanently failed record fetch (404 + retry: false) is a broken
@@ -285,16 +353,30 @@ test('a decision in flight disables every confirm card, not just its own', () =>
       }),
     ],
   });
-  const warden = wardenSession({
-    conversationId: 'w-1',
-    record,
-    // Never resolves: the point is what the UI looks like *during* a decision.
-    confirmAction: (actionId: string, approve: boolean) => {
-      decisions.push([actionId, approve]);
-      return new Promise<WardenRecord>(() => {});
-    },
-  });
-  render(<WardenChat warden={warden} />);
+  // The lock lives on the session now, so the fake has to raise it the way
+  // useWardenSession does — otherwise the state under test is never entered.
+  // The call never resolves: the point is what the UI looks like *during* a
+  // decision.
+  function ChatWithDecision() {
+    const [decidingActionId, setDecidingActionId] = useState<string | null>(
+      null
+    );
+    return (
+      <WardenChat
+        warden={wardenSession({
+          conversationId: 'w-1',
+          record,
+          decidingActionId,
+          confirmAction: (actionId: string, approve: boolean) => {
+            decisions.push([actionId, approve]);
+            setDecidingActionId(actionId);
+            return new Promise<WardenRecord>(() => {});
+          },
+        })}
+      />
+    );
+  }
+  render(<ChatWithDecision />);
 
   fireEvent.click(
     screen.getByRole('button', { name: 'Approve: Cancel run r-1' })

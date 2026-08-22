@@ -1,5 +1,6 @@
 import { type ApiClient, ApiError, type WardenRecord } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { isFakeWardenDevToolEnabled } from '../lib/devTools';
@@ -34,6 +35,19 @@ export interface WardenSession {
    * resolving, denying never runs it. Allowed mid-turn — the server accepts a
    * decision while the assistant is still answering. */
   confirmAction: (actionId: string, approve: boolean) => Promise<WardenRecord>;
+  /**
+   * Which action `confirmAction` is currently deciding, or `null`. Lives on the
+   * session for the same reason `draft` does: the surfaces that render a
+   * confirm card are unmounted by ordinary navigation (the rail's tab toggle
+   * drops the inactive panel, so does its collapse chevron, and the Warden
+   * page replaces the rail entirely). Approving runs the real mutation
+   * server-side before the call resolves, so that window is seconds wide — long
+   * enough to flip a tab in. A component-local flag would come back `null` on
+   * remount, re-enabling every card with no spinner while the effect is still
+   * running, and a second click would then 404 against an action the server
+   * already claimed.
+   */
+  decidingActionId: string | null;
   /** Drops back to the "start a conversation" state. Nothing is deleted server-side. */
   reset: () => void;
   /**
@@ -45,7 +59,13 @@ export interface WardenSession {
    * three, so the draft does too.
    */
   draft: string;
-  setDraft: (text: string) => void;
+  /**
+   * React's own setter, updater form included: a sender that clears the draft
+   * before its await has to put the text back if the call fails, but only when
+   * the human has not already typed something else — which it can only decide
+   * against the current value, not the one its closure captured.
+   */
+  setDraft: Dispatch<SetStateAction<string>>;
 }
 
 /**
@@ -77,6 +97,8 @@ export function useWardenSession(
 
   const [draft, setDraft] = useState('');
 
+  const [decidingActionId, setDecidingActionId] = useState<string | null>(null);
+
   // A conversation opened against one project's dispatchd must not survive a
   // project switch — the stale id would 404 against the new daemon (the same
   // I5 rule useDispatchProject applies to planId). The draft goes with it: a
@@ -85,6 +107,7 @@ export function useWardenSession(
   useEffect(() => {
     setConversationId(null);
     setDraft('');
+    setDecidingActionId(null);
   }, [projectPath]);
 
   const { data: record, error } = useQuery({
@@ -149,18 +172,26 @@ export function useWardenSession(
       if (client === null || conversationId === null) {
         throw new Error('no warden conversation open');
       }
-      const rec = await client.confirmWardenAction(
-        conversationId,
-        actionId,
-        approve
-      );
-      queryClient.setQueryData(wardenKey(port, conversationId), rec);
-      // Confirming is allowed mid-turn, so the same in-flight-settle race as
-      // sendMessage applies here.
-      await queryClient.invalidateQueries({
-        queryKey: wardenKey(port, conversationId),
-      });
-      return rec;
+      // Held for the whole call, including the reconciling refetch below, so
+      // every card stays locked and the deciding one keeps its spinner even if
+      // the chat unmounts and remounts underneath it.
+      setDecidingActionId(actionId);
+      try {
+        const rec = await client.confirmWardenAction(
+          conversationId,
+          actionId,
+          approve
+        );
+        queryClient.setQueryData(wardenKey(port, conversationId), rec);
+        // Confirming is allowed mid-turn, so the same in-flight-settle race as
+        // sendMessage applies here.
+        await queryClient.invalidateQueries({
+          queryKey: wardenKey(port, conversationId),
+        });
+        return rec;
+      } finally {
+        setDecidingActionId(null);
+      }
     },
     [client, conversationId, port, queryClient]
   );
@@ -186,6 +217,7 @@ export function useWardenSession(
     start,
     sendMessage,
     confirmAction,
+    decidingActionId,
     reset,
     draft,
     setDraft,

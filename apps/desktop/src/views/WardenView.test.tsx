@@ -51,6 +51,7 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     start: () => Promise.resolve(wardenRecord()),
     sendMessage: () => Promise.resolve(wardenRecord()),
     confirmAction: () => Promise.resolve(wardenRecord()),
+    decidingActionId: null,
     reset: () => {},
     draft: '',
     setDraft: () => {},

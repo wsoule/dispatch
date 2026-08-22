@@ -206,10 +206,15 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
 
-  // Which action a decision is in flight for, and the last decision's error —
-  // one at a time is plenty: the confirm call is quick, and per-card error
-  // maps would complicate a state the failure row on the card already covers.
-  const [decidingId, setDecidingId] = useState<string | null>(null);
+  // Which action a decision is in flight for — the session's, not this
+  // component's: approving runs the real mutation before the call resolves, and
+  // every surface that renders a confirm card is unmounted by an ordinary tab
+  // flip, collapse or navigation. A local flag would reset to null on remount
+  // and re-enable cards whose effect is still running.
+  const decidingId = warden.decidingActionId;
+  // The last decision's error. One at a time is plenty: per-card error maps
+  // would complicate a state the failure row on the card already covers. This
+  // one stays local — a banner is worth losing on unmount, a lock is not.
   const [decideError, setDecideError] = useState<string | null>(null);
 
   const thread = useMemo(
@@ -247,16 +252,31 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
   // daemon says the conversation is gone, so this cannot lock on a ghost.
   const hasPendingAction = (warden.record?.pendingActions.length ?? 0) > 0;
 
+  /**
+   * Puts the sent text back only if the composer is still empty. Both senders
+   * clear the draft up front rather than after their await: `start` and
+   * `sendMessage` each end with `invalidateQueries`, which waits on a real
+   * refetch once the record query has an observer, so clearing afterwards
+   * lands a whole round trip late and eats anything typed in the meantime.
+   * Clearing first costs nothing when the call succeeds; when it fails the
+   * text has to come back — unless the human has already started typing the
+   * next thing, which is theirs to keep.
+   */
+  function restoreDraft(text: string) {
+    setDraft((current) => (current === '' ? text : current));
+  }
+
   async function startConversation() {
     const text = draft.trim();
     if (text === '' || starting) return;
     setStarting(true);
     setStartError(null);
+    setDraft('');
     try {
       await warden.start(text);
-      setDraft('');
     } catch (err) {
       setStartError(err instanceof Error ? err.message : String(err));
+      restoreDraft(text);
     } finally {
       setStarting(false);
     }
@@ -270,11 +290,12 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
     if (text === '' || busy || sending) return;
     setSending(true);
     setSendError(null);
+    setDraft('');
     try {
       await warden.sendMessage(text);
-      setDraft('');
     } catch (err) {
       setSendError(err instanceof Error ? err.message : String(err));
+      restoreDraft(text);
     } finally {
       setSending(false);
     }
@@ -282,17 +303,16 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
 
   async function decide(actionId: string, approve: boolean) {
     if (decidingId !== null) return;
-    setDecidingId(actionId);
     setDecideError(null);
     try {
+      // The session raises and clears the lock around this call, so it outlives
+      // this component.
       await warden.confirmAction(actionId, approve);
     } catch (err) {
       // An approved-but-failed effect: the server already put the action back
       // in the queue with a failure row (the card re-renders with it), so this
       // banner is for transport-level failures where no record came back.
       setDecideError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setDecidingId(null);
     }
   }
 

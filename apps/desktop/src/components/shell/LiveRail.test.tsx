@@ -4,7 +4,7 @@ import type {
   WardenAction,
   WardenRecord,
 } from '@dispatch/client';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 import { useState } from 'react';
 
@@ -65,6 +65,7 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     start: () => Promise.resolve(wardenRecord()),
     sendMessage: () => Promise.resolve(wardenRecord()),
     confirmAction: () => Promise.resolve(wardenRecord()),
+    decidingActionId: null,
     reset: () => {},
     draft: '',
     setDraft: () => {},
@@ -364,7 +365,7 @@ test('expanding the collapsed rail returns to the last active tab', () => {
 
 // The rail renders the same confirm card WardenView does — approval stays
 // human-gated through the identical component, no rail-only shortcut.
-test('a pending warden action renders the confirm card in the rail and decides through the session', () => {
+test('a pending warden action renders the confirm card in the rail and decides through the session', async () => {
   const decisions: unknown[] = [];
   const record = wardenRecord({
     state: 'ready',
@@ -397,7 +398,59 @@ test('a pending warden action renders the confirm card in the rail and decides t
   fireEvent.click(
     screen.getByRole('button', { name: 'Approve: Cancel run r-1' })
   );
+  // decide() clears `decidingId` in a `finally`, a microtask after the click.
+  // Settling it inside `act` keeps that update from landing after this test.
+  await act(async () => {
+    await Promise.resolve();
+  });
   expect(decisions).toEqual([['act-1', true]]);
+});
+
+// Radix drops the inactive tab's children, so a tab flip really does unmount
+// the chat. Approving runs the mutation server-side before the call resolves,
+// which leaves seconds to flip — and coming back to cards that look decidable
+// again is how a second click reaches an action the server already claimed.
+// The lock lives on the session precisely so the remount cannot lose it.
+test('a decision in flight stays locked across a tab flip', () => {
+  const record = wardenRecord({
+    messages: [
+      {
+        role: 'action',
+        actionId: 'act-1',
+        outcome: 'pending',
+        text: 'Queued: Cancel run r-1',
+        at: '2026-08-10T00:00:02Z',
+      },
+    ],
+    pendingActions: [wardenAction()],
+  });
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record,
+    decidingActionId: 'act-1',
+  });
+  render(<LiveRail {...railProps({ warden })} />);
+  selectTab(/^Warden/);
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', {
+      name: 'Approve: Cancel run r-1',
+    }).disabled
+  ).toBe(true);
+
+  selectTab('Runs');
+  expect(screen.queryByText('Needs your approval')).toBeNull();
+  selectTab(/^Warden/);
+
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', {
+      name: 'Approve: Cancel run r-1',
+    }).disabled
+  ).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', {
+      name: 'Deny: Cancel run r-1',
+    }).disabled
+  ).toBe(true);
 });
 
 // A warden turn in flight is an agent at work: it earns a Runs-tab row with

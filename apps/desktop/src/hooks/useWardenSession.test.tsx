@@ -94,11 +94,50 @@ test('a network failure keeps the cached record', async () => {
   expect(result.current.record?.id).toBe('w-1');
 });
 
+// The approval lock belongs to the session for the same reason the draft does.
+// Approving runs the real mutation before the call resolves, and every surface
+// that renders a confirm card is unmounted by an ordinary tab flip — so the
+// flag has to be raised for the whole call, on state that outlives the chat.
+test('the deciding action is exposed while a confirm is in flight', async () => {
+  let settle: ((rec: WardenRecord) => void) | undefined;
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startWarden: () => Promise.resolve(wardenRecord()),
+    getWarden: () => Promise.resolve(wardenRecord()),
+    confirmWardenAction: () =>
+      new Promise<WardenRecord>((resolve) => {
+        settle = resolve;
+      }),
+  } as unknown as ApiClient;
+
+  const { result } = renderHook(() => useWardenSession(client, PORT, '/repo'), {
+    wrapper,
+  });
+  await act(async () => {
+    await result.current.start('what is going on?');
+  });
+  expect(result.current.decidingActionId).toBeNull();
+
+  let decided: Promise<WardenRecord> | undefined;
+  act(() => {
+    decided = result.current.confirmAction('act-1', true);
+  });
+  // Mid-flight: the server is running the effect, so every card must stay
+  // locked no matter how many times the chat around it has been remounted.
+  expect(result.current.decidingActionId).toBe('act-1');
+
+  await act(async () => {
+    settle?.(wardenRecord());
+    await decided;
+  });
+  expect(result.current.decidingActionId).toBeNull();
+});
+
 // The draft belongs to the session so it can outlive the components that
 // render it, but not the conversation it was typed into: reset() is the "start
 // over" control, and carrying a half-typed follow-up into the opening
 // composer would put words in the next conversation's mouth.
-test('reset clears the composer draft along with the conversation', async () => {
+test('reset clears the composer draft along with the conversation', () => {
   const { result } = renderHook(
     () =>
       useWardenSession(stubClient(new ApiError('gone', 404)), PORT, '/repo'),
