@@ -20,6 +20,7 @@ import type { ApiContext, DaemonTokens } from './api.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
+import { DecisionFeed } from './decisionFeed.js';
 import {
   createSourceChangeHandler,
   DepMapCache,
@@ -733,6 +734,7 @@ export async function startServer(
 
   // Constructed after ReviewRunner on purpose: terminal hooks fire in
   // registration order, so a review's findings land before the loop reacts.
+  const fixLoopStore = new FixLoopStore(rootDir);
   const fixLoop = new FixLoop({
     rootDir,
     store,
@@ -741,7 +743,7 @@ export async function startServer(
     orchestrator,
     reviewRunner,
     findingStore,
-    fixLoopStore: new FixLoopStore(rootDir),
+    fixLoopStore,
     actorContext,
   });
   // Runs after reconcileOnBoot has force-failed the previous process's runs,
@@ -750,6 +752,20 @@ export async function startServer(
   if (resumedLoops > 0) {
     console.log(`dispatchd: resumed ${resumedLoops} stalled fix loop(s)`);
   }
+
+  // One feed of everything awaiting a human, derived from the registries above
+  // rather than stored (see decisionFeed.ts). `start()` subscribes it to the
+  // event bus so a decided gate or a moved-on run broadcasts
+  // `decisions.changed` without any producer having to know the feed exists.
+  const decisionFeed = new DecisionFeed({
+    orchestrator,
+    questions,
+    scopeRequests,
+    fixLoopStore,
+    cache,
+    events,
+  });
+  const stopDecisionFeed = decisionFeed.start();
 
   const apiCtx: ApiContext = {
     rootDir,
@@ -778,6 +794,7 @@ export async function startServer(
     conversations,
     questions,
     scopeRequests,
+    decisionFeed,
     linearSync,
     gitRepo,
     actorContext,
@@ -914,6 +931,7 @@ export async function startServer(
       unsubscribeLinear();
       await linearSync.stop();
       unsubscribeBoardSync();
+      stopDecisionFeed();
       boardSyncScheduler?.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
