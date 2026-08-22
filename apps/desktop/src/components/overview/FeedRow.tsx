@@ -62,6 +62,26 @@ export interface FeedRowActions {
   onRetry: (row: FeedRowModel) => void;
   onReview: (row: FeedRowModel) => void;
   onCancelLanding: (row: FeedRowModel) => void;
+  /** Caps the task's fix loop where it stands — offered while it is actively
+   * implementing or reviewing. */
+  onStopFixLoop: (row: FeedRowModel) => void;
+}
+
+/** Whether the row's loop is actually running rounds — the only time a Stop
+ * button has anything to stop. */
+function fixLoopActive(row: FeedRowModel): boolean {
+  return (
+    row.fixLoop !== null &&
+    (row.fixLoop.state === 'implementing' || row.fixLoop.state === 'reviewing')
+  );
+}
+
+/** The activity cell's loop phrasing: "Fix round 2/5 · reviewing" beats the
+ * generic turn count whenever a loop owns the task. */
+function fixLoopActivity(row: FeedRowModel): string | null {
+  if (row.fixLoop === null) return null;
+  if (!fixLoopActive(row)) return null;
+  return `Fix round ${row.fixLoop.round}/${row.fixLoop.cap} · ${row.fixLoop.state}`;
 }
 
 interface FeedRowProps {
@@ -121,7 +141,9 @@ export function FeedRow({ row, actions }: FeedRowProps) {
         </span>
 
         <span className="dense-meta truncate">{row.epicTitle ?? ''}</span>
-        <span className="dense-meta truncate">{row.activity ?? ''}</span>
+        <span className="dense-meta truncate">
+          {fixLoopActivity(row) ?? row.activity ?? ''}
+        </span>
         <span className="dense-meta text-right">
           {formatRelativeTimeFromIso(row.since)}
         </span>
@@ -168,6 +190,11 @@ export function FeedRow({ row, actions }: FeedRowProps) {
           {row.state === 'landing' && (
             <RowButton onClick={() => actions.onCancelLanding(row)}>
               Cancel
+            </RowButton>
+          )}
+          {fixLoopActive(row) && (
+            <RowButton onClick={() => actions.onStopFixLoop(row)}>
+              Stop loop
             </RowButton>
           )}
         </span>

@@ -319,6 +319,13 @@ function startLoop(): Promise<Response> {
   });
 }
 
+// The Stop button's endpoint: caps the loop where it stands.
+function stopLoop(): Promise<Response> {
+  return fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop/stop`, {
+    method: 'POST',
+  });
+}
+
 function adjudicate(findingId: string, body: unknown): Promise<Response> {
   return fetch(
     `${baseUrl}/api/tasks/${taskId}/findings/${findingId}/adjudicate`,
@@ -1018,6 +1025,43 @@ describe('the reason a loop stopped', () => {
     const settled = await fixLoopState();
     expect(settled.state).toBe('capped');
     expect(settled.stopReason).toBe('standing-block');
+  }, 30000);
+});
+
+describe('stopping the loop by hand', () => {
+  it('caps mid-round, survives its own run going terminal, and resumes via start', async () => {
+    const gated = new GatedAgent('fix');
+    await restartWith(gated);
+
+    await seedFinding();
+    await advance({ baseSha });
+    await waitFor(async () => (await fixLoopState()).state === 'implementing');
+
+    const stopped = await json<FixLoopState>(await stopLoop());
+    expect(stopped.state).toBe('capped');
+    expect(stopped.stopReason).toBe('stopped');
+
+    // The gated fix run winds down; its terminal hook advances the loop — a
+    // user-stop must hold through that instead of re-labelling itself.
+    gated.releaseGate();
+    const after = await settle();
+    expect(after.state).toBe('capped');
+    expect(after.stopReason).toBe('stopped');
+
+    // The same button that opens a loop resumes a stopped one.
+    const resumed = await json<FixLoopState>(await startLoop());
+    expect(resumed.stopReason).not.toBe('stopped');
+  }, 30000);
+
+  it('is idempotent on an already-settled loop and 404s with no loop at all', async () => {
+    expect((await stopLoop()).status).toBe(404);
+
+    await seedFinding();
+    await advance({ baseSha, cap: 1 });
+    await waitFor(async () => (await fixLoopState()).state === 'capped');
+    const before = await fixLoopState();
+    const again = await json<FixLoopState>(await stopLoop());
+    expect(again.stopReason).toBe(before.stopReason);
   }, 30000);
 });
 

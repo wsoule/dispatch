@@ -6,7 +6,7 @@ import type {
 } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback } from 'react';
+import { useCallback, useMemo } from 'react';
 
 // Shared root for invalidating a whole event kind at once — finding.changed
 // and ledger.changed carry no id, so their handlers invalidate everything here.
@@ -17,10 +17,7 @@ const ORCHESTRATION_QUERY_ROOT = 'dispatch-orchestration';
 function taskFindingsKey(port: number | undefined, taskId: string | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'findings', port, taskId] as const;
 }
-export function fixLoopKey(
-  port: number | undefined,
-  taskId: string | undefined
-) {
+function fixLoopKey(port: number | undefined, taskId: string | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'fix-loop', port, taskId] as const;
 }
 export function taskVerificationKey(
@@ -39,6 +36,14 @@ function projectLedgerKey(port: number | undefined) {
 }
 export function findingsQueryRootKey(port: number | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'findings', port] as const;
+}
+/** Prefix of every fix-loop key — per-task and the bulk list — so one
+ *  `fixloop.changed` invalidation refreshes them all. */
+export function fixLoopQueryRootKey(port: number | undefined) {
+  return [ORCHESTRATION_QUERY_ROOT, 'fix-loop', port] as const;
+}
+function fixLoopsBulkKey(port: number | undefined) {
+  return [ORCHESTRATION_QUERY_ROOT, 'fix-loop', port, '__all__'] as const;
 }
 export function ledgerQueryRootKey(port: number | undefined) {
   return [ORCHESTRATION_QUERY_ROOT, 'ledger', port] as const;
@@ -143,6 +148,48 @@ export function useFixLoop(
     loading: isLoading,
     error: error instanceof Error ? error.message : null,
   };
+}
+
+/** Every task's fix-loop state as a by-task map — the bulk read a feed
+ *  annotates rows from, one request instead of one per task. Refreshed by the
+ *  same `fixloop.changed` invalidation as the per-task query (shared root). */
+export function useFixLoops(
+  client: ApiClient | null,
+  port: number | undefined
+): ReadonlyMap<string, FixLoopState> {
+  const { data } = useQuery({
+    queryKey: fixLoopsBulkKey(port),
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchFixLoops();
+    },
+    enabled: client !== null,
+    retry: false,
+  });
+  return useMemo(
+    () => new Map((data ?? []).map((state) => [state.taskId, state])),
+    [data]
+  );
+}
+
+/** The Stop button: caps a task's loop where it stands. `useStartFixLoop`'s
+ *  button doubles as Resume afterwards. */
+export function useStopFixLoop(
+  client: ApiClient | null,
+  port: number | undefined
+) {
+  const queryClient = useQueryClient();
+  return useCallback(
+    async (taskId: string): Promise<FixLoopState> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      const state = await client.stopFixLoop(taskId);
+      void queryClient.invalidateQueries({
+        queryKey: fixLoopQueryRootKey(port),
+      });
+      return state;
+    },
+    [client, queryClient, port]
+  );
 }
 
 /** Opens the review -> fix loop for a task, or advances an already-open one —

@@ -39,6 +39,8 @@ function cappedLabel(state: FixLoopState): string {
       return `Stopped at ${at}: held by a blocking ruling`;
     case 'error':
       return `Stopped at ${at}: the loop failed`;
+    case 'stopped':
+      return `Stopped at ${at} by you`;
     case 'rounds-exhausted':
       return `Capped at ${at}: needs a ruling`;
   }
@@ -60,6 +62,7 @@ export function fixLoopTone(state: FixLoopState): FixLoopTone {
   if (state.state !== 'capped') return 'neutral';
   const reason = fixLoopStopReason(state);
   if (reason === 'error') return 'failed';
+  // A user-stop is a decision already made, not a request for one.
   return reason === 'rounds-exhausted' ? 'waiting' : 'neutral';
 }
 
@@ -97,6 +100,11 @@ export function fixLoopCappedNotice(
           message === undefined || message.trim() === ''
             ? `${taskTitle}'s fix loop stopped on an error.`
             : `${taskTitle}: ${message.trim()}`,
+      };
+    case 'stopped':
+      return {
+        title: 'Fix loop stopped',
+        body: `${taskTitle}'s fix loop was stopped.`,
       };
     case 'rounds-exhausted':
       return {

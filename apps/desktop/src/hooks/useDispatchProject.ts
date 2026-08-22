@@ -3,6 +3,7 @@ import type {
   ApiClient,
   DraftRecord,
   EpicProgress,
+  FixLoopState,
   LandingSnapshot,
   LinearIssueLink,
   LinearStatus,
@@ -60,9 +61,11 @@ import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
 import {
   findingsQueryRootKey,
-  fixLoopKey,
+  fixLoopQueryRootKey,
   ledgerQueryRootKey,
   taskVerificationKey,
+  useFixLoops,
+  useStopFixLoop,
 } from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
 import { wardenKey } from './useWardenSession';
@@ -485,6 +488,11 @@ export interface DispatchProjectData {
   // reviewable runs in this stack" surfaces as a thrown Error).
   handleEnqueueMergeStack: (taskId: string) => Promise<void>;
   handleDequeueMerge: (runId: string) => Promise<void>;
+  /** Every task's fix-loop state, by task id — the feed annotates rows and
+   * offers Stop from this. Empty until the bulk fetch resolves. */
+  fixLoops: ReadonlyMap<string, FixLoopState>;
+  /** Caps a task's fix loop where it stands; "Review & fix" resumes it. */
+  handleStopFixLoop: (taskId: string) => Promise<void>;
   // Task 8: enqueues every eligible run across the project in one shot (the
   // "Merge all ready" toolbar action) — thin wrapper over enqueueMergeReady,
   // since the server owns the actual eligibility/ordering logic.
@@ -1198,12 +1206,13 @@ export function useDispatchProject(
               queryKey: ledgerQueryRootKey(port),
             });
           } else if (event.type === 'fixloop.changed') {
+            // The root covers the per-task query and the bulk by-task map.
             void queryClient.invalidateQueries({
-              queryKey: fixLoopKey(port, event.taskId),
+              queryKey: fixLoopQueryRootKey(port),
             });
           } else if (event.type === 'fixloop.capped') {
             void queryClient.invalidateQueries({
-              queryKey: fixLoopKey(port, event.taskId),
+              queryKey: fixLoopQueryRootKey(port),
             });
             // A stopped loop needs a human — a toast plus a durable inbox row,
             // worded from the stop reason.
@@ -1960,6 +1969,17 @@ export function useDispatchProject(
     [client, queryClient, mergeQueueQueryKey]
   );
 
+  // The feed's per-task fix-loop annotations and its Stop button.
+  const fixLoops = useFixLoops(client, port);
+  const stopFixLoop = useStopFixLoop(client, port);
+  const handleStopFixLoop = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (client === null) return;
+      await stopFixLoop(taskId);
+    },
+    [client, stopFixLoop]
+  );
+
   // Task 8: the "Merge all ready" toolbar action — enqueues every eligible
   // run in the project in one call. Also doubles as the Landing table's push-failure
   // Retry: called with nothing new to enqueue, this still kicks the queue's
@@ -2365,6 +2385,8 @@ export function useDispatchProject(
     handleEnqueueMerge,
     handleEnqueueMergeStack,
     handleDequeueMerge,
+    fixLoops,
+    handleStopFixLoop,
     handleMergeAllReady,
     handleRecheckMergeQueue,
     lastPushError,

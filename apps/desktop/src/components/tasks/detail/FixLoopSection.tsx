@@ -1,6 +1,6 @@
 import type { FixLoopState } from '@dispatch/client';
 import type { EscalationStep } from '@dispatch/core/browser';
-import { Loader2, ShieldAlert, Wrench } from 'lucide-react';
+import { Loader2, ShieldAlert, Square, Wrench } from 'lucide-react';
 
 import type { FixLoopTone } from '../../../lib/fixLoopStatus';
 import {
@@ -47,6 +47,7 @@ export function FixLoopSection({
   fixLoop,
   escalation,
   onStart,
+  onStop,
   starting = false,
   startError = null,
 }: {
@@ -55,10 +56,15 @@ export function FixLoopSection({
   fixLoop: FixLoopState | null;
   escalation: EscalationStep[];
   onStart: () => void;
+  /** Caps the loop where it stands. Offered only while rounds are running. */
+  onStop: () => void;
   starting?: boolean;
   startError?: string | null;
 }) {
   const action = startAction(fixLoop);
+  const stoppable =
+    fixLoop !== null &&
+    (fixLoop.state === 'implementing' || fixLoop.state === 'reviewing');
   const escalates =
     fixLoop !== null && willEscalateNextRound(fixLoop, escalation);
   const detail = fixLoop === null ? null : fixLoopStopDetail(fixLoop);
@@ -107,6 +113,17 @@ export function FixLoopSection({
             </Button>
             <span className="text-muted-foreground text-[11px]">
               {action.hint}
+            </span>
+          </div>
+        )}
+        {stoppable && (
+          <div className="flex items-center gap-2 pt-1 pl-[1.375rem]">
+            <Button size="xs" variant="outline" onClick={onStop}>
+              <Square className="size-3" />
+              Stop
+            </Button>
+            <span className="text-muted-foreground text-[11px]">
+              Cap the loop here; Review &amp; fix resumes it later.
             </span>
           </div>
         )}

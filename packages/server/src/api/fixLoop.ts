@@ -57,6 +57,17 @@ export async function startFixLoop(
   return jsonResponse(await ctx.fixLoop.ignite(taskId));
 }
 
+// POST /api/tasks/:id/fix-loop/stop — the user's Stop button: caps the loop
+// where it stands and asks the task's live runs to wind down.
+export function stopFixLoop(ctx: ApiContext, taskId: string): Response {
+  return jsonResponse(ctx.fixLoop.stop(taskId));
+}
+
+// GET /api/fix-loops — every task's loop state, for feeds that annotate rows.
+export function listFixLoops(ctx: ApiContext): Response {
+  return jsonResponse(ctx.fixLoop.list());
+}
+
 // POST /api/tasks/:id/findings/:fid/adjudicate — the ruling the cap demands.
 // Advancing afterwards is what lets a fully-parked cap settle to `complete`.
 export async function adjudicateFinding(

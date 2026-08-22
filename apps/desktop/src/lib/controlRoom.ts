@@ -1,4 +1,9 @@
-import type { MergeQueueSnapshot, RunKind, RunMeta } from '@dispatch/client';
+import type {
+  FixLoopState,
+  MergeQueueSnapshot,
+  RunKind,
+  RunMeta,
+} from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
@@ -53,6 +58,9 @@ export interface FeedRowModel {
   /** What a `waiting` row wants: an approval (answerable from the row) or a question
    * (answerable only in the run). `null` on every other state. */
   waitingOn: 'approval' | 'question' | null;
+  /** The task's fix loop, when one exists — the row shows its round/phase and
+   * offers Stop while it is actively implementing or reviewing. */
+  fixLoop: FixLoopState | null;
 }
 
 interface FeedGroupModel {
@@ -87,6 +95,8 @@ export interface BuildFeedInput {
   pendingApprovals: ReadonlyMap<string, { toolName: string }>;
   /** Run id -> the questions its agent is blocked on, oldest first. */
   openQuestions: ReadonlyMap<string, readonly { question: string }[]>;
+  /** Task id -> its fix-loop state, for the per-row loop annotations. */
+  fixLoops: ReadonlyMap<string, FixLoopState>;
   query: string;
   /** Empty means "no chip selected", which shows everything rather than nothing. */
   activeStates: ReadonlySet<FeedState>;
@@ -197,6 +207,7 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     mergeQueue,
     pendingApprovals,
     openQuestions,
+    fixLoops,
     query,
     activeStates,
     collapsed,
@@ -224,8 +235,13 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
       .map((r) => r.branch)
   );
 
-  // Every run that still has a place in the feed, with its state resolved once.
-  const rows: FeedRowModel[] = [];
+  // Every run that still has a place in the feed, with its state resolved once. `createdAt`
+  // and the kind travel alongside for the superseded-run pass below.
+  const entries: {
+    row: FeedRowModel;
+    createdAt: string;
+    isExecute: boolean;
+  }[] = [];
   for (const run of runs) {
     if (runKindOf(run) !== 'execute' && foldedInto.has(run.baseBranch))
       continue;
@@ -261,26 +277,58 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
             ? (queuePhaseByRunId.get(run.id) ?? null)
             : null;
 
-    rows.push({
-      runId: run.id,
-      taskId: run.taskId,
-      title: run.taskTitle,
-      state,
-      epicTitle:
-        parentId === null ? null : (epicTitleById.get(parentId) ?? null),
-      since: run.updatedAt,
-      activity,
-      // A dead review agent leaves its execute run looking like an ordinary
-      // "needs review" forever, with nothing anywhere saying the findings the
-      // user is waiting on are never coming.
-      attention:
-        auxFailed !== null
-          ? { reason: `The AI ${auxFailed} agent failed`, detail: null }
-          : attentionFor(state, run, pendingApprovals, openQuestions),
-      waitingOn:
-        state !== 'waiting' ? null : asked.length > 0 ? 'question' : 'approval',
+    entries.push({
+      createdAt: run.createdAt,
+      isExecute: runKindOf(run) === 'execute',
+      row: {
+        runId: run.id,
+        taskId: run.taskId,
+        title: run.taskTitle,
+        state,
+        epicTitle:
+          parentId === null ? null : (epicTitleById.get(parentId) ?? null),
+        since: run.updatedAt,
+        activity,
+        // A dead review agent leaves its execute run looking like an ordinary
+        // "needs review" forever, with nothing anywhere saying the findings the
+        // user is waiting on are never coming.
+        attention:
+          auxFailed !== null
+            ? { reason: `The AI ${auxFailed} agent failed`, detail: null }
+            : attentionFor(state, run, pendingApprovals, openQuestions),
+        waitingOn:
+          state !== 'waiting'
+            ? null
+            : asked.length > 0
+              ? 'question'
+              : 'approval',
+        fixLoop: fixLoops.get(run.taskId) ?? null,
+      },
     });
   }
+
+  // A task the fix loop (or a manual re-dispatch) has run several times leaves one execute
+  // run per round, each still reading 'review' or 'failed' on its own — four identical
+  // "needs review" rows for one task. Only the newest execute run speaks for the task;
+  // older rounds are history, not work waiting on anyone. Live rows (working/waiting) and
+  // queue-backed rows (landing) always survive.
+  const latestExecuteByTask = new Map<string, string>();
+  for (const entry of entries) {
+    if (!entry.isExecute) continue;
+    const seen = latestExecuteByTask.get(entry.row.taskId);
+    if (seen === undefined || entry.createdAt > seen) {
+      latestExecuteByTask.set(entry.row.taskId, entry.createdAt);
+    }
+  }
+  const rows: FeedRowModel[] = entries
+    .filter((entry) => {
+      if (!entry.isExecute) return true;
+      if (entry.row.state !== 'review' && entry.row.state !== 'failed') {
+        return true;
+      }
+      return entry.createdAt === latestExecuteByTask.get(entry.row.taskId);
+    })
+    .map((entry) => entry.row);
 
   // Ribbon counts are over everything, never the filtered set — a chip that hid rows and then
   // reported a smaller count than the chip beside it would be unreadable.

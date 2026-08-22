@@ -37,8 +37,14 @@ export type FixLoopVerdict = 'parked' | 'blocked';
 export const ADJUDICATION_VERDICTS: readonly string[] = ['parked', 'blocked'];
 
 /** Why a stopped loop is not `complete`. Carried on the state and the
- *  `fixloop.capped` event so no consumer has to infer it from the round. */
-export type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+ *  `fixloop.capped` event so no consumer has to infer it from the round.
+ *  `stopped` is the user's own Stop button — sticky against the background
+ *  advance hook, resumable through `ignite` (the "Review & fix" button). */
+export type FixLoopStop =
+  | 'rounds-exhausted'
+  | 'standing-block'
+  | 'error'
+  | 'stopped';
 
 const MIN_FIX_LOOP_CAP = 1;
 /** An upper bound on the round budget: every round dispatches a real agent
@@ -266,6 +272,39 @@ export class FixLoop {
     return this.ctx.fixLoopStore.get(taskId);
   }
 
+  /** Every task's loop state — the bulk read behind GET /api/fix-loops, so a
+   *  feed can annotate rows without one request per task. */
+  list(): FixLoopState[] {
+    return this.ctx.fixLoopStore.list();
+  }
+
+  /** The user's Stop button: caps the loop where it stands (`stopped`), and
+   *  asks any live run of the task to wind down gracefully so the spend ends
+   *  too. Sticky — the stopped run's own terminal event advances into
+   *  `settleCapped`, which leaves a user-stop alone — but resumable: `ignite`
+   *  reopens a `stopped` loop, so the "Review & fix" button doubles as Resume.
+   *  Idempotent on an already-settled loop. */
+  stop(taskId: string): FixLoopState {
+    const state = this.ctx.fixLoopStore.get(taskId);
+    if (state === null) {
+      throw new OrchestratorNotFoundError(`no fix loop for task: ${taskId}`);
+    }
+    if (state.state === 'capped' || state.state === 'complete') return state;
+    for (const run of this.ctx.orchestrator.list()) {
+      if (run.taskId !== taskId || TERMINAL_RUN_STATES.has(run.state)) continue;
+      try {
+        this.ctx.orchestrator.requestStop(run.id);
+      } catch (err) {
+        // A run that cannot be signalled must not keep the loop un-stoppable;
+        // the cap below already prevents any further round from dispatching.
+        console.error(
+          `dispatchd: fix loop stop for ${taskId} could not signal run ${run.id}: ${String(err)}`
+        );
+      }
+    }
+    return this.reachCap(state, 'stopped');
+  }
+
   // Loops a stopped daemon left mid-flight. The run they were waiting on went
   // terminal in the dead process, so no hook will ever fire for them again.
   resumeOnBoot(): number {
@@ -373,7 +412,20 @@ export class FixLoop {
    *  have, so the caller needs no `baseSha` of its own. An already-open loop is
    *  advanced instead, which is what lets one button also resume a capped one. */
   async ignite(taskId: string): Promise<FixLoopState> {
-    if (this.ctx.fixLoopStore.get(taskId) !== null) {
+    const existing = this.ctx.fixLoopStore.get(taskId);
+    if (existing !== null) {
+      // A user-stopped loop resumes here — the same button that started it.
+      // Reopened as `idle` so `step` re-derives what the next move is (clean
+      // findings settle it; open ones dispatch the next round) instead of
+      // trusting a phase the stop interrupted.
+      if (existing.state === 'capped' && existing.stopReason === 'stopped') {
+        this.save({
+          ...existing,
+          state: 'idle',
+          stopReason: undefined,
+          stopDetail: undefined,
+        });
+      }
       return await this.advance(taskId);
     }
     this.requireTask(taskId);
@@ -688,8 +740,11 @@ export class FixLoop {
   }
 
   // The cap never resolves itself. A ruling either settles it or changes what
-  // it waits for, so it stops asking for rulings that no longer exist.
+  // it waits for, so it stops asking for rulings that no longer exist. A
+  // user-stop is as sticky as an error: only an explicit resume reopens it,
+  // never the background hook that fires when its own runs wind down.
   private settleCapped(state: FixLoopState): FixLoopState {
+    if (state.stopReason === 'stopped') return state;
     const reason = this.stopReasonFor(state.taskId);
     if (reason === null) return this.settle(state);
     if (state.stopReason === 'error' || reason === state.stopReason) {
