@@ -1,7 +1,7 @@
 ---
 id: t-f6ab79
 title: "Warden front and center: Runs | Warden tab toggle in the right rail"
-status: in-progress
+status: in-review
 kind: task
 parent: null
 milestone: null
@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T21:17:49.629Z
-updated: 2026-08-22T17:15:46.468Z
+updated: 2026-08-22T17:16:19.281Z
 external: null
 writes:
   - apps/desktop/src/components/shell/LiveRail.tsx
@@ -311,3 +311,4 @@ f-072f6d is fixed correctly: WardenChat.tsx:228-232 now early-returns while hidd
 - Commit your work. An uncommitted fix is not reviewable and this round is judged on what is committed to the branch.
 - Do not widen the change beyond what these findings require. — none
 - 2026-08-22T17:15:46.468Z Fix round 3 committed (bedf2db4 + 9f58fe7e). The recordError guards were reshaped per the review's own analysis of react-query's background-error behavior: turn-live/busy consult recordError only when no record ever loaded (a transient failed refetch mid-turn keeps the running row and the closed composer), while every pending-approval signal and all three "New conversation" gates zero out when recordError is set (in-memory conversations die with a daemon restart — no ghost badges, no locked resets). All six guard halves are mutation-tested, one failing test each on revert. The rail header now uses ui/tabs.tsx (radix) like every other tab strip — same role=tab collision fix plus roving tabindex/arrow keys; component tests activate tabs via mousedown since that is how radix triggers listen. warden.spec.ts gained a second, rail-expanded case that drives the compact chat end to end on the fake backend: status turn, confirm card, the Runs-tab waiting row named by the queued action, tab round-trip, and the deny path verified against the daemon API. The visible scroll-pin fix has regression tests at both levels by hand-defining scrollHeight/scrollTop (happy-dom has no layout). Declared writes fixed via task_save and committed on the task file. Still needing a human Playwright session: regenerate views.spec.ts baselines (rail header changed) and run warden.spec.ts including the new rail case. — none
+- 2026-08-22T17:16:19.281Z [run r-f458fb] finished: finished — 9 files, $21.44 — agent:wsoule679/claude
