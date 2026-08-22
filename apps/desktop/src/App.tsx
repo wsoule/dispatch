@@ -525,11 +525,6 @@ function App() {
     });
   }, [markNotificationInboxRead]);
 
-  // Stable identity for InboxPanel's onClose — that prop drives its outside-click/Escape
-  // listener effect, so an inline arrow here would tear down and re-add those `document`
-  // listeners on every App render instead of just when the panel opens/closes.
-  const closeInbox = useCallback(() => setInboxOpen(false), []);
-
   // Click-through for a notification row: a run transition opens that run's task; a target
   // that names a page rather than a record routes via `projectViewForInboxTarget`.
   // Also marks the whole inbox read again: an entry can arrive while the panel is already
@@ -729,7 +724,15 @@ function App() {
           }}
           onOpenPalette={() => dispatchNav({ type: 'openPalette' })}
           unreadCount={unreadCount(data.notificationInbox)}
+          inboxOpen={inboxOpen}
           onToggleInbox={toggleInbox}
+          inboxPanel={
+            <InboxPanel
+              entries={notificationInbox.entries}
+              onNavigate={navigateFromInbox}
+              onMarkAllRead={markNotificationInboxRead}
+            />
+          }
           drafts={data.drafts}
           onOpenDraft={(draftId) => dispatchNav({ type: 'openDraft', draftId })}
           onDismissDraft={(id) => void data.handleDismissDraft(id)}
@@ -1118,15 +1121,6 @@ function App() {
           entries={paletteEntries}
           onClose={() => dispatchNav({ type: 'closePalette' })}
         />
-
-        {inboxOpen && (
-          <InboxPanel
-            entries={notificationInbox.entries}
-            onNavigate={navigateFromInbox}
-            onMarkAllRead={markNotificationInboxRead}
-            onClose={closeInbox}
-          />
-        )}
       </div>
     </TooltipProvider>
   );

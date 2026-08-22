@@ -1,15 +1,23 @@
 import type { DraftRecord } from '@dispatch/client';
-import { CircleAlert, Sparkles, X } from 'lucide-react';
+import { Sparkles, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { draftTrayViewModel } from '../../lib/draftTray';
 import { cn } from '@/lib/utils';
+import { TaskRow, type TaskRowState } from '@/ui/ai/task-rows';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import { CountChip } from '@/ui/chrome/CountChip';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { ScrollArea } from '@/ui/scroll-area';
-import { Spinner } from '@/ui/spinner';
+
+// The tray's own item states mapped onto `TaskRow`'s vocabulary: a ready proposal is 'done'
+// (review color — it is waiting to be reviewed), the rest map by name.
+const ROW_STATE: Record<'running' | 'ready' | 'failed', TaskRowState> = {
+  running: 'running',
+  ready: 'done',
+  failed: 'failed',
+};
 
 interface DraftTrayProps {
   /** Every draft currently held in memory, newest first — `data.drafts`. */
@@ -70,7 +78,7 @@ export function DraftTray({
           )}
         </Button>
       </PopoverTrigger>
-      <PopoverContent align="end" side="bottom" className="w-80 p-0">
+      <PopoverContent align="end" side="bottom" className="w-[26rem] p-0">
         <div className="shadow-hairline-bottom px-3 py-2">
           <span className="text-foreground text-[13px] font-medium">
             AI task drafts
@@ -80,49 +88,46 @@ export function DraftTray({
           {items.length === 0 ? (
             <EmptyState message='No drafts yet. Start one from "New task".' />
           ) : (
-            items.map((item) => (
-              <div
-                key={item.id}
-                className="shadow-hairline-bottom flex items-center gap-2 px-3 py-2 last:shadow-none"
-              >
-                {item.state === 'running' && (
-                  <Spinner className="text-primary size-3.5 shrink-0" />
-                )}
-                {item.state === 'failed' && (
-                  <CircleAlert className="text-destructive size-3.5 shrink-0" />
-                )}
-                {item.openable ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    onClick={() => {
-                      onOpenDraft(item.id);
-                      setOpen(false);
-                    }}
-                    className="h-auto min-w-0 flex-1 justify-start truncate px-1.5 py-1 text-left text-[13px] font-normal"
-                  >
-                    {item.label}
-                  </Button>
-                ) : (
-                  <span className="text-muted-foreground min-w-0 flex-1 truncate text-[13px]">
-                    {item.label}
-                  </span>
-                )}
-                <span className="text-muted-foreground shrink-0 text-[11px]">
-                  {item.elapsed}
-                </span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon-xs"
-                  aria-label="Dismiss draft"
-                  onClick={() => onDismissDraft(item.id)}
-                  className="text-muted-foreground hover:text-destructive shrink-0"
-                >
-                  <X className="size-3.5" />
-                </Button>
-              </div>
-            ))
+            <div className="[&>*+*]:shadow-hairline-top">
+              {items.map((item) => (
+                <TaskRow
+                  key={item.id}
+                  title={item.label}
+                  agent="planner"
+                  state={ROW_STATE[item.state]}
+                  progress={
+                    item.taskCount !== null && item.taskCount > 1
+                      ? `${item.taskCount} tasks`
+                      : undefined
+                  }
+                  elapsedLabel={item.elapsed}
+                  onClick={
+                    item.openable
+                      ? () => {
+                          onOpenDraft(item.id);
+                          setOpen(false);
+                        }
+                      : undefined
+                  }
+                  actions={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      aria-label="Dismiss draft"
+                      onClick={(event) => {
+                        // The row itself is clickable; a dismiss must not also open it.
+                        event.stopPropagation();
+                        onDismissDraft(item.id);
+                      }}
+                      className="text-muted-foreground hover:text-destructive shrink-0"
+                    >
+                      <X className="size-3.5" />
+                    </Button>
+                  }
+                />
+              ))}
+            </div>
           )}
         </ScrollArea>
       </PopoverContent>

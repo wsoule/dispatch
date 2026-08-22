@@ -1,5 +1,3 @@
-import { useEffect, useRef } from 'react';
-
 import { formatRelativeTimeFromIso } from '../../lib/format';
 import type { InboxEntry, InboxTarget } from '../../lib/inbox';
 import { cn } from '@/lib/utils';
@@ -8,62 +6,26 @@ import { EmptyState } from '@/ui/chrome';
 import { ScrollArea } from '@/ui/scroll-area';
 
 interface InboxPanelProps {
-  /** Newest-first inbox entries — `data.inbox.entries`, unfiltered (read/unread both show,
-   * with read rows muted). */
   entries: InboxEntry[];
-  /** Click-through — App.tsx maps this onto its existing NavActions (run → that run's task;
-   * queue/runs-page → the Inbox). */
+  /** Routes the clicked entry to its record/page — `navigateFromInbox` in App, which also
+   * closes the popover and marks the inbox read. */
   onNavigate: (target: InboxTarget) => void;
-  /** The header's manual "Mark all read" action — separate from the auto-mark-on-open App.tsx
-   * does when the panel opens, so entries that arrive while it's already open can still be
-   * cleared without closing and reopening. */
   onMarkAllRead: () => void;
-  onClose: () => void;
 }
 
 /**
- * The notification inbox popover — the recoverable record behind every transient run/queue
- * toast (see notificationEdges.ts and useTransitionNotifications.ts). Deliberately a plain
- * absolute-positioned panel, not a Radix dialog: it only needs outside-click/Escape
- * dismissal, not focus-trap/portal semantics, so a hand-rolled listener pair keeps it simple.
+ * The notification inbox's panel body — header row plus one row per entry, newest first.
+ * Purely content: it renders inside the titlebar bell's `PopoverContent` (see `TitleBar`),
+ * which owns anchoring, dismissal, and the popover chrome. Bodies wrap in full rather than
+ * clamping — a notification you cannot finish reading is a notification that failed.
  */
 export function InboxPanel({
   entries,
   onNavigate,
   onMarkAllRead,
-  onClose,
 }: InboxPanelProps) {
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  // Outside click or Escape both dismiss the panel — the same "lightweight popover" contract
-  // as clicking the bell again, just from outside the panel instead of on its trigger.
-  useEffect(() => {
-    function handlePointerDown(event: MouseEvent) {
-      if (
-        panelRef.current !== null &&
-        !panelRef.current.contains(event.target as Node)
-      ) {
-        onClose();
-      }
-    }
-    function handleKeyDown(event: KeyboardEvent) {
-      if (event.key === 'Escape') onClose();
-    }
-    document.addEventListener('mousedown', handlePointerDown);
-    document.addEventListener('keydown', handleKeyDown);
-    return () => {
-      document.removeEventListener('mousedown', handlePointerDown);
-      document.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [onClose]);
-
   return (
-    <div
-      ref={panelRef}
-      role="dialog"
-      aria-label="Notifications"
-      className="bg-popover rounded-card shadow-overlay fixed top-11 right-3 z-50 flex max-h-[70vh] w-80 flex-col overflow-hidden"
-    >
+    <div className="flex max-h-[70vh] flex-col overflow-hidden">
       <div className="shadow-hairline-bottom flex shrink-0 items-center justify-between px-3 py-2">
         <span className="text-foreground text-[13px] font-medium">
           Notifications
@@ -84,30 +46,32 @@ export function InboxPanel({
         {entries.length === 0 ? (
           <EmptyState message="No notifications yet." />
         ) : (
-          entries.map((entry) => (
-            <Button
-              key={entry.id}
-              type="button"
-              variant="ghost"
-              onClick={() => onNavigate(entry.target)}
-              className={cn(
-                'hover:bg-accent/60 shadow-hairline-bottom flex h-auto w-full flex-col items-start justify-start gap-0.5 rounded-none px-3 py-2 text-left font-normal last:shadow-none',
-                entry.read && 'opacity-60'
-              )}
-            >
-              <span className="flex w-full items-center justify-between gap-2">
-                <span className="text-foreground truncate text-[13px] font-medium">
-                  {entry.title}
+          <div className="[&>*+*]:shadow-hairline-top">
+            {entries.map((entry) => (
+              <Button
+                key={entry.id}
+                type="button"
+                variant="ghost"
+                onClick={() => onNavigate(entry.target)}
+                className={cn(
+                  'hover:bg-surface-hover ease-out-expo flex h-auto w-full flex-col items-start justify-start gap-0.5 rounded-none px-3 py-2 text-left font-normal whitespace-normal transition-colors duration-100',
+                  entry.read && 'opacity-60'
+                )}
+              >
+                <span className="flex w-full items-baseline justify-between gap-2">
+                  <span className="text-foreground min-w-0 text-[13px] font-medium">
+                    {entry.title}
+                  </span>
+                  <span className="text-muted-foreground shrink-0 font-mono text-[11px] tabular-nums">
+                    {formatRelativeTimeFromIso(entry.ts)}
+                  </span>
                 </span>
-                <span className="text-muted-foreground shrink-0 text-[11px]">
-                  {formatRelativeTimeFromIso(entry.ts)}
+                <span className="text-muted-foreground text-[12px]">
+                  {entry.body}
                 </span>
-              </span>
-              <span className="text-muted-foreground line-clamp-2 text-[12px]">
-                {entry.body}
-              </span>
-            </Button>
-          ))
+              </Button>
+            ))}
+          </div>
         )}
       </ScrollArea>
     </div>
