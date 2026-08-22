@@ -1,6 +1,6 @@
 import type { DraftRecord } from '@dispatch/client';
 import { Bell, Check, ChevronsUpDown, Plus, Search } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { type ReactNode, useEffect, useState } from 'react';
 
 import { colorForProject } from '../../lib/projectColor';
 import { isTauri } from '../../lib/tauri';
@@ -15,6 +15,7 @@ import {
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 import { Kbd } from '@/ui/kbd';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 
 /** A project offered in the titlebar's switcher dropdown. */
 interface SwitchProject {
@@ -36,7 +37,13 @@ interface TitleBarProps {
   onAddProject: () => void;
   onOpenPalette: () => void;
   unreadCount: number;
+  /** Whether the bell's notifications popover is open — owned by App, which marks the inbox
+   * read on open. */
+  inboxOpen: boolean;
   onToggleInbox: () => void;
+  /** The notifications panel body (`InboxPanel`), rendered inside the bell's popover. App
+   * owns the data wiring; the titlebar owns the anchor and chrome. */
+  inboxPanel: ReactNode;
   drafts: DraftRecord[];
   onOpenDraft: (id: string) => void;
   onDismissDraft: (id: string) => void;
@@ -98,7 +105,9 @@ export function TitleBar({
   onAddProject,
   onOpenPalette,
   unreadCount,
+  inboxOpen,
   onToggleInbox,
+  inboxPanel,
   drafts,
   onOpenDraft,
   onDismissDraft,
@@ -205,25 +214,34 @@ export function TitleBar({
         onOpenDraft={onOpenDraft}
         onDismissDraft={onDismissDraft}
       />
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
-        title="Notifications"
-        onClick={() => onToggleInbox()}
-        className="text-muted-foreground hover:text-foreground relative shrink-0 transition-colors duration-150"
-      >
-        <Bell className="size-4" strokeWidth={2} />
-        {/* Same attention affordance as the old sidebar row: a bare accent dot, with the
-            actual count carried by the aria-label rather than a numeric pill. */}
-        {unreadCount > 0 && (
-          <span
-            aria-hidden
-            className="bg-primary absolute top-0.5 right-0.5 size-1.5 rounded-full"
-          />
-        )}
-      </Button>
+      {/* App owns the open state (opening marks the inbox read), so `onOpenChange` routes
+          every Radix-initiated change — trigger click, outside click, Escape — through the
+          same toggle. */}
+      <Popover open={inboxOpen} onOpenChange={() => onToggleInbox()}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
+            title="Notifications"
+            className="text-muted-foreground hover:text-foreground relative shrink-0 transition-colors duration-150"
+          >
+            <Bell className="size-4" strokeWidth={2} />
+            {/* Same attention affordance as the old sidebar row: a bare accent dot, with the
+                actual count carried by the aria-label rather than a numeric pill. */}
+            {unreadCount > 0 && (
+              <span
+                aria-hidden
+                className="bg-primary absolute top-0.5 right-0.5 size-1.5 rounded-full"
+              />
+            )}
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent align="end" side="bottom" className="w-[26rem] p-0">
+          {inboxPanel}
+        </PopoverContent>
+      </Popover>
     </header>
   );
 }
