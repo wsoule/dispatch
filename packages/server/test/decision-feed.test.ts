@@ -402,6 +402,38 @@ describe('DecisionFeed live updates', () => {
     stop();
   });
 
+  // An orphaned agent that kept committing escalates a stalled run's reason
+  // from 'failed' to 'orphan-commits' without its id or state moving — which
+  // is exactly why run.survey is a trigger event. A signature keyed on id and
+  // state alone could not see it, so the escalation reached no one.
+  it('broadcasts when a stalled run escalates without changing state', () => {
+    const stop = h.feed.start();
+    const seen = capture(h.events);
+    h.runs.push(runMeta('r-1', { state: 'failed' }));
+    h.events.broadcast({ type: 'run.changed' });
+    expect(seen).toHaveLength(1);
+    expect(h.feed.list()[0].reason).toBe('failed');
+
+    const survey = {
+      runId: 'r-1',
+      branch: 'dispatch/r-1',
+      staged: [],
+      unstaged: [],
+      untracked: [],
+      lastCommit: null,
+      cleanTree: true,
+      postFailCommits: [
+        { sha: 'aaa', subject: 'late work', date: '2026-08-22T11:00:00Z' },
+      ],
+    };
+    h.runs[0] = runMeta('r-1', { state: 'failed', survey });
+    h.events.broadcast({ type: 'run.survey', runId: 'r-1', survey });
+
+    expect(seen).toHaveLength(2);
+    expect(h.feed.list()[0].reason).toBe('orphan-commits');
+    stop();
+  });
+
   it('stops broadcasting once unsubscribed', () => {
     const stop = h.feed.start();
     const seen = capture(h.events);

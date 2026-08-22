@@ -320,8 +320,18 @@ export class DecisionFeed {
     this.lastOpen = openById;
 
     const resolved = [...this.resolved.values()].reverse();
+    // Keyed on what a surface actually renders, minus anything time-derived.
+    // `reason` and `summary` are in it because an item can change materially
+    // without its id or state moving — an orphaned agent that kept committing
+    // escalates a stalled run from 'failed' to 'orphan-commits' in place, which
+    // is what run.survey is a trigger event for. `since` and `ageMs` are kept
+    // out: age moves on every recompute, and an approval whose run has gone
+    // falls back to `now`, so folding either in would broadcast on a loop.
     this.signature = [...open, ...resolved]
-      .map((item) => `${item.id}:${item.state}`)
+      .map(
+        (item) =>
+          `${item.id}:${item.state}:${item.reason ?? ''}:${item.summary}`
+      )
       .join('|');
     return { open, resolved };
   }
