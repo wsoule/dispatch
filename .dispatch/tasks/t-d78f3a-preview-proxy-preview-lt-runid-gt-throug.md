@@ -1,6 +1,6 @@
 ---
 id: t-d78f3a
-title: "Preview proxy: /preview/&lt;runId&gt;/ through the daemon"
+title: "Preview proxy: /preview/runId through the daemon"
 status: todo
 kind: task
 parent: e-a27691
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:41.125Z
-updated: 2026-08-22T16:38:41.125Z
+updated: 2026-08-22T16:38:49.575Z
 external: null
 writes:
   - packages/server/src/**
