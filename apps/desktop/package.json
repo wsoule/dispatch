@@ -30,17 +30,13 @@
     "@tauri-apps/plugin-notification": "catalog:",
     "@tauri-apps/plugin-process": "catalog:",
     "@tauri-apps/plugin-updater": "catalog:",
-    "class-variance-authority": "catalog:",
-    "clsx": "catalog:",
-    "cmdk": "catalog:",
     "lucide-react": "catalog:",
     "radix-ui": "catalog:",
     "react": "catalog:",
     "react-dom": "catalog:",
     "react-markdown": "catalog:",
     "remark-gfm": "catalog:",
-    "sonner": "catalog:",
-    "tailwind-merge": "catalog:"
+    "sonner": "catalog:"
   },
   "devDependencies": {
     "@dispatch/core": "workspace:*",

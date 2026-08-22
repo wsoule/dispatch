@@ -6,6 +6,7 @@
   ],
   "compilerOptions": {
     "paths": {
+      "@/ui/*": ["../../packages/ui/src/*"],
       "@/*": ["./src/*"]
     }
   }

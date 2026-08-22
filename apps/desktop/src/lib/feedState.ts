@@ -6,78 +6,20 @@ import type {
 
 import { deriveRunDisposition } from './runState';
 import type { TaskRowState } from '@/ui/ai/task-rows';
+import type { FeedState } from '@/ui/lib/feedState';
 
-/**
- * The one vocabulary every dense surface in the app groups and colors by.
- *
- * This is deliberately *not* `RunState`, and deliberately not `RunDisposition`
- * either. `RunState` records how the agent's process ended; `RunDisposition`
- * (lib/runState.ts) answers "whose turn is it" for a run in isolation. Neither
- * can describe the Control room's rows on its own, for two reasons:
- *
- * - A run in the merge queue is no longer about the agent at all — it's about
- *   whether CI will let it land. That's a state the run's own metadata doesn't
- *   have, because it lives in the queue.
- * - Half the rows aren't runs. A ready or blocked task has never had a run, so
- *   any run-derived enum has nothing to say about it.
- *
- * So this is the union of both worlds, and the names match the `--state-*`
- * tokens in styles/tokens.css one-to-one.
- */
-export type FeedState =
-  | 'working'
-  | 'waiting'
-  | 'failed'
-  | 'review'
-  | 'landing'
-  | 'ready'
-  | 'blocked';
-
-/** Human labels. Second person where the user is the blocker, because the label is the ask. */
-export const FEED_STATE_LABEL: Record<FeedState, string> = {
-  working: 'Working',
-  waiting: 'Waiting on you',
-  failed: 'Failed',
-  review: 'Needs review',
-  landing: 'Landing',
-  ready: 'Ready',
-  blocked: 'Blocked',
-};
-
-/**
- * The order the Control room's feed groups render in, and the order everything else should
- * sort by when it needs one. Fixed, not data-driven: what needs a human comes first, and it
- * must not reshuffle as counts change or rows would move under the cursor mid-click.
- */
-export const FEED_STATE_ORDER: readonly FeedState[] = [
-  'waiting',
-  'failed',
-  'working',
-  'review',
-  'landing',
-  'ready',
-  'blocked',
-];
-
-/** States where the user is the thing standing in the way, so the row earns emphasis. */
-const URGENT: ReadonlySet<FeedState> = new Set<FeedState>([
-  'waiting',
-  'failed',
-]);
-
-export function isUrgentState(state: FeedState): boolean {
-  return URGENT.has(state);
-}
-
-/** States with something actively moving, which is what earns the pulsing dot. */
-const IN_FLIGHT: ReadonlySet<FeedState> = new Set<FeedState>([
-  'working',
-  'landing',
-]);
-
-export function isInFlightState(state: FeedState): boolean {
-  return IN_FLIGHT.has(state);
-}
+// The FeedState vocabulary (type, labels, order, urgency/in-flight sets) moved to
+// @dispatch/ui (packages/ui) with the components keyed on it — the `--state-*` tokens and
+// StateMark/StateDot live there. This module keeps the app-domain half: deriving a
+// FeedState from runs and merge-queue entries. The re-export keeps `@/lib/feedState` the
+// one import path app code needs.
+export {
+  FEED_STATE_LABEL,
+  FEED_STATE_ORDER,
+  isInFlightState,
+  isUrgentState,
+  type FeedState,
+} from '@/ui/lib/feedState';
 
 /** Queue states that have come to rest — the entry is out of the pipeline either way. */
 const TERMINAL_QUEUE_STATES: ReadonlySet<MergeQueueEntryState> =

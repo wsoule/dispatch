@@ -16,7 +16,6 @@ import { StackBadge } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { deriveEpicPulse } from '../lib/epicPulse';
 import { resolveListKeyCommand } from '../lib/keyboard';
-import { Input } from '../ui/input';
 import { cn } from '@/lib/utils';
 import {
   type RecordsColumn,
@@ -27,6 +26,7 @@ import {
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import { StateDot } from '@/ui/chrome/StateDot';
+import { Input } from '@/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface TasksListViewProps {
