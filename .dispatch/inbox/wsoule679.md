@@ -5,6 +5,7 @@ line anywhere and Dispatch will pick it up.
 
 ## Open
 
+- [ ] (note) the agent had requested my input but i was not notified ^in-1149a8
 - [ ] (note) warden to be able to link directly to the tasks/runs in the chat ^in-97f238
 - [ ] (task) add the ability for Warden to create tasks ^in-a0ecfc
 - [ ] (note) I want to see all of my tasks in one place ^in-96416b
