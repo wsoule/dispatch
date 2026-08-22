@@ -122,8 +122,8 @@ are sufficient unless the edit touches executable code or package config.
 - 📄 tsconfig.oxlint.json
 - 📄 tsconfig.tsbuildinfo
 
-**Stack:** React **High impact:** apps/desktop/src/lib/utils.ts (166
-dependents), apps/desktop/src/ui/button.tsx (97 dependents),
+**Stack:** React **High impact:** apps/desktop/src/lib/utils.ts (191
+dependents), apps/desktop/src/ui/button.tsx (101 dependents),
 packages/core/src/types.ts (79 dependents), packages/core/src/actor.ts (77
 dependents), packages/core/src/describe.ts (77 dependents),
 packages/core/src/ids.ts (76 dependents), packages/core/src/slug.ts (76
