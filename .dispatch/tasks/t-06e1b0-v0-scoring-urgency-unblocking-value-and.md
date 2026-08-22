@@ -1,7 +1,7 @@
 ---
 id: t-06e1b0
 title: "v0 scoring: urgency, unblocking value, and age against the current store"
-status: in-progress
+status: in-review
 kind: task
 parent: e-ba8bf1
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-22T18:52:06.817Z
+updated: 2026-08-22T18:58:16.527Z
 external: null
 writes:
   - packages/core/src/**
@@ -35,3 +35,4 @@ From the 2026-08-22 audit: the full weight function waits on the storage spine a
 - 2026-08-22T18:08:01.592Z requested changes (run r-4c6efa): You were interrupted by a dispatchd restart (a dev build was bouncing the daemon — now resolved). Your worktree and progress are intact; the survey above lists what was uncommitted. Continue from where you left off, re-verifying anything mid-flight when you stopped. — human:wsoule679
 - 2026-08-22T18:51:35.160Z [run r-4c6efa] flagged interrupted-dirty: 11 uncommitted path(s) found — none
 - 2026-08-22T18:52:06.817Z requested changes (run r-ac26a4): Interrupted by another dispatchd restart; worktree intact, continue from where you left off. — human:wsoule679
+- 2026-08-22T18:58:16.527Z [run r-ac26a4] finished: failed — 0 files, $4.24 — agent:wsoule679/claude
