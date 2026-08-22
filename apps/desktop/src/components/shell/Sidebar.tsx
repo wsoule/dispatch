@@ -16,7 +16,7 @@ import {
   Shield,
   Waypoints,
 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { type ReactNode, useCallback, useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
 import { SyncChip } from './SyncChip';
@@ -169,13 +169,18 @@ interface SidebarProps {
   syncStatus: SyncStatus | null;
   /** Flips `.dispatch/config.yml`'s `autoCommit` off — the sync chip's kill switch. */
   onDisableAutoCommit: () => void;
+  /** The live-agents section (`LiveRail`), rendered at the top of the rail's footer — or
+   * `null` outside project scope, where there are no runs to show. App owns the gating and
+   * the data wiring; the rail just gives it a home. */
+  liveRail: ReactNode;
 }
 
 /**
- * Persistent, Linear-style left rail: wordmark, the active project's primary nav
- * (Board/Tasks/Runs/Plans), and the global section (All Agents/Sessions/Settings) below it.
- * The project switcher, notifications bell, and drafts tray moved to the window titlebar
- * (see `TitleBar.tsx`). Built on the `SidebarNav` primitive (`ui/ai/sidebar-nav.tsx`)
+ * Persistent, Linear-style left rail: the active project's primary nav (Board/Tasks/Runs/
+ * Plans), the global section (All Agents/Sessions/Settings) below it, and the live-agents
+ * section in the footer. The project switcher, notifications bell, and drafts tray live in
+ * the window titlebar (see `TitleBar.tsx`); branding lives in the app icon, not the rail.
+ * Built on the `SidebarNav` primitive (`ui/ai/sidebar-nav.tsx`)
  * for its rows/sections, still wrapped in the shadcn `Sidebar` shell purely for the
  * fixed-position/icon-collapse/mobile mechanics App.tsx's `SidebarProvider` already owns —
  * this reads that back through `useSidebar` so the icon-only strip still works.
@@ -192,6 +197,7 @@ export function Sidebar({
   onSetGlobalView,
   syncStatus,
   onDisableAutoCommit,
+  liveRail,
 }: SidebarProps) {
   const { state, toggleSidebar } = useSidebar();
   const collapsed = state === 'collapsed';
@@ -259,36 +265,12 @@ export function Sidebar({
     [onSetProjectView, onSetGlobalView]
   );
 
-  const header = (
-    <>
-      {/* The Hydrogen mark — a circle with an orbiting satellite node, matching the app icon
-        (see app-icon.svg). White tile + black mark so it reads at 20px in both themes. */}
-      <div
-        className={cn(
-          'text-foreground mb-2 flex items-center font-mono text-[13px] font-semibold',
-          collapsed ? 'justify-center' : 'gap-2 px-2'
-        )}
-      >
-        <span className="border-border inline-flex size-5 shrink-0 items-center justify-center rounded-md border bg-white">
-          <svg
-            viewBox="0 0 34 36"
-            className="size-3.5"
-            fill="none"
-            aria-hidden="true"
-          >
-            <path
-              d="M17 0C26.3888 0 34 7.61116 34 17C34 19.6624 33.3869 22.1813 32.2959 24.4248C33.3569 25.6519 34 27.2505 34 29C34 32.866 30.866 36 27 36C24.7943 36 22.828 34.979 21.5449 33.3848C20.0982 33.7852 18.5742 34 17 34C7.61116 34 0 26.3888 0 17C0 13.7085 0.935188 10.6354 2.55469 8.03223C2.20259 7.43659 2 6.74205 2 6C2 3.79086 3.79086 2 6 2C6.74205 2 7.43659 2.20259 8.03223 2.55469C10.6354 0.935188 13.7085 0 17 0ZM17 3.40039C14.4188 3.40039 12.0051 4.11849 9.94922 5.36719C9.98199 5.57335 10 5.78461 10 6C10 8.20914 8.20914 10 6 10C5.78461 10 5.57335 9.98199 5.36719 9.94922C4.11849 12.0051 3.40039 14.4188 3.40039 17C3.40039 24.5111 9.48893 30.5996 17 30.5996C18.0707 30.5996 19.112 30.4741 20.1113 30.2402C20.0393 29.8376 20 29.4233 20 29C20 25.134 23.134 22 27 22C27.8672 22 28.6974 22.158 29.4639 22.4463C30.1936 20.7786 30.5996 18.9369 30.5996 17C30.5996 9.48893 24.5111 3.40039 17 3.40039Z"
-              fill="#000000"
-            />
-          </svg>
-        </span>
-        {!collapsed && 'Dispatch'}
-      </div>
-    </>
-  );
-
   const footer = (
     <>
+      {/* The live-agents section (see `LiveRail.tsx`) — App passes it already gated to
+          project scope, so `null` here just means there is nothing to show. */}
+      {liveRail}
+
       {/* The board syncer's status. Hidden when collapsed, same as the spend line below — an
           icon-only rail has no room for a sentence. */}
       {!collapsed && hasActiveProject && (
@@ -356,7 +338,6 @@ export function Sidebar({
           `sidebar-gap`/`sidebar-container`), so this fills that box instead of also
           animating its own `w-60`/`w-14` in parallel and drifting out of sync with it. */}
       <SidebarNav
-        header={header}
         sections={sections}
         activeId={activeId}
         onSelect={handleSelect}

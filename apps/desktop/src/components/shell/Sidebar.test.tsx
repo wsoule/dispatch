@@ -16,6 +16,7 @@ const props = {
   onSetGlobalView: () => {},
   syncStatus: null,
   onDisableAutoCommit: () => {},
+  liveRail: null,
 };
 
 // The rail only reads its collapsed state from `SidebarProvider`, so every case mounts through

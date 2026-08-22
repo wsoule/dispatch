@@ -18,7 +18,7 @@ import { CommandPalette } from './components/shell/CommandPalette';
 import type { PaletteEntry } from './components/shell/CommandPalette';
 import { ErrorBoundary } from './components/shell/ErrorBoundary';
 import { InboxPanel } from './components/shell/InboxPanel';
-import { LiveRail, useLiveRailCollapsed } from './components/shell/LiveRail';
+import { LiveRail } from './components/shell/LiveRail';
 import { Sidebar, useSidebarCollapsed } from './components/shell/Sidebar';
 import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
 import { TitleBar } from './components/shell/TitleBar';
@@ -101,9 +101,6 @@ function App() {
   // The left rail's collapsed state, owned here because `SidebarProvider` wraps the whole
   // shell row; `Sidebar` reads it back through `useSidebar`. Persistence lives with the rail.
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
-  // The live-agents rail's collapsed state, owned here for the same reason: the rail is a
-  // sibling of `<main>` in the shell row, not something a view can size for itself.
-  const [liveRailCollapsed, setLiveRailCollapsed] = useLiveRailCollapsed();
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -777,6 +774,20 @@ function App() {
             onDisableAutoCommit={() =>
               void data.handleUpdateConfig({ autoCommit: false })
             }
+            // Project scope only — the global views have no runs to show. The section lives
+            // in the rail's footer now that the shell has one rail instead of two.
+            liveRail={
+              navState.section === 'project' && activeProject !== null ? (
+                <LiveRail
+                  runs={data.runs}
+                  repoPrs={data.repoPrs ?? []}
+                  openQuestions={data.openQuestions}
+                  onOpenTask={openTaskView}
+                  onOpenInbox={() => selectProjectView('inbox')}
+                  collapsed={sidebarCollapsed}
+                />
+              ) : null
+            }
           />
           <main className="min-w-0 flex-1 overflow-auto p-6">
             <ErrorBoundary label="this page">
@@ -1047,24 +1058,6 @@ function App() {
               )}
             </ErrorBoundary>
           </main>
-
-          {/* The live-agents rail, kept in the corner across every project screen — unlike the
-              old MiniOverview, it never hides itself: a row per running agent stays put even
-              when nothing needs a human, and the attention strip is the only part that comes
-              and goes. Collapsing narrows it to a strip (the attention count survives) rather
-              than removing it, which is what keeps a narrow window's Diff column readable.
-              Project scope only — the global views have no runs to show. */}
-          {navState.section === 'project' && activeProject !== null && (
-            <LiveRail
-              runs={data.runs}
-              repoPrs={data.repoPrs ?? []}
-              openQuestions={data.openQuestions}
-              onOpenTask={openTaskView}
-              onOpenInbox={() => selectProjectView('inbox')}
-              collapsed={liveRailCollapsed}
-              onSetCollapsed={setLiveRailCollapsed}
-            />
-          )}
         </SidebarProvider>
 
         {/* The quick-capture brain button, pinned bottom-right on every project screen except

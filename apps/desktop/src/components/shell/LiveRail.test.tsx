@@ -2,7 +2,7 @@ import type { RunMeta, RunQuestion } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { LiveRail, useLiveRailCollapsed } from './LiveRail';
+import { LiveRail } from './LiveRail';
 
 function run(over: Partial<RunMeta> = {}): RunMeta {
   return {
@@ -31,7 +31,6 @@ test('renders the idle copy with no runs', () => {
       onOpenTask={() => {}}
       onOpenInbox={() => {}}
       collapsed={false}
-      onSetCollapsed={() => {}}
     />
   );
   expect(screen.getByText('No agents running.')).toBeDefined();
@@ -55,7 +54,6 @@ test('renders a row per live run, clicking opens its task', () => {
       onOpenTask={onOpenTask}
       onOpenInbox={() => {}}
       collapsed={false}
-      onSetCollapsed={() => {}}
     />
   );
   const row = screen.getByText('Do the thing');
@@ -75,7 +73,6 @@ test('shows the attention strip when something is waiting, and it navigates to t
         opened = true;
       }}
       collapsed={false}
-      onSetCollapsed={() => {}}
     />
   );
   const strip = screen.getByText('1 waiting on you →');
@@ -83,62 +80,9 @@ test('shows the attention strip when something is waiting, and it navigates to t
   expect(opened).toBe(true);
 });
 
-// The rail is fixed-width and sits on every project screen, so at the window's 1040px
-// minimum it is the difference between a readable Diff column and a 176px sliver. These pin
-// the collapse at the level happy-dom can actually decide: which element is rendered and
-// what width class it carries.
-test('collapsing narrows the rail to a strip and back', () => {
-  let collapsed = false;
-  const { rerender } = render(
-    <LiveRail
-      runs={[run()]}
-      repoPrs={[]}
-      openQuestions={NO_QUESTIONS}
-      onOpenTask={() => {}}
-      onOpenInbox={() => {}}
-      collapsed={collapsed}
-      onSetCollapsed={(next) => {
-        collapsed = next;
-      }}
-    />
-  );
-
-  const expanded = screen.getByText('Live agents').closest('aside');
-  expect(expanded?.className).toContain('w-60');
-
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Collapse the live agents rail' })
-  );
-  expect(collapsed).toBe(true);
-
-  rerender(
-    <LiveRail
-      runs={[run()]}
-      repoPrs={[]}
-      openQuestions={NO_QUESTIONS}
-      onOpenTask={() => {}}
-      onOpenInbox={() => {}}
-      collapsed={collapsed}
-      onSetCollapsed={(next) => {
-        collapsed = next;
-      }}
-    />
-  );
-
-  const strip = screen
-    .getByRole('button', { name: 'Expand the live agents rail' })
-    .closest('aside');
-  expect(strip?.className).toContain('w-9');
-  expect(strip?.className).not.toContain('w-60');
-
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Expand the live agents rail' })
-  );
-  expect(collapsed).toBe(false);
-});
-
-// The spec's "never hides" rule: a collapsed rail must still say something is waiting, or
-// collapsing it becomes a way to lose the only always-on signal in the shell.
+// The "never hides" rule survives the move into the sidebar: the collapsed icon strip must
+// still say something is waiting, or collapsing the rail becomes a way to lose the only
+// always-on signal in the shell.
 test('the collapsed strip still shows the attention count and opens the inbox', () => {
   let opened = false;
   render(
@@ -151,7 +95,6 @@ test('the collapsed strip still shows the attention count and opens the inbox', 
         opened = true;
       }}
       collapsed
-      onSetCollapsed={() => {}}
     />
   );
 
@@ -161,31 +104,20 @@ test('the collapsed strip still shows the attention count and opens the inbox', 
   expect(opened).toBe(true);
 });
 
-// The key and its '1'/'0' encoding are the stored contract with an already-installed app; a
-// rename silently re-expands everyone's rail. `dispatch:overview-rail` is explicitly retired
-// and must not be consulted — it meant "hidden", which this rail never is.
-test('the collapse preference round-trips through dispatch:live-rail', () => {
-  function Probe() {
-    const [collapsed, setCollapsed] = useLiveRailCollapsed();
-    return (
-      <button type="button" onClick={() => setCollapsed(!collapsed)}>
-        {collapsed ? 'collapsed' : 'expanded'}
-      </button>
-    );
-  }
-
-  window.localStorage.removeItem('dispatch:live-rail');
-  window.localStorage.setItem('dispatch:overview-rail', '0');
-  const first = render(<Probe />);
-  expect(screen.getByRole('button').textContent).toBe('expanded');
-  expect(window.localStorage.getItem('dispatch:live-rail')).toBe('0');
-
-  fireEvent.click(screen.getByRole('button'));
-  expect(window.localStorage.getItem('dispatch:live-rail')).toBe('1');
-  first.unmount();
-
-  render(<Probe />);
-  expect(screen.getByRole('button').textContent).toBe('collapsed');
-  window.localStorage.removeItem('dispatch:live-rail');
-  window.localStorage.removeItem('dispatch:overview-rail');
+// Collapsed, the run rows and headings disappear — only the two essentials survive: the
+// attention count (above) and that agents are running at all.
+test('the collapsed strip drops rows but keeps the running count', () => {
+  render(
+    <LiveRail
+      runs={[run(), run({ id: 'r-2', taskId: 't-2', taskTitle: 'Other' })]}
+      repoPrs={[]}
+      openQuestions={NO_QUESTIONS}
+      onOpenTask={() => {}}
+      onOpenInbox={() => {}}
+      collapsed
+    />
+  );
+  expect(screen.queryByText('Live agents')).toBeNull();
+  expect(screen.queryByText('Do the thing')).toBeNull();
+  expect(screen.getByTitle('2 agents running').textContent).toContain('2');
 });

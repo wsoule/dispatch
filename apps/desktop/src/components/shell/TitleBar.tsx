@@ -202,7 +202,6 @@ export function TitleBar({
 
       <DraftTray
         drafts={drafts}
-        collapsed
         onOpenDraft={onOpenDraft}
         onDismissDraft={onDismissDraft}
       />
