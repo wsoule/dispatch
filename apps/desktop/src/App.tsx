@@ -21,6 +21,7 @@ import { InboxPanel } from './components/shell/InboxPanel';
 import { LiveRail, useLiveRailCollapsed } from './components/shell/LiveRail';
 import { Sidebar, useSidebarCollapsed } from './components/shell/Sidebar';
 import { PROJECT_VIEW_ORDER } from './components/shell/Sidebar';
+import { TitleBar } from './components/shell/TitleBar';
 import { useToasts } from './components/shell/Toasts';
 import { UpdateBanner } from './components/shell/UpdateBanner';
 import { AiTaskComposer } from './components/tasks/AiTaskComposer';
@@ -715,6 +716,27 @@ function App() {
   return (
     <TooltipProvider>
       <div className="bg-background flex h-screen flex-col overflow-hidden">
+        {/* The custom titlebar must be the window's topmost strip: with `titleBarStyle:
+            "Overlay"` the native traffic lights float over whatever is rendered up here. */}
+        <TitleBar
+          projectName={activeProject?.name ?? null}
+          projectPath={activeProject?.path ?? null}
+          noProjectYet={noProjectYet}
+          switcherOpen={switcherOpen}
+          onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
+          switchProjects={switchProjects ?? []}
+          onSelectProject={selectSwitchProject}
+          onAddProject={() => {
+            setSwitcherOpen(false);
+            setAddProjectOpen(true);
+          }}
+          onOpenPalette={() => dispatchNav({ type: 'openPalette' })}
+          unreadCount={unreadCount(data.notificationInbox)}
+          onToggleInbox={toggleInbox}
+          drafts={data.drafts}
+          onOpenDraft={(draftId) => dispatchNav({ type: 'openDraft', draftId })}
+          onDismissDraft={(id) => void data.handleDismissDraft(id)}
+        />
         {pendingUpdate !== null && !updateDismissed && (
           <UpdateBanner
             update={pendingUpdate}
@@ -737,8 +759,6 @@ function App() {
           className="relative min-h-0 flex-1 overflow-hidden"
         >
           <Sidebar
-            projectName={activeProject?.name ?? null}
-            projectPath={activeProject?.path ?? null}
             hasActiveProject={activeProject !== null}
             section={navState.section}
             projectView={navState.projectView}
@@ -751,28 +771,12 @@ function App() {
               landing:
                 data.landing !== null ? landingNavBadge(data.landing) : 0,
             }}
-            unreadCount={unreadCount(data.notificationInbox)}
-            onToggleInbox={toggleInbox}
-            drafts={data.drafts}
-            onOpenDraft={(draftId) =>
-              dispatchNav({ type: 'openDraft', draftId })
-            }
-            onDismissDraft={(id) => void data.handleDismissDraft(id)}
             onSetProjectView={selectProjectView}
             onSetGlobalView={setGlobalView}
-            switcherOpen={switcherOpen}
-            onToggleSwitcher={() => setSwitcherOpen((open) => !open)}
-            switchProjects={switchProjects ?? []}
-            onSelectProject={selectSwitchProject}
             syncStatus={data.syncStatus}
             onDisableAutoCommit={() =>
               void data.handleUpdateConfig({ autoCommit: false })
             }
-            noProjectYet={noProjectYet}
-            onAddProject={() => {
-              setSwitcherOpen(false);
-              setAddProjectOpen(true);
-            }}
           />
           <main className="min-w-0 flex-1 overflow-auto p-6">
             <ErrorBoundary label="this page">

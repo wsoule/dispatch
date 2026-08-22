@@ -5,8 +5,6 @@ import { PROJECT_VIEW_ORDER, Sidebar, useSidebarCollapsed } from './Sidebar';
 import { SidebarProvider } from '@/ui/sidebar';
 
 const props = {
-  projectName: 'dispatch',
-  projectPath: '/Users/x/dispatch',
   hasActiveProject: true,
   section: 'project' as const,
   projectView: 'inbox' as const,
@@ -14,21 +12,10 @@ const props = {
   liveAgentCount: 3,
   badges: { board: 2 },
   spendToday: 1.5,
-  unreadCount: 4,
-  onToggleInbox: () => {},
-  drafts: [],
-  onOpenDraft: () => {},
-  onDismissDraft: () => {},
   onSetProjectView: () => {},
   onSetGlobalView: () => {},
-  switcherOpen: false,
-  onToggleSwitcher: () => {},
-  switchProjects: [],
-  onSelectProject: () => {},
   syncStatus: null,
   onDisableAutoCommit: () => {},
-  noProjectYet: false,
-  onAddProject: () => {},
 };
 
 // The rail only reads its collapsed state from `SidebarProvider`, so every case mounts through
@@ -82,9 +69,8 @@ test('expanded rail shows every row with its shortcut number', () => {
   expect(screen.getByText('Work')).toBeTruthy();
   expect(screen.getByText('$1.50')).toBeTruthy();
   expect(screen.getByText('⌘K')).toBeTruthy();
-  // Per-row count, unread bell count, live-agent count.
+  // Per-row count and live-agent count. (The unread bell moved to the titlebar.)
   expect(screen.getByText('2')).toBeTruthy();
-  expect(screen.getByText('4')).toBeTruthy();
   expect(screen.getByText('3')).toBeTruthy();
 });
 
@@ -101,12 +87,6 @@ test('collapsed rail hides labels but keeps every accessible name', () => {
       screen.getByRole('button', { name: label }).getAttribute('aria-label')
     ).toBe(label);
   }
-  expect(
-    screen.getByRole('button', { name: 'Notifications (4 unread)' })
-  ).toBeTruthy();
-  expect(
-    screen.getByRole('button', { name: 'Switch project (current: dispatch)' })
-  ).toBeTruthy();
   expect(screen.queryByText('⌘1')).toBeNull();
   expect(screen.queryByText('⌘K')).toBeNull();
   expect(screen.queryByText('Workspace')).toBeNull();

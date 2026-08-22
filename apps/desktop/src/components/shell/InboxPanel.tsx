@@ -62,7 +62,7 @@ export function InboxPanel({
       ref={panelRef}
       role="dialog"
       aria-label="Notifications"
-      className="bg-popover rounded-card shadow-overlay fixed bottom-20 left-16 z-50 flex max-h-[70vh] w-80 flex-col overflow-hidden"
+      className="bg-popover rounded-card shadow-overlay fixed top-11 right-3 z-50 flex max-h-[70vh] w-80 flex-col overflow-hidden"
     >
       <div className="shadow-hairline-bottom flex shrink-0 items-center justify-between px-3 py-2">
         <span className="text-foreground text-[13px] font-medium">
