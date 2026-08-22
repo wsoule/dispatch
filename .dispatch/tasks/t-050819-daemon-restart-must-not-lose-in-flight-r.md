@@ -2,7 +2,7 @@
 id: t-050819
 title: "Daemon restart must not lose in-flight runs: auto-resume on boot and on
   re-dispatch"
-status: in-progress
+status: in-review
 kind: task
 parent: null
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T18:01:32.916Z
-updated: 2026-08-22T18:52:07.109Z
+updated: 2026-08-22T18:59:03.730Z
 external: null
 writes:
   - packages/server/src/**
@@ -41,3 +41,4 @@ Tests: extend packages/server/test/resilience.test.ts — restart mid-run with a
 - 2026-08-22T18:08:02.420Z requested changes (run r-a8ff69): You were interrupted by a dispatchd restart (a dev build was bouncing the daemon — now resolved). Your worktree and progress are intact; the survey above lists what was uncommitted. Continue from where you left off, re-verifying anything mid-flight when you stopped. — human:wsoule679
 - 2026-08-22T18:51:35.231Z [run r-a8ff69] flagged interrupted-dirty: 11 uncommitted path(s) found — none
 - 2026-08-22T18:52:07.109Z requested changes (run r-8e265e): Interrupted by another dispatchd restart; worktree intact, continue from where you left off. — human:wsoule679
+- 2026-08-22T18:59:03.730Z [run r-8e265e] finished: failed — 0 files, $3.58 — agent:wsoule679/claude
