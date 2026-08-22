@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:37:51.474Z
-updated: 2026-08-22T16:37:51.474Z
+updated: 2026-08-22T16:58:40.673Z
 external: null
 writes:
   - packages/core/src/**
@@ -24,3 +24,4 @@ Add initiative, project, and milestone entity types to packages/core (types.ts, 
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T16:58:40.673Z Audit amendment (2026-08-22): tasks ALREADY have a `milestone` field (packages/core/src/types.ts:23-26), a free-text "Linear-style grouping above epics" — the name this task introduces, with inverted semantics (new milestones sit BELOW projects). The entity model must account for it: existing task.milestone values encode grouping intent and should seed PROJECT names, and the old free-text field is retired in favor of the structured hierarchy. Coordinate with the epic→milestone migration task (t-4545da), which carries the data-mapping side. — none

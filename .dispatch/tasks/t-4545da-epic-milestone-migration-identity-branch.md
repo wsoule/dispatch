@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:20.588Z
-updated: 2026-08-22T16:38:20.588Z
+updated: 2026-08-22T16:58:43.445Z
 external: null
 writes:
   - packages/core/src/**
@@ -27,3 +27,4 @@ Migrate existing epics to milestones. This is the riskiest task in the hierarchy
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T16:58:43.445Z Audit amendment (2026-08-22): migration input includes the legacy free-text task.milestone field (packages/core/src/types.ts:23-26, "grouping above epics" — opposite of the new milestone-below-project). Mapping: distinct legacy milestone values become projects; tasks keep their epic (→ new milestone), and that milestone's project is inferred from the tasks' legacy values where consistent, defaulting to the default project where absent or conflicting. The dry-run report must list every legacy value and where it landed. Field is removed from the schema at the end of this migration. — none
