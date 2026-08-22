@@ -6,12 +6,12 @@ kind: task
 parent: e-ba8bf1
 milestone: null
 blocked-by:
-  - t-95328d
+  - t-06e1b0
 labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:33.542Z
-updated: 2026-08-22T16:38:33.542Z
+updated: 2026-08-22T16:58:29.432Z
 external: null
 writes:
   - apps/desktop/src/**
