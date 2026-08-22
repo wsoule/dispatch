@@ -15,7 +15,6 @@ import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { shouldRecluster } from '../lib/inboxAutoCluster';
 import { splitCaptureLines } from '../lib/inboxCapture';
 import { describeCluster, findCluster } from '../lib/inboxCluster';
-import { Popover, PopoverContent, PopoverTrigger } from '../ui/popover';
 import { cn } from '@/lib/utils';
 import {
   defaultSelectionActions,
@@ -28,6 +27,7 @@ import { Checkbox } from '@/ui/checkbox';
 import { Panel } from '@/ui/chrome';
 import { SectionLabel } from '@/ui/chrome/SectionLabel';
 import { Kbd } from '@/ui/kbd';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { Textarea } from '@/ui/textarea';
 
 // Mirrors InboxClusterer's own MIN_ITEMS (packages/server/src/inboxClusterer.ts) — the sidebar

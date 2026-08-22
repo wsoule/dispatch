@@ -47,9 +47,6 @@
         "@tauri-apps/plugin-notification": "catalog:",
         "@tauri-apps/plugin-process": "catalog:",
         "@tauri-apps/plugin-updater": "catalog:",
-        "class-variance-authority": "catalog:",
-        "clsx": "catalog:",
-        "cmdk": "catalog:",
         "lucide-react": "catalog:",
         "radix-ui": "catalog:",
         "react": "catalog:",
@@ -57,7 +54,6 @@
         "react-markdown": "catalog:",
         "remark-gfm": "catalog:",
         "sonner": "catalog:",
-        "tailwind-merge": "catalog:",
       },
       "devDependencies": {
         "@dispatch/core": "workspace:*",
@@ -172,6 +168,27 @@
       },
       "devDependencies": {
         "@types/bun": "catalog:",
+        "typescript": "catalog:",
+      },
+    },
+    "packages/ui": {
+      "name": "@dispatch/ui",
+      "version": "0.0.1",
+      "dependencies": {
+        "class-variance-authority": "catalog:",
+        "clsx": "catalog:",
+        "cmdk": "catalog:",
+        "lucide-react": "catalog:",
+        "radix-ui": "catalog:",
+        "react": "catalog:",
+        "sonner": "catalog:",
+        "tailwind-merge": "catalog:",
+      },
+      "devDependencies": {
+        "@happy-dom/global-registrator": "catalog:",
+        "@testing-library/react": "catalog:",
+        "@types/bun": "catalog:",
+        "@types/react": "catalog:",
         "typescript": "catalog:",
       },
     },
@@ -467,6 +484,8 @@
     "@dispatch/server": ["@dispatch/server@workspace:packages/server"],
 
     "@dispatch/site": ["@dispatch/site@workspace:apps/site"],
+
+    "@dispatch/ui": ["@dispatch/ui@workspace:packages/ui"],
 
     "@dispatch/web": ["@dispatch/web@workspace:packages/web"],
 
@@ -2027,8 +2046,6 @@
     "wrap-ansi/strip-ansi": ["strip-ansi@7.2.0", "", { "dependencies": { "ansi-regex": "^6.2.2" } }, "sha512-yDPMNjp4WyfYBkHnjIRLfca1i6KMyGCtsVgoKe/z1+6vukgaENdgGBZt+ZmKPc4gavvEZ5OgHfHdrazhgNyG7w=="],
 
     "@cspell/cspell-resolver/global-directory/ini": ["ini@6.0.0", "", {}, "sha512-IBTdIkzZNOpqm7q3dRqJvMaldXjDHWkEDfrwGEQTs5eaQMWV+djAhR+wahyNNMAa+qpbDUhBMVt4ZKNwpPm7xQ=="],
-
-    "@pierre/trees/@pierre/theming/@pierre/theme": ["@pierre/theme@1.1.0", "", {}, "sha512-GC2OWTAfTIIWWYhPCygwG8t2EtePQkRfON4MI2rwIkJylmiyqIttJID2dCL8sUD8cNdEvYkEyfEHHKMeCiDLoQ=="],
 
     "@rolldown/binding-wasm32-wasi/@napi-rs/wasm-runtime/@tybys/wasm-util": ["@tybys/wasm-util@0.10.2", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-RoBvJ2X0wuKlWFIjrwffGw1IqZHKQqzIchKaadZZfnNpsAYp2mM0h36JtPCjNDAHGgYez/15uMBpfGwchhiMgg=="],
 

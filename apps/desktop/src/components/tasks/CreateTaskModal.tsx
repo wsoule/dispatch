@@ -6,25 +6,25 @@ import type {
 } from '@dispatch/core/browser';
 import { useState } from 'react';
 
-import { Alert, AlertDescription } from '../../ui/alert';
-import { Button } from '../../ui/button';
+import { Alert, AlertDescription } from '@/ui/alert';
+import { Button } from '@/ui/button';
 import {
   Dialog,
   DialogContent,
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from '../../ui/dialog';
-import { Field, FieldLabel } from '../../ui/field';
-import { Input } from '../../ui/input';
+} from '@/ui/dialog';
+import { Field, FieldLabel } from '@/ui/field';
+import { Input } from '@/ui/input';
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from '../../ui/select';
-import { Textarea } from '../../ui/textarea';
+} from '@/ui/select';
+import { Textarea } from '@/ui/textarea';
 
 // Fixed, non-config-driven enums — see TaskDetailModal.tsx for why these
 // mirror core/types.ts's constants instead of importing them at runtime.
