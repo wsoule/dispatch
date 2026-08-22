@@ -129,19 +129,47 @@ built. Filed thin — a single design task — because everything about it depen
 on what Hosted Builder and the shared team runtime learn. Epic: `e-e2d9c0`,
 blocked by Hosted Builder, `e-5434b7`, and `e-ff5a2c`.
 
+## Audit amendments (2026-08-22)
+
+An audit of the filed board against the goal — "use it with my team, localized,
+better than Linear" — produced four changes:
+
+1. **Team-local mode** (`e-5f3530`, blocked by the storage spine): the plan as
+   first filed made Dispatch _more_ local (per-machine SQLite, dispatchd on
+   127.0.0.1, single-user) while the only team story was the hosted tier, last
+   in the build order. This epic is the near-term team product: one shared
+   dispatchd on a machine the team can reach, per-user tokens over the existing
+   two-tier auth, the desktop web bundle served to browsers, presence and
+   per-user attribution. The hosted tier later generalizes it.
+2. **Notification center** (`e-6cfcc7`, unblocked): nothing answered "what do
+   humans need to decide next" (evidence: inbox `^in-1149a8`). A daemon decision
+   feed — pending gates, agent input requests, exhausted fix loops, stalled runs
+   — with an in-app center plus OS/webhook delivery. The policy epic's
+   blocking-vs-recorded split later becomes this feed's filter.
+3. **Queue v0 first** (`t-06e1b0`; the queue epic is no longer blocked by the
+   hierarchy): urgency, unblocking value, and age exist in today's store, so the
+   scoring core, queue view, and pull dispatch ship against them now. The full
+   scoring task adds project rank, initiative rank, and due-date proximity when
+   the hierarchy lands — same function, more factors.
+4. **Legacy `milestone` field**: tasks already carry a free-text `milestone`
+   ("grouping above epics" — the opposite of the new milestone-below-project).
+   Recorded on the entity-model and migration tasks: distinct legacy values seed
+   projects, the field is retired at the end of the migration.
+
 ## Build order
 
-Two independent starting points exist today: the storage spine (`e-99e113`) and
-preview per run (`e-a27691`), joined by shareable run URLs (`e-dff6d3`) and the
-lens decomposition (`e-3a6884`) as cheap parallel work. Then:
+Three independent starting points exist today: the storage spine (`e-99e113`),
+preview per run (`e-a27691`), and the notification center (`e-6cfcc7`) — joined
+by queue v0 (`t-06e1b0`), shareable run URLs (`e-dff6d3`), and the lens
+decomposition (`e-3a6884`) as cheap parallel work. Then:
 
 ```text
-storage spine ─┬─ planning hierarchy ─┬─ memory
-               │                      └─ queue
+storage spine ─┬─ team-local mode (e-5f3530 — when the team starts using it)
+               ├─ planning hierarchy ─┬─ memory
+               │                      └─ queue v1 (full factors)
                ├─ shared team runtime (e-5434b7, mechanism updated)
                └────────────┐
 lens ── builder front door ─┴─ Hosted Builder ── Hosted Engineer
 preview ──┘                                   (also ← e-5434b7, e-ff5a2c)
-policy (independent; hosted tiers assume it)
-share URLs (independent)
+queue v0, policy, notifications, share URLs (independent, start any time)
 ```
