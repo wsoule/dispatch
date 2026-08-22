@@ -11,7 +11,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-11T21:17:49.629Z
-updated: 2026-08-22T16:14:21.947Z
+updated: 2026-08-22T16:35:45.216Z
 external: null
 writes:
   - apps/desktop/src/components/shell/LiveRail.tsx
@@ -133,3 +133,4 @@ Declared writes for this task were LiveRail.tsx, LiveRail.test.tsx, RailWardenTa
 - Address every finding above, or state precisely why one is not a defect.
 - Commit your work. An uncommitted fix is not reviewable and this round is judged on what is committed to the branch.
 - Do not widen the change beyond what these findings require. — none
+- 2026-08-22T16:35:45.215Z Fix round 1 committed (3d7ad5e2), all nine findings addressed. Correctness: recordError now vetoes the Runs-tab warden row so a 404'd record can't fake a running agent (mutation-tested, 1 fail on revert); a settled turn with a queued approval keeps a waiting row on Runs, puts an amber count on the Warden tab button, and gets a collapsed-strip badge that expands onto the confirm card; the collapsed running count includes a live warden turn. Robustness: Warden tab gates on daemonReady like WardenView; WardenChat stays mounted-but-hidden so composer drafts survive tab flips; the compact New reset is disabled while an action is pending (mutation-tested). e2e: warden.spec.ts now collapses the rail via dispatch:live-rail (the overview-rail key it set was retired and a no-op), which removes the rail's Warden tab button that strict-mode-collided with the sidebar locator. Coverage: new WardenChat.test.tsx exercises the full-page branch (start, confirm/deny, follow-up). Scope for WardenChat.tsx/.test.tsx, WardenView.tsx and warden.spec.ts requested and granted. Two hand-offs: views.spec.ts PNG baselines are stale from the rail-header change and must be regenerated outside this env (Playwright can't launch here, baselines are fixture-keyed); the devFakeWarden backend seam needs a live dispatchd so it stays e2e-only — component tests use the WardenSession interface with wardenThread.test.ts-style fixtures. — none
