@@ -5,12 +5,13 @@ status: todo
 kind: task
 parent: e-3a6884
 milestone: null
-blocked-by: []
+blocked-by:
+  - t-fb96ec
 labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:44:12.600Z
-updated: 2026-08-22T16:44:12.600Z
+updated: 2026-08-22T16:44:42.890Z
 external: null
 writes:
   - apps/desktop/src/**

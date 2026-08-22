@@ -5,12 +5,13 @@ status: todo
 kind: task
 parent: e-ad1978
 milestone: null
-blocked-by: []
+blocked-by:
+  - t-2c6c71
 labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:44:23.378Z
-updated: 2026-08-22T16:44:23.378Z
+updated: 2026-08-22T16:44:46.269Z
 external: null
 writes:
   - packages/server/src/**

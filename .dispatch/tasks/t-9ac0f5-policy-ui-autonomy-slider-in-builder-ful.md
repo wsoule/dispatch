@@ -5,12 +5,13 @@ status: todo
 kind: task
 parent: e-ad1978
 milestone: null
-blocked-by: []
+blocked-by:
+  - t-2c6c71
 labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:44:26.904Z
-updated: 2026-08-22T16:44:26.904Z
+updated: 2026-08-22T16:44:47.747Z
 external: null
 writes:
   - apps/desktop/src/**
