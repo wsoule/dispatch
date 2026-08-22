@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-22T17:36:53.614Z
+updated: 2026-08-22T17:57:12.755Z
 external: null
 writes:
   - packages/core/src/**
@@ -28,3 +28,4 @@ From the 2026-08-22 audit: the full weight function waits on the storage spine a
 ## Activity
 - 2026-08-22T17:33:47.232Z dispatched (claude, branch dispatch/t-06e1b0-v0-scoring-urgency-unblocking-value-and-167969) — human:wsoule679
 - 2026-08-22T17:36:53.613Z Starting. Plan: (1) new pure `packages/core/src/scoring.ts` — browser-safe, `now` injected, factor-table shape (urgency / unblocking / age) so the v1 task adds project rank, initiative rank, and due-date proximity by appending rows rather than rewriting; each factor returns a normalized 0..1 value + a `detail` string, total = sum(value*weight). (2) `queue.weights` config block in configTypes/config with defaults + ConfigPatch support, so the queue-view task can tune weights from Settings without touching core. (3) `GET /api/queue` in a new `packages/server/src/api/queue.ts` (one route registration in api.ts) returning ranked ready tasks with per-factor breakdowns — on-demand like /api/landing, with the existing `task.changed`/`config.changed` WS events as the refetch signal. Keeping the footprint small in server/src and core/src since r-66e2c7 and r-d236d7 are live on the same globs. — none
+- 2026-08-22T17:57:12.755Z dispatched (claude, branch dispatch/t-06e1b0-v0-scoring-urgency-unblocking-value-and-ece301) — human:wsoule679
