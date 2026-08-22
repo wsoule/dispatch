@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:37:48.803Z
-updated: 2026-08-22T18:24:34.888Z
+updated: 2026-08-22T18:28:25.399Z
 external: null
 writes:
   - packages/core/src/**
@@ -32,3 +32,4 @@ Add a SQLite-backed implementation of the TaskStore interface (packages/core/src
 - 2026-08-22T18:03:48.547Z [run r-664ec2] flagged interrupted-dirty: 12 uncommitted path(s) found — none
 - 2026-08-22T18:07:56.097Z requested changes (run r-2ca940): You were interrupted by a dispatchd restart (a dev build was bouncing the daemon — now resolved). Your worktree and progress are intact; the survey above lists what was uncommitted. Continue from where you left off, re-verifying anything mid-flight when you stopped. — human:wsoule679
 - 2026-08-22T18:24:34.888Z Run r-664ec2: adopted the interrupted r-d236d7 worktree's implementation after reviewing it file-by-file against the task (SqliteTaskStore behind a new TaskStorePort, SqliteFinding/Ledger/Evidence stores, openProjectStores as the construction-time backend switch, browserPurity test walking the value-import graph from browser.ts). Verified rather than trusted: re-ran the 61 new tests, mutation-tested all 9 guards in the diff myself (1–3 tests fail per reverted guard, none vacuous), and added one guard the prior run lacked — openDispatchDb now refuses a database whose user_version is newer than DISPATCH_DB_VERSION instead of stamping it back down (mutation-tested: 1 failure). — none
+- 2026-08-22T18:28:25.399Z Two notes for whoever adopts this in the daemon. (1) dispatchDbPath() defaults to .dispatch/dispatch.db, i.e. inside the project repo — inert today because nothing constructs with backend:'sqlite', but the epic's plan is ~/.dispatch/projects/&lt;id&gt;/, and until that move a project that flips the switch will see dispatch.db (plus -wal/-shm) in git status. Every caller passes an explicit dbPath, so it is a one-line change at the call site. (2) The schema covers what the task enumerated — tasks/epics, findings, ledger entries (decisions are kind:'decision'), and command/mutation evidence. fix-loops.jsonl and per-run transcripts are deliberately out: runs are still orchestrator-owned state, so run_id is an opaque key here rather than a foreign key. — none
