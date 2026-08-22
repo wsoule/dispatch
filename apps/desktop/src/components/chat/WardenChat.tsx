@@ -233,17 +233,24 @@ export function WardenChat({
 
   // A turn is in flight — dispatchd 409s a second message until it settles.
   // Confirm cards stay live on purpose: the server accepts a decision mid-turn.
-  // `recordError` vetoes it (same rule as LiveRail's running row): with
-  // `retry: false` a failed fetch leaves `record` undefined forever, and that
-  // is a broken conversation showing its 404 banner, not the warden answering.
+  // `recordError` only decides the no-record case (fetch never succeeded →
+  // broken conversation showing its 404 banner, not the warden answering);
+  // with a record cached, one failed *background* refetch mid-turn must not
+  // flip the composer open against a turn the server would still 409.
   const busy =
     warden.conversationId !== null &&
-    warden.recordError === null &&
-    (warden.record === undefined || warden.record.state === 'running');
+    (warden.record === undefined
+      ? warden.recordError === null
+      : warden.record.state === 'running');
 
   // A queued mutation nobody has decided on. Gates the compact reset: dropping
   // the conversation is the only way to lose the confirm card in the UI.
-  const hasPendingAction = (warden.record?.pendingActions.length ?? 0) > 0;
+  // `recordError` vetoes even a cached record here — warden conversations are
+  // in-memory in dispatchd, so a failing refetch usually means a restart wiped
+  // them, and the reset must not stay locked guarding a ghost action.
+  const hasPendingAction =
+    warden.recordError === null &&
+    (warden.record?.pendingActions.length ?? 0) > 0;
 
   async function startConversation() {
     const text = prompt.trim();

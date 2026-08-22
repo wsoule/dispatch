@@ -11,6 +11,7 @@ import { WardenChat } from '../chat/WardenChat';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { StateDot } from '@/ui/chrome/StateDot';
+import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 
 // Persists whether the rail is collapsed to a slim strip. `dispatch:overview-rail` — the key
 // the retired MiniOverview used for its own open/closed flag — is deliberately NOT read here:
@@ -115,19 +116,30 @@ export function LiveRail({
   }, [tab]);
 
   // The warden mid-turn is an agent at work like any run — it earns a Runs-tab
-  // row. `recordError` must veto it: with `retry: false` a failed fetch (stale
-  // id after a daemon restart) leaves `record` undefined forever, which is a
-  // broken conversation, not a turn in flight.
+  // row. `recordError` only decides the no-record case: fetch never succeeded
+  // (stale id 404s, retry: false) means a broken conversation, not a turn in
+  // flight. With a record cached, react-query keeps it through *background*
+  // refetch errors, and a running record plus one transient failure is still
+  // the warden at work — dropping the row there would flicker on every blip.
   const wardenTurnLive =
     warden.conversationId !== null &&
-    warden.recordError === null &&
-    (warden.record === undefined || warden.record.state === 'running');
+    (warden.record === undefined
+      ? warden.recordError === null
+      : warden.record.state === 'running');
   // Mutations queued for the human. A settled turn with a pending action is
   // `state: 'ready'` — idle, not running — so this is a separate signal: the
-  // rail must not go quiet while an approval is stranded behind it.
-  const wardenPendingCount = warden.record?.pendingActions.length ?? 0;
+  // rail must not go quiet while an approval is stranded behind it. Here
+  // `recordError` vetoes even a cached record: warden conversations are
+  // in-memory in dispatchd, so a failing refetch usually means a restart wiped
+  // them, and these signals must not advertise (and the resets must not guard)
+  // an action that no longer exists anywhere.
+  const wardenPendingCount =
+    warden.recordError === null
+      ? (warden.record?.pendingActions.length ?? 0)
+      : 0;
   // The oldest queued action — what the Runs-tab waiting row describes.
-  const firstPendingAction = warden.record?.pendingActions[0];
+  const firstPendingAction =
+    warden.recordError === null ? warden.record?.pendingActions[0] : undefined;
   const wardenRow = wardenTurnLive || wardenPendingCount > 0;
   // What "agents running" means everywhere in this rail: the run rows plus a
   // warden turn in flight — the collapsed strip and the expanded Runs tab must
@@ -197,48 +209,31 @@ export function LiveRail({
   return (
     <aside className="border-border flex w-60 shrink-0 flex-col gap-3 border-l p-3">
       <div className="flex items-center gap-2">
-        {/* Real tab semantics, not aria-pressed toggle buttons: the sidebar's
-            global nav already has a *button* named "Warden", and two identical
-            button names would be ambiguous to a screen reader and a
-            strict-mode violation for any e2e locator looking for the nav. As
-            tabs these never answer a `role: 'button'` query. */}
-        <div
-          role="tablist"
-          aria-label="Live rail sections"
-          className="bg-muted/40 flex items-center gap-0.5 rounded-md p-0.5"
+        {/* The app's radix Tabs, same as TaskView's Details|Chat|Diff: real
+            tab semantics (roving tabindex, arrow keys) — and as role=tab
+            these never collide with the sidebar's *button* named "Warden"
+            for screen readers or role-scoped e2e locators. */}
+        <Tabs
+          value={tab}
+          onValueChange={(v) => setTab(v as LiveRailTab)}
+          className="w-fit"
         >
-          {(
-            [
-              { value: 'runs', label: 'Runs' },
-              { value: 'warden', label: 'Warden' },
-            ] as const
-          ).map((t) => (
-            <Button
-              key={t.value}
-              type="button"
-              role="tab"
-              variant="ghost"
-              size="xs"
-              aria-selected={tab === t.value}
-              onClick={() => setTab(t.value)}
-              className={cn(
-                'h-6 rounded-sm px-2 text-[12px] font-normal',
-                tab === t.value
-                  ? 'bg-background text-foreground shadow-xs'
-                  : 'text-muted-foreground'
-              )}
-            >
-              {t.label}
-              {t.value === 'warden' && wardenPendingCount > 0 && (
+          <TabsList aria-label="Live rail sections">
+            <TabsTrigger value="runs" className="px-2 text-[12px]">
+              Runs
+            </TabsTrigger>
+            <TabsTrigger value="warden" className="px-2 text-[12px]">
+              Warden
+              {wardenPendingCount > 0 && (
                 // The queued-approval count follows the tab label so a user
                 // parked on Runs still sees a mutation is waiting on them.
                 <span className="rounded-full bg-amber-500/15 px-1 text-[10px] font-medium text-amber-600 dark:text-amber-400">
                   {wardenPendingCount}
                 </span>
               )}
-            </Button>
-          ))}
-        </div>
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
         <Button
           type="button"
           variant="ghost"

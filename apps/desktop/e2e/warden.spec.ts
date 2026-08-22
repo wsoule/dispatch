@@ -237,4 +237,76 @@ test.describe('warden chat end to end', () => {
     await page.keyboard.press('Meta+5');
     await expect(runRows).toHaveCount(rowsBefore + 1, { timeout: 15_000 });
   });
+
+  /**
+   * The same gated flow driven from the LiveRail's Warden tab — the compact
+   * surface the first test's collapsed rail deliberately hides. The rail
+   * stays expanded here (no Runs-view row counting happens in this test, so
+   * its run-row buttons are harmless), and the deny path is re-verified
+   * against the daemon; the approve path is the first test's job.
+   */
+  test('the rail Warden tab drives the same human-gated flow', async ({
+    page,
+    baseURL,
+    request,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== 'dark', 'theme-independent flow');
+
+    baselineRunIds = await listRunIds(request);
+
+    await page.addInitScript(() => {
+      window.localStorage.setItem('dispatch.devFakeWarden', '1');
+      window.localStorage.setItem('dispatch:live-rail', '0');
+    });
+    await page.goto(authedUrl(baseURL));
+    await page.getByText('Dispatch').first().waitFor();
+
+    // The rail's tabs are radix role=tab, so this never collides with the
+    // sidebar's "Warden" nav *button* under strict mode.
+    const wardenTab = page.getByRole('tab', { name: 'Warden' });
+    await wardenTab.click();
+
+    // The compact chat reuses the full page's aria-labels; the Warden page
+    // itself is not open, so each resolves uniquely.
+    await page
+      .getByLabel('Warden opening question')
+      .fill("What's going on in this project?");
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(
+      page.getByText(/Status check: this project has \d+ runs on record/)
+    ).toBeVisible({ timeout: 15_000 });
+
+    // --- Queue a mutation (scripted turn 1) from the rail ---------------
+    await page
+      .getByLabel('Follow-up message')
+      .fill('Dispatch the next ready task for me.');
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    const confirmHeader = page.getByText('Needs your approval');
+    await expect(confirmHeader).toBeVisible({ timeout: 15_000 });
+
+    // While the approval waits, the Runs tab lists the warden as a waiting
+    // agent named by the queued action, and clicking the row returns to the
+    // chat. Matched by accessible name — the chat stays mounted (hidden) on
+    // the Runs tab and strict mode counts its hidden nodes, so a bare text
+    // locator on the summary would also hit the hidden confirm card; only
+    // the row's name ends "… with the fake executor warden <time>".
+    await page.getByRole('tab', { name: 'Runs' }).click();
+    const wardenRow = page.getByRole('button', {
+      name: /with the fake executor warden/,
+    });
+    await expect(wardenRow).toBeVisible();
+    await wardenRow.click();
+    await expect(wardenTab).toHaveAttribute('aria-selected', 'true');
+
+    // --- Deny from the rail: nothing may happen server-side -------------
+    await page.getByRole('button', { name: /^Deny:/ }).click();
+    await expect(page.getByText(/^Denied: Dispatch /)).toBeVisible();
+    await expect(confirmHeader).toHaveCount(0);
+
+    const afterDeny = await listRunIds(request);
+    expect(
+      [...afterDeny].filter((id) => !baselineRunIds?.has(id)),
+      'denying from the rail must not create a run'
+    ).toEqual([]);
+  });
 });

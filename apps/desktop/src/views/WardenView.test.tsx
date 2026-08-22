@@ -92,3 +92,27 @@ test('New conversation resets when idle but is disabled while an action awaits a
   fireEvent.click(gated);
   expect(resets).toBe(1);
 });
+
+// The gate must not guard a ghost: a cached record whose refetch is failing is
+// usually a daemon restart that wiped the in-memory conversation, and a locked
+// header reset would leave no way to start over from the page either.
+test('New conversation is enabled again when the record refetch is failing', () => {
+  let resets = 0;
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord({ pendingActions: [wardenAction()] }),
+    recordError: 'warden conversation w-1 not found (404)',
+    reset: () => {
+      resets += 1;
+    },
+  });
+  render(
+    <WardenView data={DAEMON_UP} warden={warden} projectName="storefront" />
+  );
+  const reset = screen.getByRole<HTMLButtonElement>('button', {
+    name: /New conversation/,
+  });
+  expect(reset.disabled).toBe(false);
+  fireEvent.click(reset);
+  expect(resets).toBe(1);
+});

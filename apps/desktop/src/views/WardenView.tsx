@@ -20,6 +20,14 @@ interface WardenViewProps {
  * switching tabs and coming back lands on the same transcript.
  */
 export function WardenView({ data, warden, projectName }: WardenViewProps) {
+  // Same gate (and same recordError veto) as WardenChat's compact reset: a
+  // queued mutation must stay decidable, but a failing refetch usually means
+  // a daemon restart wiped the in-memory conversation — the reset must not
+  // stay locked guarding a ghost action.
+  const hasPendingAction =
+    warden.recordError === null &&
+    (warden.record?.pendingActions.length ?? 0) > 0;
+
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <DaemonUnavailable
@@ -42,17 +50,14 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
           )}
         </div>
         {warden.conversationId !== null && (
-          // Same gate as WardenChat's compact reset: reset() drops the only UI
-          // handle on the conversation, so a queued mutation must be decided
-          // before this can discard the confirm card that decides it.
+          // reset() drops the only UI handle on the conversation, so a queued
+          // mutation must be decided before this can discard its confirm card.
           <Button
             variant="outline"
             size="sm"
-            disabled={(warden.record?.pendingActions.length ?? 0) > 0}
+            disabled={hasPendingAction}
             title={
-              (warden.record?.pendingActions.length ?? 0) > 0
-                ? 'Decide the pending action first'
-                : undefined
+              hasPendingAction ? 'Decide the pending action first' : undefined
             }
             onClick={() => warden.reset()}
           >

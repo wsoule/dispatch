@@ -176,3 +176,70 @@ test('compact mode: New resets when idle but is disabled while an action awaits 
   fireEvent.click(gated);
   expect(resets).toBe(1);
 });
+
+// The busy veto only applies when no record ever loaded. With a running record
+// cached, one failed background refetch must not flip the composer open
+// against a turn dispatchd would still 409.
+test('a transient refetch error mid-turn still reads as the warden answering', () => {
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord({ state: 'running' }),
+    recordError: 'daemon busy (500)',
+  });
+  render(<WardenChat warden={warden} />);
+  expect(screen.getByText('The warden is answering…')).toBeDefined();
+});
+
+// The reset gate must not guard a ghost: a cached record whose refetch fails
+// is usually a daemon restart that wiped the in-memory conversation, and a
+// locked reset would leave no way to start over.
+test('compact New is enabled again when the record refetch is failing', () => {
+  let resets = 0;
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord({ pendingActions: [wardenAction()] }),
+    recordError: 'warden conversation w-1 not found (404)',
+    reset: () => {
+      resets += 1;
+    },
+  });
+  render(<WardenChat warden={warden} compact />);
+  const reset = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'New warden conversation',
+  });
+  expect(reset.disabled).toBe(false);
+  fireEvent.click(reset);
+  expect(resets).toBe(1);
+});
+
+// The scroll pin skips while the chat is display:none (scrollHeight is 0
+// there) and re-runs on the visible edge. scrollHeight/scrollTop are defined
+// by hand because happy-dom has no layout.
+test('the transcript re-pins when visible flips true', () => {
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: wardenRecord({
+      messages: [
+        { role: 'user', text: 'status?', at: '2026-08-10T00:00:01Z' },
+        { role: 'assistant', text: 'All quiet.', at: '2026-08-10T00:00:02Z' },
+      ],
+    }),
+  });
+  const { rerender } = render(
+    <WardenChat warden={warden} compact visible={false} />
+  );
+  const log = screen.getByRole('log');
+  Object.defineProperty(log, 'scrollHeight', {
+    value: 480,
+    configurable: true,
+  });
+  Object.defineProperty(log, 'scrollTop', {
+    value: 0,
+    writable: true,
+    configurable: true,
+  });
+  expect(log.scrollTop).toBe(0);
+
+  rerender(<WardenChat warden={warden} compact visible />);
+  expect(log.scrollTop).toBe(480);
+});
