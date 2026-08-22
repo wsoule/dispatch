@@ -222,6 +222,10 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
     warden.conversationId !== null &&
     (warden.record === undefined || warden.record.state === 'running');
 
+  // A queued mutation nobody has decided on. Gates the compact reset: dropping
+  // the conversation is the only way to lose the confirm card in the UI.
+  const hasPendingAction = (warden.record?.pendingActions.length ?? 0) > 0;
+
   async function startConversation() {
     const text = prompt.trim();
     if (text === '' || starting) return;
@@ -439,11 +443,18 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
           {compact && (
             // The full page's "New conversation" lives in its header; the rail
             // has no header of its own, so the reset rides the composer row.
+            // Disabled while an action awaits a decision: reset() drops the
+            // only UI handle on this conversation, and a pending mutation must
+            // stay decidable.
             <Button
               variant="ghost"
               size="xs"
+              disabled={hasPendingAction}
               onClick={() => warden.reset()}
               aria-label="New warden conversation"
+              title={
+                hasPendingAction ? 'Decide the pending action first' : undefined
+              }
               className="shrink-0"
             >
               <Plus className="size-3" /> New

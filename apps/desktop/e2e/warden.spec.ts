@@ -126,13 +126,15 @@ test.describe('warden chat end to end', () => {
     baselineRunIds = await listRunIds(request);
 
     // Route new conversations to the daemon's 'fake' warden backend — set
-    // before load, same as any localStorage-keyed devtool. The overview rail
-    // starts closed (same as edit-diff.spec.ts) for a different reason here:
-    // it repeats task titles as buttons, which would double-count the
-    // Runs-view row assertions below.
+    // before load, same as any localStorage-keyed devtool. The live rail
+    // starts collapsed (its own key — the retired dispatch:overview-rail is
+    // deliberately ignored by LiveRail) for two reasons: expanded, it repeats
+    // task titles as row buttons, double-counting the Runs-view assertions
+    // below, and its Runs | Warden tab header would strict-mode-collide with
+    // the sidebar's own "Warden" nav button.
     await page.addInitScript(() => {
       window.localStorage.setItem('dispatch.devFakeWarden', '1');
-      window.localStorage.setItem('dispatch:overview-rail', '0');
+      window.localStorage.setItem('dispatch:live-rail', '1');
     });
     await page.goto(authedUrl(baseURL));
     await page.getByText('Dispatch').first().waitFor();

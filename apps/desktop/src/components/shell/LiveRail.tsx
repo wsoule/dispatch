@@ -57,6 +57,10 @@ interface LiveRailProps {
   /** The App-mounted warden session the rail's Warden tab renders — the same
    * object WardenView gets, so both surfaces show one conversation. */
   warden: WardenSession;
+  /** Whether dispatchd is up and the client is live. When it isn't, the Warden
+   * tab explains instead of rendering a composer whose first Ask would throw —
+   * the same gate WardenView applies with DaemonUnavailable. */
+  daemonReady: boolean;
   /** Opens the full task view on a run's chat tab — `openTaskView` in App.tsx. */
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
   /** Navigates to the Inbox project view. */
@@ -83,6 +87,7 @@ export function LiveRail({
   repoPrs,
   openQuestions,
   warden,
+  daemonReady,
   onOpenTask,
   onOpenInbox,
   collapsed,
@@ -98,12 +103,34 @@ export function LiveRail({
     window.localStorage.setItem(LIVE_RAIL_TAB_STORAGE_KEY, tab);
   }, [tab]);
 
+  // Once the Warden tab has been opened, its chat stays mounted (hidden) while
+  // other tabs show, so a half-typed message survives a glance at Runs. The
+  // session itself already lives in App; the composer draft is the one piece
+  // of state that would otherwise die with the unmount.
+  const [wardenChatMounted, setWardenChatMounted] = useState(
+    () => readStoredLiveRailTab() === 'warden'
+  );
+  useEffect(() => {
+    if (tab === 'warden') setWardenChatMounted(true);
+  }, [tab]);
+
   // The warden mid-turn is an agent at work like any run — it earns a Runs-tab
-  // row. `record === undefined` with a conversation open means the record is
-  // still loading right after start, which is also a turn in flight.
-  const wardenLive =
+  // row. `recordError` must veto it: with `retry: false` a failed fetch (stale
+  // id after a daemon restart) leaves `record` undefined forever, which is a
+  // broken conversation, not a turn in flight.
+  const wardenTurnLive =
     warden.conversationId !== null &&
+    warden.recordError === null &&
     (warden.record === undefined || warden.record.state === 'running');
+  // Mutations queued for the human. A settled turn with a pending action is
+  // `state: 'ready'` — idle, not running — so this is a separate signal: the
+  // rail must not go quiet while an approval is stranded behind it.
+  const wardenPendingCount = warden.record?.pendingActions.length ?? 0;
+  const wardenRow = wardenTurnLive || wardenPendingCount > 0;
+  // What "agents running" means everywhere in this rail: the run rows plus a
+  // warden turn in flight — the collapsed strip and the expanded Runs tab must
+  // quote the same number.
+  const runningCount = live.length + (wardenTurnLive ? 1 : 0);
 
   if (collapsed) {
     return (
@@ -132,14 +159,33 @@ export function LiveRail({
             {attentionCount}
           </Button>
         )}
-        {live.length > 0 && (
-          // The one thing the strip cannot drop: that agents are running at all.
+        {wardenPendingCount > 0 && (
+          // A stranded approval must survive the collapse the same way the
+          // attention count does; expanding here lands on the confirm card.
+          <Button
+            type="button"
+            variant="ghost"
+            size="xs"
+            onClick={() => {
+              setTab('warden');
+              onSetCollapsed(false);
+            }}
+            aria-label={`${wardenPendingCount} warden action${wardenPendingCount === 1 ? '' : 's'} awaiting approval`}
+            title={`${wardenPendingCount} warden action${wardenPendingCount === 1 ? '' : 's'} awaiting approval`}
+            className="size-6 rounded-md bg-amber-500/10 p-0 text-[11px] font-medium text-amber-600 dark:text-amber-400"
+          >
+            {wardenPendingCount}
+          </Button>
+        )}
+        {runningCount > 0 && (
+          // The one thing the strip cannot drop: that agents are running at
+          // all. A warden turn counts — the expanded Runs tab gives it a row.
           <span
             className="flex flex-col items-center gap-1"
-            title={`${live.length} agent${live.length === 1 ? '' : 's'} running`}
+            title={`${runningCount} agent${runningCount === 1 ? '' : 's'} running`}
           >
             <StateDot state="working" pulse />
-            <span className="dense-meta">{live.length}</span>
+            <span className="dense-meta">{runningCount}</span>
           </span>
         )}
       </aside>
@@ -171,6 +217,13 @@ export function LiveRail({
               )}
             >
               {t.label}
+              {t.value === 'warden' && wardenPendingCount > 0 && (
+                // The queued-approval count follows the tab label so a user
+                // parked on Runs still sees a mutation is waiting on them.
+                <span className="rounded-full bg-amber-500/15 px-1 text-[10px] font-medium text-amber-600 dark:text-amber-400">
+                  {wardenPendingCount}
+                </span>
+              )}
             </Button>
           ))}
         </div>
@@ -199,17 +252,18 @@ export function LiveRail({
         </button>
       )}
 
-      {tab === 'runs' ? (
+      {tab === 'runs' && (
         <div className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-          {live.length === 0 && !wardenLive ? (
+          {live.length === 0 && !wardenRow ? (
             <p className="text-muted-foreground text-[12px]">
               No agents running.
             </p>
           ) : (
             <div className="flex flex-col gap-0.5">
-              {wardenLive && (
-                // A warden turn in flight sits with the agents it is one of;
-                // its "task view" is the rail's own Warden tab.
+              {wardenRow && (
+                // A warden turn in flight sits with the agents it is one of —
+                // and a settled turn holding a queued approval stays here as a
+                // waiting row. Its "task view" is the rail's own Warden tab.
                 <Button
                   type="button"
                   variant="ghost"
@@ -217,7 +271,10 @@ export function LiveRail({
                   onClick={() => setTab('warden')}
                   className="h-auto w-full justify-start gap-2 rounded-md px-1.5 py-1 text-left font-normal"
                 >
-                  <StateDot state="working" pulse />
+                  <StateDot
+                    state={wardenTurnLive ? 'working' : 'waiting'}
+                    pulse={wardenTurnLive}
+                  />
                   <span className="min-w-0 flex-1 truncate text-[13px]">
                     {warden.record?.prompt ?? 'Warden'}
                   </span>
@@ -256,8 +313,26 @@ export function LiveRail({
             </div>
           )}
         </div>
-      ) : (
-        <WardenChat warden={warden} compact />
+      )}
+
+      {tab === 'warden' && !daemonReady && (
+        <p className="text-muted-foreground text-[12px]">
+          The dispatch daemon isn't available, and the warden needs it. The
+          Warden page has the details and a retry.
+        </p>
+      )}
+
+      {daemonReady && wardenChatMounted && (
+        // Kept mounted once opened — `hidden`, not unmounted, on the Runs tab
+        // so the composer draft survives switching away and back.
+        <div
+          className={cn(
+            'flex min-h-0 flex-1 flex-col',
+            tab !== 'warden' && 'hidden'
+          )}
+        >
+          <WardenChat warden={warden} compact />
+        </div>
       )}
     </aside>
   );

@@ -1043,6 +1043,9 @@ function App() {
               repoPrs={data.repoPrs ?? []}
               openQuestions={data.openQuestions}
               warden={warden}
+              daemonReady={
+                !data.portLoading && !data.portError && data.client !== null
+              }
               onOpenTask={openTaskView}
               onOpenInbox={() => selectProjectView('inbox')}
               collapsed={liveRailCollapsed}
