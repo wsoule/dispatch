@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-22T18:07:56.563Z
+updated: 2026-08-22T18:11:00.127Z
 external: null
 writes:
   - packages/server/src/**
@@ -34,3 +34,10 @@ One daemon-owned feed of items awaiting a human, each with kind, task/run refere
 
 - 2026-08-22T18:03:48.403Z [run r-0bd9bd] flagged interrupted-dirty: 6 uncommitted path(s) found — none
 - 2026-08-22T18:07:56.563Z requested changes (run r-fe1a71): You were interrupted by a dispatchd restart (a dev build was bouncing the daemon — now resolved). Your worktree and progress are intact; the survey above lists what was uncommitted. Continue from where you left off, re-verifying anything mid-flight when you stopped. — human:wsoule679
+- 2026-08-22T18:11:00.127Z Self-review found two real bugs in the inherited code, both in change detection, both now fixed test-first with mutation evidence (1 test fails on each revert).
+
+(1) A read consumed the notification. `signature` was doing double duty as "what the feed contains now" (advanced by every recompute, including the one behind GET /api/decisions) and "what subscribers were last told". So a client polling in the window between a source write and the event it triggers moved the baseline forward, and the event then compared the new state against itself — suppressing decisions.changed for every other connected client. Split out a `broadcastSignature` that only advances when we actually broadcast.
+
+(2) An in-place escalation reached no one. The signature was keyed on `id:state`, but an item can change materially while both hold still: orchestrator.stampOrphanWork() attaches a survey to an already-`failed` run, escalating the feed item's reason from 'failed' to 'orphan-commits' with the same id and the same 'open' state. That is precisely what run.survey is in TRIGGER_EVENTS for, and the signature could not see it. Now keyed on id+state+reason+summary — deliberately excluding since/ageMs, since age moves on every recompute and an approval whose run has gone falls back to now, so folding either in would broadcast on a loop.
+
+Also checked and found NOT to be problems: orphaned questions/scope-requests on dead runs (index.ts onRunTerminal already closes them, which is what gives the feed its auto-resolve property); FixLoopStore.list() throwing on an unreadable store (it swallows read errors); and base-discarded outranking run state (orchestrator's own comment at the set site calls that flag "the ONLY record that a run needs human attention", confirming the ordering). — none
