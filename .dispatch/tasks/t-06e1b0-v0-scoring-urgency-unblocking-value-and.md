@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-22T18:08:01.592Z
+updated: 2026-08-22T18:51:35.160Z
 external: null
 writes:
   - packages/core/src/**
@@ -33,3 +33,4 @@ From the 2026-08-22 audit: the full weight function waits on the storage spine a
 
 - 2026-08-22T18:03:48.489Z [run r-ece301] flagged interrupted-dirty: 6 uncommitted path(s) found — none
 - 2026-08-22T18:08:01.592Z requested changes (run r-4c6efa): You were interrupted by a dispatchd restart (a dev build was bouncing the daemon — now resolved). Your worktree and progress are intact; the survey above lists what was uncommitted. Continue from where you left off, re-verifying anything mid-flight when you stopped. — human:wsoule679
+- 2026-08-22T18:51:35.160Z [run r-4c6efa] flagged interrupted-dirty: 11 uncommitted path(s) found — none
