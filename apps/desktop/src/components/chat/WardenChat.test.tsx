@@ -125,6 +125,23 @@ test('full mode: a follow-up goes through warden.sendMessage', () => {
   expect(sent).toEqual(['and the queue?']);
 });
 
+// A permanently failed record fetch (404 + retry: false) is a broken
+// conversation, not a turn in flight — the error banner and the 'answering…'
+// composer hint must never show together.
+test('a failed record fetch does not read as the warden answering', () => {
+  const warden = wardenSession({
+    conversationId: 'w-1',
+    record: undefined,
+    recordError: 'warden conversation w-1 not found (404)',
+  });
+  render(<WardenChat warden={warden} />);
+
+  expect(
+    screen.getByText('warden conversation w-1 not found (404)')
+  ).toBeDefined();
+  expect(screen.queryByText('The warden is answering…')).toBeNull();
+});
+
 // The compact reset is the only control that can discard the UI's handle on a
 // conversation; with a mutation still awaiting a decision it must not.
 test('compact mode: New resets when idle but is disabled while an action awaits approval', () => {

@@ -42,7 +42,20 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
           )}
         </div>
         {warden.conversationId !== null && (
-          <Button variant="outline" size="sm" onClick={() => warden.reset()}>
+          // Same gate as WardenChat's compact reset: reset() drops the only UI
+          // handle on the conversation, so a queued mutation must be decided
+          // before this can discard the confirm card that decides it.
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={(warden.record?.pendingActions.length ?? 0) > 0}
+            title={
+              (warden.record?.pendingActions.length ?? 0) > 0
+                ? 'Decide the pending action first'
+                : undefined
+            }
+            onClick={() => warden.reset()}
+          >
             <Plus className="size-3.5" /> New conversation
           </Button>
         )}

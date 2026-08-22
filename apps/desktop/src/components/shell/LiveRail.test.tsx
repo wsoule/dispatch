@@ -143,9 +143,7 @@ test('collapsing narrows the rail to a strip and back', () => {
     <LiveRail {...railProps({ runs: [run()], onSetCollapsed })} />
   );
 
-  const expanded = screen
-    .getByRole('button', { name: 'Runs' })
-    .closest('aside');
+  const expanded = screen.getByRole('tab', { name: 'Runs' }).closest('aside');
   expect(expanded?.className).toContain('w-60');
 
   fireEvent.click(
@@ -228,13 +226,13 @@ test('the Warden tab swaps the run list for the warden composer, and back', () =
   expect(screen.getByText('Do the thing')).toBeDefined();
   expect(screen.queryByLabelText('Warden opening question')).toBeNull();
 
-  fireEvent.click(screen.getByRole('button', { name: 'Warden' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Warden' }));
   expect(screen.queryByText('Do the thing')).toBeNull();
   const composer = screen.getByLabelText('Warden opening question');
   expect(composer.closest('.hidden')).toBeNull();
 
   // Back on Runs the chat stays mounted (it holds the draft) but hidden.
-  fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Runs' }));
   expect(screen.getByText('Do the thing')).toBeDefined();
   expect(composer.closest('.hidden')).not.toBeNull();
 });
@@ -243,13 +241,13 @@ test('the Warden tab swaps the run list for the warden composer, and back', () =
 // throw away a half-typed message. The wrapper hides instead.
 test('a composer draft survives switching tabs', () => {
   render(<LiveRail {...railProps()} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Warden' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Warden' }));
 
   const composer = screen.getByLabelText('Warden opening question');
   fireEvent.change(composer, { target: { value: 'half a thought' } });
 
-  fireEvent.click(screen.getByRole('button', { name: 'Runs' }));
-  fireEvent.click(screen.getByRole('button', { name: 'Warden' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Runs' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Warden' }));
   expect(
     screen.getByLabelText<HTMLTextAreaElement>('Warden opening question').value
   ).toBe('half a thought');
@@ -261,7 +259,7 @@ test('the attention strip stays visible on the Warden tab', () => {
   render(
     <LiveRail {...railProps({ runs: [run({ state: 'awaiting-approval' })] })} />
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Warden' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Warden' }));
   expect(screen.getByText('1 waiting on you →')).toBeDefined();
 });
 
@@ -272,7 +270,7 @@ test('the active tab round-trips through dispatch:live-rail-tab', () => {
   const first = render(<LiveRail {...railProps()} />);
   expect(window.localStorage.getItem('dispatch:live-rail-tab')).toBe('runs');
 
-  fireEvent.click(screen.getByRole('button', { name: 'Warden' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Warden' }));
   expect(window.localStorage.getItem('dispatch:live-rail-tab')).toBe('warden');
   first.unmount();
 
@@ -284,11 +282,11 @@ test('expanding the collapsed rail returns to the last active tab', () => {
   window.localStorage.setItem('dispatch:live-rail-tab', 'warden');
   const { rerender } = render(<LiveRail {...railProps({ collapsed: true })} />);
   // Collapsed strip has no tabs at all.
-  expect(screen.queryByRole('button', { name: 'Warden' })).toBeNull();
+  expect(screen.queryByRole('tab', { name: 'Warden' })).toBeNull();
 
   rerender(<LiveRail {...railProps({ collapsed: false })} />);
   expect(
-    screen.getByRole('button', { name: 'Warden' }).getAttribute('aria-pressed')
+    screen.getByRole('tab', { name: 'Warden' }).getAttribute('aria-selected')
   ).toBe('true');
   expect(screen.getByLabelText('Warden opening question')).toBeDefined();
 });
@@ -321,7 +319,7 @@ test('a pending warden action renders the confirm card in the rail and decides t
   });
   render(<LiveRail {...railProps({ warden })} />);
   // The pending count rides the tab's accessible name ("Warden 1").
-  fireEvent.click(screen.getByRole('button', { name: /^Warden/ }));
+  fireEvent.click(screen.getByRole('tab', { name: /^Warden/ }));
 
   expect(screen.getByText('Needs your approval')).toBeDefined();
   expect(screen.getByText('Cancel run r-1')).toBeDefined();
@@ -381,7 +379,11 @@ test('a queued approval keeps the warden visible: waiting row plus tab badge', (
 
   expect(screen.queryByText('No agents running.')).toBeNull();
   expect(screen.getByText('warden')).toBeDefined();
-  expect(screen.getByRole('button', { name: 'Warden 1' })).toBeDefined();
+  // The row names the thing that is actually waiting — the queued action —
+  // not the conversation's opening question from possibly hours earlier.
+  expect(screen.getByText('Cancel run r-1')).toBeDefined();
+  expect(screen.queryByText('what is going on?')).toBeNull();
+  expect(screen.getByRole('tab', { name: 'Warden 1' })).toBeDefined();
 });
 
 test('the collapsed strip counts a live warden turn as a running agent', () => {
@@ -425,7 +427,7 @@ test('the collapsed strip surfaces a queued approval and expands onto the Warden
 // developer-facing 'client not ready' error.
 test('the Warden tab explains when the daemon is unavailable instead of rendering a composer', () => {
   render(<LiveRail {...railProps({ daemonReady: false })} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Warden' }));
+  fireEvent.click(screen.getByRole('tab', { name: 'Warden' }));
   expect(screen.queryByLabelText('Warden opening question')).toBeNull();
   expect(screen.getByText(/daemon isn't available/)).toBeDefined();
 });

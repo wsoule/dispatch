@@ -126,6 +126,8 @@ export function LiveRail({
   // `state: 'ready'` — idle, not running — so this is a separate signal: the
   // rail must not go quiet while an approval is stranded behind it.
   const wardenPendingCount = warden.record?.pendingActions.length ?? 0;
+  // The oldest queued action — what the Runs-tab waiting row describes.
+  const firstPendingAction = warden.record?.pendingActions[0];
   const wardenRow = wardenTurnLive || wardenPendingCount > 0;
   // What "agents running" means everywhere in this rail: the run rows plus a
   // warden turn in flight — the collapsed strip and the expanded Runs tab must
@@ -195,7 +197,16 @@ export function LiveRail({
   return (
     <aside className="border-border flex w-60 shrink-0 flex-col gap-3 border-l p-3">
       <div className="flex items-center gap-2">
-        <div className="bg-muted/40 flex items-center gap-0.5 rounded-md p-0.5">
+        {/* Real tab semantics, not aria-pressed toggle buttons: the sidebar's
+            global nav already has a *button* named "Warden", and two identical
+            button names would be ambiguous to a screen reader and a
+            strict-mode violation for any e2e locator looking for the nav. As
+            tabs these never answer a `role: 'button'` query. */}
+        <div
+          role="tablist"
+          aria-label="Live rail sections"
+          className="bg-muted/40 flex items-center gap-0.5 rounded-md p-0.5"
+        >
           {(
             [
               { value: 'runs', label: 'Runs' },
@@ -205,9 +216,10 @@ export function LiveRail({
             <Button
               key={t.value}
               type="button"
+              role="tab"
               variant="ghost"
               size="xs"
-              aria-pressed={tab === t.value}
+              aria-selected={tab === t.value}
               onClick={() => setTab(t.value)}
               className={cn(
                 'h-6 rounded-sm px-2 text-[12px] font-normal',
@@ -262,8 +274,11 @@ export function LiveRail({
             <div className="flex flex-col gap-0.5">
               {wardenRow && (
                 // A warden turn in flight sits with the agents it is one of —
-                // and a settled turn holding a queued approval stays here as a
-                // waiting row. Its "task view" is the rail's own Warden tab.
+                // and a queued approval keeps a waiting row here. The row
+                // describes what actually needs you: the pending action's own
+                // summary and queue time when one exists, the conversation's
+                // opening prompt and start only while it is merely thinking.
+                // Its "task view" is the rail's own Warden tab.
                 <Button
                   type="button"
                   variant="ghost"
@@ -272,16 +287,20 @@ export function LiveRail({
                   className="h-auto w-full justify-start gap-2 rounded-md px-1.5 py-1 text-left font-normal"
                 >
                   <StateDot
-                    state={wardenTurnLive ? 'working' : 'waiting'}
-                    pulse={wardenTurnLive}
+                    state={firstPendingAction ? 'waiting' : 'working'}
+                    pulse={firstPendingAction === undefined}
                   />
                   <span className="min-w-0 flex-1 truncate text-[13px]">
-                    {warden.record?.prompt ?? 'Warden'}
+                    {firstPendingAction?.summary ??
+                      warden.record?.prompt ??
+                      'Warden'}
                   </span>
                   <span className="dense-meta shrink-0 capitalize">warden</span>
                   {warden.record !== undefined && (
                     <span className="dense-meta shrink-0">
-                      {formatRelativeTimeFromIso(warden.record.createdAt)}
+                      {formatRelativeTimeFromIso(
+                        firstPendingAction?.createdAt ?? warden.record.createdAt
+                      )}
                     </span>
                   )}
                 </Button>
@@ -324,14 +343,16 @@ export function LiveRail({
 
       {daemonReady && wardenChatMounted && (
         // Kept mounted once opened — `hidden`, not unmounted, on the Runs tab
-        // so the composer draft survives switching away and back.
+        // so the composer draft survives switching away and back. `visible`
+        // tells the chat when it regains a layout box: scroll pinning is a
+        // no-op inside display:none (scrollHeight is 0 there).
         <div
           className={cn(
             'flex min-h-0 flex-1 flex-col',
             tab !== 'warden' && 'hidden'
           )}
         >
-          <WardenChat warden={warden} compact />
+          <WardenChat warden={warden} compact visible={tab === 'warden'} />
         </div>
       )}
     </aside>

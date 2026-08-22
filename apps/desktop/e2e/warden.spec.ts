@@ -128,10 +128,10 @@ test.describe('warden chat end to end', () => {
     // Route new conversations to the daemon's 'fake' warden backend — set
     // before load, same as any localStorage-keyed devtool. The live rail
     // starts collapsed (its own key — the retired dispatch:overview-rail is
-    // deliberately ignored by LiveRail) for two reasons: expanded, it repeats
-    // task titles as row buttons, double-counting the Runs-view assertions
-    // below, and its Runs | Warden tab header would strict-mode-collide with
-    // the sidebar's own "Warden" nav button.
+    // deliberately ignored by LiveRail): expanded, it repeats task titles as
+    // row buttons, double-counting the Runs-view assertions below. (The
+    // rail's Runs | Warden header is no locator hazard either way — those are
+    // role=tab, so the `button` queries here never see them.)
     await page.addInitScript(() => {
       window.localStorage.setItem('dispatch.devFakeWarden', '1');
       window.localStorage.setItem('dispatch:live-rail', '1');

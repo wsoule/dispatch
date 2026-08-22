@@ -177,6 +177,13 @@ interface WardenChatProps {
    * mutation from the rail goes through exactly the path the full page uses.
    */
   compact?: boolean;
+  /**
+   * Whether the chat currently has a layout box. The rail keeps it mounted but
+   * `display: none` on the Runs tab (preserving the composer draft), where
+   * scrollHeight is 0 and scroll pinning silently does nothing — this flipping
+   * back to true re-pins the transcript to the newest row.
+   */
+  visible?: boolean;
 }
 
 /**
@@ -186,7 +193,11 @@ interface WardenChatProps {
  * questions are answered directly; anything mutating shows up as a confirm
  * card in the transcript and runs only once approved there.
  */
-export function WardenChat({ warden, compact = false }: WardenChatProps) {
+export function WardenChat({
+  warden,
+  compact = false,
+  visible = true,
+}: WardenChatProps) {
   const [prompt, setPrompt] = useState('');
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -209,17 +220,25 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
   // Pin the transcript to the newest row — keyed on the last row's identity as
   // well as the count, since a turn settling in place (pending spinner → reply)
   // can change what's at the bottom without changing how many rows there are.
+  // Also keyed on `visible`: rows that land while the rail hides this chat
+  // set scrollTop against a zero scrollHeight, so the pin must re-run the
+  // moment the tab is shown again.
   const scrollRef = useRef<HTMLDivElement>(null);
   const lastKey = thread.length > 0 ? thread[thread.length - 1].key : '';
   useEffect(() => {
+    if (!visible) return;
     const el = scrollRef.current;
     if (el !== null) el.scrollTop = el.scrollHeight;
-  }, [thread.length, lastKey]);
+  }, [thread.length, lastKey, visible]);
 
   // A turn is in flight — dispatchd 409s a second message until it settles.
   // Confirm cards stay live on purpose: the server accepts a decision mid-turn.
+  // `recordError` vetoes it (same rule as LiveRail's running row): with
+  // `retry: false` a failed fetch leaves `record` undefined forever, and that
+  // is a broken conversation showing its 404 banner, not the warden answering.
   const busy =
     warden.conversationId !== null &&
+    warden.recordError === null &&
     (warden.record === undefined || warden.record.state === 'running');
 
   // A queued mutation nobody has decided on. Gates the compact reset: dropping
