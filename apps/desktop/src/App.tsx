@@ -54,6 +54,7 @@ import {
   touchProjectOpened,
 } from './lib/tauri';
 import { checkForUpdate } from './lib/updater';
+import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
 import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
@@ -117,6 +118,12 @@ function App() {
     void checkForUpdate().then((update) => {
       if (update !== null) setPendingUpdate(update);
     });
+  }, []);
+
+  // Re-applies the persisted webview zoom on launch — ⌘+/⌘−/⌘0 adjust it from
+  // `useGlobalKeyboard`'s command handler below.
+  useEffect(() => {
+    applyZoomFactor(loadZoomFactor());
   }, []);
 
   useDataChangedEvents();
@@ -406,6 +413,15 @@ function App() {
     [data.runs, data.repoPrs, data.openQuestions]
   );
 
+  // Whether the quick-capture surface exists right now — shared by the FAB's render and the
+  // ⌘B shortcut, so the shortcut can never open a modal the button couldn't.
+  const brainDumpFabMounted =
+    navState.section === 'project' &&
+    navState.projectView !== 'brain-dump' &&
+    activeProject !== null &&
+    data.client !== null;
+  const [brainDumpOpen, setBrainDumpOpen] = useState(false);
+
   useGlobalKeyboard({
     // `modalOpen` (I3) is computed inside the hook itself now, via a live DOM check for any
     // open `Modal` instance — not just `showCreate` (App.tsx's only *direct* modal), so
@@ -416,7 +432,22 @@ function App() {
       else if (command === 'escape') dispatchNav({ type: 'escape' });
       else if (command === 'nav-back') dispatchNav({ type: 'back' });
       else if (command === 'nav-forward') dispatchNav({ type: 'forward' });
-      else if (command.startsWith('goto-')) {
+      else if (
+        command === 'zoom-in' ||
+        command === 'zoom-out' ||
+        command === 'zoom-reset'
+      ) {
+        applyZoomFactor(
+          stepZoomFactor(
+            loadZoomFactor(),
+            command.slice(5) as 'in' | 'out' | 'reset'
+          )
+        );
+      } else if (command === 'brain-dump') {
+        // Same gate as the FAB's own render: no capture surface, no shortcut. On the Brain
+        // dump view itself the full composer is already on screen.
+        if (brainDumpFabMounted) setBrainDumpOpen(true);
+      } else if (command.startsWith('goto-')) {
         // Position in the rail, not an id — the numbers stay learnable because
         // they match what the sidebar prints next to each entry.
         const view = PROJECT_VIEW_ORDER[Number(command.slice(5)) - 1];
@@ -1066,16 +1097,16 @@ function App() {
         {/* The quick-capture brain button, pinned bottom-right on every project screen except
             Brain dump itself (which has the full composer). Gated on a live daemon client:
             the raw capture handler silently no-ops when `client` is null, and a capture that
-            quietly drops the thought is worse than no button. */}
-        {navState.section === 'project' &&
-          navState.projectView !== 'brain-dump' &&
-          activeProject !== null &&
-          data.client !== null && (
-            <BrainDumpFab
-              onCapture={rawData.handleCaptureInbox}
-              onOpenBrainDump={() => selectProjectView('brain-dump')}
-            />
-          )}
+            quietly drops the thought is worse than no button. Open state lives here so the
+            ⌘B global shortcut reaches the same modal the button opens. */}
+        {brainDumpFabMounted && (
+          <BrainDumpFab
+            open={brainDumpOpen}
+            onOpenChange={setBrainDumpOpen}
+            onCapture={rawData.handleCaptureInbox}
+            onOpenBrainDump={() => selectProjectView('brain-dump')}
+          />
+        )}
 
         {selectedDoc !== null && data.config !== null && (
           // Remount per task so per-task state (model choice, in-flight dispatch) can't leak across stack-rail navigation.
