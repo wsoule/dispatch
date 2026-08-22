@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-22T18:11:00.127Z
+updated: 2026-08-22T18:30:35.612Z
 external: null
 writes:
   - packages/server/src/**
@@ -41,3 +41,12 @@ One daemon-owned feed of items awaiting a human, each with kind, task/run refere
 (2) An in-place escalation reached no one. The signature was keyed on `id:state`, but an item can change materially while both hold still: orchestrator.stampOrphanWork() attaches a survey to an already-`failed` run, escalating the feed item's reason from 'failed' to 'orphan-commits' with the same id and the same 'open' state. That is precisely what run.survey is in TRIGGER_EVENTS for, and the signature could not see it. Now keyed on id+state+reason+summary — deliberately excluding since/ageMs, since age moves on every recompute and an approval whose run has gone falls back to now, so folding either in would broadcast on a loop.
 
 Also checked and found NOT to be problems: orphaned questions/scope-requests on dead runs (index.ts onRunTerminal already closes them, which is what gives the feed its auto-resolve property); FixLoopStore.list() throwing on an unreadable store (it swallows read errors); and base-discarded outranking run state (orchestrator's own comment at the set site calls that flag "the ONLY record that a run needs human attention", confirming the ordering). — none
+- 2026-08-22T18:30:35.612Z Done and committed on dispatch/t-48a2e5-...-0bd9bd: c29ec119 (the feed) and 4820d65d (the escalation fix).
+
+Verification, stated plainly. Green: root tsc across every package (load-bearing, since ApiContext gained a required field), lint 0 errors with no suppressions added, knip clean, format:check clean, and 25/25 decision-feed tests against the final committed state. Both pre-commit hooks ran tsc + lint + format.
+
+Not green, and I want this on the record rather than buried: the full packages/server suite does not pass in this sandbox, and I did not get it to complete — it is slow enough that I stopped it partway. Every failure I saw was in PR-review-agent, GET /api/impact, or DepMapCache, all with "timed out after 5000ms" beside environmental warnings (merge driver not on PATH, "no trunk resolvable", dangling processes, and the carto unavailability recorded nine times in this task's own hazard log). Re-running those three files in isolation still fails 4/138, which rules out parallel load as the cause. I tried to prove them pre-existing by checking out the base commit, but the permission classifier blocked it and I did not work around it — so "unrelated and environmental" is well-evidenced, not proven against a baseline. Worth a human eye if these are not already known-red locally.
+
+One methodology note against myself: my first full-suite run reported a decision-feed failure, and that was my fault, not the code's — I was editing source while the suite ran, so it reached the file mid-mutation-test. I discarded that run and re-ran against stable committed files rather than reporting the tainted numbers.
+
+Scope: packages/server only, all within declared writes. No packages/core (r-664ec2/r-d236d7 have it claimed) and no packages/client method — the typed client belongs to the surface task, since this one is model-layer only. — none
