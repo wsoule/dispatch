@@ -57,10 +57,15 @@
 <script>
   const btn = document.querySelector<HTMLButtonElement>('[data-copy]');
   btn?.addEventListener('click', async () => {
-    await navigator.clipboard.writeText(btn.dataset.copy ?? '');
-    btn.textContent = 'copied';
+    try {
+      await navigator.clipboard.writeText(btn.dataset.copy ?? '');
+      btn.textContent = 'copied';
+    } catch {
+      btn.textContent = 'copy failed';
+    }
     setTimeout(() => {
       btn.textContent = 'copy';
     }, 1500);
   });
 </script>
+
