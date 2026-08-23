@@ -9,6 +9,11 @@ interface ToastInput {
   /** The detail line. For a failure this should be what actually went wrong. */
   description?: string;
   tone?: ToastTone;
+  /** The toast's primary follow-up (sonner's `action` button). */
+  action?: { label: React.ReactNode; onClick: () => void };
+  /** A second, quieter follow-up (sonner's `cancel` slot) — dismisses the
+   * toast either way. */
+  secondary?: { label: React.ReactNode; onClick: () => void };
 }
 
 interface ToastApi {
@@ -30,6 +35,18 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
         const tone = input.tone ?? 'info';
         TONE_FN[tone](input.title, {
           description: input.description,
+          ...(input.action !== undefined && {
+            action: {
+              label: input.action.label,
+              onClick: input.action.onClick,
+            },
+          }),
+          ...(input.secondary !== undefined && {
+            cancel: {
+              label: input.secondary.label,
+              onClick: input.secondary.onClick,
+            },
+          }),
           ...sonnerOptionsFor(tone),
         });
       },

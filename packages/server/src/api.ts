@@ -77,7 +77,11 @@ import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
-import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
+import {
+  filterGroupsToLocalItems,
+  InboxClusterer,
+  InboxClusterSnapshotStore,
+} from './inboxClusterer.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStore } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
@@ -3417,13 +3421,27 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
     // seed selection with an id the UI can't resolve, and fail convert outright. Filtering here
     // — rather than widening display/convert to cross-file reads — also keeps a teammate's
     // private capture text from ever reaching the local UI or a future model call over it.
-    const localIds = new Set(ctx.inboxStore.list().map((i) => i.id));
+    const localOpen = ctx.inboxStore.list().filter((i) => !i.done);
+    const localIds = new Set(localOpen.map((i) => i.id));
     const groups = await clusterer.cluster(ctx.inboxStore.listAll());
     const localGroups = filterGroupsToLocalItems(groups, localIds);
+    // Persisted so a page load renders this pass instead of billing a new one;
+    // a failed pass below deliberately leaves the previous snapshot standing.
+    new InboxClusterSnapshotStore(ctx.rootDir).save({
+      groups: localGroups,
+      itemIds: [...localIds],
+      updatedAt: new Date().toISOString(),
+    });
     return jsonResponse({ groups: localGroups, error: null });
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
+}
+
+// GET /api/inbox/clusters — the persisted result of the last clustering pass,
+// or null when none has ever run (or the cache was corrupt).
+function getInboxClusters(ctx: ApiContext): Response {
+  return jsonResponse(new InboxClusterSnapshotStore(ctx.rootDir).load());
 }
 
 /**
@@ -4615,6 +4633,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await clusterInbox(ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'clusters' &&
+        method === 'GET'
+      ) {
+        return getInboxClusters(ctx);
       }
       if (segments.length === 2 && method === 'PATCH') {
         return await updateInbox(req, ctx, segments[1]);

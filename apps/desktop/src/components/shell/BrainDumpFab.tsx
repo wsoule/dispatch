@@ -1,6 +1,10 @@
 import { Brain, Inbox } from 'lucide-react';
 import { useState } from 'react';
 
+import {
+  BRAIN_DUMP_DRAFT_KEY,
+  usePersistedDraft,
+} from '../../hooks/usePersistedDraft';
 import { splitCaptureLines } from '../../lib/inboxCapture';
 import { Button } from '@/ui/button';
 import {
@@ -39,7 +43,9 @@ export function BrainDumpFab({
   onCapture,
   onOpenBrainDump,
 }: BrainDumpFabProps) {
-  const [draft, setDraft] = useState('');
+  // The same persisted draft as the full Brain dump view — closing the modal, navigating,
+  // or relaunching never costs a half-typed thought, and the two surfaces stay one box.
+  const [draft, setDraft] = usePersistedDraft(BRAIN_DUMP_DRAFT_KEY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

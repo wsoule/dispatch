@@ -288,6 +288,10 @@ export interface DispatchProjectData {
     groups: import('@dispatch/client').InboxClusterGroup[];
     error: string | null;
   }>;
+  /** The persisted result of the last clustering pass — rendered on load so a
+   * page visit never bills a model call of its own. Null until fetched or when
+   * no pass has ever run. */
+  inboxClusters: import('@dispatch/client').InboxClusterSnapshot | null;
 
   /** Line-level review comments on the selected run's diff. */
   reviewComments: import('@dispatch/client').ReviewComment[];
@@ -661,6 +665,10 @@ export function useDispatchProject(
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
+  const inboxClustersQueryKey = useMemo(
+    () => ['dispatch-inbox-clusters', port],
+    [port]
+  );
   // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
   // on `draft.changed`.
   const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
@@ -934,6 +942,17 @@ export function useDispatchProject(
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
       return client.fetchInbox();
+    },
+    enabled: client !== null,
+  });
+
+  // The persisted last clustering pass — what BrainDumpView renders on load
+  // instead of billing a fresh model call per visit (see handleClusterInbox).
+  const { data: inboxClusters } = useQuery({
+    queryKey: inboxClustersQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchInboxClusters();
     },
     enabled: client !== null,
   });
@@ -2258,8 +2277,12 @@ export function useDispatchProject(
 
   const handleClusterInbox = useCallback(async () => {
     if (client === null) return { groups: [], error: null };
-    return await client.clusterInbox();
-  }, [client]);
+    const res = await client.clusterInbox();
+    // A successful pass was persisted server-side; refetch the snapshot so
+    // every consumer renders the same result the call returned.
+    void queryClient.invalidateQueries({ queryKey: inboxClustersQueryKey });
+    return res;
+  }, [client, queryClient, inboxClustersQueryKey]);
 
   // Retries every entry the queue is holding on a `blocked-environment` (a dirty checkout, a
   // staged index, the wrong branch). Deliberately queue-wide rather than per-entry, because the
@@ -2404,6 +2427,7 @@ export function useDispatchProject(
     enrichPlanRecord,
     handleDismissEnrich,
     handleClusterInbox,
+    inboxClusters: inboxClusters ?? null,
     reviewComments: reviewComments ?? [],
     handleAddReviewComment,
     handleApplySuggestion,

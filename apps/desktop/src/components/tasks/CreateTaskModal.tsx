@@ -6,6 +6,7 @@ import type {
 } from '@dispatch/core/browser';
 import { useState } from 'react';
 
+import { usePersistedDraft } from '../../hooks/usePersistedDraft';
 import { Alert, AlertDescription } from '@/ui/alert';
 import { Button } from '@/ui/button';
 import {
@@ -59,14 +60,18 @@ export function CreateTaskModal({
   onCreate,
   onClose,
 }: CreateTaskModalProps) {
-  const [title, setTitle] = useState('');
+  // Title and description survive an accidental close (Escape, outside click) — the two
+  // fields with real typing in them. The dropdowns cost one click to redo and stay ephemeral.
+  const [title, setTitle] = usePersistedDraft('dispatch:create-task-title');
   const [kind, setKind] = useState<TaskKind>('task');
   const [priority, setPriority] = useState<Priority>('none');
   const [status, setStatus] = useState(
     initialStatus ?? statuses[0] ?? 'backlog'
   );
   const [parent, setParent] = useState('');
-  const [description, setDescription] = useState('');
+  const [description, setDescription] = usePersistedDraft(
+    'dispatch:create-task-description'
+  );
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -86,6 +91,9 @@ export function CreateTaskModal({
         parent: parent !== '' ? parent : null,
         description,
       });
+      // The draft has landed as a task; only now does the persisted copy clear.
+      setTitle('');
+      setDescription('');
       onClose();
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));

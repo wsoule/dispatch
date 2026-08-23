@@ -54,6 +54,7 @@ export type {
   ImpactSubject,
   ImpactSubjectKind,
   InboxClusterGroup,
+  InboxClusterSnapshot,
   InboxConvertResponse,
   InboxConvertResult,
   InboxItem,
