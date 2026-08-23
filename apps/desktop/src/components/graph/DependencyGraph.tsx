@@ -1,4 +1,6 @@
+import { statusLabel } from '@dispatch/core/browser';
 import { Waypoints } from 'lucide-react';
+import type { ComponentType } from 'react';
 import { useMemo } from 'react';
 
 import {
@@ -7,135 +9,35 @@ import {
   type DagNode,
   type DagTask,
 } from '../../lib/dagLayout';
-import { statusTone } from '../../lib/taskDisplay';
-import { resolveStatusVisual } from '../tasks/StatusIcon';
+import { StatusIcon } from '../tasks/StatusIcon';
 import { cn } from '@/lib/utils';
+import { ContextCard } from '@/ui/ai/context-cards';
 
-// Reuses statusTone's six-tone vocabulary rather than inventing a second status->color map for
-// the SVG rect/dot below. The actual status->tone *resolution* comes from `resolveStatusVisual`
-// (StatusIcon's own logic) so a node's border/fill/dot always agree with the StatusIcon glyph
-// shown everywhere else in the app for that status — `statusTone` alone is only the fallback
-// `resolveStatusVisual` uses for custom, non-built-in statuses. `ReturnType` avoids needing
-// taskDisplay.ts to export its otherwise-private `Tone` type just for this one Record key.
-type Tone = ReturnType<typeof statusTone>;
+// The ContextCard footprint: w-56 wide, and two fixed heights — header+snippet+footer for
+// graphs that supply body text (`snippetFor`), header+footer for those that don't. Fixed
+// because the layout needs every node's box before anything renders; the card fills the box
+// (`h-full`) so edges always meet its actual edge.
+const CARD_WIDTH = 224;
+const CARD_HEIGHT_WITH_SNIPPET = 132;
+const CARD_HEIGHT_COMPACT = 66;
 
-const TONE_NODE_CLASSES: Record<
-  Tone,
-  { stroke: string; fill: string; dot: string }
-> = {
-  green: {
-    stroke: 'stroke-emerald-500 dark:stroke-emerald-400',
-    fill: 'fill-emerald-500/10 dark:fill-emerald-400/10',
-    dot: 'fill-emerald-500 dark:fill-emerald-400',
-  },
-  blue: {
-    stroke: 'stroke-blue-500 dark:stroke-blue-400',
-    fill: 'fill-blue-500/10 dark:fill-blue-400/10',
-    dot: 'fill-blue-500 dark:fill-blue-400',
-  },
-  amber: {
-    stroke: 'stroke-amber-500 dark:stroke-amber-400',
-    fill: 'fill-amber-500/10 dark:fill-amber-400/10',
-    dot: 'fill-amber-500 dark:fill-amber-400',
-  },
-  red: {
-    stroke: 'stroke-destructive',
-    fill: 'fill-destructive/10',
-    dot: 'fill-destructive',
-  },
-  gray: {
-    stroke: 'stroke-border',
-    fill: 'fill-transparent',
-    dot: 'fill-muted-foreground/60',
-  },
-  accent: {
-    stroke: 'stroke-primary',
-    fill: 'fill-primary/10',
-    dot: 'fill-primary',
-  },
-};
-
-// Node titles are drawn as plain SVG <text>, which has no CSS text-overflow support worth
-// relying on cross-browser — this approximates how many characters fit the fixed node width at
-// the font size used below and just slices, rather than pulling in canvas text measurement for
-// a label that only ever needs to read "roughly right", not pixel-exact.
-const MAX_TITLE_CHARS = 24;
-// The status line sits below the title at a smaller font size but sees the same fixed node
-// width, so it gets its own (shorter) budget rather than reusing MAX_TITLE_CHARS — a custom
-// project status can be an arbitrarily long word with no natural break point, unlike a title.
-const MAX_STATUS_CHARS = 16;
-
-function truncate(text: string, maxChars: number = MAX_TITLE_CHARS): string {
-  return text.length > maxChars ? `${text.slice(0, maxChars - 1)}…` : text;
-}
-
-interface DagNodeShapeProps {
-  node: DagNode;
-  /** Overrides the node's second text line (defaults to the raw status string) — the plan
-   * graph uses this for "blocked by n" style annotations where every status is 'draft'. */
-  subtitle?: string;
-  onOpenNode?: (id: string) => void;
-}
-
-// One node's box: a status-tinted rounded rect, a small status dot, and two lines of text
-// (truncated title, then the status/subtitle line) — the "SVG rect + two text lines" the
-// design brief picked over a foreignObject for crispness at any zoom. Rendered as a `<g>`
-// rather than a real DOM button (SVG has no button element) so it can still be
-// keyboard-activated when `onOpenNode` is given.
-function DagNodeShape({ node, subtitle, onOpenNode }: DagNodeShapeProps) {
-  const tone = TONE_NODE_CLASSES[resolveStatusVisual(node.status).tone];
-  const clickable = onOpenNode !== undefined;
-  const secondLine = subtitle ?? node.status;
-
-  return (
-    <g
-      transform={`translate(${node.x}, ${node.y})`}
-      role={clickable ? 'button' : undefined}
-      tabIndex={clickable ? 0 : undefined}
-      className={cn('group/node', clickable && 'cursor-pointer')}
-      onClick={clickable ? () => onOpenNode(node.id) : undefined}
-      onKeyDown={
-        clickable
-          ? (e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                onOpenNode(node.id);
-              }
-            }
-          : undefined
-      }
-      aria-label={clickable ? `Open ${node.title}` : undefined}
-    >
-      <title>{node.title}</title>
-      <rect
-        width={node.width}
-        height={node.height}
-        rx={8}
-        className={cn(
-          'stroke-[1.5] transition-colors duration-150',
-          tone.stroke,
-          tone.fill,
-          clickable && 'group-hover/node:fill-accent/40'
-        )}
-      />
-      <circle cx={14} cy={16} r={4} className={tone.dot} />
-      <text
-        x={24}
-        y={20}
-        className="fill-foreground font-sans text-[12px] font-medium"
-      >
-        {truncate(node.title)}
-      </text>
-      <text
-        x={14}
-        y={38}
-        className="fill-muted-foreground font-sans text-[10px]"
-      >
-        <title>{secondLine}</title>
-        {truncate(secondLine, MAX_STATUS_CHARS)}
-      </text>
-    </g>
-  );
+// One icon component per status string, cached so ContextCard sees a stable component
+// identity across renders (an inline closure would remount the header icon every render).
+// The wrapper ignores ContextCard's muted icon classes on purpose: StatusIcon carries its
+// own status color, which is the whole point of showing it.
+const STATUS_ICON_CACHE = new Map<
+  string,
+  ComponentType<{ className?: string }>
+>();
+function statusIconFor(status: string): ComponentType<{ className?: string }> {
+  let cached = STATUS_ICON_CACHE.get(status);
+  if (cached === undefined) {
+    cached = function NodeStatusIcon() {
+      return <StatusIcon status={status} className="size-3.5 shrink-0" />;
+    };
+    STATUS_ICON_CACHE.set(status, cached);
+  }
+  return cached;
 }
 
 // A vertical cubic-bezier from the blocker's bottom edge to the dependent's top edge — curved
@@ -175,30 +77,40 @@ export interface DependencyGraphProps {
    * set (see dagLayout.ts's "real edges only" rule); a blockedBy id pointing outside it is
    * treated the same as a dangling one. */
   tasks: DagTask[];
-  /** Second text line per node id, in place of the raw status string. */
+  /** Body text per node id (a description, an excerpt) — supplying this switches every node
+   * to the taller snippet card so the graph stays a uniform grid. */
+  snippetFor?: (id: string) => string | undefined;
+  /** Footer line per node id, in place of the status label. */
   subtitleFor?: (id: string) => string | undefined;
-  /** Opens the clicked node. Omitted renders every node as plain, non-interactive text. */
+  /** Opens the clicked node. Omitted renders every node as a plain, non-interactive card. */
   onOpenNode?: (id: string) => void;
   ariaLabel?: string;
   className?: string;
 }
 
 /**
- * True-branching dependency graph — the app's shared "mermaid-style" graph surface, drawn
- * with the design system's own status tones instead of a charting library's theme. Pure SVG,
- * laid out by the hand-rolled `dagLayout` (no charting dependency): edges as curved paths,
- * nodes as status-tinted rect+text boxes. The SVG is sized exactly to its content and left to
- * the caller's `overflow-x-auto` container to scroll — no pan/zoom (the task counts these
- * graphs see never approach needing it).
+ * True-branching dependency graph — the app's shared "mermaid-style" graph surface. Nodes
+ * are the ai components' ContextCards (status icon + mono title header, clamped snippet,
+ * mono footer), absolutely positioned by the hand-rolled `dagLayout` over an SVG layer that
+ * draws the curved edges — no charting dependency, and the nodes stay real DOM (selectable
+ * text, focusable buttons) instead of SVG text. Sized exactly to its content and left to
+ * the caller's container to scroll — no pan/zoom (the task counts these graphs see never
+ * approach needing it).
  */
 export function DependencyGraph({
   tasks,
+  snippetFor,
   subtitleFor,
   onOpenNode,
   ariaLabel = 'Dependency graph',
   className,
 }: DependencyGraphProps) {
-  const layout = useMemo(() => dagLayout(tasks), [tasks]);
+  const nodeHeight =
+    snippetFor === undefined ? CARD_HEIGHT_COMPACT : CARD_HEIGHT_WITH_SNIPPET;
+  const layout = useMemo(
+    () => dagLayout(tasks, { nodeWidth: CARD_WIDTH, nodeHeight }),
+    [tasks, nodeHeight]
+  );
 
   if (tasks.length === 0) {
     return (
@@ -218,27 +130,32 @@ export function DependencyGraph({
 
   return (
     <div className={cn('overflow-x-auto', className)}>
-      <svg
-        width={layout.width}
-        height={layout.height}
-        viewBox={`0 0 ${layout.width} ${layout.height}`}
-        role="img"
+      <div
+        role="group"
         aria-label={ariaLabel}
+        className="relative"
+        style={{ width: layout.width, height: layout.height }}
       >
-        <defs>
-          <marker
-            id="dep-graph-arrow"
-            viewBox="0 0 8 8"
-            refX={4}
-            refY={4}
-            markerWidth={6}
-            markerHeight={6}
-            orient="auto-start-reverse"
-          >
-            <path d="M 0 0 L 8 4 L 0 8 z" className="fill-border" />
-          </marker>
-        </defs>
-        <g>
+        <svg
+          width={layout.width}
+          height={layout.height}
+          viewBox={`0 0 ${layout.width} ${layout.height}`}
+          aria-hidden
+          className="pointer-events-none absolute inset-0"
+        >
+          <defs>
+            <marker
+              id="dep-graph-arrow"
+              viewBox="0 0 8 8"
+              refX={4}
+              refY={4}
+              markerWidth={6}
+              markerHeight={6}
+              orient="auto-start-reverse"
+            >
+              <path d="M 0 0 L 8 4 L 0 8 z" className="fill-border" />
+            </marker>
+          </defs>
           {layout.edges.map((edge) => (
             <EdgePath
               key={`${edge.from}->${edge.to}`}
@@ -246,18 +163,39 @@ export function DependencyGraph({
               nodesById={nodesById}
             />
           ))}
-        </g>
-        <g>
-          {layout.nodes.map((node) => (
-            <DagNodeShape
-              key={node.id}
-              node={node}
-              subtitle={subtitleFor?.(node.id)}
-              onOpenNode={onOpenNode}
+        </svg>
+        {layout.nodes.map((node) => (
+          <div
+            key={node.id}
+            className="absolute"
+            style={{
+              left: node.x,
+              top: node.y,
+              width: node.width,
+              height: node.height,
+            }}
+          >
+            <ContextCard
+              source={node.title}
+              icon={statusIconFor(node.status)}
+              snippet={snippetFor?.(node.id) ?? undefined}
+              footer={
+                <span className="text-muted-foreground font-mono text-[11px]">
+                  {subtitleFor?.(node.id) ?? statusLabel(node.status)}
+                </span>
+              }
+              onOpen={
+                onOpenNode === undefined ? undefined : () => onOpenNode(node.id)
+              }
+              className={cn(
+                'h-full w-full',
+                onOpenNode !== undefined &&
+                  'hover:ring-primary/40 ease-out-expo transition-shadow duration-100 hover:ring-1'
+              )}
             />
-          ))}
-        </g>
-      </svg>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
