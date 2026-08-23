@@ -1,7 +1,7 @@
 ---
 id: t-7cc78a
 title: SQLite-backed TaskStore implementation behind the existing store seam
-status: in-progress
+status: in-review
 kind: task
 parent: e-99e113
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:37:48.803Z
-updated: 2026-08-23T00:21:13.060Z
+updated: 2026-08-23T00:21:17.878Z
 external: null
 writes:
   - packages/core/src/**
@@ -41,3 +41,4 @@ Add a SQLite-backed implementation of the TaskStore interface (packages/core/src
 4. Quarantine, don't coerce: corrupted blocked_by/writes parse to [] (un-blocks tasks / erases write scope, sqliteDb.ts:202), corrupted applies_to broadcasts a targeted ledger entry to every task (sqliteRecords.ts:256), and metaFromRow blind-casts enums with listSafe hardcoding errors:[] (sqliteTaskStore.ts:87). Surface all of these as loud errors like parseTaskFile/listSafe do on the file backend.
 5. nextSeq is a racy MAX+1 read-then-insert (sqliteRecords.ts:457) — fold into the INSERT (COALESCE(MAX(seq)+1,0) subselect) or a transaction.
 OPTIONAL (confirmed, do if quick): shared pure builders to stop backend drift — buildFinding/buildLedgerEntry/buildNewTaskDoc/applyUpdatePatch in core, server imports the core input types instead of its verbatim copies (findings.ts:39, ledger.ts:25); one mintUniqueId helper (4 copies now); cache prepared statements per SQL; private rowOf(id) so update/amend stop double-SELECTing (slugOf dies); clauses[] form for ledger list; keep put()/toMarkdown() private until the migration commit that uses them. Run package tests when done, commit. — human:wsoule679
+- 2026-08-23T00:21:17.878Z [run r-3b5a48] finished: finished — 12 files, $0.00 — agent:wsoule679/claude
