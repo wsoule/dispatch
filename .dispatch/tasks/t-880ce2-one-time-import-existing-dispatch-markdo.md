@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T15:49:41.361Z
+updated: 2026-08-23T15:54:18.293Z
 external: null
 writes:
   - packages/cli/src/**
@@ -58,3 +58,14 @@ Dry run — nothing was written. /Users/wyatsoule/.dispatch/worktrees/cc658f5983
   mutations              0       0         0
 
 Count parity checked independently against the filesystem, not taken from the report: `ls .dispatch/tasks/*.md | wc -l` = 185 = 155 + 30, `ls .dispatch/tasks/e-*.md | wc -l` = 30, and a python pass over each JSONL counting distinct `id` values gives 341 findings and 308 ledger entries. Every source record was importable — 0 damaged, 0 unparsable lines, no duplicate-id collisions in either sidecar. The dry run is the real import inside a transaction that is rolled back rather than committed, so these are the numbers a real import produces, not a prediction of them. — none
+- 2026-08-23T15:54:18.293Z HALTED — two agents are implementing this task in the same worktree (/Users/wyatsoule/.dispatch/worktrees/cc658f598366/r-6dd770) at the same time, and the tree no longer compiles.
+
+Run r-6dd770 (me) built: core/src/migrate.ts exporting importLegacyProject/hasLegacyState/totalImported/LEGACY_SOURCES + formatMigrationReport (whole import in one BEGIN/COMMIT; dry-run is the same transaction ROLLBACKed, so rehearsal numbers ARE the real import's numbers; report carries rowsBefore/rowsAfter per table for count parity), core/src/storage.ts (moved the storage.json marker into core so the CLI can write it, server/storage.ts now re-exports it — the comment there already said core was its right home), `dispatch migrate [--dry-run]` in cli/src/commands/migrate.ts, boot-time auto-import + relaxed resolveStoreBackend in server/src/index.ts, and 38 tests (core 25, cli 5, server 8) that were all green.
+
+A second agent then rewrote core/src/migrate.ts wholesale to a different API — migrateProject(options: MigrateOptions), RecordCounts, DeferredSource, MigrationSkip, dry-run branched inside the loops. It also added core/src/jsonlRecords.ts, which extracts the JSONL id+createdAt compaction rule out of the daemon's FindingStore/LedgerStore so the import and the daemon cannot drift, and rewired server/src/findings.ts and ledger.ts onto it. That refactor is the better call and should survive whichever implementation wins — I had duplicated that rule inside my own migrate.ts.
+
+Current state: core/src/index.ts, cli/src/commands/migrate.ts, server/src/index.ts and all three test files still reference the deleted API, so `bun run tsc` in packages/core fails with 12+ TS2305 errors. I stopped rather than race — ask_user and request_scope both now fail with "run is not running", so I could not ask which implementation to keep.
+
+My work is snapshotted, uncommitted, in .agents/ignore/t-880ce2-r6dd770/ (full migrate.ts, core/storage.ts, the CLI command, all three test files, and diffs of the server/core/cli edits) so it survives whatever happens to the source tree.
+
+One result is independent of which implementation wins — the dry-run artifact in the comment above: 155 tasks + 30 epics + 341 findings + 308 ledger entries importable from this repo's real .dispatch/, 0 damaged, verified against the filesystem rather than taken from the report. — none
