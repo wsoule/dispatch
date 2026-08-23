@@ -320,11 +320,12 @@ interface PlanTaskRowProps {
   onExpand: (index: number) => void;
 }
 
-/** One card of the proposal review list. "Dependency arrows" are rendered as a plain
- * "blocked by …" badge line naming the blocking tasks by their (possibly just-edited)
- * title — a real arrow-diagram would need a layout engine this view doesn't have yet; the
- * badges convey the same ordering information, and titles are looked up live off the current
- * draft so an edited blocker's new title shows immediately in its dependents' rows. */
+/** One card of the proposal review list, in the ai components' RecommendationCard shape:
+ * a round accent-tinted badge (the task's number) beside the editable title and muted
+ * description, then one inset top-bordered footer strip holding the blocked-by chips on the
+ * left and the priority/expand/remove controls on the right. Blocker titles are looked up
+ * live off the current draft so an edited blocker's new title shows immediately in its
+ * dependents' rows. */
 function PlanTaskRow({
   task,
   index,
@@ -334,19 +335,70 @@ function PlanTaskRow({
   onExpand,
 }: PlanTaskRowProps) {
   return (
-    <div className="bg-card rounded-card shadow-card ease-out-expo hover:bg-surface-hover group/plan-task flex flex-col gap-1 px-3 py-2.5 transition-colors duration-100">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground w-5 shrink-0 text-right font-mono text-[11px]">
+    <div className="bg-card rounded-card shadow-card group/plan-task flex flex-col overflow-hidden">
+      <div className="flex items-start gap-2.5 px-4 pt-3 pb-2.5">
+        <span className="bg-accent-tint text-primary flex size-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px]">
           {index + 1}
         </span>
-        <Input
-          value={task.title}
-          onChange={(e) =>
-            onEdit({ type: 'setTaskTitle', index, title: e.target.value })
-          }
-          aria-label={`Task ${index + 1} title`}
-          className="focus-visible:ring-ring/40 h-auto min-w-0 flex-1 border-none bg-transparent px-0 py-0.5 text-[13px] font-medium shadow-none focus-visible:ring-1"
-        />
+        <div className="min-w-0 flex-1 pt-0.5">
+          <Input
+            value={task.title}
+            onChange={(e) =>
+              onEdit({ type: 'setTaskTitle', index, title: e.target.value })
+            }
+            aria-label={`Task ${index + 1} title`}
+            className="focus-visible:ring-ring/40 h-auto w-full min-w-0 border-none bg-transparent px-0 py-0 text-[13px] font-semibold shadow-none focus-visible:ring-1"
+          />
+          <Textarea
+            rows={2}
+            value={task.description}
+            onChange={(e) =>
+              onEdit({
+                type: 'setTaskDescription',
+                index,
+                description: e.target.value,
+              })
+            }
+            aria-label={`Task ${index + 1} description`}
+            className="text-muted-foreground focus-visible:ring-ring/40 mt-1 min-h-0 resize-none border-none bg-transparent p-0 text-[12.5px] leading-relaxed shadow-none focus-visible:ring-1"
+          />
+        </div>
+      </div>
+
+      <div className="border-border bg-surface-inset flex items-center gap-2 border-t px-4 py-1.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          {task.blockedByIndices.length > 0 && (
+            <>
+              <Link2 className="text-muted-foreground size-3 shrink-0" />
+              {task.blockedByIndices.map((blockerIndex) => {
+                const title = allTasks[blockerIndex]?.title;
+                if (title === undefined) return null;
+                return (
+                  <button
+                    key={blockerIndex}
+                    type="button"
+                    onClick={() => onExpand(blockerIndex)}
+                    aria-label={`Expand task ${blockerIndex + 1}`}
+                    className="rounded-control focus-visible:ring-ring/40 focus-visible:ring-1 focus-visible:outline-none"
+                  >
+                    {/* `justify-start` matters: Badge centers its content, and a
+                        centered flex box with overflow clips the START of the text. */}
+                    <Badge
+                      variant="secondary"
+                      title={title}
+                      className="hover:bg-accent max-w-[11rem] cursor-pointer justify-start font-normal"
+                    >
+                      <span className="text-muted-foreground shrink-0 font-mono">
+                        #{blockerIndex + 1}
+                      </span>
+                      <span className="truncate">{title}</span>
+                    </Badge>
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
         <Select
           value={task.priority}
           onValueChange={(value) =>
@@ -363,7 +415,7 @@ function PlanTaskRow({
           <SelectTrigger
             size="sm"
             aria-label={`Task ${index + 1} priority`}
-            className="h-6.5 w-[6.75rem] shrink-0 gap-1 px-2 text-[12px]"
+            className="h-6.5 w-[6.75rem] shrink-0 gap-1 border-none bg-transparent px-2 text-[12px] shadow-none"
           >
             <SelectValue className="capitalize" />
           </SelectTrigger>
@@ -397,53 +449,6 @@ function PlanTaskRow({
           <Trash2 className="size-3.5" />
         </Button>
       </div>
-
-      <Textarea
-        rows={2}
-        value={task.description}
-        onChange={(e) =>
-          onEdit({
-            type: 'setTaskDescription',
-            index,
-            description: e.target.value,
-          })
-        }
-        aria-label={`Task ${index + 1} description`}
-        className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-none border-none bg-transparent py-0.5 pr-0 pl-7 text-[12px] shadow-none focus-visible:ring-1"
-      />
-
-      {task.blockedByIndices.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 pl-7">
-          <Link2 className="text-muted-foreground size-3" />
-          <span className="text-muted-foreground text-[11px]">Blocked by</span>
-          {task.blockedByIndices.map((blockerIndex) => {
-            const title = allTasks[blockerIndex]?.title;
-            if (title === undefined) return null;
-            return (
-              <button
-                key={blockerIndex}
-                type="button"
-                onClick={() => onExpand(blockerIndex)}
-                aria-label={`Expand task ${blockerIndex + 1}`}
-                className="rounded-control focus-visible:ring-ring/40 focus-visible:ring-1 focus-visible:outline-none"
-              >
-                {/* `justify-start` matters: Badge centers its content, and a
-                    centered flex box with overflow clips the START of the text. */}
-                <Badge
-                  variant="secondary"
-                  title={title}
-                  className="hover:bg-accent max-w-[11rem] cursor-pointer justify-start font-normal"
-                >
-                  <span className="text-muted-foreground shrink-0 font-mono">
-                    #{blockerIndex + 1}
-                  </span>
-                  <span className="truncate">{title}</span>
-                </Badge>
-              </button>
-            );
-          })}
-        </div>
-      )}
     </div>
   );
 }
