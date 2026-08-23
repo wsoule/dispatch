@@ -1,7 +1,7 @@
 ---
 id: t-06e1b0
 title: "v0 scoring: urgency, unblocking value, and age against the current store"
-status: in-review
+status: done
 kind: task
 parent: e-ba8bf1
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-23T00:36:30.554Z
+updated: 2026-08-23T00:37:31.098Z
 external: null
 writes:
   - packages/core/src/**
@@ -64,3 +64,4 @@ Guards mutation-tested: unknown-key-beside-weights 1, contained-errors 7, defaul
 
 Still open (unchanged from before): `DispatchConfig.queue` remains optional because the scope request for apps/desktop/src/components/settings/fixtures.test-helper.ts went undecided. The two-line fix is in my earlier comment. — none
 - 2026-08-23T00:36:30.554Z [run r-44416e] finished: finished — 12 files, $7.78 — agent:wsoule679/claude
+- 2026-08-23T00:37:31.098Z run r-44416e merged into epic/e-ba8bf1 — human:wsoule679
