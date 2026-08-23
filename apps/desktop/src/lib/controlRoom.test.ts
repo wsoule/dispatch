@@ -95,9 +95,9 @@ describe('grouping', () => {
       })
     );
     expect(model.groups.map((g) => g.state)).toEqual([
-      'waiting',
-      'working',
+      'approve',
       'review',
+      'working',
     ]);
   });
 
@@ -246,7 +246,7 @@ describe('filtering', () => {
         activeStates: new Set<FeedState>(['working', 'review']),
       })
     );
-    expect(model.groups.map((g) => g.state)).toEqual(['working', 'review']);
+    expect(model.groups.map((g) => g.state)).toEqual(['review', 'working']);
     expect(model.shown).toBe(2);
   });
 });
@@ -309,10 +309,10 @@ describe('row content', () => {
       reason: 'Wants to run Bash',
       detail: null,
     });
-    expect(model.groups[0]?.rows[0]?.waitingOn).toBe('approval');
+    expect(model.groups[0]?.rows[0]?.state).toBe('approve');
   });
 
-  test('a running run with an open question moves to waiting and quotes it', () => {
+  test('a running run with an open question moves to answer and quotes it', () => {
     const model = buildFeed(
       input({
         runs: [run({ id: 'r-a', state: 'running' })],
@@ -320,13 +320,12 @@ describe('row content', () => {
       })
     );
     const row = model.groups[0]?.rows[0];
-    expect(row?.state).toBe('waiting');
-    expect(row?.waitingOn).toBe('question');
+    expect(row?.state).toBe('answer');
     expect(row?.attention).toEqual({
       reason: 'Asked you a question',
       detail: 'Which database?',
     });
-    expect(model.counts.waiting).toBe(1);
+    expect(model.counts.answer).toBe(1);
     expect(model.counts.working).toBe(0);
   });
 
@@ -356,7 +355,7 @@ describe('row content', () => {
       })
     );
     expect(model.groups[0]?.rows[0]?.state).toBe('review');
-    expect(model.groups[0]?.rows[0]?.waitingOn).toBeNull();
+    expect(model.groups[0]?.rows[0]?.attention).toBeNull();
   });
 
   // After a reload this window never saw the approval.requested event, so the tool name is
@@ -427,7 +426,7 @@ describe('row content', () => {
 });
 
 describe('auxiliary runs fold into the execute run they are about', () => {
-  test('a live review agent produces one working row, not a second row', () => {
+  test('a live review agent produces one checking row, not a second row', () => {
     const model = buildFeed(
       input({
         runs: [
@@ -441,10 +440,10 @@ describe('auxiliary runs fold into the execute run they are about', () => {
     const rows = model.groups.flatMap((g) => g.rows);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.runId).toBe('r-exec');
-    expect(rows[0]?.state).toBe('working');
+    expect(rows[0]?.state).toBe('checking');
     expect(rows[0]?.activity).toBe('AI review running');
     // The ribbon must agree with the feed, or the counts contradict the rows.
-    expect(model.counts.working).toBe(1);
+    expect(model.counts.checking).toBe(1);
     expect(model.counts.review).toBe(0);
   });
 
@@ -503,10 +502,15 @@ describe('auxiliary runs fold into the execute run they are about', () => {
 describe('group configuration', () => {
   test('only run-backed states are fed; ready and blocked are ribbon-only', () => {
     expect(FEED_GROUPS).toEqual([
-      'waiting',
+      'answer',
+      'approve',
+      'review',
+      'ruling',
+      'unblock',
       'failed',
       'working',
-      'review',
+      'fixing',
+      'checking',
       'landing',
     ]);
   });

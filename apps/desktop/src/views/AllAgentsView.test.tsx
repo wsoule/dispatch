@@ -99,7 +99,7 @@ test('agentSessionBucket and agentSessionFeedState cover every session state', (
   expect(agentSessionBucket(session({ state: 'ready' }))).toBe('needs-review');
   expect(agentSessionBucket(session({ state: 'failed' }))).toBe('needs-review');
   expect(agentSessionFeedState(session({ state: 'running' }))).toBe('working');
-  expect(agentSessionFeedState(session({ state: 'ready' }))).toBe('waiting');
+  expect(agentSessionFeedState(session({ state: 'ready' }))).toBe('answer');
   expect(agentSessionFeedState(session({ state: 'failed' }))).toBe('failed');
 });
 

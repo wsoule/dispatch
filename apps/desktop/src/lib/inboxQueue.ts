@@ -30,7 +30,7 @@ function isWaiting(
 ): boolean {
   if ((run.kind ?? 'execute') !== 'execute') return false;
   if (run.archivedAt !== undefined) return false;
-  if (deriveFeedState(run) === 'waiting') return true;
+  if (deriveFeedState(run) === 'approve') return true;
   return (openQuestions.get(run.id) ?? []).length > 0;
 }
 

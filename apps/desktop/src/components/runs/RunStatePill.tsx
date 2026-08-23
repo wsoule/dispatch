@@ -34,7 +34,7 @@ const RUN_STATE_LABEL: Record<RunState, string> = {
 const RUN_STATE_TONE: Record<RunState, FeedState> = {
   provisioning: 'working',
   running: 'working',
-  'awaiting-approval': 'waiting',
+  'awaiting-approval': 'approve',
   finished: 'review',
   failed: 'failed',
   cancelled: 'blocked',

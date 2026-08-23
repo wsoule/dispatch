@@ -199,7 +199,7 @@ function WaitingRow({
     return (
       <Row
         title={run.taskTitle}
-        state="waiting"
+        state="answer"
         updatedAt={run.updatedAt}
         onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
       />

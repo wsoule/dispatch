@@ -915,6 +915,9 @@ function App() {
                   {navState.projectView === 'overview' && (
                     <OverviewView
                       data={data}
+                      onOpenTask={(taskId) =>
+                        dispatchNav({ type: 'openPeek', taskId })
+                      }
                       onOpenRun={jumpToRun}
                       onReviewRun={(runId) => {
                         const run = data.runs.find((r) => r.id === runId);

@@ -3,37 +3,46 @@ import {
   CirclePlay,
   CircleX,
   Eye,
-  Hand,
+  Gavel,
   LoaderCircle,
+  MessageCircleQuestion,
   PlaneLanding,
+  ScanSearch,
+  ShieldCheck,
+  TriangleAlert,
+  Wrench,
 } from 'lucide-react';
 
-import { type FeedState, isInFlightState } from '../lib/feedState';
+import { type FeedState, feedTier, isInFlightState } from '../lib/feedState';
 import { cn } from '../lib/utils';
 
-// One lucide glyph per state — literal where a literal exists (a plane landing,
-// a hand asking, a ban sign) so the mark carries meaning before color does.
-const MARK_ICON: Record<FeedState, typeof Hand> = {
-  waiting: Hand,
+// One lucide glyph per state — the glyph names the specific move, literal
+// where a literal exists (a gavel for a ruling, a plane landing, a wrench for
+// a fix round).
+const MARK_ICON: Record<FeedState, typeof Ban> = {
+  answer: MessageCircleQuestion,
+  approve: ShieldCheck,
+  review: Eye,
+  ruling: Gavel,
+  unblock: TriangleAlert,
   failed: CircleX,
   working: LoaderCircle,
-  review: Eye,
+  fixing: Wrench,
+  checking: ScanSearch,
   landing: PlaneLanding,
   ready: CirclePlay,
   blocked: Ban,
 };
 
-// Spelled out because Tailwind cannot build class names at runtime. Same
-// state-token hues the rest of the app keys on.
-const MARK_COLOR: Record<FeedState, string> = {
-  waiting: 'text-state-waiting',
-  failed: 'text-state-failed',
-  working: 'text-state-working',
-  review: 'text-state-review',
-  landing: 'text-state-landing',
-  ready: 'text-state-ready',
-  blocked: 'text-state-blocked',
-};
+// Hue comes from the TIER, not the state: amber means your move whatever the
+// move is, blue means the machine's, red means broken, gray means resting.
+// Spelled out because Tailwind cannot build class names at runtime.
+const TIER_COLOR = {
+  you: 'text-state-waiting',
+  broken: 'text-state-failed',
+  machine: 'text-state-working',
+  resting: 'text-muted-foreground',
+} as const;
 
 interface StateMarkProps {
   state: FeedState;
@@ -45,9 +54,9 @@ interface StateMarkProps {
 }
 
 /**
- * The small mark that tells a row's state apart. Pulse means "in flight" and
- * nothing else — it is the only motion these surfaces have, and `motion-safe:`
- * gates it.
+ * The small mark that tells a row's state apart: glyph = which move, hue =
+ * whose move. Pulse means "in flight" and nothing else — it is the only motion
+ * these surfaces have, and `motion-safe:` gates it.
  */
 export function StateMark({
   state,
@@ -64,7 +73,7 @@ export function StateMark({
       className={cn(
         'shrink-0',
         size === 'sm' ? 'size-3.5' : 'size-4',
-        MARK_COLOR[state],
+        TIER_COLOR[feedTier(state)],
         animate && 'motion-safe:animate-pulse',
         className
       )}
