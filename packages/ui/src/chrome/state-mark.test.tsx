@@ -36,14 +36,13 @@ test('exactly the in-flight states pulse by default', () => {
   expect(pulsing.sort()).toEqual(['landing', 'working']);
 });
 
-// `failed` used to differ from `waiting` only by a ring in a border tone, which
-// is all but invisible against the light theme's near-white ground.
-test('failed differs from waiting by silhouette, not by a ring', () => {
+// Every state is its own lucide glyph — not one shape recoloured — so the marks
+// stay tellable-apart without hue.
+test('failed and waiting are different glyphs, not different colours', () => {
   const { container: failed } = render(<StateMark state="failed" />);
   const { container: waiting } = render(<StateMark state="waiting" />);
-  expect(failed.innerHTML).toContain('clip-path');
-  expect(failed.innerHTML).not.toContain('ring-');
-  expect(waiting.innerHTML).not.toContain('clip-path');
+  expect(failed.innerHTML).toContain('lucide-circle-x');
+  expect(waiting.innerHTML).toContain('lucide-hand');
 });
 
 test('the mark is hidden from assistive tech', () => {
