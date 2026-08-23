@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T18:01:32.916Z
-updated: 2026-08-23T00:21:45.879Z
+updated: 2026-08-23T01:12:44.300Z
 external: null
 writes:
   - packages/server/src/**
@@ -68,3 +68,24 @@ Verification: server tsc clean; lint 0 errors (42 warnings, all pre-existing, no
 6. finishAutoResume must re-check resumeBlockReason after the awaited survey (a human Resume during that await creates a second successor; orchestrator.ts:1805), and the give-up note must re-check stopped/blockReason before writing (it can falsely claim 'orphan still writing' about a resumed/discarded run, orchestrator.ts:1791).
 7. Internal dispatchers bypass resume entirely: epic auto-fill (epic.ts:395) and warden dispatch_task (wardenTools.ts:395) call orchestrator.dispatch directly and permanently cancel the sweep. Add a dispatchOrResume seam on the Orchestrator that all three entry points use.
 OPTIONAL (confirmed): share the stalling-executor stub via test/orchestrator/helpers.ts instead of two fresh copies; import RunMeta instead of the local RunRow slice; replace the 600ms wall-clock orphan test with condition polling (repo's flaky-test history says it will flake); delay-first loop ordering to drop the dead final 30s wait. Run server tests when done, commit. — human:wsoule679
+- 2026-08-23T01:12:44.300Z Review fixes committed: 26dbaaa9 (server), bc8ae165 (cli). All 7 required items plus all 4 optional ones.
+
+1. Re-dispatch quiescence gate. `dispatchOrResume` now refuses (409, re-arming the sweep) when the run is boot-force-failed and nothing has yet watched its worktree settle. Only boot-force-failed runs owe that proof — a run that failed with its daemon alive has no orphan to race. The 409 says the run will resume on its own and points at fresh=true.
+2. Evidence strengthened. `worktreeEvidence` now hashes the actual staged/unstaged diff CONTENT plus untracked size+mtime, and returns null for "cannot tell" — null never compares equal into a resume.
+3. Task status. `resumeBlockReason` mirrors createRun's done/cancelled refusal (and refuses an unreadable task file).
+4. Model consistency. A named model differing from the run's routes to a fresh run, same as executor. Only compared when the run's own model is known, so an older run recording none still resumes.
+5. CLI sends `--executor` only when typed (getOptionValueSource); a default is not a request.
+6. finishAutoResume re-checks blockReason after the awaited sample; the give-up note re-checks stopped+blockReason before claiming an orphan is still writing.
+7. `dispatchOrResume` seam now used by api.ts createRun, EpicEngine auto-fill and warden dispatch_task.
+
+Optional: stalling stub shared via test/orchestrator/helpers.ts; resilience test uses the real RunMeta; the 600ms wall-clock orphan test is now condition-polled; loop is delay-first.
+
+Two things found while fixing, worth knowing:
+- I introduced a real bug and caught it: `worktreeEvidence` ran git status + git diff concurrently, which lose the index.lock race in one worktree. That returns null = "cannot tell", so it would have quietly prevented EVERY resume. Now sequential.
+- Sampling moved to strictly after each quiet window (no boot baseline). Beyond dropping the dead trailing wait, this stops boot firing a burst of git at every crashed worktree exactly when its orphan is most likely mid-commit — losing that race costs the ORPHAN a failed commit. It reproduced as a real aggregate-only failure in the pre-existing orphan-work test; aggregate now runs clean 3x.
+
+Verification: tsc clean (server/cli/client); lint 0 errors / 42 pre-existing warnings, none in changed files; 930 pass 0 fail server, 194 cli, 67 client. Mutations: quiescence gate 3 fails, content evidence 1, task-status guard 1, null-is-not-quiet 1 (this one FIRST came back 0 — a dead guard — so I added a test that corrupts the worktree's .git file and re-ran it), finishAutoResume re-check 0 (verified as genuine defence-in-depth behind resumeRun's own liveRunForTask/reviewedAt guards, not a missing test — reported honestly rather than covered by a contrived one).
+
+Unrelated: test/orchestrator/claude-executor.test.ts fails in an agent shell only because DISPATCH_MCP_BIN is inherited from the installed Dispatch.app; passes under `env -u DISPATCH_MCP_BIN`.
+
+Also noticed, pre-existing and NOT changed: handleFinish's transition spreads `sessionId: finish.sessionId` over the meta, so an executor that reports a session mid-run but omits it on finish ends up with none recorded — which would make that run non-resumable. Real executors report it on finish, and boot-force-failed runs never go through handleFinish, so the incident path is unaffected. Flagging rather than touching transition's fold semantics. — none
