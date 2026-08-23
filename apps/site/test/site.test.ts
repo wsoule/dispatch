@@ -16,8 +16,10 @@ test('no em-dashes anywhere on the page', () => {
   expect(html).not.toContain('—');
 });
 
-test('live demo iframe points at the demo service', () => {
-  expect(html).toContain('dispatch-demo-production-aed7.up.railway.app');
+test('live demo iframe points at the demo service in embed mode', () => {
+  expect(html).toContain(
+    'dispatch-demo-production-aed7.up.railway.app/?embed=1'
+  );
 });
 
 test('positioning survives', () => {
