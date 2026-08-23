@@ -1,7 +1,7 @@
 ---
 id: e-5434b7
 title: "Shared team runtime: sessions leave the machine (code.storage)"
-status: todo
+status: dropped
 kind: epic
 parent: null
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T22:46:27.152Z
-updated: 2026-08-23T14:29:19.399Z
+updated: 2026-08-23T14:29:29.010Z
 external: null
 writes: []
 ---

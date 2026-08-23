@@ -1,7 +1,7 @@
 ---
 id: t-f8aaae
 title: Design the external dispatch store on code.storage
-status: todo
+status: dropped
 kind: task
 parent: e-5434b7
 milestone: null
@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T22:47:07.040Z
-updated: 2026-08-10T22:59:41.073Z
+updated: 2026-08-23T14:29:31.954Z
 external: null
 writes: []
 ---

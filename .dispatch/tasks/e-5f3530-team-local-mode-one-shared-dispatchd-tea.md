@@ -1,7 +1,7 @@
 ---
 id: e-5f3530
 title: "Team-local mode: one shared dispatchd, teammates connect from browsers"
-status: todo
+status: dropped
 kind: epic
 parent: null
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T16:58:05.881Z
-updated: 2026-08-23T14:29:22.931Z
+updated: 2026-08-23T14:29:30.432Z
 external: null
 writes: []
 ---
