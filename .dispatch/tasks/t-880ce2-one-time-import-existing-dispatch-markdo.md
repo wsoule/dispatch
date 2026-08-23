@@ -1,7 +1,7 @@
 ---
 id: t-880ce2
 title: "One-time import: existing .dispatch markdown and JSONL into the daemon DB"
-status: review
+status: working
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T16:51:08.073Z
+updated: 2026-08-23T18:35:14.634Z
 external: null
 writes:
   - packages/cli/src/**
@@ -86,3 +86,15 @@ Q2 landed: resolveStoreBackend's blanket refusal at index.ts:215 is gone (DISPAT
 
 Tests: core 506, cli 199, server 2085, all 0 fail. lint 0 errors, tsc clean on all three. Five guards mutation-tested; one of them (a redundant backend check) came back 0 and was deleted rather than kept, with the reason recorded in the code. — none
 - 2026-08-23T16:51:08.073Z [run r-5ebfaa] finished: finished — 16 files, $8.86 — agent:wsoule679/claude
+- 2026-08-23T18:35:14.634Z requested changes (run r-165d02): Code review: 13 confirmed correctness findings. REQUIRED before merge, ranked:
+1. core/index.ts:74 — the node barrel eagerly re-exports sqliteDb.ts whose top-level import of node:sqlite crashes EVERY CLI command at module load on Node 22.0–22.12 (unflagged only from 22.13), which cli's engines >=22 permits. Lazy-load the sqlite module (dynamic import behind the backend check) or split the barrel so the CLI never evaluates it un-needed.
+2. server/index.ts:492 — boot import is gated on the storage.json marker rather than the DB holding the board: a clone with the committed marker but no dispatch.db boots an empty database, skips the import (readProjectBackend already 'sqlite'), and serves an empty board while CLI/MCP refuse file reads. Gate on 'db lacks the board AND legacy board present', and/or gitignore storage.json.
+3. migrate.ts:346 — one legacy task file with an id failing TASK_ID_PATTERN escapes importTasks uncaught → ROLLBACK, whole migration fails, daemon refuses to boot on the sqlite path. Count it as damaged and continue, like every other unreadable-record path.
+4. migrate.ts:398 — two DISTINCT records sharing an id: the loser is tallied 'skipped/present' and silently lost; the scan's duplicateIds exists precisely to report this. Surface it as a problem entry with both ids/timestamps — never a silent drop (hard acceptance-bar violation).
+5. cli/doctor.ts:68 — post-migration, tasks/ remains forever, so doctor permanently validates the frozen markdown instead of the live DB. When backend=sqlite, validate the DB board regardless of tasks/ presence.
+6. sqliteRecords.ts:198 — findings/ledger reads map rows through throwing parsers with no listSafe seam: one damaged row 500s every read INCLUDING the blocked-finding merge gate. Add the skip-and-report seam SqliteTaskStore already has.
+7. cli/task.ts:118 — resolveTaskRoute uses bare cwd with no DISPATCH_PROJECT_ROOT mapping, so inside a run worktree every dispatch task command throws DAEMON_REQUIRED while the daemon runs; MCP's projectRoot() got this exact mapping — mirror it.
+8. mcp/tools.ts:692 — task_comment maps any non-404 daemon error to a false 'dispatchd is not running' and drops the comment; preserve and surface the real error.
+9. cli/doctor.ts:130 — db-backed doctor never consults /api/health problems, so damaged rows are invisible and doctor prints ok; fold problems[] into doctor issues.
+10. cli/task.ts:358 — 'task next' local fallback lacks the archivedAt filter the daemon path and the MCP copy both have — same-diff divergence, apply the same filter.
+ALSO (confirmed but cut for the report cap — fix if quick): backend marker should not flip when the import counted damaged records; the config watcher's GET-before-PATCH race within the debounce; dry-run must not write config.yml (a dry run writes NOTHING); plus cleanups: readProjectBackend copy in mcp/daemon.ts, entriesFor predicate duplication, DAEMON_REQUIRED message triplication. Run core+cli+server tests, re-run the dry run to confirm 155/30/341/308 unchanged, commit. — human:wsoule679
