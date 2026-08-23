@@ -11,17 +11,22 @@ import {
   CircleAlert,
   History,
   Link2,
+  Maximize2,
   Minus,
   Plus,
+  Rows3,
   Send,
   SignalHigh,
   SignalLow,
   SignalMedium,
   Trash2,
+  Waypoints,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { DependencyGraph } from '../components/graph/DependencyGraph';
 import { PlanQuestionsForm } from '../components/plans/PlanQuestionsForm';
+import { PlanTaskSpecDialog } from '../components/plans/PlanTaskSpecDialog';
 import { Markdown } from '../components/runs/Markdown';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useToasts } from '../components/shell/Toasts';
@@ -48,6 +53,7 @@ import {
 import { Skeleton } from '@/ui/skeleton';
 import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
+import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 
@@ -310,6 +316,8 @@ interface PlanTaskRowProps {
    * patch object, so the row and the reducer can never disagree about what an edit means. */
   onEdit: (action: ProposalAction) => void;
   onRemove: (index: number) => void;
+  /** Expands a task (this one, or a blocker named in its chips) into the full spec dialog. */
+  onExpand: (index: number) => void;
 }
 
 /** One card of the proposal review list. "Dependency arrows" are rendered as a plain
@@ -323,6 +331,7 @@ function PlanTaskRow({
   allTasks,
   onEdit,
   onRemove,
+  onExpand,
 }: PlanTaskRowProps) {
   return (
     <div className="bg-card rounded-card shadow-card ease-out-expo hover:bg-surface-hover group/plan-task flex flex-col gap-1 px-3 py-2.5 transition-colors duration-100">
@@ -371,6 +380,16 @@ function PlanTaskRow({
           type="button"
           variant="ghost"
           size="icon-xs"
+          onClick={() => onExpand(index)}
+          aria-label={`Expand task ${index + 1}`}
+          className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
+        >
+          <Maximize2 className="size-3.5" />
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
           onClick={() => onRemove(index)}
           aria-label={`Remove task ${index + 1}`}
           className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
@@ -401,19 +420,26 @@ function PlanTaskRow({
             const title = allTasks[blockerIndex]?.title;
             if (title === undefined) return null;
             return (
-              // `justify-start` matters: Badge centers its content, and a
-              // centered flex box with overflow clips the START of the text.
-              <Badge
+              <button
                 key={blockerIndex}
-                variant="secondary"
-                title={title}
-                className="max-w-[11rem] justify-start font-normal"
+                type="button"
+                onClick={() => onExpand(blockerIndex)}
+                aria-label={`Expand task ${blockerIndex + 1}`}
+                className="rounded-control focus-visible:ring-ring/40 focus-visible:ring-1 focus-visible:outline-none"
               >
-                <span className="text-muted-foreground shrink-0 font-mono">
-                  #{blockerIndex + 1}
-                </span>
-                <span className="truncate">{title}</span>
-              </Badge>
+                {/* `justify-start` matters: Badge centers its content, and a
+                    centered flex box with overflow clips the START of the text. */}
+                <Badge
+                  variant="secondary"
+                  title={title}
+                  className="hover:bg-accent max-w-[11rem] cursor-pointer justify-start font-normal"
+                >
+                  <span className="text-muted-foreground shrink-0 font-mono">
+                    #{blockerIndex + 1}
+                  </span>
+                  <span className="truncate">{title}</span>
+                </Badge>
+              </button>
             );
           })}
         </div>
@@ -463,6 +489,24 @@ export function PlansView({
   const [draft, setDraft] = useState<PlanDraft | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  // Which proposal task is expanded into the full spec dialog (by index), and whether the
+  // proposal renders as the editable list or the dependency graph.
+  const [specIndex, setSpecIndex] = useState<number | null>(null);
+  const [proposalView, setProposalView] = useState<'list' | 'graph'>('list');
+
+  // The proposal projected onto the shared graph shape. Drafts have no task ids, so nodes
+  // are keyed by proposal index; `created` is the same index (zero-padded) purely as the
+  // layout's deterministic tie-break.
+  const graphTasks = useMemo(() => {
+    if (draft === null) return [];
+    return draft.proposal.tasks.map((task, i) => ({
+      id: String(i),
+      title: task.title.trim() === '' ? `Task ${i + 1}` : task.title,
+      status: 'draft',
+      created: String(i).padStart(4, '0'),
+      blockedBy: task.blockedByIndices.map(String),
+    }));
+  }, [draft]);
 
   // Folds each turn's proposal into the editable draft as the conversation
   // produces it. History is server truth now — no snapshot to keep fresh.
@@ -530,12 +574,14 @@ export function PlansView({
   function closePlan() {
     setDraft(null);
     setConfirmError(null);
+    setSpecIndex(null);
     data.setPlanId(null);
   }
 
   function openHistoryEntry(planId: string) {
     setDraft(null);
     setConfirmError(null);
+    setSpecIndex(null);
     data.setPlanId(planId);
   }
 
@@ -699,18 +745,67 @@ export function PlansView({
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
-            {draft.proposal.tasks.map((task, i) => (
-              <PlanTaskRow
-                key={draft.taskKeys[i] ?? i}
-                task={task}
-                index={i}
-                allTasks={draft.proposal.tasks}
-                onEdit={applyEdit}
-                onRemove={(index) => applyEdit({ type: 'removeTask', index })}
+          {draft.proposal.tasks.length > 1 && (
+            <div className="flex justify-end">
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={proposalView}
+                onValueChange={(value) => {
+                  // Radix clears to '' when the active item is re-clicked; a proposal is
+                  // always one of the two views, so ignore the deselect.
+                  if (value === 'list' || value === 'graph')
+                    setProposalView(value);
+                }}
+                aria-label="Proposal layout"
+              >
+                <ToggleGroupItem value="list" aria-label="List view">
+                  <Rows3 className="size-3.5" /> List
+                </ToggleGroupItem>
+                <ToggleGroupItem value="graph" aria-label="Graph view">
+                  <Waypoints className="size-3.5" /> Graph
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          )}
+
+          {proposalView === 'graph' && draft.proposal.tasks.length > 1 ? (
+            <div className="bg-card rounded-card shadow-card p-4">
+              <DependencyGraph
+                tasks={graphTasks}
+                subtitleFor={(id) => {
+                  const task = draft.proposal.tasks[Number(id)];
+                  return task === undefined
+                    ? undefined
+                    : `#${Number(id) + 1} · ${task.priority}`;
+                }}
+                onOpenNode={(id) => setSpecIndex(Number(id))}
+                ariaLabel="Plan dependency graph"
               />
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {draft.proposal.tasks.map((task, i) => (
+                <PlanTaskRow
+                  key={draft.taskKeys[i] ?? i}
+                  task={task}
+                  index={i}
+                  allTasks={draft.proposal.tasks}
+                  onEdit={applyEdit}
+                  onRemove={(index) => applyEdit({ type: 'removeTask', index })}
+                  onExpand={setSpecIndex}
+                />
+              ))}
+            </div>
+          )}
+
+          <PlanTaskSpecDialog
+            index={specIndex}
+            tasks={draft.proposal.tasks}
+            onOpenIndex={setSpecIndex}
+            onClose={() => setSpecIndex(null)}
+          />
 
           <div className="shadow-hairline-top flex items-center justify-end gap-2 pt-3">
             <Button variant="ghost" onClick={closePlan} disabled={confirming}>
