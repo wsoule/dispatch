@@ -1,20 +1,38 @@
+import {
+  Ban,
+  CirclePlay,
+  CircleX,
+  Eye,
+  Hand,
+  LoaderCircle,
+  PlaneLanding,
+} from 'lucide-react';
+
 import { type FeedState, isInFlightState } from '../lib/feedState';
 import { cn } from '../lib/utils';
 
-// Spelled out because Tailwind cannot build class names at runtime. With the
-// palette grayscale, form distinguishes states and tone ranks their urgency.
-// `failed` is a wedge bitten out of the disc, not a ring: a ring is drawn in a
-// border tone that all but vanishes against the light theme's near-white ground,
-// whereas a cut silhouette survives either ground.
-const MARK_FORM: Record<FeedState, string> = {
-  waiting: 'bg-state-waiting rounded-full',
-  failed:
-    'bg-state-failed rounded-full [clip-path:polygon(0%_0%,100%_0%,100%_25%,35%_50%,100%_75%,100%_100%,0%_100%)]',
-  working: 'bg-state-working rounded-full',
-  review: 'border border-state-review rounded-full',
-  landing: 'bg-state-landing rounded-full [clip-path:inset(0_50%_0_0)]',
-  ready: 'border border-dashed border-state-ready rounded-full',
-  blocked: 'bg-state-blocked h-px self-center',
+// One lucide glyph per state — literal where a literal exists (a plane landing,
+// a hand asking, a ban sign) so the mark carries meaning before color does.
+const MARK_ICON: Record<FeedState, typeof Hand> = {
+  waiting: Hand,
+  failed: CircleX,
+  working: LoaderCircle,
+  review: Eye,
+  landing: PlaneLanding,
+  ready: CirclePlay,
+  blocked: Ban,
+};
+
+// Spelled out because Tailwind cannot build class names at runtime. Same
+// state-token hues the rest of the app keys on.
+const MARK_COLOR: Record<FeedState, string> = {
+  waiting: 'text-state-waiting',
+  failed: 'text-state-failed',
+  working: 'text-state-working',
+  review: 'text-state-review',
+  landing: 'text-state-landing',
+  ready: 'text-state-ready',
+  blocked: 'text-state-blocked',
 };
 
 interface StateMarkProps {
@@ -27,9 +45,9 @@ interface StateMarkProps {
 }
 
 /**
- * The small mark that tells a row's state apart without using colour. Pulse
- * means "in flight" and nothing else — it is the only motion these surfaces
- * have, and `motion-safe:` gates it.
+ * The small mark that tells a row's state apart. Pulse means "in flight" and
+ * nothing else — it is the only motion these surfaces have, and `motion-safe:`
+ * gates it.
  */
 export function StateMark({
   state,
@@ -38,13 +56,15 @@ export function StateMark({
   className,
 }: StateMarkProps) {
   const animate = pulse ?? isInFlightState(state);
+  const Icon = MARK_ICON[state];
   return (
-    <span
+    <Icon
       aria-hidden
+      strokeWidth={2.25}
       className={cn(
         'shrink-0',
-        size === 'sm' ? 'size-1.5' : 'size-2',
-        MARK_FORM[state],
+        size === 'sm' ? 'size-3.5' : 'size-4',
+        MARK_COLOR[state],
         animate && 'motion-safe:animate-pulse',
         className
       )}
