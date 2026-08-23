@@ -1,17 +1,25 @@
 import type { ImpactEntry, ImpactSubjectKind } from '@dispatch/client';
 import { IMPACT_SUBJECT_KINDS } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
-import { ChevronDown, ChevronUp, Waypoints } from 'lucide-react';
+import {
+  ChevronDown,
+  ChevronsUpDown,
+  ChevronUp,
+  TriangleAlert,
+  Waypoints,
+} from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { ImpactPanel } from '../components/impact/ImpactPanel';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef } from '../lib/appNav';
+import { findClaimOverlaps } from '../lib/claimOverlap';
 import type { HopGroup } from '../lib/impactGroups';
 import { DEFAULT_REVIEW_CAP, summarizeImpact } from '../lib/impactSummary';
 import { resolveAffectedFilesStatus } from '../lib/impactViewStatus';
 import type { InsightDelta } from '@/ui/ai/insight-cards';
 import { InsightCard } from '@/ui/ai/insight-cards';
+import { Button } from '@/ui/button';
 import {
   EmptyState,
   HintText,
@@ -21,13 +29,20 @@ import {
 } from '@/ui/chrome';
 import { PathCrumb } from '@/ui/chrome/path-crumb';
 import { Toolbar } from '@/ui/chrome/toolbar';
-import { ViewHeader } from '@/ui/chrome/view-header';
 import {
   Collapsible,
   CollapsibleContent,
   CollapsibleTrigger,
 } from '@/ui/collapsible';
+import {
+  Command,
+  CommandEmpty,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from '@/ui/command';
 import { Input } from '@/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import {
   Select,
   SelectContent,
@@ -81,9 +96,158 @@ function ReachByHopCard({ groups }: { groups: HopGroup[] }) {
   );
 }
 
+/**
+ * The zero state, made useful: instead of a blank prompt, the current overlap picture —
+ * every live run's claimed write paths, with a warning strip when two runs' claims collide
+ * (see `findClaimOverlaps`). The page answers "are my parallel agents about to collide?"
+ * before anything is picked.
+ */
+function LiveClaims({
+  claims,
+  overlaps,
+  titleByRunId,
+}: {
+  claims: import('@dispatch/client').RunClaim[];
+  overlaps: ReturnType<typeof findClaimOverlaps>;
+  titleByRunId: ReadonlyMap<string, string>;
+}) {
+  if (claims.length === 0) {
+    return (
+      <EmptyState
+        icon={Waypoints}
+        message="Pick a file, run, or task to see its blast radius."
+      />
+    );
+  }
+
+  return (
+    <>
+      {overlaps.map((overlap) => (
+        <div
+          key={overlap.a.runId + ':' + overlap.b.runId}
+          className="bg-state-waiting-surface text-state-waiting rounded-control flex items-start gap-2 px-3 py-2 text-[12.5px]"
+        >
+          <TriangleAlert className="size-3.5 shrink-0 translate-y-0.5" />
+          <span className="min-w-0">
+            {(titleByRunId.get(overlap.a.runId) ?? overlap.a.taskId) +
+              ' and ' +
+              (titleByRunId.get(overlap.b.runId) ?? overlap.b.taskId) +
+              ' are claiming overlapping paths: '}
+            <span className="font-mono text-[11.5px]">
+              {overlap.paths.join(', ')}
+            </span>
+          </span>
+        </div>
+      ))}
+
+      <Panel>
+        <PanelHeader count={claims.length}>Live claims</PanelHeader>
+        {claims.map((claim) => (
+          <PanelRow key={claim.runId} className="flex-col items-stretch gap-1">
+            <span className="text-[13px] font-medium">
+              {titleByRunId.get(claim.runId) ?? claim.taskId}
+            </span>
+            {claim.claims.length === 0 ? (
+              <HintText>No writes claimed yet.</HintText>
+            ) : (
+              <ul className="flex flex-col gap-0.5">
+                {claim.claims.map((path) => (
+                  <li key={path}>
+                    <PathCrumb path={path} />
+                  </li>
+                ))}
+              </ul>
+            )}
+          </PanelRow>
+        ))}
+      </Panel>
+      <HintText>
+        Pick a file, run, or task above for its full blast radius.
+      </HintText>
+    </>
+  );
+}
+
 // A stable reference for "nothing fetched yet" so the grouping `useMemo`
 // below doesn't re-run every render on a fresh `[]` literal.
 const NO_ENTRIES: ImpactEntry[] = [];
+
+interface SubjectOption {
+  id: string;
+  label: string;
+  /** Muted trailing text — a branch, a task id. Also searchable. */
+  hint?: string;
+}
+
+/** Searchable subject picker — a Command palette in a popover, replacing the raw `Select`
+ * that listed every run/task in the project with no filter. */
+function SubjectCombobox({
+  value,
+  placeholder,
+  options,
+  onSelect,
+  ariaLabel,
+}: {
+  value: string;
+  placeholder: string;
+  options: SubjectOption[];
+  onSelect: (id: string) => void;
+  ariaLabel: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = options.find((o) => o.id === value);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          role="combobox"
+          aria-expanded={open}
+          aria-label={ariaLabel}
+          className="w-80 justify-between font-normal"
+        >
+          <span className={cnTruncate(selected === undefined)}>
+            {selected?.label ?? placeholder}
+          </span>
+          <ChevronsUpDown className="size-3.5 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-96 p-0">
+        <Command>
+          <CommandInput placeholder="Search…" />
+          <CommandList>
+            <CommandEmpty>No matches.</CommandEmpty>
+            {options.map((option) => (
+              <CommandItem
+                key={option.id}
+                value={`${option.label} ${option.hint ?? ''} ${option.id}`}
+                onSelect={() => {
+                  onSelect(option.id);
+                  setOpen(false);
+                }}
+              >
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {option.hint !== undefined && (
+                  <span className="text-muted-foreground ml-2 shrink-0 font-mono text-[11px]">
+                    {option.hint}
+                  </span>
+                )}
+              </CommandItem>
+            ))}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+function cnTruncate(placeholder: boolean): string {
+  return placeholder
+    ? 'text-muted-foreground min-w-0 truncate'
+    : 'min-w-0 truncate';
+}
 
 /**
  * The full blast-radius browser: pick a file, run, or task, see the same
@@ -116,6 +280,43 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
   );
 
   const hasSubject = id.trim() !== '';
+
+  const runOptions = useMemo<SubjectOption[]>(
+    () =>
+      [...data.runs]
+        .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+        .map((r) => ({ id: r.id, label: r.taskTitle, hint: r.branch })),
+    [data.runs]
+  );
+  const taskOptions = useMemo<SubjectOption[]>(
+    () =>
+      data.tasksIncludingArchived.map((t) => ({
+        id: t.meta.id,
+        label: t.meta.title,
+        hint: t.meta.id,
+      })),
+    [data.tasksIncludingArchived]
+  );
+
+  // The zero state's data: every live run's claimed write paths. Keyed on the run count so
+  // a dispatch or completion refetches; only fetched while nothing is picked.
+  const { data: runClaims } = useQuery({
+    queryKey: ['run-claims', data.client?.baseUrl, data.runs.length],
+    queryFn: () => {
+      if (data.client === null) throw new Error('no API client');
+      return data.client.fetchRunClaims();
+    },
+    enabled: data.client !== null && !hasSubject,
+    retry: false,
+  });
+  const overlaps = useMemo(
+    () => findClaimOverlaps(runClaims ?? []),
+    [runClaims]
+  );
+  const titleByRunId = useMemo(
+    () => new Map(data.runs.map((r) => [r.id, r.taskTitle])),
+    [data.runs]
+  );
 
   const {
     data: response,
@@ -196,11 +397,6 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
 
   return (
     <div className="flex flex-col gap-4">
-      <ViewHeader
-        title="Impact"
-        subtitle="What a file, run, or task's changes could touch"
-      />
-
       <Toolbar>
         <Select
           value={kind}
@@ -233,40 +429,31 @@ export function ImpactView({ data, initialSubject }: ImpactViewProps) {
         )}
 
         {kind === 'run' && (
-          <Select value={id} onValueChange={setId}>
-            <SelectTrigger size="sm" aria-label="Run" className="w-60">
-              <SelectValue placeholder="Choose a run…" />
-            </SelectTrigger>
-            <SelectContent>
-              {data.runs.map((r) => (
-                <SelectItem key={r.id} value={r.id}>
-                  {r.taskTitle} · {r.branch}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SubjectCombobox
+            value={id}
+            placeholder="Choose a run…"
+            ariaLabel="Run"
+            options={runOptions}
+            onSelect={setId}
+          />
         )}
 
         {kind === 'task' && (
-          <Select value={id} onValueChange={setId}>
-            <SelectTrigger size="sm" aria-label="Task" className="w-60">
-              <SelectValue placeholder="Choose a task…" />
-            </SelectTrigger>
-            <SelectContent>
-              {data.tasksIncludingArchived.map((t) => (
-                <SelectItem key={t.meta.id} value={t.meta.id}>
-                  {t.meta.id} · {t.meta.title}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <SubjectCombobox
+            value={id}
+            placeholder="Choose a task…"
+            ariaLabel="Task"
+            options={taskOptions}
+            onSelect={setId}
+          />
         )}
       </Toolbar>
 
       {!hasSubject ? (
-        <EmptyState
-          icon={Waypoints}
-          message="Pick a file, run, or task to see its blast radius."
+        <LiveClaims
+          claims={runClaims ?? []}
+          overlaps={overlaps}
+          titleByRunId={titleByRunId}
         />
       ) : (
         <>
