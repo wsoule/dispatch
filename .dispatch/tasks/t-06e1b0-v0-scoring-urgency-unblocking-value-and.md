@@ -1,7 +1,7 @@
 ---
 id: t-06e1b0
 title: "v0 scoring: urgency, unblocking value, and age against the current store"
-status: in-progress
+status: in-review
 kind: task
 parent: e-ba8bf1
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-23T00:36:15.349Z
+updated: 2026-08-23T00:36:30.554Z
 external: null
 writes:
   - packages/core/src/**
@@ -63,3 +63,4 @@ Notes where I did something other than the literal suggestion:
 Guards mutation-tested: unknown-key-beside-weights 1, contained-errors 7, defaults-copy 1, skip-undefined 1, unblocking accuracy 2, PATCH wiring 4.
 
 Still open (unchanged from before): `DispatchConfig.queue` remains optional because the scope request for apps/desktop/src/components/settings/fixtures.test-helper.ts went undecided. The two-line fix is in my earlier comment. — none
+- 2026-08-23T00:36:30.554Z [run r-44416e] finished: finished — 12 files, $7.78 — agent:wsoule679/claude
