@@ -1,7 +1,7 @@
 ---
 id: t-880ce2
 title: "One-time import: existing .dispatch markdown and JSONL into the daemon DB"
-status: review
+status: landed
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T18:58:44.243Z
+updated: 2026-08-23T19:00:38.408Z
 external: null
 writes:
   - packages/cli/src/**
@@ -114,3 +114,4 @@ Dry run re-run after all fixes: 155/30/341/308, 0 damaged, unchanged — and now
 
 NOT DONE, deferred deliberately: the config watcher's GET-before-PATCH race within the debounce window, and the three cleanups (readProjectBackend copy in mcp/daemon.ts, entriesFor predicate duplication, DAEMON_REQUIRED triplication). None are in this task's blast radius and each is a small standalone change; the mcp/daemon.ts marker copy in particular should fold into core's storage.ts when that module is next touched, which its own comment already says. — none
 - 2026-08-23T18:58:44.243Z [run r-165d02] finished: finished — 22 files, $13.63 — agent:wsoule679/claude
+- 2026-08-23T19:00:38.408Z run r-165d02 merged into epic/e-99e113 — human:wsoule679
