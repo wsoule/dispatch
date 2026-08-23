@@ -17,6 +17,7 @@ import {
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerMergeTaskCommand } from './commands/mergeTask.js';
 import { registerMergeTeamCommand } from './commands/mergeTeam.js';
+import { registerMigrateCommand } from './commands/migrate.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerScopeCommands } from './commands/scope.js';
@@ -147,6 +148,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerMergeTaskCommand(program, ctx);
   registerMergeTeamCommand(program, ctx);
   registerScopeCommands(program, ctx);
+  registerMigrateCommand(program, ctx);
 
   return program;
 }

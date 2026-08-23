@@ -69,11 +69,30 @@ describe('browser entry point purity', () => {
   });
 
   // Proves the walker is actually following imports rather than finding
-  // nothing because it parsed nothing: the node-side entry does reach both.
-  it('does reach node:sqlite from the node entry point', () => {
+  // nothing because it parsed nothing: the node-side entry really does reach
+  // the sqlite modules and real builtins through them.
+  it('does reach the sqlite modules and node builtins from the node entry', () => {
     const { visited, builtins } = valueGraph('index.ts');
     expect(visited.has('sqliteTaskStore.ts')).toBe(true);
-    expect(builtins.map((b) => b.specifier)).toContain('node:sqlite');
+    expect(visited.has('sqliteDb.ts')).toBe(true);
+    expect(builtins.map((b) => b.specifier)).toContain('node:fs');
+  });
+
+  /**
+   * `node:sqlite` must NOT be a static value import anywhere reachable from
+   * the node barrel, even though sqliteDb.ts is.
+   *
+   * It only became available unflagged in Node 22.13, and `@dispatch/cli`
+   * declares `node: >=22` and imports this barrel for every command. A
+   * top-level import would therefore throw ERR_UNKNOWN_BUILTIN_MODULE during
+   * module evaluation on 22.0–22.12, killing `dispatch task list` on a
+   * plain file-backed project that never wanted a database at all.
+   * sqliteDb.ts loads it through createRequire at first use instead; this
+   * pins that, because reinstating the import would look completely harmless.
+   */
+  it('never reaches node:sqlite as an eager import from the node entry', () => {
+    const { builtins } = valueGraph('index.ts');
+    expect(builtins.map((b) => b.specifier)).not.toContain('node:sqlite');
   });
 
   // browser.ts re-exports store.ts's input types; if that ever stops being a

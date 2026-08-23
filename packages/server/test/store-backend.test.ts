@@ -97,13 +97,14 @@ describe('resolveStoreBackend', () => {
     expect(resolveStoreBackend(dir)).toBe('files');
   });
 
-  // Creating an empty database beside a populated board would leave the
-  // project with two half-states; moving those tasks across is the import
-  // task's job, not a side effect of a variable set in the wrong shell.
-  it('refuses to switch a project that already has a markdown board', () => {
+  // This used to be refused: an empty database opened beside a populated
+  // board left the project with two half-states. It is allowed now because
+  // startServer runs the one-time import before serving anything, so the
+  // variable is one of the two supported ways to opt a project in.
+  it('accepts sqlite for a project that still has a markdown board', () => {
     process.env.DISPATCH_STORE_BACKEND = 'sqlite';
     mkdirSync(join(dir, DISPATCH_DIR, 'tasks'), { recursive: true });
-    expect(resolveStoreBackend(dir)).toBe('files');
+    expect(resolveStoreBackend(dir)).toBe('sqlite');
   });
 
   it('still honours a recorded sqlite choice for a migrated project', () => {

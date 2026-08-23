@@ -1,6 +1,8 @@
 import {
   ActorContext,
-  DISPATCH_DIR,
+  formatMigrationReport,
+  hasLegacyState,
+  importLegacyProject,
   initProjectStores,
   isMergeDriverResolvable,
   loadConfig,
@@ -10,10 +12,10 @@ import {
 import type {
   CartoMode,
   GitReader,
+  ProjectStores,
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
-import { existsSync } from 'node:fs';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -188,10 +190,19 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
  *
  * `DISPATCH_STORE_BACKEND` remains, but only as the way to move a project
  * that has not recorded a choice yet; once it has, the marker is the answer.
- * No marker and no variable means `files`, which is every project today: the
- * one-time import that moves existing markdown and JSONL into a database has
- * not shipped yet (t-880ce2), so defaulting to `sqlite` would point every
- * existing project at an empty one.
+ * No marker and no variable means `files`, which is still every project that
+ * has not deliberately opted in: moving an existing board into the database
+ * is a migration somebody asks for, not something a daemon does to a repo
+ * because it booted there.
+ *
+ * Setting the variable on a project that already has a markdown board is now
+ * allowed, and is one of the two ways to opt in (the other is `dispatch
+ * migrate`). It used to be refused, because a fresh database opened beside a
+ * populated board left the project with two half-states — markdown nobody
+ * read and an empty database everybody did. What removes that hazard is the
+ * one-time import in `@dispatch/core`'s migrate.ts, which `startServer` runs
+ * before it serves anything: the board is copied across in one transaction,
+ * or the daemon refuses to come up.
  *
  * An unrecognized variable is a typo, not a third backend: log it and fall
  * back rather than failing boot over a misspelling.
@@ -206,22 +217,7 @@ export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
   const raw = process.env.DISPATCH_STORE_BACKEND;
   if (raw === undefined || raw === '') return 'files';
   if (raw === 'files') return raw;
-  if (raw === 'sqlite') {
-    // Refuse to open a fresh database beside a board that already has tasks
-    // in it. Creating one here would leave the project with two half-states
-    // — markdown nobody reads and an empty database everybody does — and
-    // moving those tasks across is the import task's job, not a side effect
-    // of an environment variable being set in the wrong shell.
-    if (existsSync(join(rootDir, DISPATCH_DIR, 'tasks'))) {
-      console.error(
-        `dispatchd: DISPATCH_STORE_BACKEND=sqlite ignored for ${rootDir} — ` +
-          'it already has a markdown task board, and moving it into a ' +
-          'database is a migration, not a restart. Using files.'
-      );
-      return 'files';
-    }
-    return 'sqlite';
-  }
+  if (raw === 'sqlite') return raw;
   console.error(
     `dispatchd: unknown DISPATCH_STORE_BACKEND '${raw}', using 'files'`
   );
@@ -396,6 +392,55 @@ function buildPrWorktreeManager(ctx: PrWorktreeManagerCtx): PrWorktreeManager {
 }
 
 /**
+ * The one-time import of a project's `.dispatch/` markdown and JSONL into the
+ * database it is about to be served from, run on the boot that moves it.
+ *
+ * A failure here is fatal to boot, and deliberately so. The import is one
+ * transaction, so a failure leaves the database empty and every source file
+ * untouched — which means the project's real board is still the markdown on
+ * disk. Coming up anyway would serve an empty board over it and invite writes
+ * into a database nobody meant to use yet. Refusing to start leaves the
+ * project exactly as it was, recoverable by unsetting DISPATCH_STORE_BACKEND.
+ *
+ * The report is printed in full rather than summarized to a count: it names
+ * every source that did NOT move (fix-loop state, notes and inboxes are still
+ * file-backed) and every record that could not be taken, and those are the
+ * lines somebody has to act on.
+ */
+function migrateLegacyProjectOnBoot(
+  rootDir: string,
+  stores: ProjectStores
+): void {
+  if (!hasLegacyState(rootDir)) return;
+  // Gated on whether the DATABASE actually holds the board, not on whether
+  // this project has recorded a backend. `.dispatch/storage.json` is a
+  // committable file while `dispatch.db` is not, so a fresh clone can arrive
+  // carrying the marker and no database at all. Keying on the marker there
+  // means readProjectBackend already answers 'sqlite', the import is skipped,
+  // and the daemon serves an empty board over a full markdown one — while the
+  // CLI and the MCP tools, reading the same marker, refuse to fall back to
+  // the files they can see. An empty database beside a populated board is
+  // precisely the state this import exists to resolve, however the project
+  // got into it.
+  if (stores.tasks.list().length > 0) return;
+  console.log(
+    `dispatchd: ${rootDir} still keeps its tasks as files; importing them into the database before serving.`
+  );
+  let report;
+  try {
+    report = importLegacyProject(stores);
+  } catch (err) {
+    console.error(
+      `dispatchd: refusing to start — the one-time import of ${rootDir} failed and nothing was written. ` +
+        'Your task files, findings and ledger are untouched. ' +
+        `Unset DISPATCH_STORE_BACKEND to go back to the file backend. Cause: ${(err as Error).message}`
+    );
+    throw err;
+  }
+  console.log(formatMigrationReport(report));
+}
+
+/**
  * Boots the dispatchd HTTP + WebSocket server for one dispatch project
  * (`rootDir`): a Bun.serve instance backed by an in-memory task cache that is
  * rebuilt from the project's store on boot, after every API mutation, and —
@@ -438,14 +483,30 @@ export async function startServer(
     backend === 'sqlite'
       ? initProjectStores({ rootDir, backend })
       : openProjectStores({ rootDir, backend });
-  // Record the choice in the project the first time it lands on the database,
-  // so every other process — the CLI, the MCP tools, the next daemon started
-  // from a shell with no environment set — derives the same answer from the
-  // project rather than from its own surroundings. Only `sqlite` is written:
-  // an absent marker already means `files`, and writing one for every
-  // existing project would put a new file in repos that never asked for it.
-  if (backend === 'sqlite' && readProjectBackend(rootDir) === null) {
-    writeProjectBackend(rootDir, backend);
+  // The first boot that lands this project on the database does two things,
+  // in this order: import whatever markdown-and-JSONL state it still has, then
+  // record the choice so every other process — the CLI, the MCP tools, the
+  // next daemon started from a shell with no environment set — derives the
+  // same answer from the project rather than from its own surroundings.
+  //
+  // The order is the point. The marker is what those processes read to find
+  // the board, so writing it before the import had committed would aim them
+  // at an empty database while the real board sat in markdown beside it.
+  //
+  // The import decides for itself whether there is anything to do (it checks
+  // both for legacy files and for whether the database already holds the
+  // board), so it is called on every sqlite boot rather than gated on the
+  // marker out here. Gating on the marker is what let a cloned
+  // `storage.json` with no database beside it skip the import entirely.
+  //
+  // Only `sqlite` is ever written: an absent marker already means `files`,
+  // and writing one for every existing project would put a new file in repos
+  // that never asked for it.
+  if (backend === 'sqlite') {
+    migrateLegacyProjectOnBoot(rootDir, stores);
+    if (readProjectBackend(rootDir) !== 'sqlite') {
+      writeProjectBackend(rootDir, backend);
+    }
   }
   const store = stores.tasks;
   const cache = new TaskCache();

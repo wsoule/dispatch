@@ -92,6 +92,23 @@ export type {
   SqliteRecordStores,
   TaskStoreBackend,
 } from './storeBackend.js';
+export {
+  formatMigrationReport,
+  hasLegacyState,
+  importLegacyProject,
+  LEGACY_SOURCES,
+  totalImported,
+} from './migrate.js';
+export type {
+  MigrationProblem,
+  MigrationReport,
+  MigrationTally,
+  RetainedSource,
+  RowCounts,
+} from './migrate.js';
+export { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
+export type { JsonlScan } from './jsonlRecords.js';
+export { readProjectBackend, writeProjectBackend } from './storage.js';
 export { mergeTaskFile } from './mergeTask.js';
 export { mergeTeamFile } from './mergeTeam.js';
 export type {

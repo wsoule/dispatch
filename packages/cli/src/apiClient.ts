@@ -245,6 +245,13 @@ export interface TaskApiClient {
   getTask(id: string): Promise<TaskDoc>;
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  /**
+   * Records the daemon's last cache rebuild could not read, from
+   * `GET /api/health`. These never appear in `listTasks`, so a caller that
+   * only lists sees a clean board over a damaged one — which is exactly what
+   * `dispatch doctor` is for.
+   */
+  healthProblems(): Promise<string[]>;
 }
 
 /** Builds the task half of the daemon API, bound to one daemon + token. */
@@ -267,6 +274,15 @@ export function createTaskApiClient(
       return request(target, `/api/tasks?${params.toString()}`);
     },
     readyTasks: () => request(target, '/api/tasks/ready'),
+    healthProblems: async () => {
+      const health = await request<{ problems?: unknown }>(
+        target,
+        '/api/health'
+      );
+      return Array.isArray(health.problems)
+        ? health.problems.filter((p): p is string => typeof p === 'string')
+        : [];
+    },
     getTask: (id) => request(target, `/api/tasks/${encodeURIComponent(id)}`),
     createTask: (input) => request(target, '/api/tasks', jsonBody(input)),
     updateTask: (id, patch) =>

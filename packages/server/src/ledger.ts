@@ -1,4 +1,4 @@
-import { generateLedgerId } from '@dispatch/core';
+import { generateLedgerId, scanLedgerJsonl } from '@dispatch/core';
 import type {
   AddLedgerInput,
   LedgerEntry,
@@ -31,23 +31,6 @@ export interface LedgerStorePort {
 // randomness needs; it only bounds a generator that keeps returning a taken id.
 const MINT_ATTEMPTS = 32;
 
-// The fields every read path dereferences. `appliesTo` in particular: entriesFor
-// calls .includes() on it, so a hand-edited line without it throws.
-function isLedgerEntry(value: unknown): value is LedgerEntry {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === 'string' &&
-    record.id !== '' &&
-    typeof record.kind === 'string' &&
-    typeof record.title === 'string' &&
-    typeof record.detail === 'string' &&
-    typeof record.createdAt === 'string' &&
-    Array.isArray(record.appliesTo) &&
-    record.appliesTo.every((t) => typeof t === 'string')
-  );
-}
-
 export class LedgerStore implements LedgerStorePort {
   private readonly file: string;
   private readonly generateId: (now: string) => string;
@@ -66,35 +49,16 @@ export class LedgerStore implements LedgerStorePort {
     this.generateId = generateId;
   }
 
-  // Same compaction contract as FindingStore.read(): keyed by id + createdAt, so
-  // a duplicated line collapses but two entries sharing one id both survive.
+  // Same compaction contract as FindingStore.read(), and for the same reason
+  // the same shared implementation: keyed by id + createdAt, so a duplicated
+  // line collapses but two entries sharing one id both survive. See the note
+  // on FindingStore.read() about why the rule lives in `@dispatch/core`.
   private read(): LedgerEntry[] {
     if (!existsSync(this.file)) return [];
-    const byRecord = new Map<string, LedgerEntry>();
-    const firstKeyForId = new Map<string, string>();
-    for (const line of readFileSync(this.file, 'utf8').split('\n')) {
-      if (line.trim() === '') continue;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (!isLedgerEntry(parsed)) {
-          this.reportInvalidLine(line);
-          continue;
-        }
-        // Older lines pre-date authoredBy; default it so they stay loadable.
-        const record: LedgerEntry = {
-          ...parsed,
-          authoredBy: parsed.authoredBy ?? '',
-        };
-        const key = `${record.id}\n${record.createdAt}`;
-        const first = firstKeyForId.get(record.id);
-        if (first === undefined) firstKeyForId.set(record.id, key);
-        else if (first !== key) this.reportCollision(record.id);
-        byRecord.set(key, record);
-      } catch {
-        // A hand-corrupted line costs itself, not the rest of the ledger.
-      }
-    }
-    return [...byRecord.values()];
+    const scan = scanLedgerJsonl(readFileSync(this.file, 'utf8'));
+    for (const line of scan.invalidLines) this.reportInvalidLine(line);
+    for (const id of scan.duplicateIds) this.reportCollision(id);
+    return scan.records;
   }
 
   // A repeated id with a different createdAt is two entries, not a duplicate

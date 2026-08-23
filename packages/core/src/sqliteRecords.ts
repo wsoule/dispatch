@@ -29,7 +29,9 @@ import {
   queryAll,
   queryOne,
   serializeStringArray,
+  SqliteRowError,
 } from './sqliteDb.js';
+import type { ListSafeError } from './store.js';
 
 // The database-backed counterparts of the daemon's three JSONL sidecars:
 // `.dispatch/findings.jsonl`, `.dispatch/ledger.jsonl`, and the evidence lines
@@ -49,6 +51,31 @@ import {
 // MINT_ATTEMPTS: far beyond what randomness needs, it only bounds a generator
 // that keeps returning a taken id.
 const MINT_ATTEMPTS = 32;
+
+/**
+ * Maps rows through a parser, collecting the ones that will not read instead
+ * of throwing on the first. The `listSafe` half of both stores below.
+ *
+ * Only SqliteRowError is caught: that is the "this row is damaged" signal, and
+ * swallowing anything else here would hide a real bug in the parser as a
+ * damaged-data report.
+ */
+function scanSafely<Row extends { id: string }, T>(
+  rows: Row[],
+  parse: (row: Row) => T
+): { records: T[]; errors: ListSafeError[] } {
+  const records: T[] = [];
+  const errors: ListSafeError[] = [];
+  for (const row of rows) {
+    try {
+      records.push(parse(row));
+    } catch (err) {
+      if (!(err instanceof SqliteRowError)) throw err;
+      errors.push({ file: row.id, message: err.message });
+    }
+  }
+  return { records, errors };
+}
 
 /**
  * Writes a record under a freshly minted id, re-rolling when the write reports
@@ -179,6 +206,12 @@ export class SqliteFindingStore {
   }
 
   list(filter: FindingListFilter = {}): Finding[] {
+    return this.rows(filter).map(findingFromRow);
+  }
+
+  // Shared by list() and listSafe(), so the two can never disagree about
+  // which rows are in scope — only about what happens to a damaged one.
+  private rows(filter: FindingListFilter): FindingRow[] {
     const clauses: string[] = [];
     const params: string[] = [];
     if (filter.taskId !== undefined) {
@@ -199,7 +232,29 @@ export class SqliteFindingStore {
       this.db,
       `SELECT * FROM findings${where} ORDER BY rowid`,
       params
-    ).map(findingFromRow);
+    );
+  }
+
+  /**
+   * The same scan as list(), but a row this build cannot read is collected as
+   * an error instead of aborting the scan — the seam SqliteTaskStore.listSafe
+   * already has, for the same reason: one damaged row must not make every
+   * read of this table fail.
+   *
+   * Deliberately NOT the default. `list()`, `get()` and `openFor()` still
+   * throw, because their callers include the merge gate: `openFor` answers
+   * "what is still blocking this task", and a read that quietly returned
+   * FEWER blockers than the table holds would let work merge past a finding
+   * that was supposed to stop it. Failing loudly is the safe direction there.
+   * This variant is for the read-only surfaces — listing findings in the UI,
+   * and reporting damage in `dispatch doctor` — where the alternative to a
+   * partial answer is no answer at all.
+   */
+  listSafe(filter: FindingListFilter = {}): {
+    records: Finding[];
+    errors: ListSafeError[];
+  } {
+    return scanSafely(this.rows(filter), findingFromRow);
   }
 
   /** The findings still blocking a task's fix loop. */
@@ -253,6 +308,40 @@ export class SqliteFindingStore {
         );
       return written.changes > 0 ? record : null;
     });
+  }
+
+  /**
+   * Imports an already-formed finding verbatim, keeping the id and stamps it
+   * arrived with instead of minting new ones the way add() does. Used by the
+   * one-time import of `.dispatch/findings.jsonl`, where a finding's id is
+   * already referenced by task activity and by fix-loop state.
+   *
+   * Returns false when a row already holds that id, which is what makes the
+   * import re-runnable: a second pass adds nothing rather than replacing a
+   * record the daemon has since ruled on.
+   */
+  put(record: Finding): boolean {
+    const written = this.db
+      .prepare(INSERT_FINDING_IF_ABSENT)
+      .run(
+        record.id,
+        record.taskId,
+        record.runId,
+        record.severity,
+        record.verdict,
+        record.title,
+        record.detail,
+        record.file,
+        record.line,
+        record.files === undefined ? null : serializeStringArray(record.files),
+        record.ruling,
+        record.recommendation ?? null,
+        record.round,
+        record.createdAt,
+        record.updatedAt,
+        record.raisedBy
+      );
+    return written.changes > 0;
   }
 
   update(
@@ -357,6 +446,29 @@ export class SqliteLedgerStore {
     });
   }
 
+  /**
+   * Imports an already-formed ledger entry verbatim — the ledger half of
+   * SqliteFindingStore.put(), and there for the same reason: `.dispatch/
+   * ledger.jsonl` entries carry ids and timestamps that later tasks quote, so
+   * an import has to keep them rather than mint fresh ones.
+   */
+  put(record: LedgerEntry): boolean {
+    const written = this.db
+      .prepare(INSERT_LEDGER_IF_ABSENT)
+      .run(
+        record.id,
+        record.epicId,
+        record.sourceTaskId,
+        record.kind,
+        record.title,
+        record.detail,
+        serializeStringArray(record.appliesTo),
+        record.createdAt,
+        record.authoredBy
+      );
+    return written.changes > 0;
+  }
+
   get(id: string): LedgerEntry | null {
     const row = queryOne<LedgerRow>(
       this.db,
@@ -370,6 +482,26 @@ export class SqliteLedgerStore {
   // omitted filter (everything), so the null case becomes `IS NULL` rather
   // than a parameter — `epic_id = ?` never matches NULL in SQL.
   list(filter: LedgerListFilter = {}): LedgerEntry[] {
+    return this.rows(filter).map(ledgerFromRow);
+  }
+
+  /**
+   * The skip-and-report counterpart of list() — see the note on
+   * SqliteFindingStore.listSafe for why this is a separate method rather than
+   * the default. `entriesFor()` in particular keeps throwing: it feeds the
+   * constraints and hazards injected into a dispatched task's prompt, and an
+   * agent silently briefed with fewer constraints than the ledger holds is
+   * worse than one whose dispatch fails.
+   */
+  listSafe(filter: LedgerListFilter = {}): {
+    records: LedgerEntry[];
+    errors: ListSafeError[];
+  } {
+    return scanSafely(this.rows(filter), ledgerFromRow);
+  }
+
+  // Shared by list() and listSafe(); see the note on the findings store's.
+  private rows(filter: LedgerListFilter): LedgerRow[] {
     const clauses: string[] = [];
     const params: string[] = [];
     if (filter.epicId === null) {
@@ -383,7 +515,7 @@ export class SqliteLedgerStore {
       this.db,
       `SELECT * FROM ledger_entries${where} ORDER BY rowid`,
       params
-    ).map(ledgerFromRow);
+    );
   }
 
   /**
