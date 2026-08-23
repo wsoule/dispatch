@@ -9,7 +9,6 @@ import {
   BRAIN_DUMP_DRAFT_KEY,
   usePersistedDraft,
 } from '../hooks/usePersistedDraft';
-import { splitCaptureLines } from '../lib/inboxCapture';
 import { buildMilestonePrompt } from '../lib/milestonePrompt';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
@@ -79,7 +78,6 @@ export function BrainDumpView({
   const open = useMemo(() => inbox.filter((i) => !i.done), [inbox]);
   const sorted = useMemo(() => inbox.filter((i) => i.done), [inbox]);
   const openItemIds = useMemo(() => open.map((i) => i.id), [open]);
-  const pendingLines = splitCaptureLines(draft).length;
 
   // The persisted groups, filtered to items that are still open — converting or dismissing
   // half a group must not leave it claiming members it no longer has.
@@ -227,6 +225,12 @@ export function BrainDumpView({
     setEditing({ id: item.id, text: item.text });
   }
 
+  // Tapping the row's text drops the editor down under it; tapping again folds it back up.
+  function toggleDetail(item: InboxItem): void {
+    if (editing?.id === item.id) setEditing(null);
+    else addDetail(item);
+  }
+
   // Writes the edited text back onto the item and closes the editor. An empty body is refused
   // rather than saved: a blank row is unreadable in the list and unrecoverable from it. `busy`
   // is checked here too — ⌘⏎ reaches this without going through the disabled Save button, and
@@ -280,9 +284,7 @@ export function BrainDumpView({
         />
         <div className="mt-2.5 flex items-center gap-2.5">
           <span className="dense-meta flex-1">
-            {pendingLines > 0
-              ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'}, one item each`
-              : 'One per line. Walls of text get split. Drafts keep.'}
+            One dump, one item — multiline welcome. Drafts keep.
           </span>
           {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
               size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}
@@ -451,6 +453,7 @@ export function BrainDumpView({
                   onToggle={(shiftKey) => toggle(it.id, shiftKey)}
                   onMakeTask={() => convert([it.id])}
                   onAddDetail={() => addDetail(it)}
+                  onToggleDetail={() => toggleDetail(it)}
                   onPlan={() => onPlanText(it.text)}
                   onDismiss={() => dismiss([it.id])}
                 />
@@ -462,7 +465,7 @@ export function BrainDumpView({
                       <Textarea
                         value={editing.text}
                         autoFocus
-                        aria-label={`Edit "${it.text}"`}
+                        aria-label={`Edit "${firstLine(it.text)}"`}
                         onChange={(e) =>
                           setEditing({ id: it.id, text: e.target.value })
                         }
@@ -535,7 +538,7 @@ export function BrainDumpView({
                       </span>
                     )}
                     <span className="text-muted-foreground truncate text-[13px] line-through">
-                      {it.text}
+                      {firstLine(it.text)}
                     </span>
                   </span>
                   {it.linkedTaskId === null ? (
@@ -677,6 +680,7 @@ function InboxRow({
   onToggle,
   onMakeTask,
   onAddDetail,
+  onToggleDetail,
   onPlan,
   onDismiss,
 }: {
@@ -690,6 +694,8 @@ function InboxRow({
   onToggle: (shiftKey: boolean) => void;
   onMakeTask: () => void;
   onAddDetail: () => void;
+  /** Tapping the row's text — drops the editor down, or folds it back up. */
+  onToggleDetail: () => void;
   onPlan: () => void;
   onDismiss: () => void;
 }) {
@@ -720,7 +726,21 @@ function InboxRow({
             {item.kind}
           </span>
         )}
-        <span className="truncate text-[13.5px]">{item.text}</span>
+        {/* First line only in the row; the rest lives one tap away in the drop-down.
+            A real button so the whole-text affordance is keyboard reachable too. */}
+        <button
+          type="button"
+          onClick={onToggleDetail}
+          aria-expanded={editing}
+          className="min-w-0 cursor-pointer truncate text-left text-[13.5px]"
+        >
+          {firstLine(item.text)}
+        </button>
+        {extraLines(item.text) > 0 && (
+          <span className="dense-meta shrink-0">
+            +{extraLines(item.text)} more
+          </span>
+        )}
         {/* Items an agent flagged mid-run are marked, so you can tell what you noticed
             yourself from what something else noticed for you. */}
         {item.createdByRunId !== null && (
@@ -757,5 +777,18 @@ function InboxRow({
         </Button>
       </span>
     </li>
+  );
+}
+
+/** The row shows only the dump's first line; the rest is behind the drop-down. */
+function firstLine(text: string): string {
+  return text.split('\n', 1)[0] ?? '';
+}
+
+/** How many lines the row is not showing — the "+N more" hint. */
+function extraLines(text: string): number {
+  return Math.max(
+    0,
+    text.split('\n').filter((l) => l.trim() !== '').length - 1
   );
 }

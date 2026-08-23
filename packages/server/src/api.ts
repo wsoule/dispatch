@@ -3235,9 +3235,10 @@ function promoteNote(ctx: ApiContext, id: string): Response {
   return jsonResponse(task, 201);
 }
 
-// POST /api/inbox — capture raw text. The body's `text` is split server-side into one item
-// per non-empty line, so the splitting rule lives in exactly one place rather than being
-// reimplemented by every client (the desktop composer, the MCP tool, a future CLI).
+// POST /api/inbox — capture raw text as ONE item, however many lines it takes.
+// The normalization rule lives server-side in exactly one place rather than
+// being reimplemented by every client (the desktop composer, the MCP tool, a
+// future CLI).
 async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -3358,7 +3359,15 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
       continue;
     }
     try {
-      const task = ctx.store.create({ title: item.text, kind: 'task' });
+      // A multiline dump converts as first line -> title, the rest -> the
+      // task's description — a paragraph is not a title.
+      const [firstLine = '', ...restLines] = item.text.split('\n');
+      const description = restLines.join('\n').trim();
+      const task = ctx.store.create({
+        title: firstLine,
+        kind: 'task',
+        ...(description === '' ? {} : { description }),
+      });
       links.push({ id, taskId: task.meta.id });
       results.push({ id, taskId: task.meta.id });
     } catch (err) {

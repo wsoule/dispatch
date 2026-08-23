@@ -266,3 +266,21 @@ test('shift-click with the anchor selected clears the whole range too', () => {
 
   expect(screen.queryByText(/selected/)).toBeNull();
 });
+
+test('tapping the row text drops the editor down and tapping again folds it', () => {
+  const item = inboxItem({
+    id: 'in-ml1',
+    text: 'first line\nsecond line\nthird line',
+  });
+  mount([item]);
+
+  expect(screen.getByText('+2 more')).toBeTruthy();
+  const rowText = screen.getByRole('button', { name: 'first line' });
+  fireEvent.click(rowText);
+  expect(
+    screen.getByLabelText<HTMLTextAreaElement>('Edit "first line"').value
+  ).toBe('first line\nsecond line\nthird line');
+
+  fireEvent.click(rowText);
+  expect(screen.queryByLabelText('Edit "first line"')).toBeNull();
+});
