@@ -1,0 +1,32 @@
+---
+import '@fontsource/inter/400.css';
+import '@fontsource/inter/500.css';
+import '@fontsource/inter/600.css';
+import '@fontsource/jetbrains-mono/400.css';
+import '@fontsource/jetbrains-mono/500.css';
+// Uncommented in Task 2:
+// import '../styles/tokens.css';
+// import '../styles/global.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dispatch: Linear, for agents</title>
+    <meta
+      name="description"
+      content="Linear, for agents. A board, reviews, and a merge queue, all markdown in your repo."
+    />
+    <meta property="og:title" content="Dispatch" />
+    <meta
+      property="og:description"
+      content="Linear, for agents. A board, reviews, and a merge queue in your repo."
+    />
+    <!-- The old site had no og:url, og:image, or canonical tag to carry forward (see Step 1). -->
+  </head>
+  <body>
+    <slot />
+  </body>
+</html>
