@@ -81,7 +81,7 @@
       "devDependencies": {
         "@fontsource/inter": "5.2.8",
         "@fontsource/jetbrains-mono": "5.3.0",
-        "astro": "^5.13.0",
+        "astro": "5.18.2",
       },
     },
     "packages/cli": {
