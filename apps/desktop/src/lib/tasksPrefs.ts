@@ -20,6 +20,10 @@ export interface BoardColumnPrefs {
   hideEmpty: boolean;
   /** Statuses explicitly hidden regardless of count. */
   hidden: string[];
+  /** One lane per milestone instead of the flat board (default off): the lane-per-milestone
+   * matrix is sparse — most lanes fill one column — so the dense flat kanban is the default
+   * and the Milestones view is the per-milestone surface. */
+  groupByEpic: boolean;
 }
 
 export const TASK_FILTERS_STORAGE_KEY = 'dispatch:tasks-filters-v1';
@@ -34,6 +38,7 @@ export const EMPTY_TASK_FILTERS: TaskFilters = { statuses: [], priorities: [] };
 export const DEFAULT_BOARD_COLUMN_PREFS: BoardColumnPrefs = {
   hideEmpty: true,
   hidden: ['landed', 'dropped'],
+  groupByEpic: false,
 };
 
 function stringArray(value: unknown): string[] {
@@ -71,6 +76,8 @@ export function parseBoardColumnPrefs(stored: string | null): BoardColumnPrefs {
       hideEmpty:
         typeof record.hideEmpty === 'boolean' ? record.hideEmpty : true,
       hidden: stringArray(record.hidden),
+      groupByEpic:
+        typeof record.groupByEpic === 'boolean' ? record.groupByEpic : false,
     };
   } catch {
     return DEFAULT_BOARD_COLUMN_PREFS;
