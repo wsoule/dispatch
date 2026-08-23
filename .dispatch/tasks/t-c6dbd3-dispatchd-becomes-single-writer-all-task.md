@@ -1,7 +1,7 @@
 ---
 id: t-c6dbd3
 title: "dispatchd becomes single writer: all task I/O through the daemon store"
-status: in-review
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:17.943Z
-updated: 2026-08-23T14:11:24.161Z
+updated: 2026-08-23T14:31:20.454Z
 external: null
 writes:
   - packages/server/src/**
@@ -34,3 +34,15 @@ Route every task/finding/ledger read and write through dispatchd's SQLite-backed
 - 2026-08-23T13:15:25.831Z requested changes (run r-a65e6c): dispatchd wedged at 100% CPU on its main thread and had to be restarted; your run was force-failed but your worktree (api.ts, cache.ts, findings.ts, ledger.ts, linear/sync.ts in progress) is intact. Continue the single-writer wiring from where you left off. — human:wsoule679
 - 2026-08-23T13:59:41.621Z Implementation committed in three slices: d6acc119 (server holds the store behind core's TaskStorePort, plus FindingStorePort/LedgerStorePort; backend from DISPATCH_STORE_BACKEND, still defaulting to `files` until the t-880ce2 import ships), e808bbed (MCP task_list/get/save/next proxy the daemon; task_comment's proxy auth fixed), 8786fb61 (`dispatch task *` proxies the daemon via a new TaskApiClient). Two bugs found and fixed along the way, both caught by driving the real surfaces rather than the stores: (1) openProjectStores only ATTACHES, so a sqlite daemon with no database on disk 500'd on every write — startServer now uses initProjectStores for that backend, since the daemon is the only process permitted to create it; (2) task_comment's daemon proxy never sent an Authorization header, so it 401'd and silently fell back to writing markdown, losing agent attribution on every call since the proxy was added. Safety guard on both surfaces: with a database present and no daemon, the tools/commands refuse rather than opening a second handle — mutation-tested (2 tests fail in MCP, 1 in CLI when the guard is reverted). Scope note: packages/{mcp,cli}/test were denied, so both existing suites are untouched and green (116 and 194), which is itself the backward-compatibility proof for the no-daemon fallback; the new daemon-path coverage lives in packages/server/test/{store-backend,mcp-task-proxy,cli-task-proxy}.test.ts (36 tests). cli-task-proxy.test.ts belongs in packages/cli/test and says so in its header — please move it when someone has that scope. — none
 - 2026-08-23T14:11:24.161Z [run r-a65e6c] finished: finished — 27 files, $37.83 — agent:wsoule679/claude
+- 2026-08-23T14:31:20.454Z requested changes (run r-d7cce5): Code review complete: 10 confirmed findings. REQUIRED before merge:
+1. SEVERE — index.ts:553 constructs Orchestrator WITHOUT the backend-selected findingStore, so on sqlite the blocked-finding merge gate reads an empty JSONL store and never fires: a run with an adjudicated 'blocked' finding merges. Inject the same store instance ReviewRunner/FixLoop/apiCtx get.
+2. SEVERE — backend selection split-brain: the daemon picks backend from DISPATCH_STORE_BACKEND env only (index.ts:187) while clients infer from .dispatch/dispatch.db existence — an auto-started daemon without the env serves an empty files backend over a database-backed project (task list returns [], task new writes markdown beside the db). Persist the backend per project (e.g. in config or a marker the daemon reads) so both sides derive it from the project, not the environment.
+3. task.ts:82 / mcp daemon.ts:124: mere EXISTENCE of dispatch.db hard-locks CLI+MCP task access when no daemon is running, and openDispatchDb creates the db unconditionally beside populated tasks/. Existence must not mean ownership — tie it to the persisted backend choice from fix 2, and stop creating the db on attach paths.
+4. tools.ts:650: task_comment on a db-backed project without DISPATCH_RUN_ID falsely refuses with 'dispatchd is not running' while the daemon is up — the proxy block is gated on runId. Proxy whenever the daemon is live; the endpoint accepts runId null.
+5. doctor.ts:86: db-backed doctor skips ALL graph checks (dangling refs, cycles, status) on the false premise the schema enforces them (bare DELETE leaves dangling blocked_by, no FK). Run the graph checks against the daemon/store data, not just task files.
+6. tools.ts:594: /api/tasks/ready filters archived, the local readyTasks fallback does not — apply the same archived parity fix task list got, or task_next flips answers with daemon presence.
+7. tools.ts:237: a live legacy daemon without an agentToken passes the health probe, commits the route to daemon, then every call 401s with no local fallback (CLI throws STALE_DAEMON_MESSAGE first). Treat token-less daemon as not-routable and fall back to files.
+8. tools.ts:455: daemon-routed task_get turns a corrupt-but-present task file into 'task not found' — surface the parse error + 'run dispatch doctor' hint (consult problems()/health on 404s for files backend).
+9. sqliteTaskStore.ts:245: create()'s collision error names an id that was never attempted (regenerated after the last INSERT) — reuse this branch's own withMintedId helper.
+10. sqliteTaskStore.ts:286/407: update()'s patch-split and newDoc()'s defaults+template are verbatim copies of TaskStore's — extract shared pure helpers (applyUpdatePatch/newTaskDoc) so backends cannot diverge.
+OPTIONAL (confirmed, if quick): dedupe the CLI/MCP daemon HTTP client stacks; use core's dispatchDbPath instead of three hand-spelled paths; import core's finding/ledger input types in server; collapse the triple /api/health fetch per MCP read; revisit the truncate-and-reload cache rebuild per sqlite mutation. Run server+cli+mcp tests, commit. — human:wsoule679
