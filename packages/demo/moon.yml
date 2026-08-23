@@ -1,0 +1,11 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'library'
+
+tasks:
+  demo:
+    command: 'bun src/cli.ts'
+    options:
+      cache: false
+      runInCI: 'always'

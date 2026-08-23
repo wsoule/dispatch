@@ -1,0 +1,69 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'application'
+
+tasks:
+  build:
+    script: 'tsc -b && vite build'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+    outputs:
+      - 'dist'
+
+  dev:
+    command: 'vite'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
+
+  # Sidecar binaries are bun-compiled; stays bun by design.
+  build-sidecars:
+    command: 'bun scripts/build-sidecars.ts'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  tauri-dev:
+    command: 'pnpm exec tauri dev'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
+
+  tauri-build:
+    command: 'pnpm exec tauri build'
+    deps:
+      - 'build'
+      - 'build-sidecars'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  e2e:
+    command: 'pnpm exec playwright test'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  e2e-update:
+    command: 'pnpm exec playwright test --update-snapshots'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      runInCI: 'skip'

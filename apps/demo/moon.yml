@@ -4,3 +4,11 @@ id: 'sandbox'
 
 language: 'typescript'
 layer: 'application'
+
+tasks:
+  dev:
+    command: 'bun run src/server.ts'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
