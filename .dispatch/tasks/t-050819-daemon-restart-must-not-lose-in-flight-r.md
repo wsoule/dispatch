@@ -2,7 +2,7 @@
 id: t-050819
 title: "Daemon restart must not lose in-flight runs: auto-resume on boot and on
   re-dispatch"
-status: in-progress
+status: in-review
 kind: task
 parent: null
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T18:01:32.916Z
-updated: 2026-08-23T01:12:44.300Z
+updated: 2026-08-23T01:13:04.086Z
 external: null
 writes:
   - packages/server/src/**
@@ -89,3 +89,4 @@ Verification: tsc clean (server/cli/client); lint 0 errors / 42 pre-existing war
 Unrelated: test/orchestrator/claude-executor.test.ts fails in an agent shell only because DISPATCH_MCP_BIN is inherited from the installed Dispatch.app; passes under `env -u DISPATCH_MCP_BIN`.
 
 Also noticed, pre-existing and NOT changed: handleFinish's transition spreads `sessionId: finish.sessionId` over the meta, so an executor that reports a session mid-run but omits it on finish ends up with none recorded — which would make that run non-resumable. Real executors report it on finish, and boot-force-failed runs never go through handleFinish, so the incident path is unaffected. Flagging rather than touching transition's fold semantics. — none
+- 2026-08-23T01:13:04.086Z [run r-e4e7c5] finished: finished — 13 files, $17.39 — agent:wsoule679/claude
