@@ -157,6 +157,57 @@ export function InboxView({
         </section>
       ))}
 
+      {data.readyToLand.length > 0 && (
+        <section>
+          <SectionLabel
+            rule
+            count={data.readyToLand.length}
+            trailing={
+              data.readyToLand.length > 1 ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="xs"
+                  onClick={() => {
+                    for (const row of data.readyToLand) {
+                      void project.handleEnqueueMerge(row.runId);
+                    }
+                  }}
+                  title="Queue every reviewed run for the merge queue — each still runs verify before landing"
+                >
+                  <GitMerge className="size-3" />
+                  Queue all
+                </Button>
+              ) : undefined
+            }
+          >
+            Ready to land
+          </SectionLabel>
+          <div className="mt-1.5 flex flex-col gap-0.5">
+            {data.readyToLand.map((row) => (
+              <Row
+                key={row.taskId}
+                row={row}
+                onClick={() => onOpenTask(row.taskId, 'diff', row.runId)}
+                action={
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-xs"
+                    onClick={() => void project.handleEnqueueMerge(row.runId)}
+                    aria-label={`Queue merge: ${row.title}`}
+                    title="Queue this run for merge"
+                    className="text-muted-foreground hover:text-foreground shrink-0"
+                  >
+                    <GitMerge className="size-3.5" />
+                  </Button>
+                }
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
       {data.prs.length > 0 && (
         <section>
           <SectionLabel rule count={data.prs.length}>
