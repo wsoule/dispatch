@@ -5,11 +5,11 @@ work — runs, review, and merge in one desktop app.
 
 <!-- TODO(asset): docs/assets/dispatch-hero.gif — task → dispatch → review loop -->
 
-- **Tasks live in your repo.** Every task is a markdown file in
-  `.dispatch/tasks/*.md` — synced by git, readable by humans and agents alike.
 - **Agents run with guardrails.** A task declares the paths it may write before
   the agent starts; runs carry budget and turn caps, verify gates, and
   human-gated scope escalation.
+- **Everything is on the record.** Findings, decisions, evidence, and
+  transcripts from every run are kept — reviewable, not scrolled past.
 - **Local-first.** Runs on your machine, against your checkout, with your API
   key. No account, no server, nothing uploaded.
 
@@ -22,7 +22,7 @@ Desktop app for macOS via Homebrew:
 Or grab an installer from the
 [latest release](https://github.com/wsoule/dispatch/releases/latest): macOS DMGs
 (Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
-signed and notarized (Developer ID) as of v0.1.1.
+signed and notarized (Developer ID).
 
 On macOS, installing the app also puts the `dispatch` CLI on your `PATH` (the
 cask links the binary bundled inside `Dispatch.app`).
@@ -49,10 +49,11 @@ Every read command accepts `--json` for agent/script consumption.
 
 ## How it works
 
-A task is a markdown file with frontmatter — status, priority, `blocked-by`,
-declared `writes` paths, and more — and a human-readable body. The CLI, the
-desktop app, the MCP server, and the orchestrator all read and write those same
-files, so git is both the sync layer and the history.
+A task carries status, priority, `blocked-by`, declared `writes` paths, and a
+human-readable body. The CLI, the desktop app, the MCP server, and the
+orchestrator all read and write the same task state — today stored as markdown
+files under `.dispatch/tasks/`, moving to a daemon-owned store
+([direction](docs/TEAM-SERVER.md)).
 
 Dispatching a task runs a coding agent in an isolated git worktree, scoped to
 the task's declared `writes`. Touching anything else requires a human-gated
@@ -81,7 +82,9 @@ binary from `@dispatch/mcp`.
 The five `task_*` tools operate directly on `.dispatch/tasks/*.md` and need no
 daemon (a running `dispatchd` picks up their file changes through its watcher
 like any other edit). The other nine talk to `dispatchd` over its local HTTP
-API, and return a clear error when it isn't running.
+API, and return a clear error when it isn't running. As task storage moves into
+the daemon ([direction](docs/TEAM-SERVER.md)), the five file-direct tools will
+route through it too.
 
 Tools (server name `dispatch`):
 
