@@ -1049,7 +1049,7 @@ function App() {
                   {navState.projectView === 'plans' && (
                     <PlansView
                       data={data}
-                      projectPath={activeProject.path}
+                      onGoToBoard={() => selectProjectView('board')}
                       initialPrompt={planSeed ?? undefined}
                       key={planSeed ?? 'plans'}
                     />

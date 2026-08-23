@@ -292,6 +292,9 @@ export interface DispatchProjectData {
    * page visit never bills a model call of its own. Null until fetched or when
    * no pass has ever run. */
   inboxClusters: import('@dispatch/client').InboxClusterSnapshot | null;
+  /** Every plan's summary, newest activity first — the Plans page's history,
+   * persisted server-side so it survives restarts and spans windows. */
+  plans: import('@dispatch/client').PlanSummary[];
 
   /** Line-level review comments on the selected run's diff. */
   reviewComments: import('@dispatch/client').ReviewComment[];
@@ -946,6 +949,16 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // Every plan's summary — the Plans page's server-backed history.
+  const { data: plans } = useQuery({
+    queryKey: ['dispatch-plans', port],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchPlans();
+    },
+    enabled: client !== null,
+  });
+
   // The persisted last clustering pass — what BrainDumpView renders on load
   // instead of billing a fresh model call per visit (see handleClusterInbox).
   const { data: inboxClusters } = useQuery({
@@ -1169,6 +1182,11 @@ export function useDispatchProject(
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
+            });
+            // The history list carries every plan's state — refresh it with
+            // the record so the two never disagree.
+            void queryClient.invalidateQueries({
+              queryKey: ['dispatch-plans', port],
             });
             void queryClient.invalidateQueries({
               queryKey: agentSessionsQueryKey,
@@ -2428,6 +2446,7 @@ export function useDispatchProject(
     handleDismissEnrich,
     handleClusterInbox,
     inboxClusters: inboxClusters ?? null,
+    plans: plans ?? [],
     reviewComments: reviewComments ?? [],
     handleAddReviewComment,
     handleApplySuggestion,

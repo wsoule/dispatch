@@ -86,6 +86,7 @@ export type {
   PlanMessage,
   PlanProposal,
   PlanRecord,
+  PlanSummary,
   PlanRole,
   PlanState,
   PrCheckRun,
