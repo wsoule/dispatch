@@ -1,7 +1,7 @@
 ---
 id: t-880ce2
 title: "One-time import: existing .dispatch markdown and JSONL into the daemon DB"
-status: working
+status: review
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T18:58:30.144Z
+updated: 2026-08-23T18:58:44.243Z
 external: null
 writes:
   - packages/cli/src/**
@@ -113,3 +113,4 @@ Two data-loss fixes (#3, #4) both mutation-tested at 1 failure each; the eager-i
 Dry run re-run after all fixes: 155/30/341/308, 0 damaged, unchanged — and now verified to write no database, no marker AND no config.yml (a dry run was scaffolding config.yml via initProjectStores; it attaches to :memory: through openProjectStores instead). core 509, cli 199, mcp 116, server 2085 pass; lint 0 errors; tsc clean on all four packages.
 
 NOT DONE, deferred deliberately: the config watcher's GET-before-PATCH race within the debounce window, and the three cleanups (readProjectBackend copy in mcp/daemon.ts, entriesFor predicate duplication, DAEMON_REQUIRED triplication). None are in this task's blast radius and each is a small standalone change; the mcp/daemon.ts marker copy in particular should fold into core's storage.ts when that module is next touched, which its own comment already says. — none
+- 2026-08-23T18:58:44.243Z [run r-165d02] finished: finished — 22 files, $13.63 — agent:wsoule679/claude
