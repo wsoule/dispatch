@@ -1,7 +1,7 @@
 ---
 id: t-48a2e5
 title: "Decision feed: daemon aggregates everything awaiting a human"
-status: in-review
+status: in-progress
 kind: task
 parent: e-6cfcc7
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-22T18:30:59.442Z
+updated: 2026-08-23T00:13:49.291Z
 external: null
 writes:
   - packages/server/src/**
@@ -51,3 +51,10 @@ One methodology note against myself: my first full-suite run reported a decision
 
 Scope: packages/server only, all within declared writes. No packages/core (r-664ec2/r-d236d7 have it claimed) and no packages/client method — the typed client belongs to the surface task, since this one is model-layer only. — none
 - 2026-08-22T18:30:59.442Z [run r-fe1a71] finished: finished — 6 files, $6.39 — agent:wsoule679/claude
+- 2026-08-23T00:13:49.291Z requested changes (run r-297e7b): Code review of your branch is complete. REQUIRED fixes before merge:
+
+1. (MEDIUM) stalledReason() in decisionFeed.ts:182-189 never resolves items for superseded runs: a failed/interrupted-dirty run that has a successor (some run with resumedFrom === its id) must NOT be flagged run-stalled — its successor carries the work. The orchestrator already guards this exact case at orchestrator.ts:1571; mirror it. Also exclude kind:'review' runs from run-stalled (the capped fix-loop item already represents that state). Add a test: dead run + resumed successor produces no stalled item.
+
+2. (PERF) FixLoopStore.list() does readFileSync + full JSON.parse of fix-loops.jsonl on EVERY DecisionFeed.recompute(), which fires on every run.changed — i.e. per evidence/mutation recording under agent load. Cache the parsed state map in FixLoopStore, invalidated in put(); list() becomes an in-memory read.
+
+OPTIONAL same-round cleanups (all confirmed by review, do them if quick): delete uncalled count(); simplify the unreachable oldest.done branch in pruneResolved (delete-then-set also fixes re-resolved items pruning in original insertion position); factor the 6x-duplicated ageMs clamp into one helper; reuse initGitRepo from test/orchestrator/helpers.ts instead of the local copy; reuse test/json.ts instead of the local json<T>(); reuse/extract a shared one-line truncate instead of a third copy (promptTitle, truncateReason exist). Do NOT restructure recompute into per-event builder routing — the derived-never-stored design is correct as-is. Run the package tests when done. — human:wsoule679
