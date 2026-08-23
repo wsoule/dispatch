@@ -10,11 +10,13 @@ import { StateDot } from '@/ui/chrome/StateDot';
 // status — a run's six states are fixed by the orchestrator (spec-exact
 // strings), never project-configurable, so this can switch on them directly
 // instead of falling back to gray for anything unrecognized.
+// The whose-move vocabulary's words, not process states: a run parked on an
+// approval says "Approve" (the ask), a finished one says "Review".
 const RUN_STATE_LABEL: Record<RunState, string> = {
   provisioning: 'Provisioning',
-  running: 'Running',
-  'awaiting-approval': 'Awaiting approval',
-  finished: 'Finished',
+  running: 'Working',
+  'awaiting-approval': 'Approve',
+  finished: 'Review',
   failed: 'Failed',
   cancelled: 'Cancelled',
   'interrupted-dirty': 'Interrupted',
