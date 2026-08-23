@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T16:27:51.313Z
+updated: 2026-08-23T16:28:14.073Z
 external: null
 writes:
   - packages/cli/src/**
@@ -71,3 +71,4 @@ My work is snapshotted, uncommitted, in .agents/ignore/t-880ce2-r6dd770/ (full m
 One result is independent of which implementation wins — the dry-run artifact in the comment above: 155 tasks + 30 epics + 341 findings + 308 ledger entries importable from this repo's real .dispatch/, 0 damaged, verified against the filesystem rather than taken from the report. — none
 - 2026-08-23T15:54:37.154Z [run r-6dd770] finished: finished — 16 files, $12.95 — agent:wsoule679/claude
 - 2026-08-23T16:27:51.313Z [run r-ab889f] cancelled — human:wsoule679
+- 2026-08-23T16:28:14.073Z requested changes (run r-5ebfaa): You were cancelled while parked on an unanswerable question dialog (the app's approval UI is broken — daemon app token was lost to a forced respawn). FULL CONTEXT, self-contained in case your session did not carry over: You are completing t-880ce2 (one-time import of legacy .dispatch state into the SQLite store) in the worktree at ~/.dispatch/worktrees/cc658f598366/r-6dd770. DECISIONS (already made, recorded in ledger l-cb8689, do not re-ask): Q1=(a) import tasks+findings+ledger(+evidence/mutations) only, fix-loops/notes/inbox stay file-backed but are COUNTED in the report as left-as-files; Q2=(a) auto-run on daemon start only for sqlite-resolved projects with a legacy board — relax resolveStoreBackend's refusal (index.ts:215) and keep bin.ts:271 consistent; plus a 'dispatch migrate' CLI command. Originals untouched on disk. SCOPE: settled — the canonical task file (.dispatch/tasks/t-880ce2-one-time-import-existing-dispatch-markdo.md at the PROJECT root, not your worktree copy) declares writes for packages/{cli,core,server}/src and test dirs; proceed on it, no grant pending. COLLISION: an orphaned earlier agent wrote a second implementation half in your worktree (importLegacyProject API with index/CLI/server-hook/tests) alongside yours (migrateProject API); the orphan is dead and the tree is yours — unify on ONE coherent implementation (your choice of mechanics, prefer the cheaper-to-complete half), keep the shared JSONL scanner extraction both halves invented. FINISH LINE: tests green across core+cli+server, re-run the dry run — it must reproduce 155 tasks/30 epics/341 findings/308 ledger, 0 damaged (or explain the delta), record the collision as a ledger hazard referencing e-ac6705, note in task Activity that you proceeded on the canonical fence. Do not ask questions unless truly blocked — every open decision above is settled. Commit when done. — human:wsoule679
