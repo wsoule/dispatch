@@ -311,6 +311,7 @@ singularised
 skus
 soule
 Soule
+specced
 startable
 staticlib
 statu
@@ -438,6 +439,7 @@ waitlist
 WHATWG
 wordmark
 workstream
+workstreams
 worktree
 Worktree
 WORKTREE
