@@ -2,7 +2,7 @@
 id: t-050819
 title: "Daemon restart must not lose in-flight runs: auto-resume on boot and on
   re-dispatch"
-status: in-review
+status: in-progress
 kind: task
 parent: null
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T18:01:32.916Z
-updated: 2026-08-23T00:08:46.473Z
+updated: 2026-08-23T00:21:45.879Z
 external: null
 writes:
   - packages/server/src/**
@@ -59,3 +59,12 @@ api.ts surface change kept to ~15 lines (a `fresh` boolean + the resume branch),
 
 Verification: server tsc clean; lint 0 errors (42 warnings, all pre-existing, none in changed files); 898 pass server (orchestrator + runs-api + api, incl. 5 new resilience.test.ts cases and 5 new survey.test.ts cases), 194 cli, 67 client, 0 fail. Three guards mutation-tested: quiescence gate -> 2 fails, `fresh` type check -> 1 fail, shutdown checks -> 1 fail. — none
 - 2026-08-23T00:08:46.473Z [run r-749444] finished: finished — 11 files, $2.51 — agent:wsoule679/claude
+- 2026-08-23T00:21:45.879Z requested changes (run r-e4e7c5): Code review found gaps that recreate the two-agents-in-one-worktree hazard this feature exists to prevent. REQUIRED before merge:
+1. createRun's resume branch (api.ts:569) resumes into the dead run's worktree IMMEDIATELY, with no orphan-quiescence check — a user re-dispatching seconds after a daemon restart resumes into a checkout a surviving orphan may still own, and the boot sweep then sees 'already resumed' and exits. Gate the HTTP resume on the same quiet/blockReason discipline as the sweep (or defer/409 while the sweep's quiet window is open for that run).
+2. worktreeFingerprint (orchestrator.ts:198) captures only path lists + shas — an orphan rewriting already-dirty files without committing fingerprints as quiet, and a failing git status (!ok → empty arrays) reads as maximally quiet. Include content evidence (e.g. git diff hash or mtimes) and treat status failure as 'cannot tell — defer', never quiet.
+3. Auto-resume never checks TASK status (orchestrator.ts:1695): the sweep can resume a run on a task the human cancelled/completed during the quiet window and flip it back to in-progress. Mirror createRun's done/cancelled 409 guard in resumeBlockReason.
+4. Model consistency (api.ts:556): an explicit model differing from the resumable run's must mean fresh (same logic as executor mismatch) — the desktop ALWAYS sends model and cannot send fresh:true, so today a user's retry-on-stronger-model silently no-ops.
+5. CLI --executor has a commander default of 'claude' so every plain 'dispatch run' sends a fake-explicit executor, silently breaking resume for any non-claude executor (orchestrate.ts:229). Send executor only when the user typed it (getOptionValueSource).
+6. finishAutoResume must re-check resumeBlockReason after the awaited survey (a human Resume during that await creates a second successor; orchestrator.ts:1805), and the give-up note must re-check stopped/blockReason before writing (it can falsely claim 'orphan still writing' about a resumed/discarded run, orchestrator.ts:1791).
+7. Internal dispatchers bypass resume entirely: epic auto-fill (epic.ts:395) and warden dispatch_task (wardenTools.ts:395) call orchestrator.dispatch directly and permanently cancel the sweep. Add a dispatchOrResume seam on the Orchestrator that all three entry points use.
+OPTIONAL (confirmed): share the stalling-executor stub via test/orchestrator/helpers.ts instead of two fresh copies; import RunMeta instead of the local RunRow slice; replace the 600ms wall-clock orphan test with condition polling (repo's flaky-test history says it will flake); delay-first loop ordering to drop the dead final 30s wait. Run server tests when done, commit. — human:wsoule679

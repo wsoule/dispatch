@@ -1,7 +1,7 @@
 ---
 id: t-06e1b0
 title: "v0 scoring: urgency, unblocking value, and age against the current store"
-status: in-review
+status: in-progress
 kind: task
 parent: e-ba8bf1
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-23T00:08:34.670Z
+updated: 2026-08-23T00:21:46.494Z
 external: null
 writes:
   - packages/core/src/**
@@ -43,3 +43,10 @@ BLOCKER for follow-up — `DispatchConfig.queue` is optional in the type when it
 
 Two other notes for whoever picks up the queue view: (1) the response carries the factor table (key/label/describes) alongside the weights, so the breakdown columns and weight controls should read from it rather than hardcoding the three factors — that is what makes the v1 project/initiative/due-date factors show up for free. (2) The QueueSnapshot response interface is deliberately un-exported in packages/server/src/api/queue.ts because knip gates unused exports at zero; export it when the client wrapper lands. — none
 - 2026-08-23T00:08:34.670Z [run r-df588b] finished: finished — 11 files, $2.14 — agent:wsoule679/claude
+- 2026-08-23T00:21:46.494Z requested changes (run r-44416e): Code review findings. REQUIRED before merge:
+1. PATCH /api/config silently drops queue patches: the handler's allow-list was never extended, so weight changes 200-OK with no effect and config.changed never fires for them (api.ts:~660/754) — the Settings weights UI cannot work. Wire body.queue through to updateConfig and broadcast.
+2. Config loudness is inverted: a typo'd key BESIDE weights ('wieghts:') is silently ignored yielding defaults (config.ts:490), while an unknown factor key INSIDE weights throws from loadConfig and 422s every config-reading endpoint in the daemon, not just /api/queue (config.ts:505). Make both levels loud, but contain the blast: a queue-block error should fail queue consumers loudly without bricking unrelated endpoints (parse queue lazily or isolate its errors).
+3. Shared-mutable-default poisoning: queueWeights() falls back to DEFAULT_QUEUE.weights BY REFERENCE (configTypes.ts:84) and DEFAULT_QUEUE is exported mutable and read live per loadConfig — one caller mutation corrupts all later rankings process-wide. Return a copy from the fallback and freeze (or stop exporting) the defaults.
+4. updateConfig's queue.weights loop throws on explicitly-undefined values instead of skipping (config.ts:780) — Partial<QueueWeights> with a conditional field rejects the whole patch. Skip undefined like parseQueueConfig does.
+5. Unblocking-factor accuracy: countDependents counts epics and derived review-anchor tasks as freed work, and credits full unblock value to a task whose dependent has OTHER unfinished blockers — 'unblocks 1 task' can be stated by five tasks about the same dependent (scoring.ts:123, :204). Count only dispatchable-kind dependents and either gate on sole-remaining-blocker or soften the detail text. Also: queue candidates use readyTasks while dispatch uses dispatchableTasks, so an in-review-satisfied task the orchestrator would start is invisible in the queue (scoring.ts:262) — align them or comment the divergence as deliberate.
+OPTIONAL (confirmed): fold parseLimit into a shared parseCountParam in api/http.ts; delete the dead DEFAULTS.queue line or read it; single-loop parseQueueConfig; drop the DEFAULT_QUEUE one-field wrapper; drop label from ScoreFactor (join on key); unify usableWeight with parseWeight. Run core+server tests, commit. — human:wsoule679
