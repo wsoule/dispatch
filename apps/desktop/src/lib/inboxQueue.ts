@@ -1,52 +1,89 @@
-import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
+import type {
+  FixLoopState,
+  MergeQueueSnapshot,
+  RepoPr,
+  RunMeta,
+  RunQuestion,
+} from '@dispatch/client';
+import type { TaskDoc } from '@dispatch/core/browser';
 
-import {
-  buildReviewQueue,
-  type ReviewQueueItem,
-} from '../components/runs/ReviewQueue';
-import { deriveFeedState } from './feedState';
+import type { FeedRowModel } from './controlRoom';
+import { buildFeed, FEED_GROUPS } from './controlRoom';
+import type { FeedState } from './feedState';
+import { isUrgentState } from './feedState';
+
+/** Everything `buildFeed` needs that the Inbox actually varies on — the Inbox is the
+ * Control room's urgent tiers re-surfaced as a to-do list, so it feeds the exact same
+ * derivation rather than keeping a second set of "what needs a human" rules that drift
+ * (the old rules missed failed runs without sessions, rulings, and held merges entirely,
+ * and stacked one row per run instead of one per task). */
+export interface InboxInput {
+  runs: RunMeta[];
+  tasks: TaskDoc[];
+  epics: TaskDoc[];
+  repoPrs: RepoPr[];
+  mergeQueue: MergeQueueSnapshot | null;
+  pendingApprovals: ReadonlyMap<string, { toolName: string }>;
+  openQuestions: ReadonlyMap<string, RunQuestion[]>;
+  fixLoops: ReadonlyMap<string, FixLoopState>;
+}
+
+export interface InboxSection {
+  state: FeedState;
+  rows: FeedRowModel[];
+}
 
 export interface InboxData {
-  /** Finished runs needing a look, plus open repo PRs — see `buildReviewQueue`. */
-  review: ReviewQueueItem[];
-  /** Live runs stalled on the user: an approval gate or an open question. */
-  waiting: RunMeta[];
+  /** One section per urgent move (answer/approve/review/ruling/unblock/failed), in the
+   * feed's own priority order, empty sections dropped. One row per task, never per run. */
+  sections: InboxSection[];
+  /** Open repo PRs no local run claims — reviewable, but only on GitHub. */
+  prs: RepoPr[];
+  /** Rows across sections plus unclaimed PRs — the sidebar badge. */
+  total: number;
 }
 
 /**
- * Whether a run belongs in `waiting`: a live execute-kind run, not archived,
- * that is either sitting on an approval gate (`deriveFeedState`, which reads
- * that off the run's own `state`) or blocked on a question the agent asked
- * and nobody has answered yet. A question-blocked run's own `RunState` stays
- * 'running' — the process is still up, just parked on stdin — so
- * `deriveFeedState` alone can't see it; only the separate `openQuestions` map
- * (keyed by run id, same as `taskAttention.ts`/`controlRoom.ts` read it) does.
- * Mirrors `buildReviewQueue`'s kind/archived exclusions so a review or verify
- * agent's own RunMeta, or an archived run, never leaks into the Inbox.
+ * Everything waiting on a human. A thin filter over `buildFeed` — the one place the
+ * whose-move states, question overrides, merge-queue phases, aux-agent folding, and
+ * superseded-round dedupe live — keeping this page and the Control room incapable of
+ * disagreeing about what needs you.
  */
-function isWaiting(
-  run: RunMeta,
-  openQuestions: ReadonlyMap<string, RunQuestion[]>
-): boolean {
-  if ((run.kind ?? 'execute') !== 'execute') return false;
-  if (run.archivedAt !== undefined) return false;
-  if (deriveFeedState(run) === 'approve') return true;
-  return (openQuestions.get(run.id) ?? []).length > 0;
-}
+export function buildInbox(input: InboxInput): InboxData {
+  const feed = buildFeed({
+    runs: input.runs,
+    tasks: input.tasks,
+    epics: input.epics,
+    // Ready/blocked only affect ribbon counts the Inbox never shows.
+    readyIds: new Set(),
+    blockedIds: new Set(),
+    mergeQueue: input.mergeQueue,
+    pendingApprovals: input.pendingApprovals,
+    openQuestions: input.openQuestions,
+    fixLoops: input.fixLoops,
+    query: '',
+    activeStates: new Set(),
+    collapsed: new Set(),
+    // No caps: an inbox that silently truncates its list isn't an inbox.
+    expanded: new Set(FEED_GROUPS),
+  });
 
-/**
- * Everything waiting on a human, in one list. A thin composition over the two
- * surfaces that already know how to find their half of it — no re-derivation,
- * so a change to either source's rules (what counts as needing review, what
- * counts as waiting) only has to happen in one place.
- */
-export function buildInbox(
-  runs: RunMeta[],
-  repoPrs: RepoPr[],
-  openQuestions: ReadonlyMap<string, RunQuestion[]>
-): InboxData {
+  const sections = feed.groups
+    .filter((group) => isUrgentState(group.state))
+    .map((group) => ({ state: group.state, rows: group.rows }));
+
+  const claimedUrls = new Set(
+    input.runs
+      .map((run) => run.prUrl)
+      .filter((url): url is string => url !== undefined)
+  );
+  const prs = input.repoPrs.filter((pr) => !claimedUrls.has(pr.url));
+
   return {
-    review: buildReviewQueue(runs, repoPrs),
-    waiting: runs.filter((r) => isWaiting(r, openQuestions)),
+    sections,
+    prs,
+    total:
+      sections.reduce((count, section) => count + section.rows.length, 0) +
+      prs.length,
   };
 }

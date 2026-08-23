@@ -1,8 +1,8 @@
-import type { RunMeta } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import type { FeedRowModel } from '../lib/controlRoom';
 import type { InboxData } from '../lib/inboxQueue';
 import { InboxView } from './InboxView';
 
@@ -18,81 +18,104 @@ function projectWith(
     client: {},
     runs: [],
     retryEnsureDispatchd: () => {},
-    mergeQueue: { entries: [], history: [] },
-    handleRecheckMergeQueue: async () => {},
+    openQuestions: new Map(),
     handleMergeAllReady: async () => {},
-    lastPushError: null,
+    handleEnqueueMerge: async () => {},
+    handleAnswerQuestion: async () => {},
     ...overrides,
   } as unknown as DispatchProjectData;
 }
 
-function waitingRun(id: string): RunMeta {
+function row(over: Partial<FeedRowModel> = {}): FeedRowModel {
   return {
-    id,
-    taskId: `t-${id}`,
-    taskTitle: `Waiting run ${id}`,
-    executor: 'claude',
-    state: 'waiting',
-    branch: `b-${id}`,
-    baseBranch: 'main',
-    worktreePath: '',
-    createdAt: '2026-08-10T00:00:00.000Z',
-    updatedAt: '2026-08-10T00:00:00.000Z',
-  } as unknown as RunMeta;
+    runId: 'r-1',
+    taskId: 't-1',
+    title: 'Do the thing',
+    state: 'review',
+    epicTitle: null,
+    since: '2026-08-10T00:00:00.000Z',
+    activity: null,
+    attention: null,
+    fixLoop: null,
+    ...over,
+  };
 }
 
-// The Inbox used to end with the merge queue embedded as its last item, which showed a
-// second, partial copy of what the Landing table now owns. The queue section is gone; the
-// two lists — and the inline queue-merge actions below — are what this page still is.
-test('a busy Inbox renders its two lists and no embedded merge queue', () => {
-  const waiting: RunMeta[] = Array.from({ length: 15 }, (_, i) =>
-    waitingRun(`w${i}`)
-  );
-  const review: InboxData['review'] = Array.from({ length: 10 }, (_, i) => ({
-    target: { kind: 'run', runId: `r${i}` },
-    title: `Needs review ${i}`,
-    isPr: false,
-    updatedAt: '2026-08-10T00:00:00.000Z',
-  }));
+function dataWith(sections: InboxData['sections']): InboxData {
+  const total = sections.reduce((n, s) => n + s.rows.length, 0);
+  return { sections, prs: [], total };
+}
 
+test('sections render in feed order with the whose-move labels', () => {
   render(
     <InboxView
-      data={{ waiting, review }}
+      data={dataWith([
+        {
+          state: 'answer',
+          rows: [row({ taskId: 't-a', runId: 'r-a', state: 'answer' })],
+        },
+        {
+          state: 'review',
+          rows: [
+            row({ taskId: 't-b', runId: 'r-b' }),
+            row({ taskId: 't-c', runId: 'r-c', title: 'Second review' }),
+          ],
+        },
+        {
+          state: 'failed',
+          rows: [
+            row({
+              taskId: 't-d',
+              runId: 'r-d',
+              state: 'failed',
+              attention: { reason: 'boom', detail: null },
+            }),
+          ],
+        },
+      ])}
       project={projectWith()}
       onOpenTask={() => {}}
       onOpenPr={() => {}}
     />
   );
 
-  expect(screen.getByText('Waiting on you').closest('section')).not.toBeNull();
-  expect(screen.getByText('Needs review').closest('section')).not.toBeNull();
-  expect(screen.queryByText('Merge queue')).toBeNull();
+  expect(screen.getByText('Answer').closest('section')).not.toBeNull();
+  expect(screen.getByText('Review').closest('section')).not.toBeNull();
+  expect(screen.getByText('Failed').closest('section')).not.toBeNull();
+  // The row says why it needs a human, right in the row.
+  expect(screen.queryByText('boom')).not.toBeNull();
 });
 
-// The merge affordances added 2026-08-11: reviews used to be open-one-click-merge-
-// one, six times over. The section header queues everything ready; each run-backed
-// row can queue just itself — without navigating.
+test('an empty inbox says so instead of rendering empty sections', () => {
+  render(
+    <InboxView
+      data={{ sections: [], prs: [], total: 0 }}
+      project={projectWith()}
+      onOpenTask={() => {}}
+      onOpenPr={() => {}}
+    />
+  );
+  expect(screen.queryByText('Nothing waiting on you.')).not.toBeNull();
+});
+
+// The merge affordances: the section header queues everything ready; each
+// review row can queue just itself — without navigating.
 test('queue-merge affordances call the queue, not navigation', () => {
   const calls: string[] = [];
   let mergeAll = 0;
   let navigated = 0;
-  const run = {
-    ...waitingRun('r1'),
-    state: 'finished',
-  } as unknown as RunMeta;
-  const review: InboxData['review'] = [
-    {
-      target: { kind: 'run', runId: 'r1' },
-      run,
-      title: 'Ready to land',
-      isPr: false,
-      updatedAt: '2026-08-10T00:00:00.000Z',
-    },
-  ];
 
   render(
     <InboxView
-      data={{ waiting: [], review }}
+      data={dataWith([
+        {
+          state: 'review',
+          rows: [
+            row({ title: 'Ready to land' }),
+            row({ taskId: 't-2', runId: 'r-2', title: 'Also ready' }),
+          ],
+        },
+      ])}
       project={projectWith({
         handleMergeAllReady: async () => {
           mergeAll += 1;
@@ -114,6 +137,31 @@ test('queue-merge affordances call the queue, not navigation', () => {
   fireEvent.click(
     screen.getByRole('button', { name: 'Queue merge: Ready to land' })
   );
-  expect(calls).toEqual(['r1']);
+  expect(calls).toEqual(['r-1']);
   expect(navigated).toBe(0);
+});
+
+test('an unclaimed PR renders with its number and opens the PR page', () => {
+  const opened: number[] = [];
+  render(
+    <InboxView
+      data={{
+        sections: [],
+        prs: [
+          {
+            number: 9,
+            url: 'https://github.com/x/y/pull/9',
+            title: 'Standalone PR',
+            updatedAt: '2026-08-10T00:00:00.000Z',
+          } as InboxData['prs'][number],
+        ],
+        total: 1,
+      }}
+      project={projectWith()}
+      onOpenTask={() => {}}
+      onOpenPr={(n) => opened.push(n)}
+    />
+  );
+  fireEvent.click(screen.getByText('Standalone PR'));
+  expect(opened).toEqual([9]);
 });
