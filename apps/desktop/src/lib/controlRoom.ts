@@ -307,27 +307,29 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     });
   }
 
-  // A task the fix loop (or a manual re-dispatch) has run several times leaves one execute
-  // run per round, each still reading 'review' or 'failed' on its own — four identical
-  // "needs review" rows for one task. Only the newest execute run speaks for the task;
-  // older rounds are history, not work waiting on anyone. Live rows (working/waiting) and
-  // queue-backed rows (landing) always survive.
-  const latestExecuteByTask = new Map<string, string>();
+  // A task the fix loop (or a manual re-dispatch) has run several times leaves a run per
+  // round — execute rounds still reading 'review', and unfoldable review/verify agents
+  // (their execute run merged away or healed as a zombie) each reading 'review' or 'failed'
+  // on their own — stacking near-identical rows for one task. Among a task's settled rows
+  // (review/failed, any run kind) only the newest speaks for it: the latest event is the
+  // task's current state, the rest are history, not work waiting on anyone. Live rows
+  // (working/waiting) and queue-backed rows (landing) always survive.
+  const settled = (entry: (typeof entries)[number]): boolean =>
+    entry.row.state === 'review' || entry.row.state === 'failed';
+  const latestSettledByTask = new Map<string, string>();
   for (const entry of entries) {
-    if (!entry.isExecute) continue;
-    const seen = latestExecuteByTask.get(entry.row.taskId);
+    if (!settled(entry)) continue;
+    const seen = latestSettledByTask.get(entry.row.taskId);
     if (seen === undefined || entry.createdAt > seen) {
-      latestExecuteByTask.set(entry.row.taskId, entry.createdAt);
+      latestSettledByTask.set(entry.row.taskId, entry.createdAt);
     }
   }
   const rows: FeedRowModel[] = entries
-    .filter((entry) => {
-      if (!entry.isExecute) return true;
-      if (entry.row.state !== 'review' && entry.row.state !== 'failed') {
-        return true;
-      }
-      return entry.createdAt === latestExecuteByTask.get(entry.row.taskId);
-    })
+    .filter(
+      (entry) =>
+        !settled(entry) ||
+        entry.createdAt === latestSettledByTask.get(entry.row.taskId)
+    )
     .map((entry) => entry.row);
 
   // Ribbon counts are over everything, never the filtered set — a chip that hid rows and then

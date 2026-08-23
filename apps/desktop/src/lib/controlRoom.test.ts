@@ -575,3 +575,64 @@ describe('superseded runs collapse to one row per task', () => {
     expect(review?.rows[0]?.fixLoop).toEqual(loop);
   });
 });
+
+// The screenshot case behind the rule: review agents whose execute run is gone (merged away
+// or healed as a zombie after a daemon restart) each keep a row of their own — three
+// "failed" and three "needs review" rows all naming one task.
+describe('stacked standalone review agents collapse too', () => {
+  test('zombie review runs of one task collapse to the newest', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          auxRun({
+            id: 'rv-1',
+            kind: 'review',
+            state: 'failed',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          auxRun({
+            id: 'rv-2',
+            kind: 'review',
+            state: 'failed',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+          auxRun({
+            id: 'rv-3',
+            kind: 'review',
+            state: 'finished',
+            createdAt: '2026-07-26T02:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    expect(model.total).toBe(1);
+    expect(model.groups.map((g) => g.state)).toEqual(['review']);
+    expect(model.groups[0]?.rows.map((r) => r.runId)).toEqual(['rv-3']);
+  });
+
+  test('an old execute round and a newer standalone review agent are one row', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          // An execute round still reading 'review', on a branch no aux run points at.
+          run({
+            id: 'r-old',
+            branch: 'dispatch/t-1-round1',
+            state: 'finished',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          // A newer review agent for the same task whose own execute run is gone.
+          auxRun({
+            id: 'rv-1',
+            kind: 'review',
+            state: 'failed',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    expect(model.total).toBe(1);
+    expect(model.groups[0]?.rows.map((r) => r.runId)).toEqual(['rv-1']);
+    expect(model.groups[0]?.state).toBe('failed');
+  });
+});
