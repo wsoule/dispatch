@@ -478,6 +478,40 @@ describe('FixLoopStore', () => {
     expect(reloaded?.baseSha).toBe('abc123');
     rmSync(dir, { recursive: true, force: true });
   });
+
+  // The store keeps its parsed map in memory so a hot reader is not re-parsing
+  // the whole file per call. Every test above reads through a *fresh* instance,
+  // which starts cold — so this is the one that would catch a cache that stops
+  // seeing the writes made through it.
+  it('reflects its own writes without re-reading the file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-fix-loop-cache-'));
+    const store = new FixLoopStore(dir);
+    const state: FixLoopState = {
+      taskId: 't-000001',
+      round: 0,
+      cap: 5,
+      state: 'idle',
+      baseSha: 'abc123',
+      lastReviewedSha: null,
+      updatedAt: '2026-01-01T00:00:00.000Z',
+    };
+    // Warm the cache first: a cold store would read from disk either way, so
+    // reading before the write is what makes this exercise the cached path.
+    expect(store.list()).toEqual([]);
+
+    store.put(state);
+    expect(store.get('t-000001')?.round).toBe(0);
+    expect(store.list()).toHaveLength(1);
+
+    store.put({ ...state, round: 2, state: 'reviewing' });
+    expect(store.get('t-000001')?.round).toBe(2);
+    expect(store.get('t-000001')?.state).toBe('reviewing');
+    // Still one entry: last write wins per task, it does not accumulate.
+    expect(store.list()).toHaveLength(1);
+    // And the cache never diverged from what actually landed on disk.
+    expect(new FixLoopStore(dir).get('t-000001')?.round).toBe(2);
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 describe('POST /api/tasks/:id/fix-loop/advance', () => {
