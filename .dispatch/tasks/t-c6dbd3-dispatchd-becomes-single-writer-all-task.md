@@ -1,7 +1,7 @@
 ---
 id: t-c6dbd3
 title: "dispatchd becomes single writer: all task I/O through the daemon store"
-status: todo
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:17.943Z
-updated: 2026-08-22T16:38:17.943Z
+updated: 2026-08-23T01:15:42.851Z
 external: null
 writes:
   - packages/server/src/**
@@ -27,3 +27,4 @@ Route every task/finding/ledger read and write through dispatchd's SQLite-backed
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-23T01:15:42.851Z dispatched (claude, branch dispatch/t-c6dbd3-dispatchd-becomes-single-writer-all-task-e0be91) — human:wsoule679
