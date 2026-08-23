@@ -60,7 +60,10 @@ export function PlanTaskSpecDialog({
         if (!open) onClose();
       }}
     >
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
+      {/* Zero padding: the spec view carries RecommendationCard's own edge-to-edge section
+          layout, so the dialog is just the frame. The first-child pad keeps the title clear
+          of the dialog's absolute close button. */}
+      <DialogContent className="max-h-[85vh] gap-0 overflow-y-auto p-0 sm:max-w-xl">
         {spec !== null && (
           <>
             {/* The spec body renders its own visible title; this satisfies the dialog's
@@ -69,6 +72,7 @@ export function PlanTaskSpecDialog({
             <TaskSpecView
               spec={spec}
               onOpenBlocker={(key) => onOpenIndex(Number(key))}
+              className="[&>*:first-child]:pr-10"
             />
           </>
         )}
