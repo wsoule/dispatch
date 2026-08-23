@@ -121,6 +121,15 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
+// The lane-behavior tests below exercise the opt-in grouped board — the default is the
+// flat kanban, so they seed the persisted pref the Display menu would set.
+function enableEpicLanes() {
+  window.localStorage.setItem(
+    'dispatch:board-columns-v1',
+    JSON.stringify({ hideEmpty: false, hidden: [], groupByEpic: true })
+  );
+}
+
 test('the mode prop selects the layout — the switcher lives in the sidebar, not the page', () => {
   const { rerender } = render(
     <TooltipProvider>
@@ -161,6 +170,7 @@ test('the board opens on the unified kanban with every epic expanded', () => {
 });
 
 test('j walks the cards lane by lane, and Enter opens the one it stopped on', () => {
+  enableEpicLanes();
   const opened: string[] = [];
   mount((taskId) => opened.push(taskId));
   const anchor = cardRoot('Card one');
@@ -185,6 +195,7 @@ test('j walks the cards lane by lane, and Enter opens the one it stopped on', ()
 // The regression this guards: an order built from all the project's tasks would walk the cursor
 // into a folded-up lane, moving real DOM focus to a card nobody can see.
 test('j/k skip the cards a collapsed epic is hiding', () => {
+  enableEpicLanes();
   mount();
   fireEvent.click(screen.getByRole('button', { name: /Payments epic/ }));
   const anchor = cardRoot('Card three');
@@ -196,6 +207,7 @@ test('j/k skip the cards a collapsed epic is hiding', () => {
 });
 
 test('a collapsed lane stays collapsed after switching to the list and back', () => {
+  enableEpicLanes();
   const view = (mode: 'board' | 'list') => (
     <TooltipProvider>
       <BoardView

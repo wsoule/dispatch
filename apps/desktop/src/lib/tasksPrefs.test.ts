@@ -57,10 +57,12 @@ describe('parseBoardColumnPrefs', () => {
     expect(parseBoardColumnPrefs('{"hidden": ["dropped"]}')).toEqual({
       hideEmpty: true,
       hidden: ['dropped'],
+      groupByEpic: false,
     });
     expect(parseBoardColumnPrefs('{"hideEmpty": false}')).toEqual({
       hideEmpty: false,
       hidden: [],
+      groupByEpic: false,
     });
   });
 });
@@ -113,13 +115,21 @@ describe('visibleBoardStatuses', () => {
 
   it('hides empty columns when hideEmpty is on', () => {
     expect(
-      visibleBoardStatuses(statuses, { hideEmpty: true, hidden: [] }, counts)
+      visibleBoardStatuses(
+        statuses,
+        { hideEmpty: true, hidden: [], groupByEpic: false },
+        counts
+      )
     ).toEqual(['ready', 'working']);
   });
 
   it('keeps empty columns when hideEmpty is off', () => {
     expect(
-      visibleBoardStatuses(statuses, { hideEmpty: false, hidden: [] }, counts)
+      visibleBoardStatuses(
+        statuses,
+        { hideEmpty: false, hidden: [], groupByEpic: false },
+        counts
+      )
     ).toEqual(statuses);
   });
 
@@ -127,7 +137,7 @@ describe('visibleBoardStatuses', () => {
     expect(
       visibleBoardStatuses(
         statuses,
-        { hideEmpty: false, hidden: ['ready'] },
+        { hideEmpty: false, hidden: ['ready'], groupByEpic: false },
         counts
       )
     ).toEqual(['draft', 'working', 'landed']);

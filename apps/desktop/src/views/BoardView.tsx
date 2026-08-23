@@ -16,7 +16,12 @@ import { TaskBoard } from '../components/tasks/TaskBoard';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import { showArchiveToggle } from '../lib/archiveToggle';
-import { groupTasksByEpicLane, visibleLaneTaskIds } from '../lib/boardGrouping';
+import {
+  type BoardLane,
+  groupTasksByEpicLane,
+  groupTasksByStatus,
+  visibleLaneTaskIds,
+} from '../lib/boardGrouping';
 import {
   COLLAPSED_EPICS_STORAGE_KEY,
   parseCollapsedEpics,
@@ -263,18 +268,44 @@ export function BoardView({
         : [],
     [data.config, boardColumnPrefs, countByStatus]
   );
-  // The same lanes `TaskBoard` renders, from the same pure function — this copy exists only to
-  // give the j/k cursor an order that matches what is on screen.
-  const lanes = useMemo(
-    () =>
-      data.config !== null
-        ? groupTasksByEpicLane(filteredBoardTasks, visibleStatuses, data.epics)
-        : [],
-    [filteredBoardTasks, data.config, visibleStatuses, data.epics]
-  );
+  // The same lanes `TaskBoard` renders, from the same pure functions — this copy exists only
+  // to give the j/k cursor an order that matches what is on screen (flat board: one
+  // headerless lane, nothing collapsible).
+  const lanes = useMemo<BoardLane[]>(() => {
+    if (data.config === null) return [];
+    if (boardColumnPrefs.groupByEpic) {
+      return groupTasksByEpicLane(
+        filteredBoardTasks,
+        visibleStatuses,
+        data.epics
+      );
+    }
+    const columns = groupTasksByStatus(
+      filteredBoardTasks.filter((t) => t.meta.kind !== 'epic'),
+      visibleStatuses
+    );
+    return [
+      {
+        epicId: null,
+        title: '',
+        columns,
+        total: columns.reduce((n, c) => n + c.tasks.length, 0),
+      },
+    ];
+  }, [
+    filteredBoardTasks,
+    data.config,
+    visibleStatuses,
+    data.epics,
+    boardColumnPrefs.groupByEpic,
+  ]);
   const orderedTaskIds = useMemo(
-    () => visibleLaneTaskIds(lanes, collapsedLaneKeys),
-    [lanes, collapsedLaneKeys]
+    () =>
+      visibleLaneTaskIds(
+        lanes,
+        boardColumnPrefs.groupByEpic ? collapsedLaneKeys : new Set()
+      ),
+    [lanes, collapsedLaneKeys, boardColumnPrefs.groupByEpic]
   );
   // Chip counts come from the active (non-archived) tasks so the numbers match what a
   // default board actually shows.
@@ -450,6 +481,17 @@ export function BoardView({
                 {mode === 'board' ? (
                   <div className="flex flex-col gap-0.5">
                     <DisplayRow
+                      checked={boardColumnPrefs.groupByEpic}
+                      onChange={(checked) =>
+                        setBoardColumnPrefs((prev) => ({
+                          ...prev,
+                          groupByEpic: checked,
+                        }))
+                      }
+                    >
+                      Group by milestone
+                    </DisplayRow>
+                    <DisplayRow
                       checked={boardColumnPrefs.hideEmpty}
                       onChange={(checked) =>
                         setBoardColumnPrefs((prev) => ({
@@ -566,6 +608,7 @@ export function BoardView({
             tasks={filteredBoardTasks}
             archivedTaskIds={archivedTaskIds}
             statuses={visibleStatuses}
+            groupByEpic={boardColumnPrefs.groupByEpic}
             readyIds={data.readyIds}
             blockedIds={data.blockedIds}
             liveRunStateByTaskId={data.liveRunStateByTaskId}
