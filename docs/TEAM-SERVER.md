@@ -112,7 +112,12 @@ of the org roster.
 ## 6. Team features on top
 
 With the server authoritative, the earlier mirror/fan-out machinery is
-unnecessary — these become ordinary features of a stateful service:
+unnecessary — these become ordinary features of a stateful service. They are
+also server-tier **by decision, not just by architecture**: the team-local
+direction (one shared multi-user dispatchd that teammates reach from browsers —
+epic `e-5f3530` and its satellite tasks) is parked, absorbed by phases 1–4
+below, so that multiplayer never ships free inside the open client
+(`docs/BUSINESS.md`, 2026-08-23):
 
 - **Presence** — derived from connected daemons and live runs.
 - **Claims** — TTL leases on `(taskId, writes[])`, admission-checked with the
@@ -146,8 +151,9 @@ unnecessary — these become ordinary features of a stateful service:
 2. **Offline/conflict policy in team mode.** Queued-write reconciliation rules
    when a daemon reconnects — last-write-wins per field, or surface conflicts to
    a human. Needs deciding before phase 1, not before phase 0.
-3. **Server repo location.** Private repo consuming published `@dispatch/core`
-   remains the likely shape (`docs/BUSINESS.md`).
+3. ~~**Server repo location.**~~ Decided 2026-08-23: private repo consuming
+   published `@dispatch/core` from npm, MIT-licensed so the dependency is
+   frictionless (`docs/BUSINESS.md`, `LICENSING.md`).
 4. **Protocol.** Plain WebSocket + JSON mirroring `ServerEvent` until it hurts.
 5. **What of `.dispatch/` stays in-repo.** `config.yml` clearly; whether
    `team.yml` stays as a projection or moves fully server-side can wait for

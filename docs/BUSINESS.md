@@ -24,25 +24,36 @@ The enforcement lever is structural, not legal: team features require the
 server, and the server is ours. No license checks in the client to strip out, no
 forkable moat. This is why the licensing question (below) got simpler.
 
-## Licensing
+## Licensing (decided 2026-08-23)
 
-- **The repo is private today; the license is FSL-1.1-ALv2.** Whether to publish
-  the source at launch is the real decision. With the moat in the server there
-  is little left to protect by keeping the client closed, and readable source is
-  most of the answer to "why should we trust a one-person vendor's daemon on our
-  laptops." Staying closed is viable — distribute binaries from a public
-  releases-only repo — but it costs the trust story. Decide once, at launch —
-  not by drift.
-- **The team server is commercial and private** — separate repo, consuming
-  published `@dispatch/core` (open decision §7.3 in `TEAM-SERVER.md`).
-- **Consider MIT for `@dispatch/mcp`** so any agent can drive Dispatch through
-  its tools. With tasks leaving markdown (`TEAM-SERVER.md` §3) the MCP tool
-  surface, not a file format, is the interop layer worth opening.
-- **CLA before outside PRs land** (CLA Assistant, not DCO) — still required
-  while the client is source-available and code may move across the license
-  boundary into the server.
-- Never call FSL code "open source." "Source available, becomes Apache 2.0 in
-  two years" is accurate and survives scrutiny.
+The open question from the first draft is settled: **hybrid open-core, and the
+repo goes public as soon as the mechanics are done — weeks, not a launch
+event.** `LICENSING.md` at the repo root is the plain-language map.
+
+- **MIT for the interop surface** — `@dispatch/core`, `@dispatch/client`,
+  `@dispatch/cli`, `@dispatch/mcp`. With tasks leaving markdown
+  (`TEAM-SERVER.md` §3) the MCP tool surface and the daemon API, not a file
+  format, are the interop layer worth opening; genuinely open licenses there
+  mean integration never needs a license review. Caveat: `cli` and `mcp`
+  currently depend on the FSL `@dispatch/server`; severing that import so the
+  MIT surface is dependency-clean is tracked on the board.
+- **FSL-1.1-ALv2 stays on the product** — `apps/desktop`, `packages/server`, the
+  orchestrator. Readable source answers "why trust a one-person vendor's daemon
+  on our laptops"; the non-compete is cheap insurance while the server moat is
+  planned rather than built. Relicensing toward openness stays available: once
+  the server tier is live and sticky, MIT-ing the app is a goodwill event we can
+  cash in — the reverse move never is.
+- **The team server is commercial and private** — separate repo from day one,
+  consuming published `@dispatch/core` from npm (settles §7.3 in
+  `TEAM-SERVER.md`).
+- **Publish mechanics gate the flip, nothing else** — per-package LICENSE files,
+  CLA Assistant wired up, history/secret scrub, npm publish of the MIT packages.
+  Tracked as the open-core publish epic.
+- **CLA before outside PRs land** (CLA Assistant, not DCO) — required because
+  code may move across the license boundary into the server.
+- Never call FSL code "open source." "The integration packages are MIT; the app
+  is source-available, becomes Apache 2.0 in two years" is accurate and survives
+  scrutiny.
 
 ## What the server tier costs us
 

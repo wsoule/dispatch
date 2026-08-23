@@ -196,14 +196,21 @@ wrap this daemon for end users.
 
 ## License
 
-[Functional Source License 1.1, Apache 2.0 Future License](LICENSE)
-(`FSL-1.1-ALv2`) — source-available, not OSI open source.
+Dispatch is open core — see [`LICENSING.md`](LICENSING.md) for the
+plain-language map:
 
-In practice you may read, build, modify, self-host, and redistribute Dispatch
-for any purpose except shipping a competing product or service. Internal use,
-non-commercial education and research, and professional services you deliver to
-a licensee are all explicitly permitted. **Each release converts to Apache-2.0
-two years after it ships**, and that grant is irrevocable.
+- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/client`,
+  `@dispatch/cli`, `@dispatch/mcp`. Build on the task model, drive the daemon,
+  or embed the MCP tools without a license review.
+- **[FSL-1.1-ALv2](LICENSE)** — the desktop app and the daemon/orchestrator.
+  Source-available, not OSI open source: read, build, modify, self-host, and
+  redistribute for any purpose except shipping a competing product or service.
+  Internal use, non-commercial education and research, and professional services
+  you deliver to a licensee are all explicitly permitted. **Each release
+  converts to Apache-2.0 two years after it ships**, irrevocably.
+- **Commercial** — team features (presence, claims, shared run visibility, web
+  dashboard, audit) live in the team server, a separate private repo
+  ([direction](docs/TEAM-SERVER.md)). The solo app is complete without it.
 
 Versions up to and including v0.13.1 were published under Apache-2.0 and remain
 Apache-2.0 forever.

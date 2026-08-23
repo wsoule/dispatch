@@ -24,7 +24,7 @@ bun run test
 Use `bun ws <project> <script>` to run a package script from the root:
 
 ```bash
-bun ws template test
+bun ws core test
 ```
 
 ## Pull Requests
@@ -34,10 +34,15 @@ bun ws template test
 - Update docs when public APIs, setup, or workflows change.
 - Disclose any AI assistance according to the receiving project's policy.
 
-## License
+## License and CLA
 
-Dispatch is licensed under the Functional Source License, FSL-1.1-ALv2 (see
-`LICENSE`) — source-available, converting to Apache 2.0 two years after each
-release. By submitting a contribution you agree it is provided under the
-project's license. A contributor license agreement may be introduced before
-larger external contributions are accepted.
+Dispatch is open core — see [`LICENSING.md`](../LICENSING.md). The integration
+packages (`packages/core`, `packages/client`, `packages/cli`, `packages/mcp`)
+are MIT; the rest of the repo is FSL-1.1-ALv2 (see `LICENSE`), source-available
+and converting to Apache 2.0 two years after each release.
+
+Outside contributions require a signed contributor license agreement (CLA
+Assistant prompts on your first PR, once per contributor). The CLA is needed
+because code in this repo may move across the license boundary — including into
+the commercial team server. Your contribution lands under the license of the
+package it touches.
