@@ -8,7 +8,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import { generateTaskId } from './ids.js';
+import { generateTaskId, isTaskId } from './ids.js';
 import { slugify } from './slug.js';
 import {
   appendActivity,
@@ -117,7 +117,40 @@ export interface ListSafeResult {
   errors: ListSafeError[];
 }
 
-export class TaskStore {
+/**
+ * The backend-neutral task surface, extracted so a second backend can sit
+ * behind it: `TaskStore` (markdown files under `.dispatch/tasks`) and
+ * `SqliteTaskStore` (a single daemon-owned database) both satisfy it, and
+ * picking between them is a construction-time choice — see
+ * `openProjectStores` in storeBackend.ts.
+ *
+ * Filesystem-only members are deliberately left off: `tasksDir` and
+ * `taskFilePath` have no answer in a database-backed project, so a caller
+ * that needs a path on disk has to hold a concrete `TaskStore`, not a port.
+ */
+export interface TaskStorePort {
+  readonly rootDir: string;
+  isInitialized(): boolean;
+  create(input: CreateInput, now?: string): TaskDoc;
+  get(id: string): TaskDoc | null;
+  list(filter?: ListFilter): TaskDoc[];
+  listSafe(filter?: ListFilter): ListSafeResult;
+  update(id: string, patch: UpdatePatch, now?: string): TaskDoc;
+  amend(id: string, input: Omit<Amendment, 'date'>, now?: string): TaskDoc;
+  remove(id: string): boolean;
+}
+
+// Writes the starter `.dispatch/config.yml` if the project has none. Config
+// stays a plain committable file whichever backend holds the tasks, so both
+// initializers call this rather than each spelling out the default.
+export function ensureProjectConfig(rootDir: string): void {
+  const dir = join(rootDir, DISPATCH_DIR);
+  mkdirSync(dir, { recursive: true });
+  const cfg = join(dir, 'config.yml');
+  if (!existsSync(cfg)) writeFileSync(cfg, DEFAULT_CONFIG);
+}
+
+export class TaskStore implements TaskStorePort {
   readonly tasksDir: string;
 
   constructor(readonly rootDir: string) {
@@ -127,8 +160,7 @@ export class TaskStore {
   static init(rootDir: string): TaskStore {
     const store = new TaskStore(rootDir);
     mkdirSync(store.tasksDir, { recursive: true });
-    const cfg = join(rootDir, DISPATCH_DIR, 'config.yml');
-    if (!existsSync(cfg)) writeFileSync(cfg, DEFAULT_CONFIG);
+    ensureProjectConfig(rootDir);
     return store;
   }
 
@@ -305,7 +337,7 @@ export class TaskStore {
   }
 
   taskFilePath(id: string): string | null {
-    if (!/^[te]-[0-9a-f]{6}$/.test(id)) return null;
+    if (!isTaskId(id)) return null;
     if (!this.isInitialized()) return null;
     const hit = readdirSync(this.tasksDir).find(
       (f) => f === `${id}.md` || f.startsWith(`${id}-`)

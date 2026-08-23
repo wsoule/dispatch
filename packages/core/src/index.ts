@@ -6,14 +6,30 @@ export {
   generateLedgerId,
   generateRunId,
   generateTaskId,
+  isTaskId,
+  TASK_ID_PATTERN,
 } from './ids.js';
+export {
+  FINDING_RECOMMENDATIONS,
+  FINDING_SEVERITIES,
+  FINDING_VERDICTS,
+} from './findings.js';
+export { LEDGER_KINDS } from './ledger.js';
 export type {
+  AddFindingInput,
   Finding,
+  FindingListFilter,
   FindingRecommendation,
   FindingSeverity,
+  FindingUpdatePatch,
   FindingVerdict,
 } from './findings.js';
-export type { LedgerEntry, LedgerKind } from './ledger.js';
+export type {
+  AddLedgerInput,
+  LedgerEntry,
+  LedgerKind,
+  LedgerListFilter,
+} from './ledger.js';
 export type { CommandEvidence, MutationEvidence } from './evidence.js';
 export {
   claimConflictsWithWrites,
@@ -47,7 +63,29 @@ export {
   setSection,
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
-export { TaskStore, DISPATCH_DIR } from './store.js';
+export { ensureProjectConfig, TaskStore, DISPATCH_DIR } from './store.js';
+export type { TaskStorePort } from './store.js';
+export {
+  attachDispatchDb,
+  dbVersion,
+  DISPATCH_DB_VERSION,
+  dispatchDbPath,
+  openDispatchDb,
+  SqliteRowError,
+} from './sqliteDb.js';
+export { SqliteTaskStore } from './sqliteTaskStore.js';
+export {
+  SqliteEvidenceStore,
+  SqliteFindingStore,
+  SqliteLedgerStore,
+} from './sqliteRecords.js';
+export { initProjectStores, openProjectStores } from './storeBackend.js';
+export type {
+  OpenStoresOptions,
+  ProjectStores,
+  SqliteRecordStores,
+  TaskStoreBackend,
+} from './storeBackend.js';
 export { mergeTaskFile } from './mergeTask.js';
 export { mergeTeamFile } from './mergeTeam.js';
 export type {
