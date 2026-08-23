@@ -1,6 +1,6 @@
 import { statusLabel } from '@dispatch/core/browser';
 import { Waypoints } from 'lucide-react';
-import type { ComponentType } from 'react';
+import type { ReactNode } from 'react';
 import { useMemo } from 'react';
 
 import {
@@ -11,33 +11,75 @@ import {
 } from '../../lib/dagLayout';
 import { StatusIcon } from '../tasks/StatusIcon';
 import { cn } from '@/lib/utils';
-import { ContextCard } from '@/ui/ai/context-cards';
 
-// The ContextCard footprint: w-56 wide, and two fixed heights — header+snippet+footer for
-// graphs that supply body text (`snippetFor`), header+footer for those that don't. Fixed
-// because the layout needs every node's box before anything renders; the card fills the box
-// (`h-full`) so edges always meet its actual edge.
-const CARD_WIDTH = 224;
-const CARD_HEIGHT_WITH_SNIPPET = 132;
-const CARD_HEIGHT_COMPACT = 66;
+// Fixed node footprint. Wide enough for two lines of a sans title at 12.5px (~28 chars per
+// line); fixed because the layout needs every node's box before anything renders, and the
+// card fills the box (`h-full`) so edges always meet its actual edge.
+const CARD_WIDTH = 200;
+const CARD_HEIGHT = 76;
 
-// One icon component per status string, cached so ContextCard sees a stable component
-// identity across renders (an inline closure would remount the header icon every render).
-// The wrapper ignores ContextCard's muted icon classes on purpose: StatusIcon carries its
-// own status color, which is the whole point of showing it.
-const STATUS_ICON_CACHE = new Map<
-  string,
-  ComponentType<{ className?: string }>
->();
-function statusIconFor(status: string): ComponentType<{ className?: string }> {
-  let cached = STATUS_ICON_CACHE.get(status);
-  if (cached === undefined) {
-    cached = function NodeStatusIcon() {
-      return <StatusIcon status={status} className="size-3.5 shrink-0" />;
-    };
-    STATUS_ICON_CACHE.set(status, cached);
+interface GraphNodeCardProps {
+  node: DagNode;
+  /** Short mono header label (defaults to the status label). */
+  refLabel: string;
+  /** Right side of the header — a priority glyph, a badge, anything small. */
+  accessory?: ReactNode;
+  onOpen?: () => void;
+}
+
+/** One graph node in the ContextCard visual language (inset surface, hairline, bordered
+ * mono header) with graph-appropriate detail: status glyph + short mono ref in the header,
+ * and the title in readable sans that wraps to two lines instead of truncating in mono.
+ * Everything longer (description, criteria) lives behind the click-through, not on the
+ * node — at graph scale the card's job is identity and scannability, not prose. */
+function GraphNodeCard({
+  node,
+  refLabel,
+  accessory,
+  onOpen,
+}: GraphNodeCardProps) {
+  const content = (
+    <>
+      <div className="border-border flex min-w-0 items-center gap-1.5 border-b px-2.5 py-1.5">
+        <StatusIcon status={node.status} className="size-3.5 shrink-0" />
+        <span className="text-muted-foreground min-w-0 truncate font-mono text-[11px]">
+          {refLabel}
+        </span>
+        {accessory !== undefined && (
+          <span className="ml-auto flex shrink-0 items-center">
+            {accessory}
+          </span>
+        )}
+      </div>
+      <p className="text-foreground line-clamp-2 px-2.5 py-1.5 text-left text-[12.5px] leading-snug font-medium">
+        {node.title}
+      </p>
+    </>
+  );
+
+  const className = cn(
+    'bg-surface-inset rounded-card shadow-hairline h-full w-full overflow-hidden text-left',
+    onOpen !== undefined &&
+      'hover:ring-primary/40 ease-out-expo transition-shadow duration-100 hover:ring-1'
+  );
+
+  if (onOpen !== undefined) {
+    return (
+      <button
+        type="button"
+        onClick={onOpen}
+        title={node.title}
+        className={className}
+      >
+        {content}
+      </button>
+    );
   }
-  return cached;
+  return (
+    <div title={node.title} className={className}>
+      {content}
+    </div>
+  );
 }
 
 // A vertical cubic-bezier from the blocker's bottom edge to the dependent's top edge — curved
@@ -77,11 +119,11 @@ export interface DependencyGraphProps {
    * set (see dagLayout.ts's "real edges only" rule); a blockedBy id pointing outside it is
    * treated the same as a dangling one. */
   tasks: DagTask[];
-  /** Body text per node id (a description, an excerpt) — supplying this switches every node
-   * to the taller snippet card so the graph stays a uniform grid. */
-  snippetFor?: (id: string) => string | undefined;
-  /** Footer line per node id, in place of the status label. */
-  subtitleFor?: (id: string) => string | undefined;
+  /** Short mono header ref per node id (e.g. "#2" for plan drafts, a task id for epics).
+   * Defaults to the status label. */
+  refFor?: (id: string) => string | undefined;
+  /** Small right-side header glyph per node id (e.g. a priority icon). */
+  accessoryFor?: (id: string) => ReactNode;
   /** Opens the clicked node. Omitted renders every node as a plain, non-interactive card. */
   onOpenNode?: (id: string) => void;
   ariaLabel?: string;
@@ -90,26 +132,23 @@ export interface DependencyGraphProps {
 
 /**
  * True-branching dependency graph — the app's shared "mermaid-style" graph surface. Nodes
- * are the ai components' ContextCards (status icon + mono title header, clamped snippet,
- * mono footer), absolutely positioned by the hand-rolled `dagLayout` over an SVG layer that
- * draws the curved edges — no charting dependency, and the nodes stay real DOM (selectable
- * text, focusable buttons) instead of SVG text. Sized exactly to its content and left to
- * the caller's container to scroll — no pan/zoom (the task counts these graphs see never
- * approach needing it).
+ * are compact cards in the ContextCard visual language (see `GraphNodeCard`), absolutely
+ * positioned by the hand-rolled `dagLayout` over an SVG layer that draws the curved edges —
+ * no charting dependency, and the nodes stay real DOM (selectable text, focusable buttons)
+ * instead of SVG text. Sized exactly to its content and left to the caller's container to
+ * scroll — no pan/zoom (the task counts these graphs see never approach needing it).
  */
 export function DependencyGraph({
   tasks,
-  snippetFor,
-  subtitleFor,
+  refFor,
+  accessoryFor,
   onOpenNode,
   ariaLabel = 'Dependency graph',
   className,
 }: DependencyGraphProps) {
-  const nodeHeight =
-    snippetFor === undefined ? CARD_HEIGHT_COMPACT : CARD_HEIGHT_WITH_SNIPPET;
   const layout = useMemo(
-    () => dagLayout(tasks, { nodeWidth: CARD_WIDTH, nodeHeight }),
-    [tasks, nodeHeight]
+    () => dagLayout(tasks, { nodeWidth: CARD_WIDTH, nodeHeight: CARD_HEIGHT }),
+    [tasks]
   );
 
   if (tasks.length === 0) {
@@ -175,23 +214,13 @@ export function DependencyGraph({
               height: node.height,
             }}
           >
-            <ContextCard
-              source={node.title}
-              icon={statusIconFor(node.status)}
-              snippet={snippetFor?.(node.id) ?? undefined}
-              footer={
-                <span className="text-muted-foreground font-mono text-[11px]">
-                  {subtitleFor?.(node.id) ?? statusLabel(node.status)}
-                </span>
-              }
+            <GraphNodeCard
+              node={node}
+              refLabel={refFor?.(node.id) ?? statusLabel(node.status)}
+              accessory={accessoryFor?.(node.id)}
               onOpen={
                 onOpenNode === undefined ? undefined : () => onOpenNode(node.id)
               }
-              className={cn(
-                'h-full w-full',
-                onOpenNode !== undefined &&
-                  'hover:ring-primary/40 ease-out-expo transition-shadow duration-100 hover:ring-1'
-              )}
             />
           </div>
         ))}
