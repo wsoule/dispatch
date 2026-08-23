@@ -106,8 +106,8 @@ Tools (server name `dispatch`):
 given fields otherwise; `kind` and `description` take effect on create only.
 `ask_user` and `request_scope` block until a human answers or the wait times
 out. A `workflow://onboarding` resource briefs a connecting agent on the same
-conventions. See `docs/superpowers/plans/2026-07-20-phase-3-mcp-server.md` for
-the original design.
+conventions. See `docs/archive/plans/2026-07-20-phase-3-mcp-server.md` for the
+original design.
 
 ## Dependency graph with Carto (optional)
 
@@ -152,7 +152,7 @@ container as a library, not over MCP.
 
 All six roadmap phases are complete — tracker core, CLI, `dispatchd`, the MCP
 server, the desktop app, and the orchestrator. Roadmap:
-`docs/superpowers/plans/2026-07-13-dispatch-roadmap.md`.
+`docs/archive/plans/2026-07-13-dispatch-roadmap.md`.
 
 To run the CLI from a checkout instead of the installed app:
 
@@ -184,9 +184,12 @@ wrap this daemon for end users.
 
 ## Design docs
 
-- Spec:
-  `docs/superpowers/specs/2026-07-13-agent-orchestration-platform-design.md`
-- Research: `docs/research/2026-07-13-landscape-research.md`
+- **Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — what the
+  system is today. Start here.
+- Historical plans, specs, and research live in
+  [`docs/archive/`](docs/archive/README.md). They record why decisions were made
+  and are not maintained; where they disagree with `ARCHITECTURE.md`, the
+  architecture doc is the checked one.
 
 ## License
 
