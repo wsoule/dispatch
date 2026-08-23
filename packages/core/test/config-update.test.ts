@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { loadConfig, updateConfig } from '../src/config';
+import { loadConfig, queueWeights, updateConfig } from '../src/config';
 
 function root(contents?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-cfg-'));
@@ -189,5 +189,58 @@ describe('updateConfig', () => {
     const dir = root('autoCommit: false\n');
     updateConfig(dir, { maxTurns: null });
     expect(read(dir)).not.toContain('orchestrator');
+  });
+});
+
+describe('updateConfig queue.weights', () => {
+  test('writes only the factors the patch names', () => {
+    const dir = root('queue:\n  weights:\n    age: 5\n');
+    const cfg = updateConfig(dir, { queue: { weights: { urgency: 2 } } });
+    const weights = queueWeights(cfg);
+    expect(weights.ok && weights.weights.urgency).toBe(2);
+    // Untouched by the patch, so it must survive on disk.
+    expect(weights.ok && weights.weights.age).toBe(5);
+    expect(read(dir)).toContain('urgency: 2');
+  });
+
+  test('creates the queue block when the file has none', () => {
+    const dir = root('autoCommit: false\n');
+    const weights = queueWeights(
+      updateConfig(dir, { queue: { weights: { unblocking: 0 } } })
+    );
+    expect(weights.ok && weights.weights.unblocking).toBe(0);
+  });
+
+  // A bad weight must never reach disk: loadConfig refuses the whole file
+  // afterwards, so one bad Settings write would brick every later read.
+  test('rejects a bad weight without touching the file', () => {
+    const dir = root('autoCommit: false\n');
+    expect(() =>
+      updateConfig(dir, { queue: { weights: { age: -3 } } })
+    ).toThrow(/queue.weights.age/);
+    expect(read(dir)).toBe('autoCommit: false\n');
+  });
+
+  test('rejects an unknown factor key', () => {
+    const dir = root('autoCommit: false\n');
+    expect(() =>
+      updateConfig(dir, {
+        queue: { weights: { urgncy: 1 } as never },
+      })
+    ).toThrow(/invalid queue.weights factor/);
+  });
+
+  // A Settings form builds Partial<QueueWeights> with conditional fields, so a
+  // key the user did not touch arrives as an explicit `undefined`. That means
+  // "not in this patch", not "set it to nothing".
+  test('skips explicitly-undefined weights instead of rejecting the patch', () => {
+    const dir = root('queue:\n  weights:\n    age: 5\n');
+    const cfg = updateConfig(dir, {
+      queue: { weights: { urgency: 2, unblocking: undefined } },
+    });
+    const weights = queueWeights(cfg);
+    expect(weights.ok && weights.weights.urgency).toBe(2);
+    expect(weights.ok && weights.weights.age).toBe(5);
+    expect(read(dir)).not.toContain('unblocking');
   });
 });

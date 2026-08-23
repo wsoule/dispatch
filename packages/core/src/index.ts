@@ -68,6 +68,23 @@ export {
 } from './graph.js';
 export type { TaskStack } from './graph.js';
 export {
+  AGE_HORIZON_DAYS,
+  DEFAULT_QUEUE_WEIGHTS,
+  isQueueWeight,
+  QUEUE_FACTOR_KEYS,
+  QUEUE_FACTORS,
+  rankTasks,
+  UNBLOCKING_HALF_VALUE,
+} from './scoring.js';
+export type {
+  QueueFactorInfo,
+  QueueWeights,
+  RankOptions,
+  ScoredTask,
+  ScoreFactor,
+  ScoreFactorKey,
+} from './scoring.js';
+export {
   loadConfig,
   updateConfig,
   ConfigError,
@@ -79,6 +96,7 @@ export {
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
+  queueWeights,
 } from './config.js';
 export type {
   CartoConfig,
@@ -90,6 +108,8 @@ export type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  QueueConfig,
+  QueueWeightsResult,
   RepoDigestConfig,
   VerifyConfig,
   VerifyStep,

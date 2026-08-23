@@ -17,6 +17,7 @@ import type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  QueueWeights,
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
@@ -45,6 +46,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
@@ -750,6 +752,28 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // Same deal as models/linear: core validates each field before writing,
     // and that ConfigError becomes the 400 below.
     patch.verify = body.verify as Partial<VerifyConfig>;
+  }
+  if ('queue' in body) {
+    if (
+      typeof body.queue !== 'object' ||
+      body.queue === null ||
+      Array.isArray(body.queue)
+    ) {
+      return errorResponse(400, 'queue must be an object');
+    }
+    const { weights } = body.queue as Record<string, unknown>;
+    if (weights !== undefined) {
+      if (
+        typeof weights !== 'object' ||
+        weights === null ||
+        Array.isArray(weights)
+      ) {
+        return errorResponse(400, 'queue.weights must be an object');
+      }
+      // Same deal as models/linear: core validates each factor and weight
+      // before writing, and that ConfigError becomes the 400 below.
+      patch.queue = { weights: weights as Partial<QueueWeights> };
+    }
   }
 
   try {
@@ -4626,6 +4650,13 @@ export async function handleApi(
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
       return await getImpact(ctx, url);
+    }
+
+    // GET /api/queue — dispatchable tasks ranked by the scoring function, with
+    // the per-factor breakdown. Computed per request; `task.changed` and
+    // `config.changed` are the refetch signals.
+    if (segments[0] === 'queue' && segments.length === 1 && method === 'GET') {
+      return getQueue(ctx, url);
     }
 
     // GET /api/agents — every in-memory conversation agent (planner chats,
