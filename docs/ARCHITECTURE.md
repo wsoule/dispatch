@@ -290,9 +290,11 @@ Things that are true about the tree and worth knowing before you trust
 something:
 
 - `@dispatch/web` has no dependents and no stated future.
-- `README.md` describes a Homebrew cask and notarized v0.1.1 builds; every
-  `package.json` in the tree says `0.0.1`, and the archived team spec references
-  v0.15.0. The versioning story does not agree with itself.
+- Versioning: the app version lives in `apps/desktop/src-tauri/tauri.conf.json`
+  and the release tag (v0.24.0 at the time of writing); the npm packages are
+  unpublished and their `package.json` versions now track the app version.
+  `src-tauri/Cargo.toml` still says `0.1.0` — harmless, since `tauri.conf.json`
+  wins, but it is the one version string left unaligned.
 - `docs/archive/design/` holds the earlier direction docs. The lovable pair fed
   the agreed storage/hosted direction (live epics still reference their old
   `docs/design/` paths); `open-source-monetization.md` is fully superseded.
