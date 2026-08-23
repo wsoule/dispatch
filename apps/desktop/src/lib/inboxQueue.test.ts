@@ -113,11 +113,13 @@ describe('buildInbox', () => {
     expect(data.total).toBe(0);
   });
 
-  test('a reviewed run appears nowhere', () => {
+  test('a reviewed run leaves the urgent sections for ready-to-land', () => {
     const data = buildInbox(
       input({ runs: [run({ reviewedAt: '2026-08-04T01:00:00.000Z' })] })
     );
-    expect(data.total).toBe(0);
+    expect(data.sections).toHaveLength(0);
+    expect(data.readyToLand.map((r) => r.runId)).toEqual(['r-1']);
+    expect(data.total).toBe(1);
   });
 
   test('a calm running run appears nowhere', () => {
@@ -147,5 +149,56 @@ describe('buildInbox', () => {
     expect(data.prs.map((pr) => pr.number)).toEqual([9]);
     // review row for the claimed run + one standalone PR.
     expect(data.total).toBe(2);
+  });
+});
+
+describe('readyToLand', () => {
+  test('a reviewed, unlanded run surfaces; queued/PR/landed-task ones do not', () => {
+    const reviewed = (over: Partial<RunMeta>) =>
+      run({ reviewedAt: '2026-08-04T01:00:00.000Z', ...over });
+    const data = buildInbox(
+      input({
+        runs: [
+          reviewed({ id: 'r-land', taskId: 't-land' }),
+          reviewed({
+            id: 'r-queued',
+            taskId: 't-queued',
+          }),
+          reviewed({
+            id: 'r-pr',
+            taskId: 't-pr',
+            prUrl: 'https://github.com/x/y/pull/3',
+          }),
+        ],
+        mergeQueue: {
+          entries: [{ runId: 'r-queued', state: 'queued' }],
+        } as unknown as InboxInput['mergeQueue'],
+      })
+    );
+    expect(data.readyToLand.map((r) => r.runId)).toEqual(['r-land']);
+    expect(data.readyToLand[0].activity).toBe('Reviewed, not landed');
+    // r-land + the PR-backed run's own review row is gone (reviewed), and the
+    // claimed PR isn't in repoPrs here — so the total is just the one row.
+    expect(data.total).toBe(1);
+  });
+
+  test('only the newest reviewed run speaks for a task', () => {
+    const data = buildInbox(
+      input({
+        runs: [
+          run({
+            id: 'r-old',
+            reviewedAt: '2026-08-01T01:00:00.000Z',
+            createdAt: '2026-08-01T00:00:00.000Z',
+          }),
+          run({
+            id: 'r-new',
+            reviewedAt: '2026-08-03T01:00:00.000Z',
+            createdAt: '2026-08-03T00:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    expect(data.readyToLand.map((r) => r.runId)).toEqual(['r-new']);
   });
 });

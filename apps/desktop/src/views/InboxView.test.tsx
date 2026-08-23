@@ -43,7 +43,7 @@ function row(over: Partial<FeedRowModel> = {}): FeedRowModel {
 
 function dataWith(sections: InboxData['sections']): InboxData {
   const total = sections.reduce((n, s) => n + s.rows.length, 0);
-  return { sections, prs: [], total };
+  return { sections, readyToLand: [], prs: [], total };
 }
 
 test('sections render in feed order with the whose-move labels', () => {
@@ -89,7 +89,7 @@ test('sections render in feed order with the whose-move labels', () => {
 test('an empty inbox says so instead of rendering empty sections', () => {
   render(
     <InboxView
-      data={{ sections: [], prs: [], total: 0 }}
+      data={{ sections: [], readyToLand: [], prs: [], total: 0 }}
       project={projectWith()}
       onOpenTask={() => {}}
       onOpenPr={() => {}}
@@ -147,6 +147,7 @@ test('an unclaimed PR renders with its number and opens the PR page', () => {
     <InboxView
       data={{
         sections: [],
+        readyToLand: [],
         prs: [
           {
             number: 9,
