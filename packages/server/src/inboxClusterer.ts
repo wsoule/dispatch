@@ -88,7 +88,11 @@ const SCHEMA = {
 } as const;
 
 function buildPrompt(items: InboxItem[]): string {
-  const list = items.map((i) => `${i.id}: [${i.kind}] ${i.text}`).join('\n');
+  // Items are multiline now; continuations are indented so the model still sees
+  // one `id:`-prefixed entry per item rather than orphan lines.
+  const list = items
+    .map((i) => `${i.id}: [${i.kind}] ${i.text.split('\n').join('\n    ')}`)
+    .join('\n');
   return [
     'These are raw one-line notes someone dumped into a capture inbox for a software project. ' +
       'Some of them are really the same piece of work described differently, or facets of one ' +

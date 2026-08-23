@@ -5,7 +5,6 @@ import {
   BRAIN_DUMP_DRAFT_KEY,
   usePersistedDraft,
 } from '../../hooks/usePersistedDraft';
-import { splitCaptureLines } from '../../lib/inboxCapture';
 import { Button } from '@/ui/button';
 import {
   Dialog,
@@ -48,8 +47,6 @@ export function BrainDumpFab({
   const [draft, setDraft] = usePersistedDraft(BRAIN_DUMP_DRAFT_KEY);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const pendingLines = splitCaptureLines(draft).length;
 
   function capture(): void {
     void (async () => {
@@ -103,9 +100,7 @@ export function BrainDumpFab({
           )}
           <div className="flex items-center gap-2">
             <span className="dense-meta flex-1">
-              {pendingLines > 1
-                ? `${pendingLines} lines, one item each`
-                : 'One per line. ⌘⏎ to drop it.'}
+              One dump, one item. ⌘⏎ to drop it.
             </span>
             <Button
               variant="ghost"

@@ -23,7 +23,8 @@ export function buildMilestonePrompt(input: {
       : `Plan the following captured items as one epic: "${title}".`,
     reason === '' ? null : `Why they belong together: ${reason}`,
     'Captured items, verbatim:',
-    input.items.map((text) => `- ${text}`).join('\n'),
+    // Multiline items indent their continuations so each bullet stays one item.
+    input.items.map((text) => `- ${text.split('\n').join('\n  ')}`).join('\n'),
     'Create the epic with tasks that together cover every item above. Keep each task tightly scoped.',
   ]
     .filter((line): line is string => line !== null)

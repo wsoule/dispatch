@@ -105,16 +105,28 @@ export function inferKind(text: string): InboxKind {
   return 'note';
 }
 
-/** One item per non-empty line, trimmed. Bullet and checkbox prefixes a user might paste in
- * are stripped so pasting an existing markdown list does not produce "- - [ ] thing". */
-export function splitCapture(raw: string): string[] {
-  return raw
-    .split('\n')
-    .map((line) => line.replace(/^\s*[-*]\s*(\[[ xX]\]\s*)?/, '').trim())
-    .filter((line) => line.length > 0);
+/**
+ * One capture is ONE item, however many lines it takes — a dump used to split
+ * per line, which cut connected thoughts into confetti. This just tidies the
+ * blob: CRLF to LF, trailing whitespace off each line, no leading/trailing
+ * blank lines, and any bullet/checkbox prefix off the first line so pasting a
+ * copied item does not nest "- - [ ] thing" in the stored file.
+ */
+export function normalizeCapture(raw: string): string {
+  const lines = raw.replace(/\r\n/g, '\n').split('\n');
+  if (lines.length > 0) {
+    lines[0] = lines[0].replace(/^\s*[-*]\s*(\[[ xX]\]\s*)?/, '');
+  }
+  const tidied = lines.map((line) => line.replace(/\s+$/, ''));
+  while (tidied.length > 0 && tidied[0] === '') tidied.shift();
+  while (tidied.length > 0 && tidied.at(-1) === '') tidied.pop();
+  return tidied.join('\n').trim() === '' ? '' : tidied.join('\n');
 }
 
 const LINE = /^\s*[-*]\s*\[([ xX])\]\s*(.*)$/;
+/** A continuation of the item line above it: indented, markdown list-body style.
+ * Whitespace-only indented lines carry a blank interior line through a round trip. */
+const CONTINUATION = /^[ \t]+(.*)$/;
 
 /** Pulls the trailing markers off an item's text, leaving the prose. */
 function parseMarkers(rest: string): {
@@ -163,36 +175,61 @@ function parseMarkers(rest: string): {
  */
 export function parseInbox(markdown: string): InboxItem[] {
   const items: InboxItem[] = [];
+  // The item an indented line would continue — cleared by any other line, so stray
+  // indented prose after a header can never glue itself onto an item sections away.
+  let current: InboxItem | null = null;
   for (const line of markdown.split('\n')) {
     const m = line.match(LINE);
     const box = m?.[1];
     const rest = m?.[2];
-    if (box === undefined || rest === undefined) continue;
-    const parsed = parseMarkers(rest);
-    if (parsed.text === '') continue;
-    items.push({
-      // A hand-added line has no id yet; one is minted here and persisted on the next write.
-      id: parsed.id ?? generateId(),
-      kind: parsed.kind ?? inferKind(parsed.text),
-      text: parsed.text,
-      done: box.toLowerCase() === 'x',
-      linkedTaskId: parsed.linkedTaskId,
-      createdByRunId: parsed.createdByRunId,
-      // The format carries no timestamp on purpose — it would be noise in a file meant to be
-      // typed into. Ordering is file order, which is what a human editing it would expect.
-      created: '',
-    });
+    if (box !== undefined && rest !== undefined) {
+      const parsed = parseMarkers(rest);
+      if (parsed.text === '') {
+        current = null;
+        continue;
+      }
+      current = {
+        // A hand-added line has no id yet; one is minted here and persisted on the next write.
+        id: parsed.id ?? generateId(),
+        kind: parsed.kind ?? inferKind(parsed.text),
+        text: parsed.text,
+        done: box.toLowerCase() === 'x',
+        linkedTaskId: parsed.linkedTaskId,
+        createdByRunId: parsed.createdByRunId,
+        // The format carries no timestamp on purpose — it would be noise in a file meant to be
+        // typed into. Ordering is file order, which is what a human editing it would expect.
+        created: '',
+      };
+      items.push(current);
+      continue;
+    }
+    const cont = line.match(CONTINUATION);
+    if (cont !== undefined && cont !== null && current !== null) {
+      // Markers live on the item's first line; continuations are pure prose.
+      current.text += `\n${cont[1].replace(/\s+$/, '')}`;
+      continue;
+    }
+    current = null;
   }
+  // Hand-edits can leave dangling indented blanks; they are not part of anyone's thought.
+  for (const item of items) item.text = item.text.replace(/\n+$/, '');
   return items;
 }
 
 function serializeItem(item: InboxItem): string {
   const box = item.done ? 'x' : ' ';
-  const parts = [`- [${box}] (${item.kind}) ${item.text}`];
+  const [first = '', ...rest] = item.text.split('\n');
+  const parts = [`- [${box}] (${item.kind}) ${first}`];
   if (item.linkedTaskId !== null) parts.push(`→ ${item.linkedTaskId}`);
   if (item.createdByRunId !== null) parts.push(`@${item.createdByRunId}`);
   parts.push(`^${item.id}`);
-  return parts.join(' ');
+  const head = parts.join(' ');
+  if (rest.length === 0) return head;
+  // Continuation lines indent under the item, markdown list-body style; a blank
+  // interior line is written as two spaces so the round trip keeps it.
+  return [head, ...rest.map((line) => (line === '' ? '  ' : `  ${line}`))].join(
+    '\n'
+  );
 }
 
 export function serializeInbox(items: InboxItem[]): string {
@@ -278,19 +315,22 @@ export class InboxStore {
     return items;
   }
 
-  /** Splits `text` into one item per line and prepends them, newest capture first. */
+  /** Adds `text` as ONE item — a dump is one thought, however many lines it
+   * takes — and prepends it, newest capture first. */
   add(input: AddInboxInput): InboxItem[] {
-    const lines = splitCapture(input.text);
-    if (lines.length === 0) return [];
-    const created: InboxItem[] = lines.map((text) => ({
-      id: generateId(),
-      kind: input.kind ?? inferKind(text),
-      text,
-      done: false,
-      linkedTaskId: null,
-      createdByRunId: input.createdByRunId ?? null,
-      created: '',
-    }));
+    const text = normalizeCapture(input.text);
+    if (text === '') return [];
+    const created: InboxItem[] = [
+      {
+        id: generateId(),
+        kind: input.kind ?? inferKind(text),
+        text,
+        done: false,
+        linkedTaskId: null,
+        createdByRunId: input.createdByRunId ?? null,
+        created: '',
+      },
+    ];
     const existing = this.read();
     this.write([...created, ...existing]);
     return created;
@@ -309,7 +349,13 @@ export class InboxStore {
     const item = items.find((i) => i.id === id);
     if (item === undefined) throw new Error(`inbox item not found: ${id}`);
     if (patch.kind !== undefined) item.kind = patch.kind;
-    if (patch.text !== undefined) item.text = patch.text;
+    if (patch.text !== undefined) {
+      // Same tidy-up as capture, so an edit cannot smuggle in a shape the file
+      // format cannot round-trip. A patch that normalizes to nothing is ignored
+      // rather than blanking the item — an empty row is unrecoverable.
+      const normalized = normalizeCapture(patch.text);
+      if (normalized !== '') item.text = normalized;
+    }
     if (patch.done !== undefined) item.done = patch.done;
     if (patch.linkedTaskId !== undefined)
       item.linkedTaskId = patch.linkedTaskId;
