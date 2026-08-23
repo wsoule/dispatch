@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-23T00:20:01.874Z
+updated: 2026-08-23T00:36:52.174Z
 external: null
 writes:
   - packages/server/src/**
@@ -60,3 +60,14 @@ Scope: packages/server only, all within declared writes. No packages/core (r-664
 OPTIONAL same-round cleanups (all confirmed by review, do them if quick): delete uncalled count(); simplify the unreachable oldest.done branch in pruneResolved (delete-then-set also fixes re-resolved items pruning in original insertion position); factor the 6x-duplicated ageMs clamp into one helper; reuse initGitRepo from test/orchestrator/helpers.ts instead of the local copy; reuse test/json.ts instead of the local json<T>(); reuse/extract a shared one-line truncate instead of a third copy (promptTitle, truncateReason exist). Do NOT restructure recompute into per-event builder routing — the derived-never-stored design is correct as-is. Run the package tests when done. — human:wsoule679
 - 2026-08-23T00:13:51.501Z [run r-297e7b] finished: finished — 6 files, $0.00 — agent:wsoule679/claude
 - 2026-08-23T00:20:01.874Z requested changes (run r-d730dc): Your previous resume finished with zero turns and made no changes — the required fixes were NOT applied. Please actually apply them now: (1) stalledReason() in decisionFeed.ts must not flag a run as run-stalled when a successor exists (any run with resumedFrom === its id) — mirror orchestrator.ts:1571 — and must exclude kind:'review' runs; add the test. (2) Cache FixLoopStore's parsed state map, invalidated in put(), so DecisionFeed.recompute() stops doing readFileSync per event. Commit your changes and run the package tests before finishing. — human:wsoule679
+- 2026-08-23T00:36:52.174Z Review fixes applied — d63c96c8 (stalled-run correctness + cleanups) and 046753a4 (fix-loop store cache).
+
+(1) stalledReason now skips a run some later run resumed from, mirroring the guard in Orchestrator.surveyAndUpgradeIfDirty, and skips review-kind runs whose dead end the capped fix-loop item already stands for. Two judgement calls worth flagging: I put the supersession check ABOVE the base-discarded check, because a successor inherits the discarded base too, so showing the corpse gives a human a row they cannot act on — that does mean supersession outranks the flag the orchestrator calls "the ONLY record that a run needs human attention", which I think is right but is a deliberate reversal worth a second opinion. And I read the kind through runKind() rather than run.kind, because types.ts says the field is absent on every run recorded before review runs existed. The successor ids are collected once per recompute rather than rescanning per candidate, which would have been quadratic. Tests added for both guards plus the base-discarded interaction; mutation-tested at 2 and 1 failures.
+
+(2) FixLoopStore now holds its parsed map, with put() folding its own append in rather than dropping the cache. Two correctness notes: a failed read is never cached, so an unreadable store retries instead of latching its error (the boot test depends on this), and I checked first that no caller mutates a returned FixLoopState in place — they all spread — so handing out cached objects is safe. Every pre-existing test reads through a fresh instance, so none of them would have caught a cache that stopped seeing its own writes; added the one that does, mutation-tested at 1.
+
+Optional cleanups: took the uncalled count(), the ageSince() fold, the pruneResolved simplification plus delete-then-set for re-resolved ids, and the initGitRepo/json test-helper reuse. Reusing the shared json() (which returns any) introduced two no-unsafe-return warnings, so I annotated the destinations rather than suppressing — back to the pre-existing 42 warnings, none in my files.
+
+Declined one, with reasoning: oneLine() is not a third copy of an existing truncate. truncateReason keeps the TAIL behind an "omitted" marker and promptTitle takes the first line without collapsing whitespace; oneLine collapses all whitespace and truncates the head. Sharing one helper would change behaviour in unrelated callers, so I left it and said so in the commit body. Happy to be overruled.
+
+Gates on the committed state: root tsc clean, lint 0 errors, knip clean, format:check clean, 67/67 across the three affected suites. Note this worktree lost its node_modules and dist partway through (something wiped them); I reinstalled and rebuilt before trusting any result. — none
