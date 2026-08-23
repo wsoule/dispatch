@@ -1,7 +1,7 @@
 ---
 id: t-880ce2
 title: "One-time import: existing .dispatch markdown and JSONL into the daemon DB"
-status: in-progress
+status: working
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T14:58:39.487Z
+updated: 2026-08-23T15:09:11.567Z
 external: null
 writes:
   - packages/cli/src/**
@@ -27,3 +27,4 @@ Migration command that imports a project's existing .dispatch/tasks/*.md, findin
 
 ## Activity
 - 2026-08-23T14:58:39.487Z dispatched (claude, branch dispatch/t-880ce2-one-time-import-existing-dispatch-markdo-6dd770) — human:wsoule679
+- 2026-08-23T15:09:11.567Z auto-resumed after failed (daemon restart) (run r-ab889f)
