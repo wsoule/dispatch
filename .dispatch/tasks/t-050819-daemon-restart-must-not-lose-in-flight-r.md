@@ -2,7 +2,7 @@
 id: t-050819
 title: "Daemon restart must not lose in-flight runs: auto-resume on boot and on
   re-dispatch"
-status: in-progress
+status: in-review
 kind: task
 parent: null
 milestone: null
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T18:01:32.916Z
-updated: 2026-08-23T00:08:25.954Z
+updated: 2026-08-23T00:08:46.473Z
 external: null
 writes:
   - packages/server/src/**
@@ -58,3 +58,4 @@ Two decisions worth flagging for review:
 api.ts surface change kept to ~15 lines (a `fresh` boolean + the resume branch), per the note about a live run claiming that file.
 
 Verification: server tsc clean; lint 0 errors (42 warnings, all pre-existing, none in changed files); 898 pass server (orchestrator + runs-api + api, incl. 5 new resilience.test.ts cases and 5 new survey.test.ts cases), 194 cli, 67 client, 0 fail. Three guards mutation-tested: quiescence gate -> 2 fails, `fresh` type check -> 1 fail, shutdown checks -> 1 fail. — none
+- 2026-08-23T00:08:46.473Z [run r-749444] finished: finished — 11 files, $2.51 — agent:wsoule679/claude
