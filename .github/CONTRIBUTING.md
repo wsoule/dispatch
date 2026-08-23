@@ -36,4 +36,8 @@ bun ws template test
 
 ## License
 
-Set the project license before accepting external contributions.
+Dispatch is licensed under the Functional Source License, FSL-1.1-ALv2 (see
+`LICENSE`) — source-available, converting to Apache 2.0 two years after each
+release. By submitting a contribution you agree it is provided under the
+project's license. A contributor license agreement may be introduced before
+larger external contributions are accepted.
