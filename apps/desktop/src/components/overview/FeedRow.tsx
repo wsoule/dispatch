@@ -116,7 +116,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
         urgent && 'shadow-hairline'
       )}
     >
-      <div className="grid grid-cols-[130px_minmax(140px,1fr)_140px_150px_56px_auto] items-center gap-3 px-3 py-2">
+      <div className="grid grid-cols-[130px_minmax(140px,1fr)_140px_150px_64px_auto] items-center gap-3 px-3 py-2">
         <span className="flex min-w-0 items-center gap-2">
           <StateDot state={row.state} size="md" />
           <span
@@ -144,7 +144,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
         <span className="dense-meta truncate">
           {fixLoopActivity(row) ?? row.activity ?? ''}
         </span>
-        <span className="dense-meta text-right">
+        <span className="dense-meta text-right whitespace-nowrap">
           {formatRelativeTimeFromIso(row.since)}
         </span>
 
