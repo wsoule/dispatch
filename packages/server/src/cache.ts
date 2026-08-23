@@ -1,5 +1,5 @@
 import { readyTasks } from '@dispatch/core';
-import type { ListSafeError, TaskDoc, TaskStore } from '@dispatch/core';
+import type { ListSafeError, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { Database } from 'bun:sqlite';
 
 // Loose query shape (plain strings, not core's TaskKind/Priority unions) since
@@ -17,10 +17,11 @@ interface TaskRow {
 }
 
 /**
- * In-memory read cache for the task graph, derived one-way from on-disk task
- * files via TaskStore. The cache never writes files — `rebuild()` is the only
- * way data enters it, so it is always safely reconstructible from source (the
- * files remain the single source of truth; see spec §4).
+ * In-memory read cache for the task graph, derived one-way from whichever
+ * store the daemon opened (markdown files or its SQLite database). The cache
+ * never writes — `rebuild()` is the only way data enters it, so it is always
+ * safely reconstructible from source, which remains the single source of
+ * truth (see spec §4).
  *
  * The full TaskDoc is stashed as a `json` column and reconstructed on read;
  * the other columns exist purely so SQL can filter/sort without touching the
@@ -53,7 +54,7 @@ export class TaskCache {
     `);
   }
 
-  // Truncates and repopulates the cache from the store's current files. A
+  // Truncates and repopulates the cache from the store's current contents. A
   // full rescan on every change is O(task count); acceptable at v1 scale — an
   // on-disk cache with incremental updates is a later optimization (see the
   // phase-2 plan's "Deviations from spec" note).
@@ -65,7 +66,7 @@ export class TaskCache {
   // if something more fundamental blows up (e.g. the tasks directory itself
   // vanishes mid-scan), the previous cache contents are left untouched
   // instead of being wiped and left empty.
-  rebuild(store: TaskStore): ListSafeError[] {
+  rebuild(store: TaskStorePort): ListSafeError[] {
     const { docs, errors } = store.listSafe();
     this.db.run('DELETE FROM tasks');
     const insert = this.db.prepare(
@@ -97,7 +98,7 @@ export class TaskCache {
     return this.lastErrors.map((e) => `${e.file}: ${e.message}`);
   }
 
-  // Matches TaskStore.list()'s filter semantics and sort order (created, then
+  // Matches TaskStorePort.list()'s filter semantics and sort order (created, then
   // id) so API responses stay consistent whether they hit the store directly
   // or the cache.
   query(filter: CacheFilter = {}): TaskDoc[] {

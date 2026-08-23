@@ -1,16 +1,16 @@
 #!/usr/bin/env bun
 import {
   DISPATCH_DIR,
+  initProjectStores,
   registerMergeDriverGitConfig,
   registerTeamMergeDriverGitConfig,
-  TaskStore,
   writeGitAttributes,
 } from '@dispatch/core';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 import { makeFakeGhRunner } from './fakeGh.js';
-import { startServer } from './index.js';
+import { resolveStoreBackend, startServer } from './index.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
 import type { FakeExecutorScript } from './orchestrator/executors/fake.js';
 import { FakeExecutor } from './orchestrator/executors/fake.js';
@@ -259,8 +259,18 @@ if (portArg !== undefined && Number.isNaN(port)) {
 // one bin covers both "start a daemon" and "start a daemon, initializing the
 // project first" in a single spawn.
 if (args.includes('--init')) {
-  if (!existsSync(join(rootDir, DISPATCH_DIR, 'tasks'))) {
-    TaskStore.init(rootDir);
+  // Creates whichever backend this daemon is about to open, rather than
+  // always scaffolding `.dispatch/tasks`: on `sqlite` that means applying the
+  // schema to a fresh database, and scaffolding an unused tasks directory
+  // beside it would leave a database-backed project looking half-migrated.
+  // Both branches are idempotent, so the pre-check is only about not
+  // re-announcing work; `initProjectStores` itself is safe to call twice.
+  const backend = resolveStoreBackend(rootDir);
+  if (
+    backend === 'sqlite' ||
+    !existsSync(join(rootDir, DISPATCH_DIR, 'tasks'))
+  ) {
+    initProjectStores({ rootDir, backend }).close();
   }
   // The CLI's `dispatch init` registers the merge drivers; this is the
   // desktop app's equivalent init path (GetStartedView's add-project flow),

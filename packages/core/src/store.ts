@@ -140,6 +140,108 @@ export interface TaskStorePort {
   remove(id: string): boolean;
 }
 
+/**
+ * The TaskDoc a freshly created task starts as — every default in one place.
+ *
+ * Shared by both backends rather than written out twice. The defaults here
+ * (`status: 'todo'`, `priority: 'none'`, `selfReview: true`, the absent-vs-
+ * false handling of `fixLoop`, the body template) ARE the contract for what a
+ * new task looks like, so a copy per backend is a copy that can drift — and a
+ * task created against one backend would quietly differ from the same task
+ * created against the other.
+ *
+ * Pure: the caller supplies the id, since minting one is the part the two
+ * backends genuinely do differently (a filename probe versus an insert that
+ * may lose a race).
+ */
+export function newTaskDoc(
+  id: string,
+  kind: TaskKind,
+  input: CreateInput,
+  now: string
+): TaskDoc {
+  const meta: TaskMeta = {
+    id,
+    title: input.title,
+    status: input.status ?? 'todo',
+    kind,
+    parent: input.parent ?? null,
+    milestone: input.milestone ?? null,
+    blockedBy: input.blockedBy ?? [],
+    labels: input.labels ?? [],
+    priority: input.priority ?? 'none',
+    assignee: input.assignee ?? 'none',
+    created: now,
+    updated: now,
+    external: null,
+    selfReview: input.selfReview ?? true,
+    ...(input.fixLoop === false ? { fixLoop: false } : {}),
+    writes: input.writes ?? [],
+    risk: input.risk ?? 'routine',
+    model: input.model ?? null,
+    exercised: false,
+    ...(input.derivedFrom === undefined
+      ? {}
+      : { derivedFrom: input.derivedFrom }),
+  };
+  // The initial description is caller-supplied, so it's escaped the same
+  // way setSection escapes a later edit to the same section.
+  const description = escapeHeadingLines(input.description ?? '');
+  const body = `\n## Description\n\n${description}\n\n## Acceptance Criteria\n\n## Activity\n`;
+  return { meta, body };
+}
+
+/**
+ * Applies an `UpdatePatch` to an existing doc, producing the next one.
+ *
+ * The other half of the create/update contract both backends have to agree
+ * on: which patch keys target the markdown body rather than the frontmatter,
+ * that `undefined` means "leave alone" while `null` on `archivedAt` means
+ * "clear", and that a whole-body replacement is the base later section edits
+ * apply to. Shared for the same reason as `newTaskDoc` — this is behaviour,
+ * not plumbing, and two copies of it can disagree.
+ *
+ * Pure: persisting the result is the caller's job.
+ */
+export function applyUpdatePatch(
+  doc: TaskDoc,
+  patch: UpdatePatch,
+  now: string
+): TaskDoc {
+  // body/description/acceptanceCriteria/appendActivity target the markdown
+  // body, not the frontmatter, so they're pulled out before the meta spread
+  // below.
+  const {
+    appendActivity: activityLine,
+    activityActor,
+    description,
+    acceptanceCriteria,
+    body: wholeBody,
+    archivedAt,
+    ...patchFields
+  } = patch;
+  // Drop undefined entries so a partial patch never blanks existing fields.
+  const fields = Object.fromEntries(
+    Object.entries(patchFields).filter(([, v]) => v !== undefined)
+  );
+  const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
+  // archivedAt is string|undefined on TaskMeta, so null (clear) is handled
+  // separately rather than spread in like the other fields.
+  if (archivedAt === null) delete meta.archivedAt;
+  else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
+  // A whole-body replacement is the new base the section edits below apply
+  // to, so a patch carrying both `body` and `description` lands the rewrite
+  // first and then the section edit on top of it, rather than depending on
+  // which field the caller happened to set.
+  let body = wholeBody === undefined ? doc.body : normalizeBody(wholeBody);
+  if (description !== undefined)
+    body = setSection(body, 'Description', description);
+  if (acceptanceCriteria !== undefined)
+    body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
+  if (activityLine) body = appendActivity(body, activityLine, activityActor);
+  return { meta, body };
+}
+
 // Writes the starter `.dispatch/config.yml` if the project has none. Config
 // stays a plain committable file whichever backend holds the tasks, so both
 // initializers call this rather than each spelling out the default.
@@ -175,35 +277,7 @@ export class TaskStore implements TaskStorePort {
       id = generateTaskId(kind, input.title, now);
     }
     if (this.taskFilePath(id)) throw new Error(`id collision persisted: ${id}`);
-    const meta: TaskMeta = {
-      id,
-      title: input.title,
-      status: input.status ?? 'todo',
-      kind,
-      parent: input.parent ?? null,
-      milestone: input.milestone ?? null,
-      blockedBy: input.blockedBy ?? [],
-      labels: input.labels ?? [],
-      priority: input.priority ?? 'none',
-      assignee: input.assignee ?? 'none',
-      created: now,
-      updated: now,
-      external: null,
-      selfReview: input.selfReview ?? true,
-      ...(input.fixLoop === false ? { fixLoop: false } : {}),
-      writes: input.writes ?? [],
-      risk: input.risk ?? 'routine',
-      model: input.model ?? null,
-      exercised: false,
-      ...(input.derivedFrom === undefined
-        ? {}
-        : { derivedFrom: input.derivedFrom }),
-    };
-    // The initial description is caller-supplied, so it's escaped the same
-    // way setSection escapes a later edit to the same section.
-    const description = escapeHeadingLines(input.description ?? '');
-    const body = `\n## Description\n\n${description}\n\n## Acceptance Criteria\n\n## Activity\n`;
-    const doc: TaskDoc = { meta, body };
+    const doc = newTaskDoc(id, kind, input, now);
     writeFileSync(
       join(this.tasksDir, `${id}-${slugify(input.title)}.md`),
       serializeTaskFile(doc)
@@ -274,38 +348,7 @@ export class TaskStore implements TaskStorePort {
     const file = this.taskFilePath(id);
     if (!file) throw new Error(`task not found: ${id}`);
     const doc = parseTaskFile(readFileSync(file, 'utf8'), file);
-    // body/description/acceptanceCriteria/appendActivity target the markdown
-    // body, not the frontmatter, so they're pulled out before the meta spread
-    // below.
-    const {
-      appendActivity: activityLine,
-      activityActor,
-      description,
-      acceptanceCriteria,
-      body: wholeBody,
-      archivedAt,
-      ...patchFields
-    } = patch;
-    // Drop undefined entries so a partial patch never blanks existing fields.
-    const fields = Object.fromEntries(
-      Object.entries(patchFields).filter(([, v]) => v !== undefined)
-    );
-    const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
-    // archivedAt is string|undefined on TaskMeta, so null (clear) is handled
-    // separately rather than spread in like the other fields.
-    if (archivedAt === null) delete meta.archivedAt;
-    else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
-    // A whole-body replacement is the new base the section edits below apply
-    // to, so a patch carrying both `body` and `description` lands the rewrite
-    // first and then the section edit on top of it, rather than depending on
-    // which field the caller happened to set.
-    let body = wholeBody === undefined ? doc.body : normalizeBody(wholeBody);
-    if (description !== undefined)
-      body = setSection(body, 'Description', description);
-    if (acceptanceCriteria !== undefined)
-      body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
-    if (activityLine) body = appendActivity(body, activityLine, activityActor);
-    const next: TaskDoc = { meta, body };
+    const next = applyUpdatePatch(doc, patch, now);
     writeFileSync(file, serializeTaskFile(next));
     return next;
   }

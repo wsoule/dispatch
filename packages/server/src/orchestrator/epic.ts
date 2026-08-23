@@ -4,7 +4,7 @@ import {
   loadConfig,
   schedulableBatch,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc, TaskStore } from '@dispatch/core';
+import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
@@ -53,7 +53,7 @@ export interface EpicProgress {
 
 export interface EpicEngineContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;

@@ -10,6 +10,7 @@ import {
   serializeStringArray,
   SqliteRowError,
 } from './sqliteDb.js';
+import { applyUpdatePatch, newTaskDoc } from './store.js';
 import type {
   CreateInput,
   ListFilter,
@@ -18,14 +19,7 @@ import type {
   TaskStorePort,
   UpdatePatch,
 } from './store.js';
-import {
-  appendActivity,
-  appendAmendment,
-  escapeHeadingLines,
-  normalizeBody,
-  serializeTaskFile,
-  setSection,
-} from './taskfile.js';
+import { appendAmendment, serializeTaskFile } from './taskfile.js';
 import type { Amendment } from './taskfile.js';
 import { KINDS, PRIORITIES, TASK_RISKS } from './types.js';
 import type {
@@ -231,18 +225,25 @@ export class SqliteTaskStore implements TaskStorePort {
   create(input: CreateInput, now: string = new Date().toISOString()): TaskDoc {
     const kind = input.kind ?? 'task';
     const slug = slugify(input.title);
-    let id = this.generateId(kind, input.title, now);
+    // Minted at the TOP of each attempt, so the id this reports on giving up
+    // is the last one actually tried. Generating the next candidate at the
+    // bottom of the loop instead meant the thrown message named an id that
+    // had never been near the database — the one thing someone reading that
+    // error would go looking for.
+    let lastTried = '';
     for (let attempt = 0; attempt < ID_ATTEMPTS; attempt += 1) {
-      const doc = this.newDoc(id, kind, input, now);
+      lastTried = this.generateId(kind, input.title, now);
+      const doc = newTaskDoc(lastTried, kind, input, now);
       const claimed = this.db
         .prepare(INSERT_TASK_IF_ABSENT)
         .run(...rowValuesFromDoc(doc, slug));
       if (claimed.changes > 0) return doc;
-      id = this.generateId(kind, input.title, now);
     }
     // Same message the file backend raises, and the same meaning: the
-    // generator kept handing back ids that are already taken.
-    throw new Error(`id collision persisted: ${id}`);
+    // generator kept handing back ids that are already taken. Deliberately
+    // not sqliteRecords' `withMintedId`, whose message reads differently —
+    // create()'s wording is shared with TaskStore on purpose.
+    throw new Error(`id collision persisted: ${lastTried}`);
   }
 
   get(id: string): TaskDoc | null {
@@ -281,30 +282,10 @@ export class SqliteTaskStore implements TaskStorePort {
     const row = this.rowOf(id);
     if (row === null) throw new Error(`task not found: ${id}`);
     const doc = docFromRow(row);
-    // Same split as TaskStore.update: the body-targeting keys are pulled out
-    // before the rest are spread over the existing frontmatter.
-    const {
-      appendActivity: activityLine,
-      activityActor,
-      description,
-      acceptanceCriteria,
-      body: wholeBody,
-      archivedAt,
-      ...patchFields
-    } = patch;
-    const fields = Object.fromEntries(
-      Object.entries(patchFields).filter(([, v]) => v !== undefined)
-    );
-    const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
-    if (archivedAt === null) delete meta.archivedAt;
-    else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
-    let body = wholeBody === undefined ? doc.body : normalizeBody(wholeBody);
-    if (description !== undefined)
-      body = setSection(body, 'Description', description);
-    if (acceptanceCriteria !== undefined)
-      body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
-    if (activityLine) body = appendActivity(body, activityLine, activityActor);
-    const next: TaskDoc = { meta, body };
+    // The shared helper, not a second copy of the same key-splitting: which
+    // patch fields target the body and how `archivedAt: null` clears is
+    // behaviour the two backends must not be able to disagree about.
+    const next = applyUpdatePatch(doc, patch, now);
     // The slug is the one the row already carries, not one recomputed from the
     // new title: the file backend writes back to the path it read, so
     // retitling a task never renames `<id>-<old-slug>.md`.
@@ -396,43 +377,6 @@ export class SqliteTaskStore implements TaskStorePort {
       );
     }
     return this.handle;
-  }
-
-  private newDoc(
-    id: string,
-    kind: TaskKind,
-    input: CreateInput,
-    now: string
-  ): TaskDoc {
-    const meta: TaskMeta = {
-      id,
-      title: input.title,
-      status: input.status ?? 'todo',
-      kind,
-      parent: input.parent ?? null,
-      milestone: input.milestone ?? null,
-      blockedBy: input.blockedBy ?? [],
-      labels: input.labels ?? [],
-      priority: input.priority ?? 'none',
-      assignee: input.assignee ?? 'none',
-      created: now,
-      updated: now,
-      external: null,
-      selfReview: input.selfReview ?? true,
-      ...(input.fixLoop === false ? { fixLoop: false } : {}),
-      writes: input.writes ?? [],
-      risk: input.risk ?? 'routine',
-      model: input.model ?? null,
-      exercised: false,
-      ...(input.derivedFrom === undefined
-        ? {}
-        : { derivedFrom: input.derivedFrom }),
-    };
-    // Identical to TaskStore.create's template, escaped the same way, so a
-    // task created against either backend reads the same.
-    const description = escapeHeadingLines(input.description ?? '');
-    const body = `\n## Description\n\n${description}\n\n## Acceptance Criteria\n\n## Activity\n`;
-    return { meta, body };
   }
 
   private rows(filter: ListFilter): TaskRow[] {

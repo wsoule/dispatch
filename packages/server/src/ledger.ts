@@ -1,24 +1,30 @@
 import { generateLedgerId } from '@dispatch/core';
-import type { LedgerEntry, LedgerKind } from '@dispatch/core';
+import type {
+  AddLedgerInput,
+  LedgerEntry,
+  LedgerListFilter,
+} from '@dispatch/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 // Findings and decisions carried forward between tasks, one JSON line per
 // write in `.dispatch/ledger.jsonl`. Entries are never edited in place.
 
-export interface AddLedgerInput {
-  epicId?: string | null;
-  sourceTaskId?: string | null;
-  kind: LedgerKind;
-  title: string;
-  detail: string;
-  appliesTo?: string[];
-  /** Serialized ActorRef of whoever wrote it. */
-  authoredBy: string;
-}
+// Re-exported rather than re-declared, same as findings.ts — core owns these
+// shapes so both backends take identical inputs.
+export type { AddLedgerInput, LedgerListFilter } from '@dispatch/core';
 
-export interface LedgerListFilter {
-  epicId?: string | null;
+/**
+ * The ledger surface every backend answers — same seam as `FindingStorePort`
+ * in findings.ts, and satisfied structurally by core's `SqliteLedgerStore`
+ * for the same reasons. Deliberately the intersection of the two backends:
+ * `SqliteLedgerStore` also has a `get(id)`, which nothing in the daemon calls
+ * and the JSONL store never grew.
+ */
+export interface LedgerStorePort {
+  add(input: AddLedgerInput): LedgerEntry;
+  list(filter?: LedgerListFilter): LedgerEntry[];
+  entriesFor(taskId: string, epicId: string | null): LedgerEntry[];
 }
 
 // How many times add() will re-roll an id before giving up. Far beyond what
@@ -42,7 +48,7 @@ function isLedgerEntry(value: unknown): value is LedgerEntry {
   );
 }
 
-export class LedgerStore {
+export class LedgerStore implements LedgerStorePort {
   private readonly file: string;
   private readonly generateId: (now: string) => string;
   // Ids already reported as colliding, so a damaged file logs once, not on

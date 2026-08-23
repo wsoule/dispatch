@@ -63,7 +63,13 @@ export {
   setSection,
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
-export { ensureProjectConfig, TaskStore, DISPATCH_DIR } from './store.js';
+export {
+  applyUpdatePatch,
+  DISPATCH_DIR,
+  ensureProjectConfig,
+  newTaskDoc,
+  TaskStore,
+} from './store.js';
 export type { TaskStorePort } from './store.js';
 export {
   attachDispatchDb,

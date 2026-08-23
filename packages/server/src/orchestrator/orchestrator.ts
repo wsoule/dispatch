@@ -12,6 +12,7 @@ import type {
   MutationEvidence,
   OrchestratorConfig,
   TaskDoc,
+  TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
 import {
@@ -27,8 +28,10 @@ import { join } from 'node:path';
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import { FindingStore } from '../findings.js';
+import type { FindingStorePort } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
+import type { LedgerStorePort } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import {
   EPIC_BRANCH_PREFIX,
@@ -84,7 +87,7 @@ import { WorktreeManager } from './worktree.js';
 
 export interface OrchestratorContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   // Optional override for the 2+-blocker stacked-dispatch path — the only
@@ -95,10 +98,10 @@ export interface OrchestratorContext {
   jj?: JjManager;
   // Ledger entries injected into dispatch prompts (see promptForTask below).
   // Defaults to one over `rootDir`, same pattern as `jj`.
-  ledgerStore?: LedgerStore;
+  ledgerStore?: LedgerStorePort;
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
   // to one over `rootDir`, same pattern as `ledgerStore`.
-  findingStore?: FindingStore;
+  findingStore?: FindingStorePort;
   // Who to credit on an Activity line when a call site doesn't say so itself
   // (see the `actor` opts on dispatch/review/sendMessage below). Optional —
   // a test that omits it gets the pre-attribution behavior (an unattributed
@@ -235,8 +238,8 @@ export class Orchestrator {
   // constructing it is inert — it shells out to jj lazily, per call — so an
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
-  private readonly ledgerStore: LedgerStore;
-  private readonly findingStore: FindingStore;
+  private readonly ledgerStore: LedgerStorePort;
+  private readonly findingStore: FindingStorePort;
   // The repo map injected into every run prompt (see promptForTask). Held on
   // the orchestrator rather than built per dispatch so its single-flight
   // background refresh really is one refresh, not one per concurrent dispatch.
@@ -3345,8 +3348,17 @@ export class Orchestrator {
   // `taskId` — never the whole `.dispatch/` directory (Important #5) — so
   // `git commit --amend` right after this in mergeRun() folds in exactly
   // this run's own bookkeeping and nothing else pending under `.dispatch/`.
+  //
+  // Narrows to the concrete file-backed store rather than going through
+  // `TaskStorePort`: `taskFilePath` is deliberately off the port (see its
+  // doc comment in core's store.ts) because a database-backed project has no
+  // task file to stage. On that backend this is a no-op — the task's state
+  // already lives in the daemon's database, and the git-versioned copy is
+  // the receipt exporter's job, not the merge commit's.
   private stageTaskFile(taskId: string): void {
-    const file = this.ctx.store.taskFilePath(taskId);
+    const store = this.ctx.store;
+    if (!(store instanceof TaskStore)) return;
+    const file = store.taskFilePath(taskId);
     if (file === null) return;
     Bun.spawnSync(['git', 'add', file], { cwd: this.ctx.rootDir });
   }

@@ -3,7 +3,7 @@ import type { Command } from 'commander';
 import { createApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { findRunningDaemon } from './daemon.js';
-import { requireStore } from './task.js';
+import { requireInitialized } from './task.js';
 
 const NO_DAEMON_MESSAGE =
   'no dispatchd is running for this project — start one with: dispatch serve';
@@ -34,7 +34,7 @@ function resolveAppToken(explicit: string | undefined): string {
 async function attach(
   ctx: CliContext
 ): Promise<{ baseUrl: string; agentToken: string }> {
-  requireStore(ctx);
+  requireInitialized(ctx);
   const daemon = await findRunningDaemon(ctx.cwd);
   if (daemon === null) throw new CliError(NO_DAEMON_MESSAGE);
   return {

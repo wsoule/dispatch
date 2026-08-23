@@ -10,12 +10,14 @@ import type { Command } from 'commander';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { createTaskApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
   checkMergeDriverSetup,
   checkTeamMergeDriverSetup,
 } from '../mergeDriver.js';
-import { requireStore } from './task.js';
+import { findRunningDaemon } from './daemon.js';
+import { databaseBacked, requireStore } from './task.js';
 
 interface Issue {
   file: string;
@@ -60,13 +62,32 @@ function isIsoTimestamp(value: string): boolean {
   return ISO_8601_RE.test(value) && !Number.isNaN(Date.parse(value));
 }
 
+// A project whose tasks live only in the daemon's database — no markdown
+// board beside it. During the one-time import a project can legitimately have
+// both, and that case still gets the full file scan.
+function databaseBackedOnly(ctx: CliContext): boolean {
+  return (
+    databaseBacked(ctx.cwd) && !existsSync(join(ctx.cwd, '.dispatch', 'tasks'))
+  );
+}
+
 export function registerDoctorCommand(program: Command, ctx: CliContext): void {
   program
     .command('doctor')
     .description('Validate task files and references')
     .option('--json')
-    .action((opts: { json?: boolean }) => {
-      const store = requireStore(ctx);
+    .action(async (opts: { json?: boolean }) => {
+      // Where this project's tasks come from. Only the PARSE checks are
+      // file-specific — malformed frontmatter, two files claiming one id —
+      // and a database genuinely cannot express those. Every check after
+      // them is about the task GRAPH (dangling parents, dangling blocked-by,
+      // cycles, unknown statuses), and the schema does not enforce any of
+      // that: `blocked_by` is a JSON text column with no foreign key behind
+      // it, so a database can hold exactly the same broken graph a folder of
+      // markdown can. Those checks therefore run on both backends, reading
+      // through the daemon when it owns the store.
+      const fromDatabase = databaseBackedOnly(ctx);
+      const tasksDir = fromDatabase ? null : requireStore(ctx).tasksDir;
       let config: DispatchConfig;
       try {
         config = loadConfig(ctx.cwd);
@@ -76,19 +97,41 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
       const issues: Issue[] = [];
       const parsed: { file: string; doc: TaskDoc }[] = [];
 
-      for (const file of readdirSync(store.tasksDir).filter((f) =>
-        f.endsWith('.md')
-      )) {
-        try {
-          parsed.push({
-            file,
-            doc: parseTaskFile(
-              readFileSync(join(store.tasksDir, file), 'utf8'),
-              file
-            ),
-          });
-        } catch (err) {
-          issues.push({ file, problem: (err as Error).message });
+      if (tasksDir !== null) {
+        for (const file of readdirSync(tasksDir).filter((f) =>
+          f.endsWith('.md')
+        )) {
+          try {
+            parsed.push({
+              file,
+              doc: parseTaskFile(
+                readFileSync(join(tasksDir, file), 'utf8'),
+                file
+              ),
+            });
+          } catch (err) {
+            issues.push({ file, problem: (err as Error).message });
+          }
+        }
+      } else {
+        // The daemon is the only process that may read this store, so there
+        // is nothing to check without one. `file` carries the task id here,
+        // which is what every issue message below quotes — a database-backed
+        // project has no filename to name instead.
+        const daemon = await findRunningDaemon(ctx.cwd).catch(() => null);
+        if (daemon === null) {
+          throw new CliError(
+            'dispatchd is not running — this project keeps its tasks in the ' +
+              "daemon's database, which only dispatchd may read. Start it " +
+              'with: dispatch serve'
+          );
+        }
+        const api = createTaskApiClient(
+          `http://127.0.0.1:${daemon.port}`,
+          daemon.agentToken
+        );
+        for (const doc of await api.listTasks()) {
+          parsed.push({ file: doc.meta.id, doc });
         }
       }
 
@@ -245,8 +288,14 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
           )
         );
       } else if (issues.length === 0) {
+        // What was checked is a different question from whether it was clean:
+        // this branch is only reached once there are no issues, so the
+        // wording can never contradict a non-zero issue count below.
+        const count = `${parsed.length} task${parsed.length === 1 ? '' : 's'}`;
         ctx.log(
-          `ok — ${parsed.length} task${parsed.length === 1 ? '' : 's'} checked`
+          fromDatabase
+            ? `ok — ${count} checked from the daemon database`
+            : `ok — ${count} checked`
         );
       } else {
         for (const i of issues) ctx.log(`${i.file}: ${i.problem}`);
