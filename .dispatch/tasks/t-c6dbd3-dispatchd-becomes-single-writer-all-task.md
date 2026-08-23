@@ -1,7 +1,7 @@
 ---
 id: t-c6dbd3
 title: "dispatchd becomes single writer: all task I/O through the daemon store"
-status: in-review
+status: done
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:17.943Z
-updated: 2026-08-23T14:56:56.455Z
+updated: 2026-08-23T14:58:28.803Z
 external: null
 writes:
   - packages/server/src/**
@@ -49,3 +49,4 @@ OPTIONAL (confirmed, if quick): dedupe the CLI/MCP daemon HTTP client stacks; us
 - 2026-08-23T14:31:35.478Z [run r-d7cce5] finished: finished — 27 files, $0.00 — agent:wsoule679/claude
 - 2026-08-23T14:33:06.303Z requested changes (run r-751892): Your previous resume finished with zero turns and made no changes. The 10 required review fixes are in the previous user message in this conversation — apply them now, starting with the two SEVERE ones (inject the backend-selected findingStore into the Orchestrator; persist backend selection per project so daemon and clients agree). Run server+cli+mcp tests, commit. — human:wsoule679
 - 2026-08-23T14:56:56.455Z [run r-751892] finished: finished — 32 files, $20.46 — agent:wsoule679/claude
+- 2026-08-23T14:58:28.803Z run r-751892 merged into epic/e-99e113 — human:wsoule679
