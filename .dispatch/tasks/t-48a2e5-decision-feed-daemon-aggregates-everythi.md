@@ -1,7 +1,7 @@
 ---
 id: t-48a2e5
 title: "Decision feed: daemon aggregates everything awaiting a human"
-status: in-review
+status: in-progress
 kind: task
 parent: e-6cfcc7
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-23T00:13:51.501Z
+updated: 2026-08-23T00:20:01.874Z
 external: null
 writes:
   - packages/server/src/**
@@ -59,3 +59,4 @@ Scope: packages/server only, all within declared writes. No packages/core (r-664
 
 OPTIONAL same-round cleanups (all confirmed by review, do them if quick): delete uncalled count(); simplify the unreachable oldest.done branch in pruneResolved (delete-then-set also fixes re-resolved items pruning in original insertion position); factor the 6x-duplicated ageMs clamp into one helper; reuse initGitRepo from test/orchestrator/helpers.ts instead of the local copy; reuse test/json.ts instead of the local json<T>(); reuse/extract a shared one-line truncate instead of a third copy (promptTitle, truncateReason exist). Do NOT restructure recompute into per-event builder routing — the derived-never-stored design is correct as-is. Run the package tests when done. — human:wsoule679
 - 2026-08-23T00:13:51.501Z [run r-297e7b] finished: finished — 6 files, $0.00 — agent:wsoule679/claude
+- 2026-08-23T00:20:01.874Z requested changes (run r-d730dc): Your previous resume finished with zero turns and made no changes — the required fixes were NOT applied. Please actually apply them now: (1) stalledReason() in decisionFeed.ts must not flag a run as run-stalled when a successor exists (any run with resumedFrom === its id) — mirror orchestrator.ts:1571 — and must exclude kind:'review' runs; add the test. (2) Cache FixLoopStore's parsed state map, invalidated in put(), so DecisionFeed.recompute() stops doing readFileSync per event. Commit your changes and run the package tests before finishing. — human:wsoule679
