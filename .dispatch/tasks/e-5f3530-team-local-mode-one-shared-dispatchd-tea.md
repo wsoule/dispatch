@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T16:58:05.881Z
-updated: 2026-08-22T16:58:05.881Z
+updated: 2026-08-23T14:29:22.931Z
 external: null
 writes: []
 ---
@@ -27,3 +27,4 @@ Every piece already exists in some form: the desktop UI is already a browser app
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-23T14:29:22.931Z Parked 2026-08-23: under the open-core split (docs/BUSINESS.md, LICENSING.md) multiplayer does not ship free inside the open client — the paid boundary is "team features require the server." This epic's scope (multi-user daemon, browser connect, presence/attribution) is absorbed by team-server phases 1–4 (docs/TEAM-SERVER.md §6). Revisit only if the free-funnel strategy changes. Children cancelled with this epic. — none
