@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T18:35:14.634Z
+updated: 2026-08-23T18:58:30.144Z
 external: null
 writes:
   - packages/cli/src/**
@@ -98,3 +98,18 @@ Tests: core 506, cli 199, server 2085, all 0 fail. lint 0 errors, tsc clean on a
 9. cli/doctor.ts:130 — db-backed doctor never consults /api/health problems, so damaged rows are invisible and doctor prints ok; fold problems[] into doctor issues.
 10. cli/task.ts:358 — 'task next' local fallback lacks the archivedAt filter the daemon path and the MCP copy both have — same-diff divergence, apply the same filter.
 ALSO (confirmed but cut for the report cap — fix if quick): backend marker should not flip when the import counted damaged records; the config watcher's GET-before-PATCH race within the debounce; dry-run must not write config.yml (a dry run writes NOTHING); plus cleanups: readProjectBackend copy in mcp/daemon.ts, entriesFor predicate duplication, DAEMON_REQUIRED message triplication. Run core+cli+server tests, re-run the dry run to confirm 155/30/341/308 unchanged, commit. — human:wsoule679
+- 2026-08-23T18:58:30.144Z Code review addressed — commit 9fba8e18. All 10 ranked findings fixed, plus 3 of the follow-ups. Two deliberate deviations, both flagged below.
+
+The one that mattered most (#1) was not a migration bug at all: core's node barrel reaches sqliteDb.ts, whose top-level import of node:sqlite throws ERR_UNKNOWN_BUILTIN_MODULE on Node 22.0–22.12 — which cli's `engines: >=22` permits — so EVERY CLI command died at module-graph evaluation, including on projects that have no database. Now loaded via createRequire at first use (not dynamic import, which would have made openDispatchDb async and rippled through every store constructor). Verified createRequire('node:sqlite') under both node and bun before committing. browserPurity.test.ts had a control test asserting node:sqlite IS eagerly reachable — that test failing was the fix working, so I re-pointed the control at node:fs and added a test pinning that node:sqlite is NOT eagerly reachable. Mutation-tested: restoring the static import fails it.
+
+DEVIATION 1 (#6, listSafe seam). I added listSafe() to both record stores but did NOT convert list/get/openFor/entriesFor to skip-and-report as asked. openFor answers "what findings are still blocking this task" for the merge gate, and entriesFor supplies the constraints and hazards injected into a dispatched agent's prompt. A read that silently returns FEWER blockers than the table holds lets work merge past a finding meant to stop it; one that returns fewer constraints briefs an agent with less than the ledger knows. Failing loudly is the safe direction for both, and existing tests assert that throw deliberately. listSafe is there for the read-only surfaces (UI lists, doctor) where the alternative to a partial answer is no answer. Reasoning is in the code so the next reader does not "fix" it back.
+
+DEVIATION 2 (#2). Rather than only gitignoring storage.json, I also changed the gate: the boot import now keys on whether the DATABASE holds the board, not on the marker. Gitignoring alone fixes new clones but not the ones already carrying a committed marker. Did both.
+
+Also worth calling out from the follow-ups: the marker no longer flips to sqlite when the import counted damaged records. Declaring the database authoritative while some records exist only in markdown strands them, because CLI and MCP then refuse to read the very files still holding them — the CLI now says so and tells you to fix and re-run.
+
+Two data-loss fixes (#3, #4) both mutation-tested at 1 failure each; the eager-import guard likewise. Findings #5/#7/#9/#10 were the same class of bug from different angles — a read resolved against the wrong root or the wrong source (doctor validating frozen markdown, the CLI ignoring DISPATCH_PROJECT_ROOT inside run worktrees, doctor never consulting /api/health, `task next` missing the archivedAt filter its two siblings have).
+
+Dry run re-run after all fixes: 155/30/341/308, 0 damaged, unchanged — and now verified to write no database, no marker AND no config.yml (a dry run was scaffolding config.yml via initProjectStores; it attaches to :memory: through openProjectStores instead). core 509, cli 199, mcp 116, server 2085 pass; lint 0 errors; tsc clean on all four packages.
+
+NOT DONE, deferred deliberately: the config watcher's GET-before-PATCH race within the debounce window, and the three cleanups (readProjectBackend copy in mcp/daemon.ts, entriesFor predicate duplication, DAEMON_REQUIRED triplication). None are in this task's blast radius and each is a small standalone change; the mcp/daemon.ts marker copy in particular should fold into core's storage.ts when that module is next touched, which its own comment already says. — none
