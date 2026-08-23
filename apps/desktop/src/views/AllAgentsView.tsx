@@ -159,7 +159,6 @@ export function AllAgentsView({
   if (portLoading) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="view-topbar-title">All agents</h1>
         <div className="flex flex-col gap-2">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-full" />
@@ -172,7 +171,6 @@ export function AllAgentsView({
   if (portError || client === null) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="view-topbar-title">All agents</h1>
         <DaemonUnavailable
           starting={false}
           errorDetail={portErrorDetail}
@@ -185,7 +183,6 @@ export function AllAgentsView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
       <div className="flex items-center gap-2">
-        <h1 className="view-topbar-title">All agents</h1>
         <span className="text-muted-foreground text-[12px]">
           Every agent this repo has run — task runs, planners, drafts and
           wardens

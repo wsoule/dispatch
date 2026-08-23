@@ -58,7 +58,6 @@ export function InboxView({
   if (portLoading) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="view-topbar-title">Inbox</h1>
         <div className="flex flex-col gap-2">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-full" />
@@ -71,7 +70,6 @@ export function InboxView({
   if (portError || client === null) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="view-topbar-title">Inbox</h1>
         <DaemonUnavailable
           starting={false}
           errorDetail={portErrorDetail}
@@ -87,7 +85,6 @@ export function InboxView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
       <div className="flex items-baseline gap-2">
-        <h1 className="view-topbar-title">Inbox</h1>
         <span className="text-muted-foreground text-[12px]">
           Everything waiting on a human, in one list.
         </span>

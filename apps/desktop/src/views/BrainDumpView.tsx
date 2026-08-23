@@ -52,7 +52,7 @@ export function BrainDumpView({
   onOpenTask,
 }: BrainDumpViewProps) {
   const toasts = useToasts();
-  // Shared with the ⌘B quick-capture modal and persisted across navigation and
+  // Shared with the ⌘D quick-capture modal and persisted across navigation and
   // relaunch — leaving this screen must not cost half-typed thoughts.
   const [draft, setDraft] = usePersistedDraft(BRAIN_DUMP_DRAFT_KEY);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
@@ -256,15 +256,6 @@ export function BrainDumpView({
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col gap-4 overflow-y-auto">
-      <div className="flex items-baseline gap-2">
-        <h1 className="view-topbar-title">Brain dump</h1>
-        <span className="text-muted-foreground text-[12px]">
-          Everything lands here first. Sort it later, or never.
-        </span>
-        <span className="flex-1" />
-        <ExplainerPopover />
-      </div>
-
       <Panel className="p-3.5">
         {/* `field-sizing-fixed` cancels the primitive's `field-sizing-content`: this box
             stays a draggable 92px rather than growing with what you type. */}
@@ -283,9 +274,8 @@ export function BrainDumpView({
           className="text-foreground field-sizing-fixed min-h-[92px] resize-y border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[14px] dark:bg-transparent"
         />
         <div className="mt-2.5 flex items-center gap-2.5">
-          <span className="dense-meta flex-1">
-            One dump, one item — multiline welcome. Drafts keep.
-          </span>
+          <span className="flex-1" />
+          <ExplainerPopover />
           {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
               size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}
           <Button

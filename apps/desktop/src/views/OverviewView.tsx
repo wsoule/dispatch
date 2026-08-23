@@ -21,7 +21,6 @@ import {
 
 interface OverviewViewProps {
   data: DispatchProjectData;
-  projectName: string | null;
   onOpenRun: (runId: string) => void;
   /** Opens the full-page Review for a run — where a diff gets read and annotated, as opposed
    * to the Runs surface, which is where a live agent gets watched. */
@@ -60,7 +59,6 @@ const COLLAPSIBLE_GROUPS: readonly FeedState[] = [
  */
 export function OverviewView({
   data,
-  projectName,
   onOpenRun,
   onReviewRun,
   onGoToBoard,
@@ -149,15 +147,6 @@ export function OverviewView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex items-baseline gap-2">
-        <h1 className="view-topbar-title">Control room</h1>
-        {projectName !== null && (
-          <span className="text-muted-foreground text-[13px]">
-            {projectName}
-          </span>
-        )}
-      </div>
-
       <ControlRibbon
         counts={feed.counts}
         activeStates={activeStates}

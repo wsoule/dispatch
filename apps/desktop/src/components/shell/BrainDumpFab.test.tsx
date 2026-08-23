@@ -18,7 +18,7 @@ beforeEach(() => {
   window.localStorage.removeItem(BRAIN_DUMP_DRAFT_KEY);
 });
 
-// `open` is controlled by App in production (so ⌘B can drive it); the harness plays App's
+// `open` is controlled by App in production (so ⌘D can drive it); the harness plays App's
 // role. The trigger's tooltip needs the same provider App.tsx wraps the whole shell in.
 function Harness({
   onOpenBrainDump = () => {},
