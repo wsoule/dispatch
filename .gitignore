@@ -46,3 +46,6 @@ apps/desktop/playwright-report/
 
 # Local business notes — kept out of a public repo deliberately.
 docs/business/
+
+.moon/cache
+.moon/hooks
