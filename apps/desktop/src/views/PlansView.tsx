@@ -779,16 +779,15 @@ export function PlansView({
             <div className="bg-card rounded-card shadow-card p-4">
               <DependencyGraph
                 tasks={graphTasks}
-                snippetFor={(id) => {
-                  const description =
-                    draft.proposal.tasks[Number(id)]?.description.trim();
-                  return description === '' ? undefined : description;
-                }}
-                subtitleFor={(id) => {
+                refFor={(id) => `#${Number(id) + 1}`}
+                accessoryFor={(id) => {
                   const task = draft.proposal.tasks[Number(id)];
-                  return task === undefined
-                    ? undefined
-                    : `#${Number(id) + 1} · ${task.priority}`;
+                  return task === undefined ? undefined : (
+                    <PriorityIcon
+                      priority={task.priority}
+                      className="size-3.5"
+                    />
+                  );
                 }}
                 onOpenNode={(id) => setSpecIndex(Number(id))}
                 ariaLabel="Plan dependency graph"
