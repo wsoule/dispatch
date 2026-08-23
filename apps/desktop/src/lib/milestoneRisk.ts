@@ -1,7 +1,7 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 
-import { deriveFeedState } from './feedState';
+import { deriveFeedState, isInFlightState, isUrgentState } from './feedState';
 
 /**
  * Whether a milestone is in trouble, and why.
@@ -44,9 +44,10 @@ export function deriveMilestoneStatus(
     const run = latestRunByTaskId.get(task.meta.id);
     if (run === undefined) continue;
     const state = deriveFeedState(run);
-    if (state === 'waiting') waiting += 1;
-    else if (state === 'failed') failed += 1;
-    else if (state === 'working' || state === 'landing') working += 1;
+    if (state === null) continue;
+    if (state === 'failed') failed += 1;
+    else if (state !== 'review' && isUrgentState(state)) waiting += 1;
+    else if (isInFlightState(state)) working += 1;
   }
 
   if (allClosed) {

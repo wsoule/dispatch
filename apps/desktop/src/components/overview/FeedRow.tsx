@@ -2,22 +2,22 @@ import { CircleAlert, Hand } from 'lucide-react';
 import type { ReactNode } from 'react';
 
 import type { FeedRowModel } from '@/lib/controlRoom';
-import type { FeedState } from '@/lib/feedState';
-import { FEED_STATE_LABEL, isUrgentState } from '@/lib/feedState';
+import { FEED_STATE_LABEL, feedTier, isUrgentState } from '@/lib/feedState';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
 import { StateDot } from '@/ui/chrome/StateDot';
 
-// The urgent skins, spelled out for Tailwind's static extraction.
-const URGENT_ROW: Partial<Record<FeedState, string>> = {
-  waiting: 'bg-state-waiting-surface',
-  failed: 'bg-state-failed-surface',
+// The urgent skins key off the TIER — amber for anything that is your move,
+// red for broken. Spelled out for Tailwind's static extraction.
+const URGENT_ROW: Partial<Record<ReturnType<typeof feedTier>, string>> = {
+  you: 'bg-state-waiting-surface',
+  broken: 'bg-state-failed-surface',
 };
-const URGENT_TEXT: Partial<Record<FeedState, string>> = {
-  waiting: 'text-state-waiting',
-  failed: 'text-state-failed',
+const URGENT_TEXT: Partial<Record<ReturnType<typeof feedTier>, string>> = {
+  you: 'text-state-waiting',
+  broken: 'text-state-failed',
 };
 
 /** A row action. Rendered small and quiet — the row itself is the primary target. */
@@ -62,6 +62,9 @@ export interface FeedRowActions {
   onRetry: (row: FeedRowModel) => void;
   onReview: (row: FeedRowModel) => void;
   onCancelLanding: (row: FeedRowModel) => void;
+  /** Opens the task itself — a ruling happens in the task detail's findings
+   * panel, not on a run surface. */
+  onRule: (row: FeedRowModel) => void;
   /** Caps the task's fix loop where it stands — offered while it is actively
    * implementing or reviewing. */
   onStopFixLoop: (row: FeedRowModel) => void;
@@ -106,6 +109,7 @@ interface FeedRowProps {
  */
 export function FeedRow({ row, actions }: FeedRowProps) {
   const urgent = isUrgentState(row.state);
+  const tier = feedTier(row.state);
 
   return (
     <div
@@ -120,7 +124,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
       }}
       className={cn(
         'group/row ease-out-expo rounded-control cursor-pointer overflow-hidden transition-colors duration-100',
-        urgent ? URGENT_ROW[row.state] : 'hover:bg-surface-hover',
+        urgent ? URGENT_ROW[tier] : 'hover:bg-surface-hover',
         urgent && 'shadow-hairline'
       )}
     >
@@ -131,7 +135,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
             className={cn(
               'truncate text-[11px]',
               urgent
-                ? cn(URGENT_TEXT[row.state], 'font-medium')
+                ? cn(URGENT_TEXT[tier], 'font-medium')
                 : 'text-muted-foreground'
             )}
           >
@@ -158,7 +162,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
 
         <span className="flex justify-end gap-1.5">
           {/* A question's answer is free text, so it can only be given on the Session tab. */}
-          {row.waitingOn === 'question' && (
+          {row.state === 'answer' && (
             <RowButton
               tone="urgent-waiting"
               onClick={() => actions.onOpen(row)}
@@ -166,7 +170,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
               Answer
             </RowButton>
           )}
-          {row.waitingOn === 'approval' && (
+          {row.state === 'approve' && (
             <>
               <RowButton onClick={() => actions.onApprove(row, false)}>
                 Deny
@@ -178,6 +182,14 @@ export function FeedRow({ row, actions }: FeedRowProps) {
                 Approve
               </RowButton>
             </>
+          )}
+          {row.state === 'ruling' && (
+            <RowButton
+              tone="urgent-waiting"
+              onClick={() => actions.onRule(row)}
+            >
+              Rule on findings
+            </RowButton>
           )}
           {row.state === 'failed' && (
             <>
@@ -210,14 +222,12 @@ export function FeedRow({ row, actions }: FeedRowProps) {
 
       {row.attention !== null && (
         <div className="flex items-center gap-2 px-3 pb-2 pl-[142px]">
-          {row.state === 'waiting' ? (
+          {tier === 'you' ? (
             <Hand className="text-state-waiting size-3.5 shrink-0" />
           ) : (
             <CircleAlert className="text-state-failed size-3.5 shrink-0" />
           )}
-          <span
-            className={cn('truncate text-[12.5px]', URGENT_TEXT[row.state])}
-          >
+          <span className={cn('truncate text-[12.5px]', URGENT_TEXT[tier])}>
             {row.attention.reason}
           </span>
           {row.attention.detail !== null && (
@@ -231,7 +241,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
       {/* A working run has no honest completion fraction — the orchestrator does not know how
           far through a task an agent is — so this is deliberately indeterminate rather than a
           number derived from turn count, which would look like measurement. */}
-      {row.state === 'working' && (
+      {(row.state === 'working' || row.state === 'fixing') && (
         <ProgressTrack value={null} label={`${row.title} in progress`} />
       )}
     </div>

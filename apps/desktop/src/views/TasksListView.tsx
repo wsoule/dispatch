@@ -455,7 +455,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                   <span
                     className={cn(
                       'dense-meta',
-                      pulse.state === 'waiting' && 'text-state-waiting'
+                      pulse.state === 'answer' && 'text-state-waiting'
                     )}
                   >
                     {pulse.label}

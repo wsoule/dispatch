@@ -2,17 +2,19 @@ import type { FeedState } from '@/lib/feedState';
 import {
   FEED_STATE_LABEL,
   FEED_STATE_ORDER,
+  feedTier,
   isUrgentState,
 } from '@/lib/feedState';
 import { cn } from '@/lib/utils';
 import { StateDot } from '@/ui/chrome/StateDot';
 import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
-// Urgent chips earn a tinted ground; everything else stays flat. Spelled out rather than
-// composed at runtime because Tailwind cannot build class names dynamically.
-const URGENT_SKIN: Partial<Record<FeedState, string>> = {
-  waiting: 'bg-state-waiting-surface text-state-waiting',
-  failed: 'bg-state-failed-surface text-state-failed',
+// Urgent chips earn a tinted ground keyed by TIER — amber for your move, red for
+// broken. Spelled out rather than composed at runtime because Tailwind cannot
+// build class names dynamically.
+const URGENT_SKIN: Partial<Record<ReturnType<typeof feedTier>, string>> = {
+  you: 'bg-state-waiting-surface text-state-waiting',
+  broken: 'bg-state-failed-surface text-state-failed',
 };
 
 interface ControlRibbonProps {
@@ -53,22 +55,28 @@ export function ControlRibbon({
         if (changed !== undefined) onSelect(changed);
       }}
     >
-      {FEED_STATE_ORDER.map((state) => {
+      {FEED_STATE_ORDER.map((state, index) => {
         const count = counts[state];
         const alarmed = isUrgentState(state) && count > 0;
         const active = activeStates.has(state);
+        // A hairline divider where the tier changes, so the strip reads as
+        // "your moves | broken | the machine's | not started" at a glance.
+        const previous = FEED_STATE_ORDER[index - 1];
+        const newTier =
+          previous !== undefined && feedTier(previous) !== feedTier(state);
         return (
           <ToggleGroupItem
             key={state}
             value={state}
             className={cn(
               'ease-out-expo flex h-7 items-center gap-1.5 rounded-md px-2.5 whitespace-nowrap transition-colors duration-100',
+              newTier && 'border-border ml-2 border-l pl-3.5 rounded-l-none',
               // toggleVariants' base text-sm/font-medium and pressed-state bg/text
               // are built for a pill button; all neutralized back to the chip.
               'text-[length:inherit] font-[weight:inherit]',
               'shadow-hairline hover:bg-surface-hover hover:text-inherit',
               'data-[state=on]:bg-transparent data-[state=on]:text-inherit',
-              alarmed ? URGENT_SKIN[state] : 'text-muted-foreground',
+              alarmed ? URGENT_SKIN[feedTier(state)] : 'text-muted-foreground',
               active && 'bg-surface-hover-strong ring-ring/40 ring-1'
             )}
           >

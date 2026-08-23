@@ -25,6 +25,8 @@ interface OverviewViewProps {
   /** Opens the full-page Review for a run — where a diff gets read and annotated, as opposed
    * to the Runs surface, which is where a live agent gets watched. */
   onReviewRun: (runId: string) => void;
+  /** Opens the task's detail panel — where findings get ruled on. */
+  onOpenTask: (taskId: string) => void;
   onGoToBoard: () => void;
 }
 
@@ -35,12 +37,14 @@ function toggle<T>(set: ReadonlySet<T>, value: T): Set<T> {
   return next;
 }
 
-/** The groups the collapse machinery applies to. Urgent groups (waiting/failed) are pinned
- * open — the whole point of this screen is that what needs a human is visible the moment the
- * screen is, so those two can be neither collapsed nor swept up by collapse-all. */
+/** The groups the collapse machinery applies to — the machine's tier only. Everything that
+ * is your move (or broken) is pinned open: the whole point of this screen is that what needs
+ * a human is visible the moment the screen is, so those groups can be neither collapsed nor
+ * swept up by collapse-all. */
 const COLLAPSIBLE_GROUPS: readonly FeedState[] = [
   'working',
-  'review',
+  'fixing',
+  'checking',
   'landing',
 ];
 
@@ -61,6 +65,7 @@ export function OverviewView({
   data,
   onOpenRun,
   onReviewRun,
+  onOpenTask,
   onGoToBoard,
 }: OverviewViewProps) {
   const [query, setQuery] = useState('');
@@ -126,6 +131,7 @@ export function OverviewView({
 
   const actions: FeedRowActions = {
     onOpen: (row) => onOpenRun(row.runId),
+    onRule: (row) => onOpenTask(row.taskId),
     onStopFixLoop: (row) => void data.handleStopFixLoop(row.taskId),
     onApprove: (row, allow) => {
       const pending = data.pendingApprovals.get(row.runId);
