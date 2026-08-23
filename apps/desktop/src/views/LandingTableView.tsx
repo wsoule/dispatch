@@ -115,10 +115,6 @@ export function LandingTableView({
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-2">
-        <h1 className="view-topbar-title">Landing</h1>
-        <span className="text-muted-foreground text-[12px]">
-          Every run, PR, and queue entry in flight, in one table.
-        </span>
         {/* react-query keeps the last snapshot on a failed refetch — this
             badge is the only thing that flags it as stale, not current. */}
         {snapshot !== null && data.landingIsError && (

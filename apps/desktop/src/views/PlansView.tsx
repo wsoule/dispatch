@@ -616,8 +616,7 @@ export function PlansView({
 
   return (
     <div className="mx-auto flex w-full max-w-[60rem] flex-col gap-6">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="view-topbar-title">Plans</h1>
+      <div className="flex items-center justify-end gap-3">
         {data.planId !== null && (
           <Button variant="outline" size="sm" onClick={closePlan}>
             <Plus className="size-3.5" /> New plan

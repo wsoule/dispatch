@@ -119,26 +119,26 @@ describe('resolveGlobalKeyCommand', () => {
     expect(resolveGlobalKeyCommand(key('0'), baseGlobalCtx)).toBeNull();
   });
 
-  test('⌘B opens the brain dump, but never while typing or over a modal', () => {
+  test('⌘D opens the brain dump, but never while typing or over a modal', () => {
     expect(
-      resolveGlobalKeyCommand(key('b', { metaKey: true }), baseGlobalCtx)
+      resolveGlobalKeyCommand(key('d', { metaKey: true }), baseGlobalCtx)
     ).toBe('brain-dump');
     expect(
-      resolveGlobalKeyCommand(key('B', { ctrlKey: true }), baseGlobalCtx)
+      resolveGlobalKeyCommand(key('D', { ctrlKey: true }), baseGlobalCtx)
     ).toBe('brain-dump');
     expect(
-      resolveGlobalKeyCommand(key('b', { metaKey: true }), {
+      resolveGlobalKeyCommand(key('d', { metaKey: true }), {
         ...baseGlobalCtx,
         isTyping: true,
       })
     ).toBeNull();
     expect(
-      resolveGlobalKeyCommand(key('b', { metaKey: true }), {
+      resolveGlobalKeyCommand(key('d', { metaKey: true }), {
         ...baseGlobalCtx,
         modalOpen: true,
       })
     ).toBeNull();
-    expect(resolveGlobalKeyCommand(key('b'), baseGlobalCtx)).toBeNull();
+    expect(resolveGlobalKeyCommand(key('d'), baseGlobalCtx)).toBeNull();
   });
 });
 

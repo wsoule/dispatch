@@ -414,7 +414,7 @@ function App() {
   );
 
   // Whether the quick-capture surface exists right now — shared by the FAB's render and the
-  // ⌘B shortcut, so the shortcut can never open a modal the button couldn't.
+  // ⌘D shortcut, so the shortcut can never open a modal the button couldn't.
   const brainDumpFabMounted =
     navState.section === 'project' &&
     navState.projectView !== 'brain-dump' &&
@@ -896,11 +896,7 @@ function App() {
                   )}
                   {navState.globalView === 'sessions' && <SessionsHubView />}
                   {navState.globalView === 'warden' && (
-                    <WardenView
-                      data={data}
-                      warden={warden}
-                      projectName={activeProject?.name ?? null}
-                    />
+                    <WardenView data={data} warden={warden} />
                   )}
                   {navState.globalView === 'settings' && (
                     <SettingsView activeProject={activeProject} data={data} />
@@ -919,7 +915,6 @@ function App() {
                   {navState.projectView === 'overview' && (
                     <OverviewView
                       data={data}
-                      projectName={activeProject?.name ?? null}
                       onOpenRun={jumpToRun}
                       onReviewRun={(runId) => {
                         const run = data.runs.find((r) => r.id === runId);
@@ -1098,7 +1093,7 @@ function App() {
             Brain dump itself (which has the full composer). Gated on a live daemon client:
             the raw capture handler silently no-ops when `client` is null, and a capture that
             quietly drops the thought is worse than no button. Open state lives here so the
-            ⌘B global shortcut reaches the same modal the button opens. */}
+            ⌘D global shortcut reaches the same modal the button opens. */}
         {brainDumpFabMounted && (
           <BrainDumpFab
             open={brainDumpOpen}

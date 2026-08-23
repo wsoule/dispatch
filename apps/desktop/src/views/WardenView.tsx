@@ -164,7 +164,6 @@ function WardenOutcomeRow({
 interface WardenViewProps {
   data: DispatchProjectData;
   warden: WardenSession;
-  projectName: string | null;
 }
 
 /**
@@ -174,7 +173,7 @@ interface WardenViewProps {
  * in `useWardenSession` (mounted by App), so switching tabs and coming back
  * lands on the same transcript.
  */
-export function WardenView({ data, warden, projectName }: WardenViewProps) {
+export function WardenView({ data, warden }: WardenViewProps) {
   const [prompt, setPrompt] = useState('');
   const [starting, setStarting] = useState(false);
   const [startError, setStartError] = useState<string | null>(null);
@@ -336,15 +335,7 @@ export function WardenView({ data, warden, projectName }: WardenViewProps) {
 
   return (
     <div className="mx-auto flex h-full min-h-0 w-full max-w-[60rem] flex-col gap-4">
-      <div className="flex items-center justify-between gap-3">
-        <div className="flex items-baseline gap-2">
-          <h1 className="view-topbar-title">Warden</h1>
-          {projectName !== null && (
-            <span className="text-muted-foreground text-[13px]">
-              {projectName}
-            </span>
-          )}
-        </div>
+      <div className="flex items-center justify-end gap-3">
         {warden.conversationId !== null && (
           <Button variant="outline" size="sm" onClick={() => warden.reset()}>
             <Plus className="size-3.5" /> New conversation

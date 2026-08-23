@@ -17,7 +17,7 @@ import { Textarea } from '@/ui/textarea';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface BrainDumpFabProps {
-  /** Owned by App so the ⌘B global shortcut opens the same modal the button does. */
+  /** Owned by App so the ⌘D global shortcut opens the same modal the button does. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
   /** The RAW capture handler (`rawData.handleCaptureInbox`), not the `withActionFeedback`
@@ -30,7 +30,7 @@ interface BrainDumpFabProps {
 }
 
 /**
- * The always-there capture affordance: a small brain in the bottom-right corner (and ⌘B)
+ * The always-there capture affordance: a small brain in the bottom-right corner (and ⌘D)
  * that opens a centered one-shot version of Brain dump's composer, so a passing thought can
  * be dropped into the inbox from any screen without leaving it. Same contract as the full
  * view — one item per line, ⌘⏎ commits — and a successful capture closes the modal; the
@@ -99,9 +99,7 @@ export function BrainDumpFab({
             <p className="text-state-failed text-[12px]">{error}</p>
           )}
           <div className="flex items-center gap-2">
-            <span className="dense-meta flex-1">
-              One dump, one item. ⌘⏎ to drop it.
-            </span>
+            <span className="dense-meta flex-1">⌘⏎ to drop it.</span>
             <Button
               variant="ghost"
               size="xs"
@@ -138,7 +136,7 @@ export function BrainDumpFab({
             <Brain className="size-4.5" />
           </Button>
         </TooltipTrigger>
-        <TooltipContent side="left">Add to Brain dump (⌘B)</TooltipContent>
+        <TooltipContent side="left">Add to Brain dump (⌘D)</TooltipContent>
       </Tooltip>
     </>
   );

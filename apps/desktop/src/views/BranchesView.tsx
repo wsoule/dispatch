@@ -564,7 +564,6 @@ export function BranchesView({
       onKeyDown={onRootKeyDown}
     >
       <div className="flex items-center justify-between gap-3">
-        <h1 className="view-topbar-title">Git</h1>
         <div className="flex min-w-0 flex-1 items-center px-2">
           {/* The `pl-2` InputGroup pushes onto its input is variant-prefixed, so it out-ranks
               a plain `px-0` on the control and has to be overridden in the same form. */}

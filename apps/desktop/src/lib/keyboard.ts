@@ -77,12 +77,12 @@ export function resolveGlobalKeyCommand(
   if (combo && input.key === '-') return 'zoom-out';
   if (combo && input.key === '0') return 'zoom-reset';
 
-  // Quick capture. Carries a modifier but still deliberately dead while typing (⌘B is
-  // bold-adjacent muscle memory in text fields) and while any modal is up — opening a
-  // second layer over an open dialog helps nobody.
+  // Quick capture (⌘D — "dump"). Carries a modifier but still deliberately dead while
+  // typing and while any modal is up — opening a second layer over an open dialog helps
+  // nobody.
   if (
     combo &&
-    input.key.toLowerCase() === 'b' &&
+    input.key.toLowerCase() === 'd' &&
     !ctx.isTyping &&
     !ctx.modalOpen
   ) {
