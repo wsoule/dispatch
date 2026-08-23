@@ -3,7 +3,6 @@
   "private": true,
   "license": "SEE LICENSE IN LICENSE",
   "type": "module",
-  "packageManager": "pnpm@11.9.0",
   "devDependencies": {
     "@moonrepo/cli": "catalog:",
     "@types/bun": "catalog:",
@@ -30,5 +29,6 @@
     "**/*.{css,pcss,postcss}": [
       "stylelint --fix --allow-empty-input"
     ]
-  }
+  },
+  "packageManager": "pnpm@11.9.0"
 }
