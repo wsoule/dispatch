@@ -26,12 +26,13 @@ forkable moat. This is why the licensing question (below) got simpler.
 
 ## Licensing
 
-- **The client stays source-available (FSL-1.1-ALv2), as today.** With the moat
-  in the server there is little left to protect by closing the client, and
-  readable source is most of the answer to "why should we trust a one-person
-  vendor's daemon on our laptops." Going fully closed remains an option, but it
-  is not forced by anything and it costs the trust story. Decide once,
-  deliberately — not by drift.
+- **The repo is private today; the license is FSL-1.1-ALv2.** Whether to publish
+  the source at launch is the real decision. With the moat in the server there
+  is little left to protect by keeping the client closed, and readable source is
+  most of the answer to "why should we trust a one-person vendor's daemon on our
+  laptops." Staying closed is viable — distribute binaries from a public
+  releases-only repo — but it costs the trust story. Decide once, at launch —
+  not by drift.
 - **The team server is commercial and private** — separate repo, consuming
   published `@dispatch/core` (open decision §7.3 in `TEAM-SERVER.md`).
 - **Consider MIT for `@dispatch/mcp`** so any agent can drive Dispatch through
