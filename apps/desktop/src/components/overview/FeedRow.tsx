@@ -76,12 +76,20 @@ function fixLoopActive(row: FeedRowModel): boolean {
   );
 }
 
-/** The activity cell's loop phrasing: "Fix round 2/5 · reviewing" beats the
- * generic turn count whenever a loop owns the task. */
+/** The activity cell's loop phrasing — pass position plus the findings trace,
+ * so a cycling task reads as a countdown ("Pass 3/5 · 9→4→1") rather than a
+ * treadmill. Active loops name their phase; settled ones just say where the
+ * loop stands. A loop that never opened a round says nothing. */
 function fixLoopActivity(row: FeedRowModel): string | null {
-  if (row.fixLoop === null) return null;
-  if (!fixLoopActive(row)) return null;
-  return `Fix round ${row.fixLoop.round}/${row.fixLoop.cap} · ${row.fixLoop.state}`;
+  const loop = row.fixLoop;
+  if (loop === null || loop.round === 0) return null;
+  const trace = (loop.findingsTrace ?? []).join('→');
+  const suffix = trace === '' ? '' : ` · ${trace}`;
+  if (fixLoopActive(row)) {
+    return `Fix round ${loop.round}/${loop.cap} · ${loop.state}${suffix}`;
+  }
+  if (loop.state === 'complete') return null;
+  return `Pass ${loop.round}/${loop.cap}${suffix}`;
 }
 
 interface FeedRowProps {

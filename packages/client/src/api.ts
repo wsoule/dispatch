@@ -496,6 +496,9 @@ export interface FixLoopState {
   // Set while `capped`: what the loop is waiting for. `round` alone does not
   // say — a loop can stop well short of its cap on a ruling or an error.
   stopReason?: FixLoopStop;
+  /** Open findings handed to each round's review, oldest first — [9, 4, 1] is
+   * converging, [9, 9] is thrashing. Present on API reads. */
+  findingsTrace?: number[];
   stopDetail?: string;
   updatedAt: string;
 }

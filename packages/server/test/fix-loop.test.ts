@@ -15,7 +15,11 @@ import { join } from 'node:path';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { FixLoopState } from '../src/orchestrator/fixLoop.js';
-import { escalationFor, FixLoopStore } from '../src/orchestrator/fixLoop.js';
+import {
+  escalationFor,
+  findingsTrace,
+  FixLoopStore,
+} from '../src/orchestrator/fixLoop.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -1304,4 +1308,48 @@ describe('starting the fix loop by hand', () => {
       (await fetch(`${baseUrl}/api/tasks/${taskId}/fix-loop`)).status
     ).toBe(404);
   }, 30000);
+});
+
+describe('findingsTrace', () => {
+  const snap = (over: Partial<FixLoopState>): FixLoopState => ({
+    taskId: 't-1',
+    round: 0,
+    cap: 5,
+    state: 'reviewing',
+    baseSha: 'abc',
+    lastReviewedSha: null,
+    updatedAt: '',
+    ...over,
+  });
+
+  it('one count per reviewed round, oldest first', () => {
+    const trace = findingsTrace([
+      snap({
+        round: 0,
+        reviewInputIds: Array.from({ length: 9 }, (_, i) => `f-${i}`),
+      }),
+      snap({ round: 1, state: 'implementing' }),
+      snap({ round: 1, reviewInputIds: ['f-1', 'f-2', 'f-3', 'f-4'] }),
+      snap({ round: 2, reviewInputIds: ['f-1'] }),
+    ]);
+    expect(trace).toEqual([9, 4, 1]);
+  });
+
+  it('a round reviewed twice keeps its latest snapshot', () => {
+    const trace = findingsTrace([
+      snap({ round: 1, reviewInputIds: ['a', 'b'] }),
+      snap({ round: 1, reviewInputIds: ['a', 'b', 'c'] }),
+    ]);
+    expect(trace).toEqual([3]);
+  });
+
+  it('non-reviewing snapshots and missing input lists contribute nothing', () => {
+    expect(
+      findingsTrace([
+        snap({ state: 'implementing' }),
+        snap({ state: 'capped' }),
+        snap({ round: 3, reviewInputIds: undefined }),
+      ])
+    ).toEqual([]);
+  });
 });
