@@ -2,7 +2,7 @@
   "name": "@dispatch/desktop",
   "version": "0.24.0",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
     "dev": "vite",

@@ -2,7 +2,7 @@
   "name": "@dispatch/mcp",
   "version": "0.24.0",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "bin": {
     "dispatch-mcp": "./dist/bin.js"
   },

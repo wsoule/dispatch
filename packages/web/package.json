@@ -2,7 +2,7 @@
   "name": "@dispatch/web",
   "version": "0.0.1",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
     "build": "vite build",

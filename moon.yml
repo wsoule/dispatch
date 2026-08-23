@@ -175,3 +175,14 @@ tasks:
     options:
       cache: false
       runInCI: 'always'
+
+  check-licenses:
+    command: 'bun --silent scripts/check-licenses.ts'
+    inputs:
+      - 'scripts/check-licenses.ts'
+      - '**/package.json'
+      - '**/LICENSE*'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+    options:
+      runInCI: 'always'
