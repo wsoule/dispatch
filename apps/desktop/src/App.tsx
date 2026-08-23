@@ -45,6 +45,7 @@ import { resolveExecuteModel } from './lib/models';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
+import { useTasksViewMode } from './lib/tasksViewMode';
 import {
   addProject,
   currentProjectRoot,
@@ -102,6 +103,9 @@ function App() {
   // The left rail's collapsed state, owned here because `SidebarProvider` wraps the whole
   // shell row; `Sidebar` reads it back through `useSidebar`. Persistence lives with the rail.
   const [sidebarCollapsed, setSidebarCollapsed] = useSidebarCollapsed();
+  // The Tasks view's layout, lifted to App because it's switched from the sidebar's Tasks
+  // row rather than in-page tabs.
+  const [tasksViewMode, setTasksViewMode] = useTasksViewMode();
   // Text handed to the planner from elsewhere (Brain dump's "hand it to the planner", or one
   // inbox item's "plan it"). Keyed into PlansView so a second hand-off with different text
   // remounts the composer rather than being swallowed by its existing state.
@@ -804,6 +808,8 @@ function App() {
             }}
             onSetProjectView={selectProjectView}
             onSetGlobalView={setGlobalView}
+            tasksViewMode={tasksViewMode}
+            onSetTasksViewMode={setTasksViewMode}
             syncStatus={data.syncStatus}
             onDisableAutoCommit={() =>
               void data.handleUpdateConfig({ autoCommit: false })
@@ -976,6 +982,7 @@ function App() {
                   {navState.projectView === 'board' && (
                     <BoardView
                       data={data}
+                      mode={tasksViewMode}
                       onSelectTask={(taskId) =>
                         dispatchNav({ type: 'openPeek', taskId })
                       }

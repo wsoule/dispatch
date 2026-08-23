@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import { Fragment, type ReactNode } from 'react';
 
 import { cn } from '../lib/utils';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../tooltip';
@@ -19,6 +19,10 @@ export type SidebarNavItem = {
    * notifications row whose collapsed name should fold in the unread count
    * ("Notifications (4 unread)"). Falls back to `label` when omitted. */
   ariaLabel?: string;
+  /** Extra content rendered directly below the row while the rail is expanded — a nested
+   * control that belongs to this destination (Dispatch's Tasks row hangs its layout
+   * switcher here). Hidden entirely when collapsed, like `hint`. */
+  children?: ReactNode;
 };
 
 export type SidebarNavSection = {
@@ -139,6 +143,11 @@ export function SidebarNav({
                       {accessibleLabel}
                     </TooltipContent>
                   </Tooltip>
+                ) : item.children !== undefined ? (
+                  <Fragment key={item.id}>
+                    {row}
+                    {item.children}
+                  </Fragment>
                 ) : (
                   row
                 );

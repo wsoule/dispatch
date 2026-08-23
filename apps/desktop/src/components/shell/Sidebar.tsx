@@ -1,24 +1,30 @@
 import type { SyncStatus } from '@dispatch/client';
 import {
   Brain,
+  Check,
   ChevronLeft,
   ChevronRight,
+  ChevronsUpDown,
   Cog,
   GitBranch,
   GitMerge,
   Inbox,
   LayoutDashboard,
+  LayoutGrid,
   ListChecks,
   NotebookPen,
   Palette,
   Play,
   Radar,
+  Rows3,
   Shield,
+  Target,
   Waypoints,
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
+import type { TasksViewMode } from '../../lib/tasksViewMode';
 import { SyncChip } from './SyncChip';
 import { cn } from '@/lib/utils';
 import {
@@ -27,6 +33,12 @@ import {
   type SidebarNavSection,
 } from '@/ui/ai/sidebar-nav';
 import { Button } from '@/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/ui/dropdown-menu';
 import { Kbd } from '@/ui/kbd';
 import { Sidebar as SidebarRoot, useSidebar } from '@/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
@@ -98,6 +110,18 @@ PROJECT_VIEWS.forEach((view, index) => {
   }
 });
 
+// The Tasks destination's layout options — surfaced as a dropdown nested under the Tasks
+// row while it's the active view, per the "view names belong in the sidebar" direction.
+const TASKS_VIEW_OPTIONS: {
+  id: TasksViewMode;
+  label: string;
+  icon: typeof LayoutGrid;
+}[] = [
+  { id: 'board', label: 'Board', icon: LayoutGrid },
+  { id: 'list', label: 'List', icon: Rows3 },
+  { id: 'milestones', label: 'Milestones', icon: Target },
+];
+
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
   { id: 'all-agents', label: 'All Agents', icon: Radar },
   { id: 'sessions', label: 'Sessions', icon: Play },
@@ -164,6 +188,9 @@ interface SidebarProps {
   spendToday: number | null;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
+  /** The Tasks view's active layout — drives the nested switcher under its rail row. */
+  tasksViewMode: TasksViewMode;
+  onSetTasksViewMode: (mode: TasksViewMode) => void;
   /** The board syncer's status — `null` until it has ever loaded, in which case the chip
    * renders nothing. */
   syncStatus: SyncStatus | null;
@@ -195,6 +222,8 @@ export function Sidebar({
   spendToday,
   onSetProjectView,
   onSetGlobalView,
+  tasksViewMode,
+  onSetTasksViewMode,
   syncStatus,
   onDisableAutoCommit,
   liveRail,
@@ -216,6 +245,52 @@ export function Sidebar({
         const Icon = view.icon;
         const count = badges[view.id];
         const hasCount = count !== undefined && count > 0;
+        // The Tasks row grows a nested layout dropdown while it's the active view — the
+        // page itself carries no view tabs any more.
+        const activeTasksOption =
+          TASKS_VIEW_OPTIONS.find((o) => o.id === tasksViewMode) ??
+          TASKS_VIEW_OPTIONS[0];
+        const ActiveTasksIcon = activeTasksOption.icon;
+        const tasksSwitcher =
+          view.id === 'board' &&
+          section === 'project' &&
+          projectView === 'board' &&
+          !collapsed ? (
+            <div className="pt-0.5 pb-1 pl-7">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="xs"
+                    className="text-muted-foreground hover:text-foreground h-auto gap-1.5 px-1.5 py-1 text-[12px] font-normal"
+                  >
+                    <ActiveTasksIcon className="size-3.5" />
+                    {activeTasksOption.label}
+                    <ChevronsUpDown className="size-3 opacity-60" />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start" className="min-w-36">
+                  {TASKS_VIEW_OPTIONS.map((option) => {
+                    const OptionIcon = option.icon;
+                    return (
+                      <DropdownMenuItem
+                        key={option.id}
+                        onClick={() => onSetTasksViewMode(option.id)}
+                        className="text-[12.5px]"
+                      >
+                        <OptionIcon className="size-3.5" />
+                        {option.label}
+                        {option.id === tasksViewMode && (
+                          <Check className="ml-auto size-3.5" />
+                        )}
+                      </DropdownMenuItem>
+                    );
+                  })}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+          ) : undefined;
         return {
           id: view.id,
           label: view.label,
@@ -231,6 +306,7 @@ export function Sidebar({
             index < 9 ? (
               <Kbd className={ROW_HINT_CLASS}>⌘{index + 1}</Kbd>
             ) : undefined,
+          children: tasksSwitcher,
         } satisfies SidebarNavItem;
       }),
     })

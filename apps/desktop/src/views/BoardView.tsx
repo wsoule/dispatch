@@ -1,10 +1,11 @@
+import type { TaskDoc } from '@dispatch/core/browser';
+import { statusLabel } from '@dispatch/core/browser';
 import {
   Archive,
   LayoutGrid,
   Plus,
-  Rows3,
+  SlidersHorizontal,
   Sparkles,
-  Target,
 } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 
@@ -23,18 +24,67 @@ import {
 } from '../lib/collapsedEpics';
 import { resolveListKeyCommand } from '../lib/keyboard';
 import { countMergeReady } from '../lib/mergeReady';
+import {
+  BOARD_COLUMNS_STORAGE_KEY,
+  type BoardColumnPrefs,
+  hasActiveFilters,
+  LIST_COLUMNS_STORAGE_KEY,
+  matchesTaskFilters,
+  parseBoardColumnPrefs,
+  parseHiddenListColumns,
+  parseTaskFilters,
+  TASK_FILTERS_STORAGE_KEY,
+  type TaskFilters,
+  toggleFilterValue,
+  visibleBoardStatuses,
+} from '../lib/tasksPrefs';
 import type { TasksViewMode } from '../lib/tasksViewMode';
-import { parseViewMode, VIEW_MODE_STORAGE_KEY } from '../lib/tasksViewMode';
 import { MilestonesView } from './MilestonesView';
-import { TasksListView } from './TasksListView';
+import { HIDEABLE_LIST_COLUMNS, TasksListView } from './TasksListView';
+import { FilterChips } from '@/ui/ai/filter-table';
 import { Button } from '@/ui/button';
+import { Checkbox } from '@/ui/checkbox';
 import { EmptyState } from '@/ui/chrome';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { Skeleton } from '@/ui/skeleton';
-import { Tabs, TabsList, TabsTrigger } from '@/ui/tabs';
 import { Toggle } from '@/ui/toggle';
+
+const PRIORITY_CHIP_OPTIONS = [
+  { id: 'urgent', label: 'Urgent' },
+  { id: 'high', label: 'High' },
+  { id: 'medium', label: 'Medium' },
+  { id: 'low', label: 'Low' },
+  { id: 'none', label: 'No priority' },
+];
+
+// One row of the Display popover: a checkbox + label pair, checkbox-first like every
+// column-visibility menu.
+function DisplayRow({
+  checked,
+  onChange,
+  children,
+}: {
+  checked: boolean;
+  onChange: (checked: boolean) => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <label className="hover:bg-surface-hover rounded-control flex cursor-pointer items-center gap-2 px-2 py-1 text-[12.5px]">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(value) => onChange(value === true)}
+        className="size-3.5"
+      />
+      <span className="min-w-0 flex-1 truncate">{children}</span>
+    </label>
+  );
+}
 
 interface BoardViewProps {
   data: DispatchProjectData;
+  /** Which layout renders — owned by App and switched from the sidebar's view dropdown,
+   * not from in-page tabs (the page carries actions, the rail carries navigation). */
+  mode: TasksViewMode;
   onSelectTask: (taskId: string) => void;
   /** Opens `CreateTaskModal`, optionally pre-set to a given status — TaskBoard's column
    * header's hover "+" button passes its own status through; other contexts omit it and let
@@ -92,17 +142,11 @@ function BoardSkeleton() {
  */
 export function BoardView({
   data,
+  mode,
   onSelectTask,
   onNewTask,
   onPlanWork,
 }: BoardViewProps) {
-  const [mode, setMode] = useState<TasksViewMode>(() =>
-    parseViewMode(
-      typeof window === 'undefined'
-        ? null
-        : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
-    )
-  );
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   // Which epic lanes are folded up. Session-scoped (see `collapsedEpics.ts`) and lifted to the
   // view rather than kept inside `TaskBoard` because the j/k cursor below has to skip the cards a
@@ -118,13 +162,46 @@ export function BoardView({
   );
   // Which epic's dispatch is awaiting confirmation, or null when the dialog is closed.
   const [dispatchEpicId, setDispatchEpicId] = useState<string | null>(null);
+  // The chip filters and per-view column visibility, persisted across restarts — see
+  // `tasksPrefs.ts` for the parse/defaults.
+  const [filters, setFilters] = useState<TaskFilters>(() =>
+    parseTaskFilters(window.localStorage.getItem(TASK_FILTERS_STORAGE_KEY))
+  );
+  const [boardColumnPrefs, setBoardColumnPrefs] = useState<BoardColumnPrefs>(
+    () =>
+      parseBoardColumnPrefs(
+        window.localStorage.getItem(BOARD_COLUMNS_STORAGE_KEY)
+      )
+  );
+  const [hiddenListColumns, setHiddenListColumns] = useState<string[]>(() =>
+    parseHiddenListColumns(
+      window.localStorage.getItem(LIST_COLUMNS_STORAGE_KEY)
+    )
+  );
   // "Merge all ready" toolbar button state — see the merge queue's identical control
   // for the fuller comment; this is the Board's copy of the same action.
   const [mergeAllPending, setMergeAllPending] = useState(false);
 
   useEffect(() => {
-    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, mode);
-  }, [mode]);
+    window.localStorage.setItem(
+      TASK_FILTERS_STORAGE_KEY,
+      JSON.stringify(filters)
+    );
+  }, [filters]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      BOARD_COLUMNS_STORAGE_KEY,
+      JSON.stringify(boardColumnPrefs)
+    );
+  }, [boardColumnPrefs]);
+
+  useEffect(() => {
+    window.localStorage.setItem(
+      LIST_COLUMNS_STORAGE_KEY,
+      JSON.stringify(hiddenListColumns)
+    );
+  }, [hiddenListColumns]);
 
   useEffect(() => {
     window.sessionStorage.setItem(
@@ -149,18 +226,75 @@ export function BoardView({
     () => new Set(data.archivedTasks.map((t) => t.meta.id)),
     [data.archivedTasks]
   );
+  // The chip filters, as a predicate — `undefined` when nothing is active so the list/board
+  // skip a per-task closure call on the (common) unfiltered path.
+  const taskFilterFn = useMemo(
+    () =>
+      hasActiveFilters(filters)
+        ? (doc: TaskDoc) => matchesTaskFilters(doc, filters)
+        : undefined,
+    [filters]
+  );
+  const filteredBoardTasks = useMemo(
+    () =>
+      taskFilterFn === undefined ? boardTasks : boardTasks.filter(taskFilterFn),
+    [boardTasks, taskFilterFn]
+  );
+  // Card counts per status from the *unfiltered* board set — column visibility (hide-empty)
+  // is decided from these, so a chip filter narrows cards without making columns vanish.
+  const countByStatus = useMemo(() => {
+    const map = new Map<string, number>();
+    for (const doc of boardTasks) {
+      if (doc.meta.kind === 'epic') continue;
+      map.set(doc.meta.status, (map.get(doc.meta.status) ?? 0) + 1);
+    }
+    return map;
+  }, [boardTasks]);
+  const visibleStatuses = useMemo(
+    () =>
+      data.config !== null
+        ? visibleBoardStatuses(
+            data.config.statuses,
+            boardColumnPrefs,
+            countByStatus
+          )
+        : [],
+    [data.config, boardColumnPrefs, countByStatus]
+  );
   // The same lanes `TaskBoard` renders, from the same pure function — this copy exists only to
   // give the j/k cursor an order that matches what is on screen.
   const lanes = useMemo(
     () =>
       data.config !== null
-        ? groupTasksByEpicLane(boardTasks, data.config.statuses, data.epics)
+        ? groupTasksByEpicLane(filteredBoardTasks, visibleStatuses, data.epics)
         : [],
-    [boardTasks, data.config, data.epics]
+    [filteredBoardTasks, data.config, visibleStatuses, data.epics]
   );
   const orderedTaskIds = useMemo(
     () => visibleLaneTaskIds(lanes, collapsedLaneKeys),
     [lanes, collapsedLaneKeys]
+  );
+  // Chip counts come from the active (non-archived) tasks so the numbers match what a
+  // default board actually shows.
+  const statusChipCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const doc of data.tasks) {
+      if (doc.meta.kind === 'epic') continue;
+      counts[doc.meta.status] = (counts[doc.meta.status] ?? 0) + 1;
+    }
+    return counts;
+  }, [data.tasks]);
+  const priorityChipCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const doc of data.tasks) {
+      if (doc.meta.kind === 'epic') continue;
+      counts[doc.meta.priority] = (counts[doc.meta.priority] ?? 0) + 1;
+    }
+    return counts;
+  }, [data.tasks]);
+  const hiddenListColumnSet = useMemo(
+    () => new Set(hiddenListColumns),
+    [hiddenListColumns]
   );
   const queuedRunIds = useMemo(
     () => new Set((data.mergeQueue?.entries ?? []).map((e) => e.runId)),
@@ -229,7 +363,6 @@ export function BoardView({
   if (data.tasksLoading || data.config === null) {
     return (
       <div className="flex h-full min-h-0 flex-col gap-4">
-        <h1 className="text-foreground text-[13px] font-semibold">Tasks</h1>
         <BoardSkeleton />
       </div>
     );
@@ -237,47 +370,73 @@ export function BoardView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <h1 className="text-foreground text-[13px] leading-6 font-semibold">
-          Tasks
-        </h1>
+      {/* No page header, no in-page view tabs — the layout switcher lives in the sidebar's
+          Tasks row; this row carries only actions. */}
+      <div className="flex flex-wrap items-start justify-end gap-2">
         <div className="flex flex-wrap items-center justify-end gap-2">
-          <Tabs value={mode} onValueChange={(v) => setMode(v as TasksViewMode)}>
-            <TabsList
-              aria-label="View"
-              className="border-border h-7 gap-0.5 rounded-md border bg-transparent p-0.5"
-            >
-              <TabsTrigger
-                value="list"
-                className="px-2 text-[13px] font-normal"
-              >
-                <Rows3 className="size-3.5" />
-                <span className="whitespace-nowrap max-sm:sr-only">
-                  List view
-                </span>
-              </TabsTrigger>
-              <TabsTrigger
-                value="board"
-                className="px-2 text-[13px] font-normal"
-              >
-                <LayoutGrid className="size-3.5" />
-                <span className="whitespace-nowrap max-sm:sr-only">
-                  Board view
-                </span>
-              </TabsTrigger>
-              {/* Milestones groups the same tasks a different way — it belongs
-                  beside the other groupings, not in the rail as its own place. */}
-              <TabsTrigger
-                value="milestones"
-                className="px-2 text-[13px] font-normal"
-              >
-                <Target className="size-3.5" />
-                <span className="whitespace-nowrap max-sm:sr-only">
-                  Milestones
-                </span>
-              </TabsTrigger>
-            </TabsList>
-          </Tabs>
+          {mode !== 'milestones' && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="secondary" size="sm">
+                  <SlidersHorizontal className="size-3.5" />
+                  Display
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-60 p-2">
+                {mode === 'board' ? (
+                  <div className="flex flex-col gap-0.5">
+                    <DisplayRow
+                      checked={boardColumnPrefs.hideEmpty}
+                      onChange={(checked) =>
+                        setBoardColumnPrefs((prev) => ({
+                          ...prev,
+                          hideEmpty: checked,
+                        }))
+                      }
+                    >
+                      Hide empty columns
+                    </DisplayRow>
+                    <div className="dense-label px-2 pt-2 pb-0.5">Columns</div>
+                    {(data.config?.statuses ?? []).map((status) => (
+                      <DisplayRow
+                        key={status}
+                        checked={!boardColumnPrefs.hidden.includes(status)}
+                        onChange={(checked) =>
+                          setBoardColumnPrefs((prev) => ({
+                            ...prev,
+                            hidden: checked
+                              ? prev.hidden.filter((s) => s !== status)
+                              : [...prev.hidden, status],
+                          }))
+                        }
+                      >
+                        {statusLabel(status)}
+                      </DisplayRow>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-0.5">
+                    <div className="dense-label px-2 pb-0.5">Columns</div>
+                    {HIDEABLE_LIST_COLUMNS.map((column) => (
+                      <DisplayRow
+                        key={column.key}
+                        checked={!hiddenListColumns.includes(column.key)}
+                        onChange={(checked) =>
+                          setHiddenListColumns((prev) =>
+                            checked
+                              ? prev.filter((k) => k !== column.key)
+                              : [...prev, column.key]
+                          )
+                        }
+                      >
+                        {column.label}
+                      </DisplayRow>
+                    ))}
+                  </div>
+                )}
+              </PopoverContent>
+            </Popover>
+          )}
           {showArchiveToggle(data.showArchived, data.archivedTasks.length) && (
             <Toggle
               variant="outline"
@@ -308,6 +467,41 @@ export function BoardView({
           </Button>
         </div>
       </div>
+
+      {/* The shared status/priority chip filters (the gallery's Filter Table row) — one
+          filter model for board and list. Milestones reads whole epics, so chips don't
+          apply there. */}
+      {data.config !== null &&
+        boardTasks.length > 0 &&
+        mode !== 'milestones' && (
+          <div className="flex min-w-0 items-center gap-3">
+            <FilterChips
+              options={data.config.statuses.map((status) => ({
+                id: status,
+                label: statusLabel(status),
+              }))}
+              active={filters.statuses}
+              onToggle={(id) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  statuses: toggleFilterValue(prev.statuses, id),
+                }))
+              }
+              counts={statusChipCounts}
+            />
+            <FilterChips
+              options={PRIORITY_CHIP_OPTIONS}
+              active={filters.priorities}
+              onToggle={(id) =>
+                setFilters((prev) => ({
+                  ...prev,
+                  priorities: toggleFilterValue(prev.priorities, id),
+                }))
+              }
+              counts={priorityChipCounts}
+            />
+          </div>
+        )}
 
       {boardTasks.length === 0 ? (
         <EmptyState
@@ -340,9 +534,9 @@ export function BoardView({
               setCollapsedLaneKeys((prev) => toggleCollapsedEpic(prev, key))
             }
             onRequestWorkEpic={setDispatchEpicId}
-            tasks={boardTasks}
+            tasks={filteredBoardTasks}
             archivedTaskIds={archivedTaskIds}
-            statuses={data.config.statuses}
+            statuses={visibleStatuses}
             readyIds={data.readyIds}
             blockedIds={data.blockedIds}
             liveRunStateByTaskId={data.liveRunStateByTaskId}
@@ -364,7 +558,12 @@ export function BoardView({
           />
         </div>
       ) : (
-        <TasksListView data={data} onSelectTask={onSelectTask} />
+        <TasksListView
+          data={data}
+          onSelectTask={onSelectTask}
+          taskFilter={taskFilterFn}
+          hiddenColumns={hiddenListColumnSet}
+        />
       )}
 
       {dispatchEpicId !== null && (
