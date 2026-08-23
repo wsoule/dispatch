@@ -311,11 +311,20 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
   // round — execute rounds still reading 'review', and unfoldable review/verify agents
   // (their execute run merged away or healed as a zombie) each reading 'review' or 'failed'
   // on their own — stacking near-identical rows for one task. Among a task's settled rows
-  // (review/failed, any run kind) only the newest speaks for it: the latest event is the
-  // task's current state, the rest are history, not work waiting on anyone. Live rows
-  // (working/waiting) and queue-backed rows (landing) always survive.
+  // (review/failed, any run kind) only the newest speaks for it, and none of them do while
+  // the task has a live row: a run in flight supersedes the older rounds, whose review rows
+  // come back only if it settles without replacing them. Queue-backed rows (landing) always
+  // survive.
   const settled = (entry: (typeof entries)[number]): boolean =>
     entry.row.state === 'review' || entry.row.state === 'failed';
+  const liveTasks = new Set(
+    entries
+      .filter(
+        (entry) =>
+          entry.row.state === 'working' || entry.row.state === 'waiting'
+      )
+      .map((entry) => entry.row.taskId)
+  );
   const latestSettledByTask = new Map<string, string>();
   for (const entry of entries) {
     if (!settled(entry)) continue;
@@ -328,7 +337,8 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     .filter(
       (entry) =>
         !settled(entry) ||
-        entry.createdAt === latestSettledByTask.get(entry.row.taskId)
+        (!liveTasks.has(entry.row.taskId) &&
+          entry.createdAt === latestSettledByTask.get(entry.row.taskId))
     )
     .map((entry) => entry.row);
 

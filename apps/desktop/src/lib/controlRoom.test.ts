@@ -79,8 +79,18 @@ describe('grouping', () => {
       input({
         runs: [
           run({ id: 'r-a', state: 'finished' }),
-          run({ id: 'r-b', state: 'running' }),
-          run({ id: 'r-c', state: 'awaiting-approval' }),
+          run({
+            id: 'r-b',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'running',
+          }),
+          run({
+            id: 'r-c',
+            taskId: 't-3',
+            branch: 'dispatch/t-3',
+            state: 'awaiting-approval',
+          }),
         ],
       })
     );
@@ -202,7 +212,12 @@ describe('filtering', () => {
       input({
         runs: [
           run({ id: 'r-a', state: 'running' }),
-          run({ id: 'r-b', state: 'finished' }),
+          run({
+            id: 'r-b',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'finished',
+          }),
         ],
         activeStates: new Set(),
       })
@@ -215,8 +230,18 @@ describe('filtering', () => {
       input({
         runs: [
           run({ id: 'r-a', state: 'running' }),
-          run({ id: 'r-b', state: 'finished' }),
-          run({ id: 'r-c', state: 'awaiting-approval' }),
+          run({
+            id: 'r-b',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'finished',
+          }),
+          run({
+            id: 'r-c',
+            taskId: 't-3',
+            branch: 'dispatch/t-3',
+            state: 'awaiting-approval',
+          }),
         ],
         activeStates: new Set<FeedState>(['working', 'review']),
       })
@@ -244,7 +269,12 @@ describe('counts', () => {
   test('ribbon counts are unaffected by the active filter', () => {
     const runs = [
       run({ id: 'r-a', state: 'running' }),
-      run({ id: 'r-b', state: 'finished' }),
+      run({
+        id: 'r-b',
+        taskId: 't-2',
+        branch: 'dispatch/t-2',
+        state: 'finished',
+      }),
     ];
     const unfiltered = buildFeed(input({ runs }));
     const filtered = buildFeed(
@@ -635,4 +665,29 @@ describe('stacked standalone review agents collapse too', () => {
     expect(model.groups[0]?.rows.map((r) => r.runId)).toEqual(['rv-1']);
     expect(model.groups[0]?.state).toBe('failed');
   });
+});
+
+test("a live run suppresses the task's older review and failed rows", () => {
+  const model = buildFeed(
+    input({
+      runs: [
+        run({
+          id: 'r-old',
+          branch: 'dispatch/t-1-round1',
+          state: 'finished',
+          createdAt: '2026-07-26T00:00:00.000Z',
+        }),
+        run({
+          id: 'r-live',
+          branch: 'dispatch/t-1-round2',
+          state: 'running',
+          createdAt: '2026-07-26T01:00:00.000Z',
+        }),
+      ],
+    })
+  );
+  // Only the working row: the run in flight supersedes the older round's review.
+  expect(model.total).toBe(1);
+  expect(model.groups.map((g) => g.state)).toEqual(['working']);
+  expect(model.counts.review).toBe(0);
 });
