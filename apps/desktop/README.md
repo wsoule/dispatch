@@ -24,18 +24,18 @@ FSL-1.1-ALv2, like the rest of this repository — see the root `LICENSE`.
 ## Dev workflow
 
 ```bash
-bun install
+pnpm install
 moonx desktop:tauri-dev   # needs Rust stable (rustup) installed
 ```
 
-Other useful commands, run from the repo root:
+Other useful commands, run from anywhere in the repo:
 
 - `moonx desktop:build` — `tsc -b && vite build` (frontend only).
 - `moonx desktop:test` — frontend unit tests (`bun test`).
 - `moonx desktop:typecheck` — typecheck.
 - `cd apps/desktop/src-tauri && cargo test` — Rust unit tests (parsers, cost
-  pricing, SQLite queries, tail/watcher logic). Not wired into the root
-  `bun run tsc`/`test` scripts this phase — Rust CI lands in Phase 6.
+  pricing, SQLite queries, tail/watcher logic). Not wired into moon's
+  `:typecheck`/`:test` tasks this phase — Rust CI lands in Phase 6.
 - `cd apps/desktop/src-tauri && cargo build` — compile the Tauri binary without
   launching a window.
 
@@ -65,10 +65,10 @@ Other useful commands, run from the repo root:
   configs, not merged into the monorepo's `tsconfig.options.json` — they don't
   turn on `strict`/`strictNullChecks`, and retrofitting that onto UI code not
   authored against it risks behavior changes. The desktop package therefore opts
-  out of the monorepo's shared `tsgo`-based `tsc` script and uses plain
+  out of the monorepo's shared `tsgo`-based typecheck task and uses plain
   TypeScript's `tsc -b`/`tsc -b --noEmit` instead (see `package.json` scripts);
-  it's still wired into the root `tsconfig.json` project references and the root
-  `bun run tsc` shortcut runs it like every other package.
+  it's still wired into the root `tsconfig.json` project references, and
+  `moonx desktop:typecheck` runs it like every other project's `typecheck` task.
 - **Lint:** `tsconfig.oxlint.json` covers `apps/**`, so this package is linted
   with the repo's type-aware oxlint rules.
   `typescript/strict-boolean-expressions` and

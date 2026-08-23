@@ -6,17 +6,17 @@ ones already passed.
 
 ## 1. CI green, including the Rust job
 
-All jobs in `.github/workflows/ci.yml` must pass on the release commit: `verify`
-(format/lint/stylelint/build/tsc/tests), `desktop` (JS build+test), `rust`
-(`cargo test` for `apps/desktop/src-tauri`), `pinned-actions`. Note: `rust` only
-runs `cargo test` today — `cargo fmt --check`/`clippy -D warnings` aren't
-enforced yet (`apps/desktop/src-tauri` isn't clean against either) — don't treat
-local fmt/clippy failures as blockers until CI itself gates on them.
+All jobs in `.github/workflows/ci.yml` must pass on the release commit: `ci`
+(`moon ci` — build/typecheck/test plus every root lint/audit/license task),
+`rust` (`cargo test` for `apps/desktop/src-tauri`), `actions-pinned`. Note:
+`rust` only runs `cargo test` today — `cargo fmt --check`/`clippy -D warnings`
+aren't enforced yet (`apps/desktop/src-tauri` isn't clean against either) —
+don't treat local fmt/clippy failures as blockers until CI itself gates on them.
 
-## 2. `bun run build:sidecar` smoke passes
+## 2. `scripts/build-sidecar.ts` smoke passes
 
 ```bash
-bun run build:sidecar
+bun scripts/build-sidecar.ts
 ```
 
 Compiles `packages/server/src/bin.ts` into `dist-sidecar/dispatchd` via

@@ -159,13 +159,15 @@ server, the desktop app, and the orchestrator. Roadmap:
 
 To run the CLI from a checkout instead of the installed app:
 
-    bun install && bun run build
+    proto use && pnpm install && moon run :build
     node packages/cli/dist/cli.js init
     node packages/cli/dist/cli.js doctor
 
-Bun monorepo (workspace catalog, tsdown builds, `bun test`, oxlint/oxfmt). From
-the repo root: `bun run build`, `bun run test`, `bun run tsc`, `bun run format`,
-`bun run lint`. Agent conventions live in `AGENTS.md` and `.agents/skills/`.
+pnpm + moon monorepo (dependency catalog in `pnpm-workspace.yaml`, tsdown
+builds, `bun test`, oxlint/oxfmt). From anywhere in the repo: `moon run :build`,
+`moon run :test`, `moonx <project>:typecheck`, `moon run root:format`,
+`moon run root:lint`. Agent conventions live in `AGENTS.md` and
+`.agents/skills/`.
 
 ### Daemon + web UI
 
@@ -176,11 +178,11 @@ Run the daemon and the web UI's dev server side by side for live-reloading
 frontend work:
 
     bun packages/server/src/bin.ts --root <path-to-a-dispatch-repo> --port 4771
-    bun ws web dev
+    moonx web:dev
 
-`bun ws web dev` proxies `/api` and `/ws` to `http://127.0.0.1:4771` (see
+`moonx web:dev` proxies `/api` and `/ws` to `http://127.0.0.1:4771` (see
 `packages/web/vite.config.ts`), so the Vite dev server on its own port talks to
-a real dispatchd. For a production-style check, `bun run build` builds the web
+a real dispatchd. For a production-style check, `moonx web:build` builds the web
 UI into `packages/web/dist`, then dispatchd serves it directly — no separate
 frontend server needed. `dispatch serve` / `dispatch ui` (from `@dispatch/cli`)
 wrap this daemon for end users.

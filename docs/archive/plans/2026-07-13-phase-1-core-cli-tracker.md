@@ -94,7 +94,7 @@ packages:
 
 `.gitignore`:
 
-```
+```text
 node_modules/
 dist/
 *.tsbuildinfo
@@ -654,6 +654,7 @@ git commit -m "feat(core): activity log append helper"
 
 - Consumes: everything from Tasks 2–4.
 - Produces:
+
   ```ts
   interface CreateInput {
     title: string;
@@ -694,6 +695,7 @@ git commit -m "feat(core): activity log append helper"
     taskFilePath(id: string): string | null;
   }
   ```
+
 - File name convention: `<id>-<slug>.md`; lookup is by id prefix, so title edits
   never rename files.
 

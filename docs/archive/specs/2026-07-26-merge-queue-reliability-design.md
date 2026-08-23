@@ -49,7 +49,7 @@ function of fewer parameters where more are expected, so `merge-queue.test.ts`'s
 On expiry `defaultCommandRunner` kills the process and returns `ok: false`, and
 the queue fails the entry with a reason that names the remedy:
 
-```
+```text
 verify timed out after 10m — raise orchestrator.verifyTimeoutSec or narrow verifyCommand
 ```
 
@@ -79,7 +79,7 @@ only stops making a human do it.
 infinite loop: the daemon dies mid-verify, boots, requeues, wedges again. Past 3
 attempts the entry fails for real:
 
-```
+```text
 abandoned after 3 interrupted attempts — check verifyCommand
 ```
 

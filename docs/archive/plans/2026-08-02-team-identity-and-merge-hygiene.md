@@ -952,7 +952,7 @@ first task edit rather than through an invite flow."
 - Consumes: nothing from earlier tasks at the core layer — the actor arrives as
   an already-serialized string supplied by the caller.
 - Produces: `appendActivity(body: string, line: string, actor?: string): string`
-  — appends ` — <actor>` when supplied. `UpdatePatch` gains
+  — appends `" — <actor>"` when supplied. `UpdatePatch` gains
   `activityActor?: string`.
 
 - [ ] **Step 1: Write the failing test**
@@ -1474,7 +1474,7 @@ Export `mergeTaskFile` from `packages/core/src/index.ts`.
 `dispatch init` writes (creating or appending, never clobbering an existing
 line):
 
-```
+```text
 # .gitattributes
 .dispatch/tasks/*.md merge=dispatch-task
 ```
@@ -1569,7 +1569,7 @@ store still writes `.dispatch/inbox.md`.
 - [ ] **Step 3: Implement**
 
 Change the store's file path from `join(rootDir, DISPATCH_DIR, 'inbox.md')` to
-`join(rootDir, DISPATCH_DIR, 'inbox', `${handle}.md`)`, creating the directory
+``join(rootDir, DISPATCH_DIR, 'inbox', `${handle}.md`)``, creating the directory
 on write. Add `listAll()` scanning `.dispatch/inbox/*.md` and tagging each item
 with the handle taken from its filename. Add `migrateLegacy()` moving an
 existing `.dispatch/inbox.md` into the local actor's file and deleting the

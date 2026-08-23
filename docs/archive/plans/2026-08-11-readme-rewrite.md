@@ -156,7 +156,7 @@ sentence "The registration assumes `dispatch` is on `PATH`; a packaged installer
 lands in a later phase." — the installer shipped; the cask puts `dispatch` on
 PATH (Step 2 says so).
 
-2. `## Dependency graph with Carto (optional)` — promoted from its current spot
+1. `## Dependency graph with Carto (optional)` — promoted from its current spot
    under Install. Keep visible: the first paragraph (what blast-radius scoping
    does, the TS-only fallback scanner, `dispatch doctor` reporting), the
    `npm install -g carto-md` command, and the `carto.enabled` policy paragraph.
@@ -203,8 +203,10 @@ relocated) somewhere in the new file; the only sanctioned deletions are
 
 Run from the repo root:
 
-    bun run format
-    bun run lint
+```bash
+bun run format
+bun run lint
+```
 
 Expected: lint reports 0 errors (warnings pre-exist). The formatter may rewrap
 the markdown; that is fine.

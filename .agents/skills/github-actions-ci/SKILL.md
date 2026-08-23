@@ -3,7 +3,8 @@ name: github-actions-ci
 description:
   Use when editing GitHub Actions workflows or composite actions, adding or
   bumping an action, changing the CI verify steps, or touching Dependabot
-  config. Explains the SHA-pin rule that CI enforces and the shared Bun setup.
+  config. Explains the SHA-pin rule that CI enforces and the shared
+  proto/moon/pnpm setup.
 ---
 
 # GitHub Actions and CI
@@ -30,21 +31,25 @@ To find the SHA for a version, resolve the tag on the action's repo (for example
 `git ls-remote https://github.com/actions/checkout v6.0.3`) rather than
 guessing.
 
-## Shared Bun setup
+## Shared toolchain setup
 
 Every CI job installs the toolchain through the local composite action
-`./.github/actions/setup`. It reads the Bun version from `.prototools` (single
-source of truth — bump it there and all jobs follow), restores the Bun install
-cache, and runs `bun install --frozen-lockfile`. Reuse this action in new jobs
-instead of re-adding setup steps, so the toolchain version and install fast-path
-stay in one place.
+`./.github/actions/setup`. It reads every tool pin (bun, pnpm, node, moon, gh)
+from `.prototools` via `moonrepo/setup-toolchain` (single source of truth — bump
+a pin there and all jobs follow), caches the proto toolchain, the pnpm store,
+and moon's hash/output cache, then runs `pnpm install --frozen-lockfile`. Reuse
+this action in new jobs instead of re-adding setup steps, so the toolchain
+version and install fast-path stay in one place.
 
 ## Verify steps
 
-The `verify` job runs the repo's checks in this order: `format:check`, `lint`,
-`lint:css`, `tsc`, `test`, `build`. When you add a new root-level check, add it
-here too so CI and local verification stay aligned. Keep step commands as
-`bun run <script>` wrappers rather than inlining tool invocations.
+The `ci` job runs `moon ci` with an explicit target list covering build,
+typecheck, test, and every root-level lint/audit/license task (see
+`.github/workflows/ci.yml`). `moon ci` additionally runs every other affected
+`runInCI`-enabled task through `--include-relations`, so the explicit list adds
+cold-run entry points but never subtracts — a new root-level check with
+`runInCI: 'always'` is picked up automatically; only add it to the explicit list
+if you want it to always run even when nothing affects it.
 
 ## Dependabot
 

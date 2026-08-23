@@ -91,7 +91,7 @@ The spike lives in `.agents/ignore/pierre-edit-spike/` and is not a deliverable.
 
 Three layers, each usable without the one above it.
 
-```
+```text
 apply / suggest UI          PierreReviewDiff, ReviewThread
         │
 editor seam                 pierreEditor.ts + EditProvider + edit flag

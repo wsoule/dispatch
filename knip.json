@@ -5,8 +5,8 @@
   // the vite/playwright/tsdown configs. Only the three it cannot see are listed.
   "workspaces": {
     ".": {
-      // Root-level tooling invoked from package.json scripts and the husky
-      // hooks, not imported by anything.
+      // Root-level tooling invoked from moon tasks and the moon-managed git
+      // hooks (.moon/workspace.yml's vcs.hooks), not imported by anything.
       "entry": ["scripts/*.ts"],
       "project": ["scripts/**/*.ts"]
     },
@@ -39,15 +39,36 @@
     }
   },
 
-  // Both are resolved at runtime through `import.meta.resolve(...)` on the
-  // package.json rather than imported — see executors/claude.ts locating the
-  // MCP server's bin, and commands/daemon.ts locating dispatchd. They are real
-  // dependencies that no static analysis can see.
-  "ignoreDependencies": ["@dispatch/mcp", "@dispatch/server"],
+  // Resolved at runtime through `import.meta.resolve(...)` on the package.json
+  // rather than imported — see executors/claude.ts locating the MCP server's
+  // bin, and commands/daemon.ts locating dispatchd. Real dependencies that no
+  // static analysis can see.
+  //
+  // @moonrepo/cli is the enabler knip's built-in `moonrepo` plugin checks for
+  // (node_modules/knip/dist/plugins/moonrepo) — it turns on the plugin's scan
+  // of moon.yml/.moon/tasks/*.yml, so it is used even though nothing invokes
+  // its binary directly.
+  //
+  // lint-staged runs via `pnpm exec lint-staged` in `.moon/workspace.yml`'s
+  // `vcs.hooks.pre-commit`; the moonrepo plugin only scans moon.yml and
+  // .moon/tasks/*.yml, not .moon/workspace.yml, so it can't see this usage.
+  "ignoreDependencies": [
+    "@dispatch/mcp",
+    "@dispatch/server",
+    "@moonrepo/cli",
+    "lint-staged"
+  ],
 
   // pgrep/pkill are spawned by ensure-daemon-race.test.ts to inspect and clean
   // up stray daemon processes. carto is probed by the demo's preflight and is
   // deliberately optional — it degrades to a built-in scanner when absent.
   // System binaries, not anything this repo can declare.
-  "ignoreBinaries": ["pgrep", "pkill", "carto"]
+  //
+  // noop is moon's built-in no-op command (tag-publishable.yml's `prepublish`
+  // guard runs it), not a real binary. tsdown is a real devDependency, but
+  // only in the four tsdown-tagged packages (core/client/cli/mcp) — knip's
+  // moonrepo plugin is root-only and checks .moon/tasks/*.yml commands
+  // against the root package.json, which never lists per-package build
+  // tools.
+  "ignoreBinaries": ["pgrep", "pkill", "carto", "noop", "tsdown"]
 }

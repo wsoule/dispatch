@@ -1,4 +1,4 @@
-# Bun TypeScript Monorepo Template
+# Dispatch Monorepo
 
 ## Agent Environment
 
@@ -9,17 +9,52 @@ AI-friendly output:
 export AGENT=1
 ```
 
+Most local moon tasks (formatters, benchmarks, worktree management) are
+configured with `runInCI: 'always'` so they keep working in CI-marked shells
+like agent harnesses. Tasks connected to the build graph (dev servers, e2e
+variants, publish guards) stay CI-skipped — run those with
+`moonx <target> --ignore-ci-checks`, e.g.
+`moonx desktop:dev --ignore-ci-checks`. For non-moon commands that CI-gate
+themselves, unset the var: `CI= pnpm publish --dry-run`.
+
+## Toolchain
+
+- Tool versions (bun, pnpm, node, moon, gh) are pinned in `.prototools` and
+  managed by [proto](https://moonrepo.dev/docs/proto); run `proto use` if a tool
+  is missing or a pin changed.
+- [moon](https://moonrepo.dev/docs) is the task runner; `package.json` scripts
+  are npm lifecycle hooks only.
+
 ## Core Rules
 
-- Use `bun` for commands and dependency work. Do not use `npm`, `pnpm`, `npx`,
-  or similar tools unless there is a specific reason.
-- Dependencies use Bun's root `workspaces.catalog`. Never add dependency
+- Use `pnpm` for install/add/remove/dedupe/package-manager work. Do not use
+  `bun`, `npm`, `yarn`, `npx`, or similar tools for package operations unless
+  there is a specific reason.
+- Dependencies use the `catalog` in `pnpm-workspace.yaml`. Never add dependency
   versions directly to package-level `package.json` files unless a published
   package intentionally needs its own range.
-- Run commands from the monorepo root when they operate across the repo. Use
-  package directories for package-local scripts, or use
-  `bun ws <project> <task>` as the root shortcut when that fits the task.
+- Run tasks through moon: `moon run <project>:<task>` (or the `moonx` shorthand)
+  works from anywhere in the repo. `moonx <project>:<task> -- args` forwards
+  arguments. Discover tasks with `moon tasks <project>`.
 - Preserve trailing newlines at the end of files.
+- Setup steps for a fresh clone live in `CONTRIBUTING.md`.
+
+## Licensing
+
+Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
+
+- `packages/core`, `packages/client`, `packages/cli`, `packages/mcp` are MIT.
+- Everything else (`packages/server`, `packages/ui`, `packages/web`,
+  `packages/demo`, `apps/desktop`, `apps/demo`, `apps/site`) is `FSL-1.1-ALv2`
+  (`LICENSE`), source-available and converting to Apache-2.0 two years after
+  each release.
+
+When adding a new workspace package, add it to the `EXPECTED` map in
+`scripts/check-licenses.ts` with the license the split above assigns it, set
+`package.json`'s `"license"` field to match, and add a sibling `LICENSE` file
+carrying that license's text (skip the file only for `UNLICENSED` packages).
+`moon run root:check-licenses` enforces the package.json/LICENSE-file pairing
+for every mapped package and runs in CI on every PR.
 
 ## Skills
 
@@ -54,16 +89,17 @@ Do not put source files, tests, or committed documentation under
 ## Verification Baseline
 
 After code changes, verification is not complete until you have run these from
-the monorepo root:
+anywhere in the repo:
 
 ```bash
-bun run format
-bun run lint
+moon run root:format
+moon run root:lint
 ```
 
-Also run the relevant package-level `bun run tsc` and focused tests for the
-changed area. For docs-only or AGENTS/skill-only changes, formatting and linting
-are sufficient unless the edit touches executable code or package config.
+Also run the relevant `moonx <project>:typecheck` and focused
+`moonx <project>:test` for the changed area. For docs-only or AGENTS/skill-only
+changes, formatting and linting are sufficient unless the edit touches
+executable code or package config.
 
 ## Code Readability
 
