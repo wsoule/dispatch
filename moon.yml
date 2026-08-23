@@ -1,0 +1,177 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+
+# Type-aware lint resolves @dispatch/* through each package's built dist,
+# so the root project depends on every dist-producing project.
+dependsOn:
+  - 'core'
+  - 'client'
+  - 'cli'
+  - 'mcp'
+  - 'web'
+  - 'desktop'
+
+workspace:
+  inheritedTasks:
+    # No root tsconfig to typecheck; root `bun test` would run every suite.
+    exclude: ['test', 'typecheck']
+
+tasks:
+  lint:
+    command: 'oxlint --type-aware --tsconfig tsconfig.oxlint.json .'
+    deps:
+      - '^:build'
+    inputs:
+      - '**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'
+      - '!.moon/cache/**'
+      - '!.moon/hooks/**'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+      - '.oxlintrc.json'
+      - 'tsconfig.oxlint.json'
+    options:
+      runInCI: 'always'
+
+  lint-fix:
+    command: 'oxlint --type-aware --tsconfig tsconfig.oxlint.json --fix .'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  lint-css:
+    script: 'stylelint "**/*.css" --allow-empty-input'
+    inputs:
+      - '**/*.css'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+      - 'stylelint.config.js'
+    options:
+      runInCI: 'always'
+
+  lint-css-fix:
+    script: 'stylelint "**/*.css" --allow-empty-input --fix'
+    options:
+      cache: false
+      runInCI: 'always'
+
+  format:
+    command: 'oxfmt .'
+    options:
+      cache: false
+      runInCI: 'always'
+
+  format-check:
+    command: 'oxfmt --check .'
+    inputs:
+      - '**/*'
+      - '!.moon/cache/**'
+      - '!.moon/hooks/**'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+    options:
+      runInCI: 'always'
+
+  # knip resolves cross-package imports through exports maps pointing at
+  # dist/*, so builds must run first (same reason as lint).
+  lint-deadcode:
+    command: 'knip'
+    deps:
+      - '^:build'
+    inputs:
+      - '**/*.{js,jsx,ts,tsx}'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+      - '!.moon/cache/**'
+      - 'knip.json'
+    options:
+      runInCI: 'always'
+
+  lint-dup:
+    command: 'jscpd packages apps'
+    inputs:
+      - 'packages/**/*'
+      - 'apps/**/*'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+      - '.jscpd.json'
+    options:
+      runInCI: 'always'
+
+  lint-arch:
+    command: 'depcruise packages apps'
+    inputs:
+      - 'packages/**/*.{ts,tsx}'
+      - 'apps/**/*.{ts,tsx}'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+      - '.dependency-cruiser.json'
+    options:
+      runInCI: 'always'
+
+  lint-spelling:
+    command: 'cspell --no-progress --no-summary --show-suggestions .'
+    inputs:
+      - '**/*'
+      - '!**/node_modules/**'
+      - '!**/dist/**'
+      - '!.moon/cache/**'
+      - 'cspell.json'
+      - '.cspell-dictionary.txt'
+    options:
+      runInCI: 'always'
+
+  lint-md:
+    command: 'markdownlint-cli2'
+    inputs:
+      - '**/*.md'
+      - '!**/node_modules/**'
+      - '.markdownlint-cli2.jsonc'
+    options:
+      runInCI: 'always'
+
+  lint-types:
+    command: 'type-coverage -p tsconfig.oxlint.json'
+    deps:
+      - '^:build'
+    options:
+      runInCI: 'always'
+
+  lint-chrome:
+    command: 'bun scripts/check-chrome-utilities.ts'
+    inputs:
+      - 'scripts/check-chrome-utilities.ts'
+      - 'apps/desktop/src/**/*'
+    options:
+      runInCI: 'always'
+
+  audit:
+    command: 'pnpm audit --audit-level critical'
+    options:
+      cache: false
+      runInCI: 'always'
+
+  audit-full:
+    command: 'pnpm audit'
+    options:
+      cache: false
+      # Informational; CI marks it continue-on-error at the workflow level.
+      runInCI: 'skip'
+
+  clean:
+    script:
+      'rm -rf packages/*/dist apps/*/dist dist-sidecar
+      packages/*/tsconfig.tsbuildinfo apps/*/tsconfig.tsbuildinfo'
+    options:
+      cache: false
+      runInCI: 'always'
+
+  clean-all:
+    script:
+      'rm -rf packages/*/dist apps/*/dist dist-sidecar node_modules
+      packages/*/node_modules apps/*/node_modules'
+    options:
+      cache: false
+      runInCI: 'always'
