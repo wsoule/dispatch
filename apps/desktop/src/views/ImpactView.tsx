@@ -203,7 +203,7 @@ function SubjectCombobox({
           type="button"
           variant="outline"
           size="sm"
-          role="combobox"
+          aria-haspopup="listbox"
           aria-expanded={open}
           aria-label={ariaLabel}
           className="w-80 justify-between font-normal"
