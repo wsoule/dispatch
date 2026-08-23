@@ -131,6 +131,7 @@ fixloop
 fixturehash
 followable
 forgeable
+forkable
 forksha
 frontmatter
 Frontmatter

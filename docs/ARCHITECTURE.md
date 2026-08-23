@@ -248,7 +248,7 @@ Not built: presence, run claims, cross-machine agents, audit export.
 server; the git-native design in
 `docs/archive/specs/2026-08-02-team-collaboration-design.md` is superseded, and
 the parts of it that shipped are listed above as what exists, not as what will
-continue to exist. There is no server design document yet.
+continue to exist. The server design is `docs/TEAM-SERVER.md`.
 
 The hard part is already visible in [Where state lives](#where-state-lives): the
 repo half of the state is shared and the run half is machine-local, and
@@ -290,8 +290,8 @@ something:
 - `README.md` describes a Homebrew cask and notarized v0.1.1 builds; every
   `package.json` in the tree says `0.0.1`, and the archived team spec references
   v0.15.0. The versioning story does not agree with itself.
-- `docs/design/lovable-direction.md` and `lovable-workstreams.md` predate the
-  server pivot and have not been re-checked.
-- `docs/design/open-source-monetization.md` was written against a git-native
-  multiplayer assumption that no longer holds.
+- `docs/archive/design/` holds the pre-pivot direction docs
+  (`lovable-direction.md`, `lovable-workstreams.md`,
+  `open-source-monetization.md`); `docs/BUSINESS.md` and `docs/TEAM-SERVER.md`
+  replace them.
 - The repo-local lint baseline is red, so CI signal on those checks is weak.
