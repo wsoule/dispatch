@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-23T00:21:46.494Z
+updated: 2026-08-23T00:36:15.349Z
 external: null
 writes:
   - packages/core/src/**
@@ -50,3 +50,16 @@ Two other notes for whoever picks up the queue view: (1) the response carries th
 4. updateConfig's queue.weights loop throws on explicitly-undefined values instead of skipping (config.ts:780) — Partial<QueueWeights> with a conditional field rejects the whole patch. Skip undefined like parseQueueConfig does.
 5. Unblocking-factor accuracy: countDependents counts epics and derived review-anchor tasks as freed work, and credits full unblock value to a task whose dependent has OTHER unfinished blockers — 'unblocks 1 task' can be stated by five tasks about the same dependent (scoring.ts:123, :204). Count only dispatchable-kind dependents and either gate on sole-remaining-blocker or soften the detail text. Also: queue candidates use readyTasks while dispatch uses dispatchableTasks, so an in-review-satisfied task the orchestrator would start is invisible in the queue (scoring.ts:262) — align them or comment the divergence as deliberate.
 OPTIONAL (confirmed): fold parseLimit into a shared parseCountParam in api/http.ts; delete the dead DEFAULTS.queue line or read it; single-loop parseQueueConfig; drop the DEFAULT_QUEUE one-field wrapper; drop label from ScoreFactor (join on key); unify usableWeight with parseWeight. Run core+server tests, commit. — human:wsoule679
+- 2026-08-23T00:36:15.349Z Review fixes committed as 8ca76ef7. All five required findings addressed, plus the six confirmed cleanups.
+
+Notes where I did something other than the literal suggestion:
+
+(2) Rather than parsing the queue block lazily, loadConfig parses it eagerly but *carries* the rejection as `queue.error` instead of throwing. `queueWeights()` now returns a result type (`{ok:true,weights}` | `{ok:false,error}`) so a caller structurally cannot rank against defaults while the user's real config is broken. This keeps DispatchConfig JSON-serializable for GET /api/config (which now surfaces the error, with defaults alongside so a Settings form still renders) and avoids the alternative of moving ConfigError into configTypes.ts to let a browser-safe function throw it. Tests assert the containment directly: with a broken block, /api/queue 422s with the reason while /api/config, /api/tasks and /api/health still 200.
+
+(5) Took "soften the detail text" rather than "gate on sole-remaining-blocker" for the *score*, but computed the gate anyway so the text can be precise: `frees` counts dependents this task is the last unsatisfied blocker of, and the detail reads "unblocks 1 of 3 downstream tasks". Reasoning: being one of three blockers on a chain of ten is genuine critical-path work, so zeroing its value would push exactly the wrong tasks down; the overstatement was in the wording, so that is what changed. "Satisfied" uses isSatisfiedForDispatch to match the candidate set. Also aligned candidates to dispatchableTasks — agreed this was a real bug, not a deliberate divergence.
+
+(3) Worth flagging: my first test for the shared-defaults leak passed against the mutation, because loadConfig already copies — the reference only escaped through the hand-built-config fallback (the desktop-fixture path). Retargeted at that path; it now fails when the copy is removed.
+
+Guards mutation-tested: unknown-key-beside-weights 1, contained-errors 7, defaults-copy 1, skip-undefined 1, unblocking accuracy 2, PATCH wiring 4.
+
+Still open (unchanged from before): `DispatchConfig.queue` remains optional because the scope request for apps/desktop/src/components/settings/fixtures.test-helper.ts went undecided. The two-line fix is in my earlier comment. — none
