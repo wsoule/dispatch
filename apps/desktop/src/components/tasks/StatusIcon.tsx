@@ -89,12 +89,11 @@ const FALLBACK_TONE_COLOR_CLASS: Record<Tone, string> = {
 
 /**
  * Resolves a status string to its full visual treatment — shape, color, and (for custom
- * statuses) which of `statusTone`'s six tones it maps to. Exported so other call sites that
- * need a status's *color* outside of this component's own `currentColor`-text rendering (e.g.
- * EpicDagView's SVG node fill/stroke) can key off the same resolution instead of maintaining a
- * second status->color map that would silently drift from this one.
+ * statuses) which of `statusTone`'s six tones it maps to. A call site that needs a status's
+ * color outside this component should render `StatusIcon` itself (the graph's ContextCard
+ * nodes do) rather than re-deriving colors from a second status->color map.
  */
-export function resolveStatusVisual(status: string): StatusVisual {
+function resolveStatusVisual(status: string): StatusVisual {
   const known = KNOWN_STATUS_VISUALS[status];
   if (known !== undefined) return known;
   const tone = statusTone(status);

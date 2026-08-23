@@ -779,6 +779,11 @@ export function PlansView({
             <div className="bg-card rounded-card shadow-card p-4">
               <DependencyGraph
                 tasks={graphTasks}
+                snippetFor={(id) => {
+                  const description =
+                    draft.proposal.tasks[Number(id)]?.description.trim();
+                  return description === '' ? undefined : description;
+                }}
                 subtitleFor={(id) => {
                   const task = draft.proposal.tasks[Number(id)];
                   return task === undefined

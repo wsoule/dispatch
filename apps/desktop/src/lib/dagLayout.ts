@@ -82,6 +82,13 @@ interface Position {
   y: number;
 }
 
+/** Node footprint for one layout run — callers override the defaults when their node
+ * rendering has a different fixed size (e.g. DependencyGraph's ContextCard nodes). */
+interface NodeDims {
+  nodeWidth: number;
+  nodeHeight: number;
+}
+
 /**
  * Longest-path layering via Kahn's algorithm: a task's layer is one more than the deepest of
  * its blockers (real edges only — see `dagLayout`'s filtering), computed so every blocker's
@@ -162,7 +169,8 @@ function computeLayers(
 function orderWithinLayers(
   tasks: DagTask[],
   layer: Map<string, number>,
-  blockersOf: Map<string, string[]>
+  blockersOf: Map<string, string[]>,
+  dims: NodeDims
 ): Map<string, Position> {
   const maxLayer = Math.max(...tasks.map((t) => layer.get(t.id) ?? 0));
   const byLayer: DagTask[][] = Array.from({ length: maxLayer + 1 }, () => []);
@@ -192,8 +200,8 @@ function orderWithinLayers(
     });
     scored.forEach(({ doc }, col) => {
       positions.set(doc.id, {
-        x: PADDING + col * (DAG_NODE_WIDTH + GAP_X),
-        y: PADDING + l * (DAG_NODE_HEIGHT + GAP_Y),
+        x: PADDING + col * (dims.nodeWidth + GAP_X),
+        y: PADDING + l * (dims.nodeHeight + GAP_Y),
       });
     });
   }
@@ -204,7 +212,7 @@ function orderWithinLayers(
 // of them out in a single row would (for an epic with a few dozen flat tasks) produce an
 // absurdly long, mostly-empty-looking line. Wraps into rows of `GRID_COLUMNS` instead — still
 // deterministic (created, id order), still the same node footprint/gaps as the layered case.
-function gridLayout(tasks: DagTask[]): DagLayoutResult {
+function gridLayout(tasks: DagTask[], dims: NodeDims): DagLayoutResult {
   const sorted = [...tasks].sort(byCreatedThenId);
   const nodes: DagNode[] = sorted.map((doc, i) => {
     const col = i % GRID_COLUMNS;
@@ -214,10 +222,10 @@ function gridLayout(tasks: DagTask[]): DagLayoutResult {
       title: doc.title,
       status: doc.status,
       layer: row,
-      x: PADDING + col * (DAG_NODE_WIDTH + GAP_X),
-      y: PADDING + row * (DAG_NODE_HEIGHT + GAP_Y),
-      width: DAG_NODE_WIDTH,
-      height: DAG_NODE_HEIGHT,
+      x: PADDING + col * (dims.nodeWidth + GAP_X),
+      y: PADDING + row * (dims.nodeHeight + GAP_Y),
+      width: dims.nodeWidth,
+      height: dims.nodeHeight,
     };
   });
   const cols = Math.min(GRID_COLUMNS, tasks.length);
@@ -225,9 +233,9 @@ function gridLayout(tasks: DagTask[]): DagLayoutResult {
   return {
     nodes,
     edges: [],
-    width: PADDING * 2 + cols * DAG_NODE_WIDTH + Math.max(cols - 1, 0) * GAP_X,
+    width: PADDING * 2 + cols * dims.nodeWidth + Math.max(cols - 1, 0) * GAP_X,
     height:
-      PADDING * 2 + rows * DAG_NODE_HEIGHT + Math.max(rows - 1, 0) * GAP_Y,
+      PADDING * 2 + rows * dims.nodeHeight + Math.max(rows - 1, 0) * GAP_Y,
   };
 }
 
@@ -242,8 +250,16 @@ function gridLayout(tasks: DagTask[]): DagLayoutResult {
  * both described in their own doc comments. A task set with no real edges at all skips both in
  * favor of `gridLayout`'s plain row-wrapping grid, the design's explicit empty-edges fallback.
  */
-export function dagLayout(tasks: DagTask[]): DagLayoutResult {
+export function dagLayout(
+  tasks: DagTask[],
+  opts?: Partial<NodeDims>
+): DagLayoutResult {
   if (tasks.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
+
+  const dims: NodeDims = {
+    nodeWidth: opts?.nodeWidth ?? DAG_NODE_WIDTH,
+    nodeHeight: opts?.nodeHeight ?? DAG_NODE_HEIGHT,
+  };
 
   const byId = new Map(tasks.map((t) => [t.id, t]));
 
@@ -266,10 +282,10 @@ export function dagLayout(tasks: DagTask[]): DagLayoutResult {
     }
   }
 
-  if (edges.length === 0) return gridLayout(tasks);
+  if (edges.length === 0) return gridLayout(tasks, dims);
 
   const layer = computeLayers(tasks, byId, blockersOf, dependentsOf);
-  const positions = orderWithinLayers(tasks, layer, blockersOf);
+  const positions = orderWithinLayers(tasks, layer, blockersOf, dims);
 
   const nodes: DagNode[] = tasks.map((doc) => {
     // Every task passed in gets both a layer (computeLayers) and a position
@@ -282,8 +298,8 @@ export function dagLayout(tasks: DagTask[]): DagLayoutResult {
       layer: layer.get(doc.id) ?? 0,
       x: pos.x,
       y: pos.y,
-      width: DAG_NODE_WIDTH,
-      height: DAG_NODE_HEIGHT,
+      width: dims.nodeWidth,
+      height: dims.nodeHeight,
     };
   });
 
