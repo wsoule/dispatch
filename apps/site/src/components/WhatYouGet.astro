@@ -1,0 +1,44 @@
+<section class="section">
+  <div class="container">
+    <p class="eyebrow">Features</p>
+    <h2>What you get.</h2>
+    <ul>
+      <li><strong>A board.</strong> Every task, every session, one screen.</li>
+      <li><strong>Dispatch from the board.</strong> Pick a task, pick an agent, go.</li>
+      <li><strong>Blocked means blocked.</strong> Blocked tasks don't dispatch.</li>
+      <li><strong>Reviews built in.</strong> Diffs, findings, request changes.</li>
+      <li><strong>A merge queue.</strong> Green lands. You don't babysit.</li>
+      <li>
+        <strong>Markdown in your repo.</strong> The backlog lives in
+        <code class="mono">.dispatch/</code>.
+      </li>
+      <li><strong>Two-way Linear sync.</strong> Your tracker stays current.</li>
+      <li><strong>Warden.</strong> One chat to steer every session. It asks first.</li>
+    </ul>
+  </div>
+</section>
+
+<style>
+  ul {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4) var(--space-8);
+  }
+  li {
+    padding: var(--space-3) 0;
+    border-bottom: 1px solid var(--border-default);
+    color: var(--text-secondary);
+  }
+  li strong {
+    color: var(--text-primary);
+    font-weight: 600;
+  }
+  @media (max-width: 640px) {
+    ul {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

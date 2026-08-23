@@ -1,0 +1,67 @@
+<section class="section">
+  <div class="container">
+    <p class="eyebrow">Chat vs. board</p>
+    <h2>Everything else is a chat window.</h2>
+    <p class="sub">
+      Same agent, same work. A transcript makes you scroll back and rebuild it in your head. A
+      board just shows you.
+    </p>
+    <div class="pair">
+      <div class="panel transcript" aria-hidden="true">
+        <p>I've finished the auth refactor and moved on to the retry queue.</p>
+        <p>The migration is blocked on the schema change from earlier, so I paused it.</p>
+        <p>Tests are green on the export fix. Want me to open a PR?</p>
+        <p>Also, quick question about the rate limiter config...</p>
+        <p>Picking the payments task back up now.</p>
+      </div>
+      <img src="/shots/tasks.jpg" alt="The same work on the Dispatch board" loading="lazy" />
+    </div>
+  </div>
+</section>
+
+<style>
+  .sub {
+    max-width: 36rem;
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-6);
+  }
+  .pair {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: var(--space-5);
+    align-items: stretch;
+  }
+  .panel {
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+    padding: var(--space-4);
+  }
+  .transcript {
+    position: relative;
+    max-height: 260px;
+    overflow: hidden;
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+  }
+  .transcript::after {
+    content: '';
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 80px;
+    background: linear-gradient(transparent, var(--surface-card));
+  }
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+  }
+  @media (max-width: 720px) {
+    .pair {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
