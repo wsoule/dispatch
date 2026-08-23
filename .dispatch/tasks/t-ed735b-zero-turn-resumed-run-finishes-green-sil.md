@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-23T00:20:15.382Z
-updated: 2026-08-23T00:20:15.382Z
+updated: 2026-08-23T00:26:12.224Z
 external: null
 writes:
   - packages/server/src/**
@@ -28,3 +28,4 @@ Likely area: the resume path in the executor/session handling — a resumed SDK 
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-23T00:26:12.224Z Second occurrence: r-3b5a48 (message --resume follow-up on t-7cc78a/r-2ca940) also finished with turns=0, cost=0, no commits. Pattern so far: first message --resume onto a given finished run sometimes zero-turns; re-driving with a second message --resume (r-d730dc, r-f919fe) starts a real session. Both no-ops resumed runs whose sessions predated a daemon restart — consistent with the expired/terminal-session-maps-to-clean-exit hypothesis. — none
