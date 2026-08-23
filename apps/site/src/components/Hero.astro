@@ -1,0 +1,66 @@
+<section class="hero" id="install">
+  <div class="container">
+    <h1><em>Linear</em>, for agents.</h1>
+    <p class="lede">
+      Chatting is overrated. Every session on one board: what it's doing, what blocks it, what's
+      next.
+    </p>
+    <div class="install-row">
+      <code class="mono install-cmd">brew install --cask wsoule/tap/dispatch</code>
+      <button class="btn" type="button" data-copy="brew install --cask wsoule/tap/dispatch">
+        copy
+      </button>
+    </div>
+    <p class="alt-links">
+      <a href="https://github.com/wsoule/dispatch/releases/latest">Download the app</a>
+      <span aria-hidden="true">·</span>
+      <a href="#demo">Try the live demo ↓</a>
+    </p>
+  </div>
+</section>
+
+<style>
+  .hero {
+    padding: var(--space-10) 0 var(--space-8);
+  }
+  h1 {
+    font-size: var(--site-display);
+    font-weight: 600;
+  }
+  .lede {
+    max-width: 34rem;
+    font-size: var(--text-lg);
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-6);
+  }
+  .install-row {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+  }
+  .install-cmd {
+    font-size: var(--text-sm);
+  }
+  .alt-links {
+    margin-top: var(--space-4);
+    font-size: var(--text-sm);
+    color: var(--text-muted);
+    display: flex;
+    gap: var(--space-3);
+  }
+</style>
+
+<script>
+  const btn = document.querySelector<HTMLButtonElement>('[data-copy]');
+  btn?.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(btn.dataset.copy ?? '');
+    btn.textContent = 'copied';
+    setTimeout(() => {
+      btn.textContent = 'copy';
+    }, 1500);
+  });
+</script>
