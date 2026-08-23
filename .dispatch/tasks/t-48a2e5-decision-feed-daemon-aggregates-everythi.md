@@ -1,7 +1,7 @@
 ---
 id: t-48a2e5
 title: "Decision feed: daemon aggregates everything awaiting a human"
-status: in-progress
+status: in-review
 kind: task
 parent: e-6cfcc7
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:37.817Z
-updated: 2026-08-23T00:36:52.174Z
+updated: 2026-08-23T00:37:10.583Z
 external: null
 writes:
   - packages/server/src/**
@@ -71,3 +71,4 @@ Optional cleanups: took the uncalled count(), the ageSince() fold, the pruneReso
 Declined one, with reasoning: oneLine() is not a third copy of an existing truncate. truncateReason keeps the TAIL behind an "omitted" marker and promptTitle takes the first line without collapsing whitespace; oneLine collapses all whitespace and truncates the head. Sharing one helper would change behaviour in unrelated callers, so I left it and said so in the commit body. Happy to be overruled.
 
 Gates on the committed state: root tsc clean, lint 0 errors, knip clean, format:check clean, 67/67 across the three affected suites. Note this worktree lost its node_modules and dist partway through (something wiped them); I reinstalled and rebuilt before trusting any result. — none
+- 2026-08-23T00:37:10.583Z [run r-d730dc] finished: finished — 8 files, $7.36 — agent:wsoule679/claude
