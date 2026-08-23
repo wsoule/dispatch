@@ -50,7 +50,7 @@ describe('updateConfig', () => {
   test('leaves statuses alone — they are not settings-editable', () => {
     const dir = root('statuses:\n  - todo\n  - shipped\n');
     const cfg = updateConfig(dir, { autoCommit: true });
-    expect(cfg.statuses).toEqual(['todo', 'shipped']);
+    expect(cfg.statuses).toEqual(['ready', 'shipped']);
   });
 
   // An empty verify command and no verify command mean different things to the merge queue.

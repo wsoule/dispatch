@@ -33,34 +33,41 @@ interface StatusVisual {
   fraction?: number;
 }
 
-// Linear's exact treatment for the six built-in tracker statuses: a shape that reads as
-// "how far along is this" (empty ring -> partial pie -> filled check) plus a deliberate
+// Linear's exact treatment for the built-in tracker statuses: a shape that reads as "how far
+// along is this" (dashed ring -> empty ring -> filling pie -> filled check) plus a deliberate
 // color, independent of `statusTone`'s badge-oriented palette (see the fallback below for why
-// those two mappings intentionally differ).
+// those two mappings intentionally differ). The pie fills as the pipeline advances:
+// working half, review three-quarter, landing near-full.
 const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
-  backlog: {
+  draft: {
     shape: 'dashed',
     colorClass: 'text-muted-foreground/70',
     tone: 'gray',
   },
-  todo: { shape: 'empty', colorClass: 'text-muted-foreground', tone: 'gray' },
-  'in-progress': {
+  ready: { shape: 'empty', colorClass: 'text-muted-foreground', tone: 'gray' },
+  working: {
     shape: 'pie',
     fraction: 0.5,
     colorClass: 'text-state-waiting',
     tone: 'amber',
   },
-  'in-review': {
+  review: {
     shape: 'pie',
     fraction: 0.75,
     colorClass: 'text-primary',
     tone: 'accent',
   },
-  // Green rather than the indigo this shipped with: done and in-review were both indigo, so
+  landing: {
+    shape: 'pie',
+    fraction: 0.9,
+    colorClass: 'text-state-landing',
+    tone: 'blue',
+  },
+  // Green rather than the indigo this shipped with: landed and review were both indigo, so
   // the two columns that matter most were indistinguishable at a glance. Green completes an
   // amber -> indigo -> green progression across the board.
-  done: { shape: 'check', colorClass: 'text-state-review', tone: 'green' },
-  cancelled: {
+  landed: { shape: 'check', colorClass: 'text-state-review', tone: 'green' },
+  dropped: {
     shape: 'x',
     colorClass: 'text-muted-foreground',
     tone: 'gray',

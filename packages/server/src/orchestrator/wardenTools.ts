@@ -245,8 +245,8 @@ const blockedTasksTool: WardenStatusTool<NoInput> = {
           const blocker = byId.get(id);
           return (
             blocker !== undefined &&
-            blocker.meta.status !== 'done' &&
-            blocker.meta.status !== 'cancelled'
+            blocker.meta.status !== 'landed' &&
+            blocker.meta.status !== 'dropped'
           );
         }),
       }))

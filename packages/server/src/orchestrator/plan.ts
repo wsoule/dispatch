@@ -523,7 +523,7 @@ export class PlanManager {
       const epicDoc = this.ctx.store.create({
         title: proposal.epic.title,
         kind: 'epic',
-        status: 'todo',
+        status: 'ready',
         description: proposal.epic.description,
       });
       epicId = epicDoc.meta.id;
@@ -537,7 +537,7 @@ export class PlanManager {
         this.ctx.store.create({
           title: task.title,
           kind: 'task',
-          status: 'todo',
+          status: 'ready',
           description: buildTaskDescription(task),
           parent: epicId ?? null,
           priority: task.priority,

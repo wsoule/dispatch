@@ -10,6 +10,7 @@ import { join } from 'node:path';
 
 import { generateTaskId } from './ids.js';
 import { slugify } from './slug.js';
+import { canonicalStatus } from './status.js';
 import {
   appendActivity,
   appendAmendment,
@@ -35,7 +36,7 @@ export const DISPATCH_DIR = '.dispatch';
 // initialized before this plan has `autoCommit: false` already written to
 // its own config.yml, so loadConfig's file value wins and nothing existing
 // starts pushing.
-const DEFAULT_CONFIG = `statuses: [backlog, todo, in-progress, in-review, done, cancelled]
+const DEFAULT_CONFIG = `statuses: [draft, ready, working, review, landing, landed, dropped]
 autoCommit: true
 `;
 
@@ -146,7 +147,7 @@ export class TaskStore {
     const meta: TaskMeta = {
       id,
       title: input.title,
-      status: input.status ?? 'todo',
+      status: canonicalStatus(input.status ?? 'ready'),
       kind,
       parent: input.parent ?? null,
       milestone: input.milestone ?? null,
@@ -220,7 +221,11 @@ export class TaskStore {
   private filterAndSort(docs: TaskDoc[], filter: ListFilter): TaskDoc[] {
     return docs
       .filter((d) =>
-        filter.status !== undefined ? d.meta.status === filter.status : true
+        // Filter values speak the alias layer too — `?status=backlog` keeps
+        // finding drafts forever.
+        filter.status !== undefined
+          ? d.meta.status === canonicalStatus(filter.status)
+          : true
       )
       .filter((d) =>
         filter.kind !== undefined ? d.meta.kind === filter.kind : true
@@ -259,6 +264,9 @@ export class TaskStore {
       Object.entries(patchFields).filter(([, v]) => v !== undefined)
     );
     const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
+    // Write boundary for the status alias layer: an API caller (or old UI)
+    // speaking a pre-rename name lands in canonical form.
+    meta.status = canonicalStatus(meta.status);
     // archivedAt is string|undefined on TaskMeta, so null (clear) is handled
     // separately rather than spread in like the other fields.
     if (archivedAt === null) delete meta.archivedAt;

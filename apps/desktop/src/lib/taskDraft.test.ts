@@ -43,12 +43,12 @@ describe('isDraftSaveable', () => {
 describe('editableDraftToCreateInput', () => {
   test('saves through the same CreateInput shape the modal uses', () => {
     const input = editableDraftToCreateInput(
-      editable({ status: 'backlog', parent: 'e-1' })
+      editable({ status: 'draft', parent: 'e-1' })
     );
     expect(input.title).toBe(PLANNED.title);
     expect(input.kind).toBe('task');
     expect(input.priority).toBe('high');
-    expect(input.status).toBe('backlog');
+    expect(input.status).toBe('draft');
     expect(input.parent).toBe('e-1');
   });
 

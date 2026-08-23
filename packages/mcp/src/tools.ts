@@ -1,5 +1,6 @@
 import {
   ASSIGNEES,
+  canonicalStatus,
   ConfigError,
   KINDS,
   loadConfig,
@@ -1065,7 +1066,11 @@ export function registerDispatchTools(
         // `problems` entry instead of failing the whole call — the daemon's
         // cache rebuild uses the same method for the same reason.
         const { docs, errors } = store.listSafe({
-          status: validate(status, config.statuses, 'status'),
+          status: validate(
+            status === undefined ? undefined : canonicalStatus(status),
+            config.statuses,
+            'status'
+          ),
           kind: validate(kind, KINDS, 'kind'),
           parent,
         });
@@ -1147,7 +1152,13 @@ export function registerDispatchTools(
       wrap(() => {
         const store = requireStore(rootDir);
         const config = loadConfig(rootDir);
-        const status = validate(input.status, config.statuses, 'status');
+        const status = validate(
+          input.status === undefined
+            ? undefined
+            : canonicalStatus(input.status),
+          config.statuses,
+          'status'
+        );
         const priority = validate(input.priority, PRIORITIES, 'priority');
         const assignee = validate(input.assignee, ASSIGNEES, 'assignee');
 

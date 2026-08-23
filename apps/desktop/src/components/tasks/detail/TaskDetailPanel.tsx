@@ -688,7 +688,7 @@ export function TaskDetailPanel({
                   size="sm"
                   onClick={() => onOpenSession(run.id)}
                 >
-                  {doc.meta.status === 'in-review' ? 'Review run' : 'View run'}
+                  {doc.meta.status === 'review' ? 'Review run' : 'View run'}
                 </Button>
               )}
               {run?.prUrl !== undefined && (

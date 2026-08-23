@@ -9,7 +9,7 @@ function makeTask(
   id: string,
   blockedBy: string[] = [],
   created = '2026-01-01T00:00:00.000Z',
-  status = 'todo'
+  status = 'ready'
 ): TaskDoc {
   return {
     meta: {

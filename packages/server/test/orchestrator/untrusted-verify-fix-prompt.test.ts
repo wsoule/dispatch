@@ -9,7 +9,7 @@ function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
     meta: {
       id: 't-abc123',
       title: 'Add login rate limiting',
-      status: 'todo',
+      status: 'ready',
       kind: 'task',
       parent: null,
       milestone: null,

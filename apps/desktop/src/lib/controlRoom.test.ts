@@ -43,7 +43,7 @@ function task(
   parent: string | null = null
 ): TaskDoc {
   return {
-    meta: { id, title, parent, status: 'todo', kind: 'task' },
+    meta: { id, title, parent, status: 'ready', kind: 'task' },
   } as TaskDoc;
 }
 

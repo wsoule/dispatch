@@ -154,7 +154,7 @@ describe('task_save', () => {
     })) as ToolCallResult;
     expect(result.isError).toBe(true);
     expect(callToolText(result)).toBe(
-      'invalid status: nope (expected backlog|todo|in-progress|in-review|done|cancelled)'
+      'invalid status: nope (expected draft|ready|working|review|landing|landed|dropped)'
     );
   });
 
@@ -174,7 +174,7 @@ describe('task_save', () => {
       priority: string;
       title: string;
     };
-    expect(meta.status).toBe('in-progress');
+    expect(meta.status).toBe('working');
     expect(meta.priority).toBe('low');
     expect(meta.title).toBe('Original');
   });

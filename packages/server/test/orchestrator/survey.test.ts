@@ -181,7 +181,7 @@ describe('Orchestrator agent-death recovery', () => {
     // autoCommitIfDirty's `git add -A` still ran (only the doomed `commit`
     // failed), so the file shows up staged rather than untracked.
     expect(run.meta.survey?.staged).toEqual(['oops.txt']);
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
     // The synchronous finish line still says `failed`; the upgrade to
     // `interrupted-dirty` lands as its own later Activity line.
     expect(store.get(task.meta.id)!.body).toContain(
@@ -587,17 +587,13 @@ describe('Orchestrator boot auto-resume', () => {
     // The sweep sleeps through a quiet window before it can resume anything,
     // so this lands well inside it — and a resume would drag the task the
     // human just closed out back to in-progress.
-    store.update(
-      task.meta.id,
-      { status: 'cancelled' },
-      new Date().toISOString()
-    );
+    store.update(task.meta.id, { status: 'dropped' }, new Date().toISOString());
     await second.autoResumeSettled(meta.id);
 
     expect(second.list().some((r) => r.resumedFrom === meta.id)).toBe(false);
-    expect(store.get(task.meta.id)!.meta.status).toBe('cancelled');
+    expect(store.get(task.meta.id)!.meta.status).toBe('dropped');
     expect(second.resumeBlockReason(second.getRun(meta.id)!.meta)).toBe(
-      'task is cancelled'
+      'task is dropped'
     );
   });
 

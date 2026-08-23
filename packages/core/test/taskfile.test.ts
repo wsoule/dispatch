@@ -203,7 +203,7 @@ const doc: TaskDoc = {
   meta: {
     id: 't-3fa9c2',
     title: 'Fix login redirect loop',
-    status: 'todo',
+    status: 'ready',
     kind: 'task',
     parent: 'e-8b21d0',
     milestone: null,

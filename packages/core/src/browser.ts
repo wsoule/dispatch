@@ -1,6 +1,7 @@
 // The browser-safe entry point. Everything reachable from here is pure — no
 // `node:*` import — so the desktop webview can import it in dev and in a build.
 
+export * from './status.js';
 export * from './types.js';
 export * from './configTypes.js';
 export * from './linearMap.js';

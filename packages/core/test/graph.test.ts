@@ -14,7 +14,7 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
     meta: {
       id: 't-000000',
       title: 'x',
-      status: 'todo',
+      status: 'ready',
       kind: 'task',
       parent: null,
       milestone: null,
@@ -53,8 +53,8 @@ describe('derived tasks are never ready or dispatchable', () => {
 
 describe('readyTasks', () => {
   it('includes todo tasks whose blockers are done/cancelled, excludes others', () => {
-    const done = make({ id: 't-d00000', status: 'done' });
-    const open = make({ id: 't-o00000', status: 'in-progress' });
+    const done = make({ id: 't-d00000', status: 'landed' });
+    const open = make({ id: 't-o00000', status: 'working' });
     const ready = make({ id: 't-r00000', blockedBy: ['t-d00000'] });
     const blocked = make({ id: 't-b00000', blockedBy: ['t-o00000'] });
     const ids = readyTasks([done, open, ready, blocked]).map((t) => t.meta.id);
@@ -64,7 +64,7 @@ describe('readyTasks', () => {
   });
   it('excludes epics and non-todo statuses', () => {
     const epic = make({ id: 'e-100000', kind: 'epic' });
-    const review = make({ id: 't-200000', status: 'in-review' });
+    const review = make({ id: 't-200000', status: 'review' });
     expect(readyTasks([epic, review])).toEqual([]);
   });
   it('treats dangling blocker ids as non-blocking', () => {
@@ -101,9 +101,9 @@ describe('readyTasks', () => {
     ]);
   });
   it('requires every blocker done', () => {
-    const done = make({ id: 't-d10000', status: 'done' });
-    const inProgress = make({ id: 't-p10000', status: 'in-progress' });
-    const cancelled = make({ id: 't-c10000', status: 'cancelled' });
+    const done = make({ id: 't-d10000', status: 'landed' });
+    const inProgress = make({ id: 't-p10000', status: 'working' });
+    const cancelled = make({ id: 't-c10000', status: 'dropped' });
 
     const notReady = make({
       id: 't-n10000',
@@ -122,9 +122,9 @@ describe('readyTasks', () => {
 
 describe('isDone', () => {
   it('true for done and cancelled only', () => {
-    expect(isDone(make({ status: 'done' }))).toBe(true);
-    expect(isDone(make({ status: 'cancelled' }))).toBe(true);
-    expect(isDone(make({ status: 'in-review' }))).toBe(false);
+    expect(isDone(make({ status: 'landed' }))).toBe(true);
+    expect(isDone(make({ status: 'dropped' }))).toBe(true);
+    expect(isDone(make({ status: 'review' }))).toBe(false);
   });
 });
 
@@ -172,7 +172,7 @@ describe('findDependencyCycles', () => {
 
 describe('dispatchableTasks', () => {
   it('treats an in-review blocker as satisfied, unlike readyTasks', () => {
-    const blocker = make({ id: 't-a00000', status: 'in-review' });
+    const blocker = make({ id: 't-a00000', status: 'review' });
     const dependent = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
     expect(
       dispatchableTasks([blocker, dependent]).map((t) => t.meta.id)
@@ -181,8 +181,8 @@ describe('dispatchableTasks', () => {
   });
 
   it('still blocks on an in-progress or todo blocker', () => {
-    const running = make({ id: 't-a00000', status: 'in-progress' });
-    const waiting = make({ id: 't-c00000', status: 'todo' });
+    const running = make({ id: 't-a00000', status: 'working' });
+    const waiting = make({ id: 't-c00000', status: 'ready' });
     const onRunning = make({ id: 't-b00000', blockedBy: ['t-a00000'] });
     const onWaiting = make({ id: 't-d00000', blockedBy: ['t-c00000'] });
     const ids = dispatchableTasks([running, waiting, onRunning, onWaiting]).map(
@@ -193,8 +193,8 @@ describe('dispatchableTasks', () => {
   });
 
   it('still accepts done and cancelled blockers', () => {
-    const done = make({ id: 't-a00000', status: 'done' });
-    const cancelled = make({ id: 't-c00000', status: 'cancelled' });
+    const done = make({ id: 't-a00000', status: 'landed' });
+    const cancelled = make({ id: 't-c00000', status: 'dropped' });
     const dependent = make({
       id: 't-b00000',
       blockedBy: ['t-a00000', 't-c00000'],
@@ -229,11 +229,11 @@ describe('dispatchableTasks', () => {
 
 describe('isSatisfiedForDispatch', () => {
   it('is true for done, cancelled and in-review; false otherwise', () => {
-    expect(isSatisfiedForDispatch(make({ status: 'done' }))).toBe(true);
-    expect(isSatisfiedForDispatch(make({ status: 'cancelled' }))).toBe(true);
-    expect(isSatisfiedForDispatch(make({ status: 'in-review' }))).toBe(true);
-    expect(isSatisfiedForDispatch(make({ status: 'in-progress' }))).toBe(false);
-    expect(isSatisfiedForDispatch(make({ status: 'todo' }))).toBe(false);
-    expect(isSatisfiedForDispatch(make({ status: 'backlog' }))).toBe(false);
+    expect(isSatisfiedForDispatch(make({ status: 'landed' }))).toBe(true);
+    expect(isSatisfiedForDispatch(make({ status: 'dropped' }))).toBe(true);
+    expect(isSatisfiedForDispatch(make({ status: 'review' }))).toBe(true);
+    expect(isSatisfiedForDispatch(make({ status: 'working' }))).toBe(false);
+    expect(isSatisfiedForDispatch(make({ status: 'ready' }))).toBe(false);
+    expect(isSatisfiedForDispatch(make({ status: 'draft' }))).toBe(false);
   });
 });
