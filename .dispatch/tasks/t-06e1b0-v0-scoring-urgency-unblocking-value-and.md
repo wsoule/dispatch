@@ -1,7 +1,7 @@
 ---
 id: t-06e1b0
 title: "v0 scoring: urgency, unblocking value, and age against the current store"
-status: in-progress
+status: in-review
 kind: task
 parent: e-ba8bf1
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-23T00:08:18.624Z
+updated: 2026-08-23T00:08:34.670Z
 external: null
 writes:
   - packages/core/src/**
@@ -42,3 +42,4 @@ From the 2026-08-22 audit: the full weight function waits on the storage spine a
 BLOCKER for follow-up — `DispatchConfig.queue` is optional in the type when it should be required. Adding it as required breaks `apps/desktop/src/components/settings/fixtures.test-helper.ts`, the only other full-DispatchConfig object literal in the repo (TS2741), which fails both `bun run build` and `bun run tsc` in CI. I filed a request_scope for that one file; it went undecided and returned denied, so I could not touch it. Mitigation: `queue?: QueueConfig` with `queueWeights(config)` in configTypes.ts as the single reader of the fallback — loadConfig always populates the block, so no runtime path relies on the default. To finish properly: add `queue: DEFAULT_QUEUE` (already exported from @dispatch/core/browser) to that fixture, drop the `?`, and inline queueWeights. That fixture's own doc comment says it mirrors config.test.ts's "returns defaults when file missing" case, which I did update — so it is currently stale relative to its stated contract.
 
 Two other notes for whoever picks up the queue view: (1) the response carries the factor table (key/label/describes) alongside the weights, so the breakdown columns and weight controls should read from it rather than hardcoding the three factors — that is what makes the v1 project/initiative/due-date factors show up for free. (2) The QueueSnapshot response interface is deliberately un-exported in packages/server/src/api/queue.ts because knip gates unused exports at zero; export it when the client wrapper lands. — none
+- 2026-08-23T00:08:34.670Z [run r-df588b] finished: finished — 11 files, $2.14 — agent:wsoule679/claude
