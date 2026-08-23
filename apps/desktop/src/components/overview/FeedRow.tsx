@@ -9,12 +9,9 @@ import { Button } from '@/ui/button';
 import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
 import { StateDot } from '@/ui/chrome/StateDot';
 
-// The urgent skins key off the TIER — amber for anything that is your move,
-// red for broken. Spelled out for Tailwind's static extraction.
-const URGENT_ROW: Partial<Record<ReturnType<typeof feedTier>, string>> = {
-  you: 'bg-state-waiting-surface',
-  broken: 'bg-state-failed-surface',
-};
+// Urgency tints the state label and attention line only — never the whole row;
+// a wall of amber rows reads as alarm wallpaper, not information. Keyed by
+// TIER and spelled out for Tailwind's static extraction.
 const URGENT_TEXT: Partial<Record<ReturnType<typeof feedTier>, string>> = {
   you: 'text-state-waiting',
   broken: 'text-state-failed',
@@ -124,8 +121,7 @@ export function FeedRow({ row, actions }: FeedRowProps) {
       }}
       className={cn(
         'group/row ease-out-expo rounded-control cursor-pointer overflow-hidden transition-colors duration-100',
-        urgent ? URGENT_ROW[tier] : 'hover:bg-surface-hover',
-        urgent && 'shadow-hairline'
+        'hover:bg-surface-hover'
       )}
     >
       <div className="grid grid-cols-[130px_minmax(140px,1fr)_140px_150px_64px_auto] items-center gap-3 px-3 py-2">
