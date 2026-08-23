@@ -1,7 +1,7 @@
 ---
 id: t-c6dbd3
 title: "dispatchd becomes single writer: all task I/O through the daemon store"
-status: in-review
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:17.943Z
-updated: 2026-08-23T14:31:35.478Z
+updated: 2026-08-23T14:33:06.303Z
 external: null
 writes:
   - packages/server/src/**
@@ -47,3 +47,4 @@ Route every task/finding/ledger read and write through dispatchd's SQLite-backed
 10. sqliteTaskStore.ts:286/407: update()'s patch-split and newDoc()'s defaults+template are verbatim copies of TaskStore's — extract shared pure helpers (applyUpdatePatch/newTaskDoc) so backends cannot diverge.
 OPTIONAL (confirmed, if quick): dedupe the CLI/MCP daemon HTTP client stacks; use core's dispatchDbPath instead of three hand-spelled paths; import core's finding/ledger input types in server; collapse the triple /api/health fetch per MCP read; revisit the truncate-and-reload cache rebuild per sqlite mutation. Run server+cli+mcp tests, commit. — human:wsoule679
 - 2026-08-23T14:31:35.478Z [run r-d7cce5] finished: finished — 27 files, $0.00 — agent:wsoule679/claude
+- 2026-08-23T14:33:06.303Z requested changes (run r-751892): Your previous resume finished with zero turns and made no changes. The 10 required review fixes are in the previous user message in this conversation — apply them now, starting with the two SEVERE ones (inject the backend-selected findingStore into the Orchestrator; persist backend selection per project so daemon and clients agree). Run server+cli+mcp tests, commit. — human:wsoule679
