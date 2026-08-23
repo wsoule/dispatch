@@ -1,7 +1,7 @@
 ---
 id: t-c6dbd3
 title: "dispatchd becomes single writer: all task I/O through the daemon store"
-status: in-progress
+status: in-review
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:17.943Z
-updated: 2026-08-23T14:31:20.454Z
+updated: 2026-08-23T14:31:35.478Z
 external: null
 writes:
   - packages/server/src/**
@@ -46,3 +46,4 @@ Route every task/finding/ledger read and write through dispatchd's SQLite-backed
 9. sqliteTaskStore.ts:245: create()'s collision error names an id that was never attempted (regenerated after the last INSERT) — reuse this branch's own withMintedId helper.
 10. sqliteTaskStore.ts:286/407: update()'s patch-split and newDoc()'s defaults+template are verbatim copies of TaskStore's — extract shared pure helpers (applyUpdatePatch/newTaskDoc) so backends cannot diverge.
 OPTIONAL (confirmed, if quick): dedupe the CLI/MCP daemon HTTP client stacks; use core's dispatchDbPath instead of three hand-spelled paths; import core's finding/ledger input types in server; collapse the triple /api/health fetch per MCP read; revisit the truncate-and-reload cache rebuild per sqlite mutation. Run server+cli+mcp tests, commit. — human:wsoule679
+- 2026-08-23T14:31:35.478Z [run r-d7cce5] finished: finished — 27 files, $0.00 — agent:wsoule679/claude
