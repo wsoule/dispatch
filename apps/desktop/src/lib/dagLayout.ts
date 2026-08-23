@@ -1,5 +1,30 @@
 import type { TaskDoc } from '@dispatch/core/browser';
 
+/**
+ * The minimal node shape the layout needs — deliberately not `TaskDoc`, so anything with
+ * dependency structure can render as a graph: real tasks (via `dagTaskFromDoc`), a plan's
+ * still-unconfirmed drafts (index-keyed, no ids minted yet), or whatever the next surface is.
+ * `created` is only a deterministic tie-break key; any stable sortable string works.
+ */
+export interface DagTask {
+  id: string;
+  title: string;
+  status: string;
+  created: string;
+  blockedBy: string[];
+}
+
+/** Adapts a real task to the layout's minimal shape. */
+export function dagTaskFromDoc(doc: TaskDoc): DagTask {
+  return {
+    id: doc.meta.id,
+    title: doc.meta.title,
+    status: doc.meta.status,
+    created: doc.meta.created,
+    blockedBy: doc.meta.blockedBy,
+  };
+}
+
 // Fixed node footprint for every box in the epic DAG — generous enough for a truncated title
 // plus a status line at the 11-13px scale the rest of the app renders task text at, small
 // enough that a few dozen tasks (the realistic epic size — see core's `computeStack` comment
@@ -47,9 +72,9 @@ export interface DagLayoutResult {
 // Deterministic tie-break shared in spirit with core's `computeStack`: created date first,
 // then id, so two calls over the same task set always produce byte-identical layouts — no
 // jitter between renders when created dates collide (or are literally equal, in fixtures).
-function byCreatedThenId(a: TaskDoc, b: TaskDoc): number {
-  const byCreated = a.meta.created.localeCompare(b.meta.created);
-  return byCreated !== 0 ? byCreated : a.meta.id.localeCompare(b.meta.id);
+function byCreatedThenId(a: DagTask, b: DagTask): number {
+  const byCreated = a.created.localeCompare(b.created);
+  return byCreated !== 0 ? byCreated : a.id.localeCompare(b.id);
 }
 
 interface Position {
@@ -67,35 +92,35 @@ interface Position {
  * this is what breaks the cycle, in one bounded extra pass rather than ever recursing into it.
  */
 function computeLayers(
-  tasks: TaskDoc[],
-  byId: Map<string, TaskDoc>,
+  tasks: DagTask[],
+  byId: Map<string, DagTask>,
   blockersOf: Map<string, string[]>,
   dependentsOf: Map<string, string[]>
 ): Map<string, number> {
   const layer = new Map<string, number>();
   const inDegree = new Map<string, number>();
   for (const t of tasks) {
-    inDegree.set(t.meta.id, (blockersOf.get(t.meta.id) ?? []).length);
+    inDegree.set(t.id, (blockersOf.get(t.id) ?? []).length);
   }
 
   // The zero-in-degree pool, re-sorted by (created, id) on every pop — mirrors computeStack's
   // "re-sort the pool each pop" convention so processing order (and therefore every downstream
   // layer/position decision) is fully deterministic.
-  let queue = tasks.filter((t) => inDegree.get(t.meta.id) === 0);
-  const queued = new Set(queue.map((t) => t.meta.id));
+  let queue = tasks.filter((t) => inDegree.get(t.id) === 0);
+  const queued = new Set(queue.map((t) => t.id));
 
   while (queue.length > 0) {
     queue.sort(byCreatedThenId);
     const doc = queue.shift();
     if (doc === undefined) break;
-    queued.delete(doc.meta.id);
+    queued.delete(doc.id);
     // Roots (no real blockers) never get a layer written by the dependent-update loop below,
     // so they need an explicit default; anything already set here got it from a blocker that
     // was processed earlier in this same pass.
-    if (!layer.has(doc.meta.id)) layer.set(doc.meta.id, 0);
-    const myLayer = layer.get(doc.meta.id) ?? 0;
+    if (!layer.has(doc.id)) layer.set(doc.id, 0);
+    const myLayer = layer.get(doc.id) ?? 0;
 
-    for (const dependentId of dependentsOf.get(doc.meta.id) ?? []) {
+    for (const dependentId of dependentsOf.get(doc.id) ?? []) {
       const candidate = myLayer + 1;
       layer.set(dependentId, Math.max(layer.get(dependentId) ?? 0, candidate));
       const remaining = (inDegree.get(dependentId) ?? 0) - 1;
@@ -112,15 +137,13 @@ function computeLayers(
     }
   }
 
-  const leftovers = tasks
-    .filter((t) => !layer.has(t.meta.id))
-    .sort(byCreatedThenId);
+  const leftovers = tasks.filter((t) => !layer.has(t.id)).sort(byCreatedThenId);
   for (const doc of leftovers) {
-    const blockerLayers = (blockersOf.get(doc.meta.id) ?? [])
+    const blockerLayers = (blockersOf.get(doc.id) ?? [])
       .map((id) => layer.get(id))
       .filter((l): l is number => l !== undefined);
     layer.set(
-      doc.meta.id,
+      doc.id,
       blockerLayers.length > 0 ? Math.max(...blockerLayers) + 1 : 0
     );
   }
@@ -137,18 +160,18 @@ function computeLayers(
  * per the design brief — good enough for the dozens-of-tasks graphs this renders.
  */
 function orderWithinLayers(
-  tasks: TaskDoc[],
+  tasks: DagTask[],
   layer: Map<string, number>,
   blockersOf: Map<string, string[]>
 ): Map<string, Position> {
-  const maxLayer = Math.max(...tasks.map((t) => layer.get(t.meta.id) ?? 0));
-  const byLayer: TaskDoc[][] = Array.from({ length: maxLayer + 1 }, () => []);
-  for (const t of tasks) byLayer[layer.get(t.meta.id) ?? 0].push(t);
+  const maxLayer = Math.max(...tasks.map((t) => layer.get(t.id) ?? 0));
+  const byLayer: DagTask[][] = Array.from({ length: maxLayer + 1 }, () => []);
+  for (const t of tasks) byLayer[layer.get(t.id) ?? 0].push(t);
 
   const positions = new Map<string, Position>();
   for (let l = 0; l <= maxLayer; l++) {
     const scored = byLayer[l].map((doc) => {
-      const blockerXs = (blockersOf.get(doc.meta.id) ?? [])
+      const blockerXs = (blockersOf.get(doc.id) ?? [])
         .map((id) => positions.get(id)?.x)
         .filter((x): x is number => x !== undefined);
       const barycenter =
@@ -168,7 +191,7 @@ function orderWithinLayers(
       return byCreatedThenId(a.doc, b.doc);
     });
     scored.forEach(({ doc }, col) => {
-      positions.set(doc.meta.id, {
+      positions.set(doc.id, {
         x: PADDING + col * (DAG_NODE_WIDTH + GAP_X),
         y: PADDING + l * (DAG_NODE_HEIGHT + GAP_Y),
       });
@@ -181,15 +204,15 @@ function orderWithinLayers(
 // of them out in a single row would (for an epic with a few dozen flat tasks) produce an
 // absurdly long, mostly-empty-looking line. Wraps into rows of `GRID_COLUMNS` instead — still
 // deterministic (created, id order), still the same node footprint/gaps as the layered case.
-function gridLayout(tasks: TaskDoc[]): DagLayoutResult {
+function gridLayout(tasks: DagTask[]): DagLayoutResult {
   const sorted = [...tasks].sort(byCreatedThenId);
   const nodes: DagNode[] = sorted.map((doc, i) => {
     const col = i % GRID_COLUMNS;
     const row = Math.floor(i / GRID_COLUMNS);
     return {
-      id: doc.meta.id,
-      title: doc.meta.title,
-      status: doc.meta.status,
+      id: doc.id,
+      title: doc.title,
+      status: doc.status,
       layer: row,
       x: PADDING + col * (DAG_NODE_WIDTH + GAP_X),
       y: PADDING + row * (DAG_NODE_HEIGHT + GAP_Y),
@@ -219,29 +242,27 @@ function gridLayout(tasks: TaskDoc[]): DagLayoutResult {
  * both described in their own doc comments. A task set with no real edges at all skips both in
  * favor of `gridLayout`'s plain row-wrapping grid, the design's explicit empty-edges fallback.
  */
-export function dagLayout(tasks: TaskDoc[]): DagLayoutResult {
+export function dagLayout(tasks: DagTask[]): DagLayoutResult {
   if (tasks.length === 0) return { nodes: [], edges: [], width: 0, height: 0 };
 
-  const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+  const byId = new Map(tasks.map((t) => [t.id, t]));
 
   const blockersOf = new Map<string, string[]>();
   const dependentsOf = new Map<string, string[]>();
   for (const t of tasks) {
-    const real = t.meta.blockedBy.filter(
-      (id) => id !== t.meta.id && byId.has(id)
-    );
-    blockersOf.set(t.meta.id, real);
+    const real = t.blockedBy.filter((id) => id !== t.id && byId.has(id));
+    blockersOf.set(t.id, real);
     for (const blockerId of real) {
       const bucket = dependentsOf.get(blockerId);
-      if (bucket !== undefined) bucket.push(t.meta.id);
-      else dependentsOf.set(blockerId, [t.meta.id]);
+      if (bucket !== undefined) bucket.push(t.id);
+      else dependentsOf.set(blockerId, [t.id]);
     }
   }
 
   const edges: DagEdge[] = [];
   for (const t of tasks) {
-    for (const blockerId of blockersOf.get(t.meta.id) ?? []) {
-      edges.push({ from: blockerId, to: t.meta.id });
+    for (const blockerId of blockersOf.get(t.id) ?? []) {
+      edges.push({ from: blockerId, to: t.id });
     }
   }
 
@@ -253,12 +274,12 @@ export function dagLayout(tasks: TaskDoc[]): DagLayoutResult {
   const nodes: DagNode[] = tasks.map((doc) => {
     // Every task passed in gets both a layer (computeLayers) and a position
     // (orderWithinLayers) — the fallback is only ever a defensive default, never reachable.
-    const pos = positions.get(doc.meta.id) ?? { x: PADDING, y: PADDING };
+    const pos = positions.get(doc.id) ?? { x: PADDING, y: PADDING };
     return {
-      id: doc.meta.id,
-      title: doc.meta.title,
-      status: doc.meta.status,
-      layer: layer.get(doc.meta.id) ?? 0,
+      id: doc.id,
+      title: doc.title,
+      status: doc.status,
+      layer: layer.get(doc.id) ?? 0,
       x: pos.x,
       y: pos.y,
       width: DAG_NODE_WIDTH,
