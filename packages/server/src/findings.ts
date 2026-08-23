@@ -1,9 +1,9 @@
 import { generateFindingId } from '@dispatch/core';
 import type {
+  AddFindingInput,
   Finding,
-  FindingRecommendation,
-  FindingSeverity,
-  FindingVerdict,
+  FindingListFilter,
+  FindingUpdatePatch,
 } from '@dispatch/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -11,31 +11,29 @@ import { dirname, join } from 'node:path';
 // Review findings raised against a task, one JSON line per write in
 // `.dispatch/findings.jsonl`. An update is a fresh line, not a rewrite.
 
-export interface AddFindingInput {
-  taskId: string;
-  runId: string | null;
-  severity: FindingSeverity;
-  title: string;
-  detail: string;
-  file?: string | null;
-  line?: number | null;
-  /** Paths this finding covers when one check fired across many files. */
-  files?: string[];
-  round?: number;
-  recommendation?: FindingRecommendation;
-  /** Serialized ActorRef of whoever raised it. */
-  raisedBy: string;
-}
+// Re-exported, not re-declared: `@dispatch/core` owns these shapes (they sit
+// beside the `Finding` they produce, so the database-backed store can take
+// the same inputs), and a second copy here is one that can drift from the
+// backend on the other side of the port below.
+export type {
+  AddFindingInput,
+  FindingListFilter,
+  FindingUpdatePatch,
+} from '@dispatch/core';
 
-export interface FindingUpdatePatch {
-  verdict?: FindingVerdict;
-  ruling?: string | null;
-}
-
-export interface FindingListFilter {
-  taskId?: string;
-  verdict?: FindingVerdict;
-  severity?: FindingSeverity;
+/**
+ * The findings surface every backend answers, so the daemon can hold either
+ * the JSONL store below or core's `SqliteFindingStore` without any handler
+ * knowing which. Structural, not `implements`: `SqliteFindingStore` lives in
+ * `@dispatch/core` and cannot import this file, and its extra optional `now`
+ * parameters are compatible with these signatures anyway.
+ */
+export interface FindingStorePort {
+  get(id: string): Finding | null;
+  list(filter?: FindingListFilter): Finding[];
+  openFor(taskId: string): Finding[];
+  add(input: AddFindingInput): Finding;
+  update(id: string, patch: FindingUpdatePatch): Finding;
 }
 
 // How many times add() will re-roll an id before giving up. Far beyond what
@@ -59,7 +57,7 @@ function isFinding(value: unknown): value is Finding {
   );
 }
 
-export class FindingStore {
+export class FindingStore implements FindingStorePort {
   private readonly file: string;
   private readonly generateId: (now: string) => string;
   // Ids already reported as colliding, so a damaged file logs once, not on

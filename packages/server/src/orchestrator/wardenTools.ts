@@ -1,10 +1,10 @@
 import { untrustedInline } from '@dispatch/core';
-import type { LedgerEntry, TaskDoc, TaskStore } from '@dispatch/core';
+import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
 import type { TaskCache } from '../cache.js';
-import type { LedgerStore } from '../ledger.js';
+import type { LedgerStorePort } from '../ledger.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { QuestionRegistry, RunQuestion } from './questions.js';
@@ -53,12 +53,12 @@ export class WardenToolError extends Error {}
  * bus on this context would only be a second, easily-desynced way to do it.
  */
 export interface WardenToolContext {
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   orchestrator: Orchestrator;
   mergeQueue: MergeQueue;
   questions: QuestionRegistry;
-  ledgerStore: LedgerStore;
+  ledgerStore: LedgerStorePort;
   /**
    * Executor `dispatch_task` uses when the warden doesn't name one. Matches
    * api.ts's own fallback rather than being configurable per call site, so

@@ -21,7 +21,7 @@ import type {
   LinearLabel,
   LinearWorkflowState,
   TaskDoc,
-  TaskStore,
+  TaskStorePort,
 } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
@@ -66,7 +66,7 @@ export interface LinearStatus {
 
 export interface LinearSyncDeps {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   /** A ready-made client, bypassing credential lookup entirely. Tests inject a fake here. */

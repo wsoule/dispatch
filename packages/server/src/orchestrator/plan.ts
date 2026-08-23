@@ -1,5 +1,5 @@
 import { generateDraftId, loadConfig } from '@dispatch/core';
-import type { ActorContext, TaskStore } from '@dispatch/core';
+import type { ActorContext, TaskStorePort } from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { TaskCache } from '../cache.js';
@@ -127,7 +127,7 @@ const MAX_DRAFTS = 50;
 
 export interface PlanManagerContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   // Optional, same "tests may omit it" contract as OrchestratorContext's own

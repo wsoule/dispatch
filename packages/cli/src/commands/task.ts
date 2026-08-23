@@ -1,19 +1,33 @@
 import {
   ActorContext,
   ASSIGNEES,
+  DISPATCH_DIR,
   KINDS,
   loadConfig,
   PRIORITIES,
   readyTasks,
+  serializeTaskFile,
   TaskStore,
 } from '@dispatch/core';
-import type { GitReader, Priority, TaskDoc, TaskKind } from '@dispatch/core';
+import type {
+  CreateInput,
+  GitReader,
+  ListFilter,
+  Priority,
+  TaskDoc,
+  TaskKind,
+  UpdatePatch,
+} from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
+import type { TaskApiClient } from '../apiClient.js';
+import { createTaskApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
+import { findRunningDaemon } from './daemon.js';
 
 // ActorContext's GitReader seam, Node-based — mirrors server/src/index.ts's
 // `makeGitReader` (which uses Bun.spawnSync instead, since the daemon is
@@ -32,11 +46,99 @@ function resolveActor(ctx: CliContext): ActorContext {
   return ActorContext.resolve(ctx.cwd, makeGitReader(ctx.cwd));
 }
 
+const NOT_INITIALIZED = 'not initialized — run: dispatch init';
+
+const DAEMON_REQUIRED =
+  "dispatchd is not running — this project keeps its tasks in the daemon's " +
+  'database, which only dispatchd may open. Start it with: dispatch serve';
+
 export function requireStore(ctx: CliContext): TaskStore {
   const store = new TaskStore(ctx.cwd);
-  if (!store.isInitialized())
-    throw new CliError('not initialized — run: dispatch init');
+  if (!store.isInitialized()) throw new CliError(NOT_INITIALIZED);
   return store;
+}
+
+/**
+ * The "is there a project here at all?" gate, for commands that only need to
+ * know a project exists before they talk to the daemon about runs or plans.
+ *
+ * Unlike `requireStore` this accepts either backend: a database-backed
+ * project has no `.dispatch/tasks` directory, and gating on one would refuse
+ * every orchestrate/plan/scope command in exactly the projects this epic is
+ * moving towards.
+ */
+export function requireInitialized(ctx: CliContext): void {
+  if (new TaskStore(ctx.cwd).isInitialized()) return;
+  if (databaseBacked(ctx.cwd)) return;
+  throw new CliError(NOT_INITIALIZED);
+}
+
+/**
+ * Whether this project's tasks live in a database only dispatchd may open.
+ *
+ * Read from the choice the project recorded for itself, NOT from whether a
+ * `dispatch.db` file happens to exist: a stray or half-created database would
+ * otherwise lock the CLI out of a project whose tasks are really still in
+ * markdown, with no way to say otherwise. Existence is not ownership.
+ *
+ * The daemon writes this marker when a project moves to the database — see
+ * packages/server/src/storage.ts, which owns the format and explains why this
+ * reader is duplicated here and in packages/mcp/src/daemon.ts rather than
+ * shared. Keep the three in step.
+ */
+export function databaseBacked(rootDir: string): boolean {
+  const path = join(rootDir, DISPATCH_DIR, 'storage.json');
+  if (!existsSync(path)) return false;
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+      backend?: unknown;
+    };
+    return parsed.backend === 'sqlite';
+  } catch {
+    // A mangled marker degrades the project to its pre-marker behaviour
+    // rather than making every task command fail.
+    return false;
+  }
+}
+
+/**
+ * Where a `dispatch task` command reads and writes.
+ *
+ * dispatchd is a project's single writer: while it runs, it holds the store
+ * and the CLI asks it over HTTP rather than opening a second handle. With no
+ * daemon running the CLI reads the markdown directly — the same thing it has
+ * always done, and still safe, because file-backed tasks have no exclusive
+ * writer to conflict with. A database-backed project has no such fallback,
+ * so the command says so instead of guessing.
+ *
+ * Discovery is `findRunningDaemon`, never `ensureDaemon`: `dispatch task
+ * list` is a read, and a read should not leave a background daemon running
+ * behind it. Commands that genuinely need orchestration (`dispatch run`,
+ * `dispatch plan`) still auto-start one.
+ */
+type TaskRoute =
+  | { via: 'daemon'; api: TaskApiClient }
+  | { via: 'local'; store: TaskStore };
+
+async function resolveTaskRoute(ctx: CliContext): Promise<TaskRoute> {
+  // A daemon file written before two-tier auth carries no agent token, and
+  // `findRunningDaemon` throws rather than returning one. For a task command
+  // that is not fatal — it just means there is no daemon we can present a
+  // credential to, so fall through to the same handling as no daemon at all.
+  // Commands that genuinely require dispatchd (scope decide, orchestrate)
+  // keep the explicit error, which is the right answer for them.
+  const daemon = await findRunningDaemon(ctx.cwd).catch(() => null);
+  if (daemon !== null) {
+    return {
+      via: 'daemon',
+      api: createTaskApiClient(
+        `http://127.0.0.1:${daemon.port}`,
+        daemon.agentToken
+      ),
+    };
+  }
+  if (databaseBacked(ctx.cwd)) throw new CliError(DAEMON_REQUIRED);
+  return { via: 'local', store: requireStore(ctx) };
 }
 
 function validate<T extends string>(
@@ -74,14 +176,14 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--blocked-by <id...>')
     .option('--json', 'print the created task as JSON')
     .action(
-      (
+      async (
         title: string,
         opts: Record<string, string | string[] | boolean | undefined>
       ) => {
         if (title.trim() === '') throw new CliError('title must not be empty');
-        const store = requireStore(ctx);
+        const route = await resolveTaskRoute(ctx);
         const config = loadConfig(ctx.cwd);
-        const doc = store.create({
+        const input: CreateInput = {
           title,
           kind: validate(opts.kind as string, KINDS, 'kind') as TaskKind,
           status: validate(
@@ -98,7 +200,11 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
           ) as Priority,
           labels: (opts.label as string[] | undefined) ?? [],
           blockedBy: (opts.blockedBy as string[] | undefined) ?? [],
-        });
+        };
+        const doc =
+          route.via === 'daemon'
+            ? await route.api.createTask(input)
+            : route.store.create(input);
         ctx.log(
           opts.json === true
             ? JSON.stringify(doc, null, 2)
@@ -113,10 +219,10 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--kind <kind>')
     .option('--parent <id>')
     .option('--json')
-    .action((opts: Record<string, string | boolean | undefined>) => {
-      const store = requireStore(ctx);
+    .action(async (opts: Record<string, string | boolean | undefined>) => {
+      const route = await resolveTaskRoute(ctx);
       const config = loadConfig(ctx.cwd);
-      const docs = store.list({
+      const query: ListFilter = {
         status: validate(
           opts.status as string | undefined,
           config.statuses,
@@ -124,7 +230,11 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
         ),
         kind: validate(opts.kind as string | undefined, KINDS, 'kind'),
         parent: opts.parent as string | undefined,
-      });
+      };
+      const docs =
+        route.via === 'daemon'
+          ? await route.api.listTasks(query)
+          : route.store.list(query);
       if (opts.json === true) {
         ctx.log(JSON.stringify(docs, null, 2));
         return;
@@ -136,31 +246,60 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .command('show')
     .argument('<id>')
     .option('--json')
-    .action((id: string, opts: { json?: boolean }) => {
-      const store = requireStore(ctx);
-      const doc = store.get(id);
-      if (doc === null) throw new CliError(`task not found: ${id}`);
-      if (opts.json === true) {
-        ctx.log(JSON.stringify(doc, null, 2));
+    .action(async (id: string, opts: { json?: boolean }) => {
+      const route = await resolveTaskRoute(ctx);
+      if (route.via === 'local') {
+        const doc = route.store.get(id);
+        if (doc === null) throw new CliError(`task not found: ${id}`);
+        ctx.log(
+          opts.json === true
+            ? JSON.stringify(doc, null, 2)
+            : // Still the file's own bytes on this path, exactly as before —
+              // a hand-edited task file shows as the user actually wrote it.
+              readFileSync(route.store.taskFilePath(id)!, 'utf8')
+        );
         return;
       }
-      ctx.log(readFileSync(store.taskFilePath(id)!, 'utf8'));
+      // The daemon's 404 already reads `task not found: <id>`, and `request`
+      // turns that into a CliError carrying its wording.
+      const doc = await route.api.getTask(id);
+      ctx.log(
+        opts.json === true
+          ? JSON.stringify(doc, null, 2)
+          : // Rendered from the doc: a database-backed project has no file to
+            // cat, and serializing is what produced a task file's contents in
+            // the first place, so the two forms agree.
+            serializeTaskFile(doc)
+      );
     });
 
   task
     .command('status')
     .argument('<id>')
     .argument('<status>')
-    .action((id: string, status: string) => {
-      const store = requireStore(ctx);
+    .action(async (id: string, status: string) => {
+      const route = await resolveTaskRoute(ctx);
       const config = loadConfig(ctx.cwd);
       const valid = validate(status, config.statuses, 'status')!;
-      if (store.get(id) === null) throw new CliError(`task not found: ${id}`);
-      store.update(id, {
+      const patch: UpdatePatch = {
         status: valid,
         appendActivity: `${new Date().toISOString()} status → ${valid}`,
-        activityActor: resolveActor(ctx).humanRef,
-      });
+      };
+      if (route.via === 'daemon') {
+        // No `activityActor` on this path on purpose: PATCH /api/tasks/:id
+        // credits the Activity line to the daemon's own resolved human and
+        // ignores whatever the client sent, so that a client cannot forge
+        // attribution. Sending one would be discarded anyway.
+        await route.api.updateTask(id, patch);
+      } else {
+        if (route.store.get(id) === null) {
+          throw new CliError(`task not found: ${id}`);
+        }
+        route.store.update(id, {
+          ...patch,
+          activityActor: resolveActor(ctx).humanRef,
+        });
+      }
       ctx.log(`${id} → ${valid}`);
     });
 
@@ -174,11 +313,24 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .option('--add-label <label...>')
     .option('--add-blocked-by <id...>')
     .action(
-      (id: string, opts: Record<string, string | string[] | undefined>) => {
-        const store = requireStore(ctx);
-        const doc = store.get(id);
-        if (doc === null) throw new CliError(`task not found: ${id}`);
-        store.update(id, {
+      async (
+        id: string,
+        opts: Record<string, string | string[] | undefined>
+      ) => {
+        const route = await resolveTaskRoute(ctx);
+        let doc: TaskDoc | null;
+        if (route.via === 'daemon') {
+          doc = await route.api.getTask(id);
+        } else {
+          doc = route.store.get(id);
+          if (doc === null) throw new CliError(`task not found: ${id}`);
+        }
+        // --add-label/--add-blocked-by are additive, so they are resolved
+        // against the doc just fetched. Read-modify-write against a live
+        // daemon can lose a concurrent edit to the same list; that race
+        // predates this change (it was read-modify-write against the file
+        // before) and is left as-is rather than widened into an API change.
+        const patch: UpdatePatch = {
           title: opts.title as string | undefined,
           priority: validate(
             opts.priority as string | undefined,
@@ -199,7 +351,9 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
             opts.addBlockedBy !== undefined
               ? [...doc.meta.blockedBy, ...(opts.addBlockedBy as string[])]
               : undefined,
-        });
+        };
+        if (route.via === 'daemon') await route.api.updateTask(id, patch);
+        else route.store.update(id, patch);
         ctx.log(`updated ${id}`);
       }
     );
@@ -208,9 +362,12 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .command('next')
     .description('Tasks ready to start: todo with all blockers done')
     .option('--json')
-    .action((opts: { json?: boolean }) => {
-      const store = requireStore(ctx);
-      const ready = readyTasks(store.list());
+    .action(async (opts: { json?: boolean }) => {
+      const route = await resolveTaskRoute(ctx);
+      const ready =
+        route.via === 'daemon'
+          ? await route.api.readyTasks()
+          : readyTasks(route.store.list());
       if (opts.json === true) {
         ctx.log(JSON.stringify(ready, null, 2));
         return;

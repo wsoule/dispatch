@@ -16,7 +16,16 @@ import { basename } from 'node:path';
 import { z } from 'zod';
 
 import type { DaemonFileInfo } from './daemon.js';
-import { daemonAuth, isDaemonHealthy, readDaemonFile } from './daemon.js';
+import {
+  daemonAuth,
+  DaemonHttpError,
+  daemonJsonBody,
+  daemonOwnsStore,
+  daemonRequest,
+  isDaemonHealthy,
+  liveDaemon,
+  readDaemonFile,
+} from './daemon.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
 // (and core's ConfigError) via wrap() and turns it into an MCP tool-error
@@ -173,26 +182,101 @@ function toolError(message: string): ToolOutcome {
 // Turns listSafe()'s per-file parse failures into the same doctor-pointing
 // text task_get uses for a single corrupt file, so an agent sees one
 // consistent hint no matter which tool surfaced the problem.
+const DOCTOR_HINT = " — run 'dispatch doctor'";
+
 function formatProblems(errors: ListSafeError[]): string[] {
-  return errors.map((e) => `${e.file}: ${e.message} — run 'dispatch doctor'`);
+  return errors.map((e) => `${e.file}: ${e.message}${DOCTOR_HINT}`);
+}
+
+// The same hint for problems that came back from the daemon instead. Its
+// `GET /api/health` already reports them as `<file>: <message>` (see
+// TaskCache.problems), so only the hint has to be added — which keeps
+// `problems` reading identically whether a tool answered from the daemon or
+// from a local scan.
+function formatDaemonProblems(problems: string[]): string[] {
+  return problems.map((p) => `${p}${DOCTOR_HINT}`);
+}
+
+// ---------------------------------------------------------------------------
+// Where a task tool reads and writes.
+//
+// dispatchd owns a project's task state (task t-c6dbd3): while it is running
+// it is the only process that touches the store, and every tool here asks it
+// over HTTP instead of opening the store itself. Two things make that a
+// routing decision rather than a hard rule:
+//
+//  - The daemon may not be running. On the file backend the markdown under
+//    `.dispatch/tasks` is still perfectly readable by a second process, and
+//    refusing to read it would make these tools useless in exactly the
+//    situation they are most often used from — a plain `dispatch mcp` in a
+//    checkout with no daemon. So that case falls back to a direct read, which
+//    is what every one of these tools did before this change.
+//  - Unless the project is database-backed, in which case there is no safe
+//    direct path at all and the tool says so. See `daemonOwnsStore`.
+//
+// Note which root each side resolves against. The daemon path is always the
+// PROJECT (`projectRoot()`), so an agent mid-run sees the board every other
+// agent sees rather than the frozen copy on its own branch — that is the
+// point of routing reads through the daemon at all. The local fallback keeps
+// using the raw `rootDir`, which inside a run is the worktree: unchanged
+// behaviour for the no-daemon case, and the only state actually reachable
+// there.
+// ---------------------------------------------------------------------------
+
+const DAEMON_REQUIRED =
+  "dispatchd is not running — this project keeps its tasks in the daemon's " +
+  'database, which only dispatchd may open. Start it with: dispatch serve';
+
+type StoreRoute =
+  | {
+      via: 'daemon';
+      daemon: DaemonFileInfo;
+      // Carried from the health probe `liveDaemon` already made, so a read
+      // that reports `problems` costs one round trip rather than two.
+      problems: string[];
+      configRoot: string;
+    }
+  | { via: 'local'; configRoot: string }
+  | { via: 'refused'; message: string };
+
+async function resolveStoreRoute(rootDir: string): Promise<StoreRoute> {
+  const projRoot = projectRoot(rootDir);
+  const live = await liveDaemon(projRoot);
+  if (live !== null) {
+    return {
+      via: 'daemon',
+      daemon: live.info,
+      problems: formatDaemonProblems(live.problems),
+      configRoot: projRoot,
+    };
+  }
+  if (daemonOwnsStore(projRoot)) {
+    return { via: 'refused', message: DAEMON_REQUIRED };
+  }
+  return { via: 'local', configRoot: rootDir };
 }
 
 // Runs a tool body, turning a ToolError/ConfigError into a clean MCP tool
-// error with our own message text. Anything else thrown here (a bug, a
-// TaskParseError we didn't handle explicitly) is rethrown — but that does
-// NOT become a protocol-level JSON-RPC error: the SDK's own tool-call
-// handling catches exceptions thrown from a registered callback and turns
-// them into a `{ isError: true }` CallToolResult itself (verified against
-// the installed SDK — an uncaught throw in a tool handler surfaces to the
-// client as a normal tool result, not a `client.callTool()` rejection). We
-// still catch ToolError/ConfigError explicitly so the message text matches
-// the CLI exactly, rather than relying on the SDK's default `String(err)`
-// rendering of whatever a rethrow produces.
-function wrap(fn: () => ToolOutcome): ToolOutcome {
+// error with our own message text, and a DaemonHttpError into the daemon's
+// own wording (its 404 for an unknown task already reads `task not found:
+// <id>`, the same text the local path produces). Anything else thrown here
+// is rethrown — but that does NOT become a protocol-level JSON-RPC error:
+// the SDK's own tool-call handling catches exceptions thrown from a
+// registered callback and turns them into a `{ isError: true }`
+// CallToolResult itself (verified against the installed SDK — an uncaught
+// throw in a tool handler surfaces to the client as a normal tool result,
+// not a `client.callTool()` rejection). We still catch these three
+// explicitly so the message text matches the CLI exactly, rather than
+// relying on the SDK's default `String(err)` rendering of a rethrow.
+async function wrapAsync(fn: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
   try {
-    return fn();
+    return await fn();
   } catch (err) {
-    if (err instanceof ToolError || err instanceof ConfigError) {
+    if (
+      err instanceof ToolError ||
+      err instanceof ConfigError ||
+      err instanceof DaemonHttpError
+    ) {
       return toolError(err.message);
     }
     throw err;
@@ -312,6 +396,243 @@ function callingRunId(): string | undefined {
   return id !== undefined && id !== '' ? id : undefined;
 }
 
+// The daemon's task-list response, plus the health call that carries the
+// store problems `task_list`/`task_next` promise. Fetched together rather
+// than in sequence: they are two independent localhost GETs, so paying for
+// one round trip instead of two costs nothing but a Promise.all.
+// The task docs behind `path`. `problems` came from the health probe that
+// decided this daemon was reachable in the first place (see `liveDaemon`),
+// so a list costs exactly one request.
+async function daemonDocs(
+  daemon: DaemonFileInfo,
+  path: string
+): Promise<TaskDoc[]> {
+  return daemonRequest<TaskDoc[]>(daemon, path);
+}
+
+async function taskList(
+  rootDir: string,
+  args: { status?: string; kind?: string; parent?: string }
+): Promise<ToolOutcome> {
+  const route = await resolveStoreRoute(rootDir);
+  if (route.via === 'refused') return toolError(route.message);
+  // Validated here on both paths, against the same config.yml the daemon
+  // reads, so an invalid enum reads identically whether or not a daemon is
+  // up — and so an obviously-bad filter never costs a round trip.
+  const config = loadConfig(route.configRoot);
+  const status = validate(args.status, config.statuses, 'status');
+  const kind = validate(args.kind, KINDS, 'kind');
+
+  if (route.via === 'daemon') {
+    const query = new URLSearchParams();
+    if (status !== undefined) query.set('status', status);
+    if (kind !== undefined) query.set('kind', kind);
+    if (args.parent !== undefined) query.set('parent', args.parent);
+    // `GET /api/tasks` hides archived tasks unless asked, but the local scan
+    // below has no such filter — a plain `listSafe()` returns them. Asking
+    // for them here keeps this tool's answer the same on both routes rather
+    // than making "is a daemon running?" quietly change what it returns.
+    query.set('archived', '1');
+    const suffix = `?${query.toString()}`;
+    const docs = await daemonDocs(route.daemon, `/api/tasks${suffix}`);
+    return toolResult({
+      tasks: docs.map(toSummary),
+      problems: route.problems,
+    });
+  }
+
+  const store = requireStore(rootDir);
+  // listSafe() (not list()) so one unparsable task file surfaces as a
+  // `problems` entry instead of failing the whole call — the daemon's
+  // cache rebuild uses the same method for the same reason.
+  const { docs, errors } = store.listSafe({
+    status,
+    kind,
+    parent: args.parent,
+  });
+  return toolResult({
+    tasks: docs.map(toSummary),
+    problems: formatProblems(errors),
+  });
+}
+
+async function taskGet(rootDir: string, id: string): Promise<ToolOutcome> {
+  const route = await resolveStoreRoute(rootDir);
+  if (route.via === 'refused') return toolError(route.message);
+
+  if (route.via === 'daemon') {
+    try {
+      const doc = await daemonRequest<TaskDoc>(
+        route.daemon,
+        `/api/tasks/${encodeURIComponent(id)}`
+      );
+      return toolResult({ meta: doc.meta, body: doc.body });
+    } catch (err) {
+      // A 404 has two very different causes on the file backend, and the
+      // daemon cannot tell them apart in this response: the task really does
+      // not exist, or its file failed to parse and the cache skipped it. The
+      // local branch below distinguishes them (TaskParseError -> "run
+      // dispatch doctor"), and answering "task not found" for a task that is
+      // sitting right there, merely malformed, sends an agent looking for
+      // the wrong problem. The daemon reports those parse failures at
+      // /api/health, so consult it before settling on not-found.
+      if (err instanceof DaemonHttpError && err.status === 404) {
+        if (route.problems.length > 0) {
+          throw new ToolError(
+            `task not found: ${id} — but this project has unreadable task ` +
+              `files, and one of them may be it: ${route.problems.join('; ')}`
+          );
+        }
+      }
+      throw err;
+    }
+  }
+
+  const store = requireStore(rootDir);
+  let doc: TaskDoc | null;
+  try {
+    doc = store.get(id);
+  } catch (err) {
+    if (err instanceof TaskParseError) {
+      // basename only — task_list's problems[] and the CLI never expose
+      // absolute paths, and neither should a remote MCP client see them.
+      const file = err.file === undefined ? id : basename(err.file);
+      throw new ToolError(`${file}: ${err.message}${DOCTOR_HINT}`);
+    }
+    throw err;
+  }
+  if (doc === null) throw new ToolError(`task not found: ${id}`);
+  return toolResult({ meta: doc.meta, body: doc.body });
+}
+
+interface TaskSaveInput {
+  id?: string;
+  title?: string;
+  status?: string;
+  kind?: string;
+  parent?: string | null;
+  blockedBy?: string[];
+  labels?: string[];
+  priority?: string;
+  assignee?: string;
+  description?: string;
+  writes?: string[];
+}
+
+async function taskSave(
+  rootDir: string,
+  input: TaskSaveInput
+): Promise<ToolOutcome> {
+  const route = await resolveStoreRoute(rootDir);
+  if (route.via === 'refused') return toolError(route.message);
+  const config = loadConfig(route.configRoot);
+  const status = validate(input.status, config.statuses, 'status');
+  const priority = validate(input.priority, PRIORITIES, 'priority');
+  const assignee = validate(input.assignee, ASSIGNEES, 'assignee');
+
+  if (input.id === undefined) {
+    if (input.title === undefined || input.title.trim() === '') {
+      throw new ToolError('title must not be empty');
+    }
+    const kind = validate(input.kind, KINDS, 'kind');
+    const create = {
+      title: input.title,
+      kind,
+      status,
+      description: input.description,
+      parent: input.parent ?? null,
+      priority,
+      labels: input.labels ?? [],
+      blockedBy: input.blockedBy ?? [],
+      assignee,
+      writes: input.writes,
+    };
+    const doc =
+      route.via === 'daemon'
+        ? await daemonRequest<TaskDoc>(
+            route.daemon,
+            '/api/tasks',
+            daemonJsonBody('POST', create)
+          )
+        : requireStore(rootDir).create(create);
+    return toolResult({ meta: doc.meta, body: doc.body });
+  }
+
+  const patch = {
+    title: input.title,
+    status,
+    parent: input.parent,
+    blockedBy: input.blockedBy,
+    labels: input.labels,
+    priority,
+    assignee,
+    writes: input.writes,
+  };
+  // `kind` and `description` are the only fields a caller could have sent
+  // that don't end up in `patch` (both are create-only — see the tool's own
+  // description). If every other field is undefined too, there is nothing to
+  // write: skip the update entirely rather than rewriting the task with an
+  // identical body and a bumped `updated` timestamp for no real change.
+  const hasChange = Object.values(patch).some((v) => v !== undefined);
+
+  if (route.via === 'daemon') {
+    const path = `/api/tasks/${encodeURIComponent(input.id)}`;
+    // One round trip either way. The PATCH 404s an unknown id with the same
+    // `task not found: <id>` text a GET would, so there is nothing to learn
+    // from asking first; the GET is only for the no-op case, which has to
+    // return the task's current state and has nothing to patch.
+    const doc = hasChange
+      ? await daemonRequest<TaskDoc>(
+          route.daemon,
+          path,
+          daemonJsonBody('PATCH', patch)
+        )
+      : await daemonRequest<TaskDoc>(route.daemon, path);
+    return toolResult({ meta: doc.meta, body: doc.body });
+  }
+
+  const store = requireStore(rootDir);
+  const existing = store.get(input.id);
+  if (existing === null) throw new ToolError(`task not found: ${input.id}`);
+  if (!hasChange) {
+    return toolResult({ meta: existing.meta, body: existing.body });
+  }
+  const doc = store.update(input.id, patch);
+  return toolResult({ meta: doc.meta, body: doc.body });
+}
+
+async function taskNext(rootDir: string): Promise<ToolOutcome> {
+  const route = await resolveStoreRoute(rootDir);
+  if (route.via === 'refused') return toolError(route.message);
+
+  if (route.via === 'daemon') {
+    // `/api/tasks/ready` applies core's own readyTasks() to the daemon's
+    // cache, so this is the same graph rule the local branch below runs —
+    // not a second implementation of it.
+    const docs = await daemonDocs(route.daemon, '/api/tasks/ready');
+    return toolResult({
+      tasks: docs.map(toSummary),
+      problems: route.problems,
+    });
+  }
+
+  const store = requireStore(rootDir);
+  const { docs, errors } = store.listSafe();
+  return toolResult({
+    // Archived tasks dropped to match `/api/tasks/ready`, which filters them
+    // via the cache's default query. Unlike task_list — where including them
+    // preserves what a raw file scan always returned — the daemon is simply
+    // right here: an archived task is work that already landed, and "what
+    // should I start now?" must never answer with it. Leaving the two paths
+    // differing would also make the answer depend on whether a daemon
+    // happened to be running.
+    tasks: readyTasks(docs.filter((d) => d.meta.archivedAt === undefined)).map(
+      toSummary
+    ),
+    problems: formatProblems(errors),
+  });
+}
+
 // Appends a task_comment line, crediting whoever actually said it. When
 // there's a live run and a reachable daemon, this proxies `POST
 // /api/tasks/:id/comment` so dispatchd can resolve the calling agent's
@@ -330,34 +651,45 @@ async function taskComment(
   }
   const projRoot = projectRoot(rootDir);
   const runId = callingRunId();
-  if (runId !== undefined) {
-    const daemon = readDaemonFile(projRoot);
-    if (daemon !== null && (await isDaemonHealthy(daemon.port))) {
-      try {
-        const res = await fetch(
-          `http://127.0.0.1:${daemon.port}/api/tasks/${args.id}/comment`,
-          {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ text: args.text, runId }),
-          }
-        );
-        if (res.ok) {
-          const doc = (await res.json()) as { meta: Record<string, unknown> };
-          return toolResult({ meta: doc.meta });
-        }
-        // The daemon's own store agrees with what a direct write would find
-        // — no point falling through to re-derive the same 404.
-        if (res.status === 404) {
-          return toolError(`task not found: ${args.id}`);
-        }
-      } catch {
-        // A network hiccup talking to a daemon that just answered healthy is
-        // not worth losing the comment over — fall through to the direct
-        // write below.
+  // Gated on a LIVE DAEMON, not on having a run id. dispatchd is the single
+  // writer whoever is asking, and `POST /api/tasks/:id/comment` takes a
+  // missing runId perfectly well — it credits 'none', exactly what the direct
+  // write below does. Gating on the run id instead meant a plain `dispatch
+  // mcp` session (no DISPATCH_RUN_ID) skipped the proxy entirely and then
+  // refused with "dispatchd is not running" on a database-backed project
+  // while the daemon was, in fact, running.
+  const live = await liveDaemon(projRoot);
+  if (live !== null) {
+    try {
+      // `daemonAuth` is load-bearing, not decoration: every route but
+      // /api/health requires a token, so a request without one 401s and
+      // this silently fell through to the direct write below — losing the
+      // agent attribution the proxy exists to get, on every single call.
+      const doc = await daemonRequest<{ meta: Record<string, unknown> }>(
+        live.info,
+        `/api/tasks/${encodeURIComponent(args.id)}/comment`,
+        daemonJsonBody(
+          'POST',
+          runId === undefined ? { text: args.text } : { text: args.text, runId }
+        )
+      );
+      return toolResult({ meta: doc.meta });
+    } catch (err) {
+      // The daemon's own store agrees with what a direct write would find
+      // — no point falling through to re-derive the same 404.
+      if (err instanceof DaemonHttpError && err.status === 404) {
+        return toolError(`task not found: ${args.id}`);
       }
+      // Any other answer (or a network hiccup talking to a daemon that
+      // just answered healthy) is not worth losing the comment over — fall
+      // through to the direct write below.
     }
   }
+
+  // No daemon took the write. A database-backed project has no second way in,
+  // so say so rather than letting requireStore report "not initialized" for a
+  // project that is perfectly well initialized.
+  if (daemonOwnsStore(projRoot)) return toolError(DAEMON_REQUIRED);
 
   // projectRoot(), not the raw rootDir — see its doc comment above: a
   // comment written to a run's worktree copy of a task file would be
@@ -1058,22 +1390,7 @@ export function registerDispatchTools(
       annotations: { readOnlyHint: true },
     },
     ({ status, kind, parent }) =>
-      wrap(() => {
-        const store = requireStore(rootDir);
-        const config = loadConfig(rootDir);
-        // listSafe() (not list()) so one unparsable task file surfaces as a
-        // `problems` entry instead of failing the whole call — the daemon's
-        // cache rebuild uses the same method for the same reason.
-        const { docs, errors } = store.listSafe({
-          status: validate(status, config.statuses, 'status'),
-          kind: validate(kind, KINDS, 'kind'),
-          parent,
-        });
-        return toolResult({
-          tasks: docs.map(toSummary),
-          problems: formatProblems(errors),
-        });
-      })
+      wrapAsync(() => taskList(rootDir, { status, kind, parent }))
   );
 
   server.registerTool(
@@ -1086,26 +1403,7 @@ export function registerDispatchTools(
       outputSchema: { meta: z.object(taskMetaShape), body: z.string() },
       annotations: { readOnlyHint: true },
     },
-    ({ id }) =>
-      wrap(() => {
-        const store = requireStore(rootDir);
-        let doc: TaskDoc | null;
-        try {
-          doc = store.get(id);
-        } catch (err) {
-          if (err instanceof TaskParseError) {
-            // basename only — task_list's problems[] and the CLI never expose
-            // absolute paths, and neither should a remote MCP client see them.
-            const file = err.file === undefined ? id : basename(err.file);
-            throw new ToolError(
-              `${file}: ${err.message} — run 'dispatch doctor'`
-            );
-          }
-          throw err;
-        }
-        if (doc === null) throw new ToolError(`task not found: ${id}`);
-        return toolResult({ meta: doc.meta, body: doc.body });
-      })
+    ({ id }) => wrapAsync(() => taskGet(rootDir, id))
   );
 
   server.registerTool(
@@ -1143,61 +1441,7 @@ export function registerDispatchTools(
       // that hint would be false advertising for half of what this tool
       // does. Honest annotations over the plan's original text.
     },
-    (input) =>
-      wrap(() => {
-        const store = requireStore(rootDir);
-        const config = loadConfig(rootDir);
-        const status = validate(input.status, config.statuses, 'status');
-        const priority = validate(input.priority, PRIORITIES, 'priority');
-        const assignee = validate(input.assignee, ASSIGNEES, 'assignee');
-
-        if (input.id === undefined) {
-          if (input.title === undefined || input.title.trim() === '') {
-            throw new ToolError('title must not be empty');
-          }
-          const kind = validate(input.kind, KINDS, 'kind');
-          const doc = store.create({
-            title: input.title,
-            kind,
-            status,
-            description: input.description,
-            parent: input.parent ?? null,
-            priority,
-            labels: input.labels ?? [],
-            blockedBy: input.blockedBy ?? [],
-            assignee,
-            writes: input.writes,
-          });
-          return toolResult({ meta: doc.meta, body: doc.body });
-        }
-
-        const existing = store.get(input.id);
-        if (existing === null) {
-          throw new ToolError(`task not found: ${input.id}`);
-        }
-        const patch = {
-          title: input.title,
-          status,
-          parent: input.parent,
-          blockedBy: input.blockedBy,
-          labels: input.labels,
-          priority,
-          assignee,
-          writes: input.writes,
-        };
-        // `kind` and `description` are the only fields a caller could have
-        // sent that don't end up in `patch` (both are create-only — see
-        // above). If every other field is undefined too, there is nothing
-        // to write: skip store.update() entirely rather than rewriting the
-        // file with an identical body and a bumped `updated` timestamp for
-        // no real change.
-        const hasChange = Object.values(patch).some((v) => v !== undefined);
-        if (!hasChange) {
-          return toolResult({ meta: existing.meta, body: existing.body });
-        }
-        const doc = store.update(input.id, patch);
-        return toolResult({ meta: doc.meta, body: doc.body });
-      })
+    (input) => wrapAsync(() => taskSave(rootDir, input))
   );
 
   server.registerTool(
@@ -1223,13 +1467,7 @@ export function registerDispatchTools(
       },
       annotations: { readOnlyHint: true },
     },
-    () =>
-      wrap(() => {
-        const store = requireStore(rootDir);
-        const { docs, errors } = store.listSafe();
-        const tasks = readyTasks(docs).map(toSummary);
-        return toolResult({ tasks, problems: formatProblems(errors) });
-      })
+    () => wrapAsync(() => taskNext(rootDir))
   );
 
   server.registerTool(

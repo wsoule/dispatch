@@ -1,4 +1,4 @@
-import type { ActorContext, TaskStore } from '@dispatch/core';
+import type { ActorContext, TaskStorePort } from '@dispatch/core';
 import {
   existsSync,
   mkdirSync,
@@ -201,7 +201,7 @@ export async function detectPrCapability(
 
 export interface PrManagerContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;

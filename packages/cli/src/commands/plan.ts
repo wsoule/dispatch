@@ -18,12 +18,12 @@ import { singleFlight } from '../singleFlight.js';
 import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
 import { ensureDaemon } from './daemon.js';
-import { requireStore } from './task.js';
+import { requireInitialized } from './task.js';
 
 async function daemonFor(
   ctx: CliContext
 ): Promise<{ baseUrl: string; token: string; client: ApiClient }> {
-  requireStore(ctx);
+  requireInitialized(ctx);
   const { port, agentToken } = await ensureDaemon(ctx);
   const baseUrl = `http://127.0.0.1:${port}`;
   return {

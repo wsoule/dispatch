@@ -7,7 +7,6 @@ import {
   loadConfig,
   PRIORITIES,
   TaskParseError,
-  TaskStore,
   updateConfig,
 } from '@dispatch/core';
 import type {
@@ -20,7 +19,7 @@ import type {
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc } from '@dispatch/core';
+import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -59,7 +58,7 @@ import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
 import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
-import type { FindingStore } from './findings.js';
+import type { FindingStorePort } from './findings.js';
 import {
   COMMIT_SHA_UNRESOLVED_PREFIX,
   CONFIRM_REQUIRED_ERROR,
@@ -77,7 +76,7 @@ import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
 import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
 import { buildLandingSnapshot } from './landing.js';
-import type { LedgerStore } from './ledger.js';
+import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
@@ -133,7 +132,12 @@ import type { TrackedFilesCache } from './trackedFiles.js';
 // this is what makes it easy to hit with plain fetch() in tests.
 export interface ApiContext {
   rootDir: string;
-  store: TaskStore;
+  // The port, not a concrete TaskStore: this daemon owns whichever backend
+  // the project was opened with (markdown files or its SQLite database), and
+  // every handler below works the same against either. A handler that needs
+  // a path on disk has to narrow to `TaskStore` itself — see
+  // Orchestrator.stageTaskFile, the one place that does.
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
@@ -151,8 +155,8 @@ export interface ApiContext {
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
   inboxStore: InboxStore;
-  findingStore: FindingStore;
-  ledgerStore: LedgerStore;
+  findingStore: FindingStorePort;
+  ledgerStore: LedgerStorePort;
   reviewRunner: ReviewRunner;
   verificationRunner: VerificationRunner;
   fixLoop: FixLoop;
