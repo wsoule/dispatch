@@ -1,7 +1,7 @@
 ---
 id: t-880ce2
 title: "One-time import: existing .dispatch markdown and JSONL into the daemon DB"
-status: working
+status: review
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-08-23T16:50:15.245Z
+updated: 2026-08-23T16:51:08.073Z
 external: null
 writes:
   - packages/cli/src/**
@@ -85,3 +85,4 @@ DRY RUN REPRODUCES THE ATTACHED NUMBERS EXACTLY: 155 tasks / 30 epics / 341 find
 Q2 landed: resolveStoreBackend's blanket refusal at index.ts:215 is gone (DISPATCH_STORE_BACKEND=sqlite on a project with a markdown board is now an opt-in, not an error), startServer imports before it serves and refuses to boot if the import fails, and bin.ts needed no change since it already defers to resolveStoreBackend. Originals untouched on disk throughout — deletion stays t-b3ad8f's call, receipts stay t-9d89bb's.
 
 Tests: core 506, cli 199, server 2085, all 0 fail. lint 0 errors, tsc clean on all three. Five guards mutation-tested; one of them (a redundant backend check) came back 0 and was deleted rather than kept, with the reason recorded in the code. — none
+- 2026-08-23T16:51:08.073Z [run r-5ebfaa] finished: finished — 16 files, $8.86 — agent:wsoule679/claude
