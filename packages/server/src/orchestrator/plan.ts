@@ -1,6 +1,8 @@
 import { generateDraftId, loadConfig } from '@dispatch/core';
 import type { ActorContext, TaskStore } from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
+import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
@@ -136,6 +138,66 @@ export interface PlanManagerContext {
   actorContext?: ActorContext;
 }
 
+/**
+ * Plan records in `.dispatch/plans.jsonl`, one JSON line per change, last line
+ * for an id wins — the same append-only pattern FixLoopStore uses. Plans used
+ * to live only in memory, which meant a daemon restart silently ate every
+ * conversation; this is what makes the Plans page's history real.
+ */
+export class PlanRecordStore {
+  private readonly file: string;
+
+  constructor(rootDir: string) {
+    this.file = join(rootDir, '.dispatch', 'plans.jsonl');
+  }
+
+  /** Every record, last snapshot per id, in first-seen order. */
+  load(): PlanRecord[] {
+    if (!existsSync(this.file)) return [];
+    let text: string;
+    try {
+      text = readFileSync(this.file, 'utf8');
+    } catch {
+      // An unreadable store costs the history recorded in it, not the boot.
+      return [];
+    }
+    const byId = new Map<string, PlanRecord>();
+    for (const line of text.split('\n')) {
+      if (line.trim() === '') continue;
+      try {
+        const record = JSON.parse(line) as PlanRecord;
+        byId.set(record.id, record);
+      } catch {
+        // A hand-corrupted line costs itself, not the rest of the store.
+      }
+    }
+    return [...byId.values()];
+  }
+
+  append(record: PlanRecord): void {
+    try {
+      mkdirSync(dirname(this.file), { recursive: true });
+      appendFileSync(this.file, `${JSON.stringify(record)}\n`);
+    } catch (err) {
+      // Persistence must never take a planning turn down with it.
+      console.error(
+        `dispatchd: failed to persist plan ${record.id}: ${String(err)}`
+      );
+    }
+  }
+}
+
+/** The list row's slice of a record — everything but the heavy transcript. */
+export interface PlanSummary {
+  id: string;
+  prompt: string;
+  subject?: string;
+  state: PlanState;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string;
+}
+
 // Builds the markdown body TaskStore.create's `description` param receives
 // for one planned task: the planner/proposal's own description, followed by
 // a plain "Acceptance criteria" bullet list when the proposal supplied any.
@@ -193,8 +255,42 @@ export class PlanManager {
   private readonly plans = new Map<string, PlanRecord>();
   private readonly planners = new Map<string, Planner>();
   private readonly drafts = new Map<string, DraftRecord>();
+  private readonly recordStore: PlanRecordStore;
 
-  constructor(private readonly ctx: PlanManagerContext) {}
+  constructor(private readonly ctx: PlanManagerContext) {
+    this.recordStore = new PlanRecordStore(ctx.rootDir);
+    // Rehydrate persisted plans so history survives the daemon. A plan the
+    // dead process left mid-turn can never settle (its promise died with it),
+    // so it boots as failed — the page's existing "send another message to
+    // retry" affordance is exactly the right next step.
+    for (const record of this.recordStore.load()) {
+      this.plans.set(
+        record.id,
+        record.state === 'running'
+          ? {
+              ...record,
+              state: 'failed',
+              error: 'the daemon restarted mid-turn',
+            }
+          : record
+      );
+    }
+  }
+
+  /** Every plan, newest activity first — the Plans page's history list. */
+  list(): PlanSummary[] {
+    return [...this.plans.values()]
+      .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+      .map((r) => ({
+        id: r.id,
+        prompt: r.prompt,
+        subject: r.subject,
+        state: r.state,
+        createdAt: r.createdAt,
+        updatedAt: r.updatedAt,
+        confirmedAt: r.confirmedAt,
+      }));
+  }
 
   registerPlanner(name: string, planner: Planner): void {
     this.planners.set(name, planner);
@@ -241,6 +337,11 @@ export class PlanManager {
       subject,
     };
     this.plans.set(record.id, record);
+    this.recordStore.append(record);
+    // Announce the new record immediately (not only when its first turn
+    // settles) so history lists — this window's and any other's — show the
+    // running plan right away.
+    this.ctx.events.broadcast({ type: 'plan.changed', planId: record.id });
     const model = this.resolveModel(role);
     void this.runTurn(record.id, () => planner.start(prompt, model, 'plan'));
     return record;
@@ -422,6 +523,7 @@ export class PlanManager {
       updatedAt: now,
     };
     this.plans.set(planId, updated);
+    this.recordStore.append(updated);
     this.ctx.events.broadcast({ type: 'plan.changed', planId });
     const sessionId = record.sessionId;
     const model = this.resolveModel(record.role);
@@ -476,6 +578,7 @@ export class PlanManager {
       updatedAt: new Date().toISOString(),
     };
     this.plans.set(planId, updated);
+    this.recordStore.append(updated);
     this.ctx.events.broadcast({ type: 'plan.changed', planId });
   }
 

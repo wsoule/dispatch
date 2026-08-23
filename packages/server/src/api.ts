@@ -3997,6 +3997,12 @@ export async function handleApi(
       return listFixLoops(ctx);
     }
 
+    // GET /api/plans — every plan's summary, newest activity first, for the
+    // Plans page's history (persisted server-side; localStorage is gone).
+    if (segments[0] === 'plans' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(ctx.planManager.list());
+    }
+
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(

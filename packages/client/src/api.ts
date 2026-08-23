@@ -817,6 +817,18 @@ export interface ConfirmResult {
   taskIds: string[];
 }
 
+// Mirrors PlanSummary in packages/server/src/orchestrator/plan.ts — one row
+// of GET /api/plans, the record minus its heavy transcript.
+export interface PlanSummary {
+  id: string;
+  prompt: string;
+  subject?: string;
+  state: PlanState;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string;
+}
+
 // Mirrors DraftRecord in packages/server/src/orchestrator/plan.ts — the body
 // of `POST /api/tasks/draft` and `GET /api/tasks/drafts[/:id]`.
 export interface DraftRecord {
@@ -1940,6 +1952,9 @@ export interface ApiClient {
   // scratch and is the only place that actually writes the epic/tasks.
   startPlan(prompt: string): Promise<{ planId: string }>;
   fetchPlan(planId: string): Promise<PlanRecord>;
+  /** Every plan's summary, newest activity first — the Plans page's history.
+   * Persisted server-side, so it survives restarts and spans windows. */
+  fetchPlans(): Promise<PlanSummary[]>;
   // Send a follow-up message on an existing plan conversation. Resolves (202)
   // with the record already back in `running` — poll `fetchPlan`/watch
   // `plan.changed` for the assistant's reply + refined proposal to land.
@@ -2468,6 +2483,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({ prompt }),
       }),
     fetchPlan: (planId) => request(target, `/api/plan/${planId}`),
+    fetchPlans: () => request(target, '/api/plans'),
     sendPlanMessage: (planId, text) =>
       request(target, `/api/plan/${planId}/message`, {
         method: 'POST',
