@@ -1,0 +1,42 @@
+<section class="section" id="demo">
+  <div class="container">
+    <p class="eyebrow">Demo</p>
+    <h2>See for yourself.</h2>
+    <p class="sub">
+      A real board, running in your browser. Nothing ever goes wrong with live demos, right?
+    </p>
+    <iframe
+      src="https://dispatch-demo-production-aed7.up.railway.app"
+      title="Live Dispatch demo"
+      loading="lazy"
+    ></iframe>
+    <p class="full-link">
+      <a href="https://dispatch-demo-production-aed7.up.railway.app" target="_blank" rel="noopener">
+        Open full screen ↗
+      </a>
+    </p>
+  </div>
+</section>
+
+<style>
+  .sub {
+    max-width: 36rem;
+    color: var(--text-secondary);
+    margin: 0 0 var(--space-5);
+  }
+  iframe {
+    width: 100%;
+    height: 600px;
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+  }
+  .full-link {
+    margin-top: var(--space-3);
+    font-size: var(--text-sm);
+  }
+  .full-link a {
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+</style>
