@@ -3,6 +3,7 @@ import { statusLabel } from '@dispatch/core/browser';
 import {
   Archive,
   LayoutGrid,
+  ListFilter,
   Plus,
   SlidersHorizontal,
   Sparkles,
@@ -27,6 +28,7 @@ import { countMergeReady } from '../lib/mergeReady';
 import {
   BOARD_COLUMNS_STORAGE_KEY,
   type BoardColumnPrefs,
+  EMPTY_TASK_FILTERS,
   hasActiveFilters,
   LIST_COLUMNS_STORAGE_KEY,
   matchesTaskFilters,
@@ -296,6 +298,8 @@ export function BoardView({
     () => new Set(hiddenListColumns),
     [hiddenListColumns]
   );
+  // The Filter button's badge — how many chips are active across both facets.
+  const activeFilterCount = filters.statuses.length + filters.priorities.length;
   const queuedRunIds = useMemo(
     () => new Set((data.mergeQueue?.entries ?? []).map((e) => e.runId)),
     [data.mergeQueue]
@@ -374,6 +378,66 @@ export function BoardView({
           Tasks row; this row carries only actions. */}
       <div className="flex flex-wrap items-start justify-end gap-2">
         <div className="flex flex-wrap items-center justify-end gap-2">
+          {mode !== 'milestones' && data.config !== null && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button variant="secondary" size="sm">
+                  <ListFilter className="size-3.5" />
+                  Filter
+                  {activeFilterCount > 0 && (
+                    <span className="bg-accent-tint text-primary rounded px-1 font-mono text-[10.5px] tabular-nums">
+                      {activeFilterCount}
+                    </span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent align="end" className="w-80 p-3">
+                {/* The gallery's Filter Table chips, one labeled group per facet — a
+                    popover instead of a permanent toolbar row of twelve chips. */}
+                <div className="flex flex-col gap-1">
+                  <div className="dense-label">Status</div>
+                  <FilterChips
+                    wrap
+                    options={data.config.statuses.map((status) => ({
+                      id: status,
+                      label: statusLabel(status),
+                    }))}
+                    active={filters.statuses}
+                    onToggle={(id) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        statuses: toggleFilterValue(prev.statuses, id),
+                      }))
+                    }
+                    counts={statusChipCounts}
+                  />
+                  <div className="dense-label pt-1">Priority</div>
+                  <FilterChips
+                    wrap
+                    options={PRIORITY_CHIP_OPTIONS}
+                    active={filters.priorities}
+                    onToggle={(id) =>
+                      setFilters((prev) => ({
+                        ...prev,
+                        priorities: toggleFilterValue(prev.priorities, id),
+                      }))
+                    }
+                    counts={priorityChipCounts}
+                  />
+                  {activeFilterCount > 0 && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setFilters(EMPTY_TASK_FILTERS)}
+                      className="text-muted-foreground hover:text-foreground self-end"
+                    >
+                      Clear filters
+                    </Button>
+                  )}
+                </div>
+              </PopoverContent>
+            </Popover>
+          )}
           {mode !== 'milestones' && (
             <Popover>
               <PopoverTrigger asChild>
@@ -467,41 +531,6 @@ export function BoardView({
           </Button>
         </div>
       </div>
-
-      {/* The shared status/priority chip filters (the gallery's Filter Table row) — one
-          filter model for board and list. Milestones reads whole epics, so chips don't
-          apply there. */}
-      {data.config !== null &&
-        boardTasks.length > 0 &&
-        mode !== 'milestones' && (
-          <div className="flex min-w-0 items-center gap-3">
-            <FilterChips
-              options={data.config.statuses.map((status) => ({
-                id: status,
-                label: statusLabel(status),
-              }))}
-              active={filters.statuses}
-              onToggle={(id) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  statuses: toggleFilterValue(prev.statuses, id),
-                }))
-              }
-              counts={statusChipCounts}
-            />
-            <FilterChips
-              options={PRIORITY_CHIP_OPTIONS}
-              active={filters.priorities}
-              onToggle={(id) =>
-                setFilters((prev) => ({
-                  ...prev,
-                  priorities: toggleFilterValue(prev.priorities, id),
-                }))
-              }
-              counts={priorityChipCounts}
-            />
-          </div>
-        )}
 
       {boardTasks.length === 0 ? (
         <EmptyState

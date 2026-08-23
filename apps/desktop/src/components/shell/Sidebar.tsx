@@ -1,10 +1,8 @@
 import type { SyncStatus } from '@dispatch/client';
 import {
   Brain,
-  Check,
   ChevronLeft,
   ChevronRight,
-  ChevronsUpDown,
   Cog,
   GitBranch,
   GitMerge,
@@ -33,12 +31,6 @@ import {
   type SidebarNavSection,
 } from '@/ui/ai/sidebar-nav';
 import { Button } from '@/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from '@/ui/dropdown-menu';
 import { Kbd } from '@/ui/kbd';
 import { Sidebar as SidebarRoot, useSidebar } from '@/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
@@ -110,8 +102,8 @@ PROJECT_VIEWS.forEach((view, index) => {
   }
 });
 
-// The Tasks destination's layout options — surfaced as a dropdown nested under the Tasks
-// row while it's the active view, per the "view names belong in the sidebar" direction.
+// The Tasks destination's layout options — surfaced as a nested list of rows under the
+// Tasks row while it's the active view, per the "view names belong in the sidebar" direction.
 const TASKS_VIEW_OPTIONS: {
   id: TasksViewMode;
   label: string;
@@ -245,50 +237,36 @@ export function Sidebar({
         const Icon = view.icon;
         const count = badges[view.id];
         const hasCount = count !== undefined && count > 0;
-        // The Tasks row grows a nested layout dropdown while it's the active view — the
-        // page itself carries no view tabs any more.
-        const activeTasksOption =
-          TASKS_VIEW_OPTIONS.find((o) => o.id === tasksViewMode) ??
-          TASKS_VIEW_OPTIONS[0];
-        const ActiveTasksIcon = activeTasksOption.icon;
+        // The Tasks row grows a nested list of its layouts while it's the active view —
+        // the page itself carries no view tabs any more. Plain indented rows, not a
+        // dropdown: the rail is a list, so its children read as list rows too.
         const tasksSwitcher =
           view.id === 'board' &&
           section === 'project' &&
           projectView === 'board' &&
           !collapsed ? (
-            <div className="pt-0.5 pb-1 pl-7">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
+            <div className="flex flex-col gap-px py-0.5 pr-1 pl-6">
+              {TASKS_VIEW_OPTIONS.map((option) => {
+                const OptionIcon = option.icon;
+                const optionActive = option.id === tasksViewMode;
+                return (
+                  <button
+                    key={option.id}
                     type="button"
-                    variant="ghost"
-                    size="xs"
-                    className="text-muted-foreground hover:text-foreground h-auto gap-1.5 px-1.5 py-1 text-[12px] font-normal"
+                    onClick={() => onSetTasksViewMode(option.id)}
+                    aria-current={optionActive ? 'true' : undefined}
+                    className={cn(
+                      'rounded-control ease-out-expo flex w-full items-center gap-2 px-2 py-1 text-left text-[12px] transition-colors duration-150',
+                      optionActive
+                        ? 'bg-surface-hover-strong text-foreground font-medium'
+                        : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'
+                    )}
                   >
-                    <ActiveTasksIcon className="size-3.5" />
-                    {activeTasksOption.label}
-                    <ChevronsUpDown className="size-3 opacity-60" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="start" className="min-w-36">
-                  {TASKS_VIEW_OPTIONS.map((option) => {
-                    const OptionIcon = option.icon;
-                    return (
-                      <DropdownMenuItem
-                        key={option.id}
-                        onClick={() => onSetTasksViewMode(option.id)}
-                        className="text-[12.5px]"
-                      >
-                        <OptionIcon className="size-3.5" />
-                        {option.label}
-                        {option.id === tasksViewMode && (
-                          <Check className="ml-auto size-3.5" />
-                        )}
-                      </DropdownMenuItem>
-                    );
-                  })}
-                </DropdownMenuContent>
-              </DropdownMenu>
+                    <OptionIcon className="size-3.5 shrink-0" />
+                    {option.label}
+                  </button>
+                );
+              })}
             </div>
           ) : undefined;
         return {

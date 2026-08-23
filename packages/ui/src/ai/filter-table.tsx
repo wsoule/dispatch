@@ -5,6 +5,9 @@ export type FilterChipsProps = {
   active: string[];
   onToggle: (id: string) => void;
   counts?: Record<string, number>;
+  /** Wrap chips onto multiple lines instead of the default single scrolling row — for a
+   * chip set living inside a fixed-width popover rather than a full-width toolbar. */
+  wrap?: boolean;
 };
 
 // Selects the subset of `rows` whose status (via `getStatus`) is in `active`. An empty
@@ -31,10 +34,13 @@ export function FilterChips({
   active,
   onToggle,
   counts,
+  wrap = false,
 }: FilterChipsProps) {
   return (
     <div
-      className="-mx-1 mb-1 flex items-center gap-1 overflow-x-auto px-1 py-1"
+      className={`-mx-1 mb-1 flex items-center gap-1 px-1 py-1 ${
+        wrap ? 'flex-wrap' : 'overflow-x-auto'
+      }`}
       style={{ scrollbarWidth: 'none' }}
     >
       {options.map((option) => {
