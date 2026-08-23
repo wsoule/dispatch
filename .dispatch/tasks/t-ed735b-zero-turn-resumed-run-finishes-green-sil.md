@@ -3,7 +3,7 @@ id: t-ed735b
 title: "Zero-turn resumed run finishes green: silent no-op reads as success"
 status: todo
 kind: task
-parent: null
+parent: e-ac6705
 milestone: null
 blocked-by: []
 labels:
@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-23T00:20:15.382Z
-updated: 2026-08-23T00:26:12.224Z
+updated: 2026-08-23T15:11:43.696Z
 external: null
 writes:
   - packages/server/src/**

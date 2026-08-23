@@ -4,7 +4,7 @@ title: "Fix loop false green: a review run killed mid-flight settles the loop as
   complete"
 status: todo
 kind: task
-parent: null
+parent: e-ac6705
 milestone: null
 blocked-by: []
 labels:
@@ -14,7 +14,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T18:53:51.271Z
-updated: 2026-08-22T18:53:51.271Z
+updated: 2026-08-23T15:11:43.549Z
 external: null
 writes:
   - packages/server/src/orchestrator/fixLoop.ts

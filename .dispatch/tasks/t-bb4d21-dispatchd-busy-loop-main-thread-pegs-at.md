@@ -3,7 +3,7 @@ id: t-bb4d21
 title: "dispatchd busy-loop: main thread pegs at 100% CPU, daemon goes unresponsive"
 status: todo
 kind: task
-parent: null
+parent: e-ac6705
 milestone: null
 blocked-by: []
 labels:
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-23T13:46:02.527Z
-updated: 2026-08-23T13:46:02.527Z
+updated: 2026-08-23T15:11:44.139Z
 external: null
 writes: []
 ---

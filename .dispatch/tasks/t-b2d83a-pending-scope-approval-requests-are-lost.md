@@ -3,7 +3,7 @@ id: t-b2d83a
 title: Pending scope/approval requests are lost on daemon restart and never re-surface
 status: todo
 kind: task
-parent: null
+parent: e-ac6705
 milestone: null
 blocked-by: []
 labels:
@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-23T15:09:34.933Z
-updated: 2026-08-23T15:09:34.933Z
+updated: 2026-08-23T15:11:43.847Z
 external: null
 writes: []
 ---

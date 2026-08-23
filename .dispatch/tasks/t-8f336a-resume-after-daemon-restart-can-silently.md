@@ -4,7 +4,7 @@ title: Resume after daemon restart can silently start a fresh session, losing
   all conversation context
 status: todo
 kind: task
-parent: null
+parent: e-ac6705
 milestone: null
 blocked-by: []
 labels:
@@ -13,7 +13,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-23T15:11:23.949Z
-updated: 2026-08-23T15:11:23.949Z
+updated: 2026-08-23T15:11:43.998Z
 external: null
 writes: []
 ---
