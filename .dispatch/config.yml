@@ -1,4 +1,4 @@
-statuses: [ backlog, todo, in-progress, in-review, done, cancelled ]
+statuses: [ draft, ready, working, review, landing, landed, dropped ]
 autoCommit: true
 # Run by the merge queue in each run's own worktree after a clean rebase and
 # before the squash-merge, so a branch that breaks the build never lands. A

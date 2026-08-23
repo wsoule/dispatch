@@ -30,7 +30,7 @@ interface MilestoneGroup {
 // built-in closed statuses. (A custom tracker could name these differently, but done/cancelled
 // cover every default project and degrade gracefully otherwise.)
 function isClosed(task: TaskDoc): boolean {
-  return task.meta.status === 'done' || task.meta.status === 'cancelled';
+  return task.meta.status === 'landed' || task.meta.status === 'dropped';
 }
 
 /**

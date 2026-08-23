@@ -92,7 +92,7 @@ describe('Orchestrator.reconcileExternallyMergedRuns', () => {
     expect(after.reviewAction).toBe('merge');
     expect(after.mergeCommit).toBe(mergeSha);
     expect(existsSync(meta.worktreePath)).toBe(false);
-    expect(store.get(after.taskId)!.meta.status).toBe('done');
+    expect(store.get(after.taskId)!.meta.status).toBe('landed');
     expect(store.get(after.taskId)!.body).toContain('merged outside dispatch');
   });
 
@@ -111,7 +111,7 @@ describe('Orchestrator.reconcileExternallyMergedRuns', () => {
     expect(after.reviewAction).toBe('merge');
     // A squash rewrites history, so no single merge commit is attributable.
     expect(after.mergeCommit).toBeUndefined();
-    expect(store.get(after.taskId)!.meta.status).toBe('done');
+    expect(store.get(after.taskId)!.meta.status).toBe('landed');
   });
 
   it('leaves an unmerged run alone', async () => {
@@ -124,7 +124,7 @@ describe('Orchestrator.reconcileExternallyMergedRuns', () => {
     const after = orchestrator.getRun(meta.id)!.meta;
     expect(after.reviewedAt).toBeUndefined();
     expect(existsSync(meta.worktreePath)).toBe(true);
-    expect(store.get(after.taskId)!.meta.status).toBe('in-review');
+    expect(store.get(after.taskId)!.meta.status).toBe('review');
   });
 
   it('never mistakes a no-commit run for merged, even after base merges other work', async () => {
@@ -156,6 +156,6 @@ describe('Orchestrator.reconcileExternallyMergedRuns', () => {
     expect(reconciled).toEqual([]);
     const after = orchestrator.getRun(meta.id)!.meta;
     expect(after.reviewedAt).toBeUndefined();
-    expect(store.get(after.taskId)!.meta.status).not.toBe('done');
+    expect(store.get(after.taskId)!.meta.status).not.toBe('landed');
   });
 });

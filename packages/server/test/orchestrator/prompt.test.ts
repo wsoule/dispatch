@@ -49,7 +49,7 @@ function fixtureTask(): TaskDoc {
     meta: {
       id: 't-abc123',
       title: 'Add login rate limiting',
-      status: 'todo',
+      status: 'ready',
       kind: 'task',
       parent: 'e-def456',
       milestone: null,
@@ -78,7 +78,7 @@ function fixtureEpic(): TaskDoc {
     meta: {
       id: 'e-def456',
       title: 'Harden auth',
-      status: 'in-progress',
+      status: 'working',
       kind: 'epic',
       parent: null,
       milestone: null,

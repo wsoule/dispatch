@@ -1,10 +1,4 @@
-export type TaskStatus =
-  | 'backlog'
-  | 'todo'
-  | 'in-progress'
-  | 'in-review'
-  | 'done'
-  | 'cancelled';
+export type { TaskStatus } from './status.js';
 export type TaskKind = 'task' | 'epic';
 export type Priority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
 // A serialized ActorRef (see actor.ts): `none`, the legacy bare `human`/`agent`,
@@ -79,14 +73,7 @@ export interface TaskDoc {
   body: string;
 }
 
-export const STATUSES: readonly TaskStatus[] = [
-  'backlog',
-  'todo',
-  'in-progress',
-  'in-review',
-  'done',
-  'cancelled',
-];
+export { CANONICAL_STATUSES as STATUSES } from './status.js';
 export const PRIORITIES: readonly Priority[] = [
   'urgent',
   'high',

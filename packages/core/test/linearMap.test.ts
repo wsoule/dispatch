@@ -22,7 +22,7 @@ import type { Priority, TaskDoc } from '../src/types.js';
 import { PRIORITIES, STATUSES } from '../src/types.js';
 
 const STATES: LinearWorkflowState[] = [
-  { id: 's-backlog', name: 'Backlog', type: 'backlog' },
+  { id: 's-backlog', name: 'Backlog', type: 'draft' },
   { id: 's-todo', name: 'Todo', type: 'unstarted' },
   { id: 's-progress', name: 'In Progress', type: 'started' },
   { id: 's-review', name: 'In Review', type: 'started' },
@@ -58,7 +58,7 @@ function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
     meta: {
       id: 't-abc123',
       title: 'Speed up initial page load',
-      status: 'in-progress',
+      status: 'working',
       kind: 'task',
       parent: null,
       milestone: null,
@@ -125,14 +125,14 @@ describe('priority mapping', () => {
 
 describe('resolveWorkflowState', () => {
   it('matches the configured value against state names', () => {
-    expect(
-      resolveWorkflowState('in-review', DEFAULT_STATUS_MAP, STATES)?.id
-    ).toBe('s-review');
+    expect(resolveWorkflowState('review', DEFAULT_STATUS_MAP, STATES)?.id).toBe(
+      's-review'
+    );
   });
 
   it('also matches a state type, so a map written against types works', () => {
     expect(
-      resolveWorkflowState('done', { done: 'completed' }, STATES)?.id
+      resolveWorkflowState('landed', { landed: 'completed' }, STATES)?.id
     ).toBe('s-done');
   });
 
@@ -146,18 +146,18 @@ describe('resolveWorkflowState', () => {
 describe('statusFromState', () => {
   it('inverts the configured map', () => {
     expect(
-      statusFromState(STATES[4], DEFAULT_STATUS_MAP, STATUSES, 'todo')
-    ).toBe('done');
+      statusFromState(STATES[4], DEFAULT_STATUS_MAP, STATUSES, 'ready')
+    ).toBe('landed');
   });
 
   it('falls back to the state type when the name is unmapped', () => {
     const renamed = { id: 's-x', name: 'Shipped', type: 'completed' };
-    expect(statusFromState(renamed, {}, STATUSES, 'todo')).toBe('done');
+    expect(statusFromState(renamed, {}, STATUSES, 'ready')).toBe('landed');
   });
 
   it('falls back to the caller’s status when the type is unknown too', () => {
     const weird = { id: 's-x', name: 'Parked', type: 'hibernating' };
-    expect(statusFromState(weird, {}, STATUSES, 'backlog')).toBe('backlog');
+    expect(statusFromState(weird, {}, STATUSES, 'draft')).toBe('draft');
   });
 
   it('never writes a status the project does not define', () => {
@@ -168,8 +168,8 @@ describe('statusFromState', () => {
   });
 
   it('falls back when the issue has no state at all', () => {
-    expect(statusFromState(null, DEFAULT_STATUS_MAP, STATUSES, 'todo')).toBe(
-      'todo'
+    expect(statusFromState(null, DEFAULT_STATUS_MAP, STATUSES, 'ready')).toBe(
+      'ready'
     );
   });
 });
@@ -180,11 +180,11 @@ describe('taskCreateFromIssue', () => {
       taskCreateFromIssue(issue(), {
         statusMap: DEFAULT_STATUS_MAP,
         statuses: STATUSES,
-        fallbackStatus: 'todo',
+        fallbackStatus: 'ready',
       })
     ).toEqual({
       title: 'Speed up initial page load',
-      status: 'in-progress',
+      status: 'working',
       description: 'The PR review page blocks on a serial fetch.',
       labels: ['web'],
       priority: 'high',
@@ -195,7 +195,7 @@ describe('taskCreateFromIssue', () => {
     const created = taskCreateFromIssue(issue({ description: null }), {
       statusMap: DEFAULT_STATUS_MAP,
       statuses: STATUSES,
-      fallbackStatus: 'todo',
+      fallbackStatus: 'ready',
     });
     expect(created.description).toBe('');
   });
@@ -207,11 +207,11 @@ describe('taskPatchFromIssue', () => {
       taskPatchFromIssue(issue({ priority: 1, state: STATES[5] }), {
         statusMap: DEFAULT_STATUS_MAP,
         statuses: STATUSES,
-        fallbackStatus: 'todo',
+        fallbackStatus: 'ready',
       })
     ).toEqual({
       title: 'Speed up initial page load',
-      status: 'cancelled',
+      status: 'dropped',
       description: 'The PR review page blocks on a serial fetch.',
       labels: ['web'],
       priority: 'urgent',

@@ -96,11 +96,11 @@ describe('list', () => {
     );
     store.create({ title: 'A', parent: epic.meta.id }, '2026-07-13T02:00:00Z');
     const b = store.create(
-      { title: 'B', status: 'backlog' },
+      { title: 'B', status: 'draft' },
       '2026-07-13T03:00:00Z'
     );
     expect(store.list().map((t) => t.meta.title)).toEqual(['Epic', 'A', 'B']);
-    expect(store.list({ status: 'backlog' })[0].meta.id).toBe(b.meta.id);
+    expect(store.list({ status: 'draft' })[0].meta.id).toBe(b.meta.id);
     expect(store.list({ kind: 'epic' })).toHaveLength(1);
     expect(store.list({ parent: epic.meta.id })[0].meta.title).toBe('A');
   });
@@ -128,7 +128,7 @@ describe('listSafe', () => {
       '2026-07-13T01:00:00Z'
     );
     store.create({ title: 'A', parent: epic.meta.id }, '2026-07-13T02:00:00Z');
-    store.create({ title: 'B', status: 'backlog' }, '2026-07-13T03:00:00Z');
+    store.create({ title: 'B', status: 'draft' }, '2026-07-13T03:00:00Z');
 
     expect(store.listSafe().docs.map((t) => t.meta.title)).toEqual([
       'Epic',
@@ -136,7 +136,7 @@ describe('listSafe', () => {
       'B',
     ]);
     expect(
-      store.listSafe({ status: 'backlog' }).docs.map((t) => t.meta.title)
+      store.listSafe({ status: 'draft' }).docs.map((t) => t.meta.title)
     ).toEqual(['B']);
     expect(store.listSafe({ kind: 'epic' }).docs).toHaveLength(1);
   });
@@ -153,14 +153,14 @@ describe('update', () => {
     const doc = store.create({ title: 'Fix login' }, '2026-07-13T18:00:00Z');
     const out = store.update(
       doc.meta.id,
-      { status: 'in-progress', title: 'Renamed', appendActivity: 'started' },
+      { status: 'working', title: 'Renamed', appendActivity: 'started' },
       '2026-07-13T19:00:00Z'
     );
-    expect(out.meta.status).toBe('in-progress');
+    expect(out.meta.status).toBe('working');
     expect(out.meta.updated).toBe('2026-07-13T19:00:00Z');
     expect(out.body).toContain('- started');
     expect(store.taskFilePath(doc.meta.id)).toContain('fix-login.md');
-    expect(() => store.update('t-nope00', { status: 'done' })).toThrow(
+    expect(() => store.update('t-nope00', { status: 'landed' })).toThrow(
       /task not found/
     );
   });

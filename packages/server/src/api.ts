@@ -1,5 +1,6 @@
 import {
   ASSIGNEES,
+  canonicalStatus,
   ConfigError,
   describeValue,
   getSection,
@@ -298,8 +299,13 @@ function validateTaskFields(
     // would otherwise get the template back with their text silently dropped.
     return 'invalid body: a new task builds its body from the template — set it with PATCH instead';
   }
+  // Canonicalized before the membership check so callers speaking the
+  // pre-rename names ('done', 'in-progress', …) stay valid forever — the
+  // store canonicalizes again at write, so the alias never reaches disk.
   const statusError = validateEnumField(
-    value.status,
+    typeof value.status === 'string'
+      ? canonicalStatus(value.status)
+      : value.status,
     config.statuses,
     'status'
   );
@@ -549,7 +555,7 @@ async function createRun(
   const task = ctx.store.get(taskId);
   if (
     task !== null &&
-    (task.meta.status === 'done' || task.meta.status === 'cancelled')
+    (task.meta.status === 'landed' || task.meta.status === 'dropped')
   ) {
     return errorResponse(409, `cannot dispatch a ${task.meta.status} task`);
   }

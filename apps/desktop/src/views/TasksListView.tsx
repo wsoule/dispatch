@@ -411,7 +411,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
         const collapsed = collapsedGroups.has(key);
         const doneCount =
           group.progress?.children.filter(
-            (c) => c.status === 'done' || c.status === 'cancelled'
+            (c) => c.status === 'landed' || c.status === 'dropped'
           ).length ?? 0;
         const totalCount = group.progress?.children.length ?? 0;
         const pulse = deriveEpicPulse(

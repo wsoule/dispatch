@@ -561,7 +561,7 @@ export class Orchestrator {
     this.ctx.store.update(
       taskId,
       {
-        status: 'in-progress',
+        status: 'working',
         appendActivity: `${now} dispatched (${executorName}, branch ${branch})`,
         activityActor: opts.actor ?? this.ctx.actorContext?.humanRef,
       },
@@ -758,7 +758,7 @@ export class Orchestrator {
       this.ctx.store.update(
         meta.taskId,
         {
-          status: 'done',
+          status: 'landed',
           archivedAt: now,
           appendActivity: `${now} [run ${runId}] review of ${derivedFrom} finished; task retired`,
           // Mechanical cleanup, not an action anyone asked for by name.
@@ -833,7 +833,7 @@ export class Orchestrator {
     const parents: string[] = [];
     for (const blockerId of task.meta.blockedBy) {
       const blocker = this.ctx.store.get(blockerId);
-      if (blocker === null || blocker.meta.status !== 'in-review') continue;
+      if (blocker === null || blocker.meta.status !== 'review') continue;
       const branch = this.branchForTask(blockerId);
       if (branch !== null) parents.push(branch);
     }
@@ -1769,7 +1769,7 @@ export class Orchestrator {
       return 'task could not be read';
     }
     if (task === null) return 'task no longer exists';
-    if (task.meta.status === 'done' || task.meta.status === 'cancelled') {
+    if (task.meta.status === 'landed' || task.meta.status === 'dropped') {
       return `task is ${task.meta.status}`;
     }
     return null;
@@ -2120,7 +2120,7 @@ export class Orchestrator {
       this.ctx.store.update(
         meta.taskId,
         {
-          status: 'todo',
+          status: 'ready',
           appendActivity: `${now} run ${runId} discarded`,
           activityActor: actor,
         },
@@ -2224,7 +2224,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${runId} merged via PR (${meta.prUrl ?? 'unknown url'})`,
         // The PR poller noticed GitHub reports it merged — whoever actually
         // merged it did so on GitHub, outside anything dispatch can see.
@@ -2271,7 +2271,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${runId} merged outside dispatch (branch ${meta.branch} landed on ${meta.baseBranch})`,
         // Whoever ran the merge did so in a plain git checkout, outside
         // anything dispatch can attribute.
@@ -2450,7 +2450,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
         activityActor: actor,
       },
@@ -2522,7 +2522,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
         activityActor: actor,
       },
@@ -2570,7 +2570,7 @@ export class Orchestrator {
    */
   epicLandStatus(epicId: string): EpicLandStatus {
     const epic = this.requireEpicDoc(epicId);
-    if (epic.meta.status === 'done') {
+    if (epic.meta.status === 'landed') {
       throw new OrchestratorConflictError(`epic has already landed: ${epicId}`);
     }
     const branch = epicBranchName(epicId);
@@ -2584,7 +2584,7 @@ export class Orchestrator {
       .query({ parent: epicId, includeArchived: true })
       .filter((t) => t.meta.kind === 'task');
     const unfinished = children.filter(
-      (c) => c.meta.status !== 'done' && c.meta.status !== 'cancelled'
+      (c) => c.meta.status !== 'landed' && c.meta.status !== 'dropped'
     );
     if (unfinished.length > 0) {
       const named = unfinished
@@ -2695,7 +2695,7 @@ export class Orchestrator {
     this.ctx.store.update(
       epicId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} [epic] landed on ${base}${
           hasChanges ? '' : ' (no commits to merge)'
         }`,
@@ -2748,12 +2748,12 @@ export class Orchestrator {
       );
       this.worktrees.removeBranchRef(branch);
     }
-    if (epic !== null && epic.meta.status !== 'done') {
+    if (epic !== null && epic.meta.status !== 'landed') {
       const now = new Date().toISOString();
       this.ctx.store.update(
         epicId,
         {
-          status: 'done',
+          status: 'landed',
           appendActivity: `${now} [epic] landed via PR (${prUrl})`,
           // Whoever merged did so on GitHub, outside anything dispatch can
           // attribute — same rule as markRunMergedViaPr.
@@ -3344,7 +3344,7 @@ export class Orchestrator {
   // eligible — never un-archives one that already was.
   reconcileArchives(): number {
     if (!this.worktrees.hasOriginRemote()) return 0;
-    const doneTasks = this.ctx.cache.query({ status: 'done' });
+    const doneTasks = this.ctx.cache.query({ status: 'landed' });
     if (doneTasks.length === 0) return 0;
     // Newest merged run per task, scanned once against registry.list()'s own
     // most-recent-first order — mirrors newestRunByBranch()'s same shape. Safe
@@ -3587,7 +3587,7 @@ export class Orchestrator {
         appendActivity: `${now} ${activityNote}`,
         activityActor: 'none',
       };
-      if (task.meta.status === 'in-progress') patch.status = 'in-review';
+      if (task.meta.status === 'working') patch.status = 'review';
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed' });
@@ -4040,7 +4040,7 @@ export class Orchestrator {
         // daemon right now.
         activityActor: this.ctx.actorContext?.agentRef(meta.executor),
       };
-      if (task.meta.status === 'in-progress') patch.status = 'in-review';
+      if (task.meta.status === 'working') patch.status = 'review';
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed' });
@@ -4162,7 +4162,7 @@ export class Orchestrator {
     this.ctx.store.update(
       oldMeta.taskId,
       {
-        status: 'in-progress',
+        status: 'working',
         appendActivity: `${now} requested changes (run ${runId}): ${text}${substitutionNote}`,
         activityActor: actor,
       },
@@ -4274,7 +4274,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'in-progress',
+        status: 'working',
         appendActivity: `${now} ${how} (run ${newRunId})${substitutionNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.

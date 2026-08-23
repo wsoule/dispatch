@@ -44,7 +44,7 @@ import {
 import { LinearSync } from '../src/linear/sync.js';
 
 const STATES: LinearWorkflowState[] = [
-  { id: 's-backlog', name: 'Backlog', type: 'backlog' },
+  { id: 's-backlog', name: 'Backlog', type: 'draft' },
   { id: 's-todo', name: 'Todo', type: 'unstarted' },
   { id: 's-progress', name: 'In Progress', type: 'started' },
   { id: 's-review', name: 'In Review', type: 'started' },
@@ -293,7 +293,7 @@ describe('LinearSync.pull', () => {
     const docs = store.list();
     expect(docs).toHaveLength(1);
     expect(docs[0].meta.title).toBe('Ship the thing');
-    expect(docs[0].meta.status).toBe('in-progress');
+    expect(docs[0].meta.status).toBe('working');
     expect(docs[0].meta.priority).toBe('high');
     expect(docs[0].meta.labels).toEqual(['web']);
     expect(docs[0].meta.external).toBe(`linear:${fake.issues[0].id}`);
@@ -359,7 +359,7 @@ describe('LinearSync.push', () => {
       title: 'Local work',
       description: 'do the thing',
       priority: 'urgent',
-      status: 'in-review',
+      status: 'review',
       labels: ['web'],
     });
 

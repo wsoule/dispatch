@@ -2210,7 +2210,7 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     expect(
       (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
     ).toBe(202);
-    await waitFor(() => tasks()[0]?.meta.status === 'done');
+    await waitFor(() => tasks()[0]?.meta.status === 'landed');
 
     const [task] = tasks();
     expect(task.meta.archivedAt).not.toBeUndefined();

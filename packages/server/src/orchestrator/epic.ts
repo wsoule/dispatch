@@ -422,7 +422,7 @@ export class EpicEngine {
     const children = this.childrenOf(epicId);
     if (children.length === 0) return false;
     return !children.some(
-      (c) => c.meta.status === 'todo' || c.meta.status === 'in-progress'
+      (c) => c.meta.status === 'ready' || c.meta.status === 'working'
     );
   }
 

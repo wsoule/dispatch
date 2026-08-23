@@ -75,7 +75,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 'e-4a19c2',
     title: 'Checkout rewrite',
-    status: 'in-progress',
+    status: 'working',
     kind: 'epic',
     parent: null,
     assignee: 'wsoule679',
@@ -91,7 +91,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 'e-77b3e1',
     title: 'Search relevance',
-    status: 'in-progress',
+    status: 'working',
     kind: 'epic',
     parent: null,
     assignee: 'pmirand',
@@ -107,7 +107,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-9b2d14',
     title: 'Add address autocomplete',
-    status: 'backlog',
+    status: 'draft',
     kind: 'task',
     parent: 'e-4a19c2',
     assignee: 'dokafor',
@@ -127,7 +127,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-6c40de',
     title: 'Persist the cart across devices',
-    status: 'todo',
+    status: 'ready',
     kind: 'task',
     parent: 'e-4a19c2',
     assignee: 'wsoule679',
@@ -146,7 +146,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-3f8a21',
     title: 'Validate discount codes server-side',
-    status: 'todo',
+    status: 'ready',
     kind: 'task',
     parent: 'e-4a19c2',
     assignee: 'pmirand',
@@ -162,7 +162,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-2e91aa',
     title: 'Move cart state to the session store',
-    status: 'in-review',
+    status: 'review',
     kind: 'task',
     parent: 'e-4a19c2',
     assignee: 'dokafor',
@@ -177,7 +177,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-58cc03',
     title: 'Rank exact SKU matches above fuzzy',
-    status: 'in-review',
+    status: 'review',
     kind: 'task',
     parent: 'e-77b3e1',
     assignee: 'wsoule679',
@@ -193,7 +193,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-1d77e5',
     title: 'Cache the search index in redis',
-    status: 'todo',
+    status: 'ready',
     kind: 'task',
     parent: 'e-77b3e1',
     // wsoule679, not pmirand — this is the demo's `teammate claim` target
@@ -212,7 +212,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-8ac410',
     title: 'Rate limit the search endpoint',
-    status: 'todo',
+    status: 'ready',
     kind: 'task',
     parent: 'e-77b3e1',
     assignee: 'dokafor',
@@ -227,7 +227,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-71ff03',
     title: 'Add a /health endpoint',
-    status: 'done',
+    status: 'landed',
     kind: 'task',
     parent: 'e-4a19c2',
     assignee: 'wsoule679',
@@ -242,7 +242,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-0c9b88',
     title: 'Fix hyphenated SKU search',
-    status: 'done',
+    status: 'landed',
     kind: 'task',
     parent: 'e-77b3e1',
     assignee: 'pmirand',
@@ -258,7 +258,7 @@ export const TASKS: DemoTask[] = [
   {
     id: 't-4e01af',
     title: 'Log slow queries over 200ms',
-    status: 'done',
+    status: 'landed',
     kind: 'task',
     parent: 'e-77b3e1',
     assignee: 'dokafor',

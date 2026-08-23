@@ -637,9 +637,36 @@ export class MergeQueue {
 
     const entry = this.buildEntry(meta);
     this.entries.push(entry);
+    // The board's Landing column: entering the queue is what 'landing' means.
+    this.setTaskStatus(meta.taskId, 'landing', 'entered the merge queue');
     this.broadcast();
     this.kick();
     return entry;
+  }
+
+  /**
+   * Moves a task between the review/landing/landed columns as its queue entry
+   * advances, without ever fighting a human: only the expected `from` status
+   * is moved, so a task someone dragged elsewhere stays where they put it.
+   * Failures are swallowed — queue progress must never hinge on a status
+   * write.
+   */
+  private setTaskStatus(
+    taskId: string,
+    to: 'review' | 'landing',
+    activity: string
+  ): void {
+    try {
+      const task = this.ctx.store.get(taskId);
+      if (task === null) return;
+      const from = to === 'landing' ? 'review' : 'landing';
+      if (task.meta.status !== from) return;
+      this.ctx.store.update(taskId, { status: to, appendActivity: activity });
+      this.ctx.cache.rebuild(this.ctx.store);
+      this.ctx.events.broadcast({ type: 'task.changed' });
+    } catch {
+      // A status write must never take the queue down with it.
+    }
   }
 
   // POST /api/merge-queue/stack. Enqueues every reviewable run across
@@ -762,7 +789,14 @@ export class MergeQueue {
         `run not found in merge queue: ${runId}`
       );
     }
-    this.entries.splice(idx, 1);
+    const [removed] = this.entries.splice(idx, 1);
+    if (removed !== undefined) {
+      this.setTaskStatus(
+        removed.taskId,
+        'review',
+        'left the merge queue: removed'
+      );
+    }
     this.broadcast();
     // Removing the entry a blocked-retry timer was armed for must not leave
     // that timer ticking against an empty queue — kick() re-runs pump(),
@@ -1791,6 +1825,15 @@ export class MergeQueue {
     const idx = this.entries.indexOf(entry);
     if (idx !== -1) this.entries.splice(idx, 1);
     this.setEntryState(entry, state);
+    // A failed entry hands the task back to Review; a merged one is moved to
+    // 'landed' by the merge path itself.
+    if (state === 'failed') {
+      this.setTaskStatus(
+        entry.taskId,
+        'review',
+        'left the merge queue: failed'
+      );
+    }
     entry.finishedAt = new Date().toISOString();
     this.history.unshift(entry);
     this.history.length = Math.min(this.history.length, HISTORY_LIMIT);

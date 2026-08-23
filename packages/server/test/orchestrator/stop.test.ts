@@ -119,7 +119,7 @@ describe('Orchestrator.requestStop', () => {
     // other finished run, and it still carries the marker saying why it ended.
     expect(after.state).toBe('finished');
     expect(after.stopRequestedAt).toBeDefined();
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
   });
 
   it('commits work the agent left uncommitted when it wound down', async () => {

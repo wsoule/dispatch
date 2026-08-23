@@ -10,15 +10,15 @@ import {
 
 describe('statusTone', () => {
   test('maps each built-in status to its dedicated tone', () => {
-    expect(statusTone('in-progress')).toBe('blue');
-    expect(statusTone('in-review')).toBe('amber');
-    expect(statusTone('done')).toBe('green');
-    expect(statusTone('cancelled')).toBe('red');
+    expect(statusTone('working')).toBe('blue');
+    expect(statusTone('review')).toBe('amber');
+    expect(statusTone('landed')).toBe('green');
+    expect(statusTone('dropped')).toBe('red');
   });
 
   test('falls back to gray for backlog/todo and any custom status', () => {
-    expect(statusTone('backlog')).toBe('gray');
-    expect(statusTone('todo')).toBe('gray');
+    expect(statusTone('draft')).toBe('gray');
+    expect(statusTone('ready')).toBe('gray');
     expect(statusTone('triage')).toBe('gray');
   });
 });
@@ -53,13 +53,13 @@ describe('parseTaskSections / sectionOrDash', () => {
 });
 
 describe('statusLabel', () => {
-  test('title-cases a hyphenated config status', () => {
-    expect(statusLabel('in-progress')).toBe('In Progress');
-    expect(statusLabel('in-review')).toBe('In Review');
+  test('title-cases the canonical statuses', () => {
+    expect(statusLabel('working')).toBe('Working');
+    expect(statusLabel('review')).toBe('Review');
   });
 
   test('title-cases a single-word status', () => {
-    expect(statusLabel('backlog')).toBe('Backlog');
+    expect(statusLabel('draft')).toBe('Draft');
   });
 
   test('leaves a custom multi-hyphen status readable', () => {

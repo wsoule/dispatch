@@ -8,7 +8,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
 // start — that stays server-side via GET /api/tasks/ready, whose result
 // flows into TasksPanel's readyIds.
 function isTerminal(doc: TaskDoc): boolean {
-  return doc.meta.status === 'done' || doc.meta.status === 'cancelled';
+  return doc.meta.status === 'landed' || doc.meta.status === 'dropped';
 }
 
 /** Ids of every task that lists at least one blocker id resolving to a non-terminal task.

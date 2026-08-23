@@ -35,26 +35,26 @@ function makeTask(
 
 describe('computeBlockedIds', () => {
   test('a task blocked by a non-terminal task is blocked', () => {
-    const tasks = [makeTask('a', 'todo'), makeTask('b', 'todo', ['a'])];
+    const tasks = [makeTask('a', 'ready'), makeTask('b', 'ready', ['a'])];
     expect(computeBlockedIds(tasks)).toEqual(new Set(['b']));
   });
 
   test('a task blocked only by done/cancelled tasks is not blocked', () => {
     const tasks = [
-      makeTask('a', 'done'),
-      makeTask('b', 'cancelled'),
-      makeTask('c', 'todo', ['a', 'b']),
+      makeTask('a', 'landed'),
+      makeTask('b', 'dropped'),
+      makeTask('c', 'ready', ['a', 'b']),
     ];
     expect(computeBlockedIds(tasks)).toEqual(new Set());
   });
 
   test('a dangling blocker id (no matching task) does not block', () => {
-    const tasks = [makeTask('c', 'todo', ['nonexistent'])];
+    const tasks = [makeTask('c', 'ready', ['nonexistent'])];
     expect(computeBlockedIds(tasks)).toEqual(new Set());
   });
 
   test('a task with no blockedBy is never blocked', () => {
-    const tasks = [makeTask('a', 'todo')];
+    const tasks = [makeTask('a', 'ready')];
     expect(computeBlockedIds(tasks)).toEqual(new Set());
   });
 });

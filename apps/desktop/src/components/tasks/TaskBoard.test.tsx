@@ -194,9 +194,9 @@ test('a finished epic swaps Work for a Land button that lands it', () => {
         epicId: 'e-1',
         active: false,
         children: [
-          { id: 't-1', title: 'Card one', status: 'done' },
-          { id: 't-2', title: 'Card two', status: 'cancelled' },
-          { id: 't-3', title: 'Card three', status: 'done' },
+          { id: 't-1', title: 'Card one', status: 'landed' },
+          { id: 't-2', title: 'Card two', status: 'dropped' },
+          { id: 't-3', title: 'Card three', status: 'landed' },
         ],
         liveRuns: [],
       },

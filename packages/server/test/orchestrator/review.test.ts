@@ -83,7 +83,7 @@ function taskDoc(risk: TaskRisk, writes: string[] = []): TaskDoc {
     meta: {
       id: 't-abc123',
       title: 'harden the sync path',
-      status: 'in-review',
+      status: 'review',
       kind: 'task',
       parent: null,
       milestone: null,
