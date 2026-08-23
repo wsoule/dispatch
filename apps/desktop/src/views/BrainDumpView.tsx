@@ -474,9 +474,7 @@ export function BrainDumpView({
                         className="text-foreground min-h-[72px] resize-y border-0 bg-transparent p-0 text-[13.5px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[13.5px] dark:bg-transparent"
                       />
                       <div className="mt-2 flex items-center gap-2">
-                        <span className="dense-meta flex-1">
-                          Saved straight onto the captured line.
-                        </span>
+                        <span className="flex-1" />
                         <BarButton
                           onClick={saveDetail}
                           disabled={busy || editing.text.trim() === ''}
