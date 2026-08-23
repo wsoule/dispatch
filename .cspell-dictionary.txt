@@ -245,6 +245,7 @@ misdescribe
 modelcontextprotocol
 monkeyc
 moonrepo
+moonx
 msvc
 musleabihf
 myconstant

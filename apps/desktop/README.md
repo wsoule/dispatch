@@ -25,14 +25,14 @@ FSL-1.1-ALv2, like the rest of this repository — see the root `LICENSE`.
 
 ```bash
 bun install
-bun ws desktop tauri dev   # needs Rust stable (rustup) installed
+moonx desktop:tauri-dev   # needs Rust stable (rustup) installed
 ```
 
 Other useful commands, run from the repo root:
 
-- `bun ws desktop build` — `tsc -b && vite build` (frontend only).
-- `bun ws desktop test` — frontend unit tests (`bun test`).
-- `bun ws desktop tsc` — `tsc -b --noEmit` typecheck.
+- `moonx desktop:build` — `tsc -b && vite build` (frontend only).
+- `moonx desktop:test` — frontend unit tests (`bun test`).
+- `moonx desktop:typecheck` — typecheck.
 - `cd apps/desktop/src-tauri && cargo test` — Rust unit tests (parsers, cost
   pricing, SQLite queries, tail/watcher logic). Not wired into the root
   `bun run tsc`/`test` scripts this phase — Rust CI lands in Phase 6.

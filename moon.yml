@@ -186,3 +186,12 @@ tasks:
       - '!**/dist/**'
     options:
       runInCI: 'always'
+
+  # Worktree manager (create/list/remove dispatch worktrees with port
+  # offsets). Forward args with `moonx root:wt -- <args>`.
+  wt:
+    command: 'bun --silent scripts/wt.ts'
+    options:
+      cache: false
+      interactive: true
+      runInCI: 'always'

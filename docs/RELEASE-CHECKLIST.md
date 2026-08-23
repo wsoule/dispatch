@@ -31,7 +31,7 @@ resources is a separate follow-up (see that file's "Phase 6 TODO").
 ## 3. Tauri bundle build
 
 ```bash
-bun ws desktop tauri build
+moonx desktop:tauri-build
 ```
 
 Produces the platform-native bundle (`.app`/`.dmg` on macOS) under
