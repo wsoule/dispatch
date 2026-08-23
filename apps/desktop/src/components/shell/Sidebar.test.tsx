@@ -14,6 +14,8 @@ const props = {
   spendToday: 1.5,
   onSetProjectView: () => {},
   onSetGlobalView: () => {},
+  tasksViewMode: 'board' as const,
+  onSetTasksViewMode: () => {},
   syncStatus: null,
   onDisableAutoCommit: () => {},
   liveRail: null,
