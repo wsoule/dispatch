@@ -1,4 +1,4 @@
-import { generateFindingId } from '@dispatch/core';
+import { generateFindingId, scanFindingsJsonl } from '@dispatch/core';
 import type {
   AddFindingInput,
   Finding,
@@ -40,23 +40,6 @@ export interface FindingStorePort {
 // randomness needs; it only bounds a generator that keeps returning a taken id.
 const MINT_ATTEMPTS = 32;
 
-// The fields every read path dereferences. A hand-edited line missing one is
-// not a finding: without an id, update() writes past it and never edits it.
-function isFinding(value: unknown): value is Finding {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === 'string' &&
-    record.id !== '' &&
-    typeof record.taskId === 'string' &&
-    typeof record.severity === 'string' &&
-    typeof record.verdict === 'string' &&
-    typeof record.title === 'string' &&
-    typeof record.detail === 'string' &&
-    typeof record.createdAt === 'string'
-  );
-}
-
 export class FindingStore implements FindingStorePort {
   private readonly file: string;
   private readonly generateId: (now: string) => string;
@@ -77,30 +60,19 @@ export class FindingStore implements FindingStorePort {
 
   // Compacts the append-only file, keyed by id + createdAt because update()
   // re-appends both — so two records that minted one id both survive.
+  //
+  // The compaction itself lives in `@dispatch/core`'s scanFindingsJsonl, not
+  // here: the one-time import of this file into the database has to serve
+  // exactly the set this store serves, and two copies of the rule would drift
+  // apart silently. What stays here is the reporting — which lines this
+  // daemon has already complained about — since that is per-process state a
+  // pure scanner has no business holding.
   private read(): Finding[] {
     if (!existsSync(this.file)) return [];
-    const byRecord = new Map<string, Finding>();
-    const firstKeyForId = new Map<string, string>();
-    for (const line of readFileSync(this.file, 'utf8').split('\n')) {
-      if (line.trim() === '') continue;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (!isFinding(parsed)) {
-          this.reportInvalidLine(line);
-          continue;
-        }
-        // Older lines pre-date raisedBy; default it so they stay loadable.
-        const record: Finding = { ...parsed, raisedBy: parsed.raisedBy ?? '' };
-        const key = `${record.id}\n${record.createdAt}`;
-        const first = firstKeyForId.get(record.id);
-        if (first === undefined) firstKeyForId.set(record.id, key);
-        else if (first !== key) this.reportCollision(record.id);
-        byRecord.set(key, record);
-      } catch {
-        // A hand-corrupted line costs itself, not the rest of the store.
-      }
-    }
-    return [...byRecord.values()];
+    const scan = scanFindingsJsonl(readFileSync(this.file, 'utf8'));
+    for (const line of scan.invalidLines) this.reportInvalidLine(line);
+    for (const id of scan.duplicateIds) this.reportCollision(id);
+    return scan.records;
   }
 
   // A repeated id with a different createdAt is two findings, not an edit —

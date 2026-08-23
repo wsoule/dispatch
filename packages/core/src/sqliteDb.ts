@@ -1,9 +1,49 @@
 import { existsSync, mkdirSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import type { SQLInputValue } from 'node:sqlite';
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
 
 import { DISPATCH_DIR } from './store.js';
+
+/**
+ * `node:sqlite` is loaded on first use, not at module load.
+ *
+ * It has to be. This module is reachable from `@dispatch/core`'s barrel, which
+ * `@dispatch/cli` imports for every command — and `node:sqlite` only became
+ * available unflagged in Node 22.13. On 22.0 through 22.12 a top-level
+ * `import ... from 'node:sqlite'` throws ERR_UNKNOWN_BUILTIN_MODULE while the
+ * module graph is being evaluated, so `dispatch task list` on a plain
+ * file-backed project would die before its first line ran. The CLI's engines
+ * field permits those versions (`node: >=22`), so this is a real matrix, not a
+ * hypothetical one.
+ *
+ * Deferring it means only the paths that actually open a database pay for it,
+ * and those are exactly the paths where a missing `node:sqlite` is worth an
+ * error. `createRequire` rather than a dynamic `import()` so the loading stays
+ * synchronous: making openDispatchDb async would ripple out through
+ * initProjectStores and every store constructor for no benefit.
+ */
+type DatabaseSyncCtor = new (path: string) => DatabaseSync;
+
+let cachedCtor: DatabaseSyncCtor | null = null;
+
+function databaseSyncCtor(): DatabaseSyncCtor {
+  if (cachedCtor !== null) return cachedCtor;
+  try {
+    const nodeRequire = createRequire(import.meta.url);
+    const loaded = nodeRequire('node:sqlite') as {
+      DatabaseSync: DatabaseSyncCtor;
+    };
+    cachedCtor = loaded.DatabaseSync;
+  } catch (err) {
+    throw new Error(
+      'node:sqlite is unavailable in this runtime, so a database-backed ' +
+        'dispatch project cannot be opened. It ships unflagged from Node ' +
+        `22.13; on an older 22.x, upgrade or pass --experimental-sqlite. Cause: ${(err as Error).message}`
+    );
+  }
+  return cachedCtor;
+}
 
 // The single database a daemon-owned project keeps its orchestration state
 // in: tasks (epics are tasks with `kind = 'epic'`), review findings, ledger
@@ -161,7 +201,8 @@ export function attachDispatchDb(dbPath: string): DatabaseSync | null {
 
 export function openDispatchDb(dbPath: string): DatabaseSync {
   if (dbPath !== ':memory:') mkdirSync(dirname(dbPath), { recursive: true });
-  const db = new DatabaseSync(dbPath);
+  const DatabaseSyncClass = databaseSyncCtor();
+  const db = new DatabaseSyncClass(dbPath);
   // WAL lets the desktop read while the daemon writes; NORMAL syncing is the
   // usual pairing — a crash can lose the last commit, and orchestration state
   // is re-derivable, but corruption is not on the table.

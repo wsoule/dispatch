@@ -1,10 +1,10 @@
 import {
   ActorContext,
   ASSIGNEES,
-  DISPATCH_DIR,
   KINDS,
   loadConfig,
   PRIORITIES,
+  readProjectBackend,
   readyTasks,
   serializeTaskFile,
   TaskStore,
@@ -20,8 +20,7 @@ import type {
 } from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 
 import type { TaskApiClient } from '../apiClient.js';
 import { createTaskApiClient } from '../apiClient.js';
@@ -81,24 +80,35 @@ export function requireInitialized(ctx: CliContext): void {
  * otherwise lock the CLI out of a project whose tasks are really still in
  * markdown, with no way to say otherwise. Existence is not ownership.
  *
- * The daemon writes this marker when a project moves to the database — see
- * packages/server/src/storage.ts, which owns the format and explains why this
- * reader is duplicated here and in packages/mcp/src/daemon.ts rather than
- * shared. Keep the three in step.
+ * The marker is written when a project moves to the database — by the daemon
+ * at boot, or by `dispatch migrate`. `@dispatch/core`'s storage.ts owns the
+ * format; a mangled marker reads there as null, which degrades this project to
+ * its pre-marker behaviour rather than failing every task command.
  */
 export function databaseBacked(rootDir: string): boolean {
-  const path = join(rootDir, DISPATCH_DIR, 'storage.json');
-  if (!existsSync(path)) return false;
-  try {
-    const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
-      backend?: unknown;
-    };
-    return parsed.backend === 'sqlite';
-  } catch {
-    // A mangled marker degrades the project to its pre-marker behaviour
-    // rather than making every task command fail.
-    return false;
-  }
+  return readProjectBackend(rootDir) === 'sqlite';
+}
+
+/**
+ * The PROJECT root, which inside an agent's run worktree is not the cwd.
+ *
+ * A dispatched run executes in `~/.dispatch/worktrees/<hash>/<runId>`, a
+ * checkout with its own `.dispatch/` copy and no daemon of its own. Resolving
+ * a task command against that raw cwd finds no daemon file and — once the
+ * project is database-backed — no marker either, so `dispatch task list` from
+ * inside a run either reports an uninitialized project or throws
+ * DAEMON_REQUIRED while the real daemon is running perfectly well a few
+ * directories away.
+ *
+ * The executor already publishes the mapping as DISPATCH_PROJECT_ROOT whenever
+ * the worktree differs from the project. The MCP tools have consumed it since
+ * they were written (see projectRoot() in packages/mcp/src/tools.ts); the CLI
+ * simply never did, which is why the same task command works through MCP and
+ * fails through the terminal in the same worktree.
+ */
+export function projectRoot(cwd: string): string {
+  const override = process.env.DISPATCH_PROJECT_ROOT;
+  return override !== undefined && override !== '' ? override : cwd;
 }
 
 /**
@@ -127,7 +137,11 @@ async function resolveTaskRoute(ctx: CliContext): Promise<TaskRoute> {
   // credential to, so fall through to the same handling as no daemon at all.
   // Commands that genuinely require dispatchd (scope decide, orchestrate)
   // keep the explicit error, which is the right answer for them.
-  const daemon = await findRunningDaemon(ctx.cwd).catch(() => null);
+  // projectRoot(), not the raw cwd — see its doc comment: inside a run's
+  // worktree the daemon, the marker and the real board all live at the
+  // project root, and resolving against the worktree finds none of them.
+  const root = projectRoot(ctx.cwd);
+  const daemon = await findRunningDaemon(root).catch(() => null);
   if (daemon !== null) {
     return {
       via: 'daemon',
@@ -137,7 +151,7 @@ async function resolveTaskRoute(ctx: CliContext): Promise<TaskRoute> {
       ),
     };
   }
-  if (databaseBacked(ctx.cwd)) throw new CliError(DAEMON_REQUIRED);
+  if (databaseBacked(root)) throw new CliError(DAEMON_REQUIRED);
   return { via: 'local', store: requireStore(ctx) };
 }
 
@@ -367,7 +381,14 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       const ready =
         route.via === 'daemon'
           ? await route.api.readyTasks()
-          : readyTasks(route.store.list());
+          : // Archived tasks are excluded, matching the daemon's own
+            // /api/tasks/ready and the MCP task_next copy. Without this the
+            // local fallback offers archived tasks as ready work — the same
+            // command answering differently depending on whether a daemon
+            // happened to be up.
+            readyTasks(
+              route.store.list().filter((d) => d.meta.archivedAt === undefined)
+            );
       if (opts.json === true) {
         ctx.log(JSON.stringify(ready, null, 2));
         return;

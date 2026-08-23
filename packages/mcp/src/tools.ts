@@ -659,6 +659,12 @@ async function taskComment(
   // refused with "dispatchd is not running" on a database-backed project
   // while the daemon was, in fact, running.
   const live = await liveDaemon(projRoot);
+  // Why the daemon proxy failed, kept so the fallback below can report it.
+  // Without this, a daemon that answered 401 or 500 was reported to the agent
+  // as "dispatchd is not running" — advice that is both false and unactionable
+  // — and the comment was dropped. An agent logging progress has no way to
+  // tell a lost write from a rejected one, so the real cause has to survive.
+  let proxyFailure: string | null = null;
   if (live !== null) {
     try {
       // `daemonAuth` is load-bearing, not decoration: every route but
@@ -682,14 +688,26 @@ async function taskComment(
       }
       // Any other answer (or a network hiccup talking to a daemon that
       // just answered healthy) is not worth losing the comment over — fall
-      // through to the direct write below.
+      // through to the direct write below, remembering why.
+      proxyFailure =
+        err instanceof DaemonHttpError
+          ? `dispatchd answered ${err.status} for POST /api/tasks/${args.id}/comment: ${err.message}`
+          : (err as Error).message;
     }
   }
 
   // No daemon took the write. A database-backed project has no second way in,
   // so say so rather than letting requireStore report "not initialized" for a
-  // project that is perfectly well initialized.
-  if (daemonOwnsStore(projRoot)) return toolError(DAEMON_REQUIRED);
+  // project that is perfectly well initialized. When a daemon WAS reached and
+  // rejected the write, its answer is the useful half of the message — the
+  // generic "start dispatchd" advice is actively wrong in that case.
+  if (daemonOwnsStore(projRoot)) {
+    return toolError(
+      proxyFailure === null
+        ? DAEMON_REQUIRED
+        : `could not record the comment: ${proxyFailure}`
+    );
+  }
 
   // projectRoot(), not the raw rootDir — see its doc comment above: a
   // comment written to a run's worktree copy of a task file would be

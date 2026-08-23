@@ -17,7 +17,7 @@ import {
   checkTeamMergeDriverSetup,
 } from '../mergeDriver.js';
 import { findRunningDaemon } from './daemon.js';
-import { databaseBacked, requireStore } from './task.js';
+import { databaseBacked, projectRoot, requireStore } from './task.js';
 
 interface Issue {
   file: string;
@@ -62,13 +62,22 @@ function isIsoTimestamp(value: string): boolean {
   return ISO_8601_RE.test(value) && !Number.isNaN(Date.parse(value));
 }
 
-// A project whose tasks live only in the daemon's database — no markdown
-// board beside it. During the one-time import a project can legitimately have
-// both, and that case still gets the full file scan.
-function databaseBackedOnly(ctx: CliContext): boolean {
-  return (
-    databaseBacked(ctx.cwd) && !existsSync(join(ctx.cwd, '.dispatch', 'tasks'))
-  );
+/**
+ * Whether doctor should read the board from the daemon's database.
+ *
+ * Keyed purely on the recorded backend. It used to also require that
+ * `.dispatch/tasks` was absent — but the import COPIES and never deletes, so
+ * that directory survives the migration, and until the retire-originals task
+ * lands it survives indefinitely. The effect was that doctor permanently
+ * validated a frozen snapshot of the markdown instead of the live board:
+ * every task created after the migration invisible to it, and every stale
+ * reference in the leftover files reported as a live problem.
+ *
+ * Once a project has recorded `sqlite`, the database IS the board, whatever
+ * else is still sitting on disk beside it.
+ */
+function databaseBackedBoard(ctx: CliContext): boolean {
+  return databaseBacked(projectRoot(ctx.cwd));
 }
 
 export function registerDoctorCommand(program: Command, ctx: CliContext): void {
@@ -86,7 +95,7 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
       // it, so a database can hold exactly the same broken graph a folder of
       // markdown can. Those checks therefore run on both backends, reading
       // through the daemon when it owns the store.
-      const fromDatabase = databaseBackedOnly(ctx);
+      const fromDatabase = databaseBackedBoard(ctx);
       const tasksDir = fromDatabase ? null : requireStore(ctx).tasksDir;
       let config: DispatchConfig;
       try {
@@ -118,7 +127,9 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         // is nothing to check without one. `file` carries the task id here,
         // which is what every issue message below quotes — a database-backed
         // project has no filename to name instead.
-        const daemon = await findRunningDaemon(ctx.cwd).catch(() => null);
+        const daemon = await findRunningDaemon(projectRoot(ctx.cwd)).catch(
+          () => null
+        );
         if (daemon === null) {
           throw new CliError(
             'dispatchd is not running — this project keeps its tasks in the ' +
@@ -132,6 +143,14 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         );
         for (const doc of await api.listTasks()) {
           parsed.push({ file: doc.meta.id, doc });
+        }
+        // Records the daemon could not read at all never reach listTasks(),
+        // so without this they are invisible to doctor and it reports a clean
+        // board over a damaged one. On the file backend the equivalent
+        // failures surface as parse errors in the loop above; on the database
+        // backend `GET /api/health` is the only place they are named.
+        for (const problem of await api.healthProblems()) {
+          issues.push({ file: problem.split(':')[0] ?? '', problem });
         }
       }
 
