@@ -392,11 +392,16 @@ const dispatchTask: WardenMutatingTool<z.infer<typeof dispatchInput>> = {
     // confirming the action in the chat UI is precisely who caused it. The
     // explicit 'none' actor is for callers with no human behind them at all
     // (EpicEngine's auto-fill), which the warden never is.
-    await ctx.orchestrator.dispatch(
-      input.taskId,
-      executorFor(ctx, input.executor),
-      { model: input.model }
-    );
+    // dispatchOrResume, not dispatch: a task whose last run a daemon restart
+    // left recoverable is picked back up rather than started over. `executor`
+    // and `model` carry what the warden's caller actually NAMED — the daemon's
+    // default executor is passed separately, so defaulting to it never reads
+    // as an explicit ask that a resume would have to refuse.
+    await ctx.orchestrator.dispatchOrResume(input.taskId, {
+      executor: input.executor,
+      model: input.model,
+      defaults: { executor: executorFor(ctx) },
+    });
   },
 };
 
