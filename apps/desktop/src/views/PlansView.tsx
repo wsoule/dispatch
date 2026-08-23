@@ -115,15 +115,17 @@ function PlanMessageBubble({
     <div
       className={cn(
         'rounded-control flex max-w-[85%] flex-col gap-1 px-3 py-2',
+        // A quiet tint, not a solid fill — a wall of saturated bubbles was the
+        // loudest surface in the app, and the words are the point.
         fromUser
-          ? 'bg-primary text-primary-foreground self-end'
+          ? 'bg-primary/10 shadow-hairline self-end'
           : 'bg-card shadow-hairline self-start'
       )}
     >
       <div
         className={cn(
           'flex items-baseline gap-1.5 text-[11px] font-medium tracking-wide uppercase',
-          fromUser ? 'text-primary-foreground/70' : 'text-muted-foreground'
+          fromUser ? 'text-primary' : 'text-muted-foreground'
         )}
       >
         {fromUser ? 'You' : 'Planner'}
@@ -322,16 +324,20 @@ function PlanTaskRow({
   onEdit,
   onRemove,
 }: PlanTaskRowProps) {
-  const blockerTitles = task.blockedByIndices
-    .map((i) => allTasks[i]?.title)
-    .filter((title): title is string => title !== undefined);
-
   return (
-    <div className="bg-card rounded-card shadow-card ease-out-expo hover:bg-surface-hover flex flex-col gap-2 p-3 transition-colors duration-100">
+    <div className="bg-card rounded-card shadow-card ease-out-expo hover:bg-surface-hover group/plan-task flex flex-col gap-1 px-3 py-2.5 transition-colors duration-100">
       <div className="flex items-center gap-2">
-        <span className="text-muted-foreground w-5 shrink-0 font-mono text-[11px]">
+        <span className="text-muted-foreground w-5 shrink-0 text-right font-mono text-[11px]">
           {index + 1}
         </span>
+        <Input
+          value={task.title}
+          onChange={(e) =>
+            onEdit({ type: 'setTaskTitle', index, title: e.target.value })
+          }
+          aria-label={`Task ${index + 1} title`}
+          className="focus-visible:ring-ring/40 h-auto min-w-0 flex-1 border-none bg-transparent px-0 py-0.5 text-[13px] font-medium shadow-none focus-visible:ring-1"
+        />
         <Select
           value={task.priority}
           onValueChange={(value) =>
@@ -342,15 +348,17 @@ function PlanTaskRow({
             })
           }
         >
+          {/* No icon of its own: SelectValue already renders the selected
+              item's icon+label — a second icon was how the trigger ended up
+              double-glyphed and clipped. */}
           <SelectTrigger
             size="sm"
             aria-label={`Task ${index + 1} priority`}
-            className="h-7 w-[112px] gap-1.5 px-2 text-[12px]"
+            className="h-6.5 w-[6.75rem] shrink-0 gap-1 px-2 text-[12px]"
           >
-            <PriorityIcon priority={task.priority} className="size-3.5" />
             <SelectValue className="capitalize" />
           </SelectTrigger>
-          <SelectContent align="start">
+          <SelectContent align="end">
             {PRIORITIES.map((p) => (
               <SelectItem key={p} value={p}>
                 <PriorityIcon priority={p} className="size-3.5" />
@@ -359,27 +367,18 @@ function PlanTaskRow({
             ))}
           </SelectContent>
         </Select>
-        <div className="flex-1" />
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           onClick={() => onRemove(index)}
           aria-label={`Remove task ${index + 1}`}
-          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
         >
           <Trash2 className="size-3.5" />
         </Button>
       </div>
 
-      <Input
-        value={task.title}
-        onChange={(e) =>
-          onEdit({ type: 'setTaskTitle', index, title: e.target.value })
-        }
-        aria-label={`Task ${index + 1} title`}
-        className="focus-visible:ring-ring/40 h-auto border-none bg-transparent px-0 py-0.5 text-[13px] font-medium shadow-none focus-visible:ring-1"
-      />
       <Textarea
         rows={2}
         value={task.description}
@@ -391,22 +390,32 @@ function PlanTaskRow({
           })
         }
         aria-label={`Task ${index + 1} description`}
-        className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-y border-none bg-transparent px-0 py-0.5 text-[12px] shadow-none focus-visible:ring-1"
+        className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-none border-none bg-transparent py-0.5 pr-0 pl-7 text-[12px] shadow-none focus-visible:ring-1"
       />
 
-      {blockerTitles.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 pt-1">
+      {task.blockedByIndices.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5 pl-7">
           <Link2 className="text-muted-foreground size-3" />
           <span className="text-muted-foreground text-[11px]">Blocked by</span>
-          {blockerTitles.map((title, i) => (
-            <Badge
-              key={`${title}-${i}`}
-              variant="secondary"
-              className="max-w-[12rem] truncate font-normal"
-            >
-              {title}
-            </Badge>
-          ))}
+          {task.blockedByIndices.map((blockerIndex) => {
+            const title = allTasks[blockerIndex]?.title;
+            if (title === undefined) return null;
+            return (
+              // `justify-start` matters: Badge centers its content, and a
+              // centered flex box with overflow clips the START of the text.
+              <Badge
+                key={blockerIndex}
+                variant="secondary"
+                title={title}
+                className="max-w-[11rem] justify-start font-normal"
+              >
+                <span className="text-muted-foreground shrink-0 font-mono">
+                  #{blockerIndex + 1}
+                </span>
+                <span className="truncate">{title}</span>
+              </Badge>
+            );
+          })}
         </div>
       )}
     </div>
