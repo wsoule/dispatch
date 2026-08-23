@@ -1,7 +1,7 @@
 ---
 id: t-7cc78a
 title: SQLite-backed TaskStore implementation behind the existing store seam
-status: in-review
+status: done
 kind: task
 parent: e-99e113
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:37:48.803Z
-updated: 2026-08-23T00:43:39.783Z
+updated: 2026-08-23T00:44:35.954Z
 external: null
 writes:
   - packages/core/src/**
@@ -45,3 +45,4 @@ OPTIONAL (confirmed, do if quick): shared pure builders to stop backend drift �
 - 2026-08-23T00:26:00.801Z requested changes (run r-f919fe): Your previous resume finished with zero turns and made no changes. The full list of REQUIRED and OPTIONAL fixes is in the previous user message in this conversation — apply the required ones now (id validation, attach-must-not-create-db, no silent collision overwrites, loud quarantine of corrupted columns, nextSeq race), run the core package tests, and commit. — human:wsoule679
 - 2026-08-23T00:43:16.916Z Review fixes committed as aa02a6d9. All five REQUIRED items done: (1) isTaskId() extracted to ids.ts and used by both backends — put() gates the id and slugifies the slug, toMarkdown() re-checks both since a foreign writer can INSERT rows that never went through put(); (2) openProjectStores no longer creates dispatch.db/-wal/-shm — attach-vs-init split via attachDispatchDb(), isInitialized() reflects whether a database exists, writes against a missing one refuse instead of vanishing; (3) create() and both record stores' add() claim ids with ON CONFLICT DO NOTHING + changes check, upserts kept only for update/amend/put, FindingStore.update() writes 3 columns not 16; (4) damaged JSON and out-of-set enum columns raise SqliteRowError, listSafe() collects them per row (status/assignee left unvalidated — not closed sets); (5) evidence/mutation seq computed inside the INSERT. 481 core tests pass (+18). 13 of 14 new guards mutation-tested live; the seq one is honestly 0 — it is an atomicity guarantee against a second writer, unobservable single-threaded. The finding-update guard needed a trigger-based test (AFTER UPDATE OF <column>) because a value-diff cannot distinguish an upsert that rewrites a column with its own value. OPTIONAL items: did the quick in-scope ones (shared withMintedId helper replacing 4 copies, private rowOf() killing the double-SELECT and slugOf, clauses[] form for ledger list). Left the server-side dedup of AddFindingInput/AddLedgerInput undone — packages/server is outside this task's declared writes (packages/core/**), so it needs its own task rather than a scope request. — none
 - 2026-08-23T00:43:39.783Z [run r-f919fe] finished: finished — 13 files, $9.08 — agent:wsoule679/claude
+- 2026-08-23T00:44:35.954Z run r-f919fe merged into epic/e-99e113 — human:wsoule679
