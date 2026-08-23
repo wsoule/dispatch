@@ -1611,9 +1611,12 @@ export interface ApiClient {
   // these mirror. `executor` defaults to 'claude' server-side when omitted;
   // 'fake' stays reachable for the dev-only manual-smoke toggle the desktop
   // UI gates behind a localStorage flag (see apps/desktop/src/lib/devTools.ts).
+  // `fresh` forces a brand-new run: without it the server resumes the task's
+  // most recent run when that run failed with its worktree still intact, so a
+  // re-dispatch cannot silently abandon work an agent had nearly finished.
   createRun(
     taskId: string,
-    opts?: { executor?: 'fake' | 'claude'; model?: string }
+    opts?: { executor?: 'fake' | 'claude'; model?: string; fresh?: boolean }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   // Every in-memory conversation agent (planner chats, enrich agents, task
@@ -2134,6 +2137,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({
           ...(opts.executor !== undefined ? { executor: opts.executor } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
         }),
       }),
     fetchRuns: () => request(target, '/api/runs'),

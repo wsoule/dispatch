@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 
-import type { ApiClient, ServerEvent } from '../apiClient.js';
+import type { ApiClient, RunMeta, ServerEvent } from '../apiClient.js';
 import { createApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
@@ -198,6 +198,16 @@ export function createRunWatcher(
   };
 }
 
+// What `dispatch run <taskId>` prints for the run it got back. The daemon, not
+// the caller, decides whether a re-dispatch starts over or picks the task's
+// failed run back up, so the line has to be read off the result: `resumedFrom`
+// is the only thing that says which of the two just happened.
+function describeDispatch(meta: RunMeta, taskId: string): string {
+  return meta.resumedFrom !== undefined
+    ? `resumed ${meta.resumedFrom} as ${meta.id} (${meta.executor}) for ${taskId}`
+    : `dispatched ${meta.id} (${meta.executor}) for ${taskId}`;
+}
+
 export function registerOrchestrateCommands(
   program: Command,
   ctx: CliContext
@@ -207,12 +217,20 @@ export function registerOrchestrateCommands(
     .description('Dispatch a new run, or inspect an existing one');
   run.addHelpText(
     'after',
-    '\nDispatch a new run with:\n  dispatch run <task-id> [--executor claude|fake] [--watch] [--json]'
+    '\nDispatch a new run with:\n' +
+      '  dispatch run <task-id> [--executor claude|fake] [--fresh] [--watch] [--json]\n' +
+      '\nA task whose last run failed with its worktree intact is resumed rather\n' +
+      'than started over; --fresh forces a new run. Resume a specific run with:\n' +
+      '  dispatch run resume <run-id>'
   );
 
   run
     .command('dispatch <taskId>', { isDefault: true, hidden: true })
     .option('--executor <name>', 'claude|fake', 'claude')
+    .option(
+      '--fresh',
+      "start a new run even when the task's last run could be resumed"
+    )
     .option('--watch', 'stream the run live until it reaches a terminal state')
     .option('--verbose', 'also render thinking entries while watching')
     .option('--json', 'print the dispatched run as JSON')
@@ -221,19 +239,31 @@ export function registerOrchestrateCommands(
         taskId: string,
         opts: {
           executor: string;
+          fresh?: boolean;
           watch?: boolean;
           verbose?: boolean;
           json?: boolean;
-        }
+        },
+        command: Command
       ) => {
         const { baseUrl, token, client } = await daemonFor(ctx);
+        const createOpts = { fresh: opts.fresh };
+        // Sent only when the user actually typed it. `--executor` carries a
+        // commander default, so `opts.executor` is 'claude' either way — and
+        // passing that on reads server-side as "the caller named claude",
+        // which refuses to resume a run on any other executor. A default is
+        // not a request.
+        const executor =
+          command.getOptionValueSource('executor') === 'default'
+            ? undefined
+            : opts.executor;
 
         if (opts.watch !== true) {
-          const meta = await client.createRun(taskId, opts.executor);
+          const meta = await client.createRun(taskId, executor, createOpts);
           ctx.log(
             opts.json === true
               ? JSON.stringify(meta, null, 2)
-              : `dispatched ${meta.id} (${meta.executor}) for ${taskId}`
+              : describeDispatch(meta, taskId)
           );
           return;
         }
@@ -255,8 +285,8 @@ export function registerOrchestrateCommands(
         // process itself alive right along with it (verified: a typo'd
         // task id used to hang instead of exiting 1).
         try {
-          const meta = await client.createRun(taskId, opts.executor);
-          ctx.log(`dispatched ${meta.id} (${meta.executor}) for ${taskId}`);
+          const meta = await client.createRun(taskId, executor, createOpts);
+          ctx.log(describeDispatch(meta, taskId));
           watcher.setRunId(meta.id);
           process.exitCode = await watcher.waitForExit();
         } finally {
@@ -264,6 +294,22 @@ export function registerOrchestrateCommands(
         }
       }
     );
+
+  run
+    .command('resume <runId>')
+    .description(
+      'Pick a terminal run back up in its own worktree, on its own branch'
+    )
+    .option('--json', 'print the resumed run as JSON')
+    .action(async (runId: string, opts: { json?: boolean }) => {
+      const { client } = await daemonFor(ctx);
+      const meta = await client.resumeRun(runId);
+      ctx.log(
+        opts.json === true
+          ? JSON.stringify(meta, null, 2)
+          : `resumed ${runId} as ${meta.id} (${meta.executor}) on ${meta.branch}`
+      );
+    });
 
   run
     .command('show <runId>')

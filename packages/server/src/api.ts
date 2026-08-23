@@ -510,6 +510,17 @@ async function createTaskComment(
 // actually registered on this Orchestrator instance (M6: derived live via
 // `registeredExecutorNames()`, not a separately hardcoded list) is a 400
 // here.
+//
+// A task whose most recent run failed with its worktree and branch intact is
+// RESUMED rather than started over (see Orchestrator.resumableRunForTask).
+// Losing a nearly-finished run because a re-dispatch quietly began again from
+// nothing is the expensive mistake; resuming when the caller wanted a clean
+// slate costs one discard. So resume is the default and `fresh: true` opts out.
+//
+// A resume keeps the failed run's own model, so a `model` sent alongside one is
+// not applied — handing the rest of a conversation to a different model is what
+// requestChanges' `model` comment exists to prevent. A caller that specifically
+// wants a different model wants `fresh: true`.
 async function createRun(
   req: Request,
   ctx: ApiContext,
@@ -548,16 +559,21 @@ async function createRun(
     return errorResponse(400, 'invalid model: expected a string');
   }
 
-  const executorName =
-    typeof executorField === 'string' ? executorField : 'claude';
-  // Omitting `model` falls back to the project's configured `models.execute`,
-  // so a script or an older UI build still runs on the model settings chose.
-  const model =
-    typeof modelField === 'string'
-      ? modelField
-      : loadConfig(ctx.rootDir).models.execute;
-  const meta = await ctx.orchestrator.dispatch(taskId, executorName, {
-    model,
+  const freshField = parsed.value.fresh;
+  if (freshField !== undefined && typeof freshField !== 'boolean') {
+    return errorResponse(400, 'invalid fresh: expected a boolean');
+  }
+  // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
+  // the raw fields go through untouched and only the FALLBACKS are resolved
+  // here: omitting `model` still runs a fresh dispatch on the project's
+  // configured `models.execute` (so a script or an older UI build lands where
+  // settings chose), while naming one that the resumable run cannot honour is
+  // what sends the call down the fresh path in the first place.
+  const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
+    executor: typeof executorField === 'string' ? executorField : undefined,
+    model: typeof modelField === 'string' ? modelField : undefined,
+    fresh: freshField === true,
+    defaults: { model: loadConfig(ctx.rootDir).models.execute },
   });
   return jsonResponse(meta, 201);
 }
