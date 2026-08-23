@@ -7,6 +7,7 @@ import {
   fixLoopStatusLabel,
   fixLoopStopDetail,
   fixLoopTone,
+  fixLoopTraceLabel,
   willEscalateNextRound,
 } from '../../../lib/fixLoopStatus';
 import { MainSection } from './MainSection';
@@ -68,6 +69,7 @@ export function FixLoopSection({
   const escalates =
     fixLoop !== null && willEscalateNextRound(fixLoop, escalation);
   const detail = fixLoop === null ? null : fixLoopStopDetail(fixLoop);
+  const trace = fixLoop === null ? null : fixLoopTraceLabel(fixLoop);
   return (
     <MainSection title="Fix loop">
       <div
@@ -91,6 +93,11 @@ export function FixLoopSection({
             </span>
           )}
         </div>
+        {trace !== null && (
+          <p className="text-muted-foreground pl-[1.375rem] text-[12px]">
+            Findings per pass: {trace}
+          </p>
+        )}
         {detail !== null && (
           <p className="pl-[1.375rem] text-[12px] whitespace-pre-wrap opacity-90">
             {detail}

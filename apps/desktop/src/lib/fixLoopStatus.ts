@@ -138,3 +138,11 @@ export function willEscalateNextRound(
   if (state.round >= state.cap) return false;
   return rungFor(state.round + 1, escalation).strategy === 'fresh';
 }
+
+/** The convergence readout: "9→4→1", or null when no round has been reviewed
+ *  yet. Falling numbers are the loop working; flat ones are it thrashing. */
+export function fixLoopTraceLabel(state: FixLoopState): string | null {
+  const trace = state.findingsTrace ?? [];
+  if (trace.length === 0) return null;
+  return trace.join('→');
+}

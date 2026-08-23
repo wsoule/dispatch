@@ -68,6 +68,10 @@ export interface FixLoopState {
   stopReason?: FixLoopStop;
   /** The failure text behind a `stopReason` of `error`. */
   stopDetail?: string;
+  /** Open findings handed to each round's review, oldest first — `[9, 4, 1]`
+   * is converging, `[9, 9]` is thrashing. Derived from the store's history on
+   * API reads (see `findingsTrace`); never persisted on the record itself. */
+  findingsTrace?: number[];
   updatedAt: string;
 }
 
@@ -137,6 +141,29 @@ export class FixLoopStore {
     return [...this.read().byTask.values()];
   }
 
+  /** Every snapshot ever written for a task, in file order — the loop's whole
+   * life, for derived reads like the findings trace. */
+  historyFor(taskId: string): FixLoopState[] {
+    if (!existsSync(this.file)) return [];
+    let text: string;
+    try {
+      text = readFileSync(this.file, 'utf8');
+    } catch {
+      return [];
+    }
+    const history: FixLoopState[] = [];
+    for (const line of text.split('\n')) {
+      if (line.trim() === '') continue;
+      try {
+        const record = JSON.parse(line) as FixLoopState;
+        if (record.taskId === taskId) history.push(record);
+      } catch {
+        // A hand-corrupted line costs itself, not the rest of the store.
+      }
+    }
+    return history;
+  }
+
   // `list()` plus why it may be empty, for callers on the boot path that must
   // report an unreadable store rather than read it as "no loops".
   listSafe(): { states: FixLoopState[]; error: string | null } {
@@ -149,6 +176,25 @@ export class FixLoopStore {
     appendFileSync(this.file, `${JSON.stringify(state)}\n`);
     return state;
   }
+}
+
+/**
+ * Open findings handed to each round's review, oldest round first — the
+ * loop's convergence in one array: `[9, 4, 1]` is a loop that is working,
+ * `[9, 9, 9]` one that is thrashing. Derived from the store's append-only
+ * history (every review dispatch snapshots `reviewInputIds`), never persisted.
+ * A round reviewed twice keeps its latest snapshot.
+ */
+export function findingsTrace(history: FixLoopState[]): number[] {
+  const byRound = new Map<number, number>();
+  for (const snapshot of history) {
+    if (snapshot.state !== 'reviewing') continue;
+    if (snapshot.reviewInputIds === undefined) continue;
+    byRound.set(snapshot.round, snapshot.reviewInputIds.length);
+  }
+  return [...byRound.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, count]) => count);
 }
 
 // The rung governing `round`: the latest row at or below it, falling back to
@@ -276,6 +322,26 @@ export class FixLoop {
    *  feed can annotate rows without one request per task. */
   list(): FixLoopState[] {
     return this.ctx.fixLoopStore.list();
+  }
+
+  /** `get` plus the derived findings trace — the shape API reads return. */
+  getWithTrace(taskId: string): FixLoopState | null {
+    const state = this.get(taskId);
+    if (state === null) return null;
+    return {
+      ...state,
+      findingsTrace: findingsTrace(this.ctx.fixLoopStore.historyFor(taskId)),
+    };
+  }
+
+  /** `list` plus each loop's derived findings trace. */
+  listWithTrace(): FixLoopState[] {
+    return this.list().map((state) => ({
+      ...state,
+      findingsTrace: findingsTrace(
+        this.ctx.fixLoopStore.historyFor(state.taskId)
+      ),
+    }));
   }
 
   /** The user's Stop button: caps the loop where it stands (`stopped`), and
