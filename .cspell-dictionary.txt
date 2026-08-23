@@ -169,6 +169,7 @@ idempotently
 indistinguish
 initialisation
 inlines
+inspectable
 irrors
 keepme
 keycap

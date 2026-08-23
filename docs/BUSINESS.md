@@ -34,8 +34,9 @@ forkable moat. This is why the licensing question (below) got simpler.
   deliberately — not by drift.
 - **The team server is commercial and private** — separate repo, consuming
   published `@dispatch/core` (open decision §7.3 in `TEAM-SERVER.md`).
-- **Consider MIT for the task-format spec + `@dispatch/mcp`** so other agents
-  freely speak the format. Costs nothing; the value is the app and the server.
+- **Consider MIT for `@dispatch/mcp`** so any agent can drive Dispatch through
+  its tools. With tasks leaving markdown (`TEAM-SERVER.md` §3) the MCP tool
+  surface, not a file format, is the interop layer worth opening.
 - **CLA before outside PRs land** (CLA Assistant, not DCO) — still required
   while the client is source-available and code may move across the license
   boundary into the server.

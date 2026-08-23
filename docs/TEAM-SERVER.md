@@ -1,169 +1,156 @@
 # Team server
 
-Design document for moving Dispatch's team collaboration from git-ref
-coordination to a server. This supersedes the git-native direction in
-`docs/archive/specs/2026-08-02-team-collaboration-design.md`; the parts of that
-spec that shipped are inputs here, not casualties.
+Design document for Dispatch's storage pivot and team tier: tasks leave
+markdown, dispatchd owns state in a local database, and team projects home that
+state on a server. This supersedes the git-native direction in
+`docs/archive/specs/2026-08-02-team-collaboration-design.md` and absorbs the
+storage direction agreed on 2026-08-22 (epic `e-99e113`, "Storage spine:
+daemon-owned DB with git receipts", building on
+`docs/archive/design/lovable-direction.md`).
 
-Status: **draft for decision**. §7 lists the calls that are still open; nothing
-below is implemented.
+Status: **direction decided, design draft.** The source-of-truth question is
+settled (§3); §8 lists what remains open. Nothing below is implemented.
 
-## 1. Why a server
+## 1. Why tasks leave markdown
 
-The git-native design got real mileage — five of its seven team failures are
-fixed and shipped (see §2) — but the two that remain, plus everything the
-business needs, are the ones git refs handle worst:
+Tasks-as-files was the founding design and it earned its keep solo. At real
+usage it fails on its own evidence:
 
-- **Claims and presence are liveness problems.** "Is anyone dispatching this
-  task right now" and "is Alice's agent still alive" need heartbeats and TTLs,
-  not commits. A ref-based claim can't expire when a laptop lid closes.
-- **Run state never crosses machines.** Transcripts, live logs, diff snapshots,
-  and verify results live under `DISPATCH_HOME`, keyed to one machine
-  (`docs/ARCHITECTURE.md`, "Where state lives"). A teammate can see every task
-  and none of the work happening on it. Multiplayer is mostly _this_.
-- **Sync latency is push-cadence.** The board syncer is debounced off local
-  edits and rides git push/pull; a board that updates when someone happens to
-  push is not a live board.
-- **The paid tier needs an account boundary.** Licensing, seats, and audit all
-  want a place identity actually lives (`docs/BUSINESS.md`).
+- **This repo's own history.** 187 files in `.dispatch/tasks/`, and 34 of the 40
+  most recent commits on main are `chore(board): sync N tasks`. The sync layer
+  is the majority author of the project's history.
+- **Task state churns in code diffs.** `findings.jsonl`, `ledger.jsonl`, and
+  activity appends land in the same diffs as code, and every PR drags tracker
+  noise with it.
+- **Write cadence outgrew git.** A scheduler recomputing priorities, shared
+  agent memory, presence, claims — everything on the roadmap wants real-time
+  reads and writes, not debounced commit-push cycles.
+- **Multiplayer wants one authority.** The archived team spec spent most of its
+  length reconciling concurrent file edits. A store with an owner makes that
+  machinery unnecessary.
 
-An existence proof already in the tree: `apps/demo` boots per-session
-`dispatchd` instances server-side, isolated by `DISPATCH_HOME` — the daemon is
-hostable today.
+What markdown was _for_ — inspectability, history, durability beyond the tool —
+is preserved by the receipt log (§4), not by keeping the write path in files.
 
-## 2. What we keep
+## 2. Shape
 
-Shipped and staying, regardless of anything below:
-
-| Piece                                        | Why it survives                               |
-| -------------------------------------------- | --------------------------------------------- |
-| Actors (`ActorRef`, `team.yml`, attribution) | Identity model is transport-independent       |
-| Task-file merge driver                       | Files still merge whenever git is in the loop |
-| Per-actor inbox                              | Same                                          |
-| `conflicts.ts` writes-overlap detection      | Becomes the server's claim-admission check    |
-| Board syncer                                 | Remains the offline/no-server fallback path   |
-
-The solo product keeps its promise unchanged: **no account, no server, nothing
-uploaded.** Everything in this document is additive and opt-in; a daemon that
-never connects behaves exactly as today.
-
-## 3. Architecture
+The typical SaaS shape, arrived at through the local daemon:
 
 ```text
-   Alice's machine                     Bob's machine
-┌───────────────────┐             ┌───────────────────┐
-│ Dispatch.app      │             │ Dispatch.app      │
-│   dispatchd ──────┼──┐       ┌──┼───── dispatchd    │
-│   (runs agents,   │  │       │  │                   │
-│    owns worktrees)│  │       │  │                   │
-└───────────────────┘  │       │  └───────────────────┘
-                       ▼       ▼
-              ┌─────────────────────┐
-              │ team server         │   one per org; hosted or self-hosted
-              │  identity & orgs    │
-              │  project registry   │
-              │  presence           │
-              │  claims (leases)    │
-              │  run registry+relay │
-              │  task mirror        │
-              │  audit log          │
-              └──────────┬──────────┘
-                         │
-                  web dashboard (later)
+solo                              team
+┌───────────────────┐        ┌───────────────────┐   ┌───────────────────┐
+│ Dispatch.app      │        │ Alice: dispatchd ─┼─┐ │ Bob: dispatchd ───┼─┐
+│  dispatchd        │        │  (agents, work-   │ │ │                   │ │
+│   ├─ SQLite       │        │   trees, keys)    │ │ │                   │ │
+│   └─ receipts→git │        └───────────────────┘ │ └───────────────────┘ │
+└───────────────────┘                              ▼                       ▼
+ no account, no server                    ┌─────────────────────────────────┐
+                                          │ team server (hosted/self-host)  │
+                                          │  authoritative task store       │
+                                          │  identity, orgs, projects       │
+                                          │  presence · claims · runs       │
+                                          │  audit log · web dashboard      │
+                                          └─────────────────────────────────┘
 ```
 
-Load-bearing properties:
+- **dispatchd stays the agent host everywhere.** Agents, worktrees, code, and
+  API keys never leave the operator's machine in either mode. The server stores
+  and coordinates; it does not execute.
+- **One storage seam, two backends.** `TaskStore` (`packages/core/src/store.ts`)
+  is today a concrete file-backed class; its call surface
+  (`create/get/list/update/amend/remove`) becomes an interface. Solo mode
+  implements it over local SQLite; a team project implements it over the
+  server's API. Callers — the daemon's routes, the orchestrator, MCP — don't
+  change.
+- **Daemons connect outbound** over one WebSocket. No inbound ports.
 
-- **`dispatchd` stays the agent host.** Agents, worktrees, API keys, and code
-  never leave the operator's machine. The server coordinates; it does not
-  execute.
-- **Daemons connect outbound** over a single WebSocket. No inbound ports, no NAT
-  traversal, nothing to open on a corporate laptop.
-- **Degraded = today.** Server unreachable → daemon runs exactly the current
-  solo behavior and reconciles when it reconnects. The server is an availability
-  enhancement, never a dependency for dispatching.
+## 3. Source of truth (decided)
 
-## 4. What crosses the boundary
+**Solo:** the daemon's SQLite database. **Team:** the server. Markdown task
+files are retired as a write path in both.
 
-The state split in `ARCHITECTURE.md` is the map. Per class of state:
+Consequences, stated plainly:
 
-| State                                  | Today         | With server                                                                        |
-| -------------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
-| Tasks, ledger, findings (`.dispatch/`) | repo, via git | unchanged as source of truth; server keeps a **mirror** for fan-out and web (§7.1) |
-| Presence                               | — (not built) | server-derived from connected daemons + active runs                                |
-| Claims                                 | — (not built) | server-issued leases, heartbeat TTL, admission-checked with `conflicts.ts`         |
-| Run metadata + live log                | machine-local | streamed up (`run.log` events already exist verbatim)                              |
-| Transcripts, diff snapshots            | machine-local | uploaded at run end, retention-bound                                               |
-| Worktrees                              | machine-local | **never cross**                                                                    |
-| API keys, credentials                  | machine-local | **never cross**                                                                    |
-| Audit                                  | — (not built) | server-native append-only log                                                      |
+- `.dispatch/` in the repo shrinks to genuinely-committable config
+  (`config.yml`, `team.yml`). `tasks/*.md`, `findings.jsonl`, `ledger.jsonl`,
+  `fix-loops.jsonl`, `notes.json`, and `inbox/` all move into the store.
+  Board-sync commits disappear entirely.
+- A one-time migration imports `.dispatch/tasks/*.md` into the DB and preserves
+  the originals in the receipt log.
+- **The five file-direct MCP tools change contract.** `task_list`, `task_get`,
+  `task_save`, `task_comment`, `task_next` currently touch files and work
+  without a daemon; post-spine they call through the daemon like the other nine.
+  "Works with no daemon running" is a real regression to accept — mitigated by
+  the daemon being auto-spawned by app and CLI already.
+- The board syncer, the task-file merge driver, and the per-actor inbox's
+  merge-avoidance design retire with the write path. `conflicts.ts`
+  (writes-overlap) survives — it checks declared paths, not file merges.
+- Offline in team mode becomes **cache + queued writes + reconcile**, not "git
+  still works." Weaker than the old story; honest, and standard for the shape.
+  Solo mode remains fully offline by construction.
 
-The event vocabulary already exists: the daemon's `ServerEvent` union
-(`events.ts`) is very close to the wire protocol daemon→server, and the mirror's
-fan-out to other daemons reuses the same "go refetch" contract clients already
-speak. This is the main reason the lift is smaller than it looks.
+## 4. Git receipts
 
-## 5. Sketches
+Git's role changes from sync layer to **receipt log**: an append-only,
+git-versioned export of the audit trail — task history snapshots, ledger,
+findings, decisions — written by the daemon to a location _outside_ the project
+repo (`~/.dispatch/projects/<id>/receipts`). In team mode the server produces
+the same export per project.
 
-**Claims.** A dispatch first asks the server for a lease on
-`(taskId, writes[])`. The server admission-checks overlap against live leases
-using the same `entriesOverlap` logic that gates local scheduling today, then
-grants a TTL'd lease the daemon heartbeats for the life of the run. Lease lost
-(laptop sleeps, network drops) → surfaced in the app as a warning, not a killed
-run — the operator decides. Offline → no lease, current local-only conflict
-checks apply, flagged as unclaimed on reconnect.
+This is what keeps the trust story after markdown: everything the tracker knows
+is still inspectable, diffable, greppable text with history, and if Dispatch
+disappears tomorrow the record survives. It is a projection, never a write path.
 
-**Run visibility.** Daemons forward run lifecycle + `run.log` to the server; the
-server fans out to subscribed teammates. A teammate's app renders a read-only
-live view of the run — same components, remote feed. Transcript and diff
-snapshot upload at terminal state makes review-after-the-fact possible from any
-machine.
+## 5. Actors and identity
 
-**Task mirror.** Daemon reports task-file state (post-merge-driver, so the
-server never resolves conflicts); server holds latest-known state per project
-for instant fan-out and the web dashboard. Divergence between mirror and repo
-resolves in the repo's favor, always.
+The actor model survives intact — `ActorRef` (`human:wyat`,
+`agent:wyat/claude`), attribution, and the timeline invariant are
+storage-independent. Server accounts back `human:*` refs in team mode; agents
+inherit their operator's authorization. `team.yml` becomes a cached projection
+of the org roster.
 
-**Identity.** Server accounts map onto the existing `ActorRef` space —
-`human:wyat` gains a verified account behind it; agents keep `agent:wyat/claude`
-and inherit their operator's authorization. `team.yml` becomes a cached
-projection of the org roster rather than the roster itself.
+## 6. Team features on top
 
-## 6. Phasing
+With the server authoritative, the earlier mirror/fan-out machinery is
+unnecessary — these become ordinary features of a stateful service:
 
-Each phase ships value alone and none requires the next:
+- **Presence** — derived from connected daemons and live runs.
+- **Claims** — TTL leases on `(taskId, writes[])`, admission-checked with the
+  existing overlap logic, heartbeat for the life of the run. Lease lost →
+  warning in the app, operator decides; never a killed run.
+- **Run visibility** — daemons stream run lifecycle + `run.log` (the existing
+  `ServerEvent` vocabulary is most of the wire protocol); transcripts and diff
+  snapshots upload at terminal state so review works from any machine.
+- **Web dashboard** — reads the authoritative store directly; the first surface
+  for people who never install the app.
+- **Audit** — server-native append-only log, exported as receipts (§4).
 
-1. **Connect + presence** — accounts, orgs, project link, who's online, which
-   tasks have live runs. Small, and immediately visible.
-2. **Run visibility** — stream lifecycle + logs; teammates watch runs read-only.
-   The single most demoable team feature.
-3. **Claims** — leases with TTL; kills the "two people dispatched the same task"
-   failure for good.
-4. **Task mirror + web dashboard** — live board in the browser; first surface
-   for people who never install the app (managers).
-5. **Audit + admin** — append-only audit export, roles, SSO. The enterprise
-   tier.
+## 7. Phasing
 
-## 7. Open decisions
+0. **Storage spine (solo, no server)** — epic `e-99e113`. Extract the
+   `TaskStore` interface, SQLite backend, migration from markdown, receipt
+   export, MCP tools through the daemon. Ships as a pure local improvement: sync
+   commits gone, real-time board. This phase de-risks everything after it and is
+   worth doing even if the server slipped a quarter.
+1. **Connect** — accounts, orgs, project homing, presence.
+2. **Run visibility** — the most demoable team feature.
+3. **Claims.**
+4. **Web dashboard.**
+5. **Audit, roles, SSO** — the enterprise tier.
 
-Ordered by how much the answer changes.
+## 8. Open decisions
 
-1. **Task source of truth.** Recommended: files stay authoritative, server
-   mirrors (§4, §5). Alternative: server-authoritative tasks with git export —
-   maximal "real server product," but it abandons the load-bearing product claim
-   that tasks are files in your repo, breaks offline-first, and invalidates the
-   MCP file tools. Decide explicitly; everything in §5 assumes the
-   recommendation.
-2. **Transcript storage.** Server-held (easy review-anywhere, but we now hold
-   customer code excerpts — security posture changes) vs. daemon-held with
-   server-brokered fetch (better story, worse availability). Leaning server-held
-   with retention knobs and self-host as the out.
-3. **Repo location for the server.** Same monorepo vs. private repo from day
-   one. `docs/BUSINESS.md` argues private; the counterargument is shared core
-   types (`ServerEvent`, `TaskMeta`) want one tree. A private repo consuming
-   published `@dispatch/core` is the likely shape.
-4. **Protocol stack.** Plain WebSocket + JSON mirroring `ServerEvent` (fastest,
-   matches existing code) vs. anything fancier. Recommend the former until it
-   hurts.
-5. **Web dashboard client.** Revive `@dispatch/web` (currently dependent-less)
-   or start clean against `@dispatch/ui`. Decide when phase 4 starts, not now.
+1. **Transcript storage.** Server-held (review-anywhere; we hold code excerpts —
+   posture changes) vs. daemon-held with brokered fetch. Leaning server-held
+   with retention knobs; self-host is the out.
+2. **Offline/conflict policy in team mode.** Queued-write reconciliation rules
+   when a daemon reconnects — last-write-wins per field, or surface conflicts to
+   a human. Needs deciding before phase 1, not before phase 0.
+3. **Server repo location.** Private repo consuming published `@dispatch/core`
+   remains the likely shape (`docs/BUSINESS.md`).
+4. **Protocol.** Plain WebSocket + JSON mirroring `ServerEvent` until it hurts.
+5. **What of `.dispatch/` stays in-repo.** `config.yml` clearly; whether
+   `team.yml` stays as a projection or moves fully server-side can wait for
+   phase 1.
+6. **Web dashboard client.** Revive `@dispatch/web` or start clean on
+   `@dispatch/ui`. Decide at phase 4.
