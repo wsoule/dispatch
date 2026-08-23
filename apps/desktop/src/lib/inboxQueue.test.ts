@@ -1,6 +1,7 @@
-import type { RunMeta, RunQuestion } from '@dispatch/client';
+import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
+import type { InboxInput } from './inboxQueue';
 import { buildInbox } from './inboxQueue';
 
 function run(over: Partial<RunMeta> = {}): RunMeta {
@@ -26,103 +27,125 @@ function question(over: Partial<RunQuestion> = {}): RunQuestion {
     question: 'Which way?',
     options: [],
     askedAt: '2026-08-04T00:30:00.000Z',
+    answer: null,
     ...over,
   } as RunQuestion;
 }
 
-const NO_QUESTIONS = new Map<string, RunQuestion[]>();
+function input(over: Partial<InboxInput> = {}): InboxInput {
+  return {
+    runs: [],
+    tasks: [],
+    epics: [],
+    repoPrs: [],
+    mergeQueue: null,
+    pendingApprovals: new Map(),
+    openQuestions: new Map(),
+    fixLoops: new Map(),
+    ...over,
+  };
+}
+
+function sectionStates(data: ReturnType<typeof buildInbox>): string[] {
+  return data.sections.map((s) => s.state);
+}
 
 describe('buildInbox', () => {
-  test('a finished, un-reviewed run lands in review', () => {
-    const inbox = buildInbox([run()], [], NO_QUESTIONS);
-    expect(inbox.review.map((i) => i.run?.id)).toEqual(['r-1']);
-    expect(inbox.waiting).toHaveLength(0);
+  test('a finished, un-reviewed run lands in a review section', () => {
+    const data = buildInbox(input({ runs: [run()] }));
+    expect(sectionStates(data)).toEqual(['review']);
+    expect(data.sections[0].rows.map((r) => r.runId)).toEqual(['r-1']);
+    expect(data.total).toBe(1);
   });
 
-  // No `MergeQueueEntry` involved — a plain live run stuck on an approval
-  // gate must still classify as waiting without one.
-  test('a run awaiting approval lands in waiting', () => {
-    const inbox = buildInbox(
-      [run({ state: 'awaiting-approval' })],
-      [],
-      NO_QUESTIONS
+  test('a run awaiting approval lands in approve', () => {
+    const data = buildInbox(
+      input({ runs: [run({ state: 'awaiting-approval' })] })
     );
-    expect(inbox.waiting.map((r) => r.id)).toEqual(['r-1']);
-    expect(inbox.review).toHaveLength(0);
+    expect(sectionStates(data)).toEqual(['approve']);
   });
 
-  test('a reviewed run appears in neither list', () => {
-    const inbox = buildInbox(
-      [run({ reviewedAt: '2026-08-04T01:00:00.000Z' })],
-      [],
-      NO_QUESTIONS
+  test('a run blocked on an unanswered question lands in answer', () => {
+    const data = buildInbox(
+      input({
+        runs: [run({ state: 'running' })],
+        openQuestions: new Map([['r-1', [question()]]]),
+      })
     );
-    expect(inbox.review).toHaveLength(0);
-    expect(inbox.waiting).toHaveLength(0);
+    expect(sectionStates(data)).toEqual(['answer']);
   });
 
-  test('review entries preserve buildReviewQueue order — newest first', () => {
-    const inbox = buildInbox(
-      [
-        run({ id: 'r-old', updatedAt: '2026-08-01T00:00:00.000Z' }),
-        run({ id: 'r-new', updatedAt: '2026-08-03T00:00:00.000Z' }),
-      ],
-      [],
-      NO_QUESTIONS
+  test('a failed run lands in failed — the old rules dropped these', () => {
+    const data = buildInbox(
+      input({ runs: [run({ state: 'failed', error: 'boom' })] })
     );
-    expect(inbox.review.map((i) => i.run?.id)).toEqual(['r-new', 'r-old']);
+    expect(sectionStates(data)).toEqual(['failed']);
+    expect(data.sections[0].rows[0].attention?.reason).toBe('boom');
   });
 
-  test('a run that is neither finished nor waiting appears in neither list', () => {
-    const inbox = buildInbox([run({ state: 'running' })], [], NO_QUESTIONS);
-    expect(inbox.review).toHaveLength(0);
-    expect(inbox.waiting).toHaveLength(0);
-  });
-
-  // `deriveFeedState` alone can't see this: a run blocked on an unanswered
-  // question stays 'running' in its own metadata (the agent process is still
-  // live, just waiting on stdin). Only the separate openQuestions map — keyed
-  // by run id, same as taskAttention.ts and controlRoom.ts read it — knows.
-  test('a run blocked on an unanswered question lands in waiting', () => {
-    const openQuestions = new Map<string, RunQuestion[]>([
-      ['r-1', [question({ runId: 'r-1' })]],
-    ]);
-    const inbox = buildInbox([run({ state: 'running' })], [], openQuestions);
-    expect(inbox.waiting.map((r) => r.id)).toEqual(['r-1']);
-    expect(inbox.review).toHaveLength(0);
-  });
-
-  // A run with an empty question list for its id (already answered, entry
-  // never cleaned up) must not be treated as still blocked.
-  test('a run with an empty question list is not waiting on that alone', () => {
-    const openQuestions = new Map<string, RunQuestion[]>([['r-1', []]]);
-    const inbox = buildInbox([run({ state: 'running' })], [], openQuestions);
-    expect(inbox.waiting).toHaveLength(0);
-  });
-
-  // buildReviewQueue's exclusions apply to `waiting` too: a review/verify-kind
-  // run's own RunMeta is an implementation detail of reviewing something else,
-  // not a thing needing a human on its own.
-  test('a review-kind run awaiting approval is excluded from waiting', () => {
-    const inbox = buildInbox(
-      [run({ kind: 'review', state: 'awaiting-approval' })],
-      [],
-      NO_QUESTIONS
+  test('one row per task: only the newest settled round speaks for it', () => {
+    const data = buildInbox(
+      input({
+        runs: [
+          run({ id: 'r-old', createdAt: '2026-08-01T00:00:00.000Z' }),
+          run({ id: 'r-new', createdAt: '2026-08-03T00:00:00.000Z' }),
+        ],
+      })
     );
-    expect(inbox.waiting).toHaveLength(0);
+    expect(data.total).toBe(1);
+    expect(data.sections[0].rows.map((r) => r.runId)).toEqual(['r-new']);
   });
 
-  test('an archived run awaiting approval is excluded from waiting', () => {
-    const inbox = buildInbox(
-      [
-        run({
-          state: 'awaiting-approval',
-          archivedAt: '2026-08-04T02:00:00.000Z',
-        }),
-      ],
-      [],
-      NO_QUESTIONS
+  test('a live run suppresses its task’s settled review rows', () => {
+    const data = buildInbox(
+      input({
+        runs: [
+          run({ id: 'r-reviewed', createdAt: '2026-08-01T00:00:00.000Z' }),
+          run({
+            id: 'r-live',
+            state: 'running',
+            createdAt: '2026-08-03T00:00:00.000Z',
+          }),
+        ],
+      })
     );
-    expect(inbox.waiting).toHaveLength(0);
+    // The live run itself is calm (machine tier), so nothing is urgent at all.
+    expect(data.total).toBe(0);
+  });
+
+  test('a reviewed run appears nowhere', () => {
+    const data = buildInbox(
+      input({ runs: [run({ reviewedAt: '2026-08-04T01:00:00.000Z' })] })
+    );
+    expect(data.total).toBe(0);
+  });
+
+  test('a calm running run appears nowhere', () => {
+    const data = buildInbox(input({ runs: [run({ state: 'running' })] }));
+    expect(data.total).toBe(0);
+  });
+
+  test('an unclaimed repo PR lands in prs; a run-claimed one does not', () => {
+    const claimed = {
+      number: 7,
+      url: 'https://github.com/x/y/pull/7',
+      title: 'Claimed',
+      updatedAt: '2026-08-04T00:00:00.000Z',
+    } as RepoPr;
+    const standalone = {
+      number: 9,
+      url: 'https://github.com/x/y/pull/9',
+      title: 'Standalone',
+      updatedAt: '2026-08-04T00:00:00.000Z',
+    } as RepoPr;
+    const data = buildInbox(
+      input({
+        runs: [run({ prUrl: claimed.url })],
+        repoPrs: [claimed, standalone],
+      })
+    );
+    expect(data.prs.map((pr) => pr.number)).toEqual([9]);
+    // review row for the claimed run + one standalone PR.
+    expect(data.total).toBe(2);
   });
 });

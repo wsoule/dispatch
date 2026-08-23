@@ -1,4 +1,4 @@
-import type { RunMeta, RunQuestion } from '@dispatch/client';
+import type { RunMeta } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
@@ -20,14 +20,11 @@ function run(over: Partial<RunMeta> = {}): RunMeta {
   } as RunMeta;
 }
 
-const NO_QUESTIONS = new Map<string, RunQuestion[]>();
-
 test('renders the idle copy with no runs', () => {
   render(
     <LiveRail
       runs={[]}
-      repoPrs={[]}
-      openQuestions={NO_QUESTIONS}
+      attentionCount={0}
       onOpenTask={() => {}}
       onOpenInbox={() => {}}
       collapsed={false}
@@ -49,8 +46,7 @@ test('renders a row per live run, clicking opens its task', () => {
   render(
     <LiveRail
       runs={[run()]}
-      repoPrs={[]}
-      openQuestions={NO_QUESTIONS}
+      attentionCount={0}
       onOpenTask={onOpenTask}
       onOpenInbox={() => {}}
       collapsed={false}
@@ -66,8 +62,7 @@ test('shows the attention strip when something is waiting, and it navigates to t
   render(
     <LiveRail
       runs={[run({ state: 'awaiting-approval' })]}
-      repoPrs={[]}
-      openQuestions={NO_QUESTIONS}
+      attentionCount={1}
       onOpenTask={() => {}}
       onOpenInbox={() => {
         opened = true;
@@ -88,8 +83,7 @@ test('the collapsed strip still shows the attention count and opens the inbox', 
   render(
     <LiveRail
       runs={[run({ state: 'awaiting-approval' })]}
-      repoPrs={[]}
-      openQuestions={NO_QUESTIONS}
+      attentionCount={1}
       onOpenTask={() => {}}
       onOpenInbox={() => {
         opened = true;
@@ -110,8 +104,7 @@ test('the collapsed strip drops rows but keeps the running count', () => {
   render(
     <LiveRail
       runs={[run(), run({ id: 'r-2', taskId: 't-2', taskTitle: 'Other' })]}
-      repoPrs={[]}
-      openQuestions={NO_QUESTIONS}
+      attentionCount={0}
       onOpenTask={() => {}}
       onOpenInbox={() => {}}
       collapsed

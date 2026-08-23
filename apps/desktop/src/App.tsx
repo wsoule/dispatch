@@ -410,11 +410,31 @@ function App() {
     );
   }, [data.runs, data.archivedTasks]);
 
-  // Everything the Inbox view shows — the Review queue plus any run stalled
-  // on an approval or a question. See `buildInbox`.
+  // Everything the Inbox view shows — the Control room feed's urgent tiers, one row per
+  // task. See `buildInbox`; this one result also feeds the sidebar badge and the rail's
+  // attention strip, so the three surfaces always agree.
   const inboxData = useMemo(
-    () => buildInbox(data.runs, data.repoPrs ?? [], data.openQuestions),
-    [data.runs, data.repoPrs, data.openQuestions]
+    () =>
+      buildInbox({
+        runs: data.runs,
+        tasks: data.tasks,
+        epics: data.epics,
+        repoPrs: data.repoPrs ?? [],
+        mergeQueue: data.mergeQueue,
+        pendingApprovals: data.pendingApprovals,
+        openQuestions: data.openQuestions,
+        fixLoops: data.fixLoops,
+      }),
+    [
+      data.runs,
+      data.tasks,
+      data.epics,
+      data.repoPrs,
+      data.mergeQueue,
+      data.pendingApprovals,
+      data.openQuestions,
+      data.fixLoops,
+    ]
   );
 
   // Whether the quick-capture surface exists right now — shared by the FAB's render and the
@@ -802,7 +822,7 @@ function App() {
             spendToday={todaySpend}
             badges={{
               board: data.readyIds.size,
-              inbox: inboxData.review.length + inboxData.waiting.length,
+              inbox: inboxData.total,
               landing:
                 data.landing !== null ? landingNavBadge(data.landing) : 0,
             }}
@@ -820,8 +840,7 @@ function App() {
               navState.section === 'project' && activeProject !== null ? (
                 <LiveRail
                   runs={data.runs}
-                  repoPrs={data.repoPrs ?? []}
-                  openQuestions={data.openQuestions}
+                  attentionCount={inboxData.total}
                   onOpenTask={openTaskView}
                   onOpenInbox={() => selectProjectView('inbox')}
                   collapsed={sidebarCollapsed}
