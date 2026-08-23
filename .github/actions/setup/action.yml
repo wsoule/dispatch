@@ -1,38 +1,45 @@
-name: Set up Bun and dependencies
+name: Set up moon and caches
 description: >-
-  Install the Bun version pinned in .prototools, restore the Bun install cache,
-  and install workspace dependencies with a frozen lockfile. Shared by every CI
-  job so the toolchain version and the dependency fast-path live in one place.
+  Install the proto-pinned toolchain (.prototools is the single source of truth)
+  and cache the proto tools, pnpm store, and moon's shareable cache (hashes +
+  outputs; states is machine-local run state).
 
 runs:
   using: composite
   steps:
-    # Single source of truth for the Bun version: bump .prototools and every CI
-    # job follows automatically.
-    - name: Resolve pinned Bun version
-      id: bun-version
-      shell: bash
-      run: |
-        version=$(awk -F'"' '/^bun[[:space:]]*=/ { print $2; exit }' .prototools)
-        if [ -z "$version" ]; then
-          echo "::error::Could not read the pinned Bun version from .prototools"
-          exit 1
-        fi
-        echo "version=$version" >> "$GITHUB_OUTPUT"
-
-    - name: Setup Bun
-      uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-      with:
-        bun-version: ${{ steps.bun-version.outputs.version }}
-
-    - name: Cache dependencies
+    - name: Cache proto toolchain
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
-        path: ~/.bun/install/cache
-        key: ${{ runner.os }}-bun-${{ hashFiles('**/bun.lock') }}
+        path: ~/.proto
+        key: ${{ runner.os }}-proto-${{ hashFiles('.prototools') }}
+
+    - name: Cache pnpm store
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ~/.local/share/pnpm/store
+        key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
         restore-keys: |
-          ${{ runner.os }}-bun-
+          ${{ runner.os }}-pnpm-
+
+    - name: Cache moon hashes and outputs
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: |
+          .moon/cache/hashes
+          .moon/cache/outputs
+        key: ${{ runner.os }}-moon-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-moon-
+
+    # Installs proto, then provisions every .prototools pin (bun, pnpm, node,
+    # moon, gh). Its internal actions/cache layer is off: ~/.proto is cached
+    # above.
+    - name: Install proto and moon
+      uses: moonrepo/setup-toolchain@261c62cb5b0f580c7be7c8cd0f023a2e96756095 # v0.6.4
+      with:
+        auto-install: true
+        cache: false
 
     - name: Install dependencies
       shell: bash
-      run: bun install --frozen-lockfile
+      run: pnpm install --frozen-lockfile

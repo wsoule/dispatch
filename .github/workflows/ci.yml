@@ -6,83 +6,37 @@ on:
       - main
   pull_request:
 
+# moon disables color in CI, but Vite forces ANSI when it sees
+# GITHUB_ACTIONS; NO_COLOR keeps raw logs clean for humans and agents.
+env:
+  NO_COLOR: 1
+
 jobs:
-  verify:
-    name: Verify
+  ci:
+    name: Build, test, lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # moon diffs against the merge base to compute affected projects.
+          fetch-depth: 0
 
-      - name: Set up Bun and install dependencies
+      - name: Set up moon and caches
         uses: ./.github/actions/setup
 
-      - name: Format check
-        run: bun run format:check
-
-      # `tsc` (tsgo) and oxlint's type-aware rules both resolve workspace
-      # packages through each package.json's `exports` field, which points at
-      # `dist/*`. That output only exists after a build, so Build must run
-      # before Lint and TypeScript here or every cross-package import (e.g.
-      # @dispatch/cli importing @dispatch/core) fails — as a hard "Cannot find
-      # module" for tsc, and as silent `any`-typed imports for the linter,
-      # which then trips strict-boolean-expressions/no-unsafe-* errors that
-      # never reproduce locally (where dist/ is usually already built).
-      - name: Build
-        run: bun run build
-
-      - name: Lint
-        run: bun run lint
-
-      - name: Stylelint
-        run: bun run lint:css
-
-      # Runs after Build for the same reason Lint does: knip resolves
-      # cross-package imports through each package.json's `exports` field,
-      # which points at dist/*.
-      - name: Dead code
-        run: bun run lint:deadcode
-
-      - name: TypeScript
-        run: bun run tsc
-
-      # Gates on critical only, which is where the repo sits today. The full
-      # report runs next and never fails the build, so the high/moderate
-      # backlog stays visible without blocking every PR on it.
-      - name: Audit (critical)
-        run: bun run audit
+      # moon ci runs every affected runInCI-enabled task; the explicit target
+      # list adds entry points (cold runs stay explicit) but never subtracts.
+      - name: moon ci
+        run: >-
+          moon ci :build :typecheck :test root:format-check root:lint
+          root:lint-css root:lint-deadcode root:lint-dup root:lint-arch
+          root:lint-spelling root:lint-md root:lint-types root:lint-chrome
+          root:check-licenses root:audit
 
       - name: Audit (full report)
-        run: bun run audit:all
+        run: pnpm audit
         continue-on-error: true
-
-      - name: Tests
-        run: bun run test
-
-  desktop:
-    name: Desktop (JS)
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Set up Bun and install dependencies
-        uses: ./.github/actions/setup
-
-      # The root `build`/`test` scripts only run across `packages/*` (see
-      # package.json), so apps/desktop's frontend needs its own build/test
-      # invocation here rather than riding along with the `verify` job.
-      # Workspace packages must be built first for the same reason Verify
-      # builds before linting: the desktop tsc resolves @dispatch/* through
-      # exports maps pointing at dist/*, which only exists after a build.
-      - name: Build workspace packages
-        run: bun run build
-
-      - name: Build desktop frontend
-        run: bun ws desktop build
-
-      - name: Test desktop frontend
-        run: bun ws desktop test
 
   rust:
     name: Rust (apps/desktop/src-tauri)
