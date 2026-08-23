@@ -1,7 +1,7 @@
 ---
 id: t-06e1b0
 title: "v0 scoring: urgency, unblocking value, and age against the current store"
-status: in-review
+status: in-progress
 kind: task
 parent: e-ba8bf1
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:15.804Z
-updated: 2026-08-22T18:58:16.527Z
+updated: 2026-08-23T00:07:50.710Z
 external: null
 writes:
   - packages/core/src/**
@@ -36,3 +36,4 @@ From the 2026-08-22 audit: the full weight function waits on the storage spine a
 - 2026-08-22T18:51:35.160Z [run r-4c6efa] flagged interrupted-dirty: 11 uncommitted path(s) found — none
 - 2026-08-22T18:52:06.817Z requested changes (run r-ac26a4): Interrupted by another dispatchd restart; worktree intact, continue from where you left off. — human:wsoule679
 - 2026-08-22T18:58:16.527Z [run r-ac26a4] finished: failed — 0 files, $4.24 — agent:wsoule679/claude
+- 2026-08-23T00:07:50.710Z requested changes (run r-df588b): The Claude API errored mid-run (usage limit, now reset). Your worktree is intact — continue from where you left off. — human:wsoule679
