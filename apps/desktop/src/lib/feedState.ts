@@ -20,7 +20,6 @@ export {
   isInFlightState,
   isUrgentState,
   type FeedState,
-  type FeedTier,
 } from '@/ui/lib/feedState';
 
 /** Queue states that have come to rest — the entry is out of the pipeline either way. */
