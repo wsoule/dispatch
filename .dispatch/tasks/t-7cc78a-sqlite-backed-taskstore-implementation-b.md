@@ -1,7 +1,7 @@
 ---
 id: t-7cc78a
 title: SQLite-backed TaskStore implementation behind the existing store seam
-status: in-review
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:37:48.803Z
-updated: 2026-08-23T00:21:17.878Z
+updated: 2026-08-23T00:26:00.801Z
 external: null
 writes:
   - packages/core/src/**
@@ -42,3 +42,4 @@ Add a SQLite-backed implementation of the TaskStore interface (packages/core/src
 5. nextSeq is a racy MAX+1 read-then-insert (sqliteRecords.ts:457) — fold into the INSERT (COALESCE(MAX(seq)+1,0) subselect) or a transaction.
 OPTIONAL (confirmed, do if quick): shared pure builders to stop backend drift — buildFinding/buildLedgerEntry/buildNewTaskDoc/applyUpdatePatch in core, server imports the core input types instead of its verbatim copies (findings.ts:39, ledger.ts:25); one mintUniqueId helper (4 copies now); cache prepared statements per SQL; private rowOf(id) so update/amend stop double-SELECTing (slugOf dies); clauses[] form for ledger list; keep put()/toMarkdown() private until the migration commit that uses them. Run package tests when done, commit. — human:wsoule679
 - 2026-08-23T00:21:17.878Z [run r-3b5a48] finished: finished — 12 files, $0.00 — agent:wsoule679/claude
+- 2026-08-23T00:26:00.801Z requested changes (run r-f919fe): Your previous resume finished with zero turns and made no changes. The full list of REQUIRED and OPTIONAL fixes is in the previous user message in this conversation — apply the required ones now (id validation, attach-must-not-create-db, no silent collision overwrites, loud quarantine of corrupted columns, nextSeq race), run the core package tests, and commit. — human:wsoule679
