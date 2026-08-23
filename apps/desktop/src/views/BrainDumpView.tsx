@@ -1,27 +1,17 @@
-import type { InboxClusterGroup, InboxItem, InboxKind } from '@dispatch/client';
-import {
-  Bot,
-  CircleHelp,
-  Combine,
-  Inbox,
-  RefreshCw,
-  Sparkles,
-  X,
-} from 'lucide-react';
-import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import type { InboxItem, InboxKind } from '@dispatch/client';
+import { Bot, CircleHelp, Inbox, RefreshCw, Sparkles, X } from 'lucide-react';
+import { Fragment, useMemo, useRef, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { useToasts } from '../components/shell/Toasts';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
-import { shouldRecluster } from '../lib/inboxAutoCluster';
-import { splitCaptureLines } from '../lib/inboxCapture';
-import { describeCluster, findCluster } from '../lib/inboxCluster';
-import { cn } from '@/lib/utils';
 import {
-  defaultSelectionActions,
-  selectionActionLabel,
-  SelectionActionsMenu,
-  useTextSelection,
-} from '@/ui/ai/selection-actions';
+  BRAIN_DUMP_DRAFT_KEY,
+  usePersistedDraft,
+} from '../hooks/usePersistedDraft';
+import { splitCaptureLines } from '../lib/inboxCapture';
+import { buildMilestonePrompt } from '../lib/milestonePrompt';
+import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
 import { Panel } from '@/ui/chrome';
@@ -30,11 +20,7 @@ import { Kbd } from '@/ui/kbd';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { Textarea } from '@/ui/textarea';
 
-// Mirrors InboxClusterer's own MIN_ITEMS (packages/server/src/inboxClusterer.ts) — the sidebar
-// copy and the auto-cluster trigger must agree on this threshold.
 const CLUSTER_MIN_ITEMS = 3;
-// Settling time before auto-clustering fires, so a fast typist doesn't trigger a call per line.
-const CLUSTER_DEBOUNCE_MS = 1500;
 
 interface BrainDumpViewProps {
   data: DispatchProjectData;
@@ -42,13 +28,12 @@ interface BrainDumpViewProps {
   onOpenTask: (taskId: string) => void;
 }
 
-// Kind badges take existing palette tokens — a bug is the app's red, an idea its accent. None of
-// the mockup's own colours are used anywhere in this screen.
-const KIND_SKIN: Record<InboxKind, string> = {
+// Only the kinds that carry information get a badge — a bug is the app's red, an idea its
+// accent. 'task' and 'note' are the unremarkable default and render nothing: a rail of
+// same-toned chips said nothing worth 56px a row.
+const KIND_SKIN: Partial<Record<InboxKind, string>> = {
   bug: 'text-state-failed bg-state-failed-surface',
   idea: 'text-state-working bg-state-working-surface',
-  task: 'text-state-review bg-state-review-surface',
-  note: 'text-muted-foreground bg-muted',
 };
 
 /**
@@ -67,8 +52,14 @@ export function BrainDumpView({
   onPlanText,
   onOpenTask,
 }: BrainDumpViewProps) {
-  const [draft, setDraft] = useState('');
+  const toasts = useToasts();
+  // Shared with the ⌘B quick-capture modal and persisted across navigation and
+  // relaunch — leaving this screen must not cost half-typed thoughts.
+  const [draft, setDraft] = usePersistedDraft(BRAIN_DUMP_DRAFT_KEY);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
+  // The last row whose checkbox was plainly clicked — the anchor a shift-click
+  // extends from, file-manager style.
+  const [anchorId, setAnchorId] = useState<string | null>(null);
   const [archiveOpen, setArchiveOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -77,67 +68,42 @@ export function BrainDumpView({
   const [editing, setEditing] = useState<{ id: string; text: string } | null>(
     null
   );
-  // Clustering runs automatically (see the effects below); `clusterError` deliberately isn't
-  // routed through `error` above — a background pass failing must not read as a hard failure.
-  const [groups, setGroups] = useState<InboxClusterGroup[] | null>(null);
+  // Grouping runs only when asked (the Group button) — a model call is a bill, and typing
+  // into your own inbox must never ring one up on a timer. The rendered groups come from
+  // `data.inboxClusters`, the pass persisted server-side, so a page load shows the last
+  // answer instead of re-asking.
   const [grouping, setGrouping] = useState(false);
   const [clusterError, setClusterError] = useState<string | null>(null);
-  // The id set the last cluster call covered, and the set the current in-flight call is for —
-  // feed `shouldRecluster` and the staleness guard inside `runCluster` below.
-  const lastClusteredIdsRef = useRef<string[] | null>(null);
-  const inFlightIdsRef = useRef<string[] | null>(null);
-  // Always points at this render's `runCluster`, so the debounce effect can call the latest
-  // closure without listing it as a dependency (its identity churns every render via `data`).
-  const runClusterRef = useRef<(ids: string[]) => void>(() => {});
-
-  // Selection actions over a captured item's own text. Unlike a draft or a run, a raw
-  // inbox capture carries no draft/run id an agent message could attach to — there is no
-  // "chat" path this text is part of yet (that only starts once a capture becomes a task
-  // or gets handed to the planner). So every action here, Explain and Improve included,
-  // surfaces an honest "not yet" notice rather than either faking a reply or silently
-  // doing nothing.
-  const captureListRef = useRef<HTMLUListElement>(null);
-  const { rect: captureSelectionRect } = useTextSelection(captureListRef);
-  const [selectionNotice, setSelectionNotice] = useState<string | null>(null);
-
-  function handleCaptureSelectionAction(actionId: string): void {
-    setSelectionNotice(
-      `${selectionActionLabel(actionId)} isn't wired up yet — coming soon.`
-    );
-  }
 
   const inbox = data.inbox;
   const open = useMemo(() => inbox.filter((i) => !i.done), [inbox]);
   const sorted = useMemo(() => inbox.filter((i) => i.done), [inbox]);
-  const cluster = useMemo(() => findCluster(inbox), [inbox]);
   const openItemIds = useMemo(() => open.map((i) => i.id), [open]);
   const pendingLines = splitCaptureLines(draft).length;
 
-  // Keeps runClusterRef current every render (see its own comment above). Both effects below
-  // must run unconditionally, above the early return, so hook order never depends on the daemon.
-  useEffect(() => {
-    runClusterRef.current = runCluster;
-  });
+  // The persisted groups, filtered to items that are still open — converting or dismissing
+  // half a group must not leave it claiming members it no longer has.
+  const groups = useMemo(() => {
+    if (data.inboxClusters === null) return null;
+    const openIds = new Set(openItemIds);
+    return data.inboxClusters.groups
+      .map((g) => ({
+        ...g,
+        itemIds: g.itemIds.filter((id) => openIds.has(id)),
+      }))
+      .filter((g) => g.itemIds.length >= 2);
+  }, [data.inboxClusters, openItemIds]);
 
-  // Automatic grouping, debounced after the open-item set changes. `grouping`
-  // is in the deps so a settled call re-runs this instead of racing a second.
-  useEffect(() => {
-    if (grouping) return;
-    if (
-      !shouldRecluster(
-        openItemIds,
-        lastClusteredIdsRef.current,
-        CLUSTER_MIN_ITEMS
-      )
-    ) {
-      return;
-    }
-    const timer = setTimeout(
-      () => runClusterRef.current(openItemIds),
-      CLUSTER_DEBOUNCE_MS
+  // Whether the open set has drifted from what the last pass covered — the nudge to re-group,
+  // in place of the old auto-run.
+  const groupsStale = useMemo(() => {
+    if (data.inboxClusters === null) return false;
+    const covered = new Set(data.inboxClusters.itemIds);
+    return (
+      covered.size !== openItemIds.length ||
+      openItemIds.some((id) => !covered.has(id))
     );
-    return () => clearTimeout(timer);
-  }, [openItemIds, grouping]);
+  }, [data.inboxClusters, openItemIds]);
 
   if (data.portLoading || data.portError || data.client === null) {
     return (
@@ -149,12 +115,29 @@ export function BrainDumpView({
     );
   }
 
-  function toggle(id: string) {
+  // Plain click toggles one row and moves the anchor; shift-click applies the clicked row's
+  // new state to every row between the anchor and it, and leaves the anchor where it was.
+  function toggle(id: string, shiftKey: boolean) {
     setSelected((prev) => {
       const next = new Set(prev);
+      if (shiftKey && anchorId !== null && anchorId !== id) {
+        const ids = openItemIds;
+        const from = ids.indexOf(anchorId);
+        const to = ids.indexOf(id);
+        if (from !== -1 && to !== -1) {
+          const turnOn = !prev.has(id);
+          const [lo, hi] = from < to ? [from, to] : [to, from];
+          for (const rangeId of ids.slice(lo, hi + 1)) {
+            if (turnOn) next.add(rangeId);
+            else next.delete(rangeId);
+          }
+          return next;
+        }
+      }
       if (!next.delete(id)) next.add(id);
       return next;
     });
+    if (!shiftKey) setAnchorId(id);
   }
 
   async function guard(work: () => Promise<void>) {
@@ -186,32 +169,54 @@ export function BrainDumpView({
         setError(
           `${res.converted} converted, ${res.failed} failed${first === undefined ? '' : `: ${first}`}`
         );
+        return;
+      }
+      const firstTask = res.results.find((r) => r.taskId !== undefined)?.taskId;
+      if (res.converted === 1 && firstTask !== undefined) {
+        // The one-item case gets follow-ups on the toast itself: open it, or hand it
+        // straight to AI enrichment — the thing a one-liner task usually needs next.
+        toasts.push({
+          tone: 'success',
+          title: 'Task created',
+          action: {
+            label: (
+              <span className="flex items-center gap-1">
+                <Sparkles className="size-3" aria-hidden />
+                Add detail
+              </span>
+            ),
+            onClick: () => {
+              onOpenTask(firstTask);
+              void data.handleEnrichTask(firstTask);
+            },
+          },
+          secondary: {
+            label: 'Open',
+            onClick: () => onOpenTask(firstTask),
+          },
+        });
+      } else if (res.converted > 1) {
+        toasts.push({
+          tone: 'success',
+          title: `${res.converted} tasks created`,
+        });
       }
     });
   }
 
-  // Runs one cluster call, shared by the auto effect and the manual refresh button. Refuses a
-  // second concurrent call, and drops a response once `ids` is no longer the tracked set.
-  function runCluster(ids: string[]): void {
+  // Runs one grouping pass — the Group button, and the only path that bills a model call.
+  function runCluster(): void {
     if (grouping) return; // one call in flight at a time — a second would be a second bill
-    inFlightIdsRef.current = ids;
     setGrouping(true);
+    setClusterError(null);
     void (async () => {
       try {
-        const { groups: result, error: clusterErr } =
-          await data.handleClusterInbox();
-        if (inFlightIdsRef.current !== ids) return; // superseded — drop it
-        lastClusteredIdsRef.current = ids;
+        const { error: clusterErr } = await data.handleClusterInbox();
         setClusterError(clusterErr);
-        // A failed/timed-out background pass keeps whatever grouping was last shown rather
-        // than blanking it out from under the user.
-        if (clusterErr === null) setGroups(result);
       } catch (err) {
-        if (inFlightIdsRef.current !== ids) return;
-        lastClusteredIdsRef.current = ids;
         setClusterError(err instanceof Error ? err.message : String(err));
       } finally {
-        if (inFlightIdsRef.current === ids) setGrouping(false);
+        setGrouping(false);
       }
     })();
   }
@@ -243,360 +248,314 @@ export function BrainDumpView({
     });
   }
 
-  const selectedTexts = () =>
-    open.filter((i) => selected.has(i.id)).map((i) => i.text);
+  const selectedItems = () => open.filter((i) => selected.has(i.id));
 
   return (
-    <div className="flex h-full min-h-0 gap-6">
-      <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-4 overflow-y-auto">
-        <div className="flex items-baseline gap-2">
-          <h1 className="view-topbar-title">Brain dump</h1>
-          <span className="text-muted-foreground text-[12px]">
-            Everything lands here first. Sort it later, or never.
-          </span>
-        </div>
+    <div className="mx-auto flex h-full min-h-0 w-full max-w-4xl flex-col gap-4 overflow-y-auto">
+      <div className="flex items-baseline gap-2">
+        <h1 className="view-topbar-title">Brain dump</h1>
+        <span className="text-muted-foreground text-[12px]">
+          Everything lands here first. Sort it later, or never.
+        </span>
+        <span className="flex-1" />
+        <ExplainerPopover />
+      </div>
 
-        <Panel className="p-3.5">
-          {/* `field-sizing-fixed` cancels the primitive's `field-sizing-content`: this box
-              stays a draggable 92px rather than growing with what you type. */}
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              // ⌘⏎ commits, matching the legend in the rail. Plain Enter has to stay a newline —
-              // the whole point is dumping several thoughts at once.
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                e.preventDefault();
-                if (draft.trim() !== '') capture();
-              }
-            }}
-            placeholder="Dump it here…"
-            className="text-foreground field-sizing-fixed min-h-[92px] resize-y border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[14px] dark:bg-transparent"
-          />
-          <div className="mt-2.5 flex items-center gap-2.5">
-            <span className="dense-meta flex-1">
-              {pendingLines > 0
-                ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'} , one item each`
-                : 'One per line. Walls of text get split.'}
-            </span>
-            {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
-                size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}
-            <Button
-              variant="ghost"
-              size="xs"
-              disabled={draft.trim() === '' || busy}
-              onClick={() => onPlanText(draft)}
-              className="shadow-hairline text-muted-foreground hover:bg-muted/60 hover:text-foreground h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
-            >
-              <Sparkles className="size-3.5" />
-              Hand it to the planner
-            </Button>
-            <Button
-              size="xs"
-              disabled={draft.trim() === '' || busy}
-              onClick={capture}
-              className="text-accent-foreground bg-accent hover:bg-accent/80 h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
-            >
-              <Inbox className="size-3.5" />
-              Drop into the inbox
-            </Button>
-          </div>
-        </Panel>
-
-        {error !== null && (
-          <p className="text-state-failed text-[12.5px]">{error}</p>
-        )}
-
-        {selected.size > 0 && (
-          <div className="bg-accent/15 shadow-hairline-strong flex items-center gap-2 rounded-lg px-3 py-2">
-            <span className="text-[12.5px]">{selected.size} selected</span>
-            <span className="flex-1" />
-            <BarButton onClick={() => convert([...selected])} disabled={busy}>
-              Make tasks
-            </BarButton>
-            <BarButton
-              onClick={() => onPlanText(selectedTexts().join('. '))}
-              disabled={busy}
-            >
-              Group into an epic
-            </BarButton>
-            <BarButton onClick={() => dismiss([...selected])} disabled={busy}>
-              Dismiss
-            </BarButton>
-            <BarButton onClick={() => setSelected(new Set())} disabled={busy}>
-              Clear
-            </BarButton>
-          </div>
-        )}
-
-        {/* Sits above the inbox list on purpose: the structural hint should land before the raw
-            items, so grouping is the first thing considered rather than an afterthought. */}
-        <section>
-          {/* The right rail's cluster hint is instant; this one asks a model, so it runs
-              automatically rather than on a click. The refresh icon is the manual escape hatch. */}
-          <SectionLabel
-            rule
-            trailing={
-              <span className="flex items-center gap-1.5">
-                {grouping && (
-                  <span className="text-muted-foreground text-[11px]">
-                    Grouping…
-                  </span>
-                )}
-                <Button
-                  variant="ghost"
-                  size="icon-xs"
-                  onClick={() => runCluster(openItemIds)}
-                  disabled={grouping || openItemIds.length < CLUSTER_MIN_ITEMS}
-                  aria-label={
-                    clusterError !== null
-                      ? `Refresh groups (last attempt failed: ${clusterError})`
-                      : 'Refresh groups'
-                  }
-                  title={
-                    clusterError !== null
-                      ? `Last attempt failed: ${clusterError}`
-                      : 'Refresh groups'
-                  }
-                  className={cn(
-                    // `disabled:pointer-events-auto` undoes Button's own suppression: while
-                    // disabled this button's `title` is the only place the cluster error shows.
-                    'size-auto rounded p-0.5 hover:bg-transparent disabled:pointer-events-auto disabled:opacity-40',
-                    clusterError !== null
-                      ? 'text-state-failed'
-                      : 'text-muted-foreground hover:text-foreground'
-                  )}
-                >
-                  <RefreshCw
-                    className={cn('size-3.5', grouping && 'animate-spin')}
-                  />
-                </Button>
-              </span>
+      <Panel className="p-3.5">
+        {/* `field-sizing-fixed` cancels the primitive's `field-sizing-content`: this box
+            stays a draggable 92px rather than growing with what you type. */}
+        <Textarea
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onKeyDown={(e) => {
+            // ⌘⏎ commits, matching the legend in the explainer. Plain Enter has to stay a
+            // newline — the whole point is dumping several thoughts at once.
+            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              e.preventDefault();
+              if (draft.trim() !== '') capture();
             }
+          }}
+          placeholder="Dump it here…"
+          className="text-foreground field-sizing-fixed min-h-[92px] resize-y border-0 bg-transparent p-0 text-[14px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[14px] dark:bg-transparent"
+        />
+        <div className="mt-2.5 flex items-center gap-2.5">
+          <span className="dense-meta flex-1">
+            {pendingLines > 0
+              ? `${pendingLines} ${pendingLines === 1 ? 'line' : 'lines'}, one item each`
+              : 'One per line. Walls of text get split. Drafts keep.'}
+          </span>
+          {/* Both carry `has-[>svg]:px-2.5` alongside `px-2.5`: their icon makes the xs
+              size's own `has-[>svg]:px-1.5` match, which out-ranks a plain `px-*`. */}
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={draft.trim() === '' || busy}
+            onClick={() => onPlanText(draft)}
+            className="shadow-hairline text-muted-foreground hover:bg-muted/60 hover:text-foreground h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
           >
-            Group into epics
-          </SectionLabel>
-          {groups === null ? (
-            openItemIds.length < CLUSTER_MIN_ITEMS ? (
-              <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
-                Capture a few more to enable grouping.
-              </p>
-            ) : null
-          ) : groups.length === 0 ? (
-            <p className="text-muted-foreground mt-2 text-[12.5px]">
-              Nothing here looks related.
-            </p>
-          ) : (
-            <ul className="mt-2 flex flex-col gap-2">
-              {groups.map((g) => (
-                <li key={g.epicTitle}>
-                  <Panel className="shadow-hairline border-transparent bg-transparent p-2.5">
-                    <div className="text-[12.5px] font-medium">
-                      {g.epicTitle}
-                    </div>
-                    <p className="text-muted-foreground mt-1 text-[12px] leading-relaxed">
-                      {g.reason}
-                    </p>
-                    <div className="mt-2 flex items-center gap-2">
-                      <span className="dense-meta">
-                        {g.itemIds.length} items
-                      </span>
-                      <span className="flex-1" />
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setSelected(new Set(g.itemIds))}
-                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
-                      >
-                        Select
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => {
-                          const texts = inbox
-                            .filter((i) => g.itemIds.includes(i.id))
-                            .map((i) => i.text);
-                          onPlanText(`${g.epicTitle}. ${texts.join('. ')}`);
+            <Sparkles className="size-3.5" />
+            Plan
+          </Button>
+          <Button
+            size="xs"
+            disabled={draft.trim() === '' || busy}
+            onClick={capture}
+            className="text-accent-foreground bg-accent hover:bg-accent/80 h-auto gap-1.5 px-2.5 py-1 text-[12.5px] font-normal has-[>svg]:px-2.5"
+          >
+            <Inbox className="size-3.5" />
+            Drop into the inbox
+          </Button>
+        </div>
+      </Panel>
+
+      {error !== null && (
+        <p className="text-state-failed text-[12.5px]">{error}</p>
+      )}
+
+      {selected.size > 0 && (
+        <div className="bg-accent/15 shadow-hairline-strong flex items-center gap-2 rounded-lg px-3 py-2">
+          <span className="text-[12.5px]">{selected.size} selected</span>
+          <span className="flex-1" />
+          <BarButton onClick={() => convert([...selected])} disabled={busy}>
+            Make tasks
+          </BarButton>
+          <BarButton
+            onClick={() =>
+              onPlanText(
+                buildMilestonePrompt({
+                  items: selectedItems().map((i) => i.text),
+                })
+              )
+            }
+            disabled={busy}
+          >
+            Plan as milestone
+          </BarButton>
+          <BarButton onClick={() => dismiss([...selected])} disabled={busy}>
+            Dismiss
+          </BarButton>
+          <BarButton onClick={() => setSelected(new Set())} disabled={busy}>
+            Clear
+          </BarButton>
+        </div>
+      )}
+
+      {/* Sits above the inbox list on purpose: the structural hint should land before the raw
+          items, so grouping is the first thing considered rather than an afterthought. */}
+      <section>
+        <SectionLabel
+          rule
+          trailing={
+            <span className="flex items-center gap-2">
+              {groupsStale && !grouping && (
+                <span className="text-muted-foreground text-[11px]">
+                  The list changed since this grouping.
+                </span>
+              )}
+              {clusterError !== null && (
+                <span
+                  className="text-state-failed max-w-64 truncate text-[11px]"
+                  title={clusterError}
+                >
+                  {clusterError}
+                </span>
+              )}
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={runCluster}
+                disabled={grouping || openItemIds.length < CLUSTER_MIN_ITEMS}
+                className="shadow-hairline text-muted-foreground hover:bg-muted/60 hover:text-foreground h-auto gap-1.5 px-2 py-0.5 text-[11.5px] font-normal has-[>svg]:px-2"
+              >
+                <RefreshCw
+                  className={cn('size-3', grouping && 'animate-spin')}
+                />
+                {grouping ? 'Grouping…' : 'Group'}
+              </Button>
+            </span>
+          }
+        >
+          Group into milestones
+        </SectionLabel>
+        {groups === null || groups.length === 0 ? (
+          <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
+            {openItemIds.length < CLUSTER_MIN_ITEMS
+              ? 'Capture a few more to enable grouping.'
+              : groups === null
+                ? 'Group asks a model which captures are one piece of work.'
+                : 'Nothing here looks related.'}
+          </p>
+        ) : (
+          <ul className="mt-2 flex flex-col gap-2">
+            {groups.map((g) => (
+              <li key={g.epicTitle}>
+                <Panel className="shadow-hairline border-transparent bg-transparent p-2.5">
+                  <div className="text-[12.5px] font-medium">{g.epicTitle}</div>
+                  <p className="text-muted-foreground mt-1 text-[12px] leading-relaxed">
+                    {g.reason}
+                  </p>
+                  <div className="mt-2 flex items-center gap-2">
+                    <span className="dense-meta">{g.itemIds.length} items</span>
+                    <span className="flex-1" />
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => setSelected(new Set(g.itemIds))}
+                      className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
+                    >
+                      Select
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() =>
+                        onPlanText(
+                          buildMilestonePrompt({
+                            title: g.epicTitle,
+                            reason: g.reason,
+                            items: inbox
+                              .filter((i) => g.itemIds.includes(i.id))
+                              .map((i) => i.text),
+                          })
+                        )
+                      }
+                      className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
+                    >
+                      Plan as milestone
+                    </Button>
+                  </div>
+                </Panel>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section>
+        <SectionLabel rule count={open.length}>
+          Inbox
+        </SectionLabel>
+        {open.length === 0 ? (
+          <p className="text-muted-foreground py-4 text-[12.5px]">
+            Nothing captured yet. Type above — it costs nothing.
+          </p>
+        ) : (
+          <ul className="mt-2 flex flex-col gap-1">
+            {open.map((it) => (
+              <Fragment key={it.id}>
+                <InboxRow
+                  item={it}
+                  selected={selected.has(it.id)}
+                  busy={busy}
+                  editing={editing?.id === it.id}
+                  onToggle={(shiftKey) => toggle(it.id, shiftKey)}
+                  onMakeTask={() => convert([it.id])}
+                  onAddDetail={() => addDetail(it)}
+                  onPlan={() => onPlanText(it.text)}
+                  onDismiss={() => dismiss([it.id])}
+                />
+                {/* The editor belongs to at most one row at a time — rendered right under it,
+                not in a modal, so saving or cancelling stays in the flow of the list. */}
+                {editing?.id === it.id && (
+                  <li className="px-1 pb-1.5">
+                    <Panel className="p-2.5">
+                      <Textarea
+                        value={editing.text}
+                        autoFocus
+                        aria-label={`Edit "${it.text}"`}
+                        onChange={(e) =>
+                          setEditing({ id: it.id, text: e.target.value })
+                        }
+                        onKeyDown={(e) => {
+                          // ⌘⏎ saves, matching the capture box above; Escape cancels. Plain
+                          // Enter stays a newline — detail is usually more than one line.
+                          if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                            e.preventDefault();
+                            saveDetail();
+                          }
+                          if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setEditing(null);
+                          }
                         }}
-                        className="text-accent-foreground h-auto px-0 text-[11px] font-normal hover:bg-transparent"
+                        className="text-foreground min-h-[72px] resize-y border-0 bg-transparent p-0 text-[13.5px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[13.5px] dark:bg-transparent"
+                      />
+                      <div className="mt-2 flex items-center gap-2">
+                        <span className="dense-meta flex-1">
+                          Saved straight onto the captured line.
+                        </span>
+                        <BarButton
+                          onClick={saveDetail}
+                          disabled={busy || editing.text.trim() === ''}
+                        >
+                          Save
+                        </BarButton>
+                        <BarButton
+                          onClick={() => setEditing(null)}
+                          disabled={busy}
+                        >
+                          Cancel
+                        </BarButton>
+                      </div>
+                    </Panel>
+                  </li>
+                )}
+              </Fragment>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {sorted.length > 0 && (
+        <section>
+          <Button
+            variant="ghost"
+            size="xs"
+            onClick={() => setArchiveOpen((v) => !v)}
+            className="text-muted-foreground hover:text-foreground h-auto px-0 text-[12px] font-normal hover:bg-transparent"
+          >
+            {archiveOpen ? 'Hide' : 'Show'} the {sorted.length} already sorted
+          </Button>
+          {archiveOpen && (
+            <ul className="mt-1.5 flex flex-col">
+              {sorted.map((it) => (
+                <li
+                  key={it.id}
+                  className="grid grid-cols-[minmax(0,1fr)_90px] items-center gap-3 px-1 py-1"
+                >
+                  <span className="flex min-w-0 items-center gap-1.5">
+                    {KIND_SKIN[it.kind] !== undefined && (
+                      <span
+                        className={cn(
+                          'dense-meta shrink-0 rounded px-1.5',
+                          KIND_SKIN[it.kind]
+                        )}
                       >
-                        Make an epic
-                      </Button>
-                    </div>
-                  </Panel>
+                        {it.kind}
+                      </span>
+                    )}
+                    <span className="text-muted-foreground truncate text-[13px] line-through">
+                      {it.text}
+                    </span>
+                  </span>
+                  {it.linkedTaskId === null ? (
+                    <span className="dense-meta text-right">dismissed</span>
+                  ) : (
+                    <Button
+                      variant="link"
+                      size="xs"
+                      onClick={() => onOpenTask(it.linkedTaskId ?? '')}
+                      className="dense-meta text-accent-foreground h-auto justify-end px-0 text-right text-[length:var(--text-meta)] font-normal"
+                    >
+                      → {it.linkedTaskId}
+                    </Button>
+                  )}
                 </li>
               ))}
             </ul>
           )}
         </section>
-
-        <section>
-          <SectionLabel rule count={open.length}>
-            Inbox
-          </SectionLabel>
-          {open.length === 0 ? (
-            <p className="text-muted-foreground py-4 text-[12.5px]">
-              Nothing captured yet. Type above — it costs nothing.
-            </p>
-          ) : (
-            <ul ref={captureListRef} className="mt-2 flex flex-col gap-1">
-              {open.map((it) => (
-                <Fragment key={it.id}>
-                  <InboxRow
-                    item={it}
-                    selected={selected.has(it.id)}
-                    busy={busy}
-                    editing={editing?.id === it.id}
-                    onToggle={() => toggle(it.id)}
-                    onMakeTask={() => convert([it.id])}
-                    onAddDetail={() => addDetail(it)}
-                    onPlan={() => onPlanText(it.text)}
-                    onDismiss={() => dismiss([it.id])}
-                  />
-                  {/* The editor belongs to at most one row at a time — rendered right under it,
-                  not in a modal, so saving or cancelling stays in the flow of the list. */}
-                  {editing?.id === it.id && (
-                    <li className="px-1 pb-1.5">
-                      <Panel className="p-2.5">
-                        <Textarea
-                          value={editing.text}
-                          autoFocus
-                          aria-label={`Edit "${it.text}"`}
-                          onChange={(e) =>
-                            setEditing({ id: it.id, text: e.target.value })
-                          }
-                          onKeyDown={(e) => {
-                            // ⌘⏎ saves, matching the capture box above; Escape cancels. Plain
-                            // Enter stays a newline — detail is usually more than one line.
-                            if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
-                              e.preventDefault();
-                              saveDetail();
-                            }
-                            if (e.key === 'Escape') {
-                              e.preventDefault();
-                              setEditing(null);
-                            }
-                          }}
-                          className="text-foreground min-h-[72px] resize-y border-0 bg-transparent p-0 text-[13.5px] leading-relaxed shadow-none focus-visible:ring-0 md:text-[13.5px] dark:bg-transparent"
-                        />
-                        <div className="mt-2 flex items-center gap-2">
-                          <span className="dense-meta flex-1">
-                            Saved straight onto the captured line.
-                          </span>
-                          <BarButton
-                            onClick={saveDetail}
-                            disabled={busy || editing.text.trim() === ''}
-                          >
-                            Save
-                          </BarButton>
-                          <BarButton
-                            onClick={() => setEditing(null)}
-                            disabled={busy}
-                          >
-                            Cancel
-                          </BarButton>
-                        </div>
-                      </Panel>
-                    </li>
-                  )}
-                </Fragment>
-              ))}
-            </ul>
-          )}
-          {captureSelectionRect !== null && (
-            <SelectionActionsMenu
-              actions={defaultSelectionActions}
-              onAction={handleCaptureSelectionAction}
-              position={captureSelectionRect}
-            />
-          )}
-          {selectionNotice !== null && (
-            <p
-              role="status"
-              className="text-muted-foreground mt-1 text-[11.5px]"
-            >
-              {selectionNotice}
-            </p>
-          )}
-        </section>
-
-        {sorted.length > 0 && (
-          <section>
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => setArchiveOpen((v) => !v)}
-              className="text-muted-foreground hover:text-foreground h-auto px-0 text-[12px] font-normal hover:bg-transparent"
-            >
-              {archiveOpen ? 'Hide' : 'Show'} the {sorted.length} already sorted
-            </Button>
-            {archiveOpen && (
-              <ul className="mt-1.5 flex flex-col">
-                {sorted.map((it) => (
-                  <li
-                    key={it.id}
-                    className="grid grid-cols-[56px_minmax(0,1fr)_90px] items-center gap-3 px-1 py-1"
-                  >
-                    <span
-                      className={cn(
-                        'dense-meta rounded px-1.5',
-                        KIND_SKIN[it.kind]
-                      )}
-                    >
-                      {it.kind}
-                    </span>
-                    <span className="text-muted-foreground truncate text-[13px] line-through">
-                      {it.text}
-                    </span>
-                    {it.linkedTaskId === null ? (
-                      <span className="dense-meta text-right">dismissed</span>
-                    ) : (
-                      <Button
-                        variant="link"
-                        size="xs"
-                        onClick={() => onOpenTask(it.linkedTaskId ?? '')}
-                        className="dense-meta text-accent-foreground h-auto justify-end px-0 text-right text-[length:var(--text-meta)] font-normal"
-                      >
-                        → {it.linkedTaskId}
-                      </Button>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
-      </div>
-
-      <aside className="flex w-64 shrink-0 flex-col gap-5 overflow-y-auto">
-        {/* `border-transparent` keeps Panel's box geometry while leaving the edge to the
-            stronger inset hairline this card has always worn. */}
-        {cluster !== null && (
-          <Panel className="bg-accent/10 shadow-hairline-strong border-transparent p-3">
-            <div className="dense-label text-accent-foreground flex items-center gap-1.5">
-              <Combine className="size-3.5" />
-              These look like one thing
-            </div>
-            <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
-              {describeCluster(cluster)}
-            </p>
-            <Button
-              size="xs"
-              onClick={() => setSelected(new Set(cluster.ids))}
-              className="text-accent-foreground bg-accent hover:bg-accent mt-2.5 h-auto px-2.5 py-1 text-[12px] font-normal"
-            >
-              Select them
-            </Button>
-          </Panel>
-        )}
-
-        {/* The explainer prose that used to sit here permanently now lives behind one
-            hover/focus-reachable footer affordance — see ExplainerPopover below. */}
-        <div className="mt-auto flex justify-center">
-          <ExplainerPopover />
-        </div>
-      </aside>
+      )}
     </div>
   );
 }
@@ -635,8 +594,8 @@ function ExplainerPopover() {
         </Button>
       </PopoverTrigger>
       <PopoverContent
-        side="top"
-        align="center"
+        side="bottom"
+        align="end"
         // Radix would focus the content on open, blurring the trigger and closing this
         // straight back up; keeping focus on the trigger is what makes Tab reveal it.
         onOpenAutoFocus={(e) => e.preventDefault()}
@@ -646,11 +605,11 @@ function ExplainerPopover() {
         className="flex flex-col gap-3.5"
       >
         <div>
-          <SectionLabel>Group into epics</SectionLabel>
+          <SectionLabel>Group into milestones</SectionLabel>
           <p className="text-muted-foreground mt-2 text-[12.5px] leading-relaxed">
-            Reads your captures and suggests which ones are really one piece of
-            work — automatically, a moment after what you've captured changes.
-            Use the refresh icon to force another look.
+            Group asks a model which of your captures are really one piece of
+            work. It runs only when you press it, and the last answer sticks
+            around between visits.
           </p>
         </div>
         <div>
@@ -664,9 +623,10 @@ function ExplainerPopover() {
           </p>
         </div>
         <div>
-          <SectionLabel>Keys</SectionLabel>
+          <SectionLabel>Keyboard</SectionLabel>
           <dl className="mt-2 flex flex-col gap-1.5">
             <Key combo="⌘⏎" what="drop into the inbox" />
+            <Key combo="⇧-click" what="select a range of items" />
           </dl>
         </div>
       </PopoverContent>
@@ -726,7 +686,8 @@ function InboxRow({
   /** Whether this row's own inline editor is open — disables just its "Add detail" button,
    * distinct from `busy` (every button in the view). */
   editing: boolean;
-  onToggle: () => void;
+  /** `shiftKey` extends the selection from the last plainly-clicked row. */
+  onToggle: (shiftKey: boolean) => void;
   onMakeTask: () => void;
   onAddDetail: () => void;
   onPlan: () => void;
@@ -735,25 +696,30 @@ function InboxRow({
   return (
     <li
       className={cn(
-        'group grid grid-cols-[20px_56px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors duration-150',
+        'group grid grid-cols-[20px_minmax(0,1fr)_auto] items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors duration-150',
         selected ? 'bg-accent/15 shadow-hairline-strong' : 'hover:bg-muted/40'
       )}
     >
+      {/* `onClick` rather than `onCheckedChange`: the change callback never sees the
+          pointer event, and shift-to-extend needs `shiftKey`. Radix still fires a click
+          for keyboard activation, so Space/Enter keep working (with shiftKey false). */}
       <Checkbox
         checked={selected}
-        onCheckedChange={() => onToggle()}
+        onClick={(e) => onToggle(e.shiftKey)}
         aria-label={`Select "${item.text}"`}
         className="size-3.5"
       />
-      <span
-        className={cn(
-          'dense-meta rounded px-1.5 text-center',
-          KIND_SKIN[item.kind]
-        )}
-      >
-        {item.kind}
-      </span>
       <span className="flex min-w-0 items-center gap-1.5">
+        {KIND_SKIN[item.kind] !== undefined && (
+          <span
+            className={cn(
+              'dense-meta shrink-0 rounded px-1.5',
+              KIND_SKIN[item.kind]
+            )}
+          >
+            {item.kind}
+          </span>
+        )}
         <span className="truncate text-[13.5px]">{item.text}</span>
         {/* Items an agent flagged mid-run are marked, so you can tell what you noticed
             yourself from what something else noticed for you. */}
@@ -777,7 +743,7 @@ function InboxRow({
           Add detail
         </BarButton>
         <BarButton onClick={onPlan} disabled={busy}>
-          Plan it
+          Plan
         </BarButton>
         <Button
           variant="ghost"

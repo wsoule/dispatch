@@ -1,6 +1,8 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { loadConfig } from '@dispatch/core';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import type { InboxItem } from './inbox.js';
 import { openClaudeQuery } from './orchestrator/claudeCli.js';
@@ -21,6 +23,47 @@ export interface InboxClusterGroup {
   /** Why these belong together, in one line, for the user to agree or disagree with. */
   reason: string;
   itemIds: string[];
+}
+
+/** The last clustering pass, persisted so a page load renders what the model
+ * already said instead of billing a fresh call per visit. */
+export interface InboxClusterSnapshot {
+  groups: InboxClusterGroup[];
+  /** The open local item ids the pass covered — a consumer judges staleness
+   * against these rather than re-running on sight. */
+  itemIds: string[];
+  updatedAt: string;
+}
+
+/** One JSON file under `.dispatch/`, overwritten per pass — the model's last
+ * answer is a cache, not a log. */
+export class InboxClusterSnapshotStore {
+  private readonly file: string;
+
+  constructor(rootDir: string) {
+    this.file = join(rootDir, '.dispatch', 'inbox-clusters.json');
+  }
+
+  load(): InboxClusterSnapshot | null {
+    if (!existsSync(this.file)) return null;
+    try {
+      const parsed = JSON.parse(
+        readFileSync(this.file, 'utf8')
+      ) as InboxClusterSnapshot;
+      if (!Array.isArray(parsed.groups) || !Array.isArray(parsed.itemIds)) {
+        return null;
+      }
+      return parsed;
+    } catch {
+      // A hand-corrupted cache costs itself, not the page.
+      return null;
+    }
+  }
+
+  save(snapshot: InboxClusterSnapshot): void {
+    mkdirSync(dirname(this.file), { recursive: true });
+    writeFileSync(this.file, `${JSON.stringify(snapshot, null, 2)}\n`);
+  }
 }
 
 const SCHEMA = {

@@ -5,11 +5,18 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import { beforeEach, expect, test } from 'bun:test';
 import { useState } from 'react';
 
+import { BRAIN_DUMP_DRAFT_KEY } from '../../hooks/usePersistedDraft';
 import { BrainDumpFab } from './BrainDumpFab';
 import { TooltipProvider } from '@/ui/tooltip';
+
+// The draft persists to localStorage now (shared with the full view); one
+// test's typing must not leak into the next mount.
+beforeEach(() => {
+  window.localStorage.removeItem(BRAIN_DUMP_DRAFT_KEY);
+});
 
 // `open` is controlled by App in production (so ⌘B can drive it); the harness plays App's
 // role. The trigger's tooltip needs the same provider App.tsx wraps the whole shell in.

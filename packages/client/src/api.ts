@@ -1062,6 +1062,15 @@ export interface InboxClusterGroup {
   itemIds: string[];
 }
 
+/** The persisted last clustering pass — mirrors InboxClusterSnapshot in
+ * packages/server/src/inboxClusterer.ts. */
+export interface InboxClusterSnapshot {
+  groups: InboxClusterGroup[];
+  /** The open item ids the pass covered, for judging staleness client-side. */
+  itemIds: string[];
+  updatedAt: string;
+}
+
 export interface InboxConvertResponse {
   results: InboxConvertResult[];
   converted: number;
@@ -1755,12 +1764,16 @@ export interface ApiClient {
   convertInbox(ids: string[]): Promise<InboxConvertResponse>;
   /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
   enrichTask(id: string): Promise<{ planId: string }>;
-  /** Model-backed grouping of related captures, run in the background. Always
-   * resolves with a 200 — `error` carries a failed model call. */
+  /** Model-backed grouping of related captures. Always resolves with a 200 —
+   * `error` carries a failed model call. A successful pass is persisted
+   * server-side; `fetchInboxClusters` reads it back. */
   clusterInbox(): Promise<{
     groups: InboxClusterGroup[];
     error: string | null;
   }>;
+  /** The persisted result of the last clustering pass, or null when none has
+   * ever run — what a page load renders instead of billing a fresh call. */
+  fetchInboxClusters(): Promise<InboxClusterSnapshot | null>;
 
   /** One side of a file in a run's worktree. `sha` is the precondition for applyRunEdit. */
   fetchRunFile(
@@ -2321,6 +2334,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     clusterInbox: () =>
       request(target, '/api/inbox/cluster', { method: 'POST' }),
+    fetchInboxClusters: () => request(target, '/api/inbox/clusters'),
     fetchRunFile: (runId, path, side) =>
       request(
         target,
