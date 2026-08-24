@@ -69,20 +69,20 @@ describe('demo daemon', () => {
       const tasks = (await (
         await fetch(`${base}/api/tasks`, { headers: auth })
       ).json()) as TaskDoc[];
-      // Unblocked only: a blocked todo task stacks its base branch on its
+      // Unblocked only: a blocked ready task stacks its base branch on its
       // blocker's most recent run (orchestrator.ts's resolveBase) — for a
-      // seeded blocker still `in-review`, that branch is fixture JSON only,
+      // seeded blocker still `review`, that branch is fixture JSON only,
       // never a real git ref, so the worktree add 500s. A plain unblocked
       // dispatch runs against the real default base branch instead.
-      const todo = tasks.find(
-        (t) => t.meta.status === 'todo' && t.meta.blockedBy.length === 0
+      const ready = tasks.find(
+        (t) => t.meta.status === 'ready' && t.meta.blockedBy.length === 0
       );
-      expect(todo).toBeDefined();
+      expect(ready).toBeDefined();
 
       // No `executor` field in the body — must fall back to 'claude', the
       // name this daemon registers its FakeExecutor under, per api.ts's
       // createRun default and the plan's "never spawn a real agent" rule.
-      const created = await fetch(`${base}/api/tasks/${todo!.meta.id}/runs`, {
+      const created = await fetch(`${base}/api/tasks/${ready!.meta.id}/runs`, {
         method: 'POST',
         headers: auth,
         body: '{}',
