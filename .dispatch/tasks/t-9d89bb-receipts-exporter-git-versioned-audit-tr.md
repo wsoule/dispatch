@@ -1,7 +1,7 @@
 ---
 id: t-9d89bb
 title: "Receipts exporter: git-versioned audit trail outside the project repo"
-status: todo
+status: working
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:52.987Z
-updated: 2026-08-22T16:38:52.987Z
+updated: 2026-08-24T23:55:49.549Z
 external: null
 writes:
   - packages/server/src/**
@@ -27,3 +27,4 @@ Daemon exports the audit trail — ledger entries, findings, decisions, evidence
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-24T23:55:49.549Z dispatched (claude, branch dispatch/t-9d89bb-receipts-exporter-git-versioned-audit-tr-630128) — human:wsoule679
