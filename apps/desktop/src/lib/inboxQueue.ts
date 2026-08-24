@@ -28,7 +28,7 @@ export interface InboxInput {
   fixLoops: ReadonlyMap<string, FixLoopState>;
 }
 
-export interface InboxSection {
+interface InboxSection {
   state: FeedState;
   rows: FeedRowModel[];
 }

@@ -17,8 +17,8 @@ describe('fileRowsFromStatus', () => {
     );
     expect(rows).toEqual([
       { section: 'conflicted', path: 'conflict.ts' },
-      { section: 'staged', path: 'staged.ts' },
-      { section: 'unstaged', path: 'unstaged.ts' },
+      { section: 'staged', path: 'staged.ts', code: 'M' },
+      { section: 'unstaged', path: 'unstaged.ts', code: 'M' },
       { section: 'untracked', path: 'untracked.ts' },
     ]);
   });
