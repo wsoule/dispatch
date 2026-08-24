@@ -45,11 +45,10 @@ version and install fast-path stay in one place.
 
 The `ci` job runs `moon ci` with an explicit target list covering build,
 typecheck, test, and every root-level lint/audit/license task (see
-`.github/workflows/ci.yml`). `moon ci` additionally runs every other affected
-`runInCI`-enabled task through `--include-relations`, so the explicit list adds
-cold-run entry points but never subtracts — a new root-level check with
-`runInCI: 'always'` is picked up automatically; only add it to the explicit list
-if you want it to always run even when nothing affects it.
+`.github/workflows/ci.yml`). That explicit list DEFINES what CI runs — it
+filters, it does not just add entry points. A root-level task with
+`runInCI: 'always'` that is missing from the list does NOT join the run on its
+own; a new check must be added to the explicit list for CI to run it.
 
 ## Dependabot
 

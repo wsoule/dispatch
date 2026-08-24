@@ -31,3 +31,4 @@ tasks:
       - '!node_modules/**'
       - '!dist/**'
       - '!**/*.tsbuildinfo'
+      - '!src-tauri/target/**'

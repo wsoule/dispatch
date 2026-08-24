@@ -13,8 +13,18 @@ tasks:
       - 'index.html'
       - 'vite.config.ts'
       - 'tsconfig.json'
+      - 'tsconfig.app.json'
+      - 'tsconfig.node.json'
+      - 'public/**/*'
     outputs:
       - 'dist'
+
+  # webkitFloor.test.ts asserts against the built dist/, so the inherited
+  # test task (deps: ^:build only) must also depend on this project's own
+  # build, not just upstream dependencies' builds.
+  test:
+    deps:
+      - 'build'
 
   dev:
     command: 'vite'

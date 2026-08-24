@@ -4,6 +4,13 @@ language: 'typescript'
 layer: 'library'
 
 tasks:
+  # No-build library: passthrough so ^:build chains through this project to
+  # reach the dist outputs of the dependencies it imports.
+  build:
+    command: 'noop'
+    deps:
+      - '^:build'
+
   demo:
     command: 'bun src/cli.ts'
     options:
