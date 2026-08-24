@@ -16,7 +16,7 @@ import { deriveFeedState, isInFlightState, isUrgentState } from './feedState';
  * no reason attached is just anxiety.
  */
 
-export type MilestoneHealth = 'stalled' | 'active' | 'idle' | 'complete';
+type MilestoneHealth = 'stalled' | 'active' | 'idle' | 'complete';
 
 export interface MilestoneStatus {
   health: MilestoneHealth;

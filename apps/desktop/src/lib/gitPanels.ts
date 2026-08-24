@@ -112,6 +112,9 @@ type GitFileSection = 'conflicted' | 'staged' | 'unstaged' | 'untracked';
 export interface GitFileRow {
   section: GitFileSection;
   path: string;
+  /** The git status code for staged/unstaged entries (`M`, `A`, `R100`, …) — feeds the
+   * Pierre file tree's per-row git decoration. Untracked/conflicted rows have none. */
+  code?: string;
 }
 
 export type GitRightPane =

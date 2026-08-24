@@ -3,28 +3,9 @@ import { Sparkles } from 'lucide-react';
 import { Button } from '@/ui/button';
 import { ButtonGroup } from '@/ui/button-group';
 import { Checkbox } from '@/ui/checkbox';
-import { Kbd } from '@/ui/kbd';
 import { Label } from '@/ui/label';
 import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
-
-// Each entry is one keycap + its meaning, rendered as `Kbd key label · Kbd key label · …` so
-// the shortcuts stay legible without the reader having to parse a run-on sentence of symbols.
-const LEGEND: Array<{ key: string; label: string }> = [
-  { key: '1-5', label: 'focus panel' },
-  { key: 'j/k', label: 'move' },
-  { key: 'space', label: 'stage' },
-  { key: 'a', label: 'stage all' },
-  { key: 'c', label: 'commit' },
-  { key: 'A', label: 'amend' },
-  { key: 'd', label: 'discard' },
-  { key: 'b', label: 'branch' },
-  { key: 'enter', label: 'checkout' },
-  { key: 's/S', label: 'stash/pop' },
-  { key: 'f/p/P', label: 'fetch/pull/push' },
-  { key: '/', label: 'filter' },
-  { key: '?', label: 'help' },
-];
 
 interface CommitComposerProps {
   message: string;
@@ -38,8 +19,8 @@ interface CommitComposerProps {
   onCommit: () => void;
 }
 
-/** The bottom bar: commit message, Generate (AI commit-message), Commit/Amend, and a one-line
- * keymap reminder so the shortcuts are documented on screen, not just behind `?`. */
+/** The bottom bar: commit message, Generate (AI commit-message), and Commit/Amend. The
+ * keymap lives behind `?` (see GitKeymapDialog), not as a permanent footer of copy. */
 export function CommitComposer({
   message,
   onMessageChange,
@@ -99,17 +80,6 @@ export function CommitComposer({
           </Label>
         </div>
       </div>
-      <p className="text-muted-foreground/70 flex flex-wrap items-center gap-x-1.5 gap-y-1 text-[10.5px]">
-        {LEGEND.map(({ key, label }, index) => (
-          <span key={key} className="inline-flex items-center gap-1">
-            <Kbd className="h-auto min-w-0 px-1 py-0 font-mono text-[9.5px]">
-              {key}
-            </Kbd>
-            <span>{label}</span>
-            {index < LEGEND.length - 1 && <span aria-hidden="true">·</span>}
-          </span>
-        ))}
-      </p>
     </div>
   );
 }

@@ -13,7 +13,7 @@ import { BranchesPanel } from '../components/git/BranchesPanel';
 import { CommitComposer } from '../components/git/CommitComposer';
 import { CommitsPanel } from '../components/git/CommitsPanel';
 import { DispatchAgentDialog } from '../components/git/DispatchAgentDialog';
-import { FilesPanel } from '../components/git/FilesPanel';
+import { GitFileTree } from '../components/git/GitFileTree';
 import { GitKeymapDialog } from '../components/git/GitKeymapDialog';
 import { GitRightPane } from '../components/git/GitRightPane';
 import { StashesPanel } from '../components/git/StashesPanel';
@@ -269,6 +269,9 @@ export function BranchesView({
     path: string,
     action: () => Promise<{ ok: boolean; stderr?: string }>
   ) {
+    // Re-entrancy guard: space (or the pane's Stage button) mashed on one file
+    // must not fire a second stage op while the first is still in flight.
+    if (busyPaths.has(path)) return;
     setBusyPaths((prev) => new Set(prev).add(path));
     setActionError(null);
     try {
@@ -637,172 +640,186 @@ export function BranchesView({
               key={panel}
               className={cn(
                 'border-border flex min-h-0 flex-col border-b last:border-b-0',
-                // Weighted so the longest list (branches) gets the most room, with a floor
-                // under each so no panel collapses to a header at small window sizes.
+                // Accordion on the existing focus model: the focused panel takes all the
+                // remaining height, every other list collapses to its header row. Five
+                // stacked scroll areas in one column gave each list a useless sliver;
+                // focus (digits 1-5, or clicking a header) already names the list being
+                // worked in, so it also gets the room. Status stays pinned open — it is
+                // three lines, not a list.
                 panel === 'status'
                   ? 'flex-none'
-                  : panel === 'branches'
-                    ? 'min-h-[9rem] flex-[2]'
-                    : panel === 'stashes'
-                      ? 'min-h-[5.5rem] flex-[0.8]'
-                      : 'min-h-[5.5rem] flex-[1.2]'
+                  : panelState.focused === panel
+                    ? 'min-h-0 flex-1'
+                    : 'flex-none'
               )}
             >
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setPanelState((s) => focusGitPanel(s, panel))}
-                className={cn(
-                  // The header has never lit up on hover, so ghost's own hover fill is pinned
-                  // back to whichever resting fill this panel is wearing.
-                  'bg-muted/40 hover:bg-muted/40 h-auto justify-start gap-2 rounded-none px-3 py-1.5 text-left text-[10.5px] font-medium tracking-wide uppercase',
-                  panelState.focused === panel &&
-                    'bg-accent/60 hover:bg-accent/60'
-                )}
-              >
-                <Kbd className="text-muted-foreground h-auto min-w-0 bg-transparent px-0 font-mono text-[length:inherit] normal-case">
-                  {PANEL_DIGIT[panel]}
-                </Kbd>
-                {PANEL_LABEL[panel]}
-                {panel !== 'status' && (
-                  <span
-                    data-git-panel-count={panel}
-                    className="text-muted-foreground font-mono normal-case"
-                  >
-                    {listLength(panel)}
-                  </span>
-                )}
-              </Button>
               <div
-                data-git-panel={panel}
-                className="scroll-affordance min-h-0 flex-1 overflow-y-auto"
-              >
-                {panel === 'status' && (
-                  <StatusPanel
-                    status={status}
-                    loading={statusLoading}
-                    busy={busy}
-                    onFetch={() => void runMutation(() => actions.fetch())}
-                    onPull={() => void runMutation(() => actions.pull())}
-                    onPush={() => void runMutation(() => actions.push())}
-                    onResolveConflicts={openDispatchForConflicts}
-                  />
+                className={cn(
+                  'flex items-center',
+                  'bg-muted/40',
+                  panelState.focused === panel && 'bg-accent/60'
                 )}
-                {panel === 'files' && (
-                  <>
-                    <div className="flex justify-end px-2 pt-1.5">
-                      <Button variant="ghost" size="xs" onClick={stageAll}>
-                        Stage all
-                      </Button>
-                    </div>
-                    <FilesPanel
+              >
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setPanelState((s) => focusGitPanel(s, panel))}
+                  className={cn(
+                    // The header has never lit up on hover, so ghost's own hover fill is
+                    // pinned to transparent — the wrapper row carries the resting fill.
+                    'h-auto min-w-0 flex-1 justify-start gap-2 rounded-none bg-transparent px-3 py-1.5 text-left text-[10.5px] font-medium tracking-wide uppercase hover:bg-transparent'
+                  )}
+                >
+                  <Kbd className="text-muted-foreground h-auto min-w-0 bg-transparent px-0 font-mono text-[length:inherit] normal-case">
+                    {PANEL_DIGIT[panel]}
+                  </Kbd>
+                  {PANEL_LABEL[panel]}
+                  {panel !== 'status' && (
+                    <span
+                      data-git-panel-count={panel}
+                      className="text-muted-foreground font-mono normal-case"
+                    >
+                      {listLength(panel)}
+                    </span>
+                  )}
+                </Button>
+                {/* Trailing header actions — siblings of the focus button, never nested. */}
+                {panel === 'files' &&
+                  fileRows.some((r) => r.section !== 'staged') && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={stageAll}
+                      className="text-muted-foreground hover:text-foreground mr-1.5 h-auto shrink-0 px-1.5 py-0.5 text-[10.5px]"
+                    >
+                      Stage all
+                    </Button>
+                  )}
+                {panel === 'branches' && (
+                  <Button
+                    variant="ghost"
+                    size="xs"
+                    onClick={() => setNewBranchOpen(true)}
+                    className="text-muted-foreground hover:text-foreground mr-1.5 h-auto shrink-0 px-1.5 py-0.5 text-[10.5px]"
+                  >
+                    <Plus className="size-3" />
+                    New branch
+                  </Button>
+                )}
+              </div>
+              {(panel === 'status' || panelState.focused === panel) && (
+                <div
+                  data-git-panel={panel}
+                  className="scroll-affordance min-h-0 flex-1 overflow-y-auto"
+                >
+                  {panel === 'status' && (
+                    <StatusPanel
+                      status={status}
+                      loading={statusLoading}
+                      busy={busy}
+                      onFetch={() => void runMutation(() => actions.fetch())}
+                      onPull={() => void runMutation(() => actions.pull())}
+                      onPush={() => void runMutation(() => actions.push())}
+                      onResolveConflicts={openDispatchForConflicts}
+                    />
+                  )}
+                  {panel === 'files' && (
+                    <GitFileTree
                       rows={fileRows}
                       selectedIndex={panelState.index.files}
-                      busyPaths={busyPaths}
                       onSelectIndex={(index) =>
                         setPanelState((s) => ({
                           ...focusGitPanel(s, 'files'),
                           index: { ...s.index, files: index },
                         }))
                       }
-                      onToggleStage={toggleStage}
                     />
-                  </>
-                )}
-                {panel === 'branches' && (
-                  <>
-                    <div className="flex justify-end px-2 pt-1.5">
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setNewBranchOpen(true)}
-                      >
-                        <Plus className="size-3" />
-                        New branch
-                      </Button>
-                    </div>
-                    <BranchesPanel
-                      rows={branchRowsFiltered}
-                      worktrees={data.branches}
-                      selectedIndex={panelState.index.branches}
-                      filter={branchFilter}
-                      onFilterChange={(next) =>
-                        setBranchFilter(next === branchFilter ? 'all' : next)
-                      }
-                      reclaiming={reclaiming}
-                      onReclaimMerged={() => void reclaimMerged()}
-                      onDeleteAllMergedOrphans={() =>
-                        void deleteAllMergedOrphans()
-                      }
-                      onSelectIndex={(index) =>
-                        setPanelState((s) => ({
-                          ...focusGitPanel(s, 'branches'),
-                          index: { ...s.index, branches: index },
-                        }))
-                      }
-                      onOpenRun={onOpenRun}
-                      onDispatchAgent={openDispatchForBranch}
-                    />
-                  </>
-                )}
-                {panel === 'commits' && (
-                  <CommitsPanel
-                    commits={log}
-                    loading={logLoading}
-                    selectedIndex={panelState.index.commits}
-                    onSelectIndex={(index) =>
-                      setPanelState((s) => ({
-                        ...focusGitPanel(s, 'commits'),
-                        index: { ...s.index, commits: index },
-                      }))
-                    }
-                  />
-                )}
-                {panel === 'stashes' && (
-                  <>
-                    <div className="flex items-center gap-1.5 px-2 pt-1.5">
-                      <Input
-                        value={stashMessage}
-                        onChange={(e) => setStashMessage(e.target.value)}
-                        placeholder="Stash message (optional)"
-                        className="h-7 flex-1 text-[11px]"
-                      />
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        disabled={busy}
-                        onClick={() =>
-                          void runMutation(async () => {
-                            const result = await actions.stashPush(
-                              stashMessage.trim() || undefined
-                            );
-                            if (result.ok) setStashMessage('');
-                            return result;
-                          })
+                  )}
+                  {panel === 'branches' && (
+                    <>
+                      <BranchesPanel
+                        rows={branchRowsFiltered}
+                        worktrees={data.branches}
+                        selectedIndex={panelState.index.branches}
+                        filter={branchFilter}
+                        onFilterChange={(next) =>
+                          setBranchFilter(next === branchFilter ? 'all' : next)
                         }
-                      >
-                        Stash
-                      </Button>
-                    </div>
-                    <StashesPanel
-                      stashes={stashes}
-                      loading={stashesLoading}
-                      busy={busy}
-                      selectedIndex={panelState.index.stashes}
+                        reclaiming={reclaiming}
+                        onReclaimMerged={() => void reclaimMerged()}
+                        onDeleteAllMergedOrphans={() =>
+                          void deleteAllMergedOrphans()
+                        }
+                        onSelectIndex={(index) =>
+                          setPanelState((s) => ({
+                            ...focusGitPanel(s, 'branches'),
+                            index: { ...s.index, branches: index },
+                          }))
+                        }
+                        onOpenRun={onOpenRun}
+                        onDispatchAgent={openDispatchForBranch}
+                      />
+                    </>
+                  )}
+                  {panel === 'commits' && (
+                    <CommitsPanel
+                      commits={log}
+                      loading={logLoading}
+                      selectedIndex={panelState.index.commits}
                       onSelectIndex={(index) =>
                         setPanelState((s) => ({
-                          ...focusGitPanel(s, 'stashes'),
-                          index: { ...s.index, stashes: index },
+                          ...focusGitPanel(s, 'commits'),
+                          index: { ...s.index, commits: index },
                         }))
                       }
-                      onPop={(index) =>
-                        void runMutation(() => actions.stashPop(index))
-                      }
-                      onRequestDrop={requestDropStash}
                     />
-                  </>
-                )}
-              </div>
+                  )}
+                  {panel === 'stashes' && (
+                    <>
+                      <div className="flex items-center gap-1.5 px-2 pt-1.5">
+                        <Input
+                          value={stashMessage}
+                          onChange={(e) => setStashMessage(e.target.value)}
+                          placeholder="Stash message (optional)"
+                          className="h-7 flex-1 text-[11px]"
+                        />
+                        <Button
+                          variant="outline"
+                          size="xs"
+                          disabled={busy}
+                          onClick={() =>
+                            void runMutation(async () => {
+                              const result = await actions.stashPush(
+                                stashMessage.trim() || undefined
+                              );
+                              if (result.ok) setStashMessage('');
+                              return result;
+                            })
+                          }
+                        >
+                          Stash
+                        </Button>
+                      </div>
+                      <StashesPanel
+                        stashes={stashes}
+                        loading={stashesLoading}
+                        busy={busy}
+                        selectedIndex={panelState.index.stashes}
+                        onSelectIndex={(index) =>
+                          setPanelState((s) => ({
+                            ...focusGitPanel(s, 'stashes'),
+                            index: { ...s.index, stashes: index },
+                          }))
+                        }
+                        onPop={(index) =>
+                          void runMutation(() => actions.stashPop(index))
+                        }
+                        onRequestDrop={requestDropStash}
+                      />
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
