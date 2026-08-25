@@ -1,0 +1,10 @@
+{
+  "name": "@dispatch/tokens",
+  "version": "0.24.0",
+  "private": true,
+  "description": "The design token palette shared by the desktop app and the marketing site.",
+  "license": "SEE LICENSE IN LICENSE",
+  "exports": {
+    "./tokens.css": "./tokens.css"
+  }
+}
