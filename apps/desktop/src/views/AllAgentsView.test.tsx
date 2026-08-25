@@ -242,13 +242,13 @@ test('the show-archived toggle appears once something is archived, and flips the
     archivedRunCount: 2,
     onSetShowArchived: (next) => seen.push(next),
   });
-  fireEvent.click(screen.getByRole('button', { name: 'Show archived' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Show archived (2)' }));
   expect(seen).toEqual([true]);
   unmount();
 
   // Nothing archived and the toggle off: no control to show.
   const clean = mount({ archivedRunCount: 0, showArchived: false });
-  expect(screen.queryByRole('button', { name: 'Show archived' })).toBeNull();
+  expect(screen.queryByRole('button', { name: /Show archived/ })).toBeNull();
   clean.unmount();
 
   // ...but it must never vanish while it is ON, or it would delete the only way back.
