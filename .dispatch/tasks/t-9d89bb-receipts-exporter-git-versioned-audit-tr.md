@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:52.987Z
-updated: 2026-08-24T23:55:49.549Z
+updated: 2026-08-25T00:33:05.201Z
 external: null
 writes:
   - packages/server/src/**
@@ -28,3 +28,4 @@ Daemon exports the audit trail — ledger entries, findings, decisions, evidence
 
 ## Activity
 - 2026-08-24T23:55:49.549Z dispatched (claude, branch dispatch/t-9d89bb-receipts-exporter-git-versioned-audit-tr-630128) — human:wsoule679
+- 2026-08-25T00:33:05.201Z Design settled. Receipt log is laid out as a file-backed dispatch project (.dispatch/tasks/*.md + findings/ledger/evidence JSONL under ~/.dispatch/projects/<rootHash>/receipts), so restore is the existing importLegacyProject() rather than a bespoke deserializer. Asked the human to confirm four shaping calls; no reply in the window, proceeding on my recommendation and recorded it to the ledger. Building now: core materialize/restore + server git exporter + debounced scheduler. — none
