@@ -14,7 +14,7 @@ import '@fontsource/jetbrains-mono/600.css';
 // Tailwind + shadcn theme first, so the hand-rolled token/global styles that follow win any
 // overlap during the migration to shadcn primitives.
 import './styles/tailwind.css';
-import './styles/tokens.css';
+import '@dispatch/tokens/tokens.css';
 import './styles/pierreTheme.css';
 import './styles/markdown.css';
 import './styles/global.css';

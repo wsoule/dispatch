@@ -1,18 +1,11 @@
-# Two stages: build the Astro site, then ship only Bun + server.ts + dist.
-# Versions are pinned directly in package.json (not catalog:) because this
-# image builds apps/site standalone, outside the workspace.
-FROM oven/bun:1-alpine AS build
-WORKDIR /app
-COPY package.json ./
-RUN bun install
-COPY astro.config.mjs ./
-COPY src ./src
-COPY public ./public
-RUN bun run build
-
+# The image ships a prebuilt dist: `bun run deploy` builds locally, where
+# workspace deps (@dispatch/tokens) and bun.lock govern, then uploads it.
+# No install or build inside the image; .railwayignore re-includes dist/.
 FROM oven/bun:1-alpine
+
 WORKDIR /app
 COPY server.ts ./
-COPY --from=build /app/dist ./dist
+COPY dist ./dist
+
 EXPOSE 3000
 CMD ["bun", "run", "server.ts"]
