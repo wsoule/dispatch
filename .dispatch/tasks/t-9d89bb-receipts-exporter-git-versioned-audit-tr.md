@@ -1,7 +1,7 @@
 ---
 id: t-9d89bb
 title: "Receipts exporter: git-versioned audit trail outside the project repo"
-status: in-review
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:52.987Z
-updated: 2026-09-01T15:44:54.135Z
+updated: 2026-09-01T15:57:35.615Z
 external: null
 writes:
   - packages/server/src/**
@@ -41,3 +41,15 @@ The follow-up, for whoever has the scope: add DEFAULT_RECEIPTS to that fixture's
 
 Note for reviewers on test noise: two server tests fail in an aggregate `bun test` and neither is this change. test/orchestrator/claude-executor.test.ts asserts the dispatch MCP command is 'bun', but a Dispatch agent session exports DISPATCH_MCP_BIN, so it resolves to the installed app binary instead — green under `env -u DISPATCH_MCP_BIN`. Any agent running this suite from inside Dispatch will hit it. test/prs-api.test.ts times out at ~200s under aggregate load and is green in isolation, matching the known flake. — none
 - 2026-09-01T15:44:54.135Z [run r-7bb074] finished: finished — 15 files, $14.03 — agent:wsoule679/claude
+- 2026-09-01T15:57:35.615Z requested changes (run r-9a9470): Code review: 10 confirmed findings. REQUIRED before merge, ranked:
+1. SEVERE — exporter.ts:178: ensureRepo adopts ANY directory containing .git, so receipts.dir '.' (or any existing repo) makes the daemon git add -A + commit --no-verify inside the USER'S OWN REPO every debounce, prune their task files, and overwrite their README. Refuse to adopt a repo it did not create: require a marker file written at init (or empty-dir/init-only), and reject a dir inside the project repo like PrWorktreeManager does.
+2. SEVERE — index.ts:608: wired only to task.changed, but findings/ledger/evidence emit finding.changed/ledger.changed (or nothing) — a review's 20 findings never reach the trail until an unrelated task edit. Subscribe to all record-mutating events (finding.changed, ledger.changed, and an evidence hook or periodic sweep) — the README promises 'committed on every change'.
+3. receipts.ts:226: rows in board.errors never join unexportedTaskIds, so pruneTaskFiles DELETES the last good receipt of a damaged-but-present task and commits the deletion — add them to the keep-list like the toMarkdown-throw path already does.
+4. receipts.ts:265/276: findings/ledger JSONL are rewritten from parseable rows only, committing damaged records as deletions — give them the same keep-list/preserve treatment as tasks (retain the prior line for ids listSafe reported as damaged).
+5. exporter.ts:111: git add/status/commit sit OUTSIDE the try/catch and the debounce timer has no guard — Bun.spawnSync THROWS on missing executable (verified), crashing the daemon from a setTimeout. Guard the whole export like BoardSyncScheduler.runGuarded; boot's exportNow must actually never throw.
+6. receipts.ts:469: restoreReceipts' unguarded readFileSync on evidence entries aborts the rebuild mid-way with no report — per-file try/catch, cost the bad file, continue.
+7. receipts.ts:461: evidence restore is non-transactional with a per-run idempotency guard, so an interrupted restore permanently truncates a run's evidence and re-runs count it 'skipped'. Wrap per-run in a transaction (or delete-then-insert per run) so re-runs complete partial runs.
+8. exporter.ts:185: git config user.name/email only on the init path with exit status discarded — re-assert identity on every pass (or check + repair), and check the config calls' status.
+9. exporter.ts:140: pass -c commit.gpgsign=false (and --no-gpg-sign) so a machine-global signing policy can't stall the daemon 30s per export.
+10. api.ts:194 cleanups: expose receipts status somewhere queryable (fold into GET /api/sync or doctor) instead of dead lastResult()/lastExportedAt(); delete the unreachable inFlight/pendingRerun machinery or make it real; drop the per-event loadConfig pre-check and let runOnce's gate decide.
+Run server+core tests, commit. — human:wsoule679
