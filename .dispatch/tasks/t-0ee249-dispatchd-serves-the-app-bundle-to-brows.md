@@ -1,7 +1,7 @@
 ---
 id: t-0ee249
 title: dispatchd serves the app bundle to browsers in team-serve mode
-status: todo
+status: dropped
 kind: task
 parent: e-5f3530
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:53.108Z
-updated: 2026-08-22T16:58:53.108Z
+updated: 2026-08-23T14:29:40.725Z
 external: null
 writes:
   - packages/server/src/**

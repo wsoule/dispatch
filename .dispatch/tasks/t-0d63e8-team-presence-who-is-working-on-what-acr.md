@@ -1,7 +1,7 @@
 ---
 id: t-0d63e8
 title: "Team presence: who is working on what, across machines"
-status: todo
+status: dropped
 kind: task
 parent: e-5434b7
 milestone: null
@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T22:48:38.811Z
-updated: 2026-08-10T22:48:38.811Z
+updated: 2026-08-23T14:29:34.994Z
 external: null
 writes: []
 ---

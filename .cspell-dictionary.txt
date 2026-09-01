@@ -62,6 +62,8 @@ comand
 commitish
 committerdate
 commnad
+commoditized
+comparables
 conv
 Conv
 cooldown
@@ -129,6 +131,7 @@ fixloop
 fixturehash
 followable
 forgeable
+forkable
 forksha
 frontmatter
 Frontmatter
@@ -156,6 +159,7 @@ hbrevn
 hcaret
 headlessly
 hexdigit
+hostable
 hotspot
 Hotspot
 hotspots
@@ -165,6 +169,7 @@ idempotently
 indistinguish
 initialisation
 inlines
+inspectable
 irrors
 keepme
 keycap
@@ -290,6 +295,7 @@ rusqlite
 rustls
 rustup
 schedulable
+scim
 screenful
 screenshotted
 scriptable
@@ -307,6 +313,7 @@ singularised
 skus
 soule
 Soule
+specced
 startable
 staticlib
 statu
@@ -430,9 +437,11 @@ visualiser
 vsart
 vslab
 vsrow
+waitlist
 WHATWG
 wordmark
 workstream
+workstreams
 worktree
 Worktree
 WORKTREE

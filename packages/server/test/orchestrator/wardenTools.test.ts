@@ -302,7 +302,7 @@ describe('warden status tools', () => {
     const h = makeHarness();
     const open = h.store.create({ title: 'Blocker still open' });
     const closed = h.store.create({ title: 'Blocker already done' });
-    h.store.update(closed.meta.id, { status: 'done' });
+    h.store.update(closed.meta.id, { status: 'landed' });
     const blocked = h.store.create({
       title: 'Waiting',
       blockedBy: [open.meta.id, closed.meta.id, 't-ghost0'],

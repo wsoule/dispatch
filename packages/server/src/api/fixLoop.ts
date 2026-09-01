@@ -8,9 +8,9 @@ import {
   readJsonBodyOptional,
 } from './http.js';
 
-// GET /api/tasks/:id/fix-loop
+// GET /api/tasks/:id/fix-loop — the state plus its derived findings trace.
 export function getFixLoop(ctx: ApiContext, taskId: string): Response {
-  const state = ctx.fixLoop.get(taskId);
+  const state = ctx.fixLoop.getWithTrace(taskId);
   return state === null
     ? errorResponse(404, `no fix loop for task: ${taskId}`)
     : jsonResponse(state);
@@ -55,6 +55,18 @@ export async function startFixLoop(
   taskId: string
 ): Promise<Response> {
   return jsonResponse(await ctx.fixLoop.ignite(taskId));
+}
+
+// POST /api/tasks/:id/fix-loop/stop — the user's Stop button: caps the loop
+// where it stands and asks the task's live runs to wind down.
+export function stopFixLoop(ctx: ApiContext, taskId: string): Response {
+  return jsonResponse(ctx.fixLoop.stop(taskId));
+}
+
+// GET /api/fix-loops — every task's loop state (with findings traces), for
+// feeds that annotate rows.
+export function listFixLoops(ctx: ApiContext): Response {
+  return jsonResponse(ctx.fixLoop.listWithTrace());
 }
 
 // POST /api/tasks/:id/findings/:fid/adjudicate — the ruling the cap demands.

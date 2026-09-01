@@ -32,12 +32,13 @@ describe('loadConfig', () => {
   it('returns defaults when file missing', () => {
     expect(loadConfig(root)).toEqual({
       statuses: [
-        'backlog',
-        'todo',
-        'in-progress',
-        'in-review',
-        'done',
-        'cancelled',
+        'draft',
+        'ready',
+        'working',
+        'review',
+        'landing',
+        'landed',
+        'dropped',
       ],
       autoCommit: false,
       orchestrator: {
@@ -58,17 +59,18 @@ describe('loadConfig', () => {
     writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: true\n');
     const cfg = loadConfig(root);
     expect(cfg.autoCommit).toBe(true);
-    expect(cfg.statuses).toHaveLength(6);
+    expect(cfg.statuses).toHaveLength(7);
   });
   it('mutating a returned config does not poison later loads', () => {
     loadConfig(root).statuses.push('x');
     expect(loadConfig(root).statuses).toEqual([
-      'backlog',
-      'todo',
-      'in-progress',
-      'in-review',
-      'done',
-      'cancelled',
+      'draft',
+      'ready',
+      'working',
+      'review',
+      'landing',
+      'landed',
+      'dropped',
     ]);
   });
   it('throws a ConfigError on malformed YAML', () => {

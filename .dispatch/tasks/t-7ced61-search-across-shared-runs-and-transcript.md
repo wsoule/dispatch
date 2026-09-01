@@ -1,7 +1,7 @@
 ---
 id: t-7ced61
 title: Search across shared runs and transcripts
-status: todo
+status: dropped
 kind: task
 parent: e-5434b7
 milestone: null
@@ -12,7 +12,7 @@ labels:
 priority: medium
 assignee: none
 created: 2026-08-10T22:48:44.031Z
-updated: 2026-08-10T22:48:44.031Z
+updated: 2026-08-23T14:29:36.545Z
 external: null
 writes: []
 ---

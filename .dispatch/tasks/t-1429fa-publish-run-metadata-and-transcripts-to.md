@@ -1,7 +1,7 @@
 ---
 id: t-1429fa
 title: Publish run metadata and transcripts to the shared code.storage store
-status: todo
+status: dropped
 kind: task
 parent: e-5434b7
 milestone: null
@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-10T22:48:11.919Z
-updated: 2026-08-10T22:48:11.919Z
+updated: 2026-08-23T14:29:33.567Z
 external: null
 writes: []
 ---

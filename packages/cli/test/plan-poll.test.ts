@@ -8,6 +8,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
   return {
     baseUrl: '',
     createRun: () => Promise.reject(new Error('not used')),
+    resumeRun: () => Promise.reject(new Error('not used')),
     listRuns: () => Promise.reject(new Error('not used')),
     getRun: () => Promise.reject(new Error('not used')),
     approveRun: () => Promise.reject(new Error('not used')),

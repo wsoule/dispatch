@@ -391,8 +391,12 @@ export class EpicEngine {
     for (const taskId of batch) {
       try {
         // The epic scheduler's own auto-fill decided this task was next —
-        // no human pressed dispatch for it specifically.
-        await this.ctx.orchestrator.dispatch(taskId, session.executor, {
+        // no human pressed dispatch for it specifically. Through
+        // dispatchOrResume, not dispatch: a task whose last run a restart left
+        // recoverable must be picked back up here too, since a fresh run would
+        // strand that worktree and cancel the sweep still watching it.
+        await this.ctx.orchestrator.dispatchOrResume(taskId, {
+          executor: session.executor,
           actor: 'none',
         });
       } catch (err) {
@@ -418,7 +422,7 @@ export class EpicEngine {
     const children = this.childrenOf(epicId);
     if (children.length === 0) return false;
     return !children.some(
-      (c) => c.meta.status === 'todo' || c.meta.status === 'in-progress'
+      (c) => c.meta.status === 'ready' || c.meta.status === 'working'
     );
   }
 

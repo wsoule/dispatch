@@ -132,7 +132,7 @@ describe('ReceiptsExporter', () => {
       'show',
       `HEAD~1:.dispatch/tasks/${task.meta.id}-first-task.md`,
     ]).stdout;
-    expect(before).toContain('status: todo');
+    expect(before).toContain('status: ready');
   });
 
   it('commits the deletion when a task leaves the database', () => {

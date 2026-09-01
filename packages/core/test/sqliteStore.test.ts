@@ -57,7 +57,7 @@ for (const { name, make } of BACKENDS) {
       expect(doc.meta.id).toMatch(/^t-[0-9a-f]{6}$/);
       expect(doc.meta).toMatchObject({
         title: 'Fix login',
-        status: 'todo',
+        status: 'ready',
         kind: 'task',
         parent: null,
         milestone: null,
@@ -123,7 +123,7 @@ for (const { name, make } of BACKENDS) {
       expect(store.list({ kind: 'epic' }).map((d) => d.meta.id)).toEqual([
         epic.meta.id,
       ]);
-      expect(store.list({ status: 'done' }).map((d) => d.meta.id)).toEqual([
+      expect(store.list({ status: 'landed' }).map((d) => d.meta.id)).toEqual([
         later.meta.id,
       ]);
       expect(
@@ -160,7 +160,7 @@ for (const { name, make } of BACKENDS) {
         { status: 'in-progress' },
         '2026-07-14T00:00:00Z'
       );
-      expect(next.meta.status).toBe('in-progress');
+      expect(next.meta.status).toBe('working');
       expect(next.meta.labels).toEqual(['bug']);
       expect(next.meta.writes).toEqual(['src/**']);
       expect(next.meta.updated).toBe('2026-07-14T00:00:00Z');

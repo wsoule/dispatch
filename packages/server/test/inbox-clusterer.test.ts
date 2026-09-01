@@ -1,12 +1,16 @@
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { InboxStore } from '../src/inbox';
 import type { InboxItem } from '../src/inbox';
 import type { InboxClusterGroup } from '../src/inboxClusterer';
-import { filterGroupsToLocalItems, sanitize } from '../src/inboxClusterer';
+import {
+  filterGroupsToLocalItems,
+  InboxClusterSnapshotStore,
+  sanitize,
+} from '../src/inboxClusterer';
 
 function item(id: string, text = id): InboxItem {
   return {
@@ -130,5 +134,40 @@ describe('filterGroupsToLocalItems', () => {
     // teammate's id is filtered out, so only the local-only group survives.
     expect(out).toHaveLength(1);
     expect(out[0]?.itemIds.sort()).toEqual([a.id, b.id].sort());
+  });
+});
+
+describe('InboxClusterSnapshotStore', () => {
+  test('round-trips a pass and overwrites on the next one', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-clusters-'));
+    const store = new InboxClusterSnapshotStore(root);
+    expect(store.load()).toBeNull();
+
+    const first = {
+      groups: [group()],
+      itemIds: ['a', 'b', 'c'],
+      updatedAt: '2026-08-22T00:00:00.000Z',
+    };
+    store.save(first);
+    expect(store.load()).toEqual(first);
+
+    const second = {
+      groups: [],
+      itemIds: ['d'],
+      updatedAt: '2026-08-22T01:00:00.000Z',
+    };
+    store.save(second);
+    // The last answer is a cache, not a log — one snapshot, always the latest.
+    expect(store.load()).toEqual(second);
+  });
+
+  test('a corrupt or mis-shaped cache reads as null, never throws', () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-clusters-'));
+    const file = join(root, '.dispatch', 'inbox-clusters.json');
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(file, 'not json');
+    expect(new InboxClusterSnapshotStore(root).load()).toBeNull();
+    writeFileSync(file, JSON.stringify({ groups: 'nope' }));
+    expect(new InboxClusterSnapshotStore(root).load()).toBeNull();
   });
 });

@@ -6,7 +6,7 @@ import type { QuestionTiming, ScopeTiming } from './tools.js';
 import { registerDispatchTools } from './tools.js';
 
 export const MCP_SERVER_NAME = 'dispatch';
-export const MCP_SERVER_VERSION = '0.0.1';
+export const MCP_SERVER_VERSION = '0.24.0';
 
 // Builds a dispatch MCP server rooted at `rootDir`: the five task_* tools
 // (see tools.ts) plus a `workflow://onboarding` resource that briefs an

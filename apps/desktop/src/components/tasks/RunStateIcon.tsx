@@ -1,38 +1,35 @@
 import type { RunState } from '@dispatch/client';
+import {
+  Ban,
+  CircleSlash,
+  CircleX,
+  Ellipsis,
+  Eye,
+  LoaderCircle,
+  ShieldCheck,
+  TriangleAlert,
+} from 'lucide-react';
 
 import { cn } from '@/lib/utils';
-
-// Shared 14x14 viewBox and 16px rendered size with `StatusIcon`/`PriorityIcon` — see
-// StatusIcon.tsx for why size is a Tailwind class rather than an SVG attribute.
-const VIEWBOX = 14;
-const CENTER = VIEWBOX / 2;
-const RADIUS = 5.25;
-const STROKE_WIDTH = 1.7;
 
 /** A task is blocked by an unmet dependency rather than by anything a run is doing, so it
  * isn't a `RunState` — but it occupies the same slot on a card and deserves the same glyph
  * language, hence one shared component keyed by this widened type. */
 export type RunStateIconState = RunState | 'blocked';
 
-type Shape =
-  | 'dotted'
-  | 'sweep'
-  | 'bang'
-  | 'cross'
-  | 'triangle'
-  | 'dash'
-  | 'tick';
-
 interface RunStateVisual {
-  shape: Shape;
-  /** Tailwind text-color class, driving `stroke`/`fill="currentColor"` below. */
+  icon: typeof Ban;
+  /** Tailwind text-color class, driving `currentColor` on the glyph. */
   colorClass: string;
   label: string;
+  /** `running` is the one state that moves — the loader spins. */
+  spin?: boolean;
 }
 
-// Every state forwards to one of the `--state-*` role tokens rather than naming a hue, so the
-// glyphs stay in step with how the rest of the app already paints run state (dense rows, the
-// runs list) and inherit the dark-theme overrides for free.
+// The same lucide glyph-per-move language as the feed's StateMark (packages/ui
+// chrome/state-mark.tsx), translated to run states: awaiting-approval is the
+// shield ('approve'), finished is the eye ('review'), and so on. Every state
+// forwards to one of the `--state-*` role tokens rather than naming a hue.
 //
 // `blocked` keeps the red that `TaskCardTile` already shipped for it. Note that tokens.css
 // declares blocked deliberately colorless (`--state-blocked-fg` is ghost gray) — the two have
@@ -40,42 +37,43 @@ interface RunStateVisual {
 // shipped behavior, so this preserves what's on screen today.
 const RUN_STATE_VISUALS: Record<RunStateIconState, RunStateVisual> = {
   provisioning: {
-    shape: 'dotted',
+    icon: Ellipsis,
     colorClass: 'text-state-working',
     label: 'Provisioning',
   },
   running: {
-    shape: 'sweep',
+    icon: LoaderCircle,
     colorClass: 'text-state-working',
-    label: 'Running',
+    label: 'Working',
+    spin: true,
   },
   'awaiting-approval': {
-    shape: 'bang',
+    icon: ShieldCheck,
     colorClass: 'text-state-waiting',
-    label: 'Awaiting approval',
+    label: 'Approve',
   },
   failed: {
-    shape: 'cross',
+    icon: CircleX,
     colorClass: 'text-state-failed',
     label: 'Failed',
   },
   'interrupted-dirty': {
-    shape: 'triangle',
+    icon: TriangleAlert,
     colorClass: 'text-state-waiting',
     label: 'Interrupted',
   },
   blocked: {
-    shape: 'dash',
+    icon: Ban,
     colorClass: 'text-destructive',
     label: 'Blocked',
   },
   finished: {
-    shape: 'tick',
+    icon: Eye,
     colorClass: 'text-state-review',
-    label: 'Finished',
+    label: 'Review',
   },
   cancelled: {
-    shape: 'cross',
+    icon: CircleSlash,
     colorClass: 'text-muted-foreground',
     label: 'Cancelled',
   },
@@ -109,7 +107,7 @@ const RUN_STATE_DOT_CLASS: Record<RunStateIconState, string> = {
 
 /** Solid-dot background class for a run state, matching `TaskRow`'s dot vocabulary —
  * for call sites (the board card) that want the dense-list dot language rather than this
- * file's own glyph shapes. */
+ * file's own glyphs. */
 export function runStateDotClass(state: RunStateIconState): string {
   return RUN_STATE_DOT_CLASS[state];
 }
@@ -123,147 +121,27 @@ export interface RunStateIconProps {
  * The agent-state counterpart to `StatusIcon`: what a run (or a dependency block) currently
  * wants from a human, as a 16px glyph in the run-state palette. Status answers "how far along
  * is this task", this answers "is something happening to it right now" — the two sit next to
- * each other on a card and deliberately don't share shapes, so neither is mistaken for the
- * other.
+ * each other on a card and deliberately don't share glyph sets, so neither is mistaken for
+ * the other.
  *
- * `running` animates a sweeping arc; the animation is dropped under `prefers-reduced-motion`,
- * where the partial arc still reads as distinct from provisioning's dotted ring.
+ * `running` spins its loader; the animation drops under `prefers-reduced-motion`, where the
+ * partial ring still reads as distinct from provisioning's ellipsis.
  */
 export function RunStateIcon({ state, className }: RunStateIconProps) {
   const visual = RUN_STATE_VISUALS[state];
-
+  const Icon = visual.icon;
   return (
-    <svg
-      viewBox={`0 0 ${VIEWBOX} ${VIEWBOX}`}
-      className={cn('size-4 shrink-0', visual.colorClass, className)}
+    <Icon
       role="img"
       aria-label={visual.label}
-    >
-      {visual.shape === 'dotted' && (
-        <circle
-          cx={CENTER}
-          cy={CENTER}
-          r={RADIUS}
-          fill="none"
-          stroke="currentColor"
-          strokeWidth={STROKE_WIDTH}
-          strokeLinecap="round"
-          strokeDasharray="0.1 2.5"
-        />
+      strokeWidth={2.25}
+      className={cn(
+        'size-4 shrink-0',
+        visual.colorClass,
+        visual.spin === true &&
+          'animate-spin [animation-duration:1.4s] motion-reduce:animate-none',
+        className
       )}
-      {visual.shape === 'sweep' && (
-        <>
-          <circle
-            cx={CENTER}
-            cy={CENTER}
-            r={RADIUS}
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={STROKE_WIDTH}
-            strokeOpacity={0.28}
-          />
-          <g
-            className="origin-center animate-spin motion-reduce:animate-none"
-            style={{ animationDuration: '1.4s' }}
-          >
-            <circle
-              cx={CENTER}
-              cy={CENTER}
-              r={RADIUS}
-              fill="none"
-              stroke="currentColor"
-              strokeWidth={STROKE_WIDTH}
-              strokeLinecap="round"
-              // ~30% of the circumference drawn, the rest gapped — one visible arc chasing
-              // the ring.
-              strokeDasharray={`${2 * Math.PI * RADIUS * 0.3} ${2 * Math.PI * RADIUS}`}
-            />
-          </g>
-        </>
-      )}
-      {visual.shape === 'bang' && (
-        <>
-          <circle cx={CENTER} cy={CENTER} r={RADIUS} fill="currentColor" />
-          <rect
-            x={6.3}
-            y={3.5}
-            width={1.4}
-            height={4.2}
-            rx={0.7}
-            fill="var(--color-background)"
-          />
-          <rect
-            x={6.3}
-            y={8.7}
-            width={1.4}
-            height={1.4}
-            rx={0.7}
-            fill="var(--color-background)"
-          />
-        </>
-      )}
-      {visual.shape === 'cross' && (
-        <>
-          <circle cx={CENTER} cy={CENTER} r={RADIUS} fill="currentColor" />
-          <path
-            d="M5.1 5.1 L8.9 8.9 M8.9 5.1 L5.1 8.9"
-            stroke="var(--color-background)"
-            strokeWidth={1.5}
-            strokeLinecap="round"
-          />
-        </>
-      )}
-      {visual.shape === 'triangle' && (
-        <>
-          <path
-            d="M7 1.9 L12.9 11.8 L1.1 11.8 Z"
-            fill="currentColor"
-            strokeLinejoin="round"
-          />
-          <rect
-            x={6.3}
-            y={5.2}
-            width={1.4}
-            height={3.4}
-            rx={0.7}
-            fill="var(--color-background)"
-          />
-          <rect
-            x={6.3}
-            y={9.4}
-            width={1.4}
-            height={1.4}
-            rx={0.7}
-            fill="var(--color-background)"
-          />
-        </>
-      )}
-      {visual.shape === 'dash' && (
-        <>
-          <circle cx={CENTER} cy={CENTER} r={RADIUS} fill="currentColor" />
-          <rect
-            x={4.2}
-            y={6.3}
-            width={5.6}
-            height={1.4}
-            rx={0.7}
-            fill="var(--color-background)"
-          />
-        </>
-      )}
-      {visual.shape === 'tick' && (
-        <>
-          <circle cx={CENTER} cy={CENTER} r={RADIUS} fill="currentColor" />
-          <path
-            d="M4.1 7.2 L6.1 9.2 L9.9 4.9"
-            fill="none"
-            stroke="var(--color-background)"
-            strokeWidth={1.6}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </>
-      )}
-    </svg>
+    />
   );
 }

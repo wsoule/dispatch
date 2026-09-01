@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T16:58:11.086Z
-updated: 2026-08-22T16:58:11.086Z
+updated: 2026-08-22T17:33:45.309Z
 external: null
 writes: []
 ---
@@ -26,3 +26,4 @@ Scope: a daemon-aggregated decision feed — gates awaiting a decision, agent in
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T17:33:45.309Z [epic] integration branch epic/e-6cfcc7 created from main — none

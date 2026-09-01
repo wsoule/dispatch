@@ -3,6 +3,7 @@ import { Archive, Radio } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { runStateLabel } from '../components/tasks/RunStateIcon';
 import {
   AGENT_SESSION_KIND_LABEL,
   agentSessionBucket,
@@ -62,16 +63,30 @@ const STATE_FILTERS: FilterChipOption[] = [
   { id: 'closed', label: 'Closed' },
 ];
 
-/** How a terminal run ended, in a word. */
+/** What a review action did, as a past-tense word rather than the raw enum. */
+const REVIEW_ACTION_LABEL: Record<
+  NonNullable<RunMeta['reviewAction']>,
+  string
+> = {
+  merge: 'merged',
+  discard: 'discarded',
+  pr: 'opened a PR',
+};
+
+/** How a run stands, in words — terminal runs get their outcome, live ones the same
+ * whose-move label the run glyphs use everywhere else. Raw enum strings like
+ * 'awaiting-approval' or 'interrupted-dirty' never reach the row. */
 function outcomeLabel(run: RunMeta): string {
   if (run.state === 'cancelled') return 'killed';
   if (run.state === 'failed') return 'failed';
+  if (run.state === 'interrupted-dirty') return 'interrupted';
   if (run.state === 'finished') {
-    return run.reviewedAt !== undefined
-      ? (run.reviewAction ?? 'closed')
-      : 'finished';
+    if (run.reviewedAt === undefined) return 'finished';
+    return run.reviewAction !== undefined
+      ? REVIEW_ACTION_LABEL[run.reviewAction]
+      : 'closed';
   }
-  return run.state;
+  return runStateLabel(run.state).toLowerCase();
 }
 
 /** Turns and spend folded into TaskRow's one free-text `progress` slot ("12t · $0.42") —
@@ -159,7 +174,6 @@ export function AllAgentsView({
   if (portLoading) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="view-topbar-title">All agents</h1>
         <div className="flex flex-col gap-2">
           <Skeleton className="h-8 w-full" />
           <Skeleton className="h-8 w-full" />
@@ -172,7 +186,6 @@ export function AllAgentsView({
   if (portError || client === null) {
     return (
       <div className="flex flex-col gap-4">
-        <h1 className="view-topbar-title">All agents</h1>
         <DaemonUnavailable
           starting={false}
           errorDetail={portErrorDetail}
@@ -184,14 +197,7 @@ export function AllAgentsView({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
-      <div className="flex items-center gap-2">
-        <h1 className="view-topbar-title">All agents</h1>
-        <span className="text-muted-foreground text-[12px]">
-          Every agent this repo has run — task runs, planners, drafts and
-          wardens
-          {archivedRunCount > 0 && ` · ${archivedRunCount} archived`}
-        </span>
-        <div className="flex-1" />
+      <div className="flex items-center justify-end gap-2">
         {/* One control, four buckets — deliberately not a search box: this page is scanned
             down a column, and the question it gets asked is "what is still owed", not
             "where is that one run". */}
@@ -208,7 +214,9 @@ export function AllAgentsView({
             size="xs"
             onClick={() => onSetShowArchived(!showArchived)}
           >
-            {showArchived ? 'Hide archived' : 'Show archived'}
+            {showArchived
+              ? 'Hide archived'
+              : `Show archived (${archivedRunCount})`}
           </Button>
         )}
       </div>

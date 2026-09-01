@@ -188,7 +188,8 @@ describe('a daemon on the sqlite backend', () => {
         body: JSON.stringify({ status: 'in-progress' }),
       })
     );
-    expect(patched.meta.status).toBe('in-progress');
+    // PATCH sent the pre-rename alias; the write boundary canonicalizes it.
+    expect(patched.meta.status).toBe('working');
 
     const listed = await json(
       await fetch(`${baseUrl}/api/tasks?status=in-progress`)
@@ -263,7 +264,7 @@ describe('a daemon on the sqlite backend', () => {
     const after = await json(
       await fetch(`${baseUrl}/api/tasks/${epic.meta.id}`)
     );
-    expect(after.meta.status).toBe('done');
+    expect(after.meta.status).toBe('landed');
   });
 
   // The UI's live updates ride this channel, and on this backend nothing

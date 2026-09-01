@@ -37,8 +37,14 @@ export type FixLoopVerdict = 'parked' | 'blocked';
 export const ADJUDICATION_VERDICTS: readonly string[] = ['parked', 'blocked'];
 
 /** Why a stopped loop is not `complete`. Carried on the state and the
- *  `fixloop.capped` event so no consumer has to infer it from the round. */
-export type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+ *  `fixloop.capped` event so no consumer has to infer it from the round.
+ *  `stopped` is the user's own Stop button — sticky against the background
+ *  advance hook, resumable through `ignite` (the "Review & fix" button). */
+export type FixLoopStop =
+  | 'rounds-exhausted'
+  | 'standing-block'
+  | 'error'
+  | 'stopped';
 
 const MIN_FIX_LOOP_CAP = 1;
 /** An upper bound on the round budget: every round dispatches a real agent
@@ -62,6 +68,10 @@ export interface FixLoopState {
   stopReason?: FixLoopStop;
   /** The failure text behind a `stopReason` of `error`. */
   stopDetail?: string;
+  /** Open findings handed to each round's review, oldest first — `[9, 4, 1]`
+   * is converging, `[9, 9]` is thrashing. Derived from the store's history on
+   * API reads (see `findingsTrace`); never persisted on the record itself. */
+  findingsTrace?: number[];
   updatedAt: string;
 }
 
@@ -131,6 +141,29 @@ export class FixLoopStore {
     return [...this.read().byTask.values()];
   }
 
+  /** Every snapshot ever written for a task, in file order — the loop's whole
+   * life, for derived reads like the findings trace. */
+  historyFor(taskId: string): FixLoopState[] {
+    if (!existsSync(this.file)) return [];
+    let text: string;
+    try {
+      text = readFileSync(this.file, 'utf8');
+    } catch {
+      return [];
+    }
+    const history: FixLoopState[] = [];
+    for (const line of text.split('\n')) {
+      if (line.trim() === '') continue;
+      try {
+        const record = JSON.parse(line) as FixLoopState;
+        if (record.taskId === taskId) history.push(record);
+      } catch {
+        // A hand-corrupted line costs itself, not the rest of the store.
+      }
+    }
+    return history;
+  }
+
   // `list()` plus why it may be empty, for callers on the boot path that must
   // report an unreadable store rather than read it as "no loops".
   listSafe(): { states: FixLoopState[]; error: string | null } {
@@ -143,6 +176,25 @@ export class FixLoopStore {
     appendFileSync(this.file, `${JSON.stringify(state)}\n`);
     return state;
   }
+}
+
+/**
+ * Open findings handed to each round's review, oldest round first — the
+ * loop's convergence in one array: `[9, 4, 1]` is a loop that is working,
+ * `[9, 9, 9]` one that is thrashing. Derived from the store's append-only
+ * history (every review dispatch snapshots `reviewInputIds`), never persisted.
+ * A round reviewed twice keeps its latest snapshot.
+ */
+export function findingsTrace(history: FixLoopState[]): number[] {
+  const byRound = new Map<number, number>();
+  for (const snapshot of history) {
+    if (snapshot.state !== 'reviewing') continue;
+    if (snapshot.reviewInputIds === undefined) continue;
+    byRound.set(snapshot.round, snapshot.reviewInputIds.length);
+  }
+  return [...byRound.entries()]
+    .sort(([a], [b]) => a - b)
+    .map(([, count]) => count);
 }
 
 // The rung governing `round`: the latest row at or below it, falling back to
@@ -266,6 +318,59 @@ export class FixLoop {
     return this.ctx.fixLoopStore.get(taskId);
   }
 
+  /** Every task's loop state — the bulk read behind GET /api/fix-loops, so a
+   *  feed can annotate rows without one request per task. */
+  list(): FixLoopState[] {
+    return this.ctx.fixLoopStore.list();
+  }
+
+  /** `get` plus the derived findings trace — the shape API reads return. */
+  getWithTrace(taskId: string): FixLoopState | null {
+    const state = this.get(taskId);
+    if (state === null) return null;
+    return {
+      ...state,
+      findingsTrace: findingsTrace(this.ctx.fixLoopStore.historyFor(taskId)),
+    };
+  }
+
+  /** `list` plus each loop's derived findings trace. */
+  listWithTrace(): FixLoopState[] {
+    return this.list().map((state) => ({
+      ...state,
+      findingsTrace: findingsTrace(
+        this.ctx.fixLoopStore.historyFor(state.taskId)
+      ),
+    }));
+  }
+
+  /** The user's Stop button: caps the loop where it stands (`stopped`), and
+   *  asks any live run of the task to wind down gracefully so the spend ends
+   *  too. Sticky — the stopped run's own terminal event advances into
+   *  `settleCapped`, which leaves a user-stop alone — but resumable: `ignite`
+   *  reopens a `stopped` loop, so the "Review & fix" button doubles as Resume.
+   *  Idempotent on an already-settled loop. */
+  stop(taskId: string): FixLoopState {
+    const state = this.ctx.fixLoopStore.get(taskId);
+    if (state === null) {
+      throw new OrchestratorNotFoundError(`no fix loop for task: ${taskId}`);
+    }
+    if (state.state === 'capped' || state.state === 'complete') return state;
+    for (const run of this.ctx.orchestrator.list()) {
+      if (run.taskId !== taskId || TERMINAL_RUN_STATES.has(run.state)) continue;
+      try {
+        this.ctx.orchestrator.requestStop(run.id);
+      } catch (err) {
+        // A run that cannot be signalled must not keep the loop un-stoppable;
+        // the cap below already prevents any further round from dispatching.
+        console.error(
+          `dispatchd: fix loop stop for ${taskId} could not signal run ${run.id}: ${String(err)}`
+        );
+      }
+    }
+    return this.reachCap(state, 'stopped');
+  }
+
   // Loops a stopped daemon left mid-flight. The run they were waiting on went
   // terminal in the dead process, so no hook will ever fire for them again.
   resumeOnBoot(): number {
@@ -373,7 +478,20 @@ export class FixLoop {
    *  have, so the caller needs no `baseSha` of its own. An already-open loop is
    *  advanced instead, which is what lets one button also resume a capped one. */
   async ignite(taskId: string): Promise<FixLoopState> {
-    if (this.ctx.fixLoopStore.get(taskId) !== null) {
+    const existing = this.ctx.fixLoopStore.get(taskId);
+    if (existing !== null) {
+      // A user-stopped loop resumes here — the same button that started it.
+      // Reopened as `idle` so `step` re-derives what the next move is (clean
+      // findings settle it; open ones dispatch the next round) instead of
+      // trusting a phase the stop interrupted.
+      if (existing.state === 'capped' && existing.stopReason === 'stopped') {
+        this.save({
+          ...existing,
+          state: 'idle',
+          stopReason: undefined,
+          stopDetail: undefined,
+        });
+      }
       return await this.advance(taskId);
     }
     this.requireTask(taskId);
@@ -688,8 +806,11 @@ export class FixLoop {
   }
 
   // The cap never resolves itself. A ruling either settles it or changes what
-  // it waits for, so it stops asking for rulings that no longer exist.
+  // it waits for, so it stops asking for rulings that no longer exist. A
+  // user-stop is as sticky as an error: only an explicit resume reopens it,
+  // never the background hook that fires when its own runs wind down.
   private settleCapped(state: FixLoopState): FixLoopState {
+    if (state.stopReason === 'stopped') return state;
     const reason = this.stopReasonFor(state.taskId);
     if (reason === null) return this.settle(state);
     if (state.stopReason === 'error' || reason === state.stopReason) {

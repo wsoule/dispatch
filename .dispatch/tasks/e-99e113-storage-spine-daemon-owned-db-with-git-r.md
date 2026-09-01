@@ -12,7 +12,7 @@ labels:
 priority: high
 assignee: none
 created: 2026-08-22T16:37:16.279Z
-updated: 2026-08-22T16:37:16.279Z
+updated: 2026-09-01T19:10:57.379Z
 external: null
 writes: []
 ---
@@ -28,3 +28,5 @@ This epic is the foundation for the planning hierarchy, layered memory, and plan
 ## Acceptance Criteria
 
 ## Activity
+- 2026-08-22T17:33:44.256Z [epic] integration branch epic/e-99e113 created from main — none
+- 2026-09-01T19:10:57.379Z [epic] opened landing PR: https://github.com/wsoule/dispatch/pull/26 — human:wsoule679

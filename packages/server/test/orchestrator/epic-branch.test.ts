@@ -185,7 +185,7 @@ describe('review-merge onto the epic branch', () => {
     );
     expect(fileOnBranch('main', 'a.txt')).toBeNull();
     // Task closed, run's branch/worktree cleaned up.
-    expect(h.store.get(taskId)?.meta.status).toBe('done');
+    expect(h.store.get(taskId)?.meta.status).toBe('landed');
     const runBranch = h.orchestrator.list().find((r) => r.id === runId)!.branch;
     expect(runGitSync(repo, ['branch', '--list', runBranch]).trim()).toBe('');
   });
@@ -287,7 +287,7 @@ describe('review-merge onto the epic branch', () => {
 
     const reconciled = h.orchestrator.reconcileExternallyMergedRuns();
     expect(reconciled.map((r) => r.id)).toContain(runId);
-    expect(h.store.get(taskId)?.meta.status).toBe('done');
+    expect(h.store.get(taskId)?.meta.status).toBe('landed');
   });
 });
 

@@ -1,7 +1,7 @@
 ---
 id: t-4c017f
 title: "Multi-user daemon: configurable bind, per-user tokens over two-tier auth"
-status: todo
+status: dropped
 kind: task
 parent: e-5f3530
 milestone: null
@@ -10,7 +10,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:58:33.644Z
-updated: 2026-08-22T16:58:33.644Z
+updated: 2026-08-23T14:29:38.966Z
 external: null
 writes:
   - packages/server/src/**

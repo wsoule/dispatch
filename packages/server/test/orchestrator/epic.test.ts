@@ -228,11 +228,11 @@ describe('EpicEngine.start', () => {
 
     expect(maxObserved).toBeLessThanOrEqual(2);
     const doneCount = childIds.filter(
-      (id) => harness.store.get(id)?.meta.status === 'done'
+      (id) => harness.store.get(id)?.meta.status === 'landed'
     ).length;
     expect(doneCount).toBe(0); // FakeExecutor's finish never merges — status stays in-review
     const inReviewCount = childIds.filter(
-      (id) => harness.store.get(id)?.meta.status === 'in-review'
+      (id) => harness.store.get(id)?.meta.status === 'review'
     ).length;
     expect(inReviewCount).toBe(5);
   });
@@ -266,9 +266,7 @@ describe('EpicEngine.start', () => {
       .list()
       .find((r) => r.taskId === blockerId)!;
     harness.orchestrator.approve(blockerRun.id, 'go', true);
-    await waitFor(
-      () => harness.store.get(blockerId)?.meta.status === 'in-review'
-    );
+    await waitFor(() => harness.store.get(blockerId)?.meta.status === 'review');
 
     // core's readyTasks() gates a blocked task on its blocker being
     // done/cancelled, not merely finished — merging is what actually
@@ -286,11 +284,9 @@ describe('EpicEngine.start', () => {
     harness.orchestrator.approve(blockedRun.id, 'go', true);
 
     // The blocker is 'done' (merged above); the sibling that was blocked on
-    // it has now run to completion too, landing at 'in-review'.
-    await waitFor(
-      () => harness.store.get(blockedId)?.meta.status === 'in-review'
-    );
-    expect(harness.store.get(blockerId)?.meta.status).toBe('done');
+    // it has now run to completion too, landing at 'review'.
+    await waitFor(() => harness.store.get(blockedId)?.meta.status === 'review');
+    expect(harness.store.get(blockerId)?.meta.status).toBe('landed');
   });
 
   // I3 (adjudicated): discarding a run returns its task to `todo`, but that
@@ -312,18 +308,18 @@ describe('EpicEngine.start', () => {
     await waitFor(() => harness.orchestrator.list().length === 2);
     const runA = harness.orchestrator.list().find((r) => r.taskId === aId)!;
     harness.orchestrator.approve(runA.id, 'go', true);
-    await waitFor(() => harness.store.get(aId)?.meta.status === 'in-review');
+    await waitFor(() => harness.store.get(aId)?.meta.status === 'review');
 
     expect(harness.epics.progress(epicId).active).toBe(true);
     harness.orchestrator.review(runA.id, 'discard');
 
     // Give the (buggy, pre-fix) synchronous cascade a moment to land before
     // asserting the final state: with the bug present, the task flashes
-    // through 'todo' straight into a re-dispatched 'in-progress' inside
+    // through 'ready' straight into a re-dispatched 'working' inside
     // review()'s own hook-firing call, before this line even runs — so the
     // meaningful assertion is the *settled* state, not an intermediate one.
     await sleep(80);
-    expect(harness.store.get(aId)?.meta.status).toBe('todo');
+    expect(harness.store.get(aId)?.meta.status).toBe('ready');
     const runsForA = harness.orchestrator
       .list()
       .filter((r) => r.taskId === aId);
@@ -359,7 +355,7 @@ describe('EpicEngine.start', () => {
     await harness.epics.start(epicId, { concurrency: 1, executor: 'fake' });
     await sleep(60);
     expect(harness.orchestrator.list()).toHaveLength(0);
-    expect(harness.store.get(childIds[0])?.meta.status).toBe('todo');
+    expect(harness.store.get(childIds[0])?.meta.status).toBe('ready');
 
     // Drive the outside blocker (unrelated to any epic) to a terminal run
     // state -> its task becomes `in-review`. That alone must cascade-dispatch
@@ -384,7 +380,7 @@ describe('EpicEngine.start', () => {
     );
     // The outside blocker is still merely `in-review` — no merge/PR-merge
     // ever ran — confirming dispatch didn't secretly wait on one.
-    expect(harness.store.get(outside.meta.id)?.meta.status).toBe('in-review');
+    expect(harness.store.get(outside.meta.id)?.meta.status).toBe('review');
   });
 
   // The behavioral fix under test: a dependent must dispatch as soon as its
@@ -413,15 +409,13 @@ describe('EpicEngine.start', () => {
     // Drive the blocker to a terminal state -> task becomes `in-review`.
     const run = h.orchestrator.list()[0];
     h.orchestrator.approve(run.id, 'go', true);
-    await waitFor(
-      () => h.store.get(blocker.meta.id)!.meta.status === 'in-review'
-    );
+    await waitFor(() => h.store.get(blocker.meta.id)!.meta.status === 'review');
 
     // The dependent must now dispatch WITHOUT the blocker ever reaching `done`.
     await waitFor(() =>
       h.orchestrator.list().some((r) => r.taskId === dependent.meta.id)
     );
-    expect(h.store.get(blocker.meta.id)!.meta.status).toBe('in-review');
+    expect(h.store.get(blocker.meta.id)!.meta.status).toBe('review');
   });
 
   // Guard against over-loosening the fix above: a blocker that is merely
@@ -442,7 +436,7 @@ describe('EpicEngine.start', () => {
     await waitFor(() => h.orchestrator.list().length === 1);
     await sleep(50); // give a wrong implementation time to dispatch the dependent
 
-    expect(h.store.get(blocker.meta.id)!.meta.status).toBe('in-progress');
+    expect(h.store.get(blocker.meta.id)!.meta.status).toBe('working');
     expect(
       h.orchestrator.list().some((r) => r.taskId === dependent.meta.id)
     ).toBe(false);
@@ -463,14 +457,14 @@ describe('EpicEngine.start', () => {
     harness.orchestrator.approve(runningRun.id, 'go', true);
 
     await waitFor(
-      () => harness.store.get(runningRun.taskId)?.meta.status === 'in-review'
+      () => harness.store.get(runningRun.taskId)?.meta.status === 'review'
     );
     // Give any (incorrect) cascade dispatch a moment to happen before
     // asserting it didn't.
     await sleep(60);
     expect(harness.orchestrator.list().length).toBe(1);
     const untouchedId = runningRun.taskId === firstId ? secondId : firstId;
-    expect(harness.store.get(untouchedId)?.meta.status).toBe('todo');
+    expect(harness.store.get(untouchedId)?.meta.status).toBe('ready');
   });
 
   it('409s stopping an epic with no active session', () => {
@@ -492,7 +486,7 @@ describe('EpicEngine.start', () => {
     // is enough for the epic engine to consider its dispatch work complete
     // (no human review action required — see isEpicComplete's doc comment).
     await waitFor(
-      () => harness.store.get(childIds[0])?.meta.status === 'in-review'
+      () => harness.store.get(childIds[0])?.meta.status === 'review'
     );
     await waitFor(() => {
       const body = harness.store.get(epicId)?.body ?? '';
@@ -524,7 +518,7 @@ describe('EpicEngine.start', () => {
     const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
     // Simulate a reconciler having already archived one child (done + pushed).
     harness.store.update(childIds[0], {
-      status: 'done',
+      status: 'landed',
       archivedAt: '2026-07-26T00:00:00Z',
     });
     harness.cache.rebuild(harness.store);
@@ -548,7 +542,7 @@ describe('EpicEngine.start', () => {
     // Both the child and (later) the epic are already fully done+archived
     // before the session even starts — nothing left to dispatch.
     harness.store.update(childIdsA[0], {
-      status: 'done',
+      status: 'landed',
       archivedAt: '2026-07-26T00:00:00Z',
     });
     harness.cache.rebuild(harness.store);

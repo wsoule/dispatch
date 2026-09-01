@@ -189,15 +189,16 @@ describe('later boots', () => {
 
     // The markdown file still says the task is todo. A second boot must not
     // let it win.
+    // The file's literal 'todo' reads back canonicalized by the alias layer.
     expect(new TaskStore(root).get(target?.meta.id ?? '')?.meta.status).toBe(
-      'todo'
+      'ready'
     );
     const second = await boot();
     const after: { meta: { id: string; status: string } }[] = await json(
       await fetch(`http://127.0.0.1:${second.port}/api/tasks`)
     );
     expect(after.find((d) => d.meta.id === target?.meta.id)?.meta.status).toBe(
-      'done'
+      'landed'
     );
   });
 });

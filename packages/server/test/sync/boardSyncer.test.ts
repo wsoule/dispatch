@@ -842,7 +842,7 @@ describe('BoardSyncer with the real merge driver', () => {
     const storeA = new TaskStore(a);
     const storeB = new TaskStore(b);
     const doc = storeA.create(
-      { title: 'Shared task', status: 'todo' },
+      { title: 'Shared task', status: 'ready' },
       '2026-08-01T00:00:00.000Z'
     );
     await syncerFor(a).syncOnce();
@@ -854,7 +854,7 @@ describe('BoardSyncer with the real merge driver', () => {
     // without either side losing anything.
     storeB.update(
       doc.meta.id,
-      { status: 'in-progress' },
+      { status: 'working' },
       '2026-08-02T00:00:00.000Z'
     );
     const resultB = await syncerFor(b).syncOnce();
@@ -876,7 +876,7 @@ describe('BoardSyncer with the real merge driver', () => {
     expect(resultB2.state).toBe('idle');
     const seenByB = storeB.get(doc.meta.id);
     expect(seenByB?.meta.title).toBe('Retitled by alice');
-    expect(seenByB?.meta.status).toBe('in-progress');
+    expect(seenByB?.meta.status).toBe('working');
 
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);

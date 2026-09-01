@@ -480,8 +480,9 @@ export interface UpdateFindingPatch {
 }
 
 // Why a stopped fix loop is not `complete`. Mirrors FixLoopStop in
-// packages/server/src/orchestrator/fixLoop.ts.
-type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+// packages/server/src/orchestrator/fixLoop.ts. `stopped` is the user's own
+// Stop button — resumable through `startFixLoop`.
+type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error' | 'stopped';
 
 // Mirrors FixLoopState in packages/server/src/orchestrator/fixLoop.ts: where a
 // task's review -> fix -> re-review loop currently stands.
@@ -495,6 +496,9 @@ export interface FixLoopState {
   // Set while `capped`: what the loop is waiting for. `round` alone does not
   // say — a loop can stop well short of its cap on a ruling or an error.
   stopReason?: FixLoopStop;
+  /** Open findings handed to each round's review, oldest first — [9, 4, 1] is
+   * converging, [9, 9] is thrashing. Present on API reads. */
+  findingsTrace?: number[];
   stopDetail?: string;
   updatedAt: string;
 }
@@ -816,6 +820,18 @@ export interface ConfirmResult {
   taskIds: string[];
 }
 
+// Mirrors PlanSummary in packages/server/src/orchestrator/plan.ts — one row
+// of GET /api/plans, the record minus its heavy transcript.
+export interface PlanSummary {
+  id: string;
+  prompt: string;
+  subject?: string;
+  state: PlanState;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string;
+}
+
 // Mirrors DraftRecord in packages/server/src/orchestrator/plan.ts — the body
 // of `POST /api/tasks/draft` and `GET /api/tasks/drafts[/:id]`.
 export interface DraftRecord {
@@ -1062,6 +1078,15 @@ export interface InboxClusterGroup {
   epicTitle: string;
   reason: string;
   itemIds: string[];
+}
+
+/** The persisted last clustering pass — mirrors InboxClusterSnapshot in
+ * packages/server/src/inboxClusterer.ts. */
+export interface InboxClusterSnapshot {
+  groups: InboxClusterGroup[];
+  /** The open item ids the pass covered, for judging staleness client-side. */
+  itemIds: string[];
+  updatedAt: string;
 }
 
 export interface InboxConvertResponse {
@@ -1637,9 +1662,12 @@ export interface ApiClient {
   // these mirror. `executor` defaults to 'claude' server-side when omitted;
   // 'fake' stays reachable for the dev-only manual-smoke toggle the desktop
   // UI gates behind a localStorage flag (see apps/desktop/src/lib/devTools.ts).
+  // `fresh` forces a brand-new run: without it the server resumes the task's
+  // most recent run when that run failed with its worktree still intact, so a
+  // re-dispatch cannot silently abandon work an agent had nearly finished.
   createRun(
     taskId: string,
-    opts?: { executor?: 'fake' | 'claude'; model?: string }
+    opts?: { executor?: 'fake' | 'claude'; model?: string; fresh?: boolean }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   // Every in-memory conversation agent (planner chats, enrich agents, task
@@ -1793,12 +1821,16 @@ export interface ApiClient {
   convertInbox(ids: string[]): Promise<InboxConvertResponse>;
   /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
   enrichTask(id: string): Promise<{ planId: string }>;
-  /** Model-backed grouping of related captures, run in the background. Always
-   * resolves with a 200 — `error` carries a failed model call. */
+  /** Model-backed grouping of related captures. Always resolves with a 200 —
+   * `error` carries a failed model call. A successful pass is persisted
+   * server-side; `fetchInboxClusters` reads it back. */
   clusterInbox(): Promise<{
     groups: InboxClusterGroup[];
     error: string | null;
   }>;
+  /** The persisted result of the last clustering pass, or null when none has
+   * ever run — what a page load renders instead of billing a fresh call. */
+  fetchInboxClusters(): Promise<InboxClusterSnapshot | null>;
 
   /** One side of a file in a run's worktree. `sha` is the precondition for applyRunEdit. */
   fetchRunFile(
@@ -1959,6 +1991,9 @@ export interface ApiClient {
   // scratch and is the only place that actually writes the epic/tasks.
   startPlan(prompt: string): Promise<{ planId: string }>;
   fetchPlan(planId: string): Promise<PlanRecord>;
+  /** Every plan's summary, newest activity first — the Plans page's history.
+   * Persisted server-side, so it survives restarts and spans windows. */
+  fetchPlans(): Promise<PlanSummary[]>;
   // Send a follow-up message on an existing plan conversation. Resolves (202)
   // with the record already back in `running` — poll `fetchPlan`/watch
   // `plan.changed` for the assistant's reply + refined proposal to land.
@@ -2065,7 +2100,12 @@ export interface ApiClient {
   // `advanceFixLoop` drives one step (and opens the loop when `baseSha` is
   // supplied); `adjudicateFinding` is the ruling a capped loop demands.
   fetchFixLoop(taskId: string): Promise<FixLoopState>;
+  /** Every task's loop state in one read — feeds annotate rows from this. */
+  fetchFixLoops(): Promise<FixLoopState[]>;
   startFixLoop(taskId: string): Promise<FixLoopState>;
+  /** Caps the loop where it stands (`stopped`) and winds down its live runs.
+   * `startFixLoop` on a stopped loop resumes it. */
+  stopFixLoop(taskId: string): Promise<FixLoopState>;
   advanceFixLoop(
     taskId: string,
     input?: AdvanceFixLoopInput
@@ -2151,6 +2191,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({
           ...(opts.executor !== undefined ? { executor: opts.executor } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
         }),
       }),
     fetchRuns: () => request(target, '/api/runs'),
@@ -2354,6 +2395,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     clusterInbox: () =>
       request(target, '/api/inbox/cluster', { method: 'POST' }),
+    fetchInboxClusters: () => request(target, '/api/inbox/clusters'),
     fetchRunFile: (runId, path, side) =>
       request(
         target,
@@ -2480,6 +2522,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({ prompt }),
       }),
     fetchPlan: (planId) => request(target, `/api/plan/${planId}`),
+    fetchPlans: () => request(target, '/api/plans'),
     sendPlanMessage: (planId, text) =>
       request(target, `/api/plan/${planId}/message`, {
         method: 'POST',
@@ -2597,10 +2640,17 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/verification`),
     fetchFixLoop: (taskId) =>
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
+    fetchFixLoops: () => request(target, '/api/fix-loops'),
     startFixLoop: (taskId) =>
       request(
         target,
         `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/start`,
+        { method: 'POST' }
+      ),
+    stopFixLoop: (taskId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/stop`,
         { method: 'POST' }
       ),
     advanceFixLoop: (taskId, input = {}) =>

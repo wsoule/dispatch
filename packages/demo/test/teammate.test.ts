@@ -44,7 +44,7 @@ test('conflict edits a different field than the local side', () => {
   const { theirs } = twoClones();
   conflictIn(theirs, 'task.md');
   const theirText = readFileSync(join(theirs, 'task.md'), 'utf8');
-  expect(theirText).toContain('status: in-progress');
+  expect(theirText).toContain('status: working');
   expect(theirText).toContain('assignee: none');
 });
 

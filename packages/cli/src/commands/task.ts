@@ -1,6 +1,7 @@
 import {
   ActorContext,
   ASSIGNEES,
+  canonicalStatus,
   KINDS,
   loadConfig,
   PRIORITIES,
@@ -27,6 +28,11 @@ import { createTaskApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
 import { findRunningDaemon } from './daemon.js';
+
+// The status alias layer, tolerant of an omitted flag.
+function canonicalStatusOpt(value: string | undefined): string | undefined {
+  return value === undefined ? undefined : canonicalStatus(value);
+}
 
 // ActorContext's GitReader seam, Node-based — mirrors server/src/index.ts's
 // `makeGitReader` (which uses Bun.spawnSync instead, since the daemon is
@@ -201,7 +207,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
           title,
           kind: validate(opts.kind as string, KINDS, 'kind') as TaskKind,
           status: validate(
-            opts.status as string | undefined,
+            canonicalStatusOpt(opts.status as string | undefined),
             config.statuses,
             'status'
           ),
@@ -238,7 +244,7 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       const config = loadConfig(ctx.cwd);
       const query: ListFilter = {
         status: validate(
-          opts.status as string | undefined,
+          canonicalStatusOpt(opts.status as string | undefined),
           config.statuses,
           'status'
         ),
@@ -294,7 +300,11 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
     .action(async (id: string, status: string) => {
       const route = await resolveTaskRoute(ctx);
       const config = loadConfig(ctx.cwd);
-      const valid = validate(status, config.statuses, 'status')!;
+      const valid = validate(
+        canonicalStatus(status),
+        config.statuses,
+        'status'
+      )!;
       const patch: UpdatePatch = {
         status: valid,
         appendActivity: `${new Date().toISOString()} status → ${valid}`,

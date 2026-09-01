@@ -1,7 +1,7 @@
 ---
 id: t-1655a9
 title: "Presence and attribution: who is connected, who decided what"
-status: todo
+status: dropped
 kind: task
 parent: e-5f3530
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:58:57.521Z
-updated: 2026-08-22T16:58:57.521Z
+updated: 2026-08-23T14:29:42.294Z
 external: null
 writes:
   - packages/server/src/**
