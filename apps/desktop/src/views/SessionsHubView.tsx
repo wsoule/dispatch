@@ -95,8 +95,8 @@ export function SessionsHubView() {
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-5 overflow-y-auto">
-      <div className="flex items-center justify-between gap-2">
-        <h1 className="text-foreground text-[13px] font-semibold">Sessions</h1>
+      {/* No page header — the rail names the page; this row carries the one action. */}
+      <div className="flex items-center justify-end gap-2">
         <ExportControl
           label="Export spend report"
           onExport={() => exportReport(RECENT_WINDOW_DAYS)}
