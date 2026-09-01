@@ -1,7 +1,7 @@
 ---
 id: t-b3ad8f
 title: Shrink in-repo .dispatch/ to committable config only
-status: todo
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:39:15.687Z
-updated: 2026-08-22T16:39:15.687Z
+updated: 2026-09-01T16:11:44.563Z
 external: null
 writes:
   - packages/core/src/**
@@ -29,3 +29,4 @@ Once the DB is the source of truth and receipts live outside the repo, the proje
 ## Acceptance Criteria
 
 ## Activity
+- 2026-09-01T16:11:44.563Z dispatched (claude, branch dispatch/t-b3ad8f-shrink-in-repo-dispatch-to-committable-c-59aae9) — human:wsoule679
