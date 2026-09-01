@@ -1,7 +1,7 @@
 ---
 id: t-7cc78a
 title: SQLite-backed TaskStore implementation behind the existing store seam
-status: todo
+status: done
 kind: task
 parent: e-99e113
 milestone: null
@@ -10,11 +10,12 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:37:48.803Z
-updated: 2026-09-01T19:10:22.610Z
+updated: 2026-09-01T19:11:10.512Z
 external: null
 writes:
   - packages/core/src/**
   - packages/core/test/**
+archived-at: 2026-09-01T19:11:10.512Z
 ---
 
 ## Description

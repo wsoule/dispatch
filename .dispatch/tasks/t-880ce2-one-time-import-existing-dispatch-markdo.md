@@ -1,7 +1,7 @@
 ---
 id: t-880ce2
 title: "One-time import: existing .dispatch markdown and JSONL into the daemon DB"
-status: todo
+status: done
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:56.447Z
-updated: 2026-09-01T19:10:16.413Z
+updated: 2026-09-01T19:11:10.512Z
 external: null
 writes:
   - packages/cli/src/**
@@ -20,6 +20,7 @@ writes:
   - packages/core/test/**
   - packages/server/src/**
   - packages/server/test/**
+archived-at: 2026-09-01T19:11:10.512Z
 ---
 
 ## Description

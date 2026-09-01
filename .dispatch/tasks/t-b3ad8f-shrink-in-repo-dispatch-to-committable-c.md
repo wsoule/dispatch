@@ -1,7 +1,7 @@
 ---
 id: t-b3ad8f
 title: Shrink in-repo .dispatch/ to committable config only
-status: todo
+status: done
 kind: task
 parent: e-99e113
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:39:15.687Z
-updated: 2026-09-01T19:09:43.560Z
+updated: 2026-09-01T19:11:10.512Z
 external: null
 writes:
   - packages/core/src/**
@@ -29,6 +29,7 @@ writes:
   - docs/**
   - README.md
   - .gitignore
+archived-at: 2026-09-01T19:11:10.512Z
 ---
 
 ## Description

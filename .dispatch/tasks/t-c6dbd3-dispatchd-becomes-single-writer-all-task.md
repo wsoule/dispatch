@@ -1,7 +1,7 @@
 ---
 id: t-c6dbd3
 title: "dispatchd becomes single writer: all task I/O through the daemon store"
-status: todo
+status: done
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,13 +11,14 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:17.943Z
-updated: 2026-09-01T19:10:17.047Z
+updated: 2026-09-01T19:11:10.512Z
 external: null
 writes:
   - packages/server/src/**
   - packages/server/test/**
   - packages/mcp/src/**
   - packages/cli/src/**
+archived-at: 2026-09-01T19:11:10.512Z
 ---
 
 ## Description
