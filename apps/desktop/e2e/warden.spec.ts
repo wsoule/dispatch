@@ -246,6 +246,17 @@ test.describe('warden chat end to end', () => {
    * stays expanded here (no Runs-view row counting happens in this test, so
    * its run-row buttons are harmless), and the deny path is re-verified
    * against the daemon; the approve path is the first test's job.
+   *
+   * NOT YET OBSERVED GREEN. `bun run e2e --list` discovers it, so it parses
+   * and type-checks, but no environment on this branch can run it: the
+   * webServer cannot `posix_spawn` git, and the storefront fixture
+   * (e2e/paths.ts) is gitignored and keyed by root path, so a worktree has
+   * none to seed from. Two of its assumptions are therefore held by unit
+   * tests instead, in the suite that does run — LiveRail.test.tsx pins that
+   * the rail's Warden control is a role=tab (so `getByRole('button', {name:
+   * 'Warden'})` below cannot go ambiguous against the sidebar's nav button)
+   * and that the waiting row is named "<summary> warden" in lowercase, which
+   * is what the `/with the fake executor warden/` locator depends on.
    */
   test('the rail Warden tab drives the same human-gated flow', async ({
     page,

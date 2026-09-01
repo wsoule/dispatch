@@ -64,14 +64,25 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
   ).toHaveCount(0);
 }
 
-// STALE BASELINES (branch: the rail's Runs | Warden tab toggle): the 14 PNGs
-// under views.spec.ts-snapshots/ were captured before the live rail existed,
-// and every project view has carried it since. They need one `bun run
-// e2e:update` from an environment where Playwright can actually launch — this
-// branch's is not one (its webServer cannot `posix_spawn` git, and the
-// storefront fixture is gitignored and keyed by root path, so a worktree has
-// none to seed from). The mask below is what stops the next rail edit from
-// putting them back in this state; it does not un-stale them.
+// BASELINES, EXACTLY (branch: the rail's Runs | Warden tab toggle). The loop
+// below produces 14 screenshot tests — 7 views x 2 themes — but
+// views.spec.ts-snapshots/ holds 10 PNGs, and they fail in two different ways:
+//
+//   - overview, braindump, plans, tasks, git (10 PNGs) were captured before
+//     the live rail existed, which every project view has carried since. These
+//     diff against a stale baseline. The mask below is what stops the next
+//     rail edit from re-staling them; it does not un-stale them now.
+//   - inbox and impact (4 shots) have NO baseline at all — they were added to
+//     VIEWS when they took the retired Runs/Review accelerators and never
+//     captured. Playwright fails these with "A snapshot doesn't exist" and
+//     writes the file, so `bun run e2e:update` does not refresh them, it
+//     AUTHORS them. Look at those four before committing them; nobody has.
+//
+// All of it needs one run from an environment where Playwright can launch,
+// which this branch's is not, for two independent reasons: the webServer
+// cannot `posix_spawn` git, and the storefront fixture (e2e/paths.ts) is
+// gitignored and keyed by root path, so a worktree has none to seed from.
+// Neither ci.yml nor release.yml runs Playwright, so nothing else catches it.
 for (const view of VIEWS) {
   test(`${view.name} renders`, async ({ page, baseURL }) => {
     await page.goto(authedUrl(baseURL));
@@ -86,14 +97,72 @@ for (const view of VIEWS) {
       // The live rail is on every project screen but is not what any of these
       // baselines is about, and it is chrome that keeps moving — the Runs |
       // Warden tab strip alone has changed shape three times. Unmasked, each
-      // of those edits silently invalidates all 14 PNGs here (7 views x 2
-      // themes) with no CI job to catch it. Masked, the rail still occupies
-      // its 240px so a view squeezed beside it still regresses visibly, while
-      // its internals belong to LiveRail's own tests and warden.spec.ts.
-      mask: [page.locator('[data-slot="live-rail"]')],
+      // of those edits silently invalidates all 14 PNGs here with no CI job to
+      // catch it. Masked, the rail still occupies its 240px, so a view
+      // squeezed beside it still regresses visibly.
+      //
+      // What the mask does cost is every pixel *inside* that column, and
+      // LiveRail.test.tsx cannot make up the difference: happy-dom has no
+      // layout engine at all, so nothing there can see the rail render at the
+      // wrong width, overflow its column, or clip its composer. The
+      // 'the live rail keeps its column' test below covers that directly
+      // instead — as measured geometry rather than as pixels, so it needs no
+      // baseline of its own and stays honest through cosmetic rail edits.
+      mask: [page.locator('[data-testid="live-rail"]')],
     });
   });
 }
+
+/**
+ * The coverage the mask above removes, put back as geometry instead of pixels.
+ * A rail that renders at the wrong width, overflows its column, or clips its
+ * composer is invisible to both suites otherwise: the screenshots paint it
+ * magenta, and LiveRail.test.tsx runs in happy-dom, which has no layout engine
+ * (WardenChat.test.tsx has to hand-define scrollHeight/scrollTop for exactly
+ * that reason). Measured rather than captured, so it needs no baseline to
+ * review and does not re-break every time the tab strip changes shape.
+ */
+test('the live rail keeps its column on a project view', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'dark', 'layout is theme-independent');
+
+  // '0' is expanded — the state the rail boots in for every screenshot above.
+  await page.addInitScript(() => {
+    window.localStorage.setItem('dispatch:live-rail', '0');
+  });
+  await page.goto(authedUrl(baseURL));
+  await page.getByText('Dispatch').first().waitFor();
+  await assertFixtureDataLoaded(page);
+
+  const rail = page.getByTestId('live-rail');
+  await expect(rail).toBeVisible();
+  const railBox = await rail.boundingBox();
+  if (railBox === null) throw new Error('the live rail has no layout box');
+
+  // w-60: the 240px the mask reserves. Wider and it eats the view beside it;
+  // narrower and the run rows it exists to show have nowhere to go.
+  expect(Math.round(railBox.width)).toBe(240);
+
+  // Nothing inside may spill past that column — a long task title or the tab
+  // strip overflowing is precisely what the mask would now hide.
+  const overflow = await rail.evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  // The Warden tab's composer is the tallest thing the rail has to fit, and
+  // the surface this branch added: it has to land inside the column, not be
+  // clipped out of it by the transcript above.
+  await page.getByRole('tab', { name: 'Warden' }).click();
+  const composer = page.getByLabel('Warden opening question');
+  await expect(composer).toBeVisible();
+  const composerBox = await composer.boundingBox();
+  if (composerBox === null) throw new Error('the rail composer has no box');
+  expect(composerBox.x).toBeGreaterThanOrEqual(railBox.x);
+  expect(composerBox.x + composerBox.width).toBeLessThanOrEqual(
+    railBox.x + railBox.width
+  );
+});
 
 // The queue-only "review" shot above never opened a diff, which is exactly the
 // surface that regressed in fix/review-surface (60e99e8): `CodeView` rendered

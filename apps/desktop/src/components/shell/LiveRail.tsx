@@ -132,7 +132,7 @@ export function LiveRail({
   if (collapsed) {
     return (
       <aside
-        data-slot="live-rail"
+        data-testid="live-rail"
         className="border-border flex w-9 shrink-0 flex-col items-center gap-2 border-l py-3"
       >
         <Button
@@ -196,7 +196,7 @@ export function LiveRail({
 
   return (
     <aside
-      data-slot="live-rail"
+      data-testid="live-rail"
       className="border-border flex w-60 shrink-0 flex-col border-l p-3"
     >
       {/* One radix Tabs root over the whole column, not just the header: the
