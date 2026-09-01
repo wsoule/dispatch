@@ -118,6 +118,8 @@ export type {
   SyncResult,
   SyncState,
   SyncStatus,
+  ReceiptsStatus,
+  ReceiptsResult,
   TaskDraft,
   TaskFilter,
   UpdateFindingPatch,

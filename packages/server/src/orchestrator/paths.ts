@@ -142,3 +142,25 @@ export function worktreesDir(rootDir: string): string {
 export function worktreePath(rootDir: string, runId: string): string {
   return join(worktreesDir(rootDir), runId);
 }
+
+/**
+ * Where a project's git receipt log lives by default — the audit trail the
+ * daemon exports OUTSIDE the project repo, so ledger and finding churn stops
+ * showing up in the project's own diffs.
+ *
+ * Keyed by the same `rootHash` as runs and worktrees, but under `projects/`
+ * rather than beside them: this is the one piece of per-project state a person
+ * is expected to open, clone and read, so it gets a name that says what it
+ * belongs to instead of sharing a directory with per-run scratch.
+ *
+ * `receipts.dir` in config.yml overrides this; resolveReceiptsDir owns that.
+ */
+export function receiptsDir(rootDir: string): string {
+  return join(
+    dispatchHome(),
+    '.dispatch',
+    'projects',
+    rootHash(rootDir),
+    'receipts'
+  );
+}

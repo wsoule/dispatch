@@ -12,6 +12,7 @@ import type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  ReceiptsConfig,
   RepoDigestConfig,
   VerifyConfig,
 } from './configTypes.js';
@@ -21,6 +22,7 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
@@ -80,6 +82,7 @@ const DEFAULTS: DispatchConfig = {
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
+  receipts: { ...DEFAULT_RECEIPTS },
 };
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -197,6 +200,37 @@ function parseRepoDigestConfig(raw: unknown): RepoDigestConfig {
     enabled: enabled ?? DEFAULT_REPO_DIGEST.enabled,
     cooldownHours: cooldownHours ?? DEFAULT_REPO_DIGEST.cooldownHours,
   };
+}
+
+// Validates the optional `receipts:` block, same contract as the two above.
+// `dir` is rejected empty rather than defaulted, matching prWorktreeDir: a
+// blank path in config.yml is a typo, and silently falling back to the default
+// location would export the audit trail somewhere the author did not ask for
+// and would not think to look.
+function parseReceiptsConfig(raw: unknown): ReceiptsConfig {
+  if (raw === undefined) return { ...DEFAULT_RECEIPTS };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: receipts must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { enabled } = obj;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: receipts.enabled must be a boolean'
+    );
+  }
+
+  const { dir } = obj;
+  if (dir !== undefined && (typeof dir !== 'string' || dir.trim() === '')) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: receipts.dir must be a non-empty string'
+    );
+  }
+
+  return { enabled: enabled ?? DEFAULT_RECEIPTS.enabled, dir };
 }
 
 // Validates the optional `models:` block, same contract as parseOrchestratorConfig.
@@ -468,6 +502,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
+      receipts: { ...DEFAULT_RECEIPTS },
     };
   }
   let parsed: unknown;
@@ -546,6 +581,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verify: parseVerifyConfig(raw.verify),
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
+    receipts: parseReceiptsConfig(raw.receipts),
     prWorktreeDir: raw.prWorktreeDir,
   };
 }

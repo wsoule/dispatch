@@ -154,7 +154,7 @@ describe('POST /api/tasks/:id/runs', () => {
       body: JSON.stringify({ executor: 'fake' }),
     });
     expect(res.status).toBe(409);
-    expect((await json(res)).error).toBe('cannot dispatch a done task');
+    expect((await json(res)).error).toBe('cannot dispatch a landed task');
   });
 
   it('409s dispatching a task whose status is cancelled', async () => {
@@ -171,7 +171,7 @@ describe('POST /api/tasks/:id/runs', () => {
       body: JSON.stringify({ executor: 'fake' }),
     });
     expect(res.status).toBe(409);
-    expect((await json(res)).error).toBe('cannot dispatch a cancelled task');
+    expect((await json(res)).error).toBe('cannot dispatch a dropped task');
   });
 
   it('dispatches with the default executor when the field is omitted', async () => {

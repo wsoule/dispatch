@@ -1,10 +1,22 @@
 import {
   ActorContext,
+  formatMigrationReport,
+  hasLegacyState,
+  importLegacyProject,
+  initProjectStores,
   isMergeDriverResolvable,
   loadConfig,
+  openProjectStores,
   TaskStore,
+  totalImported,
 } from '@dispatch/core';
-import type { CartoMode, GitReader } from '@dispatch/core';
+import type {
+  CartoMode,
+  GitReader,
+  ProjectStores,
+  TaskStoreBackend,
+  TaskStorePort,
+} from '@dispatch/core';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -28,9 +40,11 @@ import {
 } from './depmap.js';
 import { EventBus } from './events.js';
 import { FindingStore } from './findings.js';
+import type { FindingStorePort } from './findings.js';
 import { GitRepo } from './git/commands.js';
 import { InboxStore } from './inbox.js';
 import { LedgerStore } from './ledger.js';
+import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
@@ -61,7 +75,9 @@ import { VerificationRunner } from './orchestrator/verify.js';
 import { WardenManager } from './orchestrator/warden.js';
 import { ClaudeWarden } from './orchestrator/wardens/claude.js';
 import { WardenToolRegistry } from './orchestrator/wardenTools.js';
+import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
+import { readProjectBackend, writeProjectBackend } from './storage.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
 import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
 import { TrackedFilesCache } from './trackedFiles.js';
@@ -75,6 +91,11 @@ export interface ServerHandle {
   // Exposed for introspection/tests; its own 60s auto-refresh timer and
   // blocked-retry timer are started/stopped by startServer itself below.
   mergeQueue: MergeQueue;
+  // Same reason as mergeQueue below it: reachable so a test can assert on the
+  // orchestrator's own view of a project — in particular that its finding
+  // store is the backend-selected one the API writes through, which is what
+  // its blocked-finding merge gate reads.
+  orchestrator: Orchestrator;
   // Exposed for introspection/tests — e.g. calling pollOnce() directly to
   // populate cachedPrs() deterministically instead of racing its internal
   // poll timer (started/stopped by startServer itself below).
@@ -101,6 +122,11 @@ export interface StartServerOptions {
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
+  // Which backend this daemon's state lives in. Left unset it comes from
+  // `DISPATCH_STORE_BACKEND` (see `resolveStoreBackend`), which itself
+  // defaults to `files` — so production behaviour is unchanged until a
+  // project is deliberately moved. Tests pass it directly.
+  storeBackend?: TaskStoreBackend;
   // Overrides which executors get registered on the orchestrator, in place
   // of the production default (ClaudeExecutor as 'claude' only — Phase 7
   // moved FakeExecutor's registration behind bin.ts's DISPATCH_ENABLE_FAKES
@@ -151,11 +177,68 @@ export interface StartServerOptions {
   // autoCommit: true and every startServer()-based test would otherwise boot
   // a live interval.
   boardSyncPeriodicMs?: number;
+  // Debounce for the receipts exporter's response to a task change. Defaults
+  // to ReceiptsScheduler's own multi-second default; tests pass something much
+  // shorter. There is no periodic counterpart: the export has no remote to
+  // fall out of sync with, so nothing changes without a `task.changed`.
+  receiptsDebounceMs?: number;
+  // How often the receipts exporter sweeps without an event. Defaults to
+  // ReceiptsScheduler's own 5-minute default; tests pass something large
+  // enough never to fire, since every startServer()-based test on the database
+  // backend would otherwise boot a live interval.
+  receiptsSweepMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
 const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
+
+/**
+ * Which store backend a project uses.
+ *
+ * The PROJECT's own recorded choice wins over anything in the environment.
+ * That ordering is the whole point: the CLI and the MCP tools read the same
+ * marker to decide whether they may touch the store directly, so a daemon
+ * that took its answer only from `DISPATCH_STORE_BACKEND` could disagree with
+ * them — an auto-started daemon inherits whatever shell spawned it, and one
+ * without the variable would serve an empty `files` backend over a
+ * database-backed project.
+ *
+ * `DISPATCH_STORE_BACKEND` remains, but only as the way to move a project
+ * that has not recorded a choice yet; once it has, the marker is the answer.
+ * No marker and no variable means `files`, which is still every project that
+ * has not deliberately opted in: moving an existing board into the database
+ * is a migration somebody asks for, not something a daemon does to a repo
+ * because it booted there.
+ *
+ * Setting the variable on a project that already has a markdown board is now
+ * allowed, and is one of the two ways to opt in (the other is `dispatch
+ * migrate`). It used to be refused, because a fresh database opened beside a
+ * populated board left the project with two half-states — markdown nobody
+ * read and an empty database everybody did. What removes that hazard is the
+ * one-time import in `@dispatch/core`'s migrate.ts, which `startServer` runs
+ * before it serves anything: the board is copied across in one transaction,
+ * or the daemon refuses to come up.
+ *
+ * An unrecognized variable is a typo, not a third backend: log it and fall
+ * back rather than failing boot over a misspelling.
+ *
+ * Exported so bin.ts's `--init` creates the same backend this will open — a
+ * daemon that scaffolded files and then opened a database would find an empty
+ * project and report nothing wrong.
+ */
+export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
+  const recorded = readProjectBackend(rootDir);
+  if (recorded !== null) return recorded;
+  const raw = process.env.DISPATCH_STORE_BACKEND;
+  if (raw === undefined || raw === '') return 'files';
+  if (raw === 'files') return raw;
+  if (raw === 'sqlite') return raw;
+  console.error(
+    `dispatchd: unknown DISPATCH_STORE_BACKEND '${raw}', using 'files'`
+  );
+  return 'files';
+}
 
 // Rebuilds `cache` from `store`, and never lets a rebuild kill the daemon:
 // per-file parse failures are logged once each (they're also surfaced via
@@ -166,7 +249,7 @@ const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
 // scan. This runs both at boot and on every watcher-triggered change, which
 // is exactly where the reviewer reproduced a crash: a bad file must degrade
 // service, not end the process.
-function safeRebuild(store: TaskStore, cache: TaskCache): void {
+function safeRebuild(store: TaskStorePort, cache: TaskCache): void {
   try {
     const errors = cache.rebuild(store);
     for (const err of errors) {
@@ -325,10 +408,76 @@ function buildPrWorktreeManager(ctx: PrWorktreeManagerCtx): PrWorktreeManager {
 }
 
 /**
+ * The one-time import of a project's `.dispatch/` markdown and JSONL into the
+ * database it is about to be served from, run on the boot that moves it.
+ *
+ * A failure here is fatal to boot, and deliberately so. The import is one
+ * transaction, so a failure leaves the database empty and every source file
+ * untouched — which means the project's real board is still the markdown on
+ * disk. Coming up anyway would serve an empty board over it and invite writes
+ * into a database nobody meant to use yet. Refusing to start leaves the
+ * project exactly as it was, recoverable by unsetting DISPATCH_STORE_BACKEND.
+ *
+ * The report is printed in full rather than summarized to a count: it names
+ * every source that did NOT move (fix-loop state, notes and inboxes are still
+ * file-backed) and every record that could not be taken, and those are the
+ * lines somebody has to act on.
+ */
+function migrateLegacyProjectOnBoot(
+  rootDir: string,
+  stores: ProjectStores
+): boolean {
+  if (!hasLegacyState(rootDir)) return true;
+  // Deliberately NOT gated on the database already holding tasks.
+  //
+  // It used to be, and that made the import a strictly one-shot event keyed on
+  // one record type. `.dispatch/findings.jsonl` and `ledger.jsonl` are
+  // append-only files under git: a teammate's findings arrive on the next
+  // `git pull`, landing in files beside a database that already has tasks in
+  // it. The old guard saw a non-empty board and returned, so those records
+  // were never imported and never would be — and a finding that never reaches
+  // the database is invisible to the blocked-findings merge gate, which is a
+  // silent correctness failure rather than a cosmetic one.
+  //
+  // Running it on every boot is safe because the import is idempotent by
+  // construction: every insert is ON CONFLICT DO NOTHING against real ids, so
+  // a pass with nothing new to do writes nothing. It is quiet, too — the
+  // report is only printed when something actually moved or something went
+  // wrong (below), so a steady-state boot logs nothing at all.
+  let report;
+  try {
+    report = importLegacyProject(stores);
+  } catch (err) {
+    console.error(
+      `dispatchd: refusing to start — the one-time import of ${rootDir} failed and nothing was written. ` +
+        'Your task files, findings and ledger are untouched. ' +
+        `Unset DISPATCH_STORE_BACKEND to go back to the file backend. Cause: ${(err as Error).message}`
+    );
+    throw err;
+  }
+  const moved = totalImported(report);
+  if (moved > 0 || report.problems.length > 0) {
+    console.log(
+      `dispatchd: ${rootDir} still keeps state as files; imported ${moved} record(s) into the database before serving.`
+    );
+    console.log(formatMigrationReport(report));
+  }
+  // Whether it is safe to record this project as database-backed. Mirrors
+  // `runMigrate`: a problem means some record exists ONLY in the markdown, and
+  // the marker is what makes the CLI and the MCP tools stop reading those
+  // files — so writing it here would strand exactly those records.
+  return report.problems.length === 0;
+}
+
+/**
  * Boots the dispatchd HTTP + WebSocket server for one dispatch project
  * (`rootDir`): a Bun.serve instance backed by an in-memory task cache that is
- * rebuilt from `@dispatch/core`'s TaskStore on boot, after every API
- * mutation, and whenever the tasks directory changes on disk.
+ * rebuilt from the project's store on boot, after every API mutation, and —
+ * on the file backend — whenever the tasks directory changes on disk.
+ *
+ * This process is the project's single writer. It opens the store once, here,
+ * and holds it until `stop()`; the CLI and the MCP tools reach the same state
+ * through this daemon's HTTP API rather than opening a second handle on it.
  */
 export async function startServer(
   opts: StartServerOptions
@@ -344,7 +493,56 @@ export async function startServer(
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
 
-  const store = new TaskStore(rootDir);
+  // The one handle on this project's state for the life of the daemon. Every
+  // read and write below goes through `stores.tasks`, which is a
+  // `TaskStorePort` — the daemon does not care whether that is the markdown
+  // files under `.dispatch/tasks` or its own SQLite database, and nothing
+  // downstream can tell.
+  //
+  // The two backends open differently on purpose. `files` only ATTACHES:
+  // booting a daemon has never scaffolded `.dispatch/tasks`, and a project
+  // with nothing there should read as uninitialized rather than as an empty
+  // board. `sqlite` INITIALIZES, because there is no other process that
+  // could have created the database — the daemon is the only one allowed to
+  // open it, so "attach to the database someone else made" describes nobody.
+  // Attaching there instead would boot a daemon whose every write fails with
+  // "no dispatch database for <root>".
+  const backend = opts.storeBackend ?? resolveStoreBackend(rootDir);
+  const stores =
+    backend === 'sqlite'
+      ? initProjectStores({ rootDir, backend })
+      : openProjectStores({ rootDir, backend });
+  // The first boot that lands this project on the database does two things,
+  // in this order: import whatever markdown-and-JSONL state it still has, then
+  // record the choice so every other process — the CLI, the MCP tools, the
+  // next daemon started from a shell with no environment set — derives the
+  // same answer from the project rather than from its own surroundings.
+  //
+  // The order is the point. The marker is what those processes read to find
+  // the board, so writing it before the import had committed would aim them
+  // at an empty database while the real board sat in markdown beside it.
+  //
+  // The import decides for itself whether there is anything to do (it checks
+  // both for legacy files and for whether the database already holds the
+  // board), so it is called on every sqlite boot rather than gated on the
+  // marker out here. Gating on the marker is what let a cloned
+  // `storage.json` with no database beside it skip the import entirely.
+  //
+  // Only `sqlite` is ever written: an absent marker already means `files`,
+  // and writing one for every existing project would put a new file in repos
+  // that never asked for it.
+  if (backend === 'sqlite') {
+    const safeToRecord = migrateLegacyProjectOnBoot(rootDir, stores);
+    if (safeToRecord && readProjectBackend(rootDir) !== 'sqlite') {
+      writeProjectBackend(rootDir, backend);
+    } else if (!safeToRecord) {
+      console.error(
+        `dispatchd: NOT recording ${rootDir} as database-backed — some records above could not be imported and exist only in .dispatch/. ` +
+          'Leaving the marker unset keeps them reachable through the files. Fix the records listed above and restart.'
+      );
+    }
+  }
+  const store = stores.tasks;
   const cache = new TaskCache();
   safeRebuild(store, cache);
   const events = new EventBus();
@@ -356,16 +554,34 @@ export async function startServer(
   // duplicate rather than adding a suppression window: clients treat
   // `task.changed` as "go refetch" with no payload, so a duplicate refetch is
   // harmless, and the plan calls this out as the deliberately simple option.
-  const watcher = watchTasks(store.tasksDir, () => {
-    safeRebuild(store, cache);
-    events.broadcast({ type: 'task.changed' });
-  });
+  //
+  // Only the file backend has a directory to watch, and only it needs one:
+  // watching exists because a task file can change under a running daemon
+  // (a git checkout, a hand edit, the board syncer). On the database backend
+  // the daemon is the only writer by construction, so every change already
+  // comes through an API handler that rebuilds and broadcasts itself — there
+  // is no third party to notice.
+  const watcher =
+    store instanceof TaskStore
+      ? watchTasks(store.tasksDir, () => {
+          safeRebuild(store, cache);
+          events.broadcast({ type: 'task.changed' });
+        })
+      : null;
 
   // The board syncer: commits and pushes outstanding task files from a
   // private worktree, gated on config.yml's `autoCommit`. No trunk to pin to
   // (no origin/HEAD, no local main/master) means no syncer at all — logged
   // once here rather than left silent, but never fatal to boot.
-  const syncWorktree = SyncWorktree.open(rootDir, defaultGitRunner);
+  //
+  // Also file-backend-only, and for a more basic reason than the watcher: it
+  // copies task *files* into a git worktree and commits them. A
+  // database-backed project has no such files; exporting its state to git is
+  // the receipts exporter's job, not this one's.
+  const syncWorktree =
+    store instanceof TaskStore
+      ? SyncWorktree.open(rootDir, defaultGitRunner)
+      : null;
   const boardSyncScheduler =
     syncWorktree === null
       ? null
@@ -378,16 +594,52 @@ export async function startServer(
           debounceMs: opts.boardSyncDebounceMs,
           periodicMs: opts.boardSyncPeriodicMs,
         });
-  if (boardSyncScheduler === null) {
+  if (boardSyncScheduler === null && store instanceof TaskStore) {
     console.log(
       `dispatchd: no trunk resolvable for ${rootDir}; board sync disabled`
     );
   }
-  // Rides the same `task.changed` signal LinearSync's push debounce does —
+  // The receipts exporter: the database backend's counterpart to the board
+  // syncer above, and the other half of the split that comment describes. A
+  // file-backed project's task files are already committed into the user's own
+  // repo; a database-backed one has nothing in git at all until this writes it
+  // out, so this is what keeps the project auditable.
+  //
+  // Unlike the board syncer it needs no trunk and no remote — the log is a
+  // standalone repository under DISPATCH_HOME — so there is no "disabled
+  // because nothing resolvable" case to log. Whether it runs at all is
+  // config.yml's `receipts.enabled`, re-read on every pass rather than latched
+  // here.
+  const receiptsScheduler =
+    store instanceof TaskStore
+      ? null
+      : new ReceiptsScheduler({
+          rootDir,
+          stores,
+          actor: actorContext,
+          run: defaultGitRunner,
+          events,
+          debounceMs: opts.receiptsDebounceMs,
+          sweepMs: opts.receiptsSweepMs,
+        });
+  // One export before the server serves anything: it creates the log on a
+  // project turning receipts on for the first time, and reconciles one left
+  // dirty by a daemon that died mid-burst. Never fatal — a project that cannot
+  // write its receipt log still has a working board, and exportNow reports
+  // rather than throws.
+  receiptsScheduler?.exportNow();
+  // Both ride the same `task.changed` signal LinearSync's push debounce does —
   // the watcher above is one source of it, API mutation handlers are
-  // another, so an edit made through either path reaches the board.
+  // another, so an edit made through either path reaches the board and the
+  // receipt log. Exactly one of the two schedulers is ever non-null, since
+  // they are the file and database halves of the same job.
   const unsubscribeBoardSync = events.subscribe((event) => {
     if (event.type === 'task.changed') boardSyncScheduler?.notifyTaskChanged();
+    // A wider net than the board syncer's: the receipt log carries findings and
+    // ledger entries too, and those announce themselves on their own events.
+    // Keyed on `task.changed` alone, a review raising twenty findings would put
+    // nothing in the audit trail until an unrelated task edit came along.
+    if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
   });
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
@@ -405,7 +657,21 @@ export async function startServer(
   const jj = new JjManager(rootDir);
   // Shared with apiCtx below so a decision an agent records mid-run is
   // visible to buildTaskPrompt on the very next dispatch, no restart needed.
-  const ledgerStore = new LedgerStore(rootDir);
+  //
+  // Backed by the same store the tasks came from: the database's ledger table
+  // when this project has one, and `.dispatch/ledger.jsonl` otherwise. Both
+  // satisfy `LedgerStorePort`, so nothing downstream branches on which.
+  const ledgerStore: LedgerStorePort =
+    stores.records?.ledger ?? new LedgerStore(rootDir);
+  // Built here, above the Orchestrator, rather than beside ReviewRunner where
+  // it is also used: Orchestrator.blockedFindingReason is the gate that stops
+  // a run merging over an adjudicated `blocked` finding, and its context
+  // falls back to `new FindingStore(rootDir)` when none is passed. Built
+  // later, that fallback handed the orchestrator an empty JSONL store on a
+  // database-backed project — the gate read no findings and every blocked
+  // task merged. One instance, shared by everything that reads findings.
+  const findingStore: FindingStorePort =
+    stores.records?.findings ?? new FindingStore(rootDir);
 
   // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
   // it when available; the built-in scanner is the fallback. Source changes
@@ -474,6 +740,12 @@ export async function startServer(
     events,
     jj,
     ledgerStore,
+    findingStore,
+    // `null` on the file backend, where the run transcript is evidence's only
+    // home. On sqlite this is what puts commands and mutations into the
+    // database, which is what the receipts exporter materializes the git audit
+    // trail from.
+    evidenceStore: stores.records?.evidence ?? null,
     actorContext,
     digestCache,
     // Shares PrManager/MergeQueue/GitRepo's command-runner seam
@@ -708,8 +980,8 @@ export async function startServer(
   const gitRepo = new GitRepo(rootDir, opts.prCommandRunner);
 
   // Review dispatched as its own run kind. Built at boot because it subscribes
-  // to the terminal hook that ingests a review's findings.
-  const findingStore = new FindingStore(rootDir);
+  // to the terminal hook that ingests a review's findings. `findingStore` is
+  // the one built above, shared with the orchestrator's merge gate.
   // reviewComments is built above, alongside PrManager, which needs it too.
   // The working chat about code, separate from reviewComments — see ConversationStore's doc
   // comment for why the two aren't collapsed.
@@ -788,6 +1060,8 @@ export async function startServer(
     actorContext,
     tokens,
     boardSyncScheduler,
+    receiptsScheduler,
+    storeBackend: backend,
     mergeDriverOk,
   };
 
@@ -908,6 +1182,7 @@ export async function startServer(
     port,
     tokens,
     mergeQueue,
+    orchestrator,
     prManager,
     prWorktrees,
     async stop() {
@@ -915,7 +1190,7 @@ export async function startServer(
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).
       orchestrator.shutdown();
-      watcher.close();
+      watcher?.close();
       sourceWatcher.close();
       prManager.stopPolling();
       clearInterval(externalMergeTimer);
@@ -924,12 +1199,18 @@ export async function startServer(
       await linearSync.stop();
       unsubscribeBoardSync();
       boardSyncScheduler?.stop();
+      // Before stores.close() below, since the exporter reads the database.
+      receiptsScheduler?.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on
       // EventBus for why we don't also close each socket ourselves first.
       await server.stop(true);
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
+      // Last: the database handle outlives every reader above, and closing it
+      // while a request is still in flight would fail that request rather
+      // than let it finish. A no-op on the file backend.
+      stores.close();
     },
   };
 }

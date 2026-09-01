@@ -9,6 +9,7 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   loadConfig,
 } from '../src/config.js';
@@ -50,6 +51,7 @@ describe('loadConfig', () => {
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,
       repoDigest: DEFAULT_REPO_DIGEST,
+      receipts: DEFAULT_RECEIPTS,
     });
   });
   it('merges file values over defaults', () => {
@@ -355,6 +357,49 @@ describe('repoDigest config', () => {
   it('rejects a non-object block', () => {
     expect(() => loadConfig(writeConfig('repoDigest: 5\n'))).toThrow(
       /repoDigest must be an object/
+    );
+  });
+});
+
+describe('receipts config', () => {
+  it('defaults to enabled with no directory override', () => {
+    expect(loadConfig(writeConfig('statuses: [todo]\n')).receipts).toEqual({
+      enabled: true,
+      dir: undefined,
+    });
+  });
+
+  it('reads enabled and dir from the file', () => {
+    const dir = writeConfig('receipts:\n  enabled: false\n  dir: ../audit\n');
+    expect(loadConfig(dir).receipts).toEqual({
+      enabled: false,
+      dir: '../audit',
+    });
+  });
+
+  it('rejects a non-boolean enabled', () => {
+    expect(() =>
+      loadConfig(writeConfig('receipts:\n  enabled: "yes"\n'))
+    ).toThrow(/receipts\.enabled must be a boolean/);
+  });
+
+  // Empty rather than absent: falling back to the default location would write
+  // the audit trail somewhere the author did not ask for and would not look.
+  it('rejects an empty dir instead of falling back to the default', () => {
+    expect(() => loadConfig(writeConfig('receipts:\n  dir: "   "\n'))).toThrow(
+      /receipts\.dir must be a non-empty string/
+    );
+  });
+
+  it('rejects a non-string dir', () => {
+    expect(() => loadConfig(writeConfig('receipts:\n  dir: 5\n'))).toThrow(
+      /receipts\.dir must be a non-empty string/
+    );
+  });
+
+  it('rejects a non-object block', () => {
+    expect(() => loadConfig(writeConfig('receipts: 5\n'))).toThrow(
+      /receipts must be an object/
     );
   });
 

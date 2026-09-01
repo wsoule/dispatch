@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -8,9 +9,10 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
-import { generateTaskId } from './ids.js';
+import { generateTaskId, isTaskId } from './ids.js';
 import { slugify } from './slug.js';
 import { canonicalStatus } from './status.js';
+import type { TaskStoreBackend } from './storeBackend.js';
 import {
   appendActivity,
   appendAmendment,
@@ -118,7 +120,250 @@ export interface ListSafeResult {
   errors: ListSafeError[];
 }
 
-export class TaskStore {
+/**
+ * The backend-neutral task surface, extracted so a second backend can sit
+ * behind it: `TaskStore` (markdown files under `.dispatch/tasks`) and
+ * `SqliteTaskStore` (a single daemon-owned database) both satisfy it, and
+ * picking between them is a construction-time choice — see
+ * `openProjectStores` in storeBackend.ts.
+ *
+ * Filesystem-only members are deliberately left off: `tasksDir` and
+ * `taskFilePath` have no answer in a database-backed project, so a caller
+ * that needs a path on disk has to hold a concrete `TaskStore`, not a port.
+ */
+export interface TaskStorePort {
+  readonly rootDir: string;
+  isInitialized(): boolean;
+  create(input: CreateInput, now?: string): TaskDoc;
+  get(id: string): TaskDoc | null;
+  list(filter?: ListFilter): TaskDoc[];
+  listSafe(filter?: ListFilter): ListSafeResult;
+  update(id: string, patch: UpdatePatch, now?: string): TaskDoc;
+  amend(id: string, input: Omit<Amendment, 'date'>, now?: string): TaskDoc;
+  remove(id: string): boolean;
+}
+
+/**
+ * The TaskDoc a freshly created task starts as — every default in one place.
+ *
+ * Shared by both backends rather than written out twice. The defaults here
+ * (`status: 'todo'`, `priority: 'none'`, `selfReview: true`, the absent-vs-
+ * false handling of `fixLoop`, the body template) ARE the contract for what a
+ * new task looks like, so a copy per backend is a copy that can drift — and a
+ * task created against one backend would quietly differ from the same task
+ * created against the other.
+ *
+ * Pure: the caller supplies the id, since minting one is the part the two
+ * backends genuinely do differently (a filename probe versus an insert that
+ * may lose a race).
+ */
+export function newTaskDoc(
+  id: string,
+  kind: TaskKind,
+  input: CreateInput,
+  now: string
+): TaskDoc {
+  const meta: TaskMeta = {
+    id,
+    title: input.title,
+    status: canonicalStatus(input.status ?? 'ready'),
+    kind,
+    parent: input.parent ?? null,
+    milestone: input.milestone ?? null,
+    blockedBy: input.blockedBy ?? [],
+    labels: input.labels ?? [],
+    priority: input.priority ?? 'none',
+    assignee: input.assignee ?? 'none',
+    created: now,
+    updated: now,
+    external: null,
+    selfReview: input.selfReview ?? true,
+    ...(input.fixLoop === false ? { fixLoop: false } : {}),
+    writes: input.writes ?? [],
+    risk: input.risk ?? 'routine',
+    model: input.model ?? null,
+    exercised: false,
+    ...(input.derivedFrom === undefined
+      ? {}
+      : { derivedFrom: input.derivedFrom }),
+  };
+  // The initial description is caller-supplied, so it's escaped the same
+  // way setSection escapes a later edit to the same section.
+  const description = escapeHeadingLines(input.description ?? '');
+  const body = `\n## Description\n\n${description}\n\n## Acceptance Criteria\n\n## Activity\n`;
+  return { meta, body };
+}
+
+/**
+ * Applies an `UpdatePatch` to an existing doc, producing the next one.
+ *
+ * The other half of the create/update contract both backends have to agree
+ * on: which patch keys target the markdown body rather than the frontmatter,
+ * that `undefined` means "leave alone" while `null` on `archivedAt` means
+ * "clear", and that a whole-body replacement is the base later section edits
+ * apply to. Shared for the same reason as `newTaskDoc` — this is behaviour,
+ * not plumbing, and two copies of it can disagree.
+ *
+ * Pure: persisting the result is the caller's job.
+ */
+export function applyUpdatePatch(
+  doc: TaskDoc,
+  patch: UpdatePatch,
+  now: string
+): TaskDoc {
+  // body/description/acceptanceCriteria/appendActivity target the markdown
+  // body, not the frontmatter, so they're pulled out before the meta spread
+  // below.
+  const {
+    appendActivity: activityLine,
+    activityActor,
+    description,
+    acceptanceCriteria,
+    body: wholeBody,
+    archivedAt,
+    ...patchFields
+  } = patch;
+  // Drop undefined entries so a partial patch never blanks existing fields.
+  const fields = Object.fromEntries(
+    Object.entries(patchFields).filter(([, v]) => v !== undefined)
+  );
+  const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
+  // Write boundary for the status alias layer: an API caller (or old UI)
+  // speaking a pre-rename name lands in canonical form.
+  meta.status = canonicalStatus(meta.status);
+  // archivedAt is string|undefined on TaskMeta, so null (clear) is handled
+  // separately rather than spread in like the other fields.
+  if (archivedAt === null) delete meta.archivedAt;
+  else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
+  // A whole-body replacement is the new base the section edits below apply
+  // to, so a patch carrying both `body` and `description` lands the rewrite
+  // first and then the section edit on top of it, rather than depending on
+  // which field the caller happened to set.
+  let body = wholeBody === undefined ? doc.body : normalizeBody(wholeBody);
+  if (description !== undefined)
+    body = setSection(body, 'Description', description);
+  if (acceptanceCriteria !== undefined)
+    body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
+  if (activityLine) body = appendActivity(body, activityLine, activityActor);
+  return { meta, body };
+}
+
+// Writes the starter `.dispatch/config.yml` if the project has none. Config
+// stays a plain committable file whichever backend holds the tasks, so both
+// initializers call this rather than each spelling out the default.
+export function ensureProjectConfig(rootDir: string): void {
+  const dir = join(rootDir, DISPATCH_DIR);
+  mkdirSync(dir, { recursive: true });
+  const cfg = join(dir, 'config.yml');
+  if (!existsSync(cfg)) writeFileSync(cfg, DEFAULT_CONFIG);
+}
+
+// What `.dispatch/.gitignore` excludes, per backend.
+//
+// `dispatch.db` is the entry that matters and the one that was missing: until
+// now nothing shipped an ignore rule for it to a user's project. Dispatch's
+// own repo has one, hand-written in its root .gitignore, which is exactly why
+// the gap stayed invisible — every developer working ON dispatch was covered
+// and every project using it was not. A migrated project would commit its
+// database, its `-wal` and its `-shm` on the next `git add .`.
+//
+// The three sqlite-only entries are the state that has no table yet, so the
+// daemon still writes it here as files on both backends. On `files` they stay
+// committable: git is that backend's sync layer, and a teammate's inbox
+// arriving with a pull is the behaviour those projects already have. On
+// `sqlite` git is no longer the sync layer, so they are local working state
+// and committing them only produces churn.
+//
+// `storage.json` is ignored too, and that is a decided trade-off rather than
+// an oversight (t-880ce2). Committing the marker is the more attractive idea —
+// it would tell a fresh clone "this board is in a database, restore it from
+// the receipt log" instead of leaving the project looking uninitialized. But
+// the database it names is per-machine and is NOT in the clone, so a committed
+// marker produces a project that insists its board lives somewhere that does
+// not exist: the daemon serves an empty board while the CLI and MCP, reading
+// the same marker, refuse to fall back to any files they can see. An
+// uninitialized-looking clone is recoverable; a confidently-empty one is the
+// trap. Keep this in step with the boot import in server/src/index.ts, which
+// exists precisely to repair a project that arrives in that state.
+const IGNORE_HEADER = `# Written by dispatch. Add your own entries below; dispatch only ever
+# appends the lines it needs and never rewrites this file.`;
+
+/** Rules plus the comment that explains them, kept together so a top-up that
+ *  appends one never appends the other on its own. */
+interface IgnoreGroup {
+  comments: string[];
+  rules: string[];
+}
+
+const MACHINE_LOCAL_GROUP: IgnoreGroup = {
+  comments: [
+    "# The daemon's database is per-machine state, never committable, and",
+    '# neither is the marker naming it — a clone carrying the marker without',
+    '# the database reads as a board that is confidently empty.',
+  ],
+  rules: ['dispatch.db', 'dispatch.db-wal', 'dispatch.db-shm', 'storage.json'],
+};
+
+const DAEMON_STATE_GROUP: IgnoreGroup = {
+  comments: [
+    '# Daemon working state that has no database table yet, so it is still',
+    '# written here as files rather than held in dispatch.db.',
+  ],
+  rules: ['fix-loops.jsonl', 'notes.json', 'inbox/'],
+};
+
+function ignoreGroupsFor(backend: TaskStoreBackend): IgnoreGroup[] {
+  return backend === 'sqlite'
+    ? [MACHINE_LOCAL_GROUP, DAEMON_STATE_GROUP]
+    : [MACHINE_LOCAL_GROUP];
+}
+
+/**
+ * Writes (or tops up) `.dispatch/.gitignore` so a project never commits the
+ * state the daemon owns.
+ *
+ * Additive, never a rewrite: an existing file keeps everything in it and only
+ * gains the rules it is missing. A user who pinned an extra path here, or
+ * deliberately un-ignored one of ours by deleting the line, would otherwise
+ * have that undone on the next `dispatch init` — and silently, since nothing
+ * about running init suggests it edits files you already have.
+ *
+ * A group is appended only when one of its RULES is missing, never because its
+ * comment is: a project that moves to the database has the machine-local rules
+ * already, and re-appending their explanation every time would grow a comment
+ * block on every init.
+ */
+export function ensureProjectGitignore(
+  rootDir: string,
+  backend: TaskStoreBackend
+): void {
+  const dir = join(rootDir, DISPATCH_DIR);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, '.gitignore');
+  const groups = ignoreGroupsFor(backend);
+  if (!existsSync(path)) {
+    const body = groups.flatMap((group, index) => [
+      ...(index === 0 ? [] : ['']),
+      ...group.comments,
+      ...group.rules,
+    ]);
+    writeFileSync(path, `${[IGNORE_HEADER, ...body].join('\n')}\n`);
+    return;
+  }
+  const existing = new Set(
+    readFileSync(path, 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+  );
+  const additions = groups.flatMap((group) => {
+    const missing = group.rules.filter((rule) => !existing.has(rule));
+    return missing.length === 0 ? [] : ['', ...group.comments, ...missing];
+  });
+  if (additions.length === 0) return;
+  appendFileSync(path, `${additions.join('\n')}\n`);
+}
+
+export class TaskStore implements TaskStorePort {
   readonly tasksDir: string;
 
   constructor(readonly rootDir: string) {
@@ -128,8 +373,7 @@ export class TaskStore {
   static init(rootDir: string): TaskStore {
     const store = new TaskStore(rootDir);
     mkdirSync(store.tasksDir, { recursive: true });
-    const cfg = join(rootDir, DISPATCH_DIR, 'config.yml');
-    if (!existsSync(cfg)) writeFileSync(cfg, DEFAULT_CONFIG);
+    ensureProjectConfig(rootDir);
     return store;
   }
 
@@ -144,35 +388,7 @@ export class TaskStore {
       id = generateTaskId(kind, input.title, now);
     }
     if (this.taskFilePath(id)) throw new Error(`id collision persisted: ${id}`);
-    const meta: TaskMeta = {
-      id,
-      title: input.title,
-      status: canonicalStatus(input.status ?? 'ready'),
-      kind,
-      parent: input.parent ?? null,
-      milestone: input.milestone ?? null,
-      blockedBy: input.blockedBy ?? [],
-      labels: input.labels ?? [],
-      priority: input.priority ?? 'none',
-      assignee: input.assignee ?? 'none',
-      created: now,
-      updated: now,
-      external: null,
-      selfReview: input.selfReview ?? true,
-      ...(input.fixLoop === false ? { fixLoop: false } : {}),
-      writes: input.writes ?? [],
-      risk: input.risk ?? 'routine',
-      model: input.model ?? null,
-      exercised: false,
-      ...(input.derivedFrom === undefined
-        ? {}
-        : { derivedFrom: input.derivedFrom }),
-    };
-    // The initial description is caller-supplied, so it's escaped the same
-    // way setSection escapes a later edit to the same section.
-    const description = escapeHeadingLines(input.description ?? '');
-    const body = `\n## Description\n\n${description}\n\n## Acceptance Criteria\n\n## Activity\n`;
-    const doc: TaskDoc = { meta, body };
+    const doc = newTaskDoc(id, kind, input, now);
     writeFileSync(
       join(this.tasksDir, `${id}-${slugify(input.title)}.md`),
       serializeTaskFile(doc)
@@ -247,41 +463,7 @@ export class TaskStore {
     const file = this.taskFilePath(id);
     if (!file) throw new Error(`task not found: ${id}`);
     const doc = parseTaskFile(readFileSync(file, 'utf8'), file);
-    // body/description/acceptanceCriteria/appendActivity target the markdown
-    // body, not the frontmatter, so they're pulled out before the meta spread
-    // below.
-    const {
-      appendActivity: activityLine,
-      activityActor,
-      description,
-      acceptanceCriteria,
-      body: wholeBody,
-      archivedAt,
-      ...patchFields
-    } = patch;
-    // Drop undefined entries so a partial patch never blanks existing fields.
-    const fields = Object.fromEntries(
-      Object.entries(patchFields).filter(([, v]) => v !== undefined)
-    );
-    const meta: TaskMeta = { ...doc.meta, ...fields, updated: now };
-    // Write boundary for the status alias layer: an API caller (or old UI)
-    // speaking a pre-rename name lands in canonical form.
-    meta.status = canonicalStatus(meta.status);
-    // archivedAt is string|undefined on TaskMeta, so null (clear) is handled
-    // separately rather than spread in like the other fields.
-    if (archivedAt === null) delete meta.archivedAt;
-    else if (archivedAt !== undefined) meta.archivedAt = archivedAt;
-    // A whole-body replacement is the new base the section edits below apply
-    // to, so a patch carrying both `body` and `description` lands the rewrite
-    // first and then the section edit on top of it, rather than depending on
-    // which field the caller happened to set.
-    let body = wholeBody === undefined ? doc.body : normalizeBody(wholeBody);
-    if (description !== undefined)
-      body = setSection(body, 'Description', description);
-    if (acceptanceCriteria !== undefined)
-      body = setSection(body, 'Acceptance Criteria', acceptanceCriteria);
-    if (activityLine) body = appendActivity(body, activityLine, activityActor);
-    const next: TaskDoc = { meta, body };
+    const next = applyUpdatePatch(doc, patch, now);
     writeFileSync(file, serializeTaskFile(next));
     return next;
   }
@@ -313,7 +495,7 @@ export class TaskStore {
   }
 
   taskFilePath(id: string): string | null {
-    if (!/^[te]-[0-9a-f]{6}$/.test(id)) return null;
+    if (!isTaskId(id)) return null;
     if (!this.isInitialized()) return null;
     const hit = readdirSync(this.tasksDir).find(
       (f) => f === `${id}.md` || f.startsWith(`${id}-`)

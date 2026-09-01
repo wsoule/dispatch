@@ -8,7 +8,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { type CliContext, CliError } from '../context.js';
-import { requireStore } from './task.js';
+import { requireInitialized } from './task.js';
 
 // ---------------------------------------------------------------------------
 // Daemon-file discovery
@@ -218,11 +218,22 @@ export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
   openBrowserFor(ctx, `http://127.0.0.1:${port}`);
 }
 
+// A stale daemon file can name a port some OTHER process now holds — one that
+// accepts the connection and then simply never answers. Without a deadline the
+// probe inherits fetch's default (effectively none), so `dispatch task list`
+// hangs indefinitely on a port that has nothing to do with dispatch. A health
+// check is the one request that must never be the slow thing.
+const HEALTH_TIMEOUT_MS = 2000;
+
 async function isHealthy(port: number): Promise<boolean> {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
     return res.ok;
   } catch {
+    // Includes the timeout abort: a port that accepts and stalls is exactly
+    // as unhealthy as one that refuses.
     return false;
   }
 }
@@ -392,7 +403,13 @@ export function registerDaemonCommands(
     .description('Run dispatchd (REST + WebSocket + web UI) in the foreground')
     .option('--port <n>', 'port to listen on (default: ephemeral)')
     .action((opts: { port?: string }) => {
-      requireStore(ctx);
+      // requireInitialized, NOT requireStore: the latter demands
+      // `.dispatch/tasks`, which a database-backed project does not have and
+      // never will. Gating on it made this command refuse to start the daemon
+      // in exactly the projects that CANNOT be used without one — the CLI
+      // sends them here ("Start it with: dispatch serve") and this sent them
+      // back with "not initialized".
+      requireInitialized(ctx);
       const launcher = resolveDaemonLauncher();
       const args = [...launcher.leadingArgs, '--root', ctx.cwd];
       if (opts.port !== undefined) args.push('--port', opts.port);
@@ -419,7 +436,8 @@ export function registerDaemonCommands(
     .description('Open the dispatch web UI, starting dispatchd if needed')
     .option('--port <n>', 'port to use when starting dispatchd')
     .action(async (opts: { port?: string }) => {
-      requireStore(ctx);
+      // Same reason as `serve` above.
+      requireInitialized(ctx);
       const { port } = await ensureDaemon(ctx, { port: opts.port });
       openBrowserFor(ctx, `http://127.0.0.1:${port}`);
     });

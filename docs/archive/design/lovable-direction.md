@@ -83,6 +83,12 @@ Lovable uses code.storage as a bucket for generated apps that have no repo.
 Dispatch's entire thesis is already the thing Pierre sells: tasks are markdown
 files, git is the sync layer and the history. The mapping is direct —
 
+> Superseded in part on 2026-08-22 by the storage-spine epic (e-99e113): a
+> project can now keep its tasks in a daemon-owned database, where git is a
+> receipt log rather than the sync layer. The mapping below still holds — the
+> receipt log is a git repository — but "task file as source of truth" is now
+> "task row, exported to a task file".
+
 | Dispatch concept                             | code.storage primitive           |
 | -------------------------------------------- | -------------------------------- |
 | worktree per run                             | ephemeral branch                 |

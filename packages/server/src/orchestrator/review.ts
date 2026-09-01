@@ -9,15 +9,15 @@ import type {
   MutationEvidence,
   TaskDoc,
   TaskRisk,
-  TaskStore,
+  TaskStorePort,
 } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
-import type { FindingStore } from '../findings.js';
-import type { LedgerStore } from '../ledger.js';
+import type { FindingStorePort } from '../findings.js';
+import type { LedgerStorePort } from '../ledger.js';
 import type { ReviewCommentStore } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
 import type { Orchestrator } from './orchestrator.js';
@@ -786,9 +786,9 @@ export interface DepMapProvider {
 
 export interface ReviewRunnerContext {
   rootDir: string;
-  store: TaskStore;
-  findingStore: FindingStore;
-  ledgerStore: LedgerStore;
+  store: TaskStorePort;
+  findingStore: FindingStorePort;
+  ledgerStore: LedgerStorePort;
   depMap: DepMapProvider;
   events: EventBus;
   orchestrator: Orchestrator;

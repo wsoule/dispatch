@@ -68,11 +68,22 @@ export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
 // on-stop cleanup in daemonfile.ts's `removeDaemonFile`), so a file existing
 // is only ever a hint — this is the actual liveness check, matching the
 // CLI's own `isHealthy`.
+// A stale daemon file can name a port some OTHER process now holds — one that
+// accepts the connection and then simply never answers. Without a deadline the
+// probe inherits fetch's default (effectively none), so `dispatch task list`
+// hangs indefinitely on a port that has nothing to do with dispatch. A health
+// check is the one request that must never be the slow thing.
+const HEALTH_TIMEOUT_MS = 2000;
+
 export async function isDaemonHealthy(port: number): Promise<boolean> {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
     return res.ok;
   } catch {
+    // Includes the timeout abort: a port that accepts and stalls is exactly
+    // as unhealthy as one that refuses.
     return false;
   }
 }
@@ -85,4 +96,186 @@ export function daemonAuth(daemon: DaemonFileInfo): Record<string, string> {
   return token === undefined || token === ''
     ? {}
     : { authorization: `Bearer ${token}` };
+}
+
+// ---------------------------------------------------------------------------
+// Daemon proxying — how every task tool reaches this project's state.
+//
+// dispatchd is the single writer for a project (task t-c6dbd3): it holds the
+// store open and every other process asks it rather than opening a second
+// handle. These helpers are the small HTTP surface the tools in tools.ts use
+// to do that, kept here beside daemon discovery so a tool body reads as one
+// request rather than four lines of plumbing.
+// ---------------------------------------------------------------------------
+
+/** A reachable daemon, plus what its health probe already told us. */
+export interface LiveDaemon {
+  info: DaemonFileInfo;
+  /** Files the daemon's last cache rebuild could not parse. */
+  problems: string[];
+}
+
+/**
+ * A daemon that exists, answers `/api/health`, AND carries a token we can
+ * present — or null.
+ *
+ * The token check is not cosmetic. A daemon file written before two-tier auth
+ * has no `agentToken`, and such a daemon still passes the health probe
+ * (`/api/health` is the one open route). Routing to it on that basis committed
+ * every following call to a daemon that would answer 401, with the local
+ * fallback already skipped. Treating it as not-routable sends those calls
+ * down the file path instead, which is exactly where they went before this
+ * daemon existed.
+ *
+ * The health body is returned rather than discarded: the probe is a GET of
+ * `/api/health`, which is also where the store's parse problems live, so
+ * every caller that would otherwise fetch it a second time to fill in
+ * `problems` gets them from the request already being made.
+ */
+export async function liveDaemon(rootDir: string): Promise<LiveDaemon | null> {
+  const daemon = readDaemonFile(rootDir);
+  if (daemon === null) return null;
+  if (daemon.agentToken === undefined || daemon.agentToken === '') return null;
+  try {
+    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/health`, {
+      headers: daemonAuth(daemon),
+    });
+    if (!res.ok) return null;
+    const body = (await res.json().catch(() => ({}))) as {
+      problems?: string[];
+    };
+    return { info: daemon, problems: body.problems ?? [] };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether this project's state lives in a database only the daemon may open.
+ *
+ * This is the line between "the daemon is down, read the files yourself" and
+ * "the daemon is down, and there is nothing you may safely do". On the file
+ * backend a direct read is just a second reader of the same markdown, which
+ * is what every tool here did before the daemon existed. On the database
+ * backend it would be a second process opening a file another process holds a
+ * write transaction over — precisely what single-writer exists to prevent —
+ * so the tools refuse instead of falling back.
+ *
+ * Read from the project's recorded choice, NOT from whether a `dispatch.db`
+ * happens to exist. A stray or half-created database file would otherwise
+ * lock every tool out of a project whose tasks are really still in markdown,
+ * with no way to say otherwise — existence is not ownership. The daemon
+ * writes this marker when a project moves to the database; see
+ * packages/server/src/storage.ts, which owns the format and explains why this
+ * reader is duplicated rather than shared.
+ */
+export function daemonOwnsStore(rootDir: string): boolean {
+  return readProjectBackend(rootDir) === 'sqlite';
+}
+
+/**
+ * The backend a project recorded for itself, or null when it never recorded
+ * one — which means markdown files, the pre-marker default. Corrupt or
+ * unrecognized content reads as null for the same reason `readDaemonFile`
+ * treats a truncated file as absent: a mangled file should degrade to the old
+ * behaviour, never turn a tool call into a hard error.
+ */
+function readProjectBackend(rootDir: string): 'files' | 'sqlite' | null {
+  const path = join(rootDir, '.dispatch', 'storage.json');
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+      backend?: unknown;
+    };
+    return parsed.backend === 'sqlite' || parsed.backend === 'files'
+      ? parsed.backend
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Thrown by `daemonRequest` when the daemon could not be reached at all — the
+ * connection was refused, reset, or never established.
+ *
+ * Distinct from `DaemonHttpError`, and the distinction is what callers act on:
+ * an HTTP error means a daemon answered and disagreed, so its wording is the
+ * answer. This means nobody answered, which is recoverable — a file-backed
+ * project can just read the files instead. Without a type for it, a daemon
+ * that died between the health probe and the request surfaced to the agent as
+ * a bare `TypeError: fetch failed`, which names neither the cause nor the fix.
+ */
+export class DaemonUnreachableError extends Error {
+  constructor(
+    readonly port: number,
+    cause: string
+  ) {
+    super(
+      `dispatchd stopped responding on port ${port} (${cause}). It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve`
+    );
+    this.name = 'DaemonUnreachableError';
+  }
+}
+
+/** Thrown by `daemonRequest` when the daemon answered with a non-2xx status. */
+export class DaemonHttpError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message);
+    this.name = 'DaemonHttpError';
+  }
+}
+
+/**
+ * One authenticated request to a daemon, returning its parsed JSON body.
+ *
+ * Throws `DaemonHttpError` for a non-2xx (carrying the daemon's own `error`
+ * text when it sent one, so a tool can surface the server's wording rather
+ * than a bare status), and whatever fetch throws for a transport failure —
+ * callers distinguish the two, because a 404 is an answer and a dropped
+ * connection is not.
+ */
+export async function daemonRequest<T>(
+  daemon: DaemonFileInfo,
+  path: string,
+  init?: RequestInit
+): Promise<T> {
+  // Merged through `Headers` rather than an object spread: `HeadersInit` is
+  // allowed to be a `string[][]`, and spreading an array into an object
+  // yields `{0: [...], 1: [...]}` — silently dropping every header a caller
+  // passed that way. Same construction the CLI's own `request` uses.
+  const headers = new Headers(init?.headers);
+  for (const [key, value] of Object.entries(daemonAuth(daemon))) {
+    headers.set(key, value);
+  }
+  // A transport failure becomes `DaemonUnreachableError` rather than escaping
+  // as fetch's own TypeError: there is a real gap between `liveDaemon`'s health
+  // probe and this call, and a daemon that exits inside it is a normal event
+  // (a restart, a crash, someone closing the app), not a programming error.
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${daemon.port}${path}`, {
+      ...init,
+      headers,
+    });
+  } catch (err) {
+    throw new DaemonUnreachableError(daemon.port, (err as Error).message);
+  }
+  if (!res.ok) {
+    const body = (await res.json().catch(() => ({}))) as { error?: string };
+    throw new DaemonHttpError(res.status, body.error ?? `HTTP ${res.status}`);
+  }
+  return (await res.json()) as T;
+}
+
+/** A JSON-bodied request init, matching the CLI's own `jsonBody` helper. */
+export function daemonJsonBody(method: string, value: unknown): RequestInit {
+  return {
+    method,
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(value),
+  };
 }

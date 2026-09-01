@@ -4,14 +4,14 @@ import type {
   EscalationStep,
   Finding,
   TaskDoc,
-  TaskStore,
+  TaskStorePort,
 } from '@dispatch/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
-import type { FindingStore } from '../findings.js';
+import type { FindingStorePort } from '../findings.js';
 import type { Orchestrator } from './orchestrator.js';
 import { untrustedBlock, untrustedFenced, untrustedInline } from './prompt.js';
 import type { ReviewRunner } from './review.js';
@@ -278,12 +278,12 @@ export function buildFixPrompt(input: FixPromptInput): string {
 
 export interface FixLoopContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
   reviewRunner: ReviewRunner;
-  findingStore: FindingStore;
+  findingStore: FindingStorePort;
   fixLoopStore: FixLoopStore;
   // Optional, same "tests may omit it" contract as OrchestratorContext's own
   // field — blockTask() below falls back to an unattributed Activity line
