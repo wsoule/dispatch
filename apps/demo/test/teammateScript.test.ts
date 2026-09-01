@@ -16,7 +16,7 @@ describe('teammate actions', () => {
     expect(log).toContain('add task'); // addTaskIn's commit message
   });
 
-  test('conflictOn moves the task to in-progress on origin', () => {
+  test('conflictOn moves the task to working on origin', () => {
     const paths = seedSession(mkdtempSync(join(tmpdir(), 'demo-tm2-')));
     conflictOn(paths, 't-58cc03');
     const show = git(
@@ -24,6 +24,6 @@ describe('teammate actions', () => {
       'show',
       'main:.dispatch/tasks/t-58cc03-rank-exact-sku-matches-above-fuzzy.md'
     );
-    expect(show).toContain('status: in-progress');
+    expect(show).toContain('status: working');
   });
 });
