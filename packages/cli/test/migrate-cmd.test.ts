@@ -1,10 +1,15 @@
-import { dispatchDbPath, TaskStore } from '@dispatch/core';
+import {
+  dispatchDbPath,
+  loadConfig,
+  receiptLogDir,
+  TaskStore,
+} from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { runMigrate } from '../src/commands/migrate.js';
+import { runMigrate, runRetire } from '../src/commands/migrate.js';
 import type { CliContext } from '../src/context.js';
 
 // `dispatch migrate` is the opt-in half of the one-time import — the other is
@@ -94,3 +99,62 @@ describe('dispatch migrate', () => {
     expect(existsSync(dispatchDbPath(root))).toBe(false);
   });
 });
+
+describe('dispatch migrate --retire', () => {
+  // The retirement logic and all its coverage guards live in @dispatch/core
+  // (retire.test.ts). What matters here is the terminal around it: that the
+  // flag reaches the right function, and that its refusals reach the user as
+  // clean CliErrors rather than raw throws.
+
+  it('refuses on a project that never moved to the database', async () => {
+    seedBoard();
+    await expect(runRetire(ctx, false)).rejects.toThrow(
+      /still keeps its tasks as files/
+    );
+    expect(existsSync(join(root, '.dispatch', 'tasks'))).toBe(true);
+  });
+
+  it('refuses when the project has no receipt log yet', async () => {
+    seedBoard();
+    await runMigrate(ctx, false);
+    // Migrated, but no daemon has ever exported receipts under the fake home.
+    await expect(runRetire(ctx, false)).rejects.toThrow(/no receipt log at/);
+    expect(existsSync(join(root, '.dispatch', 'tasks'))).toBe(true);
+  });
+
+  it('retires the board once the receipt log covers it', async () => {
+    seedBoard();
+    await runMigrate(ctx, false);
+    exportReceiptLogByHand();
+
+    const report = await runRetire(ctx, false);
+
+    expect(report).toContain('Retired legacy state');
+    expect(existsSync(join(root, '.dispatch', 'tasks'))).toBe(false);
+    // The committable config is what survives.
+    expect(existsSync(join(root, '.dispatch', 'config.yml'))).toBe(true);
+  });
+
+  it('deletes nothing on a dry run', async () => {
+    seedBoard();
+    await runMigrate(ctx, false);
+    exportReceiptLogByHand();
+
+    const report = await runRetire(ctx, true);
+
+    expect(report).toContain('Would retire');
+    expect(existsSync(join(root, '.dispatch', 'tasks'))).toBe(true);
+  });
+});
+
+// Stands in for the daemon's receipts exporter: copies the project's own
+// `.dispatch` board into the receipt-log directory core resolves for this
+// root. The real exporter writes the same layout (that is the point of the
+// receipt format), so this is enough to satisfy the coverage check without
+// booting a daemon.
+function exportReceiptLogByHand(): void {
+  const dir = receiptLogDir(root, loadConfig(root));
+  cpSync(join(root, '.dispatch'), join(dir, '.dispatch'), {
+    recursive: true,
+  });
+}

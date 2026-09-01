@@ -289,7 +289,12 @@ function countInboxItems(rootDir: string): number {
   return items;
 }
 
-function retainedSources(rootDir: string): RetainedSource[] {
+/**
+ * Exported for retire.ts, which has to print the same list for the opposite
+ * reason: the import names these to say "not moved", and the retirement names
+ * them to say "not deleted, because nothing else holds them".
+ */
+export function retainedSources(rootDir: string): RetainedSource[] {
   return [
     {
       source: `${DISPATCH_DIR}/fix-loops.jsonl`,

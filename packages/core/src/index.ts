@@ -67,6 +67,7 @@ export {
   applyUpdatePatch,
   DISPATCH_DIR,
   ensureProjectConfig,
+  ensureProjectGitignore,
   newTaskDoc,
   TaskStore,
 } from './store.js';
@@ -106,6 +107,12 @@ export type {
   RetainedSource,
   RowCounts,
 } from './migrate.js';
+export {
+  formatRetireReport,
+  receiptLogDir,
+  retireLegacySources,
+} from './retire.js';
+export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
 export { materializeReceipts, restoreReceipts } from './receipts.js';
 export type {
   ReceiptsExport,

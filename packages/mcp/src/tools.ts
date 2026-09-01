@@ -22,6 +22,7 @@ import {
   daemonJsonBody,
   daemonOwnsStore,
   daemonRequest,
+  DaemonUnreachableError,
   isDaemonHealthy,
   liveDaemon,
   readDaemonFile,
@@ -275,7 +276,12 @@ async function wrapAsync(fn: () => Promise<ToolOutcome>): Promise<ToolOutcome> {
     if (
       err instanceof ToolError ||
       err instanceof ConfigError ||
-      err instanceof DaemonHttpError
+      err instanceof DaemonHttpError ||
+      // A write cannot be retried locally — the request may have reached the
+      // daemon before the connection dropped — so it reports the real cause
+      // instead of a bare `TypeError: fetch failed`. Reads fall back to the
+      // files before they ever get here (see taskList/taskGet/taskNext).
+      err instanceof DaemonUnreachableError
     ) {
       return toolError(err.message);
     }
@@ -400,6 +406,16 @@ function callingRunId(): string | undefined {
 // store problems `task_list`/`task_next` promise. Fetched together rather
 // than in sequence: they are two independent localhost GETs, so paying for
 // one round trip instead of two costs nothing but a Promise.all.
+
+// Re-throws anything that is not a recoverable "daemon vanished", and
+// re-throws even that when the project is database-backed — there, the files
+// the caller is about to fall back to do not exist, so continuing would report
+// an empty board as the truth.
+function rethrowIfNoFiles(err: unknown, projRoot: string): void {
+  if (!(err instanceof DaemonUnreachableError)) throw err;
+  if (daemonOwnsStore(projRoot)) throw err;
+}
+
 // The task docs behind `path`. `problems` came from the health probe that
 // decided this daemon was reachable in the first place (see `liveDaemon`),
 // so a list costs exactly one request.
@@ -434,11 +450,20 @@ async function taskList(
     // than making "is a daemon running?" quietly change what it returns.
     query.set('archived', '1');
     const suffix = `?${query.toString()}`;
-    const docs = await daemonDocs(route.daemon, `/api/tasks${suffix}`);
-    return toolResult({
-      tasks: docs.map(toSummary),
-      problems: route.problems,
-    });
+    try {
+      const docs = await daemonDocs(route.daemon, `/api/tasks${suffix}`);
+      return toolResult({
+        tasks: docs.map(toSummary),
+        problems: route.problems,
+      });
+    } catch (err) {
+      // The daemon died between the health probe and this read. A read is
+      // safely repeatable and the files are right there, so fall through to
+      // them rather than failing the call — unless the database owns the
+      // store, where there are no files to fall back to and `rethrowIfNoFiles`
+      // surfaces the real cause.
+      rethrowIfNoFiles(err, route.configRoot);
+    }
   }
 
   const store = requireStore(rootDir);
@@ -609,11 +634,17 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
     // `/api/tasks/ready` applies core's own readyTasks() to the daemon's
     // cache, so this is the same graph rule the local branch below runs —
     // not a second implementation of it.
-    const docs = await daemonDocs(route.daemon, '/api/tasks/ready');
-    return toolResult({
-      tasks: docs.map(toSummary),
-      problems: route.problems,
-    });
+    try {
+      const docs = await daemonDocs(route.daemon, '/api/tasks/ready');
+      return toolResult({
+        tasks: docs.map(toSummary),
+        problems: route.problems,
+      });
+    } catch (err) {
+      // Same reasoning as task_list: a dead daemon must not cost a read that
+      // the files can answer.
+      rethrowIfNoFiles(err, route.configRoot);
+    }
   }
 
   const store = requireStore(rootDir);
@@ -626,9 +657,9 @@ async function taskNext(rootDir: string): Promise<ToolOutcome> {
     // should I start now?" must never answer with it. Leaving the two paths
     // differing would also make the answer depend on whether a daemon
     // happened to be running.
-    tasks: readyTasks(docs.filter((d) => d.meta.archivedAt === undefined)).map(
-      toSummary
-    ),
+    // The FULL set, archived included — readyTasks drops archived candidates
+    // itself but needs them present to resolve blockers (see graph.ts).
+    tasks: readyTasks(docs).map(toSummary),
     problems: formatProblems(errors),
   });
 }

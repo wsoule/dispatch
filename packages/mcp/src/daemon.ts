@@ -68,11 +68,22 @@ export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
 // on-stop cleanup in daemonfile.ts's `removeDaemonFile`), so a file existing
 // is only ever a hint — this is the actual liveness check, matching the
 // CLI's own `isHealthy`.
+// A stale daemon file can name a port some OTHER process now holds — one that
+// accepts the connection and then simply never answers. Without a deadline the
+// probe inherits fetch's default (effectively none), so `dispatch task list`
+// hangs indefinitely on a port that has nothing to do with dispatch. A health
+// check is the one request that must never be the slow thing.
+const HEALTH_TIMEOUT_MS = 2000;
+
 export async function isDaemonHealthy(port: number): Promise<boolean> {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+    });
     return res.ok;
   } catch {
+    // Includes the timeout abort: a port that accepts and stalls is exactly
+    // as unhealthy as one that refuses.
     return false;
   }
 }
@@ -184,6 +195,29 @@ function readProjectBackend(rootDir: string): 'files' | 'sqlite' | null {
   }
 }
 
+/**
+ * Thrown by `daemonRequest` when the daemon could not be reached at all — the
+ * connection was refused, reset, or never established.
+ *
+ * Distinct from `DaemonHttpError`, and the distinction is what callers act on:
+ * an HTTP error means a daemon answered and disagreed, so its wording is the
+ * answer. This means nobody answered, which is recoverable — a file-backed
+ * project can just read the files instead. Without a type for it, a daemon
+ * that died between the health probe and the request surfaced to the agent as
+ * a bare `TypeError: fetch failed`, which names neither the cause nor the fix.
+ */
+export class DaemonUnreachableError extends Error {
+  constructor(
+    readonly port: number,
+    cause: string
+  ) {
+    super(
+      `dispatchd stopped responding on port ${port} (${cause}). It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve`
+    );
+    this.name = 'DaemonUnreachableError';
+  }
+}
+
 /** Thrown by `daemonRequest` when the daemon answered with a non-2xx status. */
 export class DaemonHttpError extends Error {
   constructor(
@@ -217,10 +251,19 @@ export async function daemonRequest<T>(
   for (const [key, value] of Object.entries(daemonAuth(daemon))) {
     headers.set(key, value);
   }
-  const res = await fetch(`http://127.0.0.1:${daemon.port}${path}`, {
-    ...init,
-    headers,
-  });
+  // A transport failure becomes `DaemonUnreachableError` rather than escaping
+  // as fetch's own TypeError: there is a real gap between `liveDaemon`'s health
+  // probe and this call, and a daemon that exits inside it is a normal event
+  // (a restart, a crash, someone closing the app), not a programming error.
+  let res: Response;
+  try {
+    res = await fetch(`http://127.0.0.1:${daemon.port}${path}`, {
+      ...init,
+      headers,
+    });
+  } catch (err) {
+    throw new DaemonUnreachableError(daemon.port, (err as Error).message);
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new DaemonHttpError(res.status, body.error ?? `HTTP ${res.status}`);

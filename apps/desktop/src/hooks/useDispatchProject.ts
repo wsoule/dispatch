@@ -1255,10 +1255,15 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),
             });
-          } else if (event.type === 'board.sync') {
-            // Refetches rather than reading `event.result` straight into the
-            // cache: the pending counts the chip also shows are computed
-            // live server-side and aren't part of this event's payload.
+          } else if (
+            event.type === 'board.sync' ||
+            event.type === 'receipts.export'
+          ) {
+            // Both feed the same chip — a project has a board syncer or a
+            // receipts exporter, never both — and GET /api/sync carries both
+            // halves. Refetches rather than reading `event.result` straight
+            // into the cache: the pending counts the chip also shows are
+            // computed live server-side and aren't part of either payload.
             void queryClient.invalidateQueries({
               queryKey: syncStatusQueryKey,
             });
