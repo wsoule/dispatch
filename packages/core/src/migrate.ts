@@ -124,6 +124,18 @@ export interface MigrationReport {
 export interface ImportOptions {
   /** Do the whole import, report it, then roll it back. */
   dryRun?: boolean;
+  /**
+   * Where the `.dispatch/` tree to read from lives. Defaults to the target
+   * project's own root, which is what the boot-time import wants: source and
+   * destination are the same project.
+   *
+   * The receipt exporter is why this is separable. Its log is laid out as a
+   * file-backed project precisely so restoring it is this import pointed
+   * somewhere else, rather than a second deserializer that could drift from
+   * this one — and restoring means reading from the log while writing into a
+   * rebuilt database elsewhere.
+   */
+  sourceDir?: string;
 }
 
 /**
@@ -455,6 +467,10 @@ export function importLegacyProject(
 ): MigrationReport {
   const { dryRun = false } = options;
   const rootDir = stores.tasks.rootDir;
+  // Where the files come FROM, which is the project itself unless a caller
+  // (the receipts restore) points it elsewhere. `rootDir` stays what the
+  // report names, since that is the project the records landed in.
+  const sourceDir = options.sourceDir ?? rootDir;
   const records = stores.records;
   // instanceof rather than a cast: `put` is deliberately absent from the
   // TaskStorePort the daemon holds, because importing a record verbatim —
@@ -491,9 +507,9 @@ export function importLegacyProject(
   let rowsAfter: RowCounts;
   try {
     rowsBefore = rowCounts(records);
-    importTasks(new TaskStore(rootDir), target, tasks, epics, problems);
+    importTasks(new TaskStore(sourceDir), target, tasks, epics, problems);
     importJsonl(
-      rootDir,
+      sourceDir,
       'findings.jsonl',
       scanFindingsJsonl,
       unreadableFinding,
@@ -502,7 +518,7 @@ export function importLegacyProject(
       problems
     );
     importJsonl(
-      rootDir,
+      sourceDir,
       'ledger.jsonl',
       scanLedgerJsonl,
       unreadableLedgerEntry,
@@ -527,7 +543,7 @@ export function importLegacyProject(
     findings,
     ledger,
     problems,
-    retained: retainedSources(rootDir),
+    retained: retainedSources(sourceDir),
     rowsBefore,
     rowsAfter,
   };
