@@ -1,7 +1,7 @@
 ---
 id: t-b3ad8f
 title: Shrink in-repo .dispatch/ to committable config only
-status: in-review
+status: in-progress
 kind: task
 parent: e-99e113
 milestone: null
@@ -12,14 +12,23 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:39:15.687Z
-updated: 2026-09-01T17:49:22.402Z
+updated: 2026-09-01T18:10:53.079Z
 external: null
 writes:
   - packages/core/src/**
   - packages/core/test/**
   - packages/cli/src/**
+  - packages/cli/test/**
+  - packages/server/src/**
+  - packages/server/test/**
+  - packages/mcp/src/**
+  - packages/mcp/test/**
+  - packages/client/src/**
+  - apps/desktop/src-tauri/src/**
+  - apps/desktop/src/**
   - docs/**
   - README.md
+  - .gitignore
 ---
 
 ## Description
@@ -41,3 +50,16 @@ THREE THINGS I DELIBERATELY DID NOT DO, with reasons in ledger l-7dfa5b so they 
 
 NOTE ON THIS REPO: it is still file-backed, so nothing here changed. Its own 192 tracked files under .dispatch/ come off only when someone runs `dispatch migrate` then `dispatch migrate --retire` on it deliberately. — none
 - 2026-09-01T17:49:22.402Z [run r-59aae9] finished: finished — 10 files, $15.35 — agent:wsoule679/claude
+- 2026-09-01T18:10:53.079Z requested changes (run r-525b9f): Code review: 17 confirmed/plausible findings. The task fence has been WIDENED (verify via the canonical task file) to include packages/server, mcp, client, apps/desktop/src-tauri, and .gitignore — several fixes need them. REQUIRED before merge, ranked:
+1. cli daemon.ts:395/422 — dispatch serve and ui still gate on file-only requireStore, so a db-backed project can NEVER start the daemon it is required to use (total dead end). Wire in requireInitialized() like orchestrate/plan/scope got.
+2. sidecar.rs:891 — the desktop's needs_init() keys on .dispatch/tasks existing (permanently false on sqlite), so every app launch kills the healthy daemon (force-failing live runs) and respawns with --init. Make needs_init backend-aware (storage marker or db presence).
+3. retire.ts:280 — --retire deletes a git-shared board after verifying against a LOCAL-ONLY receipt log, then tells the user to commit; teammates pull an empty board. Add a team-safety gate: refuse when the repo has a remote unless an explicit --force-solo (or equivalent) is passed, with wording that names the teammate hazard. Reconcile with the marker design coherently: storage.json stays GITIGNORED (per t-880ce2's clone-trap fix — the review's cut finding notes the repo's .gitignore contradicts the committable-marker language in the retire report; gitignored/local is the decided direction, fix the report text).
+4. index.ts:518 — boot import writes the sqlite marker even when the import reported problems, stranding failed records; mirror runMigrate's problems.length guard.
+5. index.ts:436 — 'already migrated' guard keys on tasks count only, so findings/ledger JSONL appended later (git pull) are never imported and blocked findings go invisible to the merge gate; the import is idempotent — run it whenever hasLegacyState, or key the guard per record type.
+6. receipts.ts:354 — nothing writes the evidence/mutations tables (orchestrator writes transcripts), so the log's evidence half is dead code and the README's rebuild claim is false; either wire recordEvidence/recordMutation through to the DB stores on the sqlite backend, or export evidence FROM transcripts, or correct the README + remove the dead sweep — pick one and say which in the task Activity.
+7. task.ts:389 — filtering archived tasks BEFORE readyTasks makes graph.ts treat a missing blocker as satisfied, so archiving an unfinished blocker springs its dependents ready (CLI, MCP, and daemon route all affected). Filter archived from the CANDIDATES, not from the blocker-resolution set.
+8. index.ts:436 — boot gate calls throwing list() instead of listSafe(); one damaged row kills daemon boot with no fallback. Use listSafe.
+9. mcp tools.ts:437 + cli apiClient.ts:205 — a daemon dying between health probe and request surfaces as a raw TypeError with no local fallback on file-backed projects; catch fetch rejection and fall back like taskComment does.
+10. client api.ts:1227 + server api.ts:897 — GET /api/sync claims a false 'disabled… needs restart' on sqlite projects; add the receipts field + receipts.export event to the client types and make SyncChip render receipts state instead of the false error.
+ALSO (verified, cut for cap — fix if quick): timeout on the daemon health fetch (hang on stale port); failed migrate must not pre-append sqlite rules to .dispatch/.gitignore before success; task show daemon-vs-file byte drift; edit --add-label read-modify-write against the stale cache; receipts-dir path scheme triplication with diverged hash inputs (resolve() vs raw) — unify in core.
+Run core+cli+server+mcp tests and cargo check for the sidecar change, commit. — human:wsoule679
