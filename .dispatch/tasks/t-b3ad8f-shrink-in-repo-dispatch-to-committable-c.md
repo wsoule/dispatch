@@ -1,7 +1,7 @@
 ---
 id: t-b3ad8f
 title: Shrink in-repo .dispatch/ to committable config only
-status: in-review
+status: done
 kind: task
 parent: e-99e113
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:39:15.687Z
-updated: 2026-09-01T19:05:15.523Z
+updated: 2026-09-01T19:07:27.589Z
 external: null
 writes:
   - packages/core/src/**
@@ -76,3 +76,4 @@ CUT ITEMS: fixed the health-fetch timeout (2s deadline on both the CLI and MCP p
 
 VERIFICATION on the committed tree: core 565, cli 203, mcp 116, client 67, desktop 1432, server 2112 pass / 0 fail (server run with DISPATCH_MCP_BIN unset per the known ledger hazard). cargo check clean, cargo test sidecar 45 pass including two new needs_init cases. lint 0 errors (42 pre-existing warnings), knip green — runRetire is exported again with real CLI tests behind it now that packages/cli/test is in scope, so the earlier knip workaround is gone rather than suppressed. — none
 - 2026-09-01T19:05:15.523Z [run r-525b9f] finished: finished — 29 files, $25.70 — agent:wsoule679/claude
+- 2026-09-01T19:07:27.589Z run r-525b9f merged into epic/e-99e113 — human:wsoule679
