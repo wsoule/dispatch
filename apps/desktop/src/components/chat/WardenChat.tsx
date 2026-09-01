@@ -200,11 +200,12 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
   // single draft is unambiguous.
   const { draft, setDraft } = warden;
 
-  const [starting, setStarting] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
-
-  const [sending, setSending] = useState(false);
-  const [sendError, setSendError] = useState<string | null>(null);
+  // Sending state is the session's too, and for the same reason as the draft:
+  // the rail's tab flip unmounts this panel, so a `setState` from a call that
+  // fails after the flip would land on an unmounted component and report the
+  // failure to nobody. One flag and one error cover both composers — only one
+  // of them is ever on screen, and `conversationId` decides which.
+  const { sending, sendError } = warden;
 
   // Which action a decision is in flight for — the session's, not this
   // component's: approving runs the real mutation before the call resolves, and
@@ -253,52 +254,19 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
   const hasPendingAction = (warden.record?.pendingActions.length ?? 0) > 0;
 
   /**
-   * Puts the sent text back only if the composer is still empty. Both senders
-   * clear the draft up front rather than after their await: `start` and
-   * `sendMessage` each end with `invalidateQueries`, which waits on a real
-   * refetch once the record query has an observer, so clearing afterwards
-   * lands a whole round trip late and eats anything typed in the meantime.
-   * Clearing first costs nothing when the call succeeds; when it fails the
-   * text has to come back — unless the human has already started typing the
-   * next thing, which is theirs to keep.
+   * Both composers' submit. Everything past the guard — clearing the draft,
+   * putting it back on failure, the in-flight flag, the error — belongs to
+   * `warden.submit`, which picks `start` or `sendMessage` off `conversationId`
+   * exactly as the branch below picks which composer to render.
+   *
+   * `busy` is re-checked here rather than only on the button because the
+   * composer stays editable mid-turn: Enter must not slip a message past a
+   * turn the server would 409.
    */
-  function restoreDraft(text: string) {
-    setDraft((current) => (current === '' ? text : current));
-  }
-
-  async function startConversation() {
+  function submitDraft() {
     const text = draft.trim();
-    if (text === '' || starting) return;
-    setStarting(true);
-    setStartError(null);
-    setDraft('');
-    try {
-      await warden.start(text);
-    } catch (err) {
-      setStartError(err instanceof Error ? err.message : String(err));
-      restoreDraft(text);
-    } finally {
-      setStarting(false);
-    }
-  }
-
-  async function sendFollowUp() {
-    const text = draft.trim();
-    // Re-checked here, not just on the button: the composer stays editable
-    // mid-turn, so Enter must not slip a message past a turn the server
-    // would 409.
-    if (text === '' || busy || sending) return;
-    setSending(true);
-    setSendError(null);
-    setDraft('');
-    try {
-      await warden.sendMessage(text);
-    } catch (err) {
-      setSendError(err instanceof Error ? err.message : String(err));
-      restoreDraft(text);
-    } finally {
-      setSending(false);
-    }
+    if (text === '' || sending || busy) return;
+    void warden.submit(text);
   }
 
   async function decide(actionId: string, approve: boolean) {
@@ -396,10 +364,10 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
             ? 'Ask about runs, tasks, the queue. Actions wait for your approval.'
             : 'Ask about this project — runs, tasks, the merge queue, what needs you. The warden can also act (dispatch, cancel, approve), but every mutation waits for your explicit approval here first.'}
         </p>
-        {startError !== null && (
+        {sendError !== null && (
           <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-center gap-2 rounded-md border px-3 py-2 text-[13px]">
             <CircleAlert className="size-4 shrink-0" />
-            <span>{startError}</span>
+            <span>{sendError}</span>
           </div>
         )}
         <Textarea
@@ -410,7 +378,7 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              void startConversation();
+              submitDraft();
             }
           }}
           aria-label="Warden opening question"
@@ -419,10 +387,10 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
         <div className="flex justify-end">
           <Button
             size={compact ? 'sm' : 'default'}
-            disabled={starting || draft.trim() === ''}
-            onClick={() => void startConversation()}
+            disabled={sending || draft.trim() === ''}
+            onClick={submitDraft}
           >
-            {starting ? (
+            {sending ? (
               <>
                 <Spinner className="size-4" /> Starting…
               </>
@@ -516,7 +484,7 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
             onKeyDown={(e) => {
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
-                void sendFollowUp();
+                submitDraft();
               }
             }}
             aria-label="Follow-up message"
@@ -525,7 +493,7 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
           <Button
             size={compact ? 'sm' : 'default'}
             disabled={busy || sending || draft.trim() === ''}
-            onClick={() => void sendFollowUp()}
+            onClick={submitDraft}
             className="self-end"
           >
             {sending ? (

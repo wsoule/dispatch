@@ -65,7 +65,7 @@ import {
   taskVerificationKey,
 } from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
-import { wardenKey } from './useWardenSession';
+import { wardenKey, wardenKeyPrefix } from './useWardenSession';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
@@ -1066,6 +1066,20 @@ export function useDispatchProject(
         void queryClient.invalidateQueries({ queryKey: configQueryKey });
         void queryClient.invalidateQueries({ queryKey: readyQueryKey });
         void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
+        // Prefix match: every warden record cached for this daemon. A
+        // reconnect usually means dispatchd restarted, and warden records are
+        // an in-memory Map — so every id 404s now, and no `warden.changed` can
+        // ever arrive for a conversation the daemon no longer has. Without
+        // this refetch the cached record keeps a pending action alive that
+        // exists nowhere: the rail shows a waiting row and an amber badge,
+        // Approve/Deny 404, and `hasPendingAction` disables both "New
+        // conversation" controls until the window happens to lose and regain
+        // focus. The prefix (rather than one conversation's key) is what lets
+        // this hook do it at all — the session, and the id, live in
+        // useWardenSession.
+        void queryClient.invalidateQueries({
+          queryKey: wardenKeyPrefix(port),
+        });
       },
       {
         onEvent: (event) => {

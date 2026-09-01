@@ -62,8 +62,9 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     conversationId: null,
     record: undefined,
     recordError: null,
-    start: () => Promise.resolve(wardenRecord()),
-    sendMessage: () => Promise.resolve(wardenRecord()),
+    submit: () => Promise.resolve(),
+    sending: false,
+    sendError: null,
     confirmAction: () => Promise.resolve(wardenRecord()),
     decidingActionId: null,
     reset: () => {},
@@ -609,5 +610,65 @@ test('a transient refetch error keeps every queued-approval signal', () => {
   rerender(<LiveRail {...railProps({ warden, collapsed: true })} />);
   expect(
     screen.getByRole('button', { name: '1 action awaiting your approval' })
+  ).toBeDefined();
+});
+
+// The rail's Warden control must never be a *button* named "Warden": the
+// sidebar's global nav already has one (Sidebar.tsx's GLOBAL_VIEWS), and
+// Playwright resolves `getByRole('button', { name: 'Warden' })` across the
+// whole page under strict mode. A second exact match anywhere makes that
+// locator throw, which takes out warden.spec.ts at its first navigation step —
+// the only automated coverage of the human-gated approve path. Radix renders
+// TabsTrigger as role=tab, which is what keeps the two apart; this pins that
+// so a swap to a plain <Button> cannot land quietly.
+test('the Warden tab is a tab, not a second button named "Warden"', () => {
+  render(<LiveRail {...railProps({ runs: [run()] })} />);
+
+  expect(screen.getByRole('tab', { name: 'Warden' })).toBeDefined();
+  expect(screen.queryAllByRole('button', { name: 'Warden' })).toHaveLength(0);
+
+  // Also on the Warden panel itself, where the compact reset lives — it is
+  // deliberately named "Start a new conversation" for this reason.
+  selectTab('Warden');
+  expect(screen.queryAllByRole('button', { name: 'Warden' })).toHaveLength(0);
+});
+
+// The collapsed strip is the other surface that could reintroduce the clash:
+// its approval badge is named for what is waiting, not for the warden.
+test('the collapsed rail has no button named "Warden" either', () => {
+  render(
+    <LiveRail
+      {...railProps({
+        collapsed: true,
+        warden: wardenSession({
+          conversationId: 'w-1',
+          record: wardenRecord({ pendingActions: [wardenAction()] }),
+        }),
+      })}
+    />
+  );
+
+  expect(screen.queryAllByRole('button', { name: 'Warden' })).toHaveLength(0);
+});
+
+// warden.spec.ts finds the Runs-tab waiting row by the accessible name
+// `/with the fake executor warden/` — the queued action's summary followed by
+// the row's kind label. That label is lowercase in the DOM and only *looks*
+// capitalised (Tailwind `capitalize`), which is invisible from the spec and
+// would silently stop matching if the markup started capitalising it for real.
+test('the waiting row is named by its action summary and a lowercase kind', () => {
+  render(
+    <LiveRail
+      {...railProps({
+        warden: wardenSession({
+          conversationId: 'w-1',
+          record: wardenRecord({ pendingActions: [wardenAction()] }),
+        }),
+      })}
+    />
+  );
+
+  expect(
+    screen.getByRole('button', { name: /Cancel run r-1 warden/ })
   ).toBeDefined();
 });

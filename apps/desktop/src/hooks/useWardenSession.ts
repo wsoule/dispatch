@@ -5,14 +5,27 @@ import { useCallback, useEffect, useState } from 'react';
 
 import { isFakeWardenDevToolEnabled } from '../lib/devTools';
 
+/**
+ * Every warden record key for one daemon. useDispatchProject's WS *reconnect*
+ * handler invalidates this rather than a single record's key: a reconnect
+ * usually means dispatchd restarted, which drops every in-memory warden record
+ * at once, and that handler has no conversation id to name — the session lives
+ * in this hook, not in it. Prefix invalidation is the same idiom
+ * useDataChangedEvents applies to `['board']` and `['session-detail']`.
+ */
+export function wardenKeyPrefix(port: number | undefined) {
+  return ['dispatch-warden', port] as const;
+}
+
 /** The one warden record query key, exported so useDispatchProject's WS
  * handler can invalidate it on `warden.changed` — the same wiring
- * `plan.changed` uses for `['dispatch-plan', port, planId]`. */
+ * `plan.changed` uses for `['dispatch-plan', port, planId]`. Built from the
+ * prefix above so the reconnect invalidation cannot drift out of matching it. */
 export function wardenKey(
   port: number | undefined,
   conversationId: string | null
 ) {
-  return ['dispatch-warden', port, conversationId] as const;
+  return [...wardenKeyPrefix(port), conversationId] as const;
 }
 
 export interface WardenSession {
@@ -27,10 +40,33 @@ export interface WardenSession {
   record: WardenRecord | undefined;
   /** Why `record` is missing or stale when the fetch itself failed, not just pending. */
   recordError: string | null;
-  /** Opens a conversation; resolves with the record already `running`. */
-  start: (prompt: string) => Promise<WardenRecord>;
-  /** Posts a follow-up on the open conversation (202, back to `running`). */
-  sendMessage: (text: string) => Promise<WardenRecord>;
+  /**
+   * Sends `text` — opening the conversation when none is open yet, posting a
+   * follow-up on it when one is. One entry point rather than two because the
+   * composer that calls it is one control: `conversationId` alone decides
+   * which composer is on screen, so it alone decides which call to make.
+   *
+   * Owns the whole submit cycle — clearing the draft up front, putting it back
+   * when the call fails, raising `sending`, recording `sendError` — because
+   * every one of those outlives the composer that triggered it. Never rejects:
+   * the outcome is readable on `sending` and `sendError`.
+   */
+  submit: (text: string) => Promise<void>;
+  /**
+   * A submit is in flight. Session-held for the same reason `draft` is: the
+   * rail unmounts the chat's whole panel on a tab flip, and a component-local
+   * flag would come back `false` on remount, briefly re-enabling Send against
+   * a turn dispatchd would 409.
+   */
+  sending: boolean;
+  /**
+   * Why the last submit failed, or `null`. Cleared when the next one starts
+   * and by `reset`. Session-held because the failure usually arrives *after*
+   * the user has flipped to Runs to watch the turn — the path this rail
+   * encourages — by which point a component-local `setState` is a no-op on an
+   * unmounted tree and the failure is reported to nobody.
+   */
+  sendError: string | null;
   /** Decides one queued mutating action: approving runs the real effect before
    * resolving, denying never runs it. Allowed mid-turn — the server accepts a
    * decision while the assistant is still answering. */
@@ -99,6 +135,9 @@ export function useWardenSession(
 
   const [decidingActionId, setDecidingActionId] = useState<string | null>(null);
 
+  const [sending, setSending] = useState(false);
+  const [sendError, setSendError] = useState<string | null>(null);
+
   // A conversation opened against one project's dispatchd must not survive a
   // project switch — the stale id would 404 against the new daemon (the same
   // I5 rule useDispatchProject applies to planId). The draft goes with it: a
@@ -108,6 +147,7 @@ export function useWardenSession(
     setConversationId(null);
     setDraft('');
     setDecidingActionId(null);
+    setSendError(null);
   }, [projectPath]);
 
   const { data: record, error } = useQuery({
@@ -167,6 +207,41 @@ export function useWardenSession(
     [client, conversationId, port, queryClient]
   );
 
+  /**
+   * The one thing the composer calls. `start` and `sendMessage` above are the
+   * raw HTTP mutations; this is the operation a human performs, and it keeps
+   * the three pieces of state that operation owns — the draft, the in-flight
+   * flag, the failure — together on the session, where they outlive the panel
+   * the human typed into.
+   *
+   * The draft is cleared before the await rather than after: both mutations
+   * end in `invalidateQueries`, which waits on a real refetch once the record
+   * query has an observer, so clearing afterwards lands a whole round trip
+   * late and eats anything typed in the meantime. On failure the text goes
+   * back — but only if the composer is still empty, since whatever the human
+   * has started typing since is theirs to keep.
+   */
+  const submit = useCallback(
+    async (text: string) => {
+      setSending(true);
+      setSendError(null);
+      setDraft('');
+      try {
+        if (conversationId === null) {
+          await start(text);
+        } else {
+          await sendMessage(text);
+        }
+      } catch (err) {
+        setSendError(err instanceof Error ? err.message : String(err));
+        setDraft((current) => (current === '' ? text : current));
+      } finally {
+        setSending(false);
+      }
+    },
+    [conversationId, sendMessage, start]
+  );
+
   const confirmAction = useCallback(
     async (actionId: string, approve: boolean) => {
       if (client === null || conversationId === null) {
@@ -199,6 +274,9 @@ export function useWardenSession(
   const reset = useCallback(() => {
     setConversationId(null);
     setDraft('');
+    // A failure banner from the conversation being discarded has nothing to
+    // say about the empty composer that replaces it.
+    setSendError(null);
   }, []);
 
   // react-query keeps the last good `data` through a *background* refetch
@@ -214,8 +292,9 @@ export function useWardenSession(
     conversationId,
     record: recordGone ? undefined : record,
     recordError: error instanceof Error ? error.message : null,
-    start,
-    sendMessage,
+    submit,
+    sending,
+    sendError,
     confirmAction,
     decidingActionId,
     reset,
