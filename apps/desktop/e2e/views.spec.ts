@@ -121,6 +121,17 @@ for (const view of VIEWS) {
  * (WardenChat.test.tsx has to hand-define scrollHeight/scrollTop for exactly
  * that reason). Measured rather than captured, so it needs no baseline to
  * review and does not re-break every time the tab strip changes shape.
+ *
+ * NOT YET OBSERVED GREEN, the same as warden.spec.ts's rail case and for the
+ * same two reasons — `bun run e2e --list` discovers it, which proves only that
+ * it parses and type-checks. Running it here dies in the webServer with
+ * `ENOENT: posix_spawn 'git'` before a browser ever launches.
+ *
+ * It is also narrower than what the mask removes: width, horizontal overflow
+ * and composer containment on one view in one theme, versus every pixel of the
+ * rail across 7 views x 2 themes. The tab strip, run rows, attention strip,
+ * amber badge and collapsed strip have no visual coverage anywhere. That trade
+ * is a human's to rule on, not a closed question.
  */
 test('the live rail keeps its column on a project view', async ({
   page,
@@ -141,9 +152,17 @@ test('the live rail keeps its column on a project view', async ({
   const railBox = await rail.boundingBox();
   if (railBox === null) throw new Error('the live rail has no layout box');
 
-  // w-60: the 240px the mask reserves. Wider and it eats the view beside it;
-  // narrower and the run rows it exists to show have nowhere to go.
-  expect(Math.round(railBox.width)).toBe(240);
+  // The invariant is `w-60` — 15rem — not a pixel count. global.css sets
+  // `html { font-size: clamp(16px, 0.55vw + 9.5px, 21px) }`, so 15rem is the
+  // 240px the mask reserved only while the viewport stays at or below roughly
+  // 1182px; playwright.config.ts pins 1036 today, but a later change there
+  // would fail this test with the rail perfectly correct. Measuring the root
+  // font-size and multiplying keeps the assertion on the rail's width rather
+  // than on the viewport the config happens to use.
+  const remPx = await page.evaluate(() =>
+    Number.parseFloat(getComputedStyle(document.documentElement).fontSize)
+  );
+  expect(railBox.width).toBeCloseTo(15 * remPx, 0);
 
   // Nothing inside may spill past that column — a long task title or the tab
   // strip overflowing is precisely what the mask would now hide.
