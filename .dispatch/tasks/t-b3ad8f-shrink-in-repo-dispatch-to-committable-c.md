@@ -1,7 +1,7 @@
 ---
 id: t-b3ad8f
 title: Shrink in-repo .dispatch/ to committable config only
-status: in-progress
+status: in-review
 kind: task
 parent: e-99e113
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:39:15.687Z
-updated: 2026-09-01T19:04:58.902Z
+updated: 2026-09-01T19:05:15.523Z
 external: null
 writes:
   - packages/core/src/**
@@ -75,3 +75,4 @@ TWO THINGS WORTH FLAGGING BEYOND THE LIST. (1) Finding 7 was worse than "CLI, MC
 CUT ITEMS: fixed the health-fetch timeout (2s deadline on both the CLI and MCP probes — a stale daemon file can name a port another process now holds that accepts and never answers) and the gitignore-before-success one above. NOT fixed, and deliberately left: `task show` daemon-vs-file byte drift, `edit --add-label` read-modify-write against the stale cache, and the receipts-dir path-scheme triplication. The third is the one I would take next — core's receiptLogDir and server's resolveReceiptsDir are now a seventh and sixth copy of the DISPATCH_HOME+sha256 scheme and their hash inputs genuinely differ (mine resolve()s, paths.ts does not), which is latent even though I verified empirically that the daemon and the CLI agree on a real project today. Unifying it means exporting from @dispatch/server or moving the scheme wholesale into core; that is a refactor with its own blast radius, not a review fix.
 
 VERIFICATION on the committed tree: core 565, cli 203, mcp 116, client 67, desktop 1432, server 2112 pass / 0 fail (server run with DISPATCH_MCP_BIN unset per the known ledger hazard). cargo check clean, cargo test sidecar 45 pass including two new needs_init cases. lint 0 errors (42 pre-existing warnings), knip green — runRetire is exported again with real CLI tests behind it now that packages/cli/test is in scope, so the earlier knip workaround is gone rather than suppressed. — none
+- 2026-09-01T19:05:15.523Z [run r-525b9f] finished: finished — 29 files, $25.70 — agent:wsoule679/claude
