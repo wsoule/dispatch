@@ -1,7 +1,7 @@
 ---
 id: t-b3ad8f
 title: Shrink in-repo .dispatch/ to committable config only
-status: in-progress
+status: in-review
 kind: task
 parent: e-99e113
 milestone: null
@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:39:15.687Z
-updated: 2026-09-01T17:49:01.861Z
+updated: 2026-09-01T17:49:22.402Z
 external: null
 writes:
   - packages/core/src/**
@@ -40,3 +40,4 @@ BLOCKER TO REPORT: SCOPE DENIED. I requested packages/cli/test/** and nobody dec
 THREE THINGS I DELIBERATELY DID NOT DO, with reasons in ledger l-7dfa5b so they are not re-derived. (1) `dispatch init` still defaults to FILES. I intended to flip it and stopped: resolveTaskRoute discovers a daemon with findRunningDaemon and never ensureDaemon (deliberate — "a read should not leave a background daemon running behind it"), and task.ts:154 throws DAEMON_REQUIRED for a db-backed project with no daemon. So defaulting to sqlite would make the README quickstart fail on its own second line. The real blocker is that the database backend has no no-daemon read path; that is a product decision, not plumbing. (2) fix-loops.jsonl / notes.json / inbox/ stay in place. The t-880ce2 decision already scoped porting them out as unowned work, and the inbox is deliberately hand-editable ("the cheapest possible capture is opening the file in your editor and typing a line") — a sha256-keyed path under the home directory destroys that, which is a UX call, not plumbing. They are gitignored on the sqlite backend instead, which gets the epic's stated goal (no churn in project diffs) without moving a file anybody types into. (3) storage.json stays committable, following index.ts's comment rather than this repo's own root .gitignore, which disagrees with it — on a retired project the marker is the only thing telling a fresh clone "this board is in a database, restore it from the receipt log" instead of "never initialized". If anyone flips that, flip index.ts's comment in the same commit.
 
 NOTE ON THIS REPO: it is still file-backed, so nothing here changed. Its own 192 tracked files under .dispatch/ come off only when someone runs `dispatch migrate` then `dispatch migrate --retire` on it deliberately. — none
+- 2026-09-01T17:49:22.402Z [run r-59aae9] finished: finished — 10 files, $15.35 — agent:wsoule679/claude
