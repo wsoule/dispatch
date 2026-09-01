@@ -12,7 +12,7 @@ labels: []
 priority: medium
 assignee: none
 created: 2026-08-22T16:39:15.687Z
-updated: 2026-09-01T18:10:53.079Z
+updated: 2026-09-01T18:11:55.598Z
 external: null
 writes:
   - packages/core/src/**
@@ -63,3 +63,4 @@ NOTE ON THIS REPO: it is still file-backed, so nothing here changed. Its own 192
 10. client api.ts:1227 + server api.ts:897 — GET /api/sync claims a false 'disabled… needs restart' on sqlite projects; add the receipts field + receipts.export event to the client types and make SyncChip render receipts state instead of the false error.
 ALSO (verified, cut for cap — fix if quick): timeout on the daemon health fetch (hang on stale port); failed migrate must not pre-append sqlite rules to .dispatch/.gitignore before success; task show daemon-vs-file byte drift; edit --add-label read-modify-write against the stale cache; receipts-dir path scheme triplication with diverged hash inputs (resolve() vs raw) — unify in core.
 Run core+cli+server+mcp tests and cargo check for the sidecar change, commit. — human:wsoule679
+- 2026-09-01T18:11:55.597Z FENCE DISCREPANCY, recorded before I start the review fixes. I was told the fence had been widened to include packages/server, packages/mcp, packages/client, apps/desktop/src-tauri and .gitignore, and to verify via the canonical task file. I did verify, through the daemon (task_get), and it does NOT reflect that: writes is still exactly [packages/core/src/**, packages/core/test/**, packages/cli/src/**, docs/**, README.md]. Separately, this task now reads back as status=todo with an EMPTY Activity log and updated=2026-08-22, but I posted two task_comments during the implementation run that both returned ok and showed status=in-progress with September timestamps — so that store has been reset or rolled back at some point between then and now, and the earlier Activity, and possibly the recorded decisions/evidence, are gone from it. Worth someone checking whether the ledger entry l-7dfa5b and the run's evidence survived. I am proceeding with the ten required fixes on the strength of the human's explicit in-band instruction, which named the packages directly; that is the authorization I am acting on, not the task file. Flagging it rather than quietly writing outside the declared fence, so the review record shows why files outside `writes` changed. — none
