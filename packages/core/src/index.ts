@@ -7,14 +7,30 @@ export {
   generateLedgerId,
   generateRunId,
   generateTaskId,
+  isTaskId,
+  TASK_ID_PATTERN,
 } from './ids.js';
+export {
+  FINDING_RECOMMENDATIONS,
+  FINDING_SEVERITIES,
+  FINDING_VERDICTS,
+} from './findings.js';
+export { LEDGER_KINDS } from './ledger.js';
 export type {
+  AddFindingInput,
   Finding,
+  FindingListFilter,
   FindingRecommendation,
   FindingSeverity,
+  FindingUpdatePatch,
   FindingVerdict,
 } from './findings.js';
-export type { LedgerEntry, LedgerKind } from './ledger.js';
+export type {
+  AddLedgerInput,
+  LedgerEntry,
+  LedgerKind,
+  LedgerListFilter,
+} from './ledger.js';
 export type { CommandEvidence, MutationEvidence } from './evidence.js';
 export {
   claimConflictsWithWrites,
@@ -48,7 +64,66 @@ export {
   setSection,
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
-export { TaskStore, DISPATCH_DIR } from './store.js';
+export {
+  applyUpdatePatch,
+  DISPATCH_DIR,
+  ensureProjectConfig,
+  ensureProjectGitignore,
+  newTaskDoc,
+  TaskStore,
+} from './store.js';
+export type { TaskStorePort } from './store.js';
+export {
+  attachDispatchDb,
+  dbVersion,
+  DISPATCH_DB_VERSION,
+  dispatchDbPath,
+  openDispatchDb,
+  SqliteRowError,
+} from './sqliteDb.js';
+export { SqliteTaskStore } from './sqliteTaskStore.js';
+export {
+  SqliteEvidenceStore,
+  SqliteFindingStore,
+  SqliteLedgerStore,
+} from './sqliteRecords.js';
+export { initProjectStores, openProjectStores } from './storeBackend.js';
+export type {
+  OpenStoresOptions,
+  ProjectStores,
+  SqliteRecordStores,
+  TaskStoreBackend,
+} from './storeBackend.js';
+export {
+  formatMigrationReport,
+  hasLegacyState,
+  importLegacyProject,
+  LEGACY_SOURCES,
+  totalImported,
+} from './migrate.js';
+export type {
+  MigrationProblem,
+  MigrationReport,
+  MigrationTally,
+  RetainedSource,
+  RowCounts,
+} from './migrate.js';
+export {
+  formatRetireReport,
+  receiptLogDir,
+  retireLegacySources,
+} from './retire.js';
+export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
+export { materializeReceipts, restoreReceipts } from './receipts.js';
+export type {
+  ReceiptsExport,
+  ReceiptsProblem,
+  ReceiptsRestore,
+  ReceiptsTally,
+} from './receipts.js';
+export { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
+export type { JsonlScan } from './jsonlRecords.js';
+export { readProjectBackend, writeProjectBackend } from './storage.js';
 export { mergeTaskFile } from './mergeTask.js';
 export { mergeTeamFile } from './mergeTeam.js';
 export type {
@@ -75,6 +150,7 @@ export {
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
+  DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
@@ -91,6 +167,7 @@ export type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  ReceiptsConfig,
   RepoDigestConfig,
   VerifyConfig,
   VerifyStep,

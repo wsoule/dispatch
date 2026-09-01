@@ -1,8 +1,12 @@
 import {
   DISPATCH_DIR,
+  ensureProjectGitignore,
+  initProjectStores,
   loadConfig,
+  readProjectBackend,
   TaskStore,
   upsertRegisteredProject,
+  writeProjectBackend,
 } from '@dispatch/core';
 import { cartoInit, discoverCarto } from '@dispatch/core/carto';
 import { Command } from 'commander';
@@ -17,11 +21,12 @@ import {
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerMergeTaskCommand } from './commands/mergeTask.js';
 import { registerMergeTeamCommand } from './commands/mergeTeam.js';
+import { registerMigrateCommand } from './commands/migrate.js';
 import { registerOrchestrateCommands } from './commands/orchestrate.js';
 import { registerPlanCommands } from './commands/plan.js';
 import { registerScopeCommands } from './commands/scope.js';
 import { registerTaskCommands } from './commands/task.js';
-import type { CliContext } from './context.js';
+import { type CliContext, CliError } from './context.js';
 import { registerMcpServer } from './mcpConfig.js';
 import {
   registerMergeDriverGitConfig,
@@ -41,12 +46,66 @@ import {
 // actually scaffolded — callers use that to decide what to log and whether
 // to also register the MCP server.
 function initIfMissing(ctx: CliContext): boolean {
-  const alreadyInitialized = existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'));
+  const backend = readProjectBackend(ctx.cwd) ?? 'files';
+  // A database-backed project counts as initialized even though it has no
+  // `.dispatch/tasks`, because it is not supposed to have one. Testing only
+  // for the directory put an empty markdown board back beside the database on
+  // every `dispatch init` and every bare `dispatch` — silently undoing a
+  // `dispatch migrate --retire`, and then telling the user to "create your
+  // first task" against a board nothing reads.
+  const alreadyInitialized =
+    backend === 'sqlite' || existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'));
   if (!alreadyInitialized) TaskStore.init(ctx.cwd);
+  // Unconditional, for the same reason the merge drivers below are: a project
+  // initialized before these rules existed only ever gets them if something
+  // that runs on an EXISTING project writes them. That is the case that
+  // matters most here — a long-lived project is exactly the one that will
+  // later run `dispatch migrate` and start producing a dispatch.db to commit.
+  ensureProjectGitignore(ctx.cwd, backend);
   writeGitAttributes(ctx.cwd);
   registerMergeDriverGitConfig(ctx.cwd);
   registerTeamMergeDriverGitConfig(ctx.cwd);
   return !alreadyInitialized;
+}
+
+/**
+ * `dispatch init --db`: a project whose tasks live in the daemon's database
+ * from the very first one, so its `.dispatch/` never holds anything but the
+ * config a human would want to commit.
+ *
+ * Refuses over an existing markdown board rather than initializing beside one.
+ * Creating a database next to `.dispatch/tasks` produces a project with two
+ * boards and a marker naming the empty one, which is exactly the state the
+ * one-time import exists to resolve — so it points at that instead.
+ *
+ * The daemon caveat is printed, not hidden. On this backend `dispatch task`
+ * commands go through dispatchd (see resolveTaskRoute in commands/task.ts) and
+ * a read deliberately does not auto-start one, so `dispatch task create`
+ * straight after this would fail with nothing explaining why.
+ */
+function initDatabaseBacked(ctx: CliContext): void {
+  if (readProjectBackend(ctx.cwd) === 'sqlite') {
+    ctx.log('already initialized (this project is database-backed)');
+    return;
+  }
+  if (existsSync(join(ctx.cwd, DISPATCH_DIR, 'tasks'))) {
+    throw new CliError(
+      `${ctx.cwd} already has a markdown task board. Those files are its tasks, so this will not initialize a second, empty one beside them. Move them into the database instead: dispatch migrate`
+    );
+  }
+  initProjectStores({ rootDir: ctx.cwd, backend: 'sqlite' }).close();
+  if (readProjectBackend(ctx.cwd) !== 'sqlite') {
+    writeProjectBackend(ctx.cwd, 'sqlite');
+  }
+  writeGitAttributes(ctx.cwd);
+  registerMergeDriverGitConfig(ctx.cwd);
+  registerTeamMergeDriverGitConfig(ctx.cwd);
+  ctx.log(
+    `Initialized ${DISPATCH_DIR}/ with a daemon-owned database. Your repo holds the config; the tasks live in dispatch.db and reach git as receipts.`
+  );
+  ctx.log(
+    'dispatchd is the only process that may open it, so start it before creating tasks: dispatch serve'
+  );
 }
 
 export function makeProgram(ctx: CliContext): Command {
@@ -63,8 +122,15 @@ export function makeProgram(ctx: CliContext): Command {
     .command('init')
     .description('Scaffold .dispatch/ in the current directory')
     .option('--no-mcp', 'skip registering the dispatch MCP server in .mcp.json')
-    .action((opts: { mcp: boolean }) => {
-      if (initIfMissing(ctx)) {
+    .option(
+      '--db',
+      "keep this project's tasks in the daemon's database instead of markdown files",
+      false
+    )
+    .action((opts: { mcp: boolean; db: boolean }) => {
+      if (opts.db) {
+        initDatabaseBacked(ctx);
+      } else if (initIfMissing(ctx)) {
         ctx.log(
           `Initialized ${DISPATCH_DIR}/ — create your first task with: dispatch task create "<title>"`
         );
@@ -147,6 +213,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerMergeTaskCommand(program, ctx);
   registerMergeTeamCommand(program, ctx);
   registerScopeCommands(program, ctx);
+  registerMigrateCommand(program, ctx);
 
   return program;
 }

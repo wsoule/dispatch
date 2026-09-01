@@ -884,12 +884,36 @@ pub fn has_dispatch(root: &str) -> bool {
     Path::new(root).join(".dispatch").is_dir()
 }
 
-/// True when `root` has no `.dispatch/tasks` tracker directory yet — the signal
-/// `BunSpawner::spawn` uses to decide whether to pass dispatchd `--init` on the
-/// first spawn for a newly onboarded project. Mirrors the same missing-tracker
-/// check bin.ts's `--init` handling performs on the daemon side.
+/// True when `root` has no usable Dispatch state yet — the signal
+/// `BunSpawner::spawn` uses to decide whether to pass dispatchd `--init`, and
+/// (more consequentially) the signal `ensure_dispatchd` uses to decide whether
+/// it may reuse an already-running daemon.
+///
+/// Both backends count as initialized, which is the whole point. Testing only
+/// for `.dispatch/tasks` made this permanently true for every database-backed
+/// project — they have no tasks directory and never will — so the reuse fast
+/// path was skipped on every single launch, and the code below it killed the
+/// perfectly healthy daemon and respawned it. For a project whose runs live in
+/// that daemon, that force-fails whatever was in flight, every time the app
+/// starts.
+///
+/// `dispatch.db` presence is the database-side signal rather than the
+/// `storage.json` marker, and deliberately so: the marker without a database
+/// beside it is exactly the freshly-cloned state that DOES still need
+/// `--init`, so that the daemon creates the database and its boot-time import
+/// can repopulate it. Keying on the marker would skip init there and serve an
+/// empty board. Mirrors bin.ts's `--init` handling on the daemon side.
 fn needs_init(root: &str) -> bool {
-    !Path::new(root).join(".dispatch").join("tasks").is_dir()
+    let dispatch = Path::new(root).join(".dispatch");
+    // File backend: the markdown tracker is present.
+    if dispatch.join("tasks").is_dir() {
+        return false;
+    }
+    // Database backend: the daemon's database already exists.
+    if dispatch.join("dispatch.db").is_file() {
+        return false;
+    }
+    true
 }
 
 /// Normalizes `root` before it's hashed into a daemon-file key or handed to
@@ -1199,6 +1223,45 @@ mod tests {
         // `.dispatch/tasks/` present → already initialized.
         fs::create_dir_all(dir.join(".dispatch").join("tasks")).unwrap();
         assert!(!needs_init(root));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn needs_init_false_for_a_database_backed_project() {
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-needs-init-db-{}",
+            std::process::id()
+        ));
+        let dispatch = dir.join(".dispatch");
+        fs::create_dir_all(&dispatch).unwrap();
+        let root = dir.to_str().unwrap();
+
+        // A database-backed project has no `.dispatch/tasks` and never will.
+        // Reporting it as needing init skipped daemon reuse on every launch,
+        // which killed the running daemon and force-failed its live runs.
+        assert!(needs_init(root));
+        fs::write(dispatch.join("dispatch.db"), b"").unwrap();
+        assert!(!needs_init(root));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn needs_init_true_for_a_clone_with_a_marker_but_no_database() {
+        // The clone trap: `storage.json` may arrive without the database it
+        // names. That project DOES need `--init`, so the daemon creates the
+        // database and its boot import can repopulate it.
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-needs-init-clone-{}",
+            std::process::id()
+        ));
+        let dispatch = dir.join(".dispatch");
+        fs::create_dir_all(&dispatch).unwrap();
+        let root = dir.to_str().unwrap();
+
+        fs::write(dispatch.join("storage.json"), br#"{"backend":"sqlite"}"#).unwrap();
+        assert!(needs_init(root));
 
         fs::remove_dir_all(&dir).unwrap();
     }

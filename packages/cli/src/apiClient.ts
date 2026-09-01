@@ -1,4 +1,10 @@
-import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
+import type {
+  CommandEvidence,
+  CreateInput,
+  MutationEvidence,
+  TaskDoc,
+  UpdatePatch,
+} from '@dispatch/core';
 
 import { CliError } from './context.js';
 
@@ -196,7 +202,21 @@ async function request<T>(
 ): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('authorization', `Bearer ${target.token}`);
-  const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
+  // A transport failure is caught and named. There is a real gap between the
+  // daemon-file health probe that chose this route and the request itself, and
+  // a daemon exiting inside it is ordinary — a restart, a crash, the desktop
+  // app quitting. Letting fetch's own rejection escape surfaced to the user as
+  // a bare `TypeError: fetch failed`, which names neither the cause nor the
+  // fix.
+  let res: Response;
+  try {
+    res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
+  } catch (err) {
+    throw new CliError(
+      `dispatchd stopped responding at ${target.baseUrl} (${(err as Error).message}). ` +
+        'It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve'
+    );
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new CliError(body.error ?? `request failed: ${res.status}`);
@@ -213,8 +233,82 @@ function jsonBody(value: unknown): RequestInit {
   };
 }
 
+/**
+ * Filter for `listTasks`, mirroring core's own `ListFilter` — which is what
+ * callers actually pass, so this stays module-local rather than exported.
+ */
+interface TaskListQuery {
+  status?: string;
+  kind?: string;
+  parent?: string;
+}
+
+/**
+ * The daemon's task surface, kept separate from `ApiClient` below rather than
+ * folded into it.
+ *
+ * dispatchd is a project's single writer, so when one is running the CLI asks
+ * it for task CRUD instead of opening the store itself (see commands/task.ts
+ * for what happens when none is). That is a different concern from the run /
+ * plan / epic surface `ApiClient` covers, and separating them means a caller
+ * — or a test double — only has to satisfy the half it actually uses.
+ */
+export interface TaskApiClient {
+  listTasks(query?: TaskListQuery): Promise<TaskDoc[]>;
+  readyTasks(): Promise<TaskDoc[]>;
+  getTask(id: string): Promise<TaskDoc>;
+  createTask(input: CreateInput): Promise<TaskDoc>;
+  updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  /**
+   * Records the daemon's last cache rebuild could not read, from
+   * `GET /api/health`. These never appear in `listTasks`, so a caller that
+   * only lists sees a clean board over a damaged one — which is exactly what
+   * `dispatch doctor` is for.
+   */
+  healthProblems(): Promise<string[]>;
+}
+
+/** Builds the task half of the daemon API, bound to one daemon + token. */
+export function createTaskApiClient(
+  baseUrl: string,
+  token: string
+): TaskApiClient {
+  const target: ApiTarget = { baseUrl, token };
+  return {
+    listTasks: (query = {}) => {
+      const params = new URLSearchParams();
+      for (const [key, value] of Object.entries(query)) {
+        if (value !== undefined) params.set(key, value);
+      }
+      // `GET /api/tasks` hides archived tasks unless asked; `TaskStore.list`,
+      // which `dispatch task list` used to call, has no archived filter at
+      // all. Asking for them keeps the command's output the same whether or
+      // not a daemon happens to be running.
+      params.set('archived', '1');
+      return request(target, `/api/tasks?${params.toString()}`);
+    },
+    readyTasks: () => request(target, '/api/tasks/ready'),
+    healthProblems: async () => {
+      const health = await request<{ problems?: unknown }>(
+        target,
+        '/api/health'
+      );
+      return Array.isArray(health.problems)
+        ? health.problems.filter((p): p is string => typeof p === 'string')
+        : [];
+    },
+    getTask: (id) => request(target, `/api/tasks/${encodeURIComponent(id)}`),
+    createTask: (input) => request(target, '/api/tasks', jsonBody(input)),
+    updateTask: (id, patch) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}`, {
+        ...jsonBody(patch),
+        method: 'PATCH',
+      }),
+  };
+}
+
 // Bound client returned by `createApiClient` — every method carries `baseUrl` already.
-// Task CRUD reads go straight through `@dispatch/core`'s TaskStore instead.
+// Task CRUD lives on `TaskApiClient` above instead.
 export interface ApiClient {
   baseUrl: string;
   // `fresh` forces a brand-new run. Without it the daemon resumes the task's

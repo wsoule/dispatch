@@ -237,3 +237,60 @@ describe('isSatisfiedForDispatch', () => {
     expect(isSatisfiedForDispatch(make({ status: 'draft' }))).toBe(false);
   });
 });
+
+describe('archived tasks and readiness', () => {
+  const blocker = make({ id: 't-block0' });
+  const dependent = make({ id: 't-dep000', blockedBy: ['t-block0'] });
+
+  it('does not offer an archived task as ready work', () => {
+    const archived = make({
+      id: 't-arch00',
+      archivedAt: '2026-02-02T00:00:00Z',
+    });
+    expect(readyTasks([archived]).map((t) => t.meta.id)).toEqual([]);
+    expect(dispatchableTasks([archived]).map((t) => t.meta.id)).toEqual([]);
+  });
+
+  it('keeps an archived, unfinished blocker blocking', () => {
+    // The bug this pins: callers used to drop archived tasks BEFORE calling in,
+    // so the blocker disappeared from blocker resolution, `byId.get` returned
+    // undefined, and "dangling ids do not block" made the dependent ready.
+    // Archiving is a filing action; it must never schedule work.
+    const archivedBlocker = make({
+      id: 't-block0',
+      status: 'todo',
+      archivedAt: '2026-02-02T00:00:00Z',
+    });
+    expect(
+      readyTasks([archivedBlocker, dependent]).map((t) => t.meta.id)
+    ).toEqual([]);
+    expect(
+      dispatchableTasks([archivedBlocker, dependent]).map((t) => t.meta.id)
+    ).toEqual([]);
+  });
+
+  it('still releases the dependent once that blocker is done', () => {
+    const done = make({
+      id: 't-block0',
+      status: 'done',
+      archivedAt: '2026-02-02T00:00:00Z',
+    });
+    expect(readyTasks([done, dependent]).map((t) => t.meta.id)).toEqual([
+      't-dep000',
+    ]);
+  });
+
+  it('leaves a genuinely dangling blocker non-blocking', () => {
+    // Unchanged behaviour, asserted so the fix above cannot be "improved" into
+    // making doctor's dangling-id case block instead.
+    const orphan = make({ id: 't-dep000', blockedBy: ['t-nobody'] });
+    expect(readyTasks([orphan]).map((t) => t.meta.id)).toEqual(['t-dep000']);
+  });
+
+  it('offers the blocker itself while its dependent waits', () => {
+    // The unarchived baseline the archived case above is compared against.
+    expect(readyTasks([blocker, dependent]).map((t) => t.meta.id)).toEqual([
+      't-block0',
+    ]);
+  });
+});

@@ -10,12 +10,14 @@ import type { Command } from 'commander';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { createTaskApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
   checkMergeDriverSetup,
   checkTeamMergeDriverSetup,
 } from '../mergeDriver.js';
-import { requireStore } from './task.js';
+import { findRunningDaemon } from './daemon.js';
+import { databaseBacked, projectRoot, requireStore } from './task.js';
 
 interface Issue {
   file: string;
@@ -60,13 +62,41 @@ function isIsoTimestamp(value: string): boolean {
   return ISO_8601_RE.test(value) && !Number.isNaN(Date.parse(value));
 }
 
+/**
+ * Whether doctor should read the board from the daemon's database.
+ *
+ * Keyed purely on the recorded backend. It used to also require that
+ * `.dispatch/tasks` was absent — but the import COPIES and never deletes, so
+ * that directory survives the migration, and until the retire-originals task
+ * lands it survives indefinitely. The effect was that doctor permanently
+ * validated a frozen snapshot of the markdown instead of the live board:
+ * every task created after the migration invisible to it, and every stale
+ * reference in the leftover files reported as a live problem.
+ *
+ * Once a project has recorded `sqlite`, the database IS the board, whatever
+ * else is still sitting on disk beside it.
+ */
+function databaseBackedBoard(ctx: CliContext): boolean {
+  return databaseBacked(projectRoot(ctx.cwd));
+}
+
 export function registerDoctorCommand(program: Command, ctx: CliContext): void {
   program
     .command('doctor')
     .description('Validate task files and references')
     .option('--json')
-    .action((opts: { json?: boolean }) => {
-      const store = requireStore(ctx);
+    .action(async (opts: { json?: boolean }) => {
+      // Where this project's tasks come from. Only the PARSE checks are
+      // file-specific — malformed frontmatter, two files claiming one id —
+      // and a database genuinely cannot express those. Every check after
+      // them is about the task GRAPH (dangling parents, dangling blocked-by,
+      // cycles, unknown statuses), and the schema does not enforce any of
+      // that: `blocked_by` is a JSON text column with no foreign key behind
+      // it, so a database can hold exactly the same broken graph a folder of
+      // markdown can. Those checks therefore run on both backends, reading
+      // through the daemon when it owns the store.
+      const fromDatabase = databaseBackedBoard(ctx);
+      const tasksDir = fromDatabase ? null : requireStore(ctx).tasksDir;
       let config: DispatchConfig;
       try {
         config = loadConfig(ctx.cwd);
@@ -76,19 +106,51 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
       const issues: Issue[] = [];
       const parsed: { file: string; doc: TaskDoc }[] = [];
 
-      for (const file of readdirSync(store.tasksDir).filter((f) =>
-        f.endsWith('.md')
-      )) {
-        try {
-          parsed.push({
-            file,
-            doc: parseTaskFile(
-              readFileSync(join(store.tasksDir, file), 'utf8'),
-              file
-            ),
-          });
-        } catch (err) {
-          issues.push({ file, problem: (err as Error).message });
+      if (tasksDir !== null) {
+        for (const file of readdirSync(tasksDir).filter((f) =>
+          f.endsWith('.md')
+        )) {
+          try {
+            parsed.push({
+              file,
+              doc: parseTaskFile(
+                readFileSync(join(tasksDir, file), 'utf8'),
+                file
+              ),
+            });
+          } catch (err) {
+            issues.push({ file, problem: (err as Error).message });
+          }
+        }
+      } else {
+        // The daemon is the only process that may read this store, so there
+        // is nothing to check without one. `file` carries the task id here,
+        // which is what every issue message below quotes — a database-backed
+        // project has no filename to name instead.
+        const daemon = await findRunningDaemon(projectRoot(ctx.cwd)).catch(
+          () => null
+        );
+        if (daemon === null) {
+          throw new CliError(
+            'dispatchd is not running — this project keeps its tasks in the ' +
+              "daemon's database, which only dispatchd may read. Start it " +
+              'with: dispatch serve'
+          );
+        }
+        const api = createTaskApiClient(
+          `http://127.0.0.1:${daemon.port}`,
+          daemon.agentToken
+        );
+        for (const doc of await api.listTasks()) {
+          parsed.push({ file: doc.meta.id, doc });
+        }
+        // Records the daemon could not read at all never reach listTasks(),
+        // so without this they are invisible to doctor and it reports a clean
+        // board over a damaged one. On the file backend the equivalent
+        // failures surface as parse errors in the loop above; on the database
+        // backend `GET /api/health` is the only place they are named.
+        for (const problem of await api.healthProblems()) {
+          issues.push({ file: problem.split(':')[0] ?? '', problem });
         }
       }
 
@@ -245,8 +307,14 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
           )
         );
       } else if (issues.length === 0) {
+        // What was checked is a different question from whether it was clean:
+        // this branch is only reached once there are no issues, so the
+        // wording can never contradict a non-zero issue count below.
+        const count = `${parsed.length} task${parsed.length === 1 ? '' : 's'}`;
         ctx.log(
-          `ok — ${parsed.length} task${parsed.length === 1 ? '' : 's'} checked`
+          fromDatabase
+            ? `ok — ${count} checked from the daemon database`
+            : `ok — ${count} checked`
         );
       } else {
         for (const i of issues) ctx.log(`${i.file}: ${i.problem}`);

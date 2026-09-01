@@ -5,6 +5,12 @@ work — runs, review, and merge in one desktop app.
 
 <!-- TODO(asset): docs/assets/dispatch-hero.gif — task → dispatch → review loop -->
 
+- **Your repo stays yours.** `.dispatch/` holds config you would want to commit
+  anyway. Point a project at the daemon's database (`dispatch init --db`) and
+  `dispatchd` owns the tasks, findings and history outright, writing them to a
+  git-versioned receipt log _outside_ your repo — a full audit trail with no
+  churn in your own diffs. Or keep the default and have every task be a markdown
+  file in `.dispatch/tasks/*.md`, synced by git.
 - **Agents run with guardrails.** A task declares the paths it may write before
   the agent starts; runs carry budget and turn caps, verify gates, and
   human-gated scope escalation.
@@ -37,6 +43,10 @@ In any git repo:
     dispatch task next
     dispatch doctor
 
+To keep the tasks in the daemon's database instead of markdown files, use
+`dispatch init --db` (and start `dispatch serve` before creating tasks — only
+the daemon may open the database). See [How it works](#how-it-works).
+
 Then open the Dispatch app and point it at the repo: the board shows your tasks,
 and dispatching one hands it to a coding agent in an isolated git worktree —
 live output, review, and merge all happen in the app.
@@ -49,11 +59,28 @@ Every read command accepts `--json` for agent/script consumption.
 
 ## How it works
 
-A task carries status, priority, `blocked-by`, declared `writes` paths, and a
-human-readable body. The CLI, the desktop app, the MCP server, and the
-orchestrator all read and write the same task state — today stored as markdown
-files under `.dispatch/tasks/`, moving to a daemon-owned store
-([direction](docs/TEAM-SERVER.md)).
+A task carries frontmatter — status, priority, `blocked-by`, declared `writes`
+paths, and more — and a human-readable body. The CLI, the desktop app, the MCP
+server and the orchestrator all reach the same task through `dispatchd`, which
+is the single writer.
+
+Where that state lives is a per-project choice, recorded in
+`.dispatch/storage.json`:
+
+- **Files** (the default) keeps every task as markdown in
+  `.dispatch/tasks/*.md`, committed to your repo. Git is both the sync layer and
+  the history, and the CLI can read the board with no daemon running.
+- **Database** (`dispatch init --db`, or `dispatch migrate` for a project you
+  already have) keeps them in a SQLite database only `dispatchd` may open. Your
+  `.dispatch/` shrinks to `config.yml`, `team.yml` and the marker; the database
+  is gitignored, and the audit trail reaches git as a _receipt log_ — a
+  standalone repository under `~/.dispatch/projects/<id>/receipts` that the
+  daemon commits to as things change. Because that log is laid out exactly like
+  a file-backed project, restoring it needs no special tooling: copy its
+  `.dispatch/` into a repo and it is a working board again.
+
+  On this backend `dispatch task` commands go through the daemon, so start one
+  (`dispatch serve`) before creating tasks.
 
 Dispatching a task runs a coding agent in an isolated git worktree, scoped to
 the task's declared `writes`. Touching anything else requires a human-gated
@@ -63,6 +90,27 @@ decisions from each run are recorded alongside the tasks.
 
 `dispatchd`, a local daemon, watches the repo and feeds the app live runs,
 review, and merge. It is local HTTP only — nothing leaves the machine.
+
+### Moving a project to the database
+
+An existing project moves in two deliberate steps, with the daemon stopped:
+
+    dispatch migrate --dry-run    # rehearse: report what would move, write nothing
+    dispatch migrate              # import tasks, findings and ledger into the database
+
+The import is additive — it copies, never moves, so it is safe to re-run and
+your markdown is untouched if anything goes wrong. Once the daemon has been up
+long enough to export a receipt log, retire the copies it left behind:
+
+    dispatch migrate --retire --dry-run
+    dispatch migrate --retire
+
+`--retire` deletes only what the receipt log already contains, checked record by
+record, and reports anything it kept and why. Three files stay behind on
+purpose: `fix-loops.jsonl`, `notes.json` and `inbox/` have no table in the
+database yet, so the daemon still writes them as ordinary files and the receipt
+log does not carry them. On the database backend they are gitignored rather than
+committed.
 
 ## MCP server
 
@@ -79,12 +127,12 @@ Pass `--no-mcp` to skip this. Start the server directly with `dispatch mcp`
 (reads the current directory) or the standalone `dispatch-mcp --root <dir>`
 binary from `@dispatch/mcp`.
 
-The five `task_*` tools operate directly on `.dispatch/tasks/*.md` and need no
-daemon (a running `dispatchd` picks up their file changes through its watcher
-like any other edit). The other nine talk to `dispatchd` over its local HTTP
-API, and return a clear error when it isn't running. As task storage moves into
-the daemon ([direction](docs/TEAM-SERVER.md)), the five file-direct tools will
-route through it too.
+On the file backend the five `task_*` tools operate directly on
+`.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
+file changes through its watcher like any other edit); on the database backend
+they go through the daemon like everything else. The other nine always talk to
+`dispatchd` over its local HTTP API, and return a clear error when it isn't
+running.
 
 Tools (server name `dispatch`):
 

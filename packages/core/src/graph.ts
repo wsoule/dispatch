@@ -35,10 +35,21 @@ function filterAndSortByReadiness(
   tasks: TaskDoc[],
   isSatisfied: (t: TaskDoc) => boolean
 ): TaskDoc[] {
+  // `byId` is the blocker-resolution set and MUST be built from everything
+  // passed in, archived included, because an unresolvable blocker id counts as
+  // satisfied below. Callers used to exclude archived tasks before calling in,
+  // which made archiving an unfinished blocker silently spring every task it
+  // was blocking: the blocker vanished from this map, `byId.get(dep)` returned
+  // undefined, and "dangling ids do not block" did the rest. Archiving is a
+  // filing action and must never be a scheduling one.
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
   return (
     tasks
       .filter((t) => t.meta.kind === 'task' && t.meta.status === 'ready')
+      // Archived tasks are excluded HERE, as candidates, not by the caller —
+      // that is the whole point of the note above. An archived task is never
+      // ready work, but it is still a real blocker.
+      .filter((t) => t.meta.archivedAt === undefined)
       // A derived task holds prose nobody here wrote (TaskMeta.derivedFrom): it
       // anchors a review of another's artifact, never work to hand an agent.
       .filter((t) => t.meta.derivedFrom === undefined)
@@ -73,8 +84,13 @@ export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
 }
 
 /**
- * Tasks safe to start now: kind=task, status=todo, all blockers done.
- * Dangling blocker ids (no task in the set) do not block; `doctor` reports them.
+ * Tasks safe to start now: kind=task, status=todo, not archived, all blockers
+ * done. Dangling blocker ids (no task in the set) do not block; `doctor`
+ * reports them.
+ *
+ * Pass the FULL task set, including archived ones — this excludes them from
+ * the results itself. Pre-filtering them out removes them from blocker
+ * resolution too, which reads as "blocker satisfied".
  */
 export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
   return filterAndSortByReadiness(tasks, isDone);

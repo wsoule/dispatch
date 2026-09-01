@@ -8,7 +8,6 @@ import {
   loadConfig,
   PRIORITIES,
   TaskParseError,
-  TaskStore,
   updateConfig,
 } from '@dispatch/core';
 import type {
@@ -18,10 +17,11 @@ import type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  TaskStoreBackend,
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc } from '@dispatch/core';
+import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -62,7 +62,7 @@ import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
 import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
-import type { FindingStore } from './findings.js';
+import type { FindingStorePort } from './findings.js';
 import {
   COMMIT_SHA_UNRESOLVED_PREFIX,
   CONFIRM_REQUIRED_ERROR,
@@ -84,7 +84,7 @@ import {
   InboxClusterSnapshotStore,
 } from './inboxClusterer.js';
 import { buildLandingSnapshot } from './landing.js';
-import type { LedgerStore } from './ledger.js';
+import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
@@ -123,6 +123,7 @@ import {
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import type { WardenManager } from './orchestrator/warden.js';
+import type { ReceiptsScheduler } from './receipts/scheduler.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -140,7 +141,12 @@ import type { TrackedFilesCache } from './trackedFiles.js';
 // this is what makes it easy to hit with plain fetch() in tests.
 export interface ApiContext {
   rootDir: string;
-  store: TaskStore;
+  // The port, not a concrete TaskStore: this daemon owns whichever backend
+  // the project was opened with (markdown files or its SQLite database), and
+  // every handler below works the same against either. A handler that needs
+  // a path on disk has to narrow to `TaskStore` itself — see
+  // Orchestrator.stageTaskFile, the one place that does.
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
@@ -158,8 +164,8 @@ export interface ApiContext {
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
   inboxStore: InboxStore;
-  findingStore: FindingStore;
-  ledgerStore: LedgerStore;
+  findingStore: FindingStorePort;
+  ledgerStore: LedgerStorePort;
   reviewRunner: ReviewRunner;
   verificationRunner: VerificationRunner;
   fixLoop: FixLoop;
@@ -191,6 +197,14 @@ export interface ApiContext {
   // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
   // that case, since no real SyncResult ever reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
+  // Which backend this project's state lives in. GET /api/sync needs it to
+  // tell the two reasons `boardSyncScheduler` is null apart: no trunk (a
+  // setup problem worth warning about) versus a database-backed project
+  // (which has no task files to sync and is not broken at all).
+  storeBackend: TaskStoreBackend;
+  // The receipts exporter's scheduler, or `null` on the file backend, whose
+  // task files the board syncer already commits into the user's own repo.
+  receiptsScheduler: ReceiptsScheduler | null;
   // Whether `dispatch merge-task` actually resolves on this daemon's PATH.
   // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
   // visible somewhere, since git itself never reports it as an error.
@@ -815,6 +829,67 @@ interface SyncStatus extends SyncResult {
    * line-based one, with no other diagnostic anywhere.
    */
   mergeDriverWarning: string | null;
+  /**
+   * The receipt log's last export. Reported here rather than on an endpoint of
+   * its own because this is already the "is dispatch keeping git up to date"
+   * question, and the two are the file and database halves of one answer: a
+   * project has a board syncer or a receipts exporter, never both.
+   */
+  receipts: ReceiptsStatus;
+}
+
+/** The receipt log's last export attempt, or why there wasn't one. */
+interface ReceiptsStatus {
+  /** `disabled` on the file backend; `idle` before the first export. */
+  state: 'committed' | 'clean' | 'failed' | 'idle' | 'disabled';
+  detail: string | null;
+  /** The commit the last export made, when it made one. */
+  commit: string | null;
+  changed: number;
+  removed: number;
+  /** Records the export could not read out of the database. */
+  problems: number;
+  lastExportedAt: string | null;
+}
+
+// Reads the exporter's retained last result. Its own null-vs-result
+// distinction is preserved: `disabled` means this project has no exporter at
+// all, `idle` means it has one that has not yet run.
+function receiptsStatus(ctx: ApiContext): ReceiptsStatus {
+  const scheduler = ctx.receiptsScheduler;
+  if (scheduler === null) {
+    return {
+      state: 'disabled',
+      detail:
+        'this project keeps its state as files, which the board syncer commits',
+      commit: null,
+      changed: 0,
+      removed: 0,
+      problems: 0,
+      lastExportedAt: null,
+    };
+  }
+  const last = scheduler.lastResult();
+  if (last === null) {
+    return {
+      state: 'idle',
+      detail: null,
+      commit: null,
+      changed: 0,
+      removed: 0,
+      problems: 0,
+      lastExportedAt: null,
+    };
+  }
+  return {
+    state: last.state,
+    detail: last.detail,
+    commit: last.commit,
+    changed: last.changed,
+    removed: last.removed,
+    problems: last.problems,
+    lastExportedAt: scheduler.lastExportedAt(),
+  };
 }
 
 const DISABLED_SYNC_DETAIL =
@@ -822,6 +897,12 @@ const DISABLED_SYNC_DETAIL =
   'remote or a local main/master branch. SyncWorktree.open() only runs at ' +
   'boot, so fixing that (adding an origin, or a main/master branch) needs a ' +
   'daemon restart before syncing can start.';
+
+const DATABASE_SYNC_DETAIL =
+  'board sync does not apply to this project — its tasks live in the ' +
+  "daemon's database, not in task files, so there is nothing for the board " +
+  'syncer to commit. The audit trail is exported to the git receipt log ' +
+  'instead; see `receipts` below.';
 
 const OFF_SYNC_DETAIL =
   'board sync is off for this project — turn on auto-commit in Settings ' +
@@ -856,13 +937,22 @@ function getSyncStatus(ctx: ApiContext): Response {
   if (ctx.boardSyncScheduler === null) {
     const disabled: SyncStatus = {
       state: 'disabled',
-      detail: DISABLED_SYNC_DETAIL,
+      // Two different reasons, and reporting the wrong one is worse than
+      // saying nothing. On the database backend there is no board syncer by
+      // design — the receipts exporter carries the audit trail instead — so
+      // the trunk warning below would send someone off adding a remote to fix
+      // a daemon that is working exactly as intended.
+      detail:
+        ctx.storeBackend === 'sqlite'
+          ? DATABASE_SYNC_DETAIL
+          : DISABLED_SYNC_DETAIL,
       pushed: 0,
       pulled: 0,
       pendingOutgoing: 0,
       pendingIncoming: 0,
       lastSyncedAt: null,
       mergeDriverWarning,
+      receipts: receiptsStatus(ctx),
     };
     return jsonResponse(disabled);
   }
@@ -883,6 +973,7 @@ function getSyncStatus(ctx: ApiContext): Response {
       pendingIncoming: 0,
       lastSyncedAt: null,
       mergeDriverWarning,
+      receipts: receiptsStatus(ctx),
     };
     return jsonResponse(off);
   }
@@ -898,6 +989,7 @@ function getSyncStatus(ctx: ApiContext): Response {
     pendingIncoming: pending.incoming,
     lastSyncedAt: ctx.boardSyncScheduler.lastSyncedAt(),
     mergeDriverWarning,
+    receipts: receiptsStatus(ctx),
   };
   return jsonResponse(status);
 }

@@ -12,6 +12,7 @@ import type {
   MutationEvidence,
   OrchestratorConfig,
   TaskDoc,
+  TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
 import { createHash } from 'node:crypto';
@@ -29,8 +30,10 @@ import { join } from 'node:path';
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import { FindingStore } from '../findings.js';
+import type { FindingStorePort } from '../findings.js';
 import { GitRepo } from '../git/commands.js';
 import { LedgerStore } from '../ledger.js';
+import type { LedgerStorePort } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import {
   EPIC_BRANCH_PREFIX,
@@ -84,9 +87,21 @@ import {
 import type { DiffResult } from './worktree.js';
 import { WorktreeManager } from './worktree.js';
 
+/**
+ * The slice of the database's evidence store the orchestrator writes to.
+ * Structural rather than an import of `SqliteEvidenceStore`, matching how
+ * `FindingStorePort` and `LedgerStorePort` are declared — a test can pass two
+ * functions instead of a database. Not exported: callers pass an object
+ * literal and never need to name the type.
+ */
+interface EvidenceWriter {
+  addCommand(runId: string, evidence: CommandEvidence): CommandEvidence;
+  addMutation(runId: string, mutation: MutationEvidence): MutationEvidence;
+}
+
 export interface OrchestratorContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   // Optional override for the 2+-blocker stacked-dispatch path — the only
@@ -97,10 +112,22 @@ export interface OrchestratorContext {
   jj?: JjManager;
   // Ledger entries injected into dispatch prompts (see promptForTask below).
   // Defaults to one over `rootDir`, same pattern as `jj`.
-  ledgerStore?: LedgerStore;
+  ledgerStore?: LedgerStorePort;
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
   // to one over `rootDir`, same pattern as `ledgerStore`.
-  findingStore?: FindingStore;
+  findingStore?: FindingStorePort;
+  // The database's evidence tables, on the sqlite backend only; `null` (or
+  // absent) on the file backend, where the run transcript is the only home
+  // evidence has.
+  //
+  // Both `recordEvidence` and `recordMutation` write the transcript AND this,
+  // when it exists. The transcript stays the UI's source — nothing reads this
+  // back at runtime — but the receipts exporter materializes the git audit
+  // trail from the database, so without this write the log's
+  // `.dispatch/evidence/` directory was swept every pass and was always empty.
+  // The tables and their exporter shipped ahead of the writer deliberately
+  // (see t-9d89bb); this is the writer.
+  evidenceStore?: EvidenceWriter | null;
   // Who to credit on an Activity line when a call site doesn't say so itself
   // (see the `actor` opts on dispatch/review/sendMessage below). Optional —
   // a test that omits it gets the pre-attribution behavior (an unattributed
@@ -266,8 +293,8 @@ export class Orchestrator {
   // constructing it is inert — it shells out to jj lazily, per call — so an
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
-  private readonly ledgerStore: LedgerStore;
-  private readonly findingStore: FindingStore;
+  private readonly ledgerStore: LedgerStorePort;
+  private readonly findingStore: FindingStorePort;
   // The repo map injected into every run prompt (see promptForTask). Held on
   // the orchestrator rather than built per dispatch so its single-flight
   // background refresh really is one refresh, not one per concurrent dispatch.
@@ -1239,6 +1266,16 @@ export class Orchestrator {
     this.requireRun(runId);
     const full: CommandEvidence = { ...evidence, at: new Date().toISOString() };
     this.transcriptFor(runId).appendEvidence(full);
+    // Best-effort: losing a row in the audit mirror must not fail the tool
+    // call that reported it, since the transcript — the copy the UI and the
+    // reviewer actually read — has already taken it.
+    try {
+      this.ctx.evidenceStore?.addCommand(runId, full);
+    } catch (err) {
+      console.error(
+        `dispatchd: could not mirror evidence for ${runId} into the database: ${(err as Error).message}`
+      );
+    }
     this.ctx.events.broadcast({ type: 'run.changed' });
     return full;
   }
@@ -1255,6 +1292,14 @@ export class Orchestrator {
       at: new Date().toISOString(),
     };
     this.transcriptFor(runId).appendMutation(full);
+    // Same best-effort mirror as recordEvidence above.
+    try {
+      this.ctx.evidenceStore?.addMutation(runId, full);
+    } catch (err) {
+      console.error(
+        `dispatchd: could not mirror a mutation for ${runId} into the database: ${(err as Error).message}`
+      );
+    }
     this.ctx.events.broadcast({ type: 'run.changed' });
     return full;
   }
@@ -3714,8 +3759,17 @@ export class Orchestrator {
   // `taskId` — never the whole `.dispatch/` directory (Important #5) — so
   // `git commit --amend` right after this in mergeRun() folds in exactly
   // this run's own bookkeeping and nothing else pending under `.dispatch/`.
+  //
+  // Narrows to the concrete file-backed store rather than going through
+  // `TaskStorePort`: `taskFilePath` is deliberately off the port (see its
+  // doc comment in core's store.ts) because a database-backed project has no
+  // task file to stage. On that backend this is a no-op — the task's state
+  // already lives in the daemon's database, and the git-versioned copy is
+  // the receipt exporter's job, not the merge commit's.
   private stageTaskFile(taskId: string): void {
-    const file = this.ctx.store.taskFilePath(taskId);
+    const store = this.ctx.store;
+    if (!(store instanceof TaskStore)) return;
+    const file = store.taskFilePath(taskId);
     if (file === null) return;
     Bun.spawnSync(['git', 'add', file], { cwd: this.ctx.rootDir });
   }

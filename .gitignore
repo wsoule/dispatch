@@ -46,3 +46,12 @@ apps/desktop/playwright-report/
 
 # Local business notes — kept out of a public repo deliberately.
 docs/business/
+
+# Machine-local dispatch state. The database is per-machine, and the storage
+# marker points at it — committing the marker without the database it names
+# gives a fresh clone a project that claims to be database-backed with no
+# database, which is a board that reads as empty.
+.dispatch/dispatch.db
+.dispatch/dispatch.db-wal
+.dispatch/dispatch.db-shm
+.dispatch/storage.json

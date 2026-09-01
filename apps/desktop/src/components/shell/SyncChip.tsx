@@ -1,4 +1,4 @@
-import type { SyncStatus } from '@dispatch/client';
+import type { ReceiptsStatus, SyncStatus } from '@dispatch/client';
 import { useState } from 'react';
 
 import { formatRelativeTimeFromIso } from '@/lib/format';
@@ -26,6 +26,47 @@ const DOT_CLASS: Record<SyncStatus['state'], string> = {
   disabled: 'bg-state-blocked',
   off: 'bg-state-ready',
 };
+
+// The receipt log's own dot colours. A database-backed project has no board
+// syncer, so `status.state` is permanently `disabled` there and rendering it
+// would tell the user their sync is broken when it is working exactly as
+// designed — the audit trail just reaches git through the exporter instead.
+const RECEIPTS_DOT_CLASS: Record<ReceiptsStatus['state'], string> = {
+  committed: 'bg-state-ready',
+  clean: 'bg-state-ready',
+  failed: 'bg-state-failed',
+  idle: 'bg-state-review',
+  disabled: 'bg-state-blocked',
+};
+
+// Whether this project's audit trail goes to the receipt log rather than to
+// committed task files. `disabled` is exactly the file backend (see
+// receiptsStatus in packages/server/src/api.ts), so anything else means the
+// exporter is the thing worth reporting.
+function usesReceipts(status: SyncStatus): boolean {
+  return status.receipts.state !== 'disabled';
+}
+
+function receiptsMessageFor(receipts: ReceiptsStatus): string {
+  switch (receipts.state) {
+    case 'committed':
+      return receipts.lastExportedAt === null
+        ? 'Receipts committed'
+        : `Receipts committed ${formatRelativeTimeFromIso(receipts.lastExportedAt)}`;
+    case 'clean':
+      return receipts.lastExportedAt === null
+        ? 'Receipts up to date'
+        : `Receipts up to date ${formatRelativeTimeFromIso(receipts.lastExportedAt)}`;
+    case 'failed':
+      return receipts.detail === null
+        ? 'Receipt export failed'
+        : `Receipt export failed: ${receipts.detail}`;
+    case 'idle':
+      return 'No receipts exported yet';
+    case 'disabled':
+      return receipts.detail ?? 'Receipts are off';
+  }
+}
 
 // One line a user can act on per state, per the plan's copy requirement:
 // `idle` says when, `local-only`/`blocked` say why (from `detail`),
@@ -70,7 +111,13 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
 
   if (status === null) return null;
 
-  const message = messageFor(status);
+  // A project has a board syncer or a receipts exporter, never both, so the
+  // chip reports whichever one is actually running rather than always reading
+  // the board-sync fields.
+  const receipts = usesReceipts(status);
+  const message = receipts
+    ? receiptsMessageFor(status.receipts)
+    : messageFor(status);
 
   return (
     <div className="flex flex-col gap-1 px-2 pt-2 text-[11px]">
@@ -79,7 +126,9 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
           aria-hidden
           className={cn(
             'size-1.5 shrink-0 rounded-full',
-            DOT_CLASS[status.state]
+            receipts
+              ? RECEIPTS_DOT_CLASS[status.receipts.state]
+              : DOT_CLASS[status.state]
           )}
         />
         <span
@@ -89,16 +138,17 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
           {message}
         </span>
       </div>
-      {(status.pendingOutgoing > 0 || status.pendingIncoming > 0) && (
-        <div className="text-muted-foreground/80 flex items-center gap-2 pl-3">
-          {status.pendingOutgoing > 0 && (
-            <span>{status.pendingOutgoing} to push</span>
-          )}
-          {status.pendingIncoming > 0 && (
-            <span>{status.pendingIncoming} incoming</span>
-          )}
-        </div>
-      )}
+      {!receipts &&
+        (status.pendingOutgoing > 0 || status.pendingIncoming > 0) && (
+          <div className="text-muted-foreground/80 flex items-center gap-2 pl-3">
+            {status.pendingOutgoing > 0 && (
+              <span>{status.pendingOutgoing} to push</span>
+            )}
+            {status.pendingIncoming > 0 && (
+              <span>{status.pendingIncoming} incoming</span>
+            )}
+          </div>
+        )}
       {/* A broken merge driver never blocks sync itself — git still resolves a
           genuine conflict correctly without it — so this is a standalone
           warning line, not folded into `message` above.
@@ -127,7 +177,9 @@ export function SyncChip({ status, onDisableAutoCommit }: SyncChipProps) {
       )}
       {/* No point offering the kill switch once sync is already off — flipping
           autoCommit doesn't stop anything that isn't running. */}
-      {status.state !== 'disabled' && status.state !== 'off' && (
+      {/* autoCommit drives the board syncer only — there is nothing for it to
+          turn off on a project whose trail goes to the receipt log. */}
+      {!receipts && status.state !== 'disabled' && status.state !== 'off' && (
         <Button
           type="button"
           variant="link"

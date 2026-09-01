@@ -2,7 +2,7 @@ import {
   computeStack,
   isDone,
   loadConfig,
-  type TaskStore,
+  type TaskStorePort,
 } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -160,7 +160,7 @@ export interface MergeQueueSnapshot {
 
 export interface MergeQueueContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
