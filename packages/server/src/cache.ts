@@ -1,4 +1,4 @@
-import { readyTasks } from '@dispatch/core';
+import { canonicalStatus, readyTasks } from '@dispatch/core';
 import type { ListSafeError, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { Database } from 'bun:sqlite';
 
@@ -106,7 +106,9 @@ export class TaskCache {
     const params: Record<string, string> = {};
     if (filter.status !== undefined) {
       clauses.push('status = $status');
-      params.$status = filter.status;
+      // Cached rows hold canonical statuses; the alias layer covers the query
+      // side too, so `?status=backlog` keeps finding drafts forever.
+      params.$status = canonicalStatus(filter.status);
     }
     if (filter.kind !== undefined) {
       clauses.push('kind = $kind');

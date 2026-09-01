@@ -80,7 +80,7 @@ describe('deriveEpicPulse', () => {
       new Set(['t-1'])
     );
     expect(p.label).toBe('1 need you');
-    expect(p.state).toBe('waiting');
+    expect(p.state).toBe('answer');
   });
 
   // Waiting and failed differ in how you fix them but not in who is blocking, so they share

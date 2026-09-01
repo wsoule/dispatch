@@ -4,7 +4,18 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
     "start": "bun run server.ts",
-    "dev": "bun run server.ts"
+    "deploy": "astro build && railway up",
+    "test": "astro build && bun test test/"
+  },
+  "devDependencies": {
+    "@dispatch/tokens": "workspace:*",
+    "@railway/cli": "catalog:",
+    "@fontsource/inter": "catalog:",
+    "@fontsource/jetbrains-mono": "catalog:",
+    "astro": "catalog:"
   }
 }

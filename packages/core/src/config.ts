@@ -29,6 +29,7 @@ import {
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
 } from './configTypes.js';
+import { canonicalStatus } from './status.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
 
@@ -565,7 +566,11 @@ export function loadConfig(rootDir: string): DispatchConfig {
     );
   }
   return {
-    statuses: [...(raw.statuses ?? DEFAULTS.statuses)],
+    // Old config files list the pre-rename names; canonicalize (and dedupe,
+    // in case a file lists both an old name and its successor) on load.
+    statuses: [
+      ...new Set((raw.statuses ?? DEFAULTS.statuses).map(canonicalStatus)),
+    ],
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,

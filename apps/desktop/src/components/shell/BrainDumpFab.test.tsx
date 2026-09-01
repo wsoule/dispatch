@@ -5,25 +5,46 @@ import {
   screen,
   waitFor,
 } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import { beforeEach, expect, test } from 'bun:test';
+import { useState } from 'react';
 
+import { BRAIN_DUMP_DRAFT_KEY } from '../../hooks/usePersistedDraft';
 import { BrainDumpFab } from './BrainDumpFab';
 import { TooltipProvider } from '@/ui/tooltip';
 
-// The trigger's tooltip needs the same provider App.tsx wraps the whole shell in.
-function mount(
-  overrides: Partial<Parameters<typeof BrainDumpFab>[0]> = {},
-  onCapture: (text: string) => Promise<void> = () => Promise.resolve()
-) {
-  return render(
+// The draft persists to localStorage now (shared with the full view); one
+// test's typing must not leak into the next mount.
+beforeEach(() => {
+  window.localStorage.removeItem(BRAIN_DUMP_DRAFT_KEY);
+});
+
+// `open` is controlled by App in production (so ⌘D can drive it); the harness plays App's
+// role. The trigger's tooltip needs the same provider App.tsx wraps the whole shell in.
+function Harness({
+  onOpenBrainDump = () => {},
+  onCapture = () => Promise.resolve(),
+}: {
+  onOpenBrainDump?: () => void;
+  onCapture?: (text: string) => Promise<void>;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
     <TooltipProvider>
       <BrainDumpFab
+        open={open}
+        onOpenChange={setOpen}
         onCapture={onCapture}
-        onOpenBrainDump={() => {}}
-        {...overrides}
+        onOpenBrainDump={onOpenBrainDump}
       />
     </TooltipProvider>
   );
+}
+
+function mount(
+  overrides: { onOpenBrainDump?: () => void } = {},
+  onCapture: (text: string) => Promise<void> = () => Promise.resolve()
+) {
+  return render(<Harness {...overrides} onCapture={onCapture} />);
 }
 
 function openPanel() {

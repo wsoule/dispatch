@@ -33,34 +33,41 @@ interface StatusVisual {
   fraction?: number;
 }
 
-// Linear's exact treatment for the six built-in tracker statuses: a shape that reads as
-// "how far along is this" (empty ring -> partial pie -> filled check) plus a deliberate
+// Linear's exact treatment for the built-in tracker statuses: a shape that reads as "how far
+// along is this" (dashed ring -> empty ring -> filling pie -> filled check) plus a deliberate
 // color, independent of `statusTone`'s badge-oriented palette (see the fallback below for why
-// those two mappings intentionally differ).
+// those two mappings intentionally differ). The pie fills as the pipeline advances:
+// working half, review three-quarter, landing near-full.
 const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
-  backlog: {
+  draft: {
     shape: 'dashed',
     colorClass: 'text-muted-foreground/70',
     tone: 'gray',
   },
-  todo: { shape: 'empty', colorClass: 'text-muted-foreground', tone: 'gray' },
-  'in-progress': {
+  ready: { shape: 'empty', colorClass: 'text-muted-foreground', tone: 'gray' },
+  working: {
     shape: 'pie',
     fraction: 0.5,
     colorClass: 'text-state-waiting',
     tone: 'amber',
   },
-  'in-review': {
+  review: {
     shape: 'pie',
     fraction: 0.75,
     colorClass: 'text-primary',
     tone: 'accent',
   },
-  // Green rather than the indigo this shipped with: done and in-review were both indigo, so
+  landing: {
+    shape: 'pie',
+    fraction: 0.9,
+    colorClass: 'text-state-landing',
+    tone: 'blue',
+  },
+  // Green rather than the indigo this shipped with: landed and review were both indigo, so
   // the two columns that matter most were indistinguishable at a glance. Green completes an
   // amber -> indigo -> green progression across the board.
-  done: { shape: 'check', colorClass: 'text-state-review', tone: 'green' },
-  cancelled: {
+  landed: { shape: 'check', colorClass: 'text-state-review', tone: 'green' },
+  dropped: {
     shape: 'x',
     colorClass: 'text-muted-foreground',
     tone: 'gray',
@@ -82,12 +89,11 @@ const FALLBACK_TONE_COLOR_CLASS: Record<Tone, string> = {
 
 /**
  * Resolves a status string to its full visual treatment — shape, color, and (for custom
- * statuses) which of `statusTone`'s six tones it maps to. Exported so other call sites that
- * need a status's *color* outside of this component's own `currentColor`-text rendering (e.g.
- * EpicDagView's SVG node fill/stroke) can key off the same resolution instead of maintaining a
- * second status->color map that would silently drift from this one.
+ * statuses) which of `statusTone`'s six tones it maps to. A call site that needs a status's
+ * color outside this component should render `StatusIcon` itself (the graph's ContextCard
+ * nodes do) rather than re-deriving colors from a second status->color map.
  */
-export function resolveStatusVisual(status: string): StatusVisual {
+function resolveStatusVisual(status: string): StatusVisual {
   const known = KNOWN_STATUS_VISUALS[status];
   if (known !== undefined) return known;
   const tone = statusTone(status);

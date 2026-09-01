@@ -1,5 +1,6 @@
 // This module must stay free of node:* imports — it is exported as the
 // browser-safe '@dispatch/core/graph' subpath consumed by the desktop webview.
+import { isDoneStatus, isSatisfiedForDispatchStatus } from './status.js';
 import type { Priority, TaskDoc } from './types.js';
 
 export const PRIORITY_ORDER: Record<Priority, number> = {
@@ -11,23 +12,15 @@ export const PRIORITY_ORDER: Record<Priority, number> = {
 };
 
 export function isDone(t: TaskDoc): boolean {
-  return t.meta.status === 'done' || t.meta.status === 'cancelled';
+  return isDoneStatus(t.meta.status);
 }
 
 /**
- * Whether a blocker no longer holds up *dispatching* its dependents. Looser
- * than `isDone`: a run that finishes leaves its task at `in-review` and only
- * reaches `done` once a human merges it, so gating dispatch on `isDone` keeps
- * a dependent idle for the whole review window. Dispatch can start as soon as
- * the blocker's code exists on a branch, which is exactly `in-review`.
- *
- * `'in-review'` is hardcoded for the same reason `isDone` hardcodes
- * `'done'`/`'cancelled'` — the built-in statuses are the contract the
- * orchestrator's own transitions are written against, even though
- * `.dispatch/config.yml` lets a project add custom status names.
+ * Whether a blocker no longer holds up *dispatching* its dependents — see
+ * `isSatisfiedForDispatchStatus` in status.ts for the reasoning.
  */
 export function isSatisfiedForDispatch(t: TaskDoc): boolean {
-  return isDone(t) || t.meta.status === 'in-review';
+  return isSatisfiedForDispatchStatus(t.meta.status);
 }
 
 /**
@@ -52,7 +45,7 @@ function filterAndSortByReadiness(
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
   return (
     tasks
-      .filter((t) => t.meta.kind === 'task' && t.meta.status === 'todo')
+      .filter((t) => t.meta.kind === 'task' && t.meta.status === 'ready')
       // Archived tasks are excluded HERE, as candidates, not by the caller —
       // that is the whole point of the note above. An archived task is never
       // ready work, but it is still a real blocker.

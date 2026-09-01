@@ -46,7 +46,7 @@ describe('deriveFeedState — runs with no queue entry', () => {
   test.each([
     ['provisioning', 'working'],
     ['running', 'working'],
-    ['awaiting-approval', 'waiting'],
+    ['awaiting-approval', 'approve'],
   ] as [RunMeta['state'], FeedState][])('%s -> %s', (state, expected) => {
     expect(deriveFeedState(run({ state }))).toBe(expected);
   });
@@ -115,10 +115,10 @@ describe('deriveFeedState — the queue outranks the run', () => {
 
   // Held on a dirty checkout: nothing advances until a human clears it, so it must not sit in
   // the calm part of the feed looking like it is still making progress.
-  test('blocked-environment is urgent, not landing', () => {
+  test('blocked-environment is its own ask — unblock, not landing', () => {
     expect(
       deriveFeedState(run({ state: 'finished' }), entry('blocked-environment'))
-    ).toBe('failed');
+    ).toBe('unblock');
   });
 
   test('a merged entry falls back to the run itself', () => {
@@ -134,7 +134,7 @@ describe('deriveFeedState — the queue outranks the run', () => {
   test('a merged entry does not mask a live approval', () => {
     expect(
       deriveFeedState(run({ state: 'awaiting-approval' }), entry('merged'))
-    ).toBe('waiting');
+    ).toBe('approve');
   });
 });
 
@@ -155,20 +155,33 @@ describe('state metadata', () => {
 
   // The order is load-bearing: rows must not reshuffle under the cursor as counts change, and
   // what needs a human has to stay at the top.
-  test('urgent states lead the order', () => {
-    expect(FEED_STATE_ORDER.slice(0, 2)).toEqual(['waiting', 'failed']);
-  });
-
-  test('only waiting and failed are urgent', () => {
-    expect(FEED_STATE_ORDER.filter(isUrgentState)).toEqual([
-      'waiting',
+  test('your moves and broken lead the order', () => {
+    expect(FEED_STATE_ORDER.slice(0, 6)).toEqual([
+      'answer',
+      'approve',
+      'review',
+      'ruling',
+      'unblock',
       'failed',
     ]);
   });
 
-  test('only working and landing are in flight', () => {
+  test('exactly the you-tier and broken states are urgent', () => {
+    expect(FEED_STATE_ORDER.filter(isUrgentState)).toEqual([
+      'answer',
+      'approve',
+      'review',
+      'ruling',
+      'unblock',
+      'failed',
+    ]);
+  });
+
+  test('exactly the machine tier is in flight', () => {
     expect(FEED_STATE_ORDER.filter(isInFlightState)).toEqual([
       'working',
+      'fixing',
+      'checking',
       'landing',
     ]);
   });

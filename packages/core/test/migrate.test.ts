@@ -270,7 +270,7 @@ describe('importLegacyProject', () => {
     importLegacyProject(stores);
     stores.tasks.update('t-abc123', { status: 'done' });
     importLegacyProject(stores);
-    expect(stores.tasks.get('t-abc123')?.meta.status).toBe('done');
+    expect(stores.tasks.get('t-abc123')?.meta.status).toBe('landed');
   });
 
   it('leaves every source file exactly where it was', () => {

@@ -179,8 +179,9 @@ describe('dispatch task, with a database-backed daemon running', () => {
     );
     expect(result.exitCode).toBe(0);
 
+    // The CLI accepts the pre-rename alias; the store canonicalizes it.
     const tasks = await listTasksViaApi();
-    expect(tasks[0].meta.status).toBe('in-progress');
+    expect(tasks[0].meta.status).toBe('working');
   });
 
   it('edits through the daemon', async () => {

@@ -1,5 +1,6 @@
 import {
   ASSIGNEES,
+  canonicalStatus,
   ConfigError,
   KINDS,
   loadConfig,
@@ -436,7 +437,11 @@ async function taskList(
   // reads, so an invalid enum reads identically whether or not a daemon is
   // up — and so an obviously-bad filter never costs a round trip.
   const config = loadConfig(route.configRoot);
-  const status = validate(args.status, config.statuses, 'status');
+  const status = validate(
+    args.status === undefined ? undefined : canonicalStatus(args.status),
+    config.statuses,
+    'status'
+  );
   const kind = validate(args.kind, KINDS, 'kind');
 
   if (route.via === 'daemon') {
@@ -551,7 +556,11 @@ async function taskSave(
   const route = await resolveStoreRoute(rootDir);
   if (route.via === 'refused') return toolError(route.message);
   const config = loadConfig(route.configRoot);
-  const status = validate(input.status, config.statuses, 'status');
+  const status = validate(
+    input.status === undefined ? undefined : canonicalStatus(input.status),
+    config.statuses,
+    'status'
+  );
   const priority = validate(input.priority, PRIORITIES, 'priority');
   const assignee = validate(input.assignee, ASSIGNEES, 'assignee');
 

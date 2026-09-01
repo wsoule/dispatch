@@ -1,5 +1,6 @@
 import {
   ASSIGNEES,
+  canonicalStatus,
   ConfigError,
   describeValue,
   getSection,
@@ -36,7 +37,9 @@ import {
   adjudicateFinding,
   advanceFixLoop,
   getFixLoop,
+  listFixLoops,
   startFixLoop,
+  stopFixLoop,
 } from './api/fixLoop.js';
 import {
   errorResponse,
@@ -75,7 +78,11 @@ import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
-import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
+import {
+  filterGroupsToLocalItems,
+  InboxClusterer,
+  InboxClusterSnapshotStore,
+} from './inboxClusterer.js';
 import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
@@ -306,8 +313,13 @@ function validateTaskFields(
     // would otherwise get the template back with their text silently dropped.
     return 'invalid body: a new task builds its body from the template — set it with PATCH instead';
   }
+  // Canonicalized before the membership check so callers speaking the
+  // pre-rename names ('done', 'in-progress', …) stay valid forever — the
+  // store canonicalizes again at write, so the alias never reaches disk.
   const statusError = validateEnumField(
-    value.status,
+    typeof value.status === 'string'
+      ? canonicalStatus(value.status)
+      : value.status,
     config.statuses,
     'status'
   );
@@ -518,6 +530,17 @@ async function createTaskComment(
 // actually registered on this Orchestrator instance (M6: derived live via
 // `registeredExecutorNames()`, not a separately hardcoded list) is a 400
 // here.
+//
+// A task whose most recent run failed with its worktree and branch intact is
+// RESUMED rather than started over (see Orchestrator.resumableRunForTask).
+// Losing a nearly-finished run because a re-dispatch quietly began again from
+// nothing is the expensive mistake; resuming when the caller wanted a clean
+// slate costs one discard. So resume is the default and `fresh: true` opts out.
+//
+// A resume keeps the failed run's own model, so a `model` sent alongside one is
+// not applied — handing the rest of a conversation to a different model is what
+// requestChanges' `model` comment exists to prevent. A caller that specifically
+// wants a different model wants `fresh: true`.
 async function createRun(
   req: Request,
   ctx: ApiContext,
@@ -546,7 +569,7 @@ async function createRun(
   const task = ctx.store.get(taskId);
   if (
     task !== null &&
-    (task.meta.status === 'done' || task.meta.status === 'cancelled')
+    (task.meta.status === 'landed' || task.meta.status === 'dropped')
   ) {
     return errorResponse(409, `cannot dispatch a ${task.meta.status} task`);
   }
@@ -556,16 +579,21 @@ async function createRun(
     return errorResponse(400, 'invalid model: expected a string');
   }
 
-  const executorName =
-    typeof executorField === 'string' ? executorField : 'claude';
-  // Omitting `model` falls back to the project's configured `models.execute`,
-  // so a script or an older UI build still runs on the model settings chose.
-  const model =
-    typeof modelField === 'string'
-      ? modelField
-      : loadConfig(ctx.rootDir).models.execute;
-  const meta = await ctx.orchestrator.dispatch(taskId, executorName, {
-    model,
+  const freshField = parsed.value.fresh;
+  if (freshField !== undefined && typeof freshField !== 'boolean') {
+    return errorResponse(400, 'invalid fresh: expected a boolean');
+  }
+  // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
+  // the raw fields go through untouched and only the FALLBACKS are resolved
+  // here: omitting `model` still runs a fresh dispatch on the project's
+  // configured `models.execute` (so a script or an older UI build lands where
+  // settings chose), while naming one that the resumable run cannot honour is
+  // what sends the call down the fresh path in the first place.
+  const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
+    executor: typeof executorField === 'string' ? executorField : undefined,
+    model: typeof modelField === 'string' ? modelField : undefined,
+    fresh: freshField === true,
+    defaults: { model: loadConfig(ctx.rootDir).models.execute },
   });
   return jsonResponse(meta, 201);
 }
@@ -3321,9 +3349,10 @@ function promoteNote(ctx: ApiContext, id: string): Response {
   return jsonResponse(task, 201);
 }
 
-// POST /api/inbox — capture raw text. The body's `text` is split server-side into one item
-// per non-empty line, so the splitting rule lives in exactly one place rather than being
-// reimplemented by every client (the desktop composer, the MCP tool, a future CLI).
+// POST /api/inbox — capture raw text as ONE item, however many lines it takes.
+// The normalization rule lives server-side in exactly one place rather than
+// being reimplemented by every client (the desktop composer, the MCP tool, a
+// future CLI).
 async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -3444,7 +3473,15 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
       continue;
     }
     try {
-      const task = ctx.store.create({ title: item.text, kind: 'task' });
+      // A multiline dump converts as first line -> title, the rest -> the
+      // task's description — a paragraph is not a title.
+      const [firstLine = '', ...restLines] = item.text.split('\n');
+      const description = restLines.join('\n').trim();
+      const task = ctx.store.create({
+        title: firstLine,
+        kind: 'task',
+        ...(description === '' ? {} : { description }),
+      });
       links.push({ id, taskId: task.meta.id });
       results.push({ id, taskId: task.meta.id });
     } catch (err) {
@@ -3507,13 +3544,27 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
     // seed selection with an id the UI can't resolve, and fail convert outright. Filtering here
     // — rather than widening display/convert to cross-file reads — also keeps a teammate's
     // private capture text from ever reaching the local UI or a future model call over it.
-    const localIds = new Set(ctx.inboxStore.list().map((i) => i.id));
+    const localOpen = ctx.inboxStore.list().filter((i) => !i.done);
+    const localIds = new Set(localOpen.map((i) => i.id));
     const groups = await clusterer.cluster(ctx.inboxStore.listAll());
     const localGroups = filterGroupsToLocalItems(groups, localIds);
+    // Persisted so a page load renders this pass instead of billing a new one;
+    // a failed pass below deliberately leaves the previous snapshot standing.
+    new InboxClusterSnapshotStore(ctx.rootDir).save({
+      groups: localGroups,
+      itemIds: [...localIds],
+      updatedAt: new Date().toISOString(),
+    });
     return jsonResponse({ groups: localGroups, error: null });
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
+}
+
+// GET /api/inbox/clusters — the persisted result of the last clustering pass,
+// or null when none has ever run (or the cache was corrupt).
+function getInboxClusters(ctx: ApiContext): Response {
+  return jsonResponse(new InboxClusterSnapshotStore(ctx.rootDir).load());
 }
 
 /**
@@ -4013,6 +4064,14 @@ export async function handleApi(
         return await startFixLoop(ctx, segments[1]);
       }
       if (
+        segments.length === 4 &&
+        segments[2] === 'fix-loop' &&
+        segments[3] === 'stop' &&
+        method === 'POST'
+      ) {
+        return stopFixLoop(ctx, segments[1]);
+      }
+      if (
         segments.length === 5 &&
         segments[2] === 'findings' &&
         segments[4] === 'adjudicate' &&
@@ -4020,6 +4079,20 @@ export async function handleApi(
       ) {
         return await adjudicateFinding(req, ctx, segments[1], segments[3]);
       }
+    }
+
+    if (
+      segments[0] === 'fix-loops' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return listFixLoops(ctx);
+    }
+
+    // GET /api/plans — every plan's summary, newest activity first, for the
+    // Plans page's history (persisted server-side; localStorage is gone).
+    if (segments[0] === 'plans' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(ctx.planManager.list());
     }
 
     if (segments[0] === 'runs') {
@@ -4689,6 +4762,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await clusterInbox(ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'clusters' &&
+        method === 'GET'
+      ) {
+        return getInboxClusters(ctx);
       }
       if (segments.length === 2 && method === 'PATCH') {
         return await updateInbox(req, ctx, segments[1]);

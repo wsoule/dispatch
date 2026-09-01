@@ -1,6 +1,7 @@
 // The browser-safe entry point. Everything reachable from here is pure — no
 // `node:*` import — so the desktop webview can import it in dev and in a build.
 
+export * from './status.js';
 export * from './types.js';
 export * from './configTypes.js';
 export * from './linearMap.js';
@@ -12,7 +13,11 @@ export type {
 } from './findings.js';
 export type { LedgerEntry, LedgerKind } from './ledger.js';
 export type { CommandEvidence, MutationEvidence } from './evidence.js';
-export { schedulableBatch, tasksConflict } from './conflicts.js';
+export {
+  claimConflictsWithWrites,
+  schedulableBatch,
+  tasksConflict,
+} from './conflicts.js';
 export {
   ActorRefError,
   formatActorRef,

@@ -157,6 +157,10 @@ export interface StartServerOptions {
   // How often PrManager polls open PRs for a merged state. Defaults to the
   // plan's 60s; tests pass something much shorter.
   prPollIntervalMs?: number;
+  // How long a run force-failed by reconcileOnBoot must sit with an unchanged
+  // worktree before it is auto-resumed (see Orchestrator.autoResumeAfterBoot).
+  // Defaults to the orchestrator's own 30s; a restart test passes milliseconds.
+  autoResumeQuietMs?: number;
   // Replaces credential lookup with a ready-made Linear client, so no sync test
   // ever reaches the network.
   linearClient?: LinearClient;
@@ -747,6 +751,7 @@ export async function startServer(
     // Shares PrManager/MergeQueue/GitRepo's command-runner seam
     // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
     commandRunner: opts.prCommandRunner,
+    autoResumeQuietMs: opts.autoResumeQuietMs,
   });
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
@@ -1181,6 +1186,10 @@ export async function startServer(
     prManager,
     prWorktrees,
     async stop() {
+      // First, so the boot recovery sweep stops before anything it might act
+      // on is torn down — it can sit in a quiet window for minutes and ends by
+      // starting an agent (see Orchestrator.shutdown).
+      orchestrator.shutdown();
       watcher?.close();
       sourceWatcher.close();
       prManager.stopPolling();

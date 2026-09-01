@@ -181,7 +181,7 @@ describe('plan -> confirm -> startEpic integration', () => {
     }
 
     await waitFor(() =>
-      taskIds.every((id) => store.get(id)?.meta.status === 'in-review')
+      taskIds.every((id) => store.get(id)?.meta.status === 'review')
     );
     sampling = false;
     await sampler;
@@ -192,7 +192,7 @@ describe('plan -> confirm -> startEpic integration', () => {
 
     for (const taskId of taskIds) {
       const task = store.get(taskId);
-      expect(task?.meta.status).toBe('in-review');
+      expect(task?.meta.status).toBe('review');
       expect(task?.meta.parent).toBe(epicId);
     }
 

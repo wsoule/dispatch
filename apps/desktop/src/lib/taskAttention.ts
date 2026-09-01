@@ -4,7 +4,7 @@ import type {
   RunQuestion,
 } from '@dispatch/client';
 
-import { deriveFeedState } from './feedState';
+import { deriveFeedState, isUrgentState } from './feedState';
 
 /** The subset of `FeedState` where a task's card/row earns the attention tint: the run is
  * waiting on the user (approval or question), stopped without finishing, or finished and
@@ -31,10 +31,12 @@ export function deriveTaskAttentionById(
     if (derived === null) continue;
     const asked = openQuestions.get(run.id) ?? [];
     const state =
-      derived === 'working' && asked.length > 0 ? 'waiting' : derived;
-    if (state === 'waiting' || state === 'failed' || state === 'review') {
-      result.set(taskId, state);
-    }
+      derived === 'working' && asked.length > 0 ? 'answer' : derived;
+    // TaskAttention keeps its own coarse trio: every your-move ask reads as
+    // 'waiting' at this altitude, except review, which stays its softer self.
+    if (state === 'review') result.set(taskId, 'review');
+    else if (state === 'failed') result.set(taskId, 'failed');
+    else if (isUrgentState(state)) result.set(taskId, 'waiting');
   }
   return result;
 }

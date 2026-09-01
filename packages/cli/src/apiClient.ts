@@ -311,7 +311,17 @@ export function createTaskApiClient(
 // Task CRUD lives on `TaskApiClient` above instead.
 export interface ApiClient {
   baseUrl: string;
-  createRun(taskId: string, executor?: string): Promise<RunMeta>;
+  // `fresh` forces a brand-new run. Without it the daemon resumes the task's
+  // most recent run when that run failed with its worktree still intact — see
+  // createRun in packages/server/src/api.ts.
+  createRun(
+    taskId: string,
+    executor?: string,
+    opts?: { fresh?: boolean }
+  ): Promise<RunMeta>;
+  // Picks a specific terminal run back up in its own worktree and branch, the
+  // same endpoint the desktop UI's Resume button posts to.
+  resumeRun(runId: string): Promise<RunMeta>;
   listRuns(): Promise<RunMeta[]>;
   getRun(id: string): Promise<RunDetail>;
   approveRun(runId: string, requestId: string, allow: boolean): Promise<void>;
@@ -353,10 +363,15 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
   const target: ApiTarget = { baseUrl, token };
   return {
     baseUrl,
-    createRun: (taskId, executor) =>
+    createRun: (taskId, executor, opts = {}) =>
       request(target, `/api/tasks/${taskId}/runs`, {
-        ...jsonBody(executor !== undefined ? { executor } : {}),
+        ...jsonBody({
+          ...(executor !== undefined ? { executor } : {}),
+          ...(opts.fresh === true ? { fresh: true } : {}),
+        }),
       }),
+    resumeRun: (runId) =>
+      request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     listRuns: () => request(target, '/api/runs'),
     getRun: (id) => request(target, `/api/runs/${id}`),
     approveRun: (runId, requestId, allow) =>

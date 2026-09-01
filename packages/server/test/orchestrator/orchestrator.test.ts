@@ -114,7 +114,7 @@ describe('Orchestrator.dispatch full lifecycle', () => {
     );
 
     const finishedTask = store.get(task.meta.id)!;
-    expect(finishedTask.meta.status).toBe('in-review');
+    expect(finishedTask.meta.status).toBe('review');
     expect(finishedTask.body).toContain(
       `dispatched (fake, branch ${meta.branch})`
     );
@@ -149,7 +149,7 @@ describe('Orchestrator execute runs on a derived task', () => {
     );
     // Refused before anything existed: no run, and the task untouched.
     expect(orchestrator.list()).toEqual([]);
-    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
   });
 
   // The other door. FixLoop's fresh-implementer step goes through
@@ -259,7 +259,7 @@ describe('Orchestrator.cancel', () => {
     // M2: task status is deliberately left alone (a cancelled run says
     // nothing about whether the task itself should move), but the
     // cancellation is still recorded as a durable Activity line.
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-progress');
+    expect(store.get(task.meta.id)!.meta.status).toBe('working');
     expect(store.get(task.meta.id)!.body).toContain(
       `[run ${meta.id}] cancelled`
     );
@@ -521,7 +521,7 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
     await waitFor(
       () => orchestrator.getRun(second.id)?.meta.state === 'finished'
     );
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
     expect(store.get(task.meta.id)!.body).toContain(
       `requested changes (run ${second.id}): please fix x`
     );
@@ -720,7 +720,7 @@ describe('Orchestrator.review merge', () => {
     expect(existsSync(join(repo, 'merged.txt'))).toBe(true);
     const log = runGitSync(repo, ['log', '-1', '--pretty=%s']).trim();
     expect(log).toBe(`dispatch: Merge me (run ${meta.id})`);
-    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
     expect(existsSync(meta.worktreePath)).toBe(false);
   });
 
@@ -771,7 +771,7 @@ describe('Orchestrator.review merge', () => {
     expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
       OrchestratorConflictError
     );
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
   });
 
   // A bare "main checkout has uncommitted changes" sent users hunting: in the
@@ -823,7 +823,7 @@ describe('Orchestrator.review merge', () => {
     expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
       /staged changes/
     );
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
     // The staged edit is still staged, untouched by the refused merge.
     const staged = runGitSync(repo, ['diff', '--cached', '--name-only']);
     expect(staged.trim()).toBe('.dispatch/config.yml');
@@ -875,7 +875,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
 
     // Nothing about the run or the task moved: the branch/worktree are
     // still there to retry against once the user checks main back out.
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
     expect(existsSync(meta.worktreePath)).toBe(true);
     expect(runGitSync(repo, ['branch', '--list', meta.branch])).toContain(
       meta.branch
@@ -922,7 +922,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
 
     // Task status must not have moved to done for a merge that never
     // actually happened.
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
     // Main must be back to a clean, mergeable state (git reset --merge),
     // not stuck mid-conflict — a retry after manual resolution must be
     // possible.
@@ -932,7 +932,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     // Retry after resolving manually: bring the run's own change in by
     // hand, then merge/discard cleanly resolves the run.
     orchestrator.review(meta.id, 'discard');
-    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
   });
 
   it("C: keeps a user's own unrelated .dispatch/config.yml edit out of the squash commit", async () => {
@@ -1034,8 +1034,8 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
 
     expect(existsSync(join(repo, 'first.txt'))).toBe(true);
     expect(existsSync(join(repo, 'second.txt'))).toBe(true);
-    expect(store.get(taskA.meta.id)!.meta.status).toBe('done');
-    expect(store.get(taskB.meta.id)!.meta.status).toBe('done');
+    expect(store.get(taskA.meta.id)!.meta.status).toBe('landed');
+    expect(store.get(taskB.meta.id)!.meta.status).toBe('landed');
   });
 
   it('I: merges successfully with tracked task files and a mainline commit landed since the branch point', async () => {
@@ -1074,7 +1074,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     expect(() => orchestrator.review(meta.id, 'merge')).not.toThrow();
     expect(existsSync(join(repo, 'feature.txt'))).toBe(true);
     expect(existsSync(join(repo, 'unrelated.txt'))).toBe(true);
-    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
   });
 
   // Regression guard for the "squash first" reordering: a run that made no
@@ -1095,7 +1095,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     );
 
     expect(() => orchestrator.review(meta.id, 'merge')).not.toThrow();
-    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
     const log = runGitSync(repo, ['log', '-1', '--pretty=%s']).trim();
     expect(log).toBe(`dispatch: No-op run (run ${meta.id})`);
   });
@@ -1117,7 +1117,7 @@ describe('Orchestrator.review discard', () => {
     orchestrator.review(meta.id, 'discard');
 
     expect(existsSync(meta.worktreePath)).toBe(false);
-    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
   });
 });
 
@@ -1327,7 +1327,7 @@ describe('Orchestrator hook isolation', () => {
     // handleFinish's own outcome (task -> in-review) must have landed
     // despite the subscriber throwing, and the failure gets logged rather
     // than silently swallowed.
-    expect(store.get(task.meta.id)?.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)?.meta.status).toBe('review');
     expect(store.get(task.meta.id)?.body).toContain('[hook error]');
   });
 
@@ -1349,7 +1349,7 @@ describe('Orchestrator hook isolation', () => {
     const reviewed = orchestrator.review(meta.id, 'merge');
 
     expect(reviewed.reviewedAt).toBeDefined();
-    expect(store.get(task.meta.id)?.meta.status).toBe('done');
+    expect(store.get(task.meta.id)?.meta.status).toBe('landed');
     expect(store.get(task.meta.id)?.body).toContain('[hook error]');
   });
 });
@@ -2064,7 +2064,7 @@ describe('Orchestrator eager fail on executor start failure (no zombie)', () => 
     expect(persisted.state).toBe('failed');
     // Same "only an in-progress task moves to in-review" rule handleFinish
     // uses for a normal finish/failure — shared via markRunFailed().
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
     expect(store.get(task.meta.id)!.body).toContain(
       `[run ${meta.id}] failed to start:`
     );

@@ -231,7 +231,7 @@ describe('PrManager poll cache', () => {
     );
     expect(listCalls).toHaveLength(1);
     expect(viewCalls).toHaveLength(1);
-    expect(harness.store.get(task.meta.id)?.meta.status).toBe('done');
+    expect(harness.store.get(task.meta.id)?.meta.status).toBe('landed');
   });
 
   test('listMergedPrs returns merged PRs sorted by updatedAt desc with correct argv', async () => {

@@ -44,11 +44,15 @@ an unsigned bundle as "the release."
 ## 4. Version bumps + changelog note
 
 Bump `version` in every published package changed since the last release
-(`core`, `cli`, `client`, `server`, `mcp` — all `0.0.1` today; `web` and
-`desktop` stay private/unpublished). Write a short changelog note grouped by the
-conventional-commit types already used in this repo's history (`feat`, `fix`,
-`docs`, ...) — no changelog-generation tool is wired up, so this is a manual
-pass over `git log` since the last release tag.
+(`core`, `cli`, `client`, `server`, `mcp`; `web` and `desktop` stay
+private/unpublished). Package versions track the app version
+(`apps/desktop/src-tauri/tauri.conf.json` + the release tag) — aligned at 0.24.0
+as of 2026-08-23; bump the constants `CORE_VERSION`
+(`packages/core/src/index.ts`) and `MCP_SERVER_VERSION`
+(`packages/mcp/src/server.ts`) with them. Write a short changelog note grouped
+by the conventional-commit types already used in this repo's history (`feat`,
+`fix`, `docs`, ...) — no changelog-generation tool is wired up, so this is a
+manual pass over `git log` since the last release tag.
 
 ## 5. npm publish order
 

@@ -14,6 +14,8 @@ work — runs, review, and merge in one desktop app.
 - **Agents run with guardrails.** A task declares the paths it may write before
   the agent starts; runs carry budget and turn caps, verify gates, and
   human-gated scope escalation.
+- **Everything is on the record.** Findings, decisions, evidence, and
+  transcripts from every run are kept — reviewable, not scrolled past.
 - **Local-first.** Runs on your machine, against your checkout, with your API
   key. No account, no server, nothing uploaded.
 
@@ -26,7 +28,7 @@ Desktop app for macOS via Homebrew:
 Or grab an installer from the
 [latest release](https://github.com/wsoule/dispatch/releases/latest): macOS DMGs
 (Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
-signed and notarized (Developer ID) as of v0.1.1.
+signed and notarized (Developer ID).
 
 On macOS, installing the app also puts the `dispatch` CLI on your `PATH` (the
 cask links the binary bundled inside `Dispatch.app`).
@@ -155,8 +157,8 @@ Tools (server name `dispatch`):
 given fields otherwise; `kind` and `description` take effect on create only.
 `ask_user` and `request_scope` block until a human answers or the wait times
 out. A `workflow://onboarding` resource briefs a connecting agent on the same
-conventions. See `docs/superpowers/plans/2026-07-20-phase-3-mcp-server.md` for
-the original design.
+conventions. See `docs/archive/plans/2026-07-20-phase-3-mcp-server.md` for the
+original design.
 
 ## Dependency graph with Carto (optional)
 
@@ -201,7 +203,7 @@ container as a library, not over MCP.
 
 All six roadmap phases are complete — tracker core, CLI, `dispatchd`, the MCP
 server, the desktop app, and the orchestrator. Roadmap:
-`docs/superpowers/plans/2026-07-13-dispatch-roadmap.md`.
+`docs/archive/plans/2026-07-13-dispatch-roadmap.md`.
 
 To run the CLI from a checkout instead of the installed app:
 
@@ -233,20 +235,30 @@ wrap this daemon for end users.
 
 ## Design docs
 
-- Spec:
-  `docs/superpowers/specs/2026-07-13-agent-orchestration-platform-design.md`
-- Research: `docs/research/2026-07-13-landscape-research.md`
+- **Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — what the
+  system is today. Start here.
+- Historical plans, specs, and research live in
+  [`docs/archive/`](docs/archive/README.md). They record why decisions were made
+  and are not maintained; where they disagree with `ARCHITECTURE.md`, the
+  architecture doc is the checked one.
 
 ## License
 
-[Functional Source License 1.1, Apache 2.0 Future License](LICENSE)
-(`FSL-1.1-ALv2`) — source-available, not OSI open source.
+Dispatch is open core — see [`LICENSING.md`](LICENSING.md) for the
+plain-language map:
 
-In practice you may read, build, modify, self-host, and redistribute Dispatch
-for any purpose except shipping a competing product or service. Internal use,
-non-commercial education and research, and professional services you deliver to
-a licensee are all explicitly permitted. **Each release converts to Apache-2.0
-two years after it ships**, and that grant is irrevocable.
+- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/client`,
+  `@dispatch/cli`, `@dispatch/mcp`. Build on the task model, drive the daemon,
+  or embed the MCP tools without a license review.
+- **[FSL-1.1-ALv2](LICENSE)** — the desktop app and the daemon/orchestrator.
+  Source-available, not OSI open source: read, build, modify, self-host, and
+  redistribute for any purpose except shipping a competing product or service.
+  Internal use, non-commercial education and research, and professional services
+  you deliver to a licensee are all explicitly permitted. **Each release
+  converts to Apache-2.0 two years after it ships**, irrevocably.
+- **Commercial** — team features (presence, claims, shared run visibility, web
+  dashboard, audit) live in the team server, a separate private repo
+  ([direction](docs/TEAM-SERVER.md)). The solo app is complete without it.
 
 Versions up to and including v0.13.1 were published under Apache-2.0 and remain
 Apache-2.0 forever.

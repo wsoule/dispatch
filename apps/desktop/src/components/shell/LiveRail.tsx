@@ -1,4 +1,4 @@
-import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
+import type { RunMeta } from '@dispatch/client';
 import { useMemo } from 'react';
 
 import type { TaskTab } from '../../lib/appNav';
@@ -10,8 +10,9 @@ import { StateDot } from '@/ui/chrome/StateDot';
 
 interface LiveRailProps {
   runs: RunMeta[];
-  repoPrs: RepoPr[];
-  openQuestions: ReadonlyMap<string, RunQuestion[]>;
+  /** Everything waiting on a human — App's own `buildInbox` total, the same number the
+   * Inbox page and sidebar badge show. */
+  attentionCount: number;
   /** Opens the full task view on a run's chat tab — `openTaskView` in App.tsx. */
   onOpenTask: (taskId: string, tab: TaskTab, runId?: string) => void;
   /** Navigates to the Inbox project view. */
@@ -29,16 +30,12 @@ interface LiveRailProps {
  */
 export function LiveRail({
   runs,
-  repoPrs,
-  openQuestions,
+  attentionCount,
   onOpenTask,
   onOpenInbox,
   collapsed,
 }: LiveRailProps) {
-  const { attentionCount, live } = useMemo(
-    () => buildLiveRail(runs, repoPrs, openQuestions),
-    [runs, repoPrs, openQuestions]
-  );
+  const live = useMemo(() => buildLiveRail(runs), [runs]);
 
   if (collapsed) {
     return (

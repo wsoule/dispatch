@@ -641,7 +641,7 @@ describe('PrManager polling', () => {
       stderr: '',
     };
     await pr.pollOnce();
-    expect(harness.store.get(taskId)?.meta.status).toBe('in-review');
+    expect(harness.store.get(taskId)?.meta.status).toBe('review');
 
     stub.viewResult = {
       ok: true,
@@ -651,7 +651,7 @@ describe('PrManager polling', () => {
     await pr.pollOnce();
 
     const task = harness.store.get(taskId);
-    expect(task?.meta.status).toBe('done');
+    expect(task?.meta.status).toBe('landed');
     const run = harness.orchestrator.getRun(runId);
     expect(run?.meta.reviewedAt).toBeDefined();
     expect(run?.meta.reviewAction).toBe('pr');
@@ -732,7 +732,7 @@ describe('PrManager polling', () => {
     };
     await pr.pollOnce();
 
-    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+    expect(harness.store.get(taskId)?.meta.status).toBe('landed');
 
     // Worktree is gone now, so this reads the persisted snapshot.
     const persisted = harness.orchestrator.diff(runId);
@@ -750,7 +750,7 @@ describe('PrManager polling', () => {
 
     stub.viewResult = { ok: false, stdout: '', stderr: 'rate limited' };
     await expect(pr.pollOnce()).resolves.toBeUndefined();
-    expect(harness.store.get(taskId)?.meta.status).toBe('in-review');
+    expect(harness.store.get(taskId)?.meta.status).toBe('review');
   });
 
   it('does not poll at all when the project lacks the pr capability', () => {

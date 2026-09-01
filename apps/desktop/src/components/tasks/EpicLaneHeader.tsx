@@ -97,7 +97,7 @@ export function EpicLaneHeader({
 
   const doneCount =
     progress?.children.filter(
-      (c) => c.status === 'done' || c.status === 'cancelled'
+      (c) => c.status === 'landed' || c.status === 'dropped'
     ).length ?? 0;
   const totalCount = progress?.children.length ?? 0;
   const liveCount = progress?.liveRuns.length ?? 0;
@@ -110,7 +110,7 @@ export function EpicLaneHeader({
     !active &&
     totalCount > 0 &&
     doneCount === totalCount &&
-    epic.meta.status !== 'done';
+    epic.meta.status !== 'landed';
 
   return (
     <>

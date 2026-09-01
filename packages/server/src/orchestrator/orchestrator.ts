@@ -15,12 +15,14 @@ import type {
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
+import { createHash } from 'node:crypto';
 import {
   existsSync,
   mkdirSync,
   readdirSync,
   readFileSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs';
 import { join } from 'node:path';
@@ -138,6 +140,11 @@ export interface OrchestratorContext {
   // Overrides STOP_ESCALATION_MS, same test-injection reason: a test proving a
   // stubborn run gets escalated cannot wait out the real two-minute window.
   stopEscalationMs?: number;
+  // Overrides AUTO_RESUME_QUIET_MS / AUTO_RESUME_MAX_ATTEMPTS — same
+  // test-injection reason again: a restart test proving a crashed run comes
+  // back cannot wait out the real half-minute quiet window per attempt.
+  autoResumeQuietMs?: number;
+  autoResumeMaxAttempts?: number;
   // The repo-map cache injected into run prompts (see promptForTask). Defaults
   // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
@@ -186,6 +193,21 @@ const ORPHAN_RECHECK_COOLDOWN_MS = 60_000;
 // its next tool call.
 const STOP_ESCALATION_MS = 120_000;
 
+// How long a boot-force-failed run's worktree must sit completely unchanged
+// before reconcileOnBoot is willing to auto-resume it — see
+// autoResumeAfterBoot. The orphaned agent process survives the daemon restart
+// (that is what BOOT_FORCE_FAIL_ERROR says), so the only evidence available
+// that it has stopped is that it has stopped touching the tree. Generous on
+// purpose: waiting is free, and resuming into a worktree a live orphan still
+// owns puts two agents in one checkout.
+const AUTO_RESUME_QUIET_MS = 30_000;
+
+// How many quiet windows an auto-resume waits out before giving up on a run
+// whose orphan never goes quiet. Giving up leaves the run exactly where today's
+// code leaves every crashed run — failed, unreviewed, resumable by hand — so
+// the ceiling costs nothing but bounds the retry loop.
+const AUTO_RESUME_MAX_ATTEMPTS = 20;
+
 // Sort order for the Branches surface: the rows that need a human decision
 // come first, read-only live runs last.
 const STATUS_RANK: Record<BranchEntryStatus, number> = {
@@ -197,6 +219,15 @@ const STATUS_RANK: Record<BranchEntryStatus, number> = {
   // work waiting on anyone.
   epic: 4,
 };
+
+// `unref`d so a pending quiet window is never the reason a process stays
+// alive: the boot recovery sweep this serves is background work, and the
+// daemon's own server is what should be holding the event loop open.
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms).unref();
+  });
+}
 
 // How a branch ref relates to the run registry — see BranchEntryStatus for
 // what each value means. A branch with no run at all is an orphan; otherwise
@@ -298,6 +329,17 @@ export class Orchestrator {
     ReturnType<typeof setTimeout>
   >();
   private readonly stopEscalationMs: number;
+  // In-flight boot auto-resume attempts, keyed by run — see
+  // autoResumeSettled(), which is how a test waits one out instead of sleeping.
+  private readonly scheduledAutoResumes = new Map<string, Promise<void>>();
+  private readonly autoResumeQuietMs: number;
+  private readonly autoResumeMaxAttempts: number;
+  // Runs whose worktree the recovery sweep has actually watched sit still —
+  // see needsQuietProof, which is what stops a re-dispatch from resuming into
+  // a checkout an orphaned agent may still own.
+  private readonly observedQuiet = new Set<string>();
+  // Set by shutdown(); see it for what this is protecting against.
+  private stopped = false;
 
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
@@ -308,6 +350,9 @@ export class Orchestrator {
     this.claimsRefreshCooldownMs =
       ctx.claimsRefreshCooldownMs ?? CLAIMS_REFRESH_COOLDOWN_MS;
     this.stopEscalationMs = ctx.stopEscalationMs ?? STOP_ESCALATION_MS;
+    this.autoResumeQuietMs = ctx.autoResumeQuietMs ?? AUTO_RESUME_QUIET_MS;
+    this.autoResumeMaxAttempts =
+      ctx.autoResumeMaxAttempts ?? AUTO_RESUME_MAX_ATTEMPTS;
     this.runCommand = ctx.commandRunner ?? defaultCommandRunner;
   }
 
@@ -543,7 +588,7 @@ export class Orchestrator {
     this.ctx.store.update(
       taskId,
       {
-        status: 'in-progress',
+        status: 'working',
         appendActivity: `${now} dispatched (${executorName}, branch ${branch})`,
         activityActor: opts.actor ?? this.ctx.actorContext?.humanRef,
       },
@@ -740,7 +785,7 @@ export class Orchestrator {
       this.ctx.store.update(
         meta.taskId,
         {
-          status: 'done',
+          status: 'landed',
           archivedAt: now,
           appendActivity: `${now} [run ${runId}] review of ${derivedFrom} finished; task retired`,
           // Mechanical cleanup, not an action anyone asked for by name.
@@ -815,7 +860,7 @@ export class Orchestrator {
     const parents: string[] = [];
     for (const blockerId of task.meta.blockedBy) {
       const blocker = this.ctx.store.get(blockerId);
-      if (blocker === null || blocker.meta.status !== 'in-review') continue;
+      if (blocker === null || blocker.meta.status !== 'review') continue;
       const branch = this.branchForTask(blockerId);
       if (branch !== null) parents.push(branch);
     }
@@ -1510,6 +1555,63 @@ export class Orchestrator {
     };
   }
 
+  /**
+   * A hash of everything about a run's worktree that a still-running agent
+   * would change: the branch head, the exact CONTENT of every tracked
+   * modification, and the size and mtime of every untracked file. Two equal
+   * samples a quiet window apart are the only evidence autoResumeAfterBoot()
+   * has that nobody is writing to the checkout any more.
+   *
+   * Content, not just the path lists a survey carries: an orphaned agent
+   * rewriting a file it had ALREADY dirtied moves no path and no sha, so a
+   * name-only fingerprint reads a busy tree as a still one.
+   *
+   * Returns null for "cannot tell", which every caller must treat as not
+   * quiet. A git command failing here is evidence of activity if it is
+   * evidence of anything — an index lock held by the orphan's own commit, a
+   * worktree being rewritten underneath the read — whereas folding a failed
+   * `git status` into empty arrays reads as maximally quiet, the exact
+   * inversion of what a failure means.
+   */
+  private async worktreeEvidence(runId: string): Promise<string | null> {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return null;
+    const repo = new GitRepo(meta.worktreePath);
+    // Sequential, deliberately, where surveyRun's cheaper pair can be
+    // concurrent: `git status` and `git diff` both opportunistically refresh
+    // the index, and two of them at once in the same worktree lose the race
+    // for `index.lock`. That failure would come back here as null — "cannot
+    // tell" — so running them in parallel would make a run's own evidence
+    // gathering the reason it never looked quiet enough to resume.
+    const status = await repo.status();
+    if (!status.ok) return null;
+    const log = await repo.log({ limit: 1 });
+    if (!log.ok) return null;
+    const unstaged = await repo.diff();
+    if (!unstaged.ok) return null;
+    const staged = await repo.diff({ staged: true });
+    if (!staged.ok) return null;
+    const hash = createHash('sha256');
+    hash.update(log.commits[0]?.sha ?? 'no-commits');
+    hash.update(unstaged.patch);
+    hash.update(staged.patch);
+    // Untracked files never show up in a diff, so their content is sampled
+    // separately. Size and mtime rather than a read: it catches a rewrite
+    // without pulling in files an agent may be actively writing.
+    for (const path of [...status.untracked].sort()) {
+      hash.update(path);
+      try {
+        const stat = statSync(join(meta.worktreePath, path));
+        hash.update(`${stat.size}:${stat.mtimeMs}`);
+      } catch {
+        // Gone between the status and the stat — itself a change, and one the
+        // next sample will disagree with.
+        hash.update('gone');
+      }
+    }
+    return hash.digest('hex');
+  }
+
   // Grows a run's claims to match its worktree's git status. Public so tests
   // can call it directly instead of waiting out the cooldown below.
   async refreshClaims(runId: string): Promise<void> {
@@ -1672,6 +1774,270 @@ export class Orchestrator {
     );
   }
 
+  // Why a run cannot be picked up where it left off, or null when nothing
+  // stands in the way. Shared by the two paths that resume WITHOUT a human
+  // choosing a specific run — the boot sweep below, and `dispatch run
+  // <taskId>` re-dispatching a task — so both agree on what "resumable" means
+  // instead of each discovering it by calling resumeRun() and catching
+  // whatever it throws.
+  //
+  // Deliberately stricter than resumeRun()'s own guards, because nobody is
+  // being asked here: it also refuses the cases where a person should be the
+  // one to decide (a base flagged as needing a human, a review/verify run) and
+  // the case where there is nothing to pick up at all (a run that died before
+  // its agent ever reported a session).
+  resumeBlockReason(meta: RunMeta): string | null {
+    if (meta.state !== 'failed' && meta.state !== 'interrupted-dirty') {
+      return `run is ${meta.state}, not a failed run`;
+    }
+    if (runKind(meta) !== 'execute') return 'run is not an execute run';
+    if (meta.reviewedAt !== undefined) return 'run has already been reviewed';
+    if (meta.prUrl !== undefined) return 'run has an open PR';
+    if (meta.baseDiscarded === true) return "run's base needs a human";
+    if (meta.sessionId === undefined) return 'run never started a session';
+    if (!existsSync(meta.worktreePath)) return 'run has no worktree left';
+    if (this.registry.list().some((r) => r.resumedFrom === meta.id)) {
+      return 'run has already been resumed';
+    }
+    const live = this.registry.liveRunForTask(meta.taskId);
+    if (live !== undefined) return `task already has a live run: ${live.id}`;
+    // Mirrors createRun's own done/cancelled refusal. Load-bearing for the
+    // sweep in particular: it sleeps for minutes between samples, and a task a
+    // human closed out during one of those windows must not be dragged back to
+    // in-progress by a decision that predates them. An unreadable task file is
+    // treated the same way — a resume must not be built on a task nobody can
+    // read the status of.
+    let task: TaskDoc | null;
+    try {
+      task = this.ctx.store.get(meta.taskId);
+    } catch {
+      return 'task could not be read';
+    }
+    if (task === null) return 'task no longer exists';
+    if (task.meta.status === 'landed' || task.meta.status === 'dropped') {
+      return `task is ${task.meta.status}`;
+    }
+    return null;
+  }
+
+  // The run a re-dispatch of `taskId` should pick up instead of starting from
+  // scratch, or null when the task has nothing resumable. Only the task's most
+  // recent execute run is ever considered: an older failed run has already been
+  // superseded, and resuming it would fork the task's history.
+  resumableRunForTask(taskId: string): RunMeta | null {
+    const newest = this.registry
+      .list()
+      .find((r) => r.taskId === taskId && runKind(r) === 'execute');
+    if (newest === undefined) return null;
+    return this.resumeBlockReason(newest) === null ? newest : null;
+  }
+
+  /**
+   * The one entry point for "start work on this task": the HTTP API, the epic
+   * auto-fill and the warden's dispatch_task all come through here, so a task
+   * whose most recent run is resumable is PICKED UP rather than started over.
+   * A dispatcher calling dispatch() directly strands that run's worktree and
+   * permanently cancels the recovery sweep watching it (resumeBlockReason then
+   * reads "task already has a live run" forever) — which is precisely how the
+   * incident lost a nearly-finished run.
+   *
+   * `executor`/`model` are what the caller NAMED; undefined means no
+   * preference, so a resume is free to keep whatever the failed run used.
+   * `defaults` is what a fresh run falls back to instead. The two are kept
+   * apart on purpose: a resolved default must never read as the caller having
+   * asked for something a resume cannot honour, which is how a CLI flag with a
+   * default value silently disabled resume for every non-default executor.
+   */
+  async dispatchOrResume(
+    taskId: string,
+    request: {
+      executor?: string;
+      model?: string;
+      fresh?: boolean;
+      actor?: string;
+      defaults?: { executor?: string; model?: string };
+    } = {}
+  ): Promise<RunMeta> {
+    if (request.fresh !== true) {
+      const resumable = this.resumableRunForTask(taskId);
+      if (resumable !== null && this.resumeHonoursRequest(resumable, request)) {
+        return this.resumeForRedispatch(resumable, request.actor);
+      }
+    }
+    const executorName =
+      request.executor ?? request.defaults?.executor ?? DEFAULT_EXECUTOR_NAME;
+    return await this.dispatch(taskId, executorName, {
+      model: request.model ?? request.defaults?.model,
+      actor: request.actor,
+    });
+  }
+
+  // Whether resuming `run` would actually give the caller what it asked for. A
+  // resume deliberately keeps the run's own executor, session and model —
+  // handing the rest of a conversation to a different model is what
+  // requestChanges' own `model` comment exists to prevent — so a caller that
+  // NAMED a different one is asking for something only a fresh run delivers.
+  // Without this, a user retrying a failed run on a stronger model silently
+  // got the old one back.
+  private resumeHonoursRequest(
+    run: RunMeta,
+    request: { executor?: string; model?: string }
+  ): boolean {
+    if (request.executor !== undefined && request.executor !== run.executor) {
+      return false;
+    }
+    // Only compared when the run's own model is known: an older run recorded
+    // none, and "no evidence they differ" must not read as "they differ".
+    return (
+      request.model === undefined ||
+      run.model === undefined ||
+      request.model === run.model
+    );
+  }
+
+  // The resume half of dispatchOrResume, held to the same orphan-quiescence
+  // discipline as the boot sweep. A run this daemon force-failed at boot may
+  // still have the agent it orphaned writing to the worktree, and resuming
+  // into that is the two-agents-in-one-checkout hazard the sweep exists to
+  // avoid — so rather than racing it, this re-arms the sweep and refuses,
+  // saying so in terms the caller can act on.
+  private resumeForRedispatch(run: RunMeta, actor?: string): RunMeta {
+    if (this.needsQuietProof(run)) {
+      this.scheduleAutoResume(run.id);
+      throw new OrchestratorConflictError(
+        `run ${run.id} is still being recovered after a daemon restart — waiting for the agent it orphaned to stop writing to ${run.branch}. It will resume on its own; dispatch with fresh=true to start over instead.`
+      );
+    }
+    return this.resumeRun(run.id, { actor });
+  }
+
+  // True when this run could still have the agent a restart orphaned writing
+  // to its worktree, and nothing has yet watched it long enough to say
+  // otherwise. Only boot-force-failed runs can be in that position — a run
+  // that failed normally did so with its daemon alive and its executor gone —
+  // so they are the only ones a resume has to prove anything about.
+  private needsQuietProof(meta: RunMeta): boolean {
+    return (
+      meta.error === BOOT_FORCE_FAIL_ERROR && !this.observedQuiet.has(meta.id)
+    );
+  }
+
+  // Resolves once the boot auto-resume attempt for a run has settled — the
+  // autoResume counterpart of surveySettled(), so a test can wait one out
+  // rather than sleeping past it.
+  autoResumeSettled(runId: string): Promise<void> {
+    return this.scheduledAutoResumes.get(runId) ?? Promise.resolve();
+  }
+
+  // Tells the orchestrator its daemon is going away, so background work that
+  // outlives a single request stops instead of acting on a dead process. Only
+  // the boot recovery sweep listens today, and it is the one that matters: it
+  // sleeps for minutes at a time and ends by STARTING an agent, so a sweep
+  // that ran on past shutdown would spawn a run into a daemon that no longer
+  // exists to supervise it. Idempotent, and deliberately one-way.
+  shutdown(): void {
+    this.stopped = true;
+  }
+
+  // Fire-and-forget auto-resume, same shape as scheduleSurvey: nothing is left
+  // to receive a rejection, so a failure is logged rather than lost. Joins a
+  // sweep already in flight instead of starting a second one — two loops
+  // sampling the same worktree could both see it settle and both resume.
+  private scheduleAutoResume(runId: string): void {
+    if (this.scheduledAutoResumes.has(runId)) return;
+    const done = this.autoResumeAfterBoot(runId)
+      .catch((err: unknown) => {
+        console.error(
+          `dispatchd: auto-resume of run ${runId} failed: ${(err as Error).message}`
+        );
+      })
+      .finally(() => {
+        if (this.scheduledAutoResumes.get(runId) === done) {
+          this.scheduledAutoResumes.delete(runId);
+        }
+      });
+    this.scheduledAutoResumes.set(runId, done);
+  }
+
+  // The recovery half of reconcileOnBoot: a run this boot force-failed gets
+  // picked back up in its own worktree, on its own branch, instead of being
+  // left dead for a human to notice — which is how a nearly-finished run was
+  // lost outright when re-dispatching its task spawned a fresh one instead.
+  //
+  // The hazard this has to survive is that the orphaned agent process can
+  // outlive the daemon that started it and keep committing (see
+  // stampOrphanWork), and nothing here holds a handle on it — the Agent SDK
+  // spawns its CLI child internally, so there is no pid to probe. Liveness is
+  // therefore inferred from the worktree: two identical surveys a quiet window
+  // apart mean nobody is writing to the checkout. Anything else defers to the
+  // next attempt rather than racing the orphan for it, and running out of
+  // attempts leaves the run exactly where today's code leaves every crashed
+  // run — failed, unreviewed, resumable by hand.
+  private async autoResumeAfterBoot(runId: string): Promise<void> {
+    // The boot survey decides failed vs interrupted-dirty and stamps the
+    // survey resumeRun() folds into the agent's prompt; resuming ahead of it
+    // would hand the agent a prompt with no record of its own leftover tree.
+    await this.surveySettled(runId);
+    // Every sample is taken AFTER a quiet window, never before one. Two
+    // reasons: the loop then ends on a sample rather than on a wait whose
+    // result nobody reads, and boot does not fire a burst of git at every
+    // crashed worktree at the exact moment the orphan that owns it is most
+    // likely to be mid-commit — sampling into that costs an `index.lock`
+    // collision for whichever of the two loses, which for the orphan means a
+    // failed commit and lost work. The first comparison therefore needs two
+    // windows, which is the price of not being one of the racers.
+    let previous: string | null = null;
+    for (let attempt = 0; attempt < this.autoResumeMaxAttempts; attempt++) {
+      await delay(this.autoResumeQuietMs);
+      if (this.stopped) return;
+      const meta = this.registry.get(runId);
+      // A human who resumed, reviewed or discarded the run first has already
+      // answered the question this loop was asking — not a failure, just done.
+      if (meta === undefined || this.resumeBlockReason(meta) !== null) return;
+      const sample = await this.worktreeEvidence(runId);
+      // `null` is "cannot tell", never "quiet" — so two unreadable samples in
+      // a row must not compare equal and fall through into a resume.
+      if (sample !== null && sample === previous) {
+        this.observedQuiet.add(runId);
+        this.finishAutoResume(runId);
+        return;
+      }
+      previous = sample;
+    }
+    // Out of attempts. Re-checked rather than assumed: the run may have been
+    // resumed, reviewed or discarded while this loop was sleeping, and a note
+    // announcing that an orphan is still writing would be flatly wrong about
+    // a run somebody already dealt with.
+    if (this.stopped) return;
+    const meta = this.registry.get(runId);
+    if (meta === undefined || this.resumeBlockReason(meta) !== null) return;
+    this.noteTaskActivityOnce(
+      meta.taskId,
+      `[run ${runId}] not auto-resumed after the daemon restart: the orphaned agent is still writing to this branch — resume it by hand once it stops`
+    );
+  }
+
+  // The resume itself. resumeRun() can still refuse at this point — a human
+  // pressing Resume in the same instant, a worktree removed between the last
+  // survey and here — and that is a deferral, not a crash: log it and leave the
+  // run resumable by hand, exactly as if this sweep had never run.
+  private finishAutoResume(runId: string): void {
+    if (this.stopped) return;
+    const meta = this.registry.get(runId);
+    // Re-checked after the awaited sample this decision rests on: a human
+    // pressing Resume inside that window has already created the successor,
+    // and a second one would put two agents in the one worktree — the exact
+    // hazard the quiet window upstream of here exists to prevent.
+    if (meta === undefined || this.resumeBlockReason(meta) !== null) return;
+    try {
+      this.resumeRun(runId, { auto: true });
+    } catch (err) {
+      console.error(
+        `dispatchd: could not auto-resume run ${runId}: ${(err as Error).message}`
+      );
+    }
+  }
+
   // The review surface's unified diff: everything committed on the run's
   // branch since it diverged from its base branch, plus per-file status.
   //
@@ -1799,7 +2165,7 @@ export class Orchestrator {
       this.ctx.store.update(
         meta.taskId,
         {
-          status: 'todo',
+          status: 'ready',
           appendActivity: `${now} run ${runId} discarded`,
           activityActor: actor,
         },
@@ -1903,7 +2269,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${runId} merged via PR (${meta.prUrl ?? 'unknown url'})`,
         // The PR poller noticed GitHub reports it merged — whoever actually
         // merged it did so on GitHub, outside anything dispatch can see.
@@ -1950,7 +2316,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${runId} merged outside dispatch (branch ${meta.branch} landed on ${meta.baseBranch})`,
         // Whoever ran the merge did so in a plain git checkout, outside
         // anything dispatch can attribute.
@@ -2129,7 +2495,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
         activityActor: actor,
       },
@@ -2201,7 +2567,7 @@ export class Orchestrator {
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} run ${meta.id} merged into ${meta.baseBranch}`,
         activityActor: actor,
       },
@@ -2249,7 +2615,7 @@ export class Orchestrator {
    */
   epicLandStatus(epicId: string): EpicLandStatus {
     const epic = this.requireEpicDoc(epicId);
-    if (epic.meta.status === 'done') {
+    if (epic.meta.status === 'landed') {
       throw new OrchestratorConflictError(`epic has already landed: ${epicId}`);
     }
     const branch = epicBranchName(epicId);
@@ -2263,7 +2629,7 @@ export class Orchestrator {
       .query({ parent: epicId, includeArchived: true })
       .filter((t) => t.meta.kind === 'task');
     const unfinished = children.filter(
-      (c) => c.meta.status !== 'done' && c.meta.status !== 'cancelled'
+      (c) => c.meta.status !== 'landed' && c.meta.status !== 'dropped'
     );
     if (unfinished.length > 0) {
       const named = unfinished
@@ -2374,7 +2740,7 @@ export class Orchestrator {
     this.ctx.store.update(
       epicId,
       {
-        status: 'done',
+        status: 'landed',
         appendActivity: `${now} [epic] landed on ${base}${
           hasChanges ? '' : ' (no commits to merge)'
         }`,
@@ -2427,12 +2793,12 @@ export class Orchestrator {
       );
       this.worktrees.removeBranchRef(branch);
     }
-    if (epic !== null && epic.meta.status !== 'done') {
+    if (epic !== null && epic.meta.status !== 'landed') {
       const now = new Date().toISOString();
       this.ctx.store.update(
         epicId,
         {
-          status: 'done',
+          status: 'landed',
           appendActivity: `${now} [epic] landed via PR (${prUrl})`,
           // Whoever merged did so on GitHub, outside anything dispatch can
           // attribute — same rule as markRunMergedViaPr.
@@ -3023,7 +3389,7 @@ export class Orchestrator {
   // eligible — never un-archives one that already was.
   reconcileArchives(): number {
     if (!this.worktrees.hasOriginRemote()) return 0;
-    const doneTasks = this.ctx.cache.query({ status: 'done' });
+    const doneTasks = this.ctx.cache.query({ status: 'landed' });
     if (doneTasks.length === 0) return 0;
     // Newest merged run per task, scanned once against registry.list()'s own
     // most-recent-first order — mirrors newestRunByBranch()'s same shape. Safe
@@ -3145,11 +3511,14 @@ export class Orchestrator {
     const retiredRunIds = this.retireLostDerivedRuns(bootRuns);
     this.reconcileArchives();
     // Deferred, not awaited — reconcileOnBoot() stays synchronous, so each
-    // crashed run's worktree is surveyed and upgraded in the background. A
-    // retired review's worktree is already gone, and deliberately discarded.
+    // crashed run's worktree is surveyed and upgraded in the background, and
+    // then picked back up if it can be (see autoResumeAfterBoot, which waits
+    // on that survey before it decides anything). A retired review's worktree
+    // is already gone, and deliberately discarded.
     for (const runId of crashedRunIds) {
       if (retiredRunIds.has(runId)) continue;
       this.scheduleSurvey(runId);
+      this.scheduleAutoResume(runId);
     }
   }
 
@@ -3263,7 +3632,7 @@ export class Orchestrator {
         appendActivity: `${now} ${activityNote}`,
         activityActor: 'none',
       };
-      if (task.meta.status === 'in-progress') patch.status = 'in-review';
+      if (task.meta.status === 'working') patch.status = 'review';
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed' });
@@ -3725,7 +4094,7 @@ export class Orchestrator {
         // daemon right now.
         activityActor: this.ctx.actorContext?.agentRef(meta.executor),
       };
-      if (task.meta.status === 'in-progress') patch.status = 'in-review';
+      if (task.meta.status === 'working') patch.status = 'review';
       this.ctx.store.update(meta.taskId, patch, now);
       this.ctx.cache.rebuild(this.ctx.store);
       this.ctx.events.broadcast({ type: 'task.changed' });
@@ -3847,7 +4216,7 @@ export class Orchestrator {
     this.ctx.store.update(
       oldMeta.taskId,
       {
-        status: 'in-progress',
+        status: 'working',
         appendActivity: `${now} requested changes (run ${runId}): ${text}${substitutionNote}`,
         activityActor: actor,
       },
@@ -3878,7 +4247,17 @@ export class Orchestrator {
 
   // POST /api/runs/:id/resume: a fresh run in the SAME worktree/branch,
   // always a new session, with the run's survey (if any) in its prompt.
-  resumeRun(runId: string): RunMeta {
+  //
+  // `auto` marks the one caller that is not a person — reconcileOnBoot's
+  // recovery sweep — so the Activity line it writes says a restart brought the
+  // run back rather than crediting the human whose daemon happened to reboot.
+  // `actor` is the same override dispatch() takes, for the callers that resume
+  // on someone else's behalf (dispatchOrResume, reached from the epic
+  // auto-fill, credits 'none' exactly as its dispatch does).
+  resumeRun(
+    runId: string,
+    opts: { auto?: boolean; actor?: string } = {}
+  ): RunMeta {
     const meta = this.requireRun(runId);
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
       throw new OrchestratorClientError(`run is still live: ${runId}`);
@@ -3942,14 +4321,20 @@ export class Orchestrator {
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
       : '';
+    const how =
+      opts.auto === true
+        ? `auto-resumed after ${meta.state} (daemon restart)`
+        : `resumed after ${meta.state}`;
     this.ctx.store.update(
       meta.taskId,
       {
-        status: 'in-progress',
-        appendActivity: `${now} resumed after ${meta.state} (run ${newRunId})${substitutionNote}`,
-        // resumeRun() has exactly one caller: the human pressing Resume via
-        // the API.
-        activityActor: this.ctx.actorContext?.humanRef,
+        status: 'working',
+        appendActivity: `${now} ${how} (run ${newRunId})${substitutionNote}`,
+        // Left unattributed on the auto path: no person asked for this one, and
+        // crediting the daemon's operator would misreport who acted.
+        activityActor:
+          opts.actor ??
+          (opts.auto === true ? undefined : this.ctx.actorContext?.humanRef),
       },
       now
     );
