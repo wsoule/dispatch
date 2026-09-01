@@ -122,7 +122,7 @@ test('the deciding action is exposed while a confirm is in flight', async () => 
   });
   expect(result.current.decidingActionId).toBeNull();
 
-  let decided: Promise<WardenRecord> | undefined;
+  let decided: Promise<void> | undefined;
   act(() => {
     decided = result.current.confirmAction('act-1', true);
   });
@@ -336,4 +336,109 @@ test('a failed submit leaves a newly typed draft alone', async () => {
 
   expect(result.current.draft).toBe('next thought');
   expect(result.current.sendError).toBe('daemon unreachable');
+});
+
+// The decide failure belongs to the session for exactly the reason the send
+// failure does. While an approval is queued the Runs tab shows a waiting
+// warden row, so flipping there is the path the rail encourages — and the rail
+// unmounts the chat on that flip. A transport-level failure reported into
+// component state would land on an unmounted tree, leaving a confirm card that
+// looks untouched with no explanation of why nothing happened.
+test('a failed decision leaves its error on the session', async () => {
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startWarden: () => Promise.resolve(wardenRecord()),
+    getWarden: () => Promise.resolve(wardenRecord()),
+    confirmWardenAction: () => Promise.reject(new Error('daemon unreachable')),
+  } as unknown as ApiClient;
+
+  const { result } = renderHook(() => useWardenSession(client, PORT, '/repo'), {
+    wrapper,
+  });
+  await act(async () => {
+    await result.current.submit('what is going on?');
+  });
+
+  await act(async () => {
+    await result.current.confirmAction('act-1', true);
+  });
+
+  // Never rejects — the outcome is readable here, the same contract `submit`
+  // has, so no caller has to own a try/catch that outlives its own component.
+  expect(result.current.decideError).toBe('daemon unreachable');
+  // The lock still comes down: the action is back on the server's queue and
+  // the card has to be clickable again.
+  expect(result.current.decidingActionId).toBeNull();
+});
+
+// One decision at a time is a server-side invariant, not a cosmetic one: a
+// second call would 404 against an action the first already claimed. The guard
+// lives on the session because every card that could fire it is unmounted by
+// an ordinary tab flip, which would reset a component-local one.
+test('a second decision while one is in flight is a no-op', async () => {
+  const calls: string[] = [];
+  let settle: ((rec: WardenRecord) => void) | undefined;
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startWarden: () => Promise.resolve(wardenRecord()),
+    getWarden: () => Promise.resolve(wardenRecord()),
+    confirmWardenAction: (_id: string, actionId: string) => {
+      calls.push(actionId);
+      return new Promise<WardenRecord>((resolve) => {
+        settle = resolve;
+      });
+    },
+  } as unknown as ApiClient;
+
+  const { result } = renderHook(() => useWardenSession(client, PORT, '/repo'), {
+    wrapper,
+  });
+  await act(async () => {
+    await result.current.submit('what is going on?');
+  });
+
+  let first: Promise<void> | undefined;
+  act(() => {
+    first = result.current.confirmAction('act-1', true);
+  });
+  expect(result.current.decidingActionId).toBe('act-1');
+
+  await act(async () => {
+    await result.current.confirmAction('act-2', true);
+  });
+  expect(calls).toEqual(['act-1']);
+
+  await act(async () => {
+    settle?.(wardenRecord());
+    await first;
+  });
+  expect(result.current.decidingActionId).toBeNull();
+});
+
+// reset() drops the conversation, so a failure banner from a decision on it
+// has nothing to say about the empty composer that replaces it — the same rule
+// `sendError` follows.
+test('reset clears the last decide error', async () => {
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startWarden: () => Promise.resolve(wardenRecord()),
+    getWarden: () => Promise.resolve(wardenRecord()),
+    confirmWardenAction: () => Promise.reject(new Error('daemon unreachable')),
+  } as unknown as ApiClient;
+
+  const { result } = renderHook(() => useWardenSession(client, PORT, '/repo'), {
+    wrapper,
+  });
+  await act(async () => {
+    await result.current.submit('what is going on?');
+  });
+  await act(async () => {
+    await result.current.confirmAction('act-1', true);
+  });
+  expect(result.current.decideError).toBe('daemon unreachable');
+
+  act(() => {
+    result.current.reset();
+  });
+  expect(result.current.decideError).toBeNull();
 });

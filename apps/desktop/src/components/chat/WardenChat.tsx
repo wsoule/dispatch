@@ -8,7 +8,7 @@ import {
   Wrench,
   X,
 } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 
 import type { WardenSession } from '../../hooks/useWardenSession';
 import { formatRelativeTimeFromIso } from '../../lib/format';
@@ -70,7 +70,7 @@ interface WardenConfirmCardProps {
    * spinner. */
   deciding: boolean;
   /** Some decision is in flight, this card's or another card's. One model turn
-   * can queue several actions, and `decide()` holds a single lock: without
+   * can queue several actions, and the session holds a single lock: without
    * disabling the others, their buttons stay live and eat the click. */
   locked: boolean;
   onDecide: (approve: boolean) => void;
@@ -207,16 +207,15 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
   // of them is ever on screen, and `conversationId` decides which.
   const { sending, sendError } = warden;
 
-  // Which action a decision is in flight for — the session's, not this
-  // component's: approving runs the real mutation before the call resolves, and
-  // every surface that renders a confirm card is unmounted by an ordinary tab
-  // flip, collapse or navigation. A local flag would reset to null on remount
-  // and re-enable cards whose effect is still running.
+  // Both are the session's, for the same reason: approving runs the real
+  // mutation before the call resolves, and every surface that renders a
+  // confirm card is unmounted by an ordinary tab flip, collapse or navigation.
+  // A local lock would reset to null on remount and re-enable cards whose
+  // effect is still running; a local error would land on an unmounted tree and
+  // report the failure to nobody. One error at a time is plenty — per-card
+  // error maps would complicate a state the failure row on the card covers.
   const decidingId = warden.decidingActionId;
-  // The last decision's error. One at a time is plenty: per-card error maps
-  // would complicate a state the failure row on the card already covers. This
-  // one stays local — a banner is worth losing on unmount, a lock is not.
-  const [decideError, setDecideError] = useState<string | null>(null);
+  const decideError = warden.decideError;
 
   const thread = useMemo(
     () => buildWardenThread(warden.record),
@@ -269,19 +268,10 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
     void warden.submit(text);
   }
 
-  async function decide(actionId: string, approve: boolean) {
-    if (decidingId !== null) return;
-    setDecideError(null);
-    try {
-      // The session raises and clears the lock around this call, so it outlives
-      // this component.
-      await warden.confirmAction(actionId, approve);
-    } catch (err) {
-      // An approved-but-failed effect: the server already put the action back
-      // in the queue with a failure row (the card re-renders with it), so this
-      // banner is for transport-level failures where no record came back.
-      setDecideError(err instanceof Error ? err.message : String(err));
-    }
+  // The session owns the whole decide cycle — the re-entrancy guard, the lock
+  // and the failure — so this is a plain forward rather than a wrapper.
+  function decide(actionId: string, approve: boolean) {
+    void warden.confirmAction(actionId, approve);
   }
 
   function renderRow(item: WardenThreadItem) {
@@ -315,7 +305,7 @@ export function WardenChat({ warden, compact = false }: WardenChatProps) {
             failure={item.failure}
             deciding={decidingId === item.action.id}
             locked={decidingId !== null}
-            onDecide={(approve) => void decide(item.action.id, approve)}
+            onDecide={(approve) => decide(item.action.id, approve)}
           />
         );
       case 'outcome':

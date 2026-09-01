@@ -69,10 +69,17 @@ export interface WardenSession {
    * unmounted tree and the failure is reported to nobody.
    */
   sendError: string | null;
-  /** Decides one queued mutating action: approving runs the real effect before
+  /**
+   * Decides one queued mutating action: approving runs the real effect before
    * resolving, denying never runs it. Allowed mid-turn — the server accepts a
-   * decision while the assistant is still answering. */
-  confirmAction: (actionId: string, approve: boolean) => Promise<WardenRecord>;
+   * decision while the assistant is still answering.
+   *
+   * Owns the whole decide cycle — the lock, the failure, and the re-entrancy
+   * guard — for the same reason `submit` owns the send cycle. Never rejects:
+   * the outcome is readable on `decidingActionId` and `decideError`. A second
+   * call while one is in flight is a no-op rather than a second request.
+   */
+  confirmAction: (actionId: string, approve: boolean) => Promise<void>;
   /**
    * Which action `confirmAction` is currently deciding, or `null`. Lives on the
    * session for the same reason `draft` does: the surfaces that render a
@@ -86,6 +93,16 @@ export interface WardenSession {
    * already claimed.
    */
   decidingActionId: string | null;
+  /**
+   * Why the last decision failed, or `null`. Cleared when the next one starts
+   * and by `reset`. Session-held for exactly the reason `sendError` is: while
+   * an approval is queued the Runs tab shows a waiting warden row, so flipping
+   * there is the path this rail encourages, and the rail unmounts the chat on
+   * that flip. A component-local `setState` from a transport-level failure
+   * that lands after the flip reports to nobody, leaving a confirm card that
+   * looks untouched with no explanation of why nothing happened.
+   */
+  decideError: string | null;
   /** Drops back to the "start a conversation" state. Nothing is deleted server-side. */
   reset: () => void;
   /**
@@ -136,6 +153,7 @@ export function useWardenSession(
   const [draft, setDraft] = useState('');
 
   const [decidingActionId, setDecidingActionId] = useState<string | null>(null);
+  const [decideError, setDecideError] = useState<string | null>(null);
 
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -150,6 +168,7 @@ export function useWardenSession(
     setDraft('');
     setDecidingActionId(null);
     setSendError(null);
+    setDecideError(null);
   }, [projectPath]);
 
   const { data: record, error } = useQuery({
@@ -246,13 +265,20 @@ export function useWardenSession(
 
   const confirmAction = useCallback(
     async (actionId: string, approve: boolean) => {
+      // The re-entrancy guard belongs here rather than on the cards: every
+      // surface that renders one is unmounted by an ordinary tab flip, so a
+      // component-local guard would come back open on remount and let a second
+      // click 404 against an action the server already claimed.
+      if (decidingActionId !== null) return;
       if (client === null || conversationId === null) {
-        throw new Error('no warden conversation open');
+        setDecideError('no warden conversation open');
+        return;
       }
       // Held for the whole call, including the reconciling refetch below, so
       // every card stays locked and the deciding one keeps its spinner even if
       // the chat unmounts and remounts underneath it.
       setDecidingActionId(actionId);
+      setDecideError(null);
       try {
         const rec = await client.confirmWardenAction(
           conversationId,
@@ -265,12 +291,16 @@ export function useWardenSession(
         await queryClient.invalidateQueries({
           queryKey: wardenKey(port, conversationId),
         });
-        return rec;
+      } catch (err) {
+        // An approved-but-failed effect comes back as a record with a failure
+        // row on the card, so this only ever reports a transport-level failure
+        // where no record came back at all.
+        setDecideError(err instanceof Error ? err.message : String(err));
       } finally {
         setDecidingActionId(null);
       }
     },
-    [client, conversationId, port, queryClient]
+    [client, conversationId, decidingActionId, port, queryClient]
   );
 
   const reset = useCallback(() => {
@@ -279,6 +309,7 @@ export function useWardenSession(
     // A failure banner from the conversation being discarded has nothing to
     // say about the empty composer that replaces it.
     setSendError(null);
+    setDecideError(null);
   }, []);
 
   // react-query keeps the last good `data` through a *background* refetch
@@ -299,6 +330,7 @@ export function useWardenSession(
     sendError,
     confirmAction,
     decidingActionId,
+    decideError,
     reset,
     draft,
     setDraft,

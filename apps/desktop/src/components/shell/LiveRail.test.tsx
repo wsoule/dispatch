@@ -65,8 +65,9 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     submit: () => Promise.resolve(),
     sending: false,
     sendError: null,
-    confirmAction: () => Promise.resolve(wardenRecord()),
+    confirmAction: () => Promise.resolve(),
     decidingActionId: null,
+    decideError: null,
     reset: () => {},
     draft: '',
     setDraft: () => {},
@@ -387,7 +388,7 @@ test('a pending warden action renders the confirm card in the rail and decides t
     record,
     confirmAction: (actionId: string, approve: boolean) => {
       decisions.push([actionId, approve]);
-      return Promise.resolve(record);
+      return Promise.resolve();
     },
   });
   render(<LiveRail {...railProps({ warden })} />);

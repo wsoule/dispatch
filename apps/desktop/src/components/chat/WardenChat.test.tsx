@@ -44,8 +44,9 @@ function wardenSession(over: Partial<WardenSession> = {}): WardenSession {
     submit: () => Promise.resolve(),
     sending: false,
     sendError: null,
-    confirmAction: () => Promise.resolve(wardenRecord()),
+    confirmAction: () => Promise.resolve(),
     decidingActionId: null,
+    decideError: null,
     reset: () => {},
     draft: '',
     setDraft: () => {},
@@ -130,7 +131,7 @@ test('full mode: transcript renders bubbles and the confirm card decides through
     record,
     confirmAction: (actionId: string, approve: boolean) => {
       decisions.push([actionId, approve]);
-      return Promise.resolve(record);
+      return Promise.resolve();
     },
   });
   render(<WardenChat warden={warden} />);
@@ -367,7 +368,7 @@ test('a decision in flight disables every confirm card, not just its own', () =>
           confirmAction: (actionId: string, approve: boolean) => {
             decisions.push([actionId, approve]);
             setDecidingActionId(actionId);
-            return new Promise<WardenRecord>(() => {});
+            return new Promise<void>(() => {});
           },
         })}
       />
