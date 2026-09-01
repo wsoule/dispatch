@@ -162,12 +162,13 @@ test('reset clears the composer draft along with the conversation', () => {
 // A dispatchd restart destroys every warden record (they live in an in-memory
 // Map), and nothing in the app notices on its own: `warden.changed` can never
 // arrive for a conversation the daemon no longer has, and the record query has
-// no refetch interval. The WS reconnect handler is the one trigger, and it
-// cannot name a conversation id — it lives in useDispatchProject, which does
+// no refetch interval. The trigger is the daemon's `hello` frame, which the
+// server sends from its websocket `open` handler and so on every reconnect;
+// useDispatchProject handles it and cannot name a conversation id — it does
 // not own this session — so it invalidates by prefix. This is that chain's far
 // end: once the prefix invalidation fires, the ghost record and the pending
 // action nobody can decide any more have to be gone.
-test('a reconnect prefix invalidation clears a record the daemon no longer has', async () => {
+test('a prefix invalidation clears a record the daemon no longer has', async () => {
   let restarted = false;
   const client = {
     baseUrl: `http://127.0.0.1:${PORT}`,
@@ -209,7 +210,7 @@ test('a reconnect prefix invalidation clears a record the daemon no longer has',
 // The prefix above only reaches the record query if the full key still starts
 // with it. Nothing else would catch a reshuffle of wardenKey's elements: the
 // invalidation would quietly stop matching and the ghost would come back.
-test('the record key starts with the prefix the reconnect handler invalidates', () => {
+test('the record key starts with the prefix the hello handler invalidates', () => {
   expect(wardenKey(PORT, 'w-1').slice(0, 2)).toEqual([
     ...wardenKeyPrefix(PORT),
   ]);

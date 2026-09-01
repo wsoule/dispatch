@@ -6,12 +6,14 @@ import { useCallback, useEffect, useState } from 'react';
 import { isFakeWardenDevToolEnabled } from '../lib/devTools';
 
 /**
- * Every warden record key for one daemon. useDispatchProject's WS *reconnect*
- * handler invalidates this rather than a single record's key: a reconnect
- * usually means dispatchd restarted, which drops every in-memory warden record
- * at once, and that handler has no conversation id to name — the session lives
- * in this hook, not in it. Prefix invalidation is the same idiom
- * useDataChangedEvents applies to `['board']` and `['session-detail']`.
+ * Every warden record key for one daemon. useDispatchProject invalidates this
+ * prefix — rather than a single record's key — when the daemon's `hello`
+ * greeting arrives, which the server sends on every websocket open and so on
+ * every reconnect. A reconnect usually means dispatchd restarted, which drops
+ * every in-memory warden record at once, and that handler has no conversation
+ * id to name: the session lives in this hook, not in it. Prefix invalidation
+ * is the same idiom useDataChangedEvents applies to `['board']` and
+ * `['session-detail']`.
  */
 export function wardenKeyPrefix(port: number | undefined) {
   return ['dispatch-warden', port] as const;
@@ -20,7 +22,7 @@ export function wardenKeyPrefix(port: number | undefined) {
 /** The one warden record query key, exported so useDispatchProject's WS
  * handler can invalidate it on `warden.changed` — the same wiring
  * `plan.changed` uses for `['dispatch-plan', port, planId]`. Built from the
- * prefix above so the reconnect invalidation cannot drift out of matching it. */
+ * prefix above so the `hello` invalidation cannot drift out of matching it. */
 export function wardenKey(
   port: number | undefined,
   conversationId: string | null

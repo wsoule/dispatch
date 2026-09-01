@@ -1066,24 +1066,31 @@ export function useDispatchProject(
         void queryClient.invalidateQueries({ queryKey: configQueryKey });
         void queryClient.invalidateQueries({ queryKey: readyQueryKey });
         void queryClient.invalidateQueries({ queryKey: epicProgressKeyPrefix });
-        // Prefix match: every warden record cached for this daemon. A
-        // reconnect usually means dispatchd restarted, and warden records are
-        // an in-memory Map — so every id 404s now, and no `warden.changed` can
-        // ever arrive for a conversation the daemon no longer has. Without
-        // this refetch the cached record keeps a pending action alive that
-        // exists nowhere: the rail shows a waiting row and an amber badge,
-        // Approve/Deny 404, and `hasPendingAction` disables both "New
-        // conversation" controls until the window happens to lose and regain
-        // focus. The prefix (rather than one conversation's key) is what lets
-        // this hook do it at all — the session, and the id, live in
-        // useWardenSession.
-        void queryClient.invalidateQueries({
-          queryKey: wardenKeyPrefix(port),
-        });
       },
       {
         onEvent: (event) => {
-          if (event.type === 'run.changed') {
+          if (event.type === 'hello') {
+            // The daemon sends `hello` from its websocket `open` handler
+            // (packages/server/src/index.ts), so this fires once per socket:
+            // on the first connect and again on every reconnect. A reconnect
+            // usually means dispatchd restarted, and warden records live in an
+            // in-memory Map — so every cached id 404s now, and no
+            // `warden.changed` can ever arrive for a conversation the daemon
+            // no longer has. Without this refetch the cached record keeps a
+            // pending action alive that exists nowhere: the rail shows a
+            // waiting row and an amber badge, Approve/Deny 404, and
+            // `hasPendingAction` disables both "New conversation" controls
+            // until the window happens to lose and regain focus.
+            //
+            // It has to be the whole prefix rather than one conversation's
+            // key: the open conversation, and its id, live in
+            // useWardenSession, which this hook cannot see. On the first
+            // connect nothing is cached yet, so the invalidation is a no-op
+            // there rather than a wasted refetch.
+            void queryClient.invalidateQueries({
+              queryKey: wardenKeyPrefix(port),
+            });
+          } else if (event.type === 'run.changed') {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-run', port],
