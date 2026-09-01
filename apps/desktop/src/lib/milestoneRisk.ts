@@ -80,10 +80,3 @@ export function deriveMilestoneStatus(
     working,
   };
 }
-
-export const MILESTONE_HEALTH_LABEL: Record<MilestoneHealth, string> = {
-  stalled: 'Stalled',
-  active: 'In progress',
-  idle: 'Not started',
-  complete: 'Complete',
-};

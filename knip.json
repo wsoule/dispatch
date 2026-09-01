@@ -15,12 +15,6 @@
       // (startServer) that the CLI and every server test reach for.
       "entry": ["src/index.ts"]
     },
-    "apps/site": {
-      // A static marketing site: server.ts serves public/ as browser assets,
-      // so nothing under it is ever imported. Mirrors the `apps/site/public/**`
-      // exclusion .oxlintrc.json already carries.
-      "ignore": ["public/**"]
-    },
     "packages/demo": {
       // storefront-src is a template copied into the generated demo repo
       // (see src/paths.ts's `template`), so nothing in this workspace ever
