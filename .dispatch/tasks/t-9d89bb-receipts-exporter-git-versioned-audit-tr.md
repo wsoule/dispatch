@@ -1,7 +1,7 @@
 ---
 id: t-9d89bb
 title: "Receipts exporter: git-versioned audit trail outside the project repo"
-status: done
+status: todo
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:52.987Z
-updated: 2026-09-01T16:11:43.654Z
+updated: 2026-09-01T19:10:15.789Z
 external: null
 writes:
   - packages/server/src/**
@@ -57,3 +57,6 @@ Run server+core tests, commit. — human:wsoule679
 - 2026-09-01T15:58:17.668Z requested changes (run r-31de8c): Your previous resume finished with zero turns and made no changes. The 10 required review fixes are in the previous user message in this conversation — apply them now, starting with the two SEVERE ones (refuse to adopt a git repo the exporter did not create; subscribe the exporter to finding.changed/ledger.changed and an evidence path, not just task.changed). Run server+core tests, commit. — human:wsoule679
 - 2026-09-01T16:10:20.210Z [run r-31de8c] finished: finished — 15 files, $8.56 — agent:wsoule679/claude
 - 2026-09-01T16:11:43.654Z run r-31de8c merged into epic/e-99e113 — human:wsoule679
+- 2026-09-01T19:10:15.362Z run r-9a9470 discarded — human:wsoule679
+- 2026-09-01T19:10:15.567Z run r-7bb074 discarded — human:wsoule679
+- 2026-09-01T19:10:15.789Z run r-630128 discarded — human:wsoule679
