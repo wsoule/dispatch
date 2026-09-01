@@ -1,7 +1,7 @@
 ---
 id: t-9d89bb
 title: "Receipts exporter: git-versioned audit trail outside the project repo"
-status: in-progress
+status: in-review
 kind: task
 parent: e-99e113
 milestone: null
@@ -11,7 +11,7 @@ labels: []
 priority: high
 assignee: none
 created: 2026-08-22T16:38:52.987Z
-updated: 2026-09-01T15:42:38.022Z
+updated: 2026-09-01T15:44:54.135Z
 external: null
 writes:
   - packages/server/src/**
@@ -40,3 +40,4 @@ Leaving the field required would have left the branch unbuildable and therefore 
 The follow-up, for whoever has the scope: add DEFAULT_RECEIPTS to that fixture's existing `@dispatch/core/browser` import and add `receipts: DEFAULT_RECEIPTS,` beside `repoDigest: DEFAULT_REPO_DIGEST,`, then drop the `?` in configTypes.ts and the `?? DEFAULT_RECEIPTS` in receipts/exporter.ts. DEFAULT_RECEIPTS is already exported from the browser entrypoint (browser.ts re-exports configTypes wholesale), so no other plumbing is needed.
 
 Note for reviewers on test noise: two server tests fail in an aggregate `bun test` and neither is this change. test/orchestrator/claude-executor.test.ts asserts the dispatch MCP command is 'bun', but a Dispatch agent session exports DISPATCH_MCP_BIN, so it resolves to the installed app binary instead — green under `env -u DISPATCH_MCP_BIN`. Any agent running this suite from inside Dispatch will hit it. test/prs-api.test.ts times out at ~200s under aggregate load and is green in isolation, matching the known flake. — none
+- 2026-09-01T15:44:54.135Z [run r-7bb074] finished: finished — 15 files, $14.03 — agent:wsoule679/claude
