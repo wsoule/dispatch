@@ -660,6 +660,9 @@ export type ServerEvent =
   // render the outcome without a follow-up fetch. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'board.sync'; result: SyncResult }
+  // The receipts exporter attempted an export of the git audit trail. The
+  // database backend's counterpart to `board.sync`.
+  | { type: 'receipts.export'; result: ReceiptsResult }
   // The PR poll's cached repo-PR set changed (a delta in number, head sha,
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of
@@ -1231,6 +1234,42 @@ export interface SyncStatus extends SyncResult {
   lastSyncedAt: string | null;
   /** Null when `dispatch merge-task` resolves on the daemon's PATH; otherwise why it doesn't. */
   mergeDriverWarning: string | null;
+  /**
+   * The receipt log's last export — the database backend's half of "is
+   * dispatch keeping git up to date". A project has a board syncer or a
+   * receipts exporter, never both, so a UI that only reads the board-sync
+   * fields reports a database-backed project as permanently disabled.
+   */
+  receipts: ReceiptsStatus;
+}
+
+/**
+ * Mirrors `ReceiptsStatus` in packages/server/src/api.ts.
+ *
+ * `disabled` means the file backend, where the board syncer commits task
+ * files directly and there is no receipt log — not that anything is wrong.
+ */
+export interface ReceiptsStatus {
+  state: 'committed' | 'clean' | 'failed' | 'idle' | 'disabled';
+  detail: string | null;
+  /** The commit the last export made, when it made one. */
+  commit: string | null;
+  changed: number;
+  removed: number;
+  /** Records the export could not read out of the database. */
+  problems: number;
+  lastExportedAt: string | null;
+}
+
+/** Mirrors `ReceiptsResult` in packages/server/src/receipts/exporter.ts. */
+export interface ReceiptsResult {
+  state: 'committed' | 'clean' | 'failed';
+  dir: string;
+  commit: string | null;
+  changed: number;
+  removed: number;
+  problems: number;
+  detail: string;
 }
 
 // Mirrors LinearSyncSummary in packages/server/src/linear/sync.ts: `created`

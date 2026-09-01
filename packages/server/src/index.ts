@@ -8,6 +8,7 @@ import {
   loadConfig,
   openProjectStores,
   TaskStore,
+  totalImported,
 } from '@dispatch/core';
 import type {
   CartoMode,
@@ -421,22 +422,24 @@ function buildPrWorktreeManager(ctx: PrWorktreeManagerCtx): PrWorktreeManager {
 function migrateLegacyProjectOnBoot(
   rootDir: string,
   stores: ProjectStores
-): void {
-  if (!hasLegacyState(rootDir)) return;
-  // Gated on whether the DATABASE actually holds the board, not on whether
-  // this project has recorded a backend. `.dispatch/storage.json` is a
-  // committable file while `dispatch.db` is not, so a fresh clone can arrive
-  // carrying the marker and no database at all. Keying on the marker there
-  // means readProjectBackend already answers 'sqlite', the import is skipped,
-  // and the daemon serves an empty board over a full markdown one — while the
-  // CLI and the MCP tools, reading the same marker, refuse to fall back to
-  // the files they can see. An empty database beside a populated board is
-  // precisely the state this import exists to resolve, however the project
-  // got into it.
-  if (stores.tasks.list().length > 0) return;
-  console.log(
-    `dispatchd: ${rootDir} still keeps its tasks as files; importing them into the database before serving.`
-  );
+): boolean {
+  if (!hasLegacyState(rootDir)) return true;
+  // Deliberately NOT gated on the database already holding tasks.
+  //
+  // It used to be, and that made the import a strictly one-shot event keyed on
+  // one record type. `.dispatch/findings.jsonl` and `ledger.jsonl` are
+  // append-only files under git: a teammate's findings arrive on the next
+  // `git pull`, landing in files beside a database that already has tasks in
+  // it. The old guard saw a non-empty board and returned, so those records
+  // were never imported and never would be — and a finding that never reaches
+  // the database is invisible to the blocked-findings merge gate, which is a
+  // silent correctness failure rather than a cosmetic one.
+  //
+  // Running it on every boot is safe because the import is idempotent by
+  // construction: every insert is ON CONFLICT DO NOTHING against real ids, so
+  // a pass with nothing new to do writes nothing. It is quiet, too — the
+  // report is only printed when something actually moved or something went
+  // wrong (below), so a steady-state boot logs nothing at all.
   let report;
   try {
     report = importLegacyProject(stores);
@@ -448,7 +451,18 @@ function migrateLegacyProjectOnBoot(
     );
     throw err;
   }
-  console.log(formatMigrationReport(report));
+  const moved = totalImported(report);
+  if (moved > 0 || report.problems.length > 0) {
+    console.log(
+      `dispatchd: ${rootDir} still keeps state as files; imported ${moved} record(s) into the database before serving.`
+    );
+    console.log(formatMigrationReport(report));
+  }
+  // Whether it is safe to record this project as database-backed. Mirrors
+  // `runMigrate`: a problem means some record exists ONLY in the markdown, and
+  // the marker is what makes the CLI and the MCP tools stop reading those
+  // files — so writing it here would strand exactly those records.
+  return report.problems.length === 0;
 }
 
 /**
@@ -514,9 +528,14 @@ export async function startServer(
   // and writing one for every existing project would put a new file in repos
   // that never asked for it.
   if (backend === 'sqlite') {
-    migrateLegacyProjectOnBoot(rootDir, stores);
-    if (readProjectBackend(rootDir) !== 'sqlite') {
+    const safeToRecord = migrateLegacyProjectOnBoot(rootDir, stores);
+    if (safeToRecord && readProjectBackend(rootDir) !== 'sqlite') {
       writeProjectBackend(rootDir, backend);
+    } else if (!safeToRecord) {
+      console.error(
+        `dispatchd: NOT recording ${rootDir} as database-backed — some records above could not be imported and exist only in .dispatch/. ` +
+          'Leaving the marker unset keeps them reachable through the files. Fix the records listed above and restart.'
+      );
     }
   }
   const store = stores.tasks;
@@ -718,6 +737,11 @@ export async function startServer(
     jj,
     ledgerStore,
     findingStore,
+    // `null` on the file backend, where the run transcript is evidence's only
+    // home. On sqlite this is what puts commands and mutations into the
+    // database, which is what the receipts exporter materializes the git audit
+    // trail from.
+    evidenceStore: stores.records?.evidence ?? null,
     actorContext,
     digestCache,
     // Shares PrManager/MergeQueue/GitRepo's command-runner seam
@@ -1032,6 +1056,7 @@ export async function startServer(
     tokens,
     boardSyncScheduler,
     receiptsScheduler,
+    storeBackend: backend,
     mergeDriverOk,
   };
 

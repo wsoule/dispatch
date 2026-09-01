@@ -202,7 +202,21 @@ async function request<T>(
 ): Promise<T> {
   const headers = new Headers(init?.headers);
   headers.set('authorization', `Bearer ${target.token}`);
-  const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
+  // A transport failure is caught and named. There is a real gap between the
+  // daemon-file health probe that chose this route and the request itself, and
+  // a daemon exiting inside it is ordinary — a restart, a crash, the desktop
+  // app quitting. Letting fetch's own rejection escape surfaced to the user as
+  // a bare `TypeError: fetch failed`, which names neither the cause nor the
+  // fix.
+  let res: Response;
+  try {
+    res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
+  } catch (err) {
+    throw new CliError(
+      `dispatchd stopped responding at ${target.baseUrl} (${(err as Error).message}). ` +
+        'It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve'
+    );
+  }
   if (!res.ok) {
     const body = (await res.json().catch(() => ({}))) as { error?: string };
     throw new CliError(body.error ?? `request failed: ${res.status}`);

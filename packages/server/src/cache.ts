@@ -137,6 +137,10 @@ export class TaskCache {
   // cache only supplies the current doc set, never reimplements the graph
   // rules in SQL.
   ready(): TaskDoc[] {
-    return readyTasks(this.query());
+    // includeArchived, deliberately: readyTasks excludes archived tasks from
+    // its results but resolves blockers against whatever it is given, so the
+    // default archived-excluding query made an archived blocker read as
+    // satisfied and sprang its dependents.
+    return readyTasks(this.query({ includeArchived: true }));
   }
 }

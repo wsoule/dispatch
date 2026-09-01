@@ -381,14 +381,11 @@ export function registerTaskCommands(program: Command, ctx: CliContext): void {
       const ready =
         route.via === 'daemon'
           ? await route.api.readyTasks()
-          : // Archived tasks are excluded, matching the daemon's own
-            // /api/tasks/ready and the MCP task_next copy. Without this the
-            // local fallback offers archived tasks as ready work — the same
-            // command answering differently depending on whether a daemon
-            // happened to be up.
-            readyTasks(
-              route.store.list().filter((d) => d.meta.archivedAt === undefined)
-            );
+          : // The FULL set, archived included: readyTasks excludes archived
+            // tasks from its own results, but needs them present to resolve
+            // blockers. Filtering them out here made archiving an unfinished
+            // blocker spring everything it was blocking.
+            readyTasks(route.store.list());
       if (opts.json === true) {
         ctx.log(JSON.stringify(ready, null, 2));
         return;

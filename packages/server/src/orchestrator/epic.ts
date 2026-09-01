@@ -370,9 +370,9 @@ export class EpicEngine {
 
     // childIds now includes archived children (see childrenOf); dispatchability
     // must exclude them explicitly rather than rely on childrenOf's filtering.
-    const ready = dispatchableTasks(this.ctx.cache.query()).filter(
-      (t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined
-    );
+    const ready = dispatchableTasks(
+      this.ctx.cache.query({ includeArchived: true })
+    ).filter((t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined);
     // A live run's footprint can have grown past its task's declared writes
     // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
     const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);

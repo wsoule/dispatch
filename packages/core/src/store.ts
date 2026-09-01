@@ -1,4 +1,5 @@
 import {
+  appendFileSync,
   existsSync,
   mkdirSync,
   readdirSync,
@@ -10,6 +11,7 @@ import { join } from 'node:path';
 
 import { generateTaskId, isTaskId } from './ids.js';
 import { slugify } from './slug.js';
+import type { TaskStoreBackend } from './storeBackend.js';
 import {
   appendActivity,
   appendAmendment,
@@ -250,6 +252,111 @@ export function ensureProjectConfig(rootDir: string): void {
   mkdirSync(dir, { recursive: true });
   const cfg = join(dir, 'config.yml');
   if (!existsSync(cfg)) writeFileSync(cfg, DEFAULT_CONFIG);
+}
+
+// What `.dispatch/.gitignore` excludes, per backend.
+//
+// `dispatch.db` is the entry that matters and the one that was missing: until
+// now nothing shipped an ignore rule for it to a user's project. Dispatch's
+// own repo has one, hand-written in its root .gitignore, which is exactly why
+// the gap stayed invisible — every developer working ON dispatch was covered
+// and every project using it was not. A migrated project would commit its
+// database, its `-wal` and its `-shm` on the next `git add .`.
+//
+// The three sqlite-only entries are the state that has no table yet, so the
+// daemon still writes it here as files on both backends. On `files` they stay
+// committable: git is that backend's sync layer, and a teammate's inbox
+// arriving with a pull is the behaviour those projects already have. On
+// `sqlite` git is no longer the sync layer, so they are local working state
+// and committing them only produces churn.
+//
+// `storage.json` is ignored too, and that is a decided trade-off rather than
+// an oversight (t-880ce2). Committing the marker is the more attractive idea —
+// it would tell a fresh clone "this board is in a database, restore it from
+// the receipt log" instead of leaving the project looking uninitialized. But
+// the database it names is per-machine and is NOT in the clone, so a committed
+// marker produces a project that insists its board lives somewhere that does
+// not exist: the daemon serves an empty board while the CLI and MCP, reading
+// the same marker, refuse to fall back to any files they can see. An
+// uninitialized-looking clone is recoverable; a confidently-empty one is the
+// trap. Keep this in step with the boot import in server/src/index.ts, which
+// exists precisely to repair a project that arrives in that state.
+const IGNORE_HEADER = `# Written by dispatch. Add your own entries below; dispatch only ever
+# appends the lines it needs and never rewrites this file.`;
+
+/** Rules plus the comment that explains them, kept together so a top-up that
+ *  appends one never appends the other on its own. */
+interface IgnoreGroup {
+  comments: string[];
+  rules: string[];
+}
+
+const MACHINE_LOCAL_GROUP: IgnoreGroup = {
+  comments: [
+    "# The daemon's database is per-machine state, never committable, and",
+    '# neither is the marker naming it — a clone carrying the marker without',
+    '# the database reads as a board that is confidently empty.',
+  ],
+  rules: ['dispatch.db', 'dispatch.db-wal', 'dispatch.db-shm', 'storage.json'],
+};
+
+const DAEMON_STATE_GROUP: IgnoreGroup = {
+  comments: [
+    '# Daemon working state that has no database table yet, so it is still',
+    '# written here as files rather than held in dispatch.db.',
+  ],
+  rules: ['fix-loops.jsonl', 'notes.json', 'inbox/'],
+};
+
+function ignoreGroupsFor(backend: TaskStoreBackend): IgnoreGroup[] {
+  return backend === 'sqlite'
+    ? [MACHINE_LOCAL_GROUP, DAEMON_STATE_GROUP]
+    : [MACHINE_LOCAL_GROUP];
+}
+
+/**
+ * Writes (or tops up) `.dispatch/.gitignore` so a project never commits the
+ * state the daemon owns.
+ *
+ * Additive, never a rewrite: an existing file keeps everything in it and only
+ * gains the rules it is missing. A user who pinned an extra path here, or
+ * deliberately un-ignored one of ours by deleting the line, would otherwise
+ * have that undone on the next `dispatch init` — and silently, since nothing
+ * about running init suggests it edits files you already have.
+ *
+ * A group is appended only when one of its RULES is missing, never because its
+ * comment is: a project that moves to the database has the machine-local rules
+ * already, and re-appending their explanation every time would grow a comment
+ * block on every init.
+ */
+export function ensureProjectGitignore(
+  rootDir: string,
+  backend: TaskStoreBackend
+): void {
+  const dir = join(rootDir, DISPATCH_DIR);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, '.gitignore');
+  const groups = ignoreGroupsFor(backend);
+  if (!existsSync(path)) {
+    const body = groups.flatMap((group, index) => [
+      ...(index === 0 ? [] : ['']),
+      ...group.comments,
+      ...group.rules,
+    ]);
+    writeFileSync(path, `${[IGNORE_HEADER, ...body].join('\n')}\n`);
+    return;
+  }
+  const existing = new Set(
+    readFileSync(path, 'utf8')
+      .split('\n')
+      .map((line) => line.trim())
+  );
+  const additions = groups.flatMap((group) => {
+    const missing = group.rules.filter((rule) => !existing.has(rule));
+    return missing.length === 0 ? [] : ['', ...group.comments, ...missing];
+  });
+  if (additions.length === 0) return;
+  appendFileSync(path, `${additions.join('\n')}\n`);
 }
 
 export class TaskStore implements TaskStorePort {

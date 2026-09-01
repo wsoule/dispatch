@@ -11,7 +11,11 @@ import {
   SqliteLedgerStore,
 } from './sqliteRecords.js';
 import { SqliteTaskStore } from './sqliteTaskStore.js';
-import { ensureProjectConfig, TaskStore } from './store.js';
+import {
+  ensureProjectConfig,
+  ensureProjectGitignore,
+  TaskStore,
+} from './store.js';
 import type { TaskStorePort } from './store.js';
 
 // Which backend a project's state lives in. Chosen once, when the stores are
@@ -78,6 +82,19 @@ export function openProjectStores(options: OpenStoresOptions): ProjectStores {
 /** Creates a project's state if it is missing, then attaches to it. */
 export function initProjectStores(options: OpenStoresOptions): ProjectStores {
   const { rootDir, backend = 'files' } = options;
+  // Every path that creates a project passes through here — `dispatch init`,
+  // `dispatch migrate`, and the desktop's add-project flow (server/src/bin.ts
+  // `--init`) — which is why the ignore rules are written here rather than in
+  // the CLI. A CLI-only implementation would leave every desktop-added
+  // project free to commit its own database.
+  //
+  // Always the `files` rule set, even when initializing a database: opening a
+  // database is not the same event as a project BECOMING database-backed.
+  // `dispatch migrate` opens one and can still fail, and writing the
+  // sqlite-only rules here left a project that is still file-backed ignoring
+  // its own inbox and fix-loop state. The sqlite rules are added by
+  // `writeProjectBackend`, which is the write that actually moves the project.
+  ensureProjectGitignore(rootDir, 'files');
   if (backend === 'files') {
     TaskStore.init(rootDir);
     return openProjectStores(options);

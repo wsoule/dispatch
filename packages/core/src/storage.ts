@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import { DISPATCH_DIR } from './store.js';
+import { DISPATCH_DIR, ensureProjectGitignore } from './store.js';
 import type { TaskStoreBackend } from './storeBackend.js';
 
 // ---------------------------------------------------------------------------
@@ -58,7 +58,16 @@ export function readProjectBackend(rootDir: string): TaskStoreBackend | null {
   }
 }
 
-/** Records the backend this project uses, for every other process to read. */
+/**
+ * Records the backend this project uses, for every other process to read.
+ *
+ * This is the moment a project becomes database-backed, so it is also where
+ * the backend-specific ignore rules land. Writing them when the database was
+ * merely OPENED was wrong: `dispatch migrate` opens one before importing, and
+ * an import that fails leaves the project file-backed — but already ignoring
+ * the inbox and fix-loop state that, on the file backend, it is supposed to
+ * commit.
+ */
 export function writeProjectBackend(
   rootDir: string,
   backend: TaskStoreBackend
@@ -66,4 +75,5 @@ export function writeProjectBackend(
   const path = storageMarkerPath(rootDir);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(path, `${JSON.stringify({ backend }, null, 2)}\n`);
+  ensureProjectGitignore(rootDir, backend);
 }

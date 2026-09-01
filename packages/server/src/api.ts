@@ -16,6 +16,7 @@ import type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  TaskStoreBackend,
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
@@ -189,6 +190,11 @@ export interface ApiContext {
   // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
   // that case, since no real SyncResult ever reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
+  // Which backend this project's state lives in. GET /api/sync needs it to
+  // tell the two reasons `boardSyncScheduler` is null apart: no trunk (a
+  // setup problem worth warning about) versus a database-backed project
+  // (which has no task files to sync and is not broken at all).
+  storeBackend: TaskStoreBackend;
   // The receipts exporter's scheduler, or `null` on the file backend, whose
   // task files the board syncer already commits into the user's own repo.
   receiptsScheduler: ReceiptsScheduler | null;
@@ -864,6 +870,12 @@ const DISABLED_SYNC_DETAIL =
   'boot, so fixing that (adding an origin, or a main/master branch) needs a ' +
   'daemon restart before syncing can start.';
 
+const DATABASE_SYNC_DETAIL =
+  'board sync does not apply to this project — its tasks live in the ' +
+  "daemon's database, not in task files, so there is nothing for the board " +
+  'syncer to commit. The audit trail is exported to the git receipt log ' +
+  'instead; see `receipts` below.';
+
 const OFF_SYNC_DETAIL =
   'board sync is off for this project — turn on auto-commit in Settings ' +
   'to start syncing.';
@@ -897,7 +909,15 @@ function getSyncStatus(ctx: ApiContext): Response {
   if (ctx.boardSyncScheduler === null) {
     const disabled: SyncStatus = {
       state: 'disabled',
-      detail: DISABLED_SYNC_DETAIL,
+      // Two different reasons, and reporting the wrong one is worse than
+      // saying nothing. On the database backend there is no board syncer by
+      // design — the receipts exporter carries the audit trail instead — so
+      // the trunk warning below would send someone off adding a remote to fix
+      // a daemon that is working exactly as intended.
+      detail:
+        ctx.storeBackend === 'sqlite'
+          ? DATABASE_SYNC_DETAIL
+          : DISABLED_SYNC_DETAIL,
       pushed: 0,
       pulled: 0,
       pendingOutgoing: 0,

@@ -1,16 +1,21 @@
 import {
   dispatchDbPath,
   formatMigrationReport,
+  formatRetireReport,
   hasLegacyState,
   importLegacyProject,
   initProjectStores,
+  loadConfig,
   openProjectStores,
   readProjectBackend,
+  receiptLogDir,
+  retireLegacySources,
   totalImported,
   writeProjectBackend,
 } from '@dispatch/core';
 import type { MigrationReport, ProjectStores } from '@dispatch/core';
 import type { Command } from 'commander';
+import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 import { type CliContext, CliError } from '../context.js';
@@ -21,6 +26,16 @@ import { findRunningDaemon } from './daemon.js';
 // (migrate.ts); this file is the terminal around it: choosing what to open,
 // refusing to run when it would be unsafe, and recording the project's new
 // backend once the import has actually committed.
+
+// Node-based GitReader, mirroring the one in commands/task.ts. Used only for
+// the shared-repo check in `--retire`; a git that will not run reads as "no
+// remote", which retireLegacySources treats as not-shared.
+function makeGitReader(cwd: string) {
+  return (args: string[]): string | null => {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' });
+    return result.status === 0 ? result.stdout.trim() : null;
+  };
+}
 
 const DAEMON_RUNNING =
   'dispatchd is running for this project. It is the single writer of the ' +
@@ -42,9 +57,29 @@ export function registerMigrateCommand(
       'report what would move without writing anything',
       false
     )
-    .action(async (opts: { dryRun: boolean }) => {
-      ctx.log(await runMigrate(ctx, opts.dryRun));
-    });
+    .option(
+      '--retire',
+      'delete the markdown and JSONL a previous import already copied out, once the receipt log covers them',
+      false
+    )
+    .option(
+      '--force-solo',
+      'allow --retire in a repo with a git remote (the receipt log is per-machine, so teammates get an empty board)',
+      false
+    )
+    .action(
+      async (opts: {
+        dryRun: boolean;
+        retire: boolean;
+        forceSolo: boolean;
+      }) => {
+        ctx.log(
+          opts.retire
+            ? await runRetire(ctx, opts.dryRun, opts.forceSolo)
+            : await runMigrate(ctx, opts.dryRun)
+        );
+      }
+    );
 }
 
 /**
@@ -105,7 +140,8 @@ export async function runMigrate(
       // rows exist would point them at an empty database.
       writeProjectBackend(rootDir, 'sqlite');
       lines.push(
-        `Recorded this project as database-backed. The originals are still in .dispatch/ — ${totalImported(report)} record(s) were copied, not moved.`
+        `Recorded this project as database-backed. The originals are still in .dispatch/ — ${totalImported(report)} record(s) were copied, not moved. ` +
+          'Once the daemon has exported a receipt log, remove them with: dispatch migrate --retire'
       );
     }
   }
@@ -143,4 +179,46 @@ function openImportTarget(rootDir: string, dryRun: boolean): ProjectStores {
   return dryRun
     ? openProjectStores({ rootDir, backend: 'sqlite' })
     : initProjectStores({ rootDir, backend: 'sqlite' });
+}
+
+/**
+ * The other half of `dispatch migrate`: deleting what the import copied out.
+ *
+ * Kept behind a flag on the same command rather than given its own, because
+ * the two are one operation a person performs in two sittings — import, let
+ * the daemon export a receipt log, then retire. A separate top-level verb
+ * would read like an unrelated feature.
+ *
+ * The daemon check is the same one the import uses and matters more here: the
+ * receipt exporter runs INSIDE dispatchd, so a running daemon is also the
+ * thing actively writing the log this reads to decide what is safe to delete.
+ * Checking a moving target is how a source gets cleared on the strength of a
+ * half-written export.
+ *
+ */
+export async function runRetire(
+  ctx: CliContext,
+  dryRun: boolean,
+  forceSolo = false
+): Promise<string> {
+  const rootDir = ctx.cwd;
+  if ((await findRunningDaemon(rootDir)) !== null) {
+    throw new CliError(DAEMON_RUNNING);
+  }
+  try {
+    return formatRetireReport(
+      retireLegacySources(rootDir, {
+        receiptsDir: receiptLogDir(rootDir, loadConfig(rootDir)),
+        dryRun,
+        git: makeGitReader(rootDir),
+        forceSolo,
+      })
+    );
+  } catch (err) {
+    // retireLegacySources throws only for the two states where no source could
+    // be safe to remove, and both messages already name the command to run
+    // next — so they are surfaced verbatim rather than wrapped in a second
+    // layer of explanation.
+    throw new CliError((err as Error).message);
+  }
 }
