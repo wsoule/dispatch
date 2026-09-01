@@ -611,6 +611,29 @@ export class SqliteEvidenceStore {
     return mutation;
   }
 
+  /**
+   * Every run this database holds evidence for, commands and mutations
+   * together, oldest first.
+   *
+   * The receipt exporter needs this because it writes one file per run and has
+   * no other way to learn which runs exist — nothing in this database owns
+   * runs, so `run_id` is only ever an opaque key arriving from the
+   * orchestrator. Ordered by each run's earliest stamp rather than by id so
+   * the exported file list reads chronologically.
+   */
+  runIds(): string[] {
+    const rows = queryAll<{ run_id: string }>(
+      this.db,
+      `SELECT run_id, MIN(at) AS first_at FROM (
+         SELECT run_id, at FROM evidence
+         UNION ALL
+         SELECT run_id, at FROM mutations
+       ) GROUP BY run_id ORDER BY first_at, run_id`,
+      []
+    );
+    return rows.map((row) => row.run_id);
+  }
+
   commandsFor(runId: string): CommandEvidence[] {
     const rows = queryAll<EvidenceRow>(
       this.db,

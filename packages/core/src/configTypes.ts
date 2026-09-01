@@ -29,6 +29,25 @@ export const DEFAULT_REPO_DIGEST: RepoDigestConfig = {
   cooldownHours: 6,
 };
 
+/**
+ * The git-versioned audit trail the daemon exports outside the project repo.
+ *
+ * On by default, because the receipt log is what keeps the project's history
+ * auditable once the database — not git — is the sync layer. Turning it off
+ * stops the export; it never deletes a log already written.
+ */
+export interface ReceiptsConfig {
+  enabled: boolean;
+  /**
+   * Where the log lives. Absent means the default under DISPATCH_HOME, keyed
+   * by a hash of the project path the same way runs and worktrees are. A
+   * relative path is resolved against the project root.
+   */
+  dir?: string;
+}
+
+export const DEFAULT_RECEIPTS: ReceiptsConfig = { enabled: true };
+
 /** One named gate in the verify pipeline. */
 export interface VerifyStep {
   name: string;
@@ -51,6 +70,13 @@ export interface DispatchConfig {
   verify?: VerifyConfig;
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
+  /**
+   * The git receipt log. `loadConfig` always populates this, so a config it
+   * returns can be read without a fallback; it is optional only so callers
+   * that build a DispatchConfig literal by hand — test fixtures, mostly — do
+   * not all have to be updated at once. Absent means DEFAULT_RECEIPTS.
+   */
+  receipts?: ReceiptsConfig;
   /** Parent directory for PR review worktrees (Task 7); each PR gets a
    *  `pr-<n>` child inside it. Absent means the default sibling of `rootDir`. */
   prWorktreeDir?: string;

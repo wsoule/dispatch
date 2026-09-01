@@ -115,6 +115,7 @@ import {
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import type { WardenManager } from './orchestrator/warden.js';
+import type { ReceiptsScheduler } from './receipts/scheduler.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -188,6 +189,9 @@ export interface ApiContext {
   // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
   // that case, since no real SyncResult ever reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
+  // The receipts exporter's scheduler, or `null` on the file backend, whose
+  // task files the board syncer already commits into the user's own repo.
+  receiptsScheduler: ReceiptsScheduler | null;
   // Whether `dispatch merge-task` actually resolves on this daemon's PATH.
   // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
   // visible somewhere, since git itself never reports it as an error.
@@ -791,6 +795,67 @@ interface SyncStatus extends SyncResult {
    * line-based one, with no other diagnostic anywhere.
    */
   mergeDriverWarning: string | null;
+  /**
+   * The receipt log's last export. Reported here rather than on an endpoint of
+   * its own because this is already the "is dispatch keeping git up to date"
+   * question, and the two are the file and database halves of one answer: a
+   * project has a board syncer or a receipts exporter, never both.
+   */
+  receipts: ReceiptsStatus;
+}
+
+/** The receipt log's last export attempt, or why there wasn't one. */
+interface ReceiptsStatus {
+  /** `disabled` on the file backend; `idle` before the first export. */
+  state: 'committed' | 'clean' | 'failed' | 'idle' | 'disabled';
+  detail: string | null;
+  /** The commit the last export made, when it made one. */
+  commit: string | null;
+  changed: number;
+  removed: number;
+  /** Records the export could not read out of the database. */
+  problems: number;
+  lastExportedAt: string | null;
+}
+
+// Reads the exporter's retained last result. Its own null-vs-result
+// distinction is preserved: `disabled` means this project has no exporter at
+// all, `idle` means it has one that has not yet run.
+function receiptsStatus(ctx: ApiContext): ReceiptsStatus {
+  const scheduler = ctx.receiptsScheduler;
+  if (scheduler === null) {
+    return {
+      state: 'disabled',
+      detail:
+        'this project keeps its state as files, which the board syncer commits',
+      commit: null,
+      changed: 0,
+      removed: 0,
+      problems: 0,
+      lastExportedAt: null,
+    };
+  }
+  const last = scheduler.lastResult();
+  if (last === null) {
+    return {
+      state: 'idle',
+      detail: null,
+      commit: null,
+      changed: 0,
+      removed: 0,
+      problems: 0,
+      lastExportedAt: null,
+    };
+  }
+  return {
+    state: last.state,
+    detail: last.detail,
+    commit: last.commit,
+    changed: last.changed,
+    removed: last.removed,
+    problems: last.problems,
+    lastExportedAt: scheduler.lastExportedAt(),
+  };
 }
 
 const DISABLED_SYNC_DETAIL =
@@ -839,6 +904,7 @@ function getSyncStatus(ctx: ApiContext): Response {
       pendingIncoming: 0,
       lastSyncedAt: null,
       mergeDriverWarning,
+      receipts: receiptsStatus(ctx),
     };
     return jsonResponse(disabled);
   }
@@ -859,6 +925,7 @@ function getSyncStatus(ctx: ApiContext): Response {
       pendingIncoming: 0,
       lastSyncedAt: null,
       mergeDriverWarning,
+      receipts: receiptsStatus(ctx),
     };
     return jsonResponse(off);
   }
@@ -874,6 +941,7 @@ function getSyncStatus(ctx: ApiContext): Response {
     pendingIncoming: pending.incoming,
     lastSyncedAt: ctx.boardSyncScheduler.lastSyncedAt(),
     mergeDriverWarning,
+    receipts: receiptsStatus(ctx),
   };
   return jsonResponse(status);
 }

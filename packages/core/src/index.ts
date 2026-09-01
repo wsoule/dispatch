@@ -106,6 +106,13 @@ export type {
   RetainedSource,
   RowCounts,
 } from './migrate.js';
+export { materializeReceipts, restoreReceipts } from './receipts.js';
+export type {
+  ReceiptsExport,
+  ReceiptsProblem,
+  ReceiptsRestore,
+  ReceiptsTally,
+} from './receipts.js';
 export { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
 export type { JsonlScan } from './jsonlRecords.js';
 export { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -135,6 +142,7 @@ export {
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
+  DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
@@ -151,6 +159,7 @@ export type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  ReceiptsConfig,
   RepoDigestConfig,
   VerifyConfig,
   VerifyStep,

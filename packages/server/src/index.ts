@@ -74,6 +74,7 @@ import { VerificationRunner } from './orchestrator/verify.js';
 import { WardenManager } from './orchestrator/warden.js';
 import { ClaudeWarden } from './orchestrator/wardens/claude.js';
 import { WardenToolRegistry } from './orchestrator/wardenTools.js';
+import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
@@ -171,6 +172,16 @@ export interface StartServerOptions {
   // autoCommit: true and every startServer()-based test would otherwise boot
   // a live interval.
   boardSyncPeriodicMs?: number;
+  // Debounce for the receipts exporter's response to a task change. Defaults
+  // to ReceiptsScheduler's own multi-second default; tests pass something much
+  // shorter. There is no periodic counterpart: the export has no remote to
+  // fall out of sync with, so nothing changes without a `task.changed`.
+  receiptsDebounceMs?: number;
+  // How often the receipts exporter sweeps without an event. Defaults to
+  // ReceiptsScheduler's own 5-minute default; tests pass something large
+  // enough never to fire, since every startServer()-based test on the database
+  // backend would otherwise boot a live interval.
+  receiptsSweepMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -565,11 +576,47 @@ export async function startServer(
       `dispatchd: no trunk resolvable for ${rootDir}; board sync disabled`
     );
   }
-  // Rides the same `task.changed` signal LinearSync's push debounce does —
+  // The receipts exporter: the database backend's counterpart to the board
+  // syncer above, and the other half of the split that comment describes. A
+  // file-backed project's task files are already committed into the user's own
+  // repo; a database-backed one has nothing in git at all until this writes it
+  // out, so this is what keeps the project auditable.
+  //
+  // Unlike the board syncer it needs no trunk and no remote — the log is a
+  // standalone repository under DISPATCH_HOME — so there is no "disabled
+  // because nothing resolvable" case to log. Whether it runs at all is
+  // config.yml's `receipts.enabled`, re-read on every pass rather than latched
+  // here.
+  const receiptsScheduler =
+    store instanceof TaskStore
+      ? null
+      : new ReceiptsScheduler({
+          rootDir,
+          stores,
+          actor: actorContext,
+          run: defaultGitRunner,
+          events,
+          debounceMs: opts.receiptsDebounceMs,
+          sweepMs: opts.receiptsSweepMs,
+        });
+  // One export before the server serves anything: it creates the log on a
+  // project turning receipts on for the first time, and reconciles one left
+  // dirty by a daemon that died mid-burst. Never fatal — a project that cannot
+  // write its receipt log still has a working board, and exportNow reports
+  // rather than throws.
+  receiptsScheduler?.exportNow();
+  // Both ride the same `task.changed` signal LinearSync's push debounce does —
   // the watcher above is one source of it, API mutation handlers are
-  // another, so an edit made through either path reaches the board.
+  // another, so an edit made through either path reaches the board and the
+  // receipt log. Exactly one of the two schedulers is ever non-null, since
+  // they are the file and database halves of the same job.
   const unsubscribeBoardSync = events.subscribe((event) => {
     if (event.type === 'task.changed') boardSyncScheduler?.notifyTaskChanged();
+    // A wider net than the board syncer's: the receipt log carries findings and
+    // ledger entries too, and those announce themselves on their own events.
+    // Keyed on `task.changed` alone, a review raising twenty findings would put
+    // nothing in the audit trail until an unrelated task edit came along.
+    if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
   });
   // The orchestrator's own executor registry: 'claude' (Slice O2's real
   // Agent SDK executor) is the production default per api.ts's createRun.
@@ -984,6 +1031,7 @@ export async function startServer(
     actorContext,
     tokens,
     boardSyncScheduler,
+    receiptsScheduler,
     mergeDriverOk,
   };
 
@@ -1117,6 +1165,8 @@ export async function startServer(
       await linearSync.stop();
       unsubscribeBoardSync();
       boardSyncScheduler?.stop();
+      // Before stores.close() below, since the exporter reads the database.
+      receiptsScheduler?.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on
