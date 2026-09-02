@@ -400,7 +400,7 @@ every cycle.
 Capture the sync worktree's HEAD before `git pull --rebase`, and afterwards ask
 git which paths moved:
 
-```
+```text
 git diff --name-only --diff-filter=ACMR <before>..<after> -- .dispatch/tasks
 git diff --name-only --diff-filter=D    <before>..<after> -- .dispatch/tasks
 ```

@@ -35,7 +35,7 @@ nothing at all.
 
 Measured with `processPatch` at 1.3.1:
 
-```
+```text
 ADDED    -> type: new    | isPartial: true
 MODIFIED -> type: change | isPartial: true
 ```

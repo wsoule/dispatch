@@ -17,5 +17,10 @@
     // Duplicate headings are normal in these docs: per-task sections repeat
     // "Files", "Tests", "Commit" by design.
     "MD024": false,
+    // README.md uses <details><summary> for a real collapsible section
+    // (Carto install troubleshooting); Markdown has no native collapsible
+    // syntax, so these two elements are allowed deliberately rather than
+    // disabled wholesale.
+    "MD033": { "allowed_elements": ["details", "summary"] },
   },
 }

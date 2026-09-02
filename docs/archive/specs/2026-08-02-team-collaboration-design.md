@@ -484,7 +484,7 @@ exception degrades to (c).
 
 **Mode A (git):**
 
-```
+```text
 user edits task in desktop
   → daemon writes .dispatch/tasks/t-xxx.md      (working tree, any branch)
   → watcher fires → BoardSync.localChanged()
@@ -495,7 +495,7 @@ user edits task in desktop
 
 **Mode B (relay):**
 
-```
+```text
 user types in the desktop task detail
   → CRDT op applied locally, rendered immediately
   → relay broadcasts → teammate's replica applies → their UI updates (<1s)

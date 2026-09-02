@@ -50,14 +50,14 @@ travels as a query parameter on GET and in the body on POST**, matching how
 
 ## File Structure
 
-**Created — server**
+### Created — server
 
 - `packages/server/src/conversations.ts` — `ConversationStore`, `SubjectRef`,
   `ChatMessage`, `isSubjectRef`. Mirrors `reviewComments.ts`.
 - `packages/server/test/conversations.test.ts`
 - `packages/server/test/conversations-api.test.ts`
 
-**Created — desktop**
+### Created — desktop
 
 - `apps/desktop/src/components/chat/SnippetComposer.tsx` — chips, input, target
   picker. No fetching, no persistence.
@@ -75,7 +75,7 @@ travels as a query parameter on GET and in the body on POST**, matching how
 - `apps/desktop/src/components/code/DiffSurface.tsx` — the shared renderer the
   three surfaces collapse into.
 
-**Modified**
+### Modified
 
 - `packages/server/src/orchestrator/paths.ts` — add `conversationPath`.
 - `packages/server/src/api.ts` — three routes.

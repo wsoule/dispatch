@@ -41,30 +41,29 @@ verifiable end-to-end.
 
 ## MCP (packages/mcp)
 
-6. The ClaudeExecutor spawns each agent's MCP server; pass `DISPATCH_RUN_ID`
+1. The ClaudeExecutor spawns each agent's MCP server; pass `DISPATCH_RUN_ID`
    (the agent's own run id) in that server's env so its tools know the sender.
    (executors/claude.ts sets the mcpServers env — add DISPATCH_RUN_ID alongside
    DISPATCH_PROJECT_ROOT.)
-7. `agent_message` tool: read `DISPATCH_RUN_ID` from env and pass it as
+2. `agent_message` tool: read `DISPATCH_RUN_ID` from env and pass it as
    `fromRunId` to the daemon's inject, so the recipient sees who sent it. Keep
    the runId/taskId XOR target and the no-live-target error listing live runs.
-8. Add `message_user(text)` MCP tool: posts a `from:'agent'` message to the user
+3. Add `message_user(text)` MCP tool: posts a `from:'agent'` message to the user
    for this agent's own run (via a daemon endpoint), so an agent can flag a
    question/update to the human. readOnlyHint false. Small.
-9. Update the `workflow://onboarding` resource to explain the three channels.
+4. Update the `workflow://onboarding` resource to explain the three channels.
 
 ## App (apps/desktop)
 
-10. RunLogView: render `message` entries distinctly (not as system notes) —
-    `from:'user'` as "You" (accent, right-aligned bubble), `from:'agent'` as "↳
-    <fromLabel>" (a distinct tint) — so the session visibly shows the
-    conversation, including agent-to-agent messages.
-11. The composer already sends user messages; ensure they appear as
-    `from:'user'` entries immediately (optimistic or via WS).
-12. All Agents view: show the live runs prominently so the user can open any
-    live agent's session and talk to it (it likely already lists runs — make
-    each row open the run's Session tab). Optional: a small "live messages"
-    feed.
+1. RunLogView: render `message` entries distinctly (not as system notes) —
+   `from:'user'` as "You" (accent, right-aligned bubble), `from:'agent'` as "↳
+   `<fromLabel>`" (a distinct tint) — so the session visibly shows the
+   conversation, including agent-to-agent messages.
+2. The composer already sends user messages; ensure they appear as `from:'user'`
+   entries immediately (optimistic or via WS).
+3. All Agents view: show the live runs prominently so the user can open any live
+   agent's session and talk to it (it likely already lists runs — make each row
+   open the run's Session tab). Optional: a small "live messages" feed.
 
 ## Verification (must do end-to-end)
 

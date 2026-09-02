@@ -40,7 +40,7 @@ Playwright.
 
 ## File Structure
 
-**Created**
+### Created
 
 - `apps/desktop/src/lib/pierreEditor.ts` — the single `Editor` factory. Owns
   editor options; knows nothing about runs.
@@ -53,7 +53,7 @@ Playwright.
 - `packages/server/test/run-file-edits.test.ts` — routes for reading and writing
   a worktree file.
 
-**Modified**
+### Modified
 
 - `packages/server/src/git/commands.ts` — add `show()`.
 - `packages/server/src/reviewComments.ts` — `suggestion` field, suggestion block
@@ -764,7 +764,7 @@ if (c.suggestion !== undefined && c.suggestion !== '') {
 ````
 
 And extend the preamble string to end with:
-`' A fenced `suggestion` block is the exact replacement text for the lines named above — apply it verbatim.'`
+`' A fenced`suggestion`block is the exact replacement text for the lines named above — apply it verbatim.'`
 
 Mirror `suggestion?: string` onto `ReviewComment` in
 `packages/client/src/api.ts` and onto `addReviewComment`'s input, and accept it
