@@ -275,7 +275,9 @@ pnpm + moon monorepo. Tool versions (bun, pnpm, node, moon, gh) are pinned in
 `.prototools` and installed via [proto](https://moonrepo.dev/docs/proto).
 Dependencies are pinned in the `catalog` in `pnpm-workspace.yaml`; package
 `package.json` files reference `catalog:` rather than versions. moon is the task
-runner — `package.json` scripts are npm lifecycle hooks only.
+runner; each package also keeps a matching `package.json` script, deliberately
+identical to its moon task, because knip's entry-point discovery and Tauri's
+`beforeBuildCommand` both read scripts and cannot read moon tasks.
 
 From anywhere in the repo: `moon run root:format` (oxfmt), `moon run root:lint`
 (oxlint, type-aware), plus `root:lint-md`, `root:lint-spelling`,
@@ -285,9 +287,11 @@ From anywhere in the repo: `moon run root:format` (oxfmt), `moon run root:lint`
 `.github/workflows/ci.yml`).
 
 Treat a failure as pre-existing until you have checked whether your own change
-caused it — the affected-aware nature of `moon ci` means a stale local cache can
-mask a regression, so re-run the specific lane after a `moon run root:clean` if
-a result looks suspicious.
+caused it. moon caches task results by input hash, so if a lane's verdict looks
+suspicious, re-run it with `--force` (which bypasses the cache and the affected
+check) rather than trusting a cache hit: `moon run root:lint --force`. Note that
+`root:clean` deletes build output, not moon's cache — it is not the lever for
+this.
 
 ## Known soft spots
 

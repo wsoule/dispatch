@@ -13,10 +13,10 @@ All jobs in `.github/workflows/ci.yml` must pass on the release commit: `ci`
 aren't enforced yet (`apps/desktop/src-tauri` isn't clean against either) —
 don't treat local fmt/clippy failures as blockers until CI itself gates on them.
 
-## 2. `scripts/build-sidecar.ts` smoke passes
+## 2. `root:build-sidecar` smoke passes
 
 ```bash
-bun scripts/build-sidecar.ts
+moonx root:build-sidecar --ignore-ci-checks
 ```
 
 Compiles `packages/server/src/bin.ts` into `dist-sidecar/dispatchd` via
@@ -31,7 +31,7 @@ resources is a separate follow-up (see that file's "Phase 6 TODO").
 ## 3. Tauri bundle build
 
 ```bash
-moonx desktop:tauri-build
+moonx desktop:tauri-build --ignore-ci-checks
 ```
 
 Produces the platform-native bundle (`.app`/`.dmg` on macOS) under
