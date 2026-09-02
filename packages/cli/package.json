@@ -15,10 +15,10 @@
   "dependencies": {
     "@dispatch/core": "workspace:*",
     "@dispatch/mcp": "workspace:*",
-    "@dispatch/server": "workspace:*",
     "commander": "catalog:"
   },
   "devDependencies": {
+    "@dispatch/server": "workspace:*",
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"

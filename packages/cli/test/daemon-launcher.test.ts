@@ -3,7 +3,11 @@ import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveDaemonLauncher } from '../src/commands/daemon.js';
+import {
+  resolveDaemonBin,
+  resolveDaemonLauncher,
+} from '../src/commands/daemon.js';
+import { CliError } from '../src/context.js';
 
 // The three-tier precedence resolveDaemonLauncher implements — see its doc
 // comment: (a) DISPATCH_DAEMON_BIN override, (b) a compiled `dispatchd` binary
@@ -90,5 +94,26 @@ describe('resolveDaemonLauncher precedence', () => {
     expect(launcher.leadingArgs).toHaveLength(1);
     expect(launcher.leadingArgs[0]).toMatch(/packages\/server\/src\/bin\.ts$/);
     expect(launcher.usesBun).toBe(true);
+  });
+});
+
+describe('resolveDaemonBin', () => {
+  it('anchors on @dispatch/server/package.json and points at src/bin.ts', () => {
+    const bin = resolveDaemonBin(
+      (specifier) => `/checkout/node_modules/${specifier}`
+    );
+    expect(bin).toBe('/checkout/node_modules/@dispatch/server/src/bin.ts');
+  });
+
+  it('turns a failed resolve into an actionable CliError, not a module-not-found', () => {
+    // @dispatch/server is a devDependency, so a standalone (npm) install of
+    // the CLI cannot resolve it — the error must say what to do instead.
+    const failingResolve = () => {
+      throw new Error("Cannot find module '@dispatch/server/package.json'");
+    };
+    expect(() => resolveDaemonBin(failingResolve)).toThrow(CliError);
+    expect(() => resolveDaemonBin(failingResolve)).toThrow(
+      /DISPATCH_DAEMON_BIN/
+    );
   });
 });

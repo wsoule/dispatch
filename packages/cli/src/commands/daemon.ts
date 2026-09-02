@@ -75,10 +75,29 @@ function readDaemonFile(rootDir: string): DaemonFileInfo | null {
 // export exists specifically so this resolve() call has something to anchor
 // on; the bin script sits alongside it at `src/bin.ts`, run directly by Bun
 // (which executes TypeScript natively, no build step required).
-function resolveDaemonBin(): string {
-  const pkgJsonPath = createRequire(import.meta.url).resolve(
-    '@dispatch/server/package.json'
-  );
+//
+// `@dispatch/server` is a devDependency only: the MIT-licensed CLI must not
+// pull the FSL daemon into its published dependency tree, so this resolve
+// succeeds in a monorepo checkout but not in a standalone install. There the
+// daemon ships as a sibling `dispatchd` binary or via `DISPATCH_DAEMON_BIN`
+// (see `resolveDaemonLauncher`), and this last-resort branch turns the raw
+// module-not-found into an actionable error. `resolvePkg` is injectable only
+// so tests can exercise that branch.
+export function resolveDaemonBin(
+  resolvePkg: (specifier: string) => string = (s) =>
+    createRequire(import.meta.url).resolve(s)
+): string {
+  let pkgJsonPath: string;
+  try {
+    pkgJsonPath = resolvePkg('@dispatch/server/package.json');
+  } catch {
+    throw new CliError(
+      'no dispatchd found: this install has no bundled daemon and no ' +
+        '@dispatch/server checkout. Install the Dispatch desktop app (which ' +
+        'ships dispatchd), or set DISPATCH_DAEMON_BIN to a dispatchd binary ' +
+        'or entry script.'
+    );
+  }
   return join(dirname(pkgJsonPath), 'src', 'bin.ts');
 }
 

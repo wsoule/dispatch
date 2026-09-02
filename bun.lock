@@ -32,7 +32,7 @@
     },
     "apps/desktop": {
       "name": "@dispatch/desktop",
-      "version": "0.24.0",
+      "version": "0.25.0",
       "dependencies": {
         "@dispatch/client": "workspace:*",
         "@dispatch/tokens": "workspace:*",
@@ -89,17 +89,17 @@
     },
     "packages/cli": {
       "name": "@dispatch/cli",
-      "version": "0.24.0",
+      "version": "0.25.0",
       "bin": {
         "dispatch": "./dist/cli.js",
       },
       "dependencies": {
         "@dispatch/core": "workspace:*",
         "@dispatch/mcp": "workspace:*",
-        "@dispatch/server": "workspace:*",
         "commander": "catalog:",
       },
       "devDependencies": {
+        "@dispatch/server": "workspace:*",
         "@types/bun": "catalog:",
         "tsdown": "catalog:",
         "typescript": "catalog:",
