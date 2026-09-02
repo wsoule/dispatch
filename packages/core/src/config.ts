@@ -12,6 +12,7 @@ import type {
   LinearConfig,
   ModelConfig,
   OrchestratorConfig,
+  QueueConfig,
   ReceiptsConfig,
   RepoDigestConfig,
   VerifyConfig,
@@ -29,6 +30,12 @@ import {
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
 } from './configTypes.js';
+import type { QueueWeights, ScoreFactorKey } from './scoring.js';
+import {
+  DEFAULT_QUEUE_WEIGHTS,
+  isQueueWeight,
+  QUEUE_FACTOR_KEYS,
+} from './scoring.js';
 import { canonicalStatus } from './status.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
@@ -73,6 +80,12 @@ function cloneFixLoop(config: FixLoopConfig): FixLoopConfig {
   };
 }
 
+// A fresh QueueConfig carrying a copy of the frozen defaults, so no loaded
+// config ever shares a weights object with another.
+function defaultQueue(): QueueConfig {
+  return { weights: { ...DEFAULT_QUEUE_WEIGHTS } };
+}
+
 const DEFAULTS: DispatchConfig = {
   statuses: [...STATUSES],
   autoCommit: false,
@@ -83,6 +96,8 @@ const DEFAULTS: DispatchConfig = {
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
   receipts: { ...DEFAULT_RECEIPTS },
+  // No `queue` here: it is the one optional block, so a DEFAULTS entry could
+  // only be read through a fallback anyway. Both readers call defaultQueue().
 };
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -487,6 +502,94 @@ function parseCarto(raw: unknown): CartoConfig {
   return { enabled: normalized as CartoMode };
 }
 
+// Reads one factor weight, rejecting anything that would make a score
+// meaningless: a non-number, a NaN/Infinity, or a negative (which would invert
+// the factor's meaning — turning a factor off is what `0` is for). `label`
+// names the source so the same checks can report a config.yml path or a patch
+// field.
+function parseWeight(raw: unknown, label: string): number {
+  if (!isQueueWeight(raw)) {
+    throw new ConfigError(`invalid ${label}: must be a number >= 0`);
+  }
+  return raw;
+}
+
+// Every key the `queue:` block accepts. Checked so a typo one level *up* from
+// the weights — `queue.wieghts:` — is refused too, rather than parsing as an
+// empty block and silently handing back the defaults.
+const QUEUE_KEYS: readonly string[] = ['weights'];
+
+// Validates the `queue:` block, throwing on anything it will not accept.
+// Weights layer over the defaults key by key, so a config naming only
+// `urgency` keeps the default unblocking and age weights instead of silently
+// zeroing them. An unknown key at either level is an error rather than
+// ignored: it is almost always a typo for a real one, and swallowing it would
+// leave the setting the user wrote with no effect at all.
+function parseQueueBlock(raw: unknown): QueueWeights {
+  if (raw === undefined) return { ...DEFAULT_QUEUE_WEIGHTS };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: queue must be an object'
+    );
+  }
+  const block = raw as Record<string, unknown>;
+  for (const key of Object.keys(block)) {
+    if (!QUEUE_KEYS.includes(key)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown queue key "${key}" (expected ${QUEUE_KEYS.join('|')})`
+      );
+    }
+  }
+
+  const { weights } = block;
+  if (weights === undefined) return { ...DEFAULT_QUEUE_WEIGHTS };
+  if (
+    typeof weights !== 'object' ||
+    weights === null ||
+    Array.isArray(weights)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: queue.weights must be an object'
+    );
+  }
+
+  const merged: QueueWeights = { ...DEFAULT_QUEUE_WEIGHTS };
+  for (const [key, value] of Object.entries(weights)) {
+    if (!QUEUE_FACTOR_KEYS.includes(key as ScoreFactorKey)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown queue.weights factor "${key}" (expected ${QUEUE_FACTOR_KEYS.join('|')})`
+      );
+    }
+    if (value === undefined) continue;
+    merged[key as ScoreFactorKey] = parseWeight(
+      value,
+      `.dispatch/config.yml: queue.weights.${key}`
+    );
+  }
+  return merged;
+}
+
+/**
+ * Loads the `queue:` block, keeping any rejection as `error` instead of
+ * throwing it.
+ *
+ * Deliberately the one block that does not fail `loadConfig`. Every other
+ * block is read by machinery the daemon cannot run without, so refusing the
+ * whole file is right for them. The queue's weights are read by one endpoint,
+ * and throwing here would turn a single mistyped weight into a 422 on every
+ * config-reading route — runs, tasks, settings, all of it — for a mistake that
+ * only makes the ranking wrong. `queueWeights()` is where it becomes loud, for
+ * the callers that actually depend on it.
+ */
+function parseQueueConfig(raw: unknown): QueueConfig {
+  try {
+    return { weights: parseQueueBlock(raw) };
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    return { weights: { ...DEFAULT_QUEUE_WEIGHTS }, error: err.message };
+  }
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -503,6 +606,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
       receipts: { ...DEFAULT_RECEIPTS },
+      queue: defaultQueue(),
     };
   }
   let parsed: unknown;
@@ -582,6 +686,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     receipts: parseReceiptsConfig(raw.receipts),
+    queue: parseQueueConfig(raw.queue),
     prWorktreeDir: raw.prWorktreeDir,
   };
 }
@@ -746,6 +851,26 @@ export function updateConfig(
   }
   if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
   if (patch.fixLoop !== undefined) applyFixLoopPatch(doc, patch.fixLoop);
+  if (patch.queue?.weights !== undefined) {
+    // Same validate-before-write rule as models: a bad weight must never reach
+    // disk, or every later loadConfig refuses the whole file. Written key by
+    // key so a weight the patch omits keeps whatever is already on disk.
+    for (const [key, value] of Object.entries(patch.queue.weights)) {
+      if (!QUEUE_FACTOR_KEYS.includes(key as ScoreFactorKey)) {
+        throw new ConfigError(
+          `invalid queue.weights factor: ${key} (expected ${QUEUE_FACTOR_KEYS.join('|')})`
+        );
+      }
+      // `Partial<QueueWeights>` built with a conditional field carries the key
+      // with an explicit `undefined`; that means "not in this patch", not "set
+      // it to nothing", so skip rather than reject the whole write.
+      if (value === undefined) continue;
+      doc.setIn(
+        ['queue', 'weights', key],
+        parseWeight(value, `queue.weights.${key}`)
+      );
+    }
+  }
   if (patch.verify !== undefined) {
     // Same validate-before-write rule as models: a bad field must never reach
     // disk, or loadConfig refuses the whole file afterwards.
