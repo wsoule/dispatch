@@ -194,6 +194,7 @@ mergedsha
 metacharacter
 METACHARS
 misdescribe
+mktemp
 modelcontextprotocol
 ncarto
 neutralised
@@ -227,6 +228,7 @@ pgrep
 pids
 Pids
 pierrecomputer
+pipefail
 Plandex
 pluralised
 pluralises

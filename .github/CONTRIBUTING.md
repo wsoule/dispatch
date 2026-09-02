@@ -42,7 +42,12 @@ are MIT; the rest of the repo is FSL-1.1-ALv2 (see `LICENSE`), source-available
 and converting to Apache 2.0 two years after each release.
 
 Outside contributions require a signed contributor license agreement (CLA
-Assistant prompts on your first PR, once per contributor). The CLA is needed
-because code in this repo may move across the license boundary — including into
-the commercial team server. Your contribution lands under the license of the
-package it touches.
+Assistant prompts on your first PR, once per contributor; the full text is
+[`CLA.md`](CLA.md)). The CLA is needed because code in this repo may move across
+the license boundary — including into the commercial team server. Your
+contribution lands under the license of the package it touches.
+
+Maintainer setup note: the CLA workflow only hard-blocks merges once the "CLA
+Assistant" job (the job name, not the "CLA / CLA Assistant" display string) is a
+required status check on `main` — a repo-settings step, and one that only takes
+effect once the repository is public.

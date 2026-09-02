@@ -1,0 +1,92 @@
+name: CLA
+
+# Gates outside PRs on a signed CLA (.github/CLA.md) via CLA Assistant.
+# Why a CLA and not a DCO: see .github/CLA.md and LICENSING.md.
+#
+# Merge-blocking requires making the "CLA Assistant" job a required status
+# check on main once the repo is public (tracked on the flip task).
+#
+# contributor-assistant/github-action is archived (2026-03): accepted for
+# now — fallback is hosted cla-assistant.io or a maintained fork. Dependabot
+# will not bump the pin.
+on:
+  issue_comment:
+    types: [created]
+  pull_request_target:
+    types: [opened, closed, reopened, synchronize]
+
+permissions:
+  actions: write
+  contents: write
+  pull-requests: write
+  statuses: write
+
+# Serialize runs: concurrent signature writes race the signatures file and
+# the loser's signature is lost.
+concurrency:
+  group: cla-assistant
+
+jobs:
+  cla:
+    # The job name is the status-check context a ruleset must require.
+    name: CLA Assistant
+    runs-on: ubuntu-latest
+    # PR events from the owner or a bot skip the job entirely (a skipped
+    # required check counts as passing). Comments run only when they look
+    # like a signature or a recheck; the action re-checks the signature
+    # sentence exactly, so this loose contains() can only over-trigger.
+    if: >-
+      (github.event_name == 'pull_request_target' && github.actor !=
+      github.repository_owner && !endsWith(github.actor, '[bot]')) ||
+      (github.event_name == 'issue_comment' && (github.event.comment.body ==
+      'recheck' || contains(github.event.comment.body, 'sign the CLA')))
+    steps:
+      # Signatures live on a dedicated branch so their commits stay off
+      # protected main; the action cannot create that branch itself.
+      - name: Ensure the cla-signatures branch exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          repo='${{ github.repository }}'
+          err=$(mktemp)
+          if gh api "repos/${repo}/git/ref/heads/cla-signatures" --silent 2>"${err}"; then
+            echo 'cla-signatures branch already exists.'
+            exit 0
+          fi
+          if ! grep -q 'HTTP 404' "${err}"; then
+            echo 'Could not check for the cla-signatures branch:' >&2
+            cat "${err}" >&2
+            exit 1
+          fi
+          # 4b825d... is git's empty-tree SHA; committing against it makes
+          # an orphan branch with no checkout and no repo history.
+          commit=$(gh api "repos/${repo}/git/commits" \
+            -f message='chore: root commit for CLA signatures' \
+            -f tree='4b825dc642cb6eb9a060e54bf8d69288fbee4904' \
+            --jq .sha)
+          if ! out=$(gh api "repos/${repo}/git/refs" \
+            -f ref='refs/heads/cla-signatures' \
+            -f sha="${commit}" 2>&1); then
+            if grep -q 'Reference already exists' <<<"${out}"; then
+              echo 'Another run created cla-signatures first.'
+              exit 0
+            fi
+            echo "${out}" >&2
+            exit 1
+          fi
+          echo "Created cla-signatures branch at ${commit}."
+
+      # The `closed` trigger exists only for this step's after-merge lock,
+      # which stops merged threads from collecting stray sign comments.
+      - name: Check or record CLA signatures
+        uses: contributor-assistant/github-action@ca4a40a7d1004f18d9960b404b97e5f30a505a08 # v2.6.1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          path-to-signatures: signatures/cla.json
+          path-to-document:
+            ${{ github.server_url }}/${{ github.repository
+            }}/blob/main/.github/CLA.md
+          branch: cla-signatures
+          allowlist: ${{ github.repository_owner }},*[bot]
