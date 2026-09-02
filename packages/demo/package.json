@@ -1,6 +1,7 @@
 {
   "name": "@dispatch/demo",
   "private": true,
+  "license": "FSL-1.1-ALv2",
   "bin": {
     "demo": "./src/cli.ts"
   },
