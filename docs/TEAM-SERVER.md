@@ -116,8 +116,8 @@ unnecessary — these become ordinary features of a stateful service. They are
 also server-tier **by decision, not just by architecture**: the team-local
 direction (one shared multi-user dispatchd that teammates reach from browsers —
 epic `e-5f3530` and its satellite tasks) is parked, absorbed by phases 1–4
-below, so that multiplayer never ships free inside the open client
-(`docs/BUSINESS.md`, 2026-08-23):
+below, so that multiplayer never ships free inside the open client (decided
+2026-08-23):
 
 - **Presence** — derived from connected daemons and live runs.
 - **Claims** — TTL leases on `(taskId, writes[])`, admission-checked with the
@@ -153,7 +153,7 @@ below, so that multiplayer never ships free inside the open client
    a human. Needs deciding before phase 1, not before phase 0.
 3. ~~**Server repo location.**~~ Decided 2026-08-23: private repo consuming
    published `@dispatch/core` from npm, MIT-licensed so the dependency is
-   frictionless (`docs/BUSINESS.md`, `LICENSING.md`).
+   frictionless (`LICENSING.md`).
 4. **Protocol.** Plain WebSocket + JSON mirroring `ServerEvent` until it hurts.
 5. **What of `.dispatch/` stays in-repo.** `config.yml` clearly; whether
    `team.yml` stays as a projection or moves fully server-side can wait for

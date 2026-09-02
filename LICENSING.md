@@ -3,7 +3,7 @@
 Dispatch is open core. This file is the plain-language map of what is licensed
 how, and why. The legal texts are the per-package `LICENSE` files and the root
 [`LICENSE`](LICENSE); where this summary and a license text disagree, the
-license text wins. Decided 2026-08-23 (`docs/BUSINESS.md`).
+license text wins. Decided 2026-08-23.
 
 ## The split
 
@@ -30,7 +30,7 @@ Three tiers, one rule each:
   shared run visibility, web dashboard, audit) live in the team server, which is
   a paid service — hosted by us or self-hosted under a commercial license — and
   is not in this repo. The paid boundary is the server, not license checks in
-  this code. See `docs/TEAM-SERVER.md` and `docs/BUSINESS.md`.
+  this code. See `docs/TEAM-SERVER.md`.
 
 ## Fine print, stated plainly
 
