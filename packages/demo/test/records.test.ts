@@ -180,7 +180,7 @@ test('teammate inboxes are non-empty and distinct from the owner', () => {
 
 // Type-level check: assigning through Finding/LedgerEntry ensures records.ts's
 // literals satisfy the exact interfaces core exports — a shape drift there
-// fails `bun ws demo tsc`, not just this test file.
+// fails `moonx demo:typecheck`, not just this test file.
 test('written findings and ledger entries parse as their real interface shape', () => {
   const root = build();
   const findings = lines(root, 'findings.jsonl') as unknown as Finding[];

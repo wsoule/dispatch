@@ -271,18 +271,23 @@ multiplayer needs the run half to cross machines.
 
 ## Build and verification
 
-Bun monorepo. Dependencies are pinned in the root `workspaces.catalog`; package
-`package.json` files reference `catalog:` rather than versions.
+pnpm + moon monorepo. Tool versions (bun, pnpm, node, moon, gh) are pinned in
+`.prototools` and installed via [proto](https://moonrepo.dev/docs/proto).
+Dependencies are pinned in the `catalog` in `pnpm-workspace.yaml`; package
+`package.json` files reference `catalog:` rather than versions. moon is the task
+runner — `package.json` scripts are npm lifecycle hooks only.
 
-From the root: `bun run format` (oxfmt), `bun run lint` (oxlint, type-aware),
-plus `lint:md`, `lint:spelling`, `lint:css`, `lint:deadcode` (knip), `lint:dup`
-(jscpd), `lint:arch` (dependency-cruiser), `lint:types`.
+From anywhere in the repo: `moon run root:format` (oxfmt), `moon run root:lint`
+(oxlint, type-aware), plus `root:lint-md`, `root:lint-spelling`,
+`root:lint-css`, `root:lint-deadcode` (knip), `root:lint-dup` (jscpd),
+`root:lint-arch` (dependency-cruiser), `root:lint-types`, `root:check-licenses`.
+`moon ci` runs the affected-aware set of these in CI (see
+`.github/workflows/ci.yml`).
 
-**These do not currently pass on a clean checkout.** As of this writing
-`bun run lint` reports 57 errors and 474 warnings, `lint:md` and `lint:spelling`
-each fail on pre-existing files, and `bun run format` wants to reflow the
-Carto-generated block in `AGENTS.md`. Treat a failure as pre-existing until you
-have checked whether your own change caused it.
+Treat a failure as pre-existing until you have checked whether your own change
+caused it — the affected-aware nature of `moon ci` means a stale local cache can
+mask a regression, so re-run the specific lane after a `moon run root:clean` if
+a result looks suspicious.
 
 ## Known soft spots
 
