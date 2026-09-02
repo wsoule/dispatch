@@ -105,14 +105,28 @@ function canBuildOn(run: RunMeta | null): run is RunMeta {
 // Last line for a task id wins, like FindingStore.
 export class FixLoopStore {
   private readonly file: string;
+  // The parsed store, kept in memory between reads. DecisionFeed recomputes on
+  // every run.changed, and each recompute calls list(), so without this the
+  // daemon re-read and re-parsed the whole JSONL file on every run state
+  // change — including the bursts an agent produces recording evidence.
+  //
+  // Safe to hold because this process is the only writer: put() is the sole
+  // append site and folds its own write in below. A fresh instance starts cold,
+  // which is what the reload tests rely on. A failed read is never cached, so
+  // an unreadable store retries rather than latching its error forever.
+  private cached: Map<string, FixLoopState> | null = null;
 
   constructor(rootDir: string) {
     this.file = join(rootDir, '.dispatch', 'fix-loops.jsonl');
   }
 
   private read(): { byTask: Map<string, FixLoopState>; error: string | null } {
+    if (this.cached !== null) return { byTask: this.cached, error: null };
     const byTask = new Map<string, FixLoopState>();
-    if (!existsSync(this.file)) return { byTask, error: null };
+    if (!existsSync(this.file)) {
+      this.cached = byTask;
+      return { byTask, error: null };
+    }
     let text: string;
     try {
       text = readFileSync(this.file, 'utf8');
@@ -130,6 +144,7 @@ export class FixLoopStore {
         // A hand-corrupted line costs itself, not the rest of the store.
       }
     }
+    this.cached = byTask;
     return { byTask, error: null };
   }
 
@@ -174,6 +189,11 @@ export class FixLoopStore {
   put(state: FixLoopState): FixLoopState {
     mkdirSync(dirname(this.file), { recursive: true });
     appendFileSync(this.file, `${JSON.stringify(state)}\n`);
+    // Fold the write into the cache rather than dropping it, so a busy loop
+    // does not re-parse the file after each round. Last line wins on read, and
+    // setting the key is exactly that. Only reached if the append succeeded,
+    // so a failed write leaves cache and disk agreeing.
+    this.cached?.set(state.taskId, state);
     return state;
   }
 }

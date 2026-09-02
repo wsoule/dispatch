@@ -112,6 +112,12 @@ export type ServerEvent =
   // appends several entries, and a client rendering the thread wants the whole
   // record anyway.
   | { type: 'warden.changed'; conversationId: string }
+  // The decision feed's contents changed: something started or stopped
+  // awaiting a human. Same "go refetch" contract as task.changed — the feed is
+  // derived on every read (see decisionFeed.ts), so there is no increment to
+  // carry, and one event covers a gate, a question, a capped loop or a stalled
+  // run equally.
+  | { type: 'decisions.changed' }
   // The PR poll's cached repo-PR set changed (a delta in number, head sha,
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of

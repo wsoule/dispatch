@@ -60,6 +60,7 @@ import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
+import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
@@ -180,6 +181,8 @@ export interface ApiContext {
   conversations: ConversationStore;
   questions: QuestionRegistry;
   scopeRequests: ScopeRequestRegistry;
+  // The one feed of everything awaiting a human — see decisionFeed.ts.
+  decisionFeed: DecisionFeed;
   linearSync: LinearSync;
   // Cached once at boot (see pr.ts's detectPrCapability) — exposed at
   // GET /api/health as `pr` so a client can hide/disable the PR action
@@ -4358,6 +4361,30 @@ export async function handleApi(
     // app's "an agent is waiting on you" surfaces.
     if (segments[0] === 'questions' && segments.length === 1) {
       if (method === 'GET') return jsonResponse(ctx.questions.listOpen());
+    }
+
+    // GET /api/decisions — every item awaiting a human, across all four
+    // sources, for the notification center and the delivery channels built on
+    // it. `?disposition=blocking|recorded` is the policy engine's filter (see
+    // decisionFeed.ts); `?resolved=1` also returns the items the feed has just
+    // watched resolve, so a surface can show a row settling instead of
+    // vanishing.
+    if (segments[0] === 'decisions' && segments.length === 1) {
+      if (method === 'GET') {
+        const raw = url.searchParams.get('disposition');
+        if (raw !== null && raw !== 'blocking' && raw !== 'recorded') {
+          return errorResponse(
+            400,
+            "disposition must be 'blocking' or 'recorded'"
+          );
+        }
+        return jsonResponse({
+          items: ctx.decisionFeed.list({
+            disposition: (raw ?? undefined) as DecisionDisposition | undefined,
+            includeResolved: url.searchParams.get('resolved') === '1',
+          }),
+        });
+      }
     }
 
     // GET /api/prs (item B): every open PR in the repo — see
