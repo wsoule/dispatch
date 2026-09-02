@@ -115,6 +115,16 @@ tasks:
     options:
       runInCI: 'always'
 
+  # knip --fix deletes unused exports and files. Skipped in CI like the other
+  # fix lanes; run it with `moonx root:lint-deadcode-fix --ignore-ci-checks`.
+  lint-deadcode-fix:
+    command: 'knip --fix'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      runInCI: 'skip'
+
   lint-dup:
     command: 'jscpd packages apps'
     inputs:

@@ -69,17 +69,17 @@ inputs haven't changed.
 
 Common entry points:
 
-| Task                             | What it does                                                                   |
-| -------------------------------- | ------------------------------------------------------------------------------ |
-| `moonx desktop:dev`              | Desktop app dev server (Vite)                                                  |
-| `moonx desktop:tauri-dev`        | Desktop app inside the Tauri shell                                             |
-| `moonx web:dev`                  | Web UI dev server (proxies to a locally running `dispatchd`)                   |
-| `moonx site:dev`                 | Marketing site dev server                                                      |
-| `moonx sandbox:dev`              | Demo/sandbox environment dev server (`apps/demo`)                              |
-| `moonx <package>:test`           | Unit tests for one package                                                     |
-| `moonx <project>:typecheck`      | Typecheck (builds workspace deps first)                                        |
-| `moonx desktop:e2e`              | Desktop Playwright suite                                                       |
-| `moon run root:format root:lint` | Repo-wide format + type-aware lint                                             |
+| Task                             | What it does                                                                         |
+| -------------------------------- | ------------------------------------------------------------------------------------ |
+| `moonx desktop:dev`              | Desktop app dev server (Vite)                                                        |
+| `moonx desktop:tauri-dev`        | Desktop app inside the Tauri shell                                                   |
+| `moonx web:dev`                  | Web UI dev server (proxies to a locally running `dispatchd`)                         |
+| `moonx site:dev`                 | Marketing site dev server                                                            |
+| `moonx sandbox:dev`              | Demo/sandbox environment dev server (`apps/demo`)                                    |
+| `moonx <package>:test`           | Unit tests for one package                                                           |
+| `moonx <project>:typecheck`      | Typecheck (builds workspace deps first)                                              |
+| `moonx desktop:e2e`              | Desktop Playwright suite                                                             |
+| `moon run root:format root:lint` | Repo-wide format + type-aware lint                                                   |
 | `moonx root:wt -- new <slug>`    | Create a git worktree and reserve a dev-server port offset (see `scripts/README.md`) |
 
 ## Before you push

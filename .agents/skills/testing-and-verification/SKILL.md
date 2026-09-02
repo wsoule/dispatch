@@ -23,10 +23,18 @@ Useful check/fix pairs also run from anywhere in the repo:
 moon run root:format-check
 moon run root:format
 moon run root:lint
-moon run root:lint-fix
 moon run root:lint-css
-moon run root:lint-css-fix
 moon run root:lint-deadcode
+```
+
+The `-fix` lanes rewrite source, so they are `runInCI: 'skip'` and a CI-marked
+shell (any agent harness, where `CI` is set) refuses them under `moon run`. Use
+`moonx` with the escape hatch:
+
+```bash
+moonx root:lint-fix --ignore-ci-checks
+moonx root:lint-css-fix --ignore-ci-checks
+moonx root:lint-deadcode-fix --ignore-ci-checks
 ```
 
 ## Dead Code
