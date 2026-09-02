@@ -68,7 +68,7 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
-import { wardenKey } from './useWardenSession';
+import { wardenKey, wardenKeyPrefix } from './useWardenSession';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
@@ -1109,7 +1109,28 @@ export function useDispatchProject(
       },
       {
         onEvent: (event) => {
-          if (event.type === 'run.changed') {
+          if (event.type === 'hello') {
+            // The daemon sends `hello` from its websocket `open` handler
+            // (packages/server/src/index.ts), so this fires once per socket:
+            // on the first connect and again on every reconnect. A reconnect
+            // usually means dispatchd restarted, and warden records live in an
+            // in-memory Map — so every cached id 404s now, and no
+            // `warden.changed` can ever arrive for a conversation the daemon
+            // no longer has. Without this refetch the cached record keeps a
+            // pending action alive that exists nowhere: the rail shows a
+            // waiting row and an amber badge, Approve/Deny 404, and
+            // `hasPendingAction` disables both "New conversation" controls
+            // until the window happens to lose and regain focus.
+            //
+            // It has to be the whole prefix rather than one conversation's
+            // key: the open conversation, and its id, live in
+            // useWardenSession, which this hook cannot see. On the first
+            // connect nothing is cached yet, so the invalidation is a no-op
+            // there rather than a wasted refetch.
+            void queryClient.invalidateQueries({
+              queryKey: wardenKeyPrefix(port),
+            });
+          } else if (event.type === 'run.changed') {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-run', port],

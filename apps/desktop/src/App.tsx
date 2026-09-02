@@ -841,8 +841,13 @@ function App() {
                 <LiveRail
                   runs={data.runs}
                   attentionCount={inboxData.total}
+                  warden={warden}
+                  daemonReady={
+                    !data.portLoading && !data.portError && data.client !== null
+                  }
                   onOpenTask={openTaskView}
                   onOpenInbox={() => selectProjectView('inbox')}
+                  onOpenWarden={() => setGlobalView('warden')}
                   collapsed={sidebarCollapsed}
                 />
               ) : null
