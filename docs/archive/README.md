@@ -14,13 +14,11 @@ Known superseded:
   over git refs (mode A) with a hosted CRDT relay as an optional second mode.
   Team collaboration is moving to a server (`docs/TEAM-SERVER.md`); the
   git-native design is no longer the direction.
-- `design/open-source-monetization.md` — monetization plan written against the
-  git-native multiplayer assumption. Replaced by `docs/BUSINESS.md`.
 - `design/lovable-direction.md` and `design/lovable-workstreams.md` — the
   direction docs behind the agreed storage spine and hosted tier (epics
   `e-99e113`, `e-e2d9c0` and others still cite their old `docs/design/` paths).
-  Their substance is absorbed into `docs/TEAM-SERVER.md` and `docs/BUSINESS.md`;
-  read them for the fuller original reasoning.
+  Their substance is absorbed into `docs/TEAM-SERVER.md`; read them for the
+  fuller original reasoning.
 
 Nothing here is maintained. Do not update these files — write a new document
 instead.

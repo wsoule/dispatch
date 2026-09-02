@@ -297,6 +297,6 @@ something:
   wins, but it is the one version string left unaligned.
 - `docs/archive/design/` holds the earlier direction docs. The lovable pair fed
   the agreed storage/hosted direction (live epics still reference their old
-  `docs/design/` paths); `open-source-monetization.md` is fully superseded.
-  `docs/BUSINESS.md` and `docs/TEAM-SERVER.md` are the current statements.
+  `docs/design/` paths). `LICENSING.md` and `docs/TEAM-SERVER.md` are the
+  current statements.
 - The repo-local lint baseline is red, so CI signal on those checks is weak.
