@@ -1,0 +1,91 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'application'
+
+# ui is consumed via the Vite '@/ui' source alias, not the package specifier;
+# build scope keeps the edge on the moon graph without manifest syncing.
+dependsOn:
+  - id: 'ui'
+    scope: 'build'
+
+tasks:
+  # Kept in step with apps/desktop's package.json `build` script on purpose:
+  # src-tauri/tauri.conf.json's beforeBuildCommand runs `bun run build:app`,
+  # which chains that script. The two must stay identical.
+  build:
+    script: 'tsc -b && vite build'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'index.html'
+      - 'vite.config.ts'
+      - 'tsconfig.json'
+      - 'tsconfig.app.json'
+      - 'tsconfig.node.json'
+      - 'public/**/*'
+    outputs:
+      - 'dist'
+
+  # webkitFloor.test.ts asserts against the built dist/, so the inherited
+  # test task (deps: ^:build only) must also depend on this project's own
+  # build, not just upstream dependencies' builds.
+  test:
+    deps:
+      - 'build'
+
+  # Mirrored as the package.json `dev` script for tauri's beforeDevCommand.
+  dev:
+    command: 'vite'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
+
+  # Sidecar binaries are bun-compiled; stays bun by design. Also mirrored as
+  # apps/desktop's `build:sidecars` script, which tauri's beforeBuildCommand
+  # reaches through `build:app`.
+  build-sidecars:
+    command: 'bun scripts/build-sidecars.ts'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  tauri-dev:
+    command: 'pnpm exec tauri dev'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
+
+  tauri-build:
+    command: 'pnpm exec tauri build'
+    deps:
+      - 'build'
+      - 'build-sidecars'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  e2e:
+    command: 'pnpm exec playwright test'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      runInCI: 'skip'
+
+  e2e-update:
+    command: 'pnpm exec playwright test --update-snapshots'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      runInCI: 'skip'

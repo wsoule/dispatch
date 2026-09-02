@@ -1,0 +1,63 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+language: 'typescript'
+layer: 'application'
+
+tasks:
+  build:
+    command: 'astro build'
+    deps:
+      - '^:build'
+    inputs:
+      - 'src/**/*'
+      - 'public/**/*'
+      - 'astro.config.mjs'
+      - 'tsconfig.json'
+    outputs:
+      - 'dist'
+
+  # test/site.test.ts reads ../dist/index.html at import time and throws when
+  # it is missing, so this needs its OWN build — the inherited test task only
+  # depends on ^:build (upstream projects), which never builds this one.
+  test:
+    command: 'bun test test/'
+    deps:
+      - 'build'
+
+  dev:
+    command: 'astro dev'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
+
+  preview:
+    command: 'astro preview'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
+
+  # Serves the prebuilt dist/ — this is the container entrypoint (Dockerfile),
+  # not a dev server.
+  start:
+    command: 'bun run server.ts'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'
+
+  # Railway ships the locally-built dist/ inside the image rather than building
+  # on the platform, so the build must be a dependency, not a shell `&&`.
+  deploy:
+    command: 'railway up'
+    deps:
+      - 'build'
+    options:
+      cache: false
+      interactive: true
+      runInCI: 'skip'

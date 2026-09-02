@@ -55,3 +55,6 @@ docs/business/
 .dispatch/dispatch.db-wal
 .dispatch/dispatch.db-shm
 .dispatch/storage.json
+
+.moon/cache
+.moon/hooks

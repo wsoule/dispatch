@@ -1,0 +1,34 @@
+$schema: 'https://moonrepo.dev/schemas/tasks.json'
+
+# Tasks shared by every JS/TS project. Only string-identical tasks belong
+# here; per-project variance lives in that project's moon.yml.
+inheritedBy:
+  languages: ['typescript', 'javascript']
+
+# package.json: manifest changes must re-trigger tasks. tsconfig.options.json:
+# every package tsconfig extends it and several builds emit declarations, so
+# compiler-option changes must re-key everything.
+implicitInputs:
+  - 'package.json'
+  - '/tsconfig.options.json'
+
+tasks:
+  # Tests import workspace deps through their built dist (same resolution as
+  # typecheck), so dependency builds must complete first.
+  test:
+    command: 'bun test'
+    deps:
+      - '^:build'
+
+  # Cross-package imports resolve through each dependency's dist (no TS
+  # project references), so dependencies build before typecheck.
+  typecheck:
+    command: 'tsgo --noEmit --pretty'
+    deps:
+      - '^:build'
+    inputs:
+      - '**/*'
+      - '!node_modules/**'
+      - '!dist/**'
+      - '!**/*.tsbuildinfo'
+      - '!src-tauri/target/**'

@@ -1,0 +1,26 @@
+$schema: 'https://moonrepo.dev/schemas/tasks.json'
+
+# Guard chain for packages the open-core epic will publish. Each such package
+# gets "prepublishOnly": "moon run <name>:prepublish". Stays runInCI: skip so
+# moon ci --include-relations never drags publish guards into CI.
+inheritedBy:
+  tags: ['publishable']
+
+tasks:
+  # Publishes must use the pnpm pinned in .prototools; the script reads the
+  # pin itself.
+  assert-pnpm-version:
+    command: 'bun $workspaceRoot/scripts/assert-pnpm-version.ts'
+    options:
+      cache: false
+      internal: true
+      runInCI: 'skip'
+
+  prepublish:
+    command: 'noop'
+    deps:
+      - 'assert-pnpm-version'
+      - 'build'
+    options:
+      cache: false
+      runInCI: 'skip'
