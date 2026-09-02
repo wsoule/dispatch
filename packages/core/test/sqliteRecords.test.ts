@@ -1,15 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import type { DatabaseSync } from 'node:sqlite';
 
 import type { AddFindingInput } from '../src/findings.js';
 import { openDispatchDb, SqliteRowError } from '../src/sqliteDb.js';
+import type { SqliteDatabase } from '../src/sqliteDb.js';
 import {
   SqliteEvidenceStore,
   SqliteFindingStore,
   SqliteLedgerStore,
 } from '../src/sqliteRecords.js';
 
-let db: DatabaseSync;
+let db: SqliteDatabase;
 
 beforeEach(() => {
   db = openDispatchDb(':memory:');

@@ -79,7 +79,14 @@ export {
   DISPATCH_DB_VERSION,
   dispatchDbPath,
   openDispatchDb,
+  sqliteDriver,
   SqliteRowError,
+} from './sqliteDb.js';
+export type {
+  SqliteDatabase,
+  SqliteDriver,
+  SqliteStatement,
+  SqlValue,
 } from './sqliteDb.js';
 export { SqliteTaskStore } from './sqliteTaskStore.js';
 export {

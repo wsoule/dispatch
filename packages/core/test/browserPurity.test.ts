@@ -22,7 +22,9 @@ const FROM_STATEMENT =
 const SIDE_EFFECT_IMPORT = /(?:^|\n)import\s+'([^']+)'/g;
 
 // Every module a value import can reach from `entry`, as paths relative to
-// src/, along with the `node:` specifiers found on the way.
+// src/, along with the runtime-builtin specifiers found on the way. Both
+// `node:` and `bun:` count: neither exists in a browser bundle, and a `bun:`
+// one is additionally fatal to the Node-run CLI.
 function valueGraph(entry: string): {
   visited: Set<string>;
   builtins: { file: string; specifier: string }[];
@@ -45,7 +47,7 @@ function valueGraph(entry: string): {
       specifiers.push(specifier);
     }
     for (const specifier of specifiers) {
-      if (specifier.startsWith('node:')) {
+      if (specifier.startsWith('node:') || specifier.startsWith('bun:')) {
         builtins.push({ file: key, specifier });
       } else if (specifier.startsWith('.')) {
         queue.push(resolve(dirname(file), specifier.replace(/\.js$/, '.ts')));
@@ -56,7 +58,7 @@ function valueGraph(entry: string): {
 }
 
 describe('browser entry point purity', () => {
-  it('reaches no node: builtin from browser.ts', () => {
+  it('reaches no node: or bun: builtin from browser.ts', () => {
     expect(valueGraph('browser.ts').builtins).toEqual([]);
   });
 
@@ -79,20 +81,26 @@ describe('browser entry point purity', () => {
   });
 
   /**
-   * `node:sqlite` must NOT be a static value import anywhere reachable from
-   * the node barrel, even though sqliteDb.ts is.
+   * NEITHER SQLite driver may be a static value import anywhere reachable from
+   * the node barrel, even though sqliteDb.ts is. They are loaded through
+   * createRequire at first use, and each would break a different runtime if
+   * that changed:
    *
-   * It only became available unflagged in Node 22.13, and `@dispatch/cli`
-   * declares `node: >=22` and imports this barrel for every command. A
-   * top-level import would therefore throw ERR_UNKNOWN_BUILTIN_MODULE during
-   * module evaluation on 22.0–22.12, killing `dispatch task list` on a
-   * plain file-backed project that never wanted a database at all.
-   * sqliteDb.ts loads it through createRequire at first use instead; this
-   * pins that, because reinstating the import would look completely harmless.
+   * - `node:sqlite` only became available unflagged in Node 22.13, and
+   *   `@dispatch/cli` declares `node: >=22` and imports this barrel for every
+   *   command. A top-level import would throw ERR_UNKNOWN_BUILTIN_MODULE
+   *   during module evaluation on 22.0–22.12, killing `dispatch task list` on
+   *   a plain file-backed project that never wanted a database at all.
+   * - `bun:sqlite` does not exist under Node at all, so a top-level import
+   *   would kill every CLI command outright on the runtime the CLI targets.
+   *
+   * Reinstating either import would look completely harmless, which is why
+   * this is pinned rather than left to review.
    */
-  it('never reaches node:sqlite as an eager import from the node entry', () => {
-    const { builtins } = valueGraph('index.ts');
-    expect(builtins.map((b) => b.specifier)).not.toContain('node:sqlite');
+  it('never reaches a sqlite driver as an eager import from the node entry', () => {
+    const specifiers = valueGraph('index.ts').builtins.map((b) => b.specifier);
+    expect(specifiers).not.toContain('node:sqlite');
+    expect(specifiers).not.toContain('bun:sqlite');
   });
 
   // browser.ts re-exports store.ts's input types; if that ever stops being a

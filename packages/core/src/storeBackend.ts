@@ -1,10 +1,9 @@
-import type { DatabaseSync } from 'node:sqlite';
-
 import {
   attachDispatchDb,
   dispatchDbPath,
   openDispatchDb,
 } from './sqliteDb.js';
+import type { SqliteDatabase } from './sqliteDb.js';
 import {
   SqliteEvidenceStore,
   SqliteFindingStore,
@@ -33,7 +32,7 @@ export type TaskStoreBackend = 'files' | 'sqlite';
  * to read and nowhere to write until something initializes one.
  */
 export interface SqliteRecordStores {
-  db: DatabaseSync;
+  db: SqliteDatabase;
   findings: SqliteFindingStore;
   ledger: SqliteLedgerStore;
   evidence: SqliteEvidenceStore;
@@ -108,14 +107,19 @@ export function initProjectStores(options: OpenStoresOptions): ProjectStores {
 }
 
 // Wraps a handle (or the absence of one) in the four stores that share it.
-function sqliteStores(rootDir: string, db: DatabaseSync | null): ProjectStores {
+function sqliteStores(
+  rootDir: string,
+  db: SqliteDatabase | null
+): ProjectStores {
   const tasks = new SqliteTaskStore(rootDir, db);
   if (db === null) {
     return { backend: 'sqlite', tasks, records: null, close: () => {} };
   }
-  // node:sqlite throws "database is not open" on a second close(). Shutdown
-  // paths overlap — a caller closing on its own and a teardown closing again —
-  // so this swallows the repeat rather than making every caller track it.
+  // Shutdown paths overlap — a caller closing on its own and a teardown
+  // closing again — and the two drivers disagree about what that means:
+  // node:sqlite throws "database is not open" on a second close() where
+  // bun:sqlite ignores it. This swallows the repeat so the behaviour is the
+  // same on both, rather than making every caller track it.
   let closed = false;
   return {
     backend: 'sqlite',

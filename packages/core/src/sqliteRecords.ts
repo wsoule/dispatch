@@ -1,5 +1,3 @@
-import type { DatabaseSync } from 'node:sqlite';
-
 import type { CommandEvidence, MutationEvidence } from './evidence.js';
 import {
   FINDING_RECOMMENDATIONS,
@@ -31,6 +29,7 @@ import {
   serializeStringArray,
   SqliteRowError,
 } from './sqliteDb.js';
+import type { SqliteDatabase } from './sqliteDb.js';
 import type { ListSafeError } from './store.js';
 
 // The database-backed counterparts of the daemon's three JSONL sidecars:
@@ -192,7 +191,7 @@ UPDATE findings SET verdict = ?, ruling = ?, updated_at = ? WHERE id = ?
 
 export class SqliteFindingStore {
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: SqliteDatabase,
     private readonly generateId: (now: string) => string = generateFindingId
   ) {}
 
@@ -409,7 +408,7 @@ ON CONFLICT (id) DO NOTHING
 
 export class SqliteLedgerStore {
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: SqliteDatabase,
     private readonly generateId: (now: string) => string = generateLedgerId
   ) {}
 
@@ -580,7 +579,7 @@ VALUES (
 `;
 
 export class SqliteEvidenceStore {
-  constructor(private readonly db: DatabaseSync) {}
+  constructor(private readonly db: SqliteDatabase) {}
 
   addCommand(runId: string, evidence: CommandEvidence): CommandEvidence {
     this.db

@@ -1,5 +1,3 @@
-import type { DatabaseSync, SQLInputValue } from 'node:sqlite';
-
 import { generateTaskId, isTaskId } from './ids.js';
 import { slugify } from './slug.js';
 import {
@@ -10,6 +8,7 @@ import {
   serializeStringArray,
   SqliteRowError,
 } from './sqliteDb.js';
+import type { SqliteDatabase, SqlValue } from './sqliteDb.js';
 import { applyUpdatePatch, newTaskDoc } from './store.js';
 import type {
   CreateInput,
@@ -122,7 +121,7 @@ function docFromRow(row: TaskRow): TaskDoc {
 // The write-side inverse of metaFromRow. `fix_loop` is normalized the way
 // serializeTaskFile normalizes it: only an explicit opt-out is persisted, so
 // an in-memory `fixLoop: true` reads back as absent from both backends.
-function rowValuesFromDoc(doc: TaskDoc, slug: string): SQLInputValue[] {
+function rowValuesFromDoc(doc: TaskDoc, slug: string): SqlValue[] {
   const { meta } = doc;
   return [
     meta.id,
@@ -203,7 +202,7 @@ export class SqliteTaskStore implements TaskStorePort {
     // null when the project has no database yet. Attaching to a project must
     // not create one (see attachDispatchDb), so this store has to be able to
     // represent "nothing here": reads answer empty, writes refuse.
-    private readonly handle: DatabaseSync | null,
+    private readonly handle: SqliteDatabase | null,
     // Injectable for the same reason SqliteFindingStore's is: the collision
     // path in create() is unreachable from a test that cannot make the
     // generator repeat itself.
@@ -370,7 +369,7 @@ export class SqliteTaskStore implements TaskStorePort {
 
   // The database handle, for the paths that write. A store attached to a
   // project with no database refuses rather than silently dropping the write.
-  private get db(): DatabaseSync {
+  private get db(): SqliteDatabase {
     if (this.handle === null) {
       throw new Error(
         `no dispatch database for ${this.rootDir}: initProjectStores() creates one, openProjectStores() attaches to an existing one`

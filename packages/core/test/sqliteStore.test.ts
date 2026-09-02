@@ -1,8 +1,8 @@
+import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
 
 import {
   dbVersion,
@@ -12,6 +12,7 @@ import {
   queryOne,
 } from '../src/sqliteDb.js';
 import { SqliteRowError } from '../src/sqliteDb.js';
+import type { SqliteDatabase } from '../src/sqliteDb.js';
 import { SqliteTaskStore } from '../src/sqliteTaskStore.js';
 import { TaskStore } from '../src/store.js';
 import type { TaskStorePort } from '../src/store.js';
@@ -19,7 +20,7 @@ import { getSection, serializeTaskFile } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
 
 let root: string;
-const openDbs: DatabaseSync[] = [];
+const openDbs: SqliteDatabase[] = [];
 
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-sqlite-'));
@@ -478,9 +479,20 @@ describe('SqliteTaskStore persistence', () => {
       /was written by a newer schema/
     );
     // And it left the marker alone rather than downgrading it on the way out.
-    const inspect = new DatabaseSync(dbPath);
-    openDbs.push(inspect);
-    expect(dbVersion(inspect)).toBe(DISPATCH_DB_VERSION + 1);
+    //
+    // Read with the raw bun:sqlite driver, not through the seam: openDispatchDb
+    // refuses this file outright, which is the refusal just asserted above. The
+    // raw handle is deliberately NOT passed to dbVersion() — it has no `driver`
+    // brand, so it is not a SqliteDatabase and the compiler now says so.
+    const inspect = new Database(dbPath);
+    try {
+      const marker = inspect.prepare('PRAGMA user_version').get() as {
+        user_version: number;
+      };
+      expect(marker.user_version).toBe(DISPATCH_DB_VERSION + 1);
+    } finally {
+      inspect.close();
+    }
   });
 
   // put() is the migration entry point: importing `.dispatch/tasks/*.md` has
@@ -526,7 +538,7 @@ describe('SqliteTaskStore persistence', () => {
 // renamed by hand. None of those rows have been through create(), so nothing
 // downstream may assume the columns are well formed.
 describe('SqliteTaskStore rejects rows it cannot trust', () => {
-  function storeWith(db: DatabaseSync): SqliteTaskStore {
+  function storeWith(db: SqliteDatabase): SqliteTaskStore {
     return new SqliteTaskStore(root, db);
   }
 
