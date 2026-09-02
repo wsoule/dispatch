@@ -65,20 +65,30 @@ onlyBuiltDependencies:
   # Native libvips bindings for astro:assets image optimization.
   - 'sharp'
 
-# The first two are carried over verbatim from the root package.json's
-# `overrides`. `tar` is new here and is a security fix, not a migration detail:
-# @railway/cli (apps/site's deploy path) asks for `tar: ^6.1.11`, and every
-# 6.x is inside GHSA-23hp-3jrh-7fpw — "node-tar: Decompression/parse DoS via
-# unlimited input", vulnerable <=7.5.18. That is the one CRITICAL the audit
-# gate trips on, and it is inherited: `bun audit --audit-level=critical` fails
-# identically on an unmodified main today. Forcing the patched 7.5.19 across
-# the major boundary was verified end to end here — @railway/cli's postinstall
-# still unpacks its download and `railway --version` still runs — and it takes
-# the audit from 24 findings (1 critical, 11 high) to 13 (0 critical, 4 high).
-# Drop this line once @railway/cli ships a tar ^7 range of its own.
+# GHSA-23hp-3jrh-7fpw ("node-tar: Decompression/parse DoS via unlimited input",
+# vulnerable <=7.5.18) is the one CRITICAL `pnpm audit` reports, and it is
+# inherited, not introduced: @railway/cli pins `tar: ^6.1.11` and every 6.x is
+# affected. It is equally red on main today under `bun audit`.
+#
+# It cannot be overridden. Forcing the patched 7.5.19 across the major boundary
+# breaks @railway/cli's own postinstall on a clean install — tar 7 removed the
+# default export, and `import tar from "tar"` in its postinstall.js dies with
+# "The requested module 'tar' does not provide an export named 'default'". (An
+# override LOOKS like it works if node_modules is already populated, because
+# the railway binary is already unpacked. It is not.)
+#
+# Accepted because the blast radius is nil: @railway/cli is a devDependency of
+# apps/site only, used by hand for `moonx site:deploy`, and apps/site's Docker
+# image copies just server.ts and the prebuilt dist/ — it installs no
+# node_modules at all, so this never reaches a running service. Drop this entry
+# the moment @railway/cli ships a tar ^7 range.
+auditConfig:
+  ignoreGhsas:
+    - 'GHSA-23hp-3jrh-7fpw'
+
+# Carried over verbatim from the root package.json's `overrides`.
 overrides:
   '@types/node': '24.13.2'
-  'tar': '7.5.19'
   'typescript': '5.9.2'
 
 # The dependency catalog. Every package references these as `catalog:` rather

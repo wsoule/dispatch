@@ -38,6 +38,8 @@ bunfig
 bunx
 cacheinfo
 callsites
+capitalised
+capitalising
 capturable
 carto
 Carto
@@ -167,6 +169,7 @@ fullwidth
 gelato
 getcwd
 GHSA
+Ghsas
 gifsicle
 gitdir
 gitignoring
@@ -206,6 +209,7 @@ hotspots
 Hotspots
 hstatus
 idempotently
+IDREF
 indistinguish
 initialisation
 inlines
@@ -364,6 +368,7 @@ Repointing
 repoints
 repolled
 reqwest
+reranks
 rescan
 rescanning
 rescans
@@ -454,6 +459,7 @@ Tauri's
 Terragon
 TESTKEY
 testuser
+textareas
 textful
 theanshsonkar
 thiserror
@@ -550,6 +556,7 @@ uppercased
 upserts
 Upserts
 urgentish
+urgncy
 VIEWBOX
 vinxi
 virtualisation
@@ -561,6 +568,7 @@ waitlist
 watskeburt
 wayfinding
 WHATWG
+wieghts
 wordmark
 workstream
 workstreams
