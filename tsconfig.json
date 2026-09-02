@@ -21,9 +21,6 @@
       "path": "packages/ui/tsconfig.json"
     },
     {
-      "path": "packages/web/tsconfig.json"
-    },
-    {
       "path": "apps/desktop/tsconfig.json"
     }
   ]

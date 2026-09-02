@@ -32,7 +32,7 @@
     },
     "apps/desktop": {
       "name": "@dispatch/desktop",
-      "version": "0.24.0",
+      "version": "0.25.1",
       "dependencies": {
         "@dispatch/client": "workspace:*",
         "@dispatch/tokens": "workspace:*",
@@ -89,7 +89,7 @@
     },
     "packages/cli": {
       "name": "@dispatch/cli",
-      "version": "0.24.0",
+      "version": "0.25.1",
       "bin": {
         "dispatch": "./dist/cli.js",
       },
@@ -202,24 +202,6 @@
         "@types/bun": "catalog:",
         "@types/react": "catalog:",
         "typescript": "catalog:",
-      },
-    },
-    "packages/web": {
-      "name": "@dispatch/web",
-      "version": "0.0.1",
-      "dependencies": {
-        "@dispatch/client": "workspace:*",
-        "react": "catalog:",
-        "react-dom": "catalog:",
-      },
-      "devDependencies": {
-        "@dispatch/core": "workspace:*",
-        "@types/bun": "catalog:",
-        "@types/react": "catalog:",
-        "@types/react-dom": "catalog:",
-        "@vitejs/plugin-react": "catalog:",
-        "typescript": "catalog:",
-        "vite": "catalog:",
       },
     },
   },
@@ -514,8 +496,6 @@
     "@dispatch/tokens": ["@dispatch/tokens@workspace:packages/tokens"],
 
     "@dispatch/ui": ["@dispatch/ui@workspace:packages/ui"],
-
-    "@dispatch/web": ["@dispatch/web@workspace:packages/web"],
 
     "@dnd-kit/accessibility": ["@dnd-kit/accessibility@3.1.1", "", { "dependencies": { "tslib": "^2.0.0" }, "peerDependencies": { "react": ">=16.8.0" } }, "sha512-2P+YgaXF+gRsIihwwY1gCsQSYnu9Zyj2py8kY5fFvUM1qm2WA2u639R6YNVfU4GWr+ZM5mqEsfHZZLoRONbemw=="],
 
