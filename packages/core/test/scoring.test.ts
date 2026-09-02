@@ -18,7 +18,7 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
     meta: {
       id: 't-000000',
       title: 'x',
-      status: 'todo',
+      status: 'ready',
       kind: 'task',
       parent: null,
       milestone: null,
@@ -55,12 +55,12 @@ function only(key: ScoreFactorKey): QueueWeights {
 }
 
 describe('rankTasks candidate set', () => {
-  it('scores exactly the ready tasks: todo, kind=task, blockers done', () => {
-    const blocker = make({ id: 't-aaaaaa', status: 'in-progress' });
+  it('scores exactly the ready tasks: ready, kind=task, blockers done', () => {
+    const blocker = make({ id: 't-aaaaaa', status: 'working' });
     const blocked = make({ id: 't-bbbbbb', blockedBy: ['t-aaaaaa'] });
     const free = make({ id: 't-cccccc' });
     const epic = make({ id: 'e-dddddd', kind: 'epic' });
-    const backlog = make({ id: 't-eeeeee', status: 'backlog' });
+    const backlog = make({ id: 't-eeeeee', status: 'draft' });
 
     const ranked = rankTasks([blocker, blocked, free, epic, backlog], {
       weights: DEFAULT_QUEUE_WEIGHTS,
