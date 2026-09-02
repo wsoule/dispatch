@@ -48,8 +48,12 @@ are inside the repo.
 
 ## Running tasks
 
-moon is the only task runner; `package.json` scripts exist solely for npm
-lifecycle hooks. Tasks run from anywhere in the repo:
+moon is the task runner — it is what CI and the git hooks use, and what you
+should use. Packages do also keep a matching `package.json` script for each
+task, kept byte-identical to the moon task: knip finds a workspace's entry
+points through plugins that key off those scripts, and Tauri shells into
+`apps/desktop`'s by name. Change a moon task and its script together. Tasks run
+from anywhere in the repo:
 
 ```bash
 moon run <project>:<task>      # e.g. moon run core:build
@@ -76,7 +80,7 @@ Common entry points:
 | `moonx <project>:typecheck`      | Typecheck (builds workspace deps first)                                        |
 | `moonx desktop:e2e`              | Desktop Playwright suite                                                       |
 | `moon run root:format root:lint` | Repo-wide format + type-aware lint                                             |
-| `moonx root:wt -- new <slug>`    | Create a git worktree with isolated dev-server ports (see `scripts/README.md`) |
+| `moonx root:wt -- new <slug>`    | Create a git worktree and reserve a dev-server port offset (see `scripts/README.md`) |
 
 ## Before you push
 

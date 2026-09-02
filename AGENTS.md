@@ -9,13 +9,20 @@ AI-friendly output:
 export AGENT=1
 ```
 
-Most local moon tasks (formatters, benchmarks, worktree management) are
-configured with `runInCI: 'always'` so they keep working in CI-marked shells
-like agent harnesses. Tasks connected to the build graph (dev servers, e2e
-variants, publish guards) stay CI-skipped — run those with
-`moonx <target> --ignore-ci-checks`, e.g.
-`moonx desktop:dev --ignore-ci-checks`. For non-moon commands that CI-gate
-themselves, unset the var: `CI= pnpm publish --dry-run`.
+Most local moon tasks (`root:format`, the worktree manager) are configured with
+`runInCI: 'always'` so they keep working in CI-marked shells like agent
+harnesses. Two groups stay CI-skipped and need
+`moonx <target> --ignore-ci-checks`:
+
+- Tasks connected to the build graph — dev servers, e2e variants, publish
+  guards. `moonx desktop:dev --ignore-ci-checks`.
+- Tasks that destroy or rewrite the tree — `root:clean`, `root:clean-all`,
+  `root:lint-fix`, `root:lint-css-fix`. `moon ci` with no explicit targets runs
+  every affected task that is not skipped, and an eligible `clean-all` would
+  delete `node_modules` from under the pipeline running it.
+
+For non-moon commands that CI-gate themselves, unset the var:
+`CI= pnpm publish --dry-run`.
 
 ## Toolchain
 

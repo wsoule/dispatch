@@ -63,11 +63,13 @@ tasks:
     options:
       runInCI: 'always'
 
+  # Skipped in CI for the same reason lint-fix is: it rewrites source. Run it
+  # from a CI-marked shell (an agent harness) with --ignore-ci-checks.
   lint-css-fix:
     script: 'stylelint "**/*.css" --allow-empty-input --fix'
     options:
       cache: false
-      runInCI: 'always'
+      runInCI: 'skip'
 
   format:
     command: 'oxfmt .'
@@ -211,13 +213,19 @@ tasks:
       # Informational; CI marks it continue-on-error at the workflow level.
       runInCI: 'skip'
 
+  # Both stay CI-skipped on purpose. `moon ci` with no explicit targets runs
+  # every affected task that is not skipped, so an eligible clean-all would
+  # delete node_modules midway through the pipeline that is using it. The
+  # workflow does pass an explicit target list today, but that is a property of
+  # one file rather than a guarantee. From a CI-marked shell (an agent
+  # harness), run them with --ignore-ci-checks.
   clean:
     script:
       'rm -rf packages/*/dist apps/*/dist dist-sidecar
       packages/*/tsconfig.tsbuildinfo apps/*/tsconfig.tsbuildinfo'
     options:
       cache: false
-      runInCI: 'always'
+      runInCI: 'skip'
 
   clean-all:
     script:
@@ -225,7 +233,7 @@ tasks:
       packages/*/node_modules apps/*/node_modules'
     options:
       cache: false
-      runInCI: 'always'
+      runInCI: 'skip'
 
   check-licenses:
     command: 'bun --silent scripts/check-licenses.ts'
