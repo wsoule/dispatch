@@ -540,10 +540,19 @@ function resolveGitWorktreeRoot(path: string): string {
   return resolve(result.stdout.trim());
 }
 
+// A worktree's claimed port offset, or null when the file does not carry a
+// usable one. Strict on purpose: `Number('')` and `Number('  ')` are both 0,
+// so a blank or truncated `DISPATCH_PORT_OFFSET=` used to parse as offset 0 —
+// which is the MAIN CLONE's offset. A worktree that silently claimed 0 would
+// have `wt clean`/`wt rm` target ports 5173 and 3000 and kill the dev servers
+// running in the main checkout. Anything that is not a non-negative integer is
+// treated as absent instead.
 function parseOffset(value: string | undefined): number | null {
   if (value === undefined) return null;
-  const offset = Number(value);
-  return Number.isFinite(offset) ? offset : null;
+  const trimmed = value.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const offset = Number(trimmed);
+  return Number.isSafeInteger(offset) ? offset : null;
 }
 
 // Stable, deterministic offset candidate from slug. Steps by 10 so ports in
@@ -619,9 +628,15 @@ function pidOnPort(port: number): number | null {
   return pids[0] ?? null;
 }
 
+// Parse a KEY=value env file. The accumulator is a null-prototype object: this
+// reads a file from the filesystem, and a line like `__proto__=x` assigned onto
+// an object literal mutates the prototype rather than adding a key.
 function parseEnvFile(path: string): Record<string, string> {
   const text = readFileSync(path, 'utf8');
-  const out: Record<string, string> = {};
+  const out: Record<string, string> = Object.create(null) as Record<
+    string,
+    string
+  >;
   for (const rawLine of text.split('\n')) {
     const line = rawLine.trim();
     if (!line || line.startsWith('#')) continue;

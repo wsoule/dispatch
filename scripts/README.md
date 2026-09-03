@@ -32,10 +32,9 @@ Run `moonx root:wt -- help` for the full subcommand list.
 
 The offset in `.env.worktree` is currently a **reservation, not an
 enforcement**: `wt` allocates and reports it, but no dev server reads
-`DISPATCH_PORT_OFFSET` yet (see the design notes at the top of `wt.ts`).
-`load-worktree-env.mjs` is the loader for closing that gap — it pulls
-`.env.worktree` into `process.env` from a Node or Bun config that runs outside a
-moon task. Nothing imports it yet.
+`DISPATCH_PORT_OFFSET` yet, so two worktrees running `moonx desktop:dev` still
+collide on 5173. The design notes at the top of `wt.ts` name the three configs
+that would have to pick the offset up to close it.
 
 ## Stale Dev Servers
 

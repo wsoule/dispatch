@@ -12,6 +12,24 @@ dependsOn:
   - 'web'
   - 'desktop'
 
+# Every repo-wide lane below scans from the root, and every one of them has to
+# exclude the same set of generated and vendored trees. That block was copied
+# into nine tasks and had already drifted — only some of them excluded
+# .moon/cache and .moon/hooks, so a moon run would spuriously invalidate the
+# lanes that missed it. One definition, referenced as @group(scan-excluded).
+fileGroups:
+  scan-excluded:
+    - '!**/node_modules/**'
+    - '!**/dist/**'
+    - '!**/src-tauri/target/**'
+    - '!**/test-results/**'
+    - '!**/playwright-report/**'
+    - '!.moon/cache/**'
+    - '!.moon/hooks/**'
+    - '!.agents/ignore/**'
+    - '!.superpowers/**'
+    - '!.dispatch/**'
+
 workspace:
   inheritedTasks:
     # No root tsconfig to typecheck; root `bun test` would run every suite.
@@ -24,16 +42,7 @@ tasks:
       - '^:build'
     inputs:
       - '**/*.{js,jsx,mjs,cjs,ts,tsx,mts,cts}'
-      - '!.moon/cache/**'
-      - '!.moon/hooks/**'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
       - '.oxlintrc.json'
       - 'tsconfig.oxlint.json'
     options:
@@ -51,14 +60,7 @@ tasks:
     script: 'stylelint "**/*.css" --allow-empty-input'
     inputs:
       - '**/*.css'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
       - 'stylelint.config.js'
     options:
       runInCI: 'always'
@@ -81,16 +83,7 @@ tasks:
     command: 'oxfmt --check .'
     inputs:
       - '**/*'
-      - '!.moon/cache/**'
-      - '!.moon/hooks/**'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
     options:
       runInCI: 'always'
 
@@ -102,15 +95,7 @@ tasks:
       - '^:build'
     inputs:
       - '**/*.{js,jsx,ts,tsx}'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!.moon/cache/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
       - 'knip.json'
     options:
       runInCI: 'always'
@@ -130,14 +115,7 @@ tasks:
     inputs:
       - 'packages/**/*'
       - 'apps/**/*'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
       - '.jscpd.json'
     options:
       runInCI: 'always'
@@ -147,14 +125,7 @@ tasks:
     inputs:
       - 'packages/**/*.{ts,tsx}'
       - 'apps/**/*.{ts,tsx}'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
       - '.dependency-cruiser.json'
     options:
       runInCI: 'always'
@@ -163,16 +134,7 @@ tasks:
     command: 'cspell --no-progress --no-summary --show-suggestions .'
     inputs:
       - '**/*'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!.moon/cache/**'
-      - '!.moon/hooks/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
       - 'cspell.json'
       - '.cspell-dictionary.txt'
     options:
@@ -182,15 +144,7 @@ tasks:
     command: 'markdownlint-cli2'
     inputs:
       - '**/*.md'
-      - '!**/node_modules/**'
-      - '!.moon/cache/**'
-      - '!.moon/hooks/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
       - '.markdownlint-cli2.jsonc'
     options:
       runInCI: 'always'
@@ -251,14 +205,7 @@ tasks:
       - 'scripts/check-licenses.ts'
       - '**/package.json'
       - '**/LICENSE*'
-      - '!**/node_modules/**'
-      - '!**/dist/**'
-      - '!**/src-tauri/target/**'
-      - '!**/test-results/**'
-      - '!**/playwright-report/**'
-      - '!.agents/ignore/**'
-      - '!.superpowers/**'
-      - '!.dispatch/**'
+      - '@group(scan-excluded)'
     options:
       runInCI: 'always'
 
@@ -272,6 +219,20 @@ tasks:
     options:
       cache: false
       runInCI: 'skip'
+
+  # Guards ci.yml's `moon ci` target list against the root task graph. Six lint
+  # lanes were dark on main because those two are independent bookkeeping.
+  check-ci-targets:
+    command: 'bun --silent scripts/check-ci-targets.ts'
+    inputs:
+      - 'scripts/check-ci-targets.ts'
+      - 'moon.yml'
+      - '.github/workflows/ci.yml'
+    options:
+      # Shells out to `moon query`, which must not be cached against a stale
+      # graph.
+      cache: false
+      runInCI: 'always'
 
   # Worktree manager (create/list/remove dispatch worktrees with port
   # offsets). Forward args with `moonx root:wt -- <args>`.

@@ -7,19 +7,18 @@ description: >-
 runs:
   using: composite
   steps:
+    # Restored BEFORE setup-toolchain runs, so the install below is a no-op on
+    # a hit. restore-keys matters: without it, editing .prototools — a version
+    # bump, exactly when a warm cache is most valuable — is a total miss and
+    # every job re-downloads all six tools. The fallback restores the previous
+    # toolchain and proto fetches only what actually moved.
     - name: Cache proto toolchain
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ~/.proto
         key: ${{ runner.os }}-proto-${{ hashFiles('.prototools') }}
-
-    - name: Cache pnpm store
-      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
-      with:
-        path: ~/.local/share/pnpm/store
-        key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
         restore-keys: |
-          ${{ runner.os }}-pnpm-
+          ${{ runner.os }}-proto-
 
     - name: Cache moon hashes and outputs
       uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -39,6 +38,26 @@ runs:
       with:
         auto-install: true
         cache: false
+
+    # Must come AFTER the toolchain install — this is the first step that can
+    # actually run pnpm. The path is asked for rather than hardcoded:
+    # `~/.local/share/pnpm/store` is the Linux default only. macOS resolves to
+    # ~/Library/pnpm/store and Windows to LOCALAPPDATA, so a hardcoded Linux
+    # path caches nothing at all on the macOS runners — which is where
+    # release.yml, using this same action, does its longest builds.
+    - name: Resolve the pnpm store path
+      id: pnpm-store
+      shell: bash
+      run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
+
+    # Still ahead of `pnpm install`, which is the only thing that reads it.
+    - name: Cache pnpm store
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.pnpm-store.outputs.path }}
+        key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-
 
     - name: Install dependencies
       shell: bash

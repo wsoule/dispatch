@@ -29,8 +29,12 @@ For non-moon commands that CI-gate themselves, unset the var:
 - Tool versions (bun, pnpm, node, moon, gh) are pinned in `.prototools` and
   managed by [proto](https://moonrepo.dev/docs/proto); run `proto use` if a tool
   is missing or a pin changed.
-- [moon](https://moonrepo.dev/docs) is the task runner; `package.json` scripts
-  are npm lifecycle hooks only.
+- [moon](https://moonrepo.dev/docs) is the task runner. Each package also keeps
+  a `package.json` script mirroring its moon task, and the two must move
+  together: knip discovers entry points through plugins that key off those
+  scripts, and tauri shells into `apps/desktop`'s by name. Where moon expresses
+  a step as a task dependency instead of a shell `&&` (site's build before its
+  test, say), the two read differently on purpose — moon is what CI runs.
 
 ## Core Rules
 
