@@ -233,6 +233,22 @@ tasks:
       cache: false
       runInCI: 'always'
 
+  # Guards the build graph against tests that spawn their own build output
+  # without an edge to it. cli:test and mcp:test raced their own builds on a
+  # cold CI checkout while passing locally against a warm dist/.
+  check-own-build-deps:
+    command: 'bun --silent scripts/check-own-build-deps.ts'
+    inputs:
+      - 'scripts/check-own-build-deps.ts'
+      - '/packages/*/moon.yml'
+      - '/apps/*/moon.yml'
+      - '/.moon/tasks/*.yml'
+    options:
+      # Shells out to `moon query`, which must not be cached against a stale
+      # graph.
+      cache: false
+      runInCI: 'always'
+
   # Worktree manager (create/list/remove dispatch worktrees with port
   # offsets). Forward args with `moonx root:wt -- <args>`.
   wt:
