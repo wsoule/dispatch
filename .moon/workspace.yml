@@ -21,8 +21,16 @@ vcs:
   sync: true
   hooks:
     pre-commit:
-      # Typecheck projects affected by staged files (and their dependents),
-      # then format the worktree; lint-staged re-stages fixes for staged files.
+      # Typecheck the projects affected by staged files, then let lint-staged
+      # format and lint-fix exactly those files and re-stage the result.
+      #
+      # `moon run root:format` used to sit between these two and was removed:
+      # it runs `oxfmt .` over the WHOLE worktree, so committing one file could
+      # rewrite unstaged edits, untracked scratch files, and — the case that
+      # actually bit us — the carto-generated block in AGENTS.md. In this repo
+      # that is worse than untidy: several agent sessions share a checkout, so
+      # a repo-wide rewrite during one session's commit lands in another's
+      # diff. lint-staged already runs `oxfmt --write` on the staged files,
+      # which is the only formatting a commit hook has any business doing.
       - 'moon exec :typecheck --affected --status staged'
-      - 'moon run root:format'
       - 'pnpm exec lint-staged'
