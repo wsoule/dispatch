@@ -886,7 +886,7 @@ It must:
    `statusMap`, `intervalSec`, `direction: both`) — **no API key**.
 5. Write `.gitattributes` containing:
 
-```
+```text
 .dispatch/tasks/*.md merge=dispatch-task
 .dispatch/team.yml merge=dispatch-team
 ```

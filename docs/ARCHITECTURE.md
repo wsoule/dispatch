@@ -271,18 +271,27 @@ multiplayer needs the run half to cross machines.
 
 ## Build and verification
 
-Bun monorepo. Dependencies are pinned in the root `workspaces.catalog`; package
-`package.json` files reference `catalog:` rather than versions.
+pnpm + moon monorepo. Tool versions (bun, pnpm, node, moon, gh) are pinned in
+`.prototools` and installed via [proto](https://moonrepo.dev/docs/proto).
+Dependencies are pinned in the `catalog` in `pnpm-workspace.yaml`; package
+`package.json` files reference `catalog:` rather than versions. moon is the task
+runner; each package also keeps a matching `package.json` script, deliberately
+identical to its moon task, because knip's entry-point discovery and Tauri's
+`beforeBuildCommand` both read scripts and cannot read moon tasks.
 
-From the root: `bun run format` (oxfmt), `bun run lint` (oxlint, type-aware),
-plus `lint:md`, `lint:spelling`, `lint:css`, `lint:deadcode` (knip), `lint:dup`
-(jscpd), `lint:arch` (dependency-cruiser), `lint:types`.
+From anywhere in the repo: `moon run root:format` (oxfmt), `moon run root:lint`
+(oxlint, type-aware), plus `root:lint-md`, `root:lint-spelling`,
+`root:lint-css`, `root:lint-deadcode` (knip), `root:lint-dup` (jscpd),
+`root:lint-arch` (dependency-cruiser), `root:lint-types`, `root:check-licenses`.
+`moon ci` runs the affected-aware set of these in CI (see
+`.github/workflows/ci.yml`).
 
-**These do not currently pass on a clean checkout.** As of this writing
-`bun run lint` reports 57 errors and 474 warnings, `lint:md` and `lint:spelling`
-each fail on pre-existing files, and `bun run format` wants to reflow the
-Carto-generated block in `AGENTS.md`. Treat a failure as pre-existing until you
-have checked whether your own change caused it.
+Treat a failure as pre-existing until you have checked whether your own change
+caused it. moon caches task results by input hash, so if a lane's verdict looks
+suspicious, re-run it with `--force` (which bypasses the cache and the affected
+check) rather than trusting a cache hit: `moon run root:lint --force`. Note that
+`root:clean` deletes build output, not moon's cache — it is not the lever for
+this.
 
 ## Known soft spots
 

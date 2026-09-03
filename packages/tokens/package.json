@@ -3,7 +3,7 @@
   "version": "0.24.0",
   "private": true,
   "description": "The design token palette shared by the desktop app and the marketing site.",
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "FSL-1.1-ALv2",
   "exports": {
     "./tokens.css": "./tokens.css"
   }

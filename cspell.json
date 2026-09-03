@@ -17,10 +17,13 @@
     "**/storefront-src/**",
     "**/src-tauri/target/**",
     "**/src-tauri/Cargo.lock",
-    "bun.lock",
+    "pnpm-lock.yaml",
     "*.svg",
     "**/*.snap",
     ".dispatch/**",
-    ".agents/ignore/**"
+    ".agents/ignore/**",
+    // Compiler cache blobs (concatenated declaration text, minified), not
+    // source — never meant for spell-checking.
+    "**/*.tsbuildinfo"
   ]
 }

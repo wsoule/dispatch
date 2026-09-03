@@ -6,7 +6,7 @@ from, imported from the Claude Design project
 `.agents/ignore/` on purpose: every dispatched agent works in its own worktree,
 so a gitignored copy on one machine is invisible to the agent doing the work.
 
-## We take its structure. We take none of its colors.
+## We take its structure. We take none of its colors
 
 The mockup is a dark-only prototype drawn against a different design system, in
 a palette that is not ours. **Nothing in it is a color decision for Dispatch.**

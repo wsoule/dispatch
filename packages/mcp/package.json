@@ -2,7 +2,7 @@
   "name": "@dispatch/mcp",
   "version": "0.24.0",
   "private": true,
-  "license": "SEE LICENSE IN LICENSE",
+  "license": "MIT",
   "bin": {
     "dispatch-mcp": "./dist/bin.js"
   },
@@ -17,7 +17,8 @@
   "scripts": {
     "build": "tsdown --clean",
     "test": "bun test",
-    "tsc": "tsgo --noEmit --pretty"
+    "tsc": "tsgo --noEmit --pretty",
+    "prepublishOnly": "moon run mcp:prepublish"
   },
   "dependencies": {
     "@dispatch/core": "workspace:*",

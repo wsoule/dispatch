@@ -57,8 +57,8 @@ describe('webkit floor declarations', () => {
 describe('built bundle parses on the oldest supported WebKit', () => {
   // A missing dist/ must fail rather than skip: a silently-skipping check here
   // is exactly as useful as no check at all, and this suite runs in CI directly
-  // after `bun ws desktop build`.
-  test('dist/ exists (run `bun run build` in apps/desktop first)', () => {
+  // after `moonx desktop:build`.
+  test('dist/ exists (run `moonx desktop:build` first)', () => {
     expect(existsSync(DIST_DIR)).toBe(true);
   });
 

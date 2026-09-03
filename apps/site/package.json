@@ -2,6 +2,7 @@
   "name": "@dispatch/site",
   "version": "0.0.0",
   "private": true,
+  "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
     "dev": "astro dev",
@@ -9,13 +10,16 @@
     "preview": "astro preview",
     "start": "bun run server.ts",
     "deploy": "astro build && railway up",
-    "test": "astro build && bun test test/"
+    "test": "astro build && bun test test/",
+    "tsc": "tsgo --noEmit --pretty"
   },
   "devDependencies": {
     "@dispatch/tokens": "workspace:*",
     "@fontsource/inter": "catalog:",
     "@fontsource/jetbrains-mono": "catalog:",
     "@railway/cli": "catalog:",
-    "astro": "catalog:"
+    "@types/bun": "catalog:",
+    "astro": "catalog:",
+    "typescript": "catalog:"
   }
 }

@@ -103,7 +103,7 @@ Tauri-ready seam above is what made the pivot cheap.
 
 ## 3. Architecture
 
-```
+```text
 ┌────────────┐  ┌────────────┐  ┌──────────────────────┐
 │  Web UI    │  │    CLI     │  │ Any MCP client       │
 │ React/Vite │  │ dispatch * │  │ (Claude Code, etc.)  │
@@ -156,7 +156,7 @@ Kanban/Cyrus/Terragon-oss so their code is minable).
 
 ### Task files — source of truth, in the target repo
 
-```
+```text
 .dispatch/
   config.yml            # statuses, defaults, executor config, autoCommit
   tasks/

@@ -12,17 +12,18 @@ description:
 
 Use the following commit message template:
 
-```
+```text
 <type>(<scope>): <subject>
 
 <description>
 ```
 
-- The <type> can be: agents, chore, ci, docs, feat, fix, perf, refactor, test,
+- The `<type>` can be: agents, chore, ci, docs, feat, fix, perf, refactor, test,
   tool.
-- The <scope> can be a project, package, or app name; omit the scope and its
+- The `<scope>` can be a project, package, or app name; omit the scope and its
   wrapped parens if none is clear.
-- The <subject> and <description> should explain the motivations and changes.
+- The `<subject>` and `<description>` should explain the motivations and
+  changes.
 - Include a description body for every commit unless the staged change is truly
   mechanical or trivial and the subject fully explains it.
 - Keep every commit message line 72 characters or fewer. Hard-wrap body text to

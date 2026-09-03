@@ -1,0 +1,19 @@
+$schema: 'https://moonrepo.dev/schemas/project.json'
+
+# CSS only: tokens.css is consumed straight through the package exports map by
+# apps/desktop (src/main.tsx) and apps/site (src/layouts/Base.astro), both of
+# which inline it into their bundles. There is nothing here to build, typecheck
+# or test.
+#
+# The language is left unset deliberately — declaring it as typescript would
+# inherit .moon/tasks/bun-common.yml's test and typecheck tasks, which have no
+# tsconfig and no test files to run against.
+#
+# NO BUILD TASK ON PURPOSE. A `noop` build here does not make consumers
+# cache-correct: moon 2.3.3 does not fold a dependency task's hash into its
+# dependents', so tokens:build re-runs while desktop:build and site:build stay
+# cached and ship the previous palette (measured). The staleness is fixed the
+# only way that works — each consumer lists
+# `/packages/tokens/tokens.css` in its own build inputs. If you add a second
+# file here, add it there too.
+layer: 'library'

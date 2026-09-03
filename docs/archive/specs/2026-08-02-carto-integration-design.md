@@ -60,12 +60,15 @@ until the spike runs** (see Testing).
   `init`/`sync` but is not a programmatic interface.
 - **The programmatic interface is the ANCI consumer library**, documented under
   README § "Build on Carto":
+
   ```js
   const { loadAnci } = require('carto-md/src/anci/consumer');
   const reader = loadAnci('./.carto');
   reader.blastRadius('src/auth/session.ts'); // { count, hops, files: [...] }
   ```
+
   It reads the container "without running Carto's engine."
+
 - **Tool count is tiered.** README says ≈10; `src/mcp/server.js` registers 57;
   `docs/api/README.md` catalogs 86. The core tier (~10, with parameterized
   families — `impact(mode=)`, `memory(kind=)`, `history(view=)`,
@@ -85,7 +88,7 @@ until the spike runs** (see Testing).
 
 One new module, two consumers, two surfaces.
 
-```
+```text
 packages/core/src/carto.ts        →  @dispatch/core/carto   (new export subpath)
   ├─ discover()      locate `carto` on PATH, then brew prefix; version-gate
   ├─ ensureIndexed() run `carto init` (guarded) / `carto sync`

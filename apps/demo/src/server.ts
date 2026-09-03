@@ -334,7 +334,7 @@ function bootSelfCheck(sessionsDir: string, distDir: string): void {
   }
   if (!existsSync(join(distDir, 'index.html'))) {
     problems.push(
-      `desktop bundle missing at ${distDir} (run: bun run build in apps/desktop)`
+      `desktop bundle missing at ${distDir} (run: moonx desktop:build)`
     );
   }
 

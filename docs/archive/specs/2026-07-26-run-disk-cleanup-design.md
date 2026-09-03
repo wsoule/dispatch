@@ -7,7 +7,7 @@
 Run state on disk grows without bound and nothing surfaces the cost. Measured on
 one project after a day of dispatching:
 
-```
+```text
 ~/.dispatch/worktrees/<hash>/   1.9G   (3 worktrees)
 ~/.dispatch/runs/<hash>/        960K   (17 transcripts, 6 diff snapshots)
 ```
@@ -23,7 +23,7 @@ All three surviving worktrees belong to runs that are terminal but
 
 **The disk cost is almost entirely reinstallable dependencies:**
 
-```
+```text
 r-47cdd2   total 648M   node_modules 641M
 r-9954a6   total 699M   node_modules 641M
 r-b1d725   total 649M   node_modules 641M

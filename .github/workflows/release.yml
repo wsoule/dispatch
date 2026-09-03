@@ -92,7 +92,7 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      - name: Set up Bun and install dependencies
+      - name: Set up moon and caches
         uses: ./.github/actions/setup
 
       - name: Install Rust stable
@@ -125,7 +125,7 @@ jobs:
       # the sidecar `bun build --compile` step resolves @dispatch/* imports
       # through each package.json's `exports`, which point at dist/*.
       - name: Build workspace packages
-        run: bun run build
+        run: moon run core:build client:build cli:build mcp:build
 
       # The signing certificate must be importable BEFORE the build: the
       # sidecar build script codesigns during tauri's beforeBuildCommand,
@@ -184,7 +184,7 @@ jobs:
           for var in APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             if [ -z "$(printenv "$var")" ]; then unset "$var"; fi
           done
-          bun ws desktop tauri build
+          moonx desktop:tauri-build --ignore-ci-checks
 
       # Both macOS arch builds emit an identically-named `Dispatch.app.tar.gz`
       # (+`.sig`) — the updater tarball carries no arch in its name the way the

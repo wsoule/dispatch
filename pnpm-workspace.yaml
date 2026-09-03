@@ -1,0 +1,173 @@
+packages:
+  - packages/*
+  - apps/*
+
+# bunfig.toml's `minimumReleaseAge = 604800` (seconds) in pnpm's units. Same
+# intent: refuse a dependency published less than a week ago, so a compromised
+# or accidentally-broken release has time to be caught before it can land here.
+minimumReleaseAge: 10080 # minutes = 7 days
+# Packages exempted from the age gate. Two reasons appear here, and NO third:
+#   - @types/bun and the @pierre/* packages track our own fast-moving upstreams
+#     and were already exempt under bunfig (minimumReleaseAgeExcludes).
+#   - everything else is a platform-specific binary published in lockstep with
+#     its parent package. The age gate is evaluated per package, so a parent
+#     old enough to install can still fail on a sibling binary that pnpm only
+#     resolves for the current platform. Exempting the binaries keeps the gate
+#     meaningful on the packages a human actually chooses.
+#
+# The PARENTS of those binaries — vite, rolldown, @moonrepo/cli,
+# @typescript/native-preview — were also listed here and have been removed. A
+# bare-name waiver is permanent and unscoped: it would have let a
+# hours-old vite or moon release install without anyone noticing, which is the
+# exact thing this gate exists to stop, and those are four packages a human
+# chooses deliberately. Verified they were unnecessary — a clean
+# `pnpm install --frozen-lockfile` succeeds without them. If a future bump
+# genuinely needs one, prefer waiting out the week or pinning the parent
+# explicitly over re-adding a standing waiver.
+minimumReleaseAgeExclude:
+  - '@types/bun'
+  - '@pierre/diffs'
+  - '@pierre/trees'
+  - '@moonrepo/core-linux-arm64-gnu'
+  - '@moonrepo/core-linux-arm64-musl'
+  - '@moonrepo/core-linux-x64-gnu'
+  - '@moonrepo/core-linux-x64-musl'
+  - '@moonrepo/core-macos-arm64'
+  - '@moonrepo/core-macos-x64'
+  - '@moonrepo/core-windows-x64-msvc'
+  - '@rolldown/binding-android-arm64'
+  - '@rolldown/binding-darwin-arm64'
+  - '@rolldown/binding-darwin-x64'
+  - '@rolldown/binding-freebsd-x64'
+  - '@rolldown/binding-linux-arm-gnueabihf'
+  - '@rolldown/binding-linux-arm64-gnu'
+  - '@rolldown/binding-linux-arm64-musl'
+  - '@rolldown/binding-linux-ppc64-gnu'
+  - '@rolldown/binding-linux-s390x-gnu'
+  - '@rolldown/binding-linux-x64-gnu'
+  - '@rolldown/binding-linux-x64-musl'
+  - '@rolldown/binding-openharmony-arm64'
+  - '@rolldown/binding-wasm32-wasi'
+  - '@rolldown/binding-win32-arm64-msvc'
+  - '@rolldown/binding-win32-x64-msvc'
+  - '@typescript/native-preview-darwin-arm64'
+  - '@typescript/native-preview-darwin-x64'
+  - '@typescript/native-preview-linux-arm'
+  - '@typescript/native-preview-linux-arm64'
+  - '@typescript/native-preview-linux-x64'
+  - '@typescript/native-preview-win32-arm64'
+  - '@typescript/native-preview-win32-x64'
+
+# pnpm refuses to run any dependency's install lifecycle script unless it is
+# named here, and hard-fails the install otherwise. Bun ran these silently off
+# its own built-in trusted list, so this allowlist is new — and it is the point:
+# an install-time script is arbitrary code execution, which is exactly what the
+# minimumReleaseAge gate above is guarding against. Each entry needs a reason.
+#
+# The key is `allowBuilds`, NOT `onlyBuiltDependencies`. pnpm 11 renamed it, and
+# the old name is silently ignored rather than rejected — an install configured
+# with `onlyBuiltDependencies` still fails with ERR_PNPM_IGNORED_BUILDS and
+# gives no hint that the key is the problem. Verified by deleting this block:
+# the install goes back to exit 1.
+allowBuilds:
+  # Downloads the `railway` binary that apps/site's deploy task shells out to.
+  '@railway/cli': true
+  # Places the platform-specific native binary; astro's build fails without it.
+  esbuild: true
+  # Native libvips bindings for astro:assets image optimization.
+  sharp: true
+
+# GHSA-23hp-3jrh-7fpw ("node-tar: Decompression/parse DoS via unlimited input",
+# vulnerable <=7.5.18) is the one CRITICAL `pnpm audit` reports, and it is
+# inherited, not introduced: @railway/cli pins `tar: ^6.1.11` and every 6.x is
+# affected. It is equally red on main today under `bun audit`.
+#
+# It cannot be overridden. Forcing the patched 7.5.19 across the major boundary
+# breaks @railway/cli's own postinstall on a clean install — tar 7 removed the
+# default export, and `import tar from "tar"` in its postinstall.js dies with
+# "The requested module 'tar' does not provide an export named 'default'". (An
+# override LOOKS like it works if node_modules is already populated, because
+# the railway binary is already unpacked. It is not.)
+#
+# Accepted because the blast radius is nil: @railway/cli is a devDependency of
+# apps/site only, used by hand for `moonx site:deploy`, and apps/site's Docker
+# image copies just server.ts and the prebuilt dist/ — it installs no
+# node_modules at all, so this never reaches a running service. Drop this entry
+# the moment @railway/cli ships a tar ^7 range.
+auditConfig:
+  ignoreGhsas:
+    - 'GHSA-23hp-3jrh-7fpw'
+
+# Carried over from the root package.json's `overrides` — but note typescript is
+# NOT verbatim. It read `typescript: 'catalog:'` there; pnpm does not resolve
+# `catalog:` inside `overrides`, so it is spelled out. That means this line and
+# the catalog entry below are two places one version lives: bump both together.
+overrides:
+  '@types/node': '24.13.2'
+  'typescript': '5.9.2'
+
+# The dependency catalog. Every package references these as `catalog:` rather
+# than a version, so a bump happens here once. This replaces Bun's
+# `workspaces.catalog`; the convention for packages is unchanged.
+catalog:
+  '@anthropic-ai/claude-agent-sdk': '0.3.207'
+  '@dnd-kit/core': '6.3.1'
+  '@dnd-kit/utilities': '3.2.2'
+  '@fontsource/inter': '5.2.8'
+  '@fontsource/jetbrains-mono': '5.3.0'
+  '@happy-dom/global-registrator': '20.11.1'
+  '@modelcontextprotocol/sdk': '1.29.0'
+  '@moonrepo/cli': '2.3.3'
+  '@pierre/diffs': '1.3.1'
+  '@pierre/trees': '1.0.0-beta.5'
+  '@playwright/test': '1.62.0'
+  '@railway/cli': '5.41.2'
+  '@tailwindcss/vite': '4.3.3'
+  '@tanstack/react-query': '5.101.2'
+  '@tauri-apps/api': '2.11.1'
+  '@tauri-apps/cli': '2.11.4'
+  '@tauri-apps/plugin-dialog': '2.7.1'
+  '@tauri-apps/plugin-notification': '2.3.3'
+  '@tauri-apps/plugin-process': '2.3.1'
+  '@tauri-apps/plugin-updater': '2.10.1'
+  '@testing-library/dom': '10.4.1'
+  '@testing-library/react': '16.3.2'
+  '@types/bun': '1.3.12'
+  '@types/node': '24.13.2'
+  '@types/react': '19.2.17'
+  '@types/react-dom': '19.2.3'
+  '@typescript/native-preview': '7.0.0-dev.20260128.1'
+  '@vitejs/plugin-react': '6.0.3'
+  'acorn': '8.16.0'
+  'astro': '5.18.2'
+  'class-variance-authority': '0.7.1'
+  'clsx': '2.1.1'
+  'cmdk': '1.1.1'
+  'commander': '13.1.0'
+  'cspell': '10.0.1'
+  'dependency-cruiser': '18.1.1'
+  'jscpd': '5.0.14'
+  'knip': '6.29.0'
+  'lint-staged': '16.2.7'
+  'lucide-react': '1.25.0'
+  'markdownlint-cli2': '0.23.2'
+  'oxfmt': '0.27.0'
+  'oxlint': '1.42.0'
+  'oxlint-tsgolint': '0.11.3'
+  'radix-ui': '1.6.4'
+  'react': '19.2.7'
+  'react-dom': '19.2.7'
+  'react-markdown': '9.0.1'
+  'remark-gfm': '4.0.0'
+  'sonner': '2.0.7'
+  'stylelint': '16.25.0'
+  'stylelint-config-standard': '39.0.1'
+  'tailwind-merge': '3.6.0'
+  'tailwindcss': '4.3.3'
+  'tsdown': '0.15.11'
+  'tw-animate-css': '1.4.0'
+  'type-coverage': '2.30.1'
+  'typescript': '5.9.2'
+  'vite': '8.1.4'
+  'yaml': '2.9.0'
+  'zod': '4.4.3'

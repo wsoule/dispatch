@@ -193,7 +193,7 @@ its blocker's branch, and the merge queue still restacks dependents after a
 blocker lands. The only difference is that restacking is explicit rather than
 automatic:
 
-```
+```text
 git rebase --onto <new-base> <old-tip> <dependent-branch>
 ```
 

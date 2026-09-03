@@ -3,10 +3,14 @@ autoCommit: true
 # Run by the merge queue in each run's own worktree after a clean rebase and
 # before the squash-merge, so a branch that breaks the build never lands. A
 # worktree is a fresh checkout with no node_modules or dist/, and @dispatch/*
-# resolve through exports maps pointing at dist/ — so install and build have to
-# come first or lint/test fail on unresolved workspace imports rather than on
-# anything real. Mirrors what CI gates on (build -> lint -> test); takes ~2 min
-# per entry.
+# resolve through exports maps pointing at dist/ — so install has to come first
+# or everything after it fails on unresolved workspace imports rather than on
+# anything real. Mirrors what CI gates on (build -> lint -> test).
+#
+# These are deliberately `moon run <target>` and NOT `moon ci`: moon ci is
+# affected-aware against a merge base, and a merge-queue entry has already been
+# rebased, so "affected" is not the question here — the question is whether the
+# whole repo still builds with this branch in it. Full targets, every time.
 #
 # Named steps rather than one shell line: a failure then says WHICH gate broke.
 # The whole reason this was hard to diagnose once was that "verify failed" is
@@ -18,13 +22,13 @@ orchestrator:
 
 verifySteps:
   - name: install
-    command: bun install --frozen-lockfile
+    command: pnpm install --frozen-lockfile
   - name: build
-    command: bun run build
+    command: moon run :build
   - name: lint
-    command: bun run lint
+    command: moon run root:lint
   - name: test
-    command: bun run test
+    command: moon run :test
 models:
   execute: claude-opus-5
   plan: claude-opus-5

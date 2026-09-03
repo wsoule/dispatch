@@ -6,17 +6,17 @@ ones already passed.
 
 ## 1. CI green, including the Rust job
 
-All jobs in `.github/workflows/ci.yml` must pass on the release commit: `verify`
-(format/lint/stylelint/build/tsc/tests), `desktop` (JS build+test), `rust`
-(`cargo test` for `apps/desktop/src-tauri`), `pinned-actions`. Note: `rust` only
-runs `cargo test` today — `cargo fmt --check`/`clippy -D warnings` aren't
-enforced yet (`apps/desktop/src-tauri` isn't clean against either) — don't treat
-local fmt/clippy failures as blockers until CI itself gates on them.
+All jobs in `.github/workflows/ci.yml` must pass on the release commit: `ci`
+(`moon ci` — build/typecheck/test plus every root lint/audit/license task),
+`rust` (`cargo test` for `apps/desktop/src-tauri`), `actions-pinned`. Note:
+`rust` only runs `cargo test` today — `cargo fmt --check`/`clippy -D warnings`
+aren't enforced yet (`apps/desktop/src-tauri` isn't clean against either) —
+don't treat local fmt/clippy failures as blockers until CI itself gates on them.
 
-## 2. `bun run build:sidecar` smoke passes
+## 2. `root:build-sidecar` smoke passes
 
 ```bash
-bun run build:sidecar
+moonx root:build-sidecar --ignore-ci-checks
 ```
 
 Compiles `packages/server/src/bin.ts` into `dist-sidecar/dispatchd` via
@@ -31,7 +31,7 @@ resources is a separate follow-up (see that file's "Phase 6 TODO").
 ## 3. Tauri bundle build
 
 ```bash
-bun ws desktop tauri build
+moonx desktop:tauri-build --ignore-ci-checks
 ```
 
 Produces the platform-native bundle (`.app`/`.dmg` on macOS) under
