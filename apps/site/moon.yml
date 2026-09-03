@@ -13,6 +13,10 @@ tasks:
       - 'public/**/*'
       - 'astro.config.mjs'
       - 'tsconfig.json'
+      # src/layouts/Base.astro inlines this; see the note in
+      # apps/desktop/moon.yml for why the workspace edge alone does not cover
+      # it.
+      - '/packages/tokens/tokens.css'
     outputs:
       - 'dist'
 

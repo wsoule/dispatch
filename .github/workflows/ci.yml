@@ -29,12 +29,22 @@ jobs:
       # it does not just add entry points. A root-level task with
       # runInCI: 'always' that is missing from this list does NOT join the
       # run on its own; add new checks here explicitly.
+      #
+      # --include-relations is LOAD-BEARING, not an optimization. Without it,
+      # moon marks only the projects whose own files changed, so a
+      # packages/core edit runs core:build/test/typecheck and NOTHING in cli,
+      # client, mcp or desktop — a change that breaks every dependent merges
+      # green. Verified both directions: with the flag, a core-only commit
+      # fans out to cli/client/mcp/demo/desktop/server/web test+typecheck,
+      # while an apps/site-only commit still narrows to just site.
+      # (`--downstream deep` does NOT do this; it controls action-graph depth,
+      # not which projects count as affected.)
       - name: moon ci
         run: >-
-          moon ci :build :typecheck :test root:format-check root:lint
-          root:lint-css root:lint-deadcode root:lint-dup root:lint-arch
-          root:lint-spelling root:lint-md root:lint-types root:lint-chrome
-          root:check-licenses root:audit
+          moon ci --include-relations :build :typecheck :test root:format-check
+          root:lint root:lint-css root:lint-deadcode root:lint-dup
+          root:lint-arch root:lint-spelling root:lint-md root:lint-types
+          root:lint-chrome root:check-licenses root:check-ci-targets root:audit
 
       - name: Audit (full report)
         run: pnpm audit

@@ -25,8 +25,29 @@ tasks:
       - 'tsconfig.app.json'
       - 'tsconfig.node.json'
       - 'public/**/*'
+      # src/main.tsx inlines this into the bundle. moon does NOT fold a
+      # dependency task's hash into a dependent's, so the workspace edge to
+      # `tokens` is not enough on its own — without this line, editing the
+      # palette leaves this build cache-valid and it ships the old colours.
+      - '/packages/tokens/tokens.css'
     outputs:
       - 'dist'
+
+  # MUST override the inherited `tsgo --noEmit` task. apps/desktop's
+  # tsconfig.json is a SOLUTION file — `"files": []` plus references to
+  # tsconfig.{app,node,e2e}.json — so a plain `tsgo --noEmit` resolves it,
+  # finds zero files, and exits 0. Measured: with a deliberate
+  # `const x: number = "s"` in src/lib/utils.ts, tsgo reported nothing and
+  # passed, while `tsc -b` reported TS2322. This is the whole desktop app,
+  # ~128 files, so the inherited task silently typechecks nothing at all.
+  # `-b` is what walks the references, and matches the package.json script.
+  # `script:` not `command:` — the same reason this project's build task uses
+  # it. Under `command:`, moon splits the string and tsc rejects the flag with
+  # "TS5023: Unknown compiler option '-b'".
+  typecheck:
+    script: 'tsc -b --noEmit'
+    deps:
+      - '^:build'
 
   # webkitFloor.test.ts asserts against the built dist/, so the inherited
   # test task (deps: ^:build only) must also depend on this project's own
@@ -65,11 +86,16 @@ tasks:
       persistent: true
       runInCI: 'skip'
 
+  # deps is `^:build` ONLY — deliberately not this project's own build or
+  # build-sidecars. tauri.conf.json's beforeBuildCommand runs
+  # `bun run build:app`, which is `bun run build && bun run build:sidecars`, so
+  # listing them here too ran the vite bundle and the ~70 MB sidecar compiles
+  # twice per release. tauri owns the desktop half; moon owns making sure the
+  # workspace packages it imports are built first.
   tauri-build:
     command: 'pnpm exec tauri build'
     deps:
-      - 'build'
-      - 'build-sidecars'
+      - '^:build'
     options:
       cache: false
       runInCI: 'skip'
