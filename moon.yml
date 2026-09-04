@@ -163,8 +163,13 @@ tasks:
     options:
       runInCI: 'always'
 
+  # Through audit-gate.ts: a critical advisory fails; an unreachable registry
+  # warns and passes — npm timeouts failed two otherwise-green CI runs.
   audit:
-    command: 'pnpm audit --audit-level critical'
+    command: 'bun --silent scripts/audit-gate.ts'
+    inputs:
+      - 'scripts/audit-gate.ts'
+      - 'pnpm-lock.yaml'
     options:
       cache: false
       runInCI: 'always'
