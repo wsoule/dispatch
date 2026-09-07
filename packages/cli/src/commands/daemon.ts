@@ -225,16 +225,84 @@ export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
 // check is the one request that must never be the slow thing.
 const HEALTH_TIMEOUT_MS = 2000;
 
-async function isHealthy(port: number): Promise<boolean> {
+// What one `/api/health` probe learned about a port. `unresponsive` is the
+// case a plain boolean hid: something accepted the connection and stalled
+// past the deadline. For the port a daemon file names, that is usually a live
+// dispatchd too busy to answer — provisioning several run worktrees at once
+// does it — not a dead one, and the two must not be treated alike (see
+// locateDaemon).
+type HealthProbe = 'healthy' | 'unresponsive' | 'down';
+
+async function probeHealth(
+  port: number,
+  timeoutMs = HEALTH_TIMEOUT_MS
+): Promise<HealthProbe> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
-      signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+      signal: AbortSignal.timeout(timeoutMs),
     });
-    return res.ok;
-  } catch {
-    // Includes the timeout abort: a port that accepts and stalls is exactly
-    // as unhealthy as one that refuses.
-    return false;
+    return res.ok ? 'healthy' : 'down';
+  } catch (err) {
+    return (err as { name?: string }).name === 'TimeoutError'
+      ? 'unresponsive'
+      : 'down';
+  }
+}
+
+async function isHealthy(port: number): Promise<boolean> {
+  return (await probeHealth(port)) === 'healthy';
+}
+
+// Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the
+// process exists under another user, which still counts as alive.
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
+  }
+}
+
+// How long to keep re-probing a daemon whose pid is alive but whose health
+// check stalls, before giving up on it with an error.
+const STALLED_DAEMON_WAIT_MS = 30_000;
+
+export interface LocateDaemonOptions {
+  // Per-probe deadline; tests shorten it.
+  healthTimeoutMs?: number;
+  // Total patience for a live-but-stalled daemon; tests shorten it.
+  stalledWaitMs?: number;
+}
+
+// The daemon this project's daemon file names, or null when the file is
+// absent or stale (nothing answers on its port, or its pid is gone). A live
+// pid whose health check merely stalls is NEITHER: it is re-probed for up to
+// `stalledWaitMs`, and if it never answers this throws instead of returning
+// null. Null is what makes ensureDaemon spawn a replacement, and a
+// replacement's boot reconcile force-fails every run the stalled daemon still
+// has in flight — on 2026-09-07 three daemons stacked up on one root this
+// way inside ten minutes, killing two waves of runs.
+export async function locateDaemon(
+  rootDir: string,
+  opts: LocateDaemonOptions = {}
+): Promise<DaemonConnection | null> {
+  const info = readDaemonFile(rootDir);
+  if (info === null) return null;
+  const stalledWaitMs = opts.stalledWaitMs ?? STALLED_DAEMON_WAIT_MS;
+  const deadline = Date.now() + stalledWaitMs;
+  for (;;) {
+    const probe = await probeHealth(info.port, opts.healthTimeoutMs);
+    if (probe === 'healthy') {
+      return { port: info.port, agentToken: requireAgentToken(info) };
+    }
+    if (probe === 'down' || !pidAlive(info.pid)) return null;
+    if (Date.now() >= deadline) {
+      throw new CliError(
+        `dispatchd for this project (pid ${info.pid}, port ${info.port}) is running but has not answered a health check in ${Math.round(stalledWaitMs / 1000)}s — it is probably overloaded. Wait and retry, or stop it (kill ${info.pid}) before starting another; a second daemon would force-fail the runs it has in flight.`
+      );
+    }
+    await sleep(500);
   }
 }
 
@@ -282,14 +350,13 @@ export interface DaemonConnection {
 // decide path needs this, because a daemon it started itself would have
 // minted an app token nobody can present.
 export async function findRunningDaemon(
-  rootDir: string
+  rootDir: string,
+  opts: LocateDaemonOptions = {}
 ): Promise<DaemonConnection | null> {
-  const info = readDaemonFile(rootDir);
-  if (info === null || !(await isHealthy(info.port))) return null;
-  return { port: info.port, agentToken: requireAgentToken(info) };
+  return locateDaemon(rootDir, opts);
 }
 
-export interface EnsureDaemonOptions {
+export interface EnsureDaemonOptions extends LocateDaemonOptions {
   // Port to request when a fresh daemon must be spawned (default: ephemeral,
   // same as `dispatch serve`/`dispatch ui` with no `--port`).
   port?: string;
@@ -307,7 +374,7 @@ export async function ensureDaemon(
   ctx: CliContext,
   opts: EnsureDaemonOptions = {}
 ): Promise<DaemonConnection> {
-  const existing = await findRunningDaemon(ctx.cwd);
+  const existing = await locateDaemon(ctx.cwd, opts);
   if (existing !== null) return existing;
 
   const launcher = resolveDaemonLauncher();

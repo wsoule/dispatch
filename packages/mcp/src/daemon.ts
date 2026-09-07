@@ -136,17 +136,45 @@ export async function liveDaemon(rootDir: string): Promise<LiveDaemon | null> {
   const daemon = readDaemonFile(rootDir);
   if (daemon === null) return null;
   if (daemon.agentToken === undefined || daemon.agentToken === '') return null;
+  const deadline = Date.now() + STALLED_DAEMON_WAIT_MS;
+  for (;;) {
+    let timedOut = false;
+    try {
+      const res = await fetch(`http://127.0.0.1:${daemon.port}/api/health`, {
+        headers: daemonAuth(daemon),
+        signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json().catch(() => ({}))) as {
+        problems?: string[];
+      };
+      return { info: daemon, problems: body.problems ?? [] };
+    } catch (err) {
+      timedOut = (err as { name?: string }).name === 'TimeoutError';
+    }
+    // A refused connection is a stale file. A stall from a pid that is still
+    // alive is a busy daemon: keep probing for a while rather than telling
+    // the agent its daemon is gone (which, before the deadline existed, was
+    // instead an indefinite hang on the first tool call).
+    if (!timedOut || !pidAlive(daemon.pid) || Date.now() >= deadline) {
+      return null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+// How long `liveDaemon` keeps re-probing a daemon whose pid is alive but whose
+// health check stalls before reporting it as unreachable.
+const STALLED_DAEMON_WAIT_MS = 30_000;
+
+// Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the
+// process exists under another user, which still counts as alive.
+function pidAlive(pid: number): boolean {
   try {
-    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/health`, {
-      headers: daemonAuth(daemon),
-    });
-    if (!res.ok) return null;
-    const body = (await res.json().catch(() => ({}))) as {
-      problems?: string[];
-    };
-    return { info: daemon, problems: body.problems ?? [] };
-  } catch {
-    return null;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
   }
 }
 
