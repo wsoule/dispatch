@@ -670,13 +670,17 @@ describe('ClaudeExecutor abrupt stream end with no result message', () => {
 // finish it reported. Every truncation test below differs only in the fields
 // on that single result message, so they share this harness.
 async function finishForResult(
-  result: Record<string, unknown>
+  result: Record<string, unknown>,
+  // Messages the SDK streams before the terminal result — e.g. the synthetic
+  // assistant message explaining an API error.
+  preceding: Record<string, unknown>[] = []
 ): Promise<{ state: string; error?: string; turns?: number }> {
   const repo = initGitRepo('dispatch-claude-terminal-reason-');
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function* fakeMessages(): Generator<any> {
       yield { type: 'system', subtype: 'init', session_id: 'sess-tr' };
+      yield* preceding;
       yield { type: 'result', ...result };
     }
     const executor = new ClaudeExecutor(
@@ -729,6 +733,95 @@ describe('ClaudeExecutor truncated-run detection', () => {
     // The partial work still happened — turn/cost accounting must survive the
     // reclassification so the run's cost isn't silently lost.
     expect(finish.turns).toBe(72);
+  });
+
+  // 2026-09-04: seven runs died to the usage limit, but the SDK tagged the
+  // stop `terminal_reason: 'api_error'` (not 'blocking_limit'), so every run
+  // record said only "the Claude API errored" and the real reason had to be
+  // dug out of each transcript's last assistant line — a synthetic message
+  // carrying `error: 'rate_limit'` and the limit text.
+  it("names the usage limit when a rate_limit assistant message precedes an 'api_error' stop", async () => {
+    const finish = await finishForResult(
+      {
+        subtype: 'success',
+        is_error: false,
+        num_turns: 67,
+        total_cost_usd: 18.12,
+        session_id: 'sess-tr',
+        stop_reason: null,
+        terminal_reason: 'api_error',
+        errors: [],
+      },
+      [
+        {
+          type: 'assistant',
+          error: 'rate_limit',
+          session_id: 'sess-tr',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: "You've hit your session limit · resets 10pm (America/Detroit)",
+              },
+            ],
+          },
+        },
+      ]
+    );
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toMatch(/usage limit/i);
+    expect(finish.error).toContain('resets 10pm');
+    expect(finish.turns).toBe(67);
+  });
+
+  it("keeps the generic message for an 'api_error' stop with no API-error message before it", async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: false,
+      num_turns: 2,
+      total_cost_usd: 0.1,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      terminal_reason: 'api_error',
+      errors: [],
+    });
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toMatch(/Claude API errored/);
+  });
+
+  it("appends the SDK's text for an API error kind it has no specific wording for", async () => {
+    const finish = await finishForResult(
+      {
+        subtype: 'success',
+        is_error: false,
+        num_turns: 2,
+        total_cost_usd: 0.1,
+        session_id: 'sess-tr',
+        stop_reason: null,
+        terminal_reason: 'api_error',
+        errors: [],
+      },
+      [
+        {
+          type: 'assistant',
+          error: 'server_error',
+          session_id: 'sess-tr',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'API Error: 500 upstream' }],
+          },
+        },
+      ]
+    );
+
+    expect(finish.error).toBe(
+      'the Claude API errored before the agent finished (API Error: 500 upstream)'
+    );
   });
 
   it.each([
