@@ -288,6 +288,10 @@ const enableFakes = process.env.DISPATCH_ENABLE_FAKES === '1';
 const handle = await startServer({
   rootDir,
   port,
+  // `--init` is the desktop's add-project spawn, which deliberately replaces
+  // whatever daemon predates the project's tracker; `--replace` is the
+  // explicit operator override.
+  replaceRunningDaemon: args.includes('--init') || args.includes('--replace'),
   // `undefined` here defers to index.ts's own production default (register
   // only the real 'claude' backend) — see this file's module doc comment for
   // when/why these are populated instead.

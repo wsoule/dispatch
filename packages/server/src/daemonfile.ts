@@ -83,3 +83,45 @@ export function removeDaemonFile(rootDir: string): void {
   const path = daemonFilePath(rootDir);
   if (existsSync(path)) rmSync(path);
 }
+
+// Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the
+// process exists under another user, which still counts as alive.
+export function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
+  }
+}
+
+// Throws when this root's daemon file names a live dispatchd that still
+// answers — or merely stalls — on its port. Booting a second daemon anyway
+// would run reconcileOnBoot against runs the first one still owns and
+// force-fail all of them, which is exactly what happened on 2026-09-07 when
+// a CLI health probe timed out against a busy daemon and spawned a
+// replacement. A file whose pid is dead, or whose port refuses outright, is
+// stale and does not block.
+export async function assertRootNotServed(
+  rootDir: string,
+  healthTimeoutMs = 2000
+): Promise<void> {
+  const prior = readDaemonFile(rootDir);
+  if (prior === null || prior.pid === process.pid || !pidAlive(prior.pid)) {
+    return;
+  }
+  let served: boolean;
+  try {
+    const res = await fetch(`http://127.0.0.1:${prior.port}/api/health`, {
+      signal: AbortSignal.timeout(healthTimeoutMs),
+    });
+    served = res.ok;
+  } catch (err) {
+    // Only a timeout means "alive but busy"; a refusal means nothing is there.
+    served = (err as { name?: string }).name === 'TimeoutError';
+  }
+  if (!served) return;
+  throw new Error(
+    `another dispatchd (pid ${prior.pid}) is already serving ${rootDir} on port ${prior.port}; refusing to start a second one, which would force-fail the runs it has in flight. Stop it first (kill ${prior.pid}), or pass --replace to take over anyway.`
+  );
+}

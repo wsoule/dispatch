@@ -31,7 +31,11 @@ import {
 import type { ApiContext, DaemonTokens } from './api.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
-import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
+import {
+  assertRootNotServed,
+  removeDaemonFile,
+  writeDaemonFile,
+} from './daemonfile.js';
 import { DecisionFeed } from './decisionFeed.js';
 import {
   createSourceChangeHandler,
@@ -123,6 +127,10 @@ export interface StartServerOptions {
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
+  // Boot even when the daemon file names a live dispatchd for this root. Off
+  // by default: a second daemon force-fails the first one's runs (see
+  // assertRootNotServed). bin.ts sets it for `--replace` and `--init`.
+  replaceRunningDaemon?: boolean;
   // Which backend this daemon's state lives in. Left unset it comes from
   // `DISPATCH_STORE_BACKEND` (see `resolveStoreBackend`), which itself
   // defaults to `files` — so production behaviour is unchanged until a
@@ -488,6 +496,12 @@ export async function startServer(
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
   const tokens = opts.tokens ?? mintDaemonTokens();
+
+  // Before touching any state: a root another live daemon is serving is not
+  // ours to reconcile.
+  if (shouldWriteDaemonFile && opts.replaceRunningDaemon !== true) {
+    await assertRootNotServed(rootDir);
+  }
 
   // Who this daemon acts as. Resolved first, before anything touches the
   // store, so a teammate is registered on the roster ahead of any task edit
