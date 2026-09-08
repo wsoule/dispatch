@@ -113,6 +113,29 @@ function createEpicWithChildren(
   return { epicId: epic.meta.id, childIds };
 }
 
+// 2026-09-08: every run in a 35-run fleet executed on the CLI's default model
+// instead of the project's configured `models.execute`, because only the HTTP
+// dispatch route resolved that fallback — the epic engine's auto-fill (and the
+// warden's dispatch tool) passed no `defaults` at all. It surfaced as a whole
+// epic dying on one model's usage limit while the config named another.
+describe('dispatch model default', () => {
+  it('records the project-configured models.execute on an epic auto-fill', async () => {
+    const { epics, store, orchestrator } = makeHarness();
+    // After the harness, whose TaskStore.init creates `.dispatch`. The config
+    // is read fresh at dispatch time, so writing it here still counts.
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'models:\n  execute: claude-sonnet-5\n'
+    );
+    const { epicId } = createEpicWithChildren(store, 1);
+
+    await epics.start(epicId, { executor: 'fake', concurrency: 1 });
+    await waitFor(() => orchestrator.list().length > 0);
+
+    expect(orchestrator.list()[0]?.model).toBe('claude-sonnet-5');
+  });
+});
+
 describe('EpicEngine.start', () => {
   it('404s starting an unknown epic', async () => {
     const { epics } = makeHarness();

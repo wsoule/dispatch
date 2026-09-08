@@ -1867,7 +1867,19 @@ export class Orchestrator {
     const executorName =
       request.executor ?? request.defaults?.executor ?? DEFAULT_EXECUTOR_NAME;
     return await this.dispatch(taskId, executorName, {
-      model: request.model ?? request.defaults?.model,
+      // The project's configured `models.execute` is the last fallback, so a
+      // caller that resolves no default still lands where settings chose. It
+      // sits at the same precedence as `defaults.model` — after anything the
+      // caller NAMED — so the named-vs-defaulted distinction resume turns on
+      // is untouched (resumeHonoursRequest has already run, on the raw
+      // request). Resolving this per caller instead is what silently ran a
+      // whole 2026-09-08 fleet on the CLI's default model: only the HTTP
+      // route passed `defaults`, while the epic auto-fill and the warden's
+      // dispatch tool passed none, and the config key looked ignored.
+      model:
+        request.model ??
+        request.defaults?.model ??
+        loadConfig(this.ctx.rootDir).models.execute,
       actor: request.actor,
     });
   }
