@@ -30,6 +30,13 @@ function countDaemonProcesses(root: string): number {
   }
 }
 
+// Bun types `Server.port` as optional (unix-socket servers have none); every
+// server here binds TCP, so an absent port is a test bug, not a case.
+function portOf(server: { port?: number }): number {
+  if (server.port === undefined) throw new Error('test server has no port');
+  return server.port;
+}
+
 let root: string;
 let dispatchHome: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
@@ -72,7 +79,7 @@ describe('ensureDaemon race (I3)', () => {
       writeFileSync(
         daemonFilePath(root),
         JSON.stringify({
-          port: daemon.port,
+          port: portOf(daemon),
           pid: process.pid,
           rootDir: root,
           startedAt: new Date().toISOString(),
@@ -84,7 +91,7 @@ describe('ensureDaemon race (I3)', () => {
     try {
       const conn = await ensureDaemon({ cwd: root, log: () => {} });
 
-      expect(conn.port).toBe(daemon.port);
+      expect(conn.port).toBe(portOf(daemon));
       expect(conn.agentToken).toBe('held-by-the-other-process');
       // The whole point: nothing of ours was started.
       expect(countDaemonProcesses(root)).toBe(0);

@@ -1,7 +1,7 @@
 import type { Command } from 'commander';
 
 import type { ApiClient, RunMeta, ServerEvent } from '../apiClient.js';
-import { createApiClient } from '../apiClient.js';
+import { createApiClient, DaemonUnreachableError } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
   exitCodeForRunState,
@@ -129,14 +129,15 @@ export function createRunWatcher(
   // true, the later `onGiveUp` became a no-op, and the CLI died with an uncaught
   // exception instead of printing "lost connection to dispatchd".
   //
-  // `TypeError` is the precise signal rather than a message match: per the fetch
-  // spec a network failure rejects with TypeError, while an HTTP error response
-  // does not reject at all — createApiClient turns those into a thrown
-  // Error/CliError carrying the server's message. So a non-TypeError here means
+  // The two signals are precise rather than message matches: per the fetch spec
+  // a network failure rejects with TypeError, and createApiClient wraps exactly
+  // that case in DaemonUnreachableError. An HTTP error response does not reject
+  // at all — those become a CliError carrying the server's message. So anything
+  // else here means
   // the run is genuinely unreadable (it was deleted, the id is wrong) and must
   // still fail the watch rather than retry forever.
   function isConnectionError(err: unknown): boolean {
-    return err instanceof TypeError;
+    return err instanceof TypeError || err instanceof DaemonUnreachableError;
   }
 
   function triggerRefetch(): void {

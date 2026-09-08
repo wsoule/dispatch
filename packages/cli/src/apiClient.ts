@@ -195,6 +195,21 @@ interface ApiTarget {
 
 // Throws a CliError carrying the server's own `{ error }` message on any non-2xx, so
 // cli.ts renders API failures in the server's wording rather than a bare status code.
+/**
+ * The daemon could not be reached at all — the request never got an answer.
+ *
+ * A distinct type rather than a plain CliError because callers must be able to
+ * tell "the daemon went away" from "the daemon said no". The `--watch` loops
+ * key on exactly that: a refetch failing because the connection died is not
+ * fatal (the socket layer's reconnect/give-up is what reports it), while any
+ * other failure means the run is genuinely unreadable and must stop the watch.
+ * Before this existed those loops tested `err instanceof TypeError` — fetch's
+ * own network-failure signal — which this very wrapper had already swallowed,
+ * so a daemon killed mid-refetch died with the wrong message (and, on a slow
+ * enough machine, beat the right one to it).
+ */
+export class DaemonUnreachableError extends CliError {}
+
 async function request<T>(
   target: ApiTarget,
   path: string,
@@ -212,7 +227,7 @@ async function request<T>(
   try {
     res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
   } catch (err) {
-    throw new CliError(
+    throw new DaemonUnreachableError(
       `dispatchd stopped responding at ${target.baseUrl} (${(err as Error).message}). ` +
         'It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve'
     );
