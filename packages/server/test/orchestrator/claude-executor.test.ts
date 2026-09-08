@@ -777,6 +777,45 @@ describe('ClaudeExecutor truncated-run detection', () => {
     expect(finish.turns).toBe(67);
   });
 
+  // The other rate_limit: credits exhausted rather than a session window, and
+  // the remedy is the opposite of "wait for the reset" — so the lead must not
+  // supply one, only the SDK's own text.
+  it('carries the out-of-credits text without contradicting it', async () => {
+    const finish = await finishForResult(
+      {
+        subtype: 'success',
+        is_error: false,
+        num_turns: 15,
+        total_cost_usd: 2.5,
+        session_id: 'sess-tr',
+        stop_reason: null,
+        terminal_reason: 'api_error',
+        errors: [],
+      },
+      [
+        {
+          type: 'assistant',
+          error: 'rate_limit',
+          session_id: 'sess-tr',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: "You're out of usage credits. Switch to another model, or manage usage credits at https://example.invalid/usage",
+              },
+            ],
+          },
+        },
+      ]
+    );
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toContain('out of usage credits');
+    expect(finish.error).not.toMatch(/once your limit resets/);
+  });
+
   it("keeps the generic message for an 'api_error' stop with no API-error message before it", async () => {
     const finish = await finishForResult({
       subtype: 'success',

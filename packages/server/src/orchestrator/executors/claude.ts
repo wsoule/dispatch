@@ -374,6 +374,12 @@ function entriesForAssistantContent(
 const USAGE_LIMIT_MESSAGE =
   'Claude usage limit reached before the agent finished — resume this run once your limit resets';
 
+// The same stop reached through `api_error`, where the SDK's own explanation
+// follows in parentheses. This lead deliberately offers no remedy: the two
+// limits differ ("resets 10pm" vs "you're out of usage credits, switch model
+// or top up") and guessing produced a message that contradicted the SDK's.
+const USAGE_LIMIT_LEAD = 'Claude usage limit reached before the agent finished';
+
 // Human-readable explanations for the `terminal_reason` values that mean the
 // agent was CUT OFF rather than finishing its work. Only `'completed'` means
 // genuinely done, so this map exists purely to give the common truncation
@@ -444,7 +450,7 @@ interface ApiErrorNote {
 // Per-kind explanations for the API errors that end a run. A kind absent here
 // keeps the generic terminal-reason message, with the SDK's own text appended.
 const API_ERROR_MESSAGES: Record<string, string> = {
-  rate_limit: USAGE_LIMIT_MESSAGE,
+  rate_limit: USAGE_LIMIT_LEAD,
   overloaded: 'the Claude API is overloaded — resume this run shortly',
   billing_error:
     'a Claude billing problem stopped the agent before it finished',
