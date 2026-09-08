@@ -67,6 +67,7 @@ import { BoardSyncScheduler } from './sync/scheduler.js';
 import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
 import { TrackedFilesCache } from './trackedFiles.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
+import { WebhookDelivery } from './webhookDelivery.js';
 
 export interface ServerHandle {
   port: number;
@@ -767,6 +768,17 @@ export async function startServer(
   });
   const stopDecisionFeed = decisionFeed.start();
 
+  // Delivery beyond the app: each newly-blocking feed item POSTed to the
+  // webhook in config.yml's `notifications:` block. Config is read per pass so
+  // an edit applies live; the in-app record stays whatever the feed says.
+  const webhookDelivery = new WebhookDelivery({
+    rootDir,
+    feed: decisionFeed,
+    events,
+    readConfig: () => loadConfig(rootDir).notifications,
+  });
+  const stopWebhookDelivery = webhookDelivery.start();
+
   const apiCtx: ApiContext = {
     rootDir,
     store,
@@ -931,6 +943,7 @@ export async function startServer(
       unsubscribeLinear();
       await linearSync.stop();
       unsubscribeBoardSync();
+      stopWebhookDelivery();
       stopDecisionFeed();
       boardSyncScheduler?.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets

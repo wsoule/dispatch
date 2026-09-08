@@ -74,11 +74,13 @@ export {
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
+  DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
+  NOTIFICATION_KINDS,
 } from './config.js';
 export type {
   CartoConfig,
@@ -89,6 +91,8 @@ export type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  NotificationKind,
+  NotificationsConfig,
   OrchestratorConfig,
   RepoDigestConfig,
   VerifyConfig,

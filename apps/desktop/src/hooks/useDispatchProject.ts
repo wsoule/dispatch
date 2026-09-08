@@ -27,6 +27,7 @@ import type {
   DispatchConfig,
   EscalationStep,
   ModelConfig,
+  NotificationKind,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core/browser';
@@ -51,7 +52,7 @@ import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
 import { resolveExecuteModel } from '../lib/models';
-import { notify } from '../lib/notifications';
+import { notify, setNotificationKinds } from '../lib/notifications';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
@@ -336,6 +337,10 @@ export interface DispatchProjectData {
     maxBudgetUsd?: number | null;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
+    notifications?: {
+      kinds?: Partial<Record<NotificationKind, boolean>>;
+      webhook?: string | null;
+    };
   }) => Promise<void>;
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source.
    * `null` until the status query has ever resolved. */
@@ -721,6 +726,13 @@ export function useDispatchProject(
     },
     enabled: client !== null,
   });
+  // The OS-notification toggles live at module level in notifications.ts
+  // because the WS handler below fires `notify` without re-subscribing on a
+  // config change. Reset to "everything on" while a project's config is
+  // still loading, rather than carrying the previous project's toggles over.
+  useEffect(() => {
+    setNotificationKinds(config?.notifications.kinds ?? null);
+  }, [config]);
   // The sync chip's data source — refetched only on mount and on the
   // `board.sync` WS event below (see the effect's invalidation), not polled.
   const { data: syncStatus } = useQuery({
@@ -1106,7 +1118,11 @@ export function useDispatchProject(
             const taskTitle =
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
-            void notify('Approval needed', `${event.toolName} · ${taskTitle}`);
+            void notify(
+              'Approval needed',
+              `${event.toolName} · ${taskTitle}`,
+              'approval'
+            );
           } else if (event.type === 'question.asked') {
             void queryClient.invalidateQueries({ queryKey: questionsQueryKey });
             // Same cache-read reason as approval.requested above: this effect's
@@ -1115,7 +1131,7 @@ export function useDispatchProject(
             const taskTitle =
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
-            void notify('An agent has a question', taskTitle);
+            void notify('An agent has a question', taskTitle, 'question');
           } else if (
             event.type === 'question.answered' ||
             event.type === 'question.closed'
@@ -1131,7 +1147,11 @@ export function useDispatchProject(
             const taskTitle =
               liveRuns?.find((r) => r.id === event.runId)?.taskTitle ??
               event.runId;
-            void notify('An agent needs scope approval', taskTitle);
+            void notify(
+              'An agent needs scope approval',
+              taskTitle,
+              'scope-request'
+            );
           } else if (event.type === 'scope.decided') {
             setPendingScopeRequests((prev) => {
               if (!prev.has(event.runId)) return prev;
@@ -1217,7 +1237,7 @@ export function useDispatchProject(
               event.reason,
               event.message
             );
-            void notify(notice.title, taskTitle);
+            void notify(notice.title, taskTitle, 'fix-loop-capped');
             onRecordInbox([
               {
                 ts: new Date().toISOString(),
@@ -1241,7 +1261,7 @@ export function useDispatchProject(
               event.runId;
             const notice = runSurveyNotice(taskTitle, event.survey);
             if (notice !== null) {
-              void notify(notice.title, notice.body);
+              void notify(notice.title, notice.body, 'run-stalled');
               onRecordInbox([
                 {
                   ts: new Date().toISOString(),
@@ -2167,6 +2187,10 @@ export function useDispatchProject(
       maxBudgetUsd?: number | null;
       fixLoop?: { cap?: number; escalation?: EscalationStep[] };
       verify?: { command?: string; url?: string; notes?: string };
+      notifications?: {
+        kinds?: Partial<Record<NotificationKind, boolean>>;
+        webhook?: string | null;
+      };
     }): Promise<void> => {
       if (client === null) return;
       await client.updateConfig(patch);

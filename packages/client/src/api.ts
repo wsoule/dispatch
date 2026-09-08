@@ -11,6 +11,7 @@ import type {
   LedgerKind,
   ModelConfig,
   MutationEvidence,
+  NotificationKind,
   Priority,
   TaskDoc,
   TaskRisk,
@@ -1855,6 +1856,11 @@ export interface ApiClient {
     maxBudgetUsd?: number | null;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
+    /** `webhook: null` (or '') clears the URL; `kinds` merges over what is on disk. */
+    notifications?: {
+      kinds?: Partial<Record<NotificationKind, boolean>>;
+      webhook?: string | null;
+    };
   }): Promise<DispatchConfig>;
   // Linear sync. `connectLinear` posts the key once and never gets it back; every later
   // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.

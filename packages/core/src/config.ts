@@ -11,6 +11,8 @@ import type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  NotificationKind,
+  NotificationsConfig,
   OrchestratorConfig,
   RepoDigestConfig,
   VerifyConfig,
@@ -21,11 +23,13 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
+  NOTIFICATION_KINDS,
 } from './configTypes.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
@@ -79,7 +83,93 @@ const DEFAULTS: DispatchConfig = {
   fixLoop: cloneFixLoop(DEFAULT_FIX_LOOP),
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
+  notifications: cloneNotifications(DEFAULT_NOTIFICATIONS),
 };
+
+// `kinds` is an object, so a shallow spread would share the toggle map
+// between the defaults and every loaded config.
+function cloneNotifications(config: NotificationsConfig): NotificationsConfig {
+  return {
+    kinds: { ...config.kinds },
+    ...(config.webhook === undefined ? {} : { webhook: config.webhook }),
+  };
+}
+
+// A webhook has to be somewhere an HTTP POST can reach: a parseable URL with
+// an http(s) scheme. Anything else is a ConfigError at load time rather than a
+// fetch failure logged on the first delivery. Returns the trimmed URL.
+function validateWebhookUrl(value: unknown, label: string): string {
+  if (typeof value !== 'string' || value.trim() === '') {
+    throw new ConfigError(`invalid ${label}: must be a non-empty string`);
+  }
+  const trimmed = value.trim();
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    throw new ConfigError(`invalid ${label}: must be an http(s) URL`);
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new ConfigError(`invalid ${label}: must be an http(s) URL`);
+  }
+  return trimmed;
+}
+
+// Validates one `kinds:` map — the shape the loader and updateConfig share.
+// An unknown kind is an error rather than ignored, so a typo cannot leave the
+// kind it meant to silence on its default.
+function parseNotificationKinds(
+  raw: unknown,
+  label: string
+): Partial<Record<NotificationKind, boolean>> {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(`invalid ${label}: must be an object`);
+  }
+  const result: Partial<Record<NotificationKind, boolean>> = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!NOTIFICATION_KINDS.includes(key as NotificationKind)) {
+      throw new ConfigError(
+        `invalid ${label}: unknown kind "${key}" (expected ${NOTIFICATION_KINDS.join('|')})`
+      );
+    }
+    if (typeof value !== 'boolean') {
+      throw new ConfigError(`invalid ${label}.${key}: must be a boolean`);
+    }
+    result[key as NotificationKind] = value;
+  }
+  return result;
+}
+
+// Validates the optional `notifications:` block, same contract as the blocks
+// below. `kinds` merges over the defaults, so switching one kind off does not
+// switch the other four off with it.
+function parseNotificationsConfig(raw: unknown): NotificationsConfig {
+  if (raw === undefined) return cloneNotifications(DEFAULT_NOTIFICATIONS);
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: notifications must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const result = cloneNotifications(DEFAULT_NOTIFICATIONS);
+  if (obj.kinds !== undefined) {
+    Object.assign(
+      result.kinds,
+      parseNotificationKinds(
+        obj.kinds,
+        '.dispatch/config.yml: notifications.kinds'
+      )
+    );
+  }
+  // `null` is how a hand edit clears the URL without deleting the key.
+  if (obj.webhook !== undefined && obj.webhook !== null) {
+    result.webhook = validateWebhookUrl(
+      obj.webhook,
+      '.dispatch/config.yml: notifications.webhook'
+    );
+  }
+  return result;
+}
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
 // defaults; any other non-object is a ConfigError rather than silently ignored.
@@ -467,6 +557,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       fixLoop: cloneFixLoop(DEFAULTS.fixLoop),
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
+      notifications: cloneNotifications(DEFAULTS.notifications),
     };
   }
   let parsed: unknown;
@@ -541,8 +632,39 @@ export function loadConfig(rootDir: string): DispatchConfig {
     verify: parseVerifyConfig(raw.verify),
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
+    notifications: parseNotificationsConfig(raw.notifications),
     prWorktreeDir: raw.prWorktreeDir,
   };
+}
+
+// Writes the `notifications:` keys a patch names. `kinds` is written
+// key-by-key so a toggle the patch omits survives; `webhook: null` deletes the
+// key, and an empty string counts as clearing too, since a form cannot send
+// null from a text field.
+function applyNotificationsPatch(
+  doc: YAML.Document,
+  patch: NonNullable<ConfigPatch['notifications']>
+): void {
+  if (patch.kinds !== undefined) {
+    const kinds = parseNotificationKinds(patch.kinds, 'notifications.kinds');
+    for (const [kind, enabled] of Object.entries(kinds)) {
+      doc.setIn(['notifications', 'kinds', kind], enabled);
+    }
+  }
+  if (patch.webhook !== undefined) {
+    if (patch.webhook === null || patch.webhook.trim() === '') {
+      // Same guard as clearing an absent cap above: never create the block as
+      // a side effect of clearing a key that is not there.
+      if (doc.hasIn(['notifications', 'webhook'])) {
+        doc.deleteIn(['notifications', 'webhook']);
+      }
+      return;
+    }
+    doc.setIn(
+      ['notifications', 'webhook'],
+      validateWebhookUrl(patch.webhook, 'notifications.webhook')
+    );
+  }
 }
 
 // Writes the `linear:` keys a patch names, validating each before it reaches disk.
@@ -705,6 +827,9 @@ export function updateConfig(
   }
   if (patch.linear !== undefined) applyLinearPatch(doc, patch.linear);
   if (patch.fixLoop !== undefined) applyFixLoopPatch(doc, patch.fixLoop);
+  if (patch.notifications !== undefined) {
+    applyNotificationsPatch(doc, patch.notifications);
+  }
   if (patch.verify !== undefined) {
     // Same validate-before-write rule as models: a bad field must never reach
     // disk, or loadConfig refuses the whole file afterwards.

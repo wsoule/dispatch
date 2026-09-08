@@ -9,6 +9,7 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
   loadConfig,
 } from '../src/config.js';
@@ -49,6 +50,7 @@ describe('loadConfig', () => {
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,
       repoDigest: DEFAULT_REPO_DIGEST,
+      notifications: DEFAULT_NOTIFICATIONS,
     });
   });
   it('merges file values over defaults', () => {

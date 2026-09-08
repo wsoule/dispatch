@@ -6,6 +6,7 @@ import { DaemonSection } from '../components/settings/DaemonSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
+import { NotificationsSection } from '../components/settings/NotificationsSection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { EmptyState } from '@/ui/chrome';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
@@ -23,8 +24,8 @@ type SaveState =
   | { kind: 'saved' }
   | { kind: 'error'; message: string };
 
-/** Settings for the active project: General / Agents / Integrations / Daemon / Diffs
- *  tabs. Every tab but Diffs saves through the shell's one `save` and its one
+/** Settings for the active project: General / Agents / Integrations /
+ *  Notifications / Daemon / Diffs tabs. Every tab but Diffs saves through the shell's one `save` and its one
  *  indicator beneath the tab bar; Diffs is a local display preference with its own
  *  storage and no save state. */
 export function SettingsView({ activeProject, data }: SettingsViewProps) {
@@ -76,6 +77,7 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
           <TabsTrigger value="general">General</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
+          <TabsTrigger value="notifications">Notifications</TabsTrigger>
           <TabsTrigger value="daemon">Daemon</TabsTrigger>
           <TabsTrigger value="diffs">Diffs</TabsTrigger>
         </TabsList>
@@ -110,6 +112,12 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
 
         <TabsContent value="integrations">
           <IntegrationsSection data={integrationsData} />
+        </TabsContent>
+
+        <TabsContent value="notifications">
+          {data.config !== null && (
+            <NotificationsSection config={data.config} onSave={save} />
+          )}
         </TabsContent>
 
         <TabsContent value="daemon">

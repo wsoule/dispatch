@@ -93,6 +93,45 @@ describe('PATCH /api/config — fixLoop', () => {
   });
 });
 
+describe('PATCH /api/config — notifications', () => {
+  it('writes a toggle and a webhook and they round-trip through GET', async () => {
+    const res = await patchConfig({
+      notifications: {
+        kinds: { 'run-stalled': false },
+        webhook: 'https://hooks.example.com/services/x',
+      },
+    });
+    expect(res.status).toBe(200);
+    const config = await json<{
+      notifications: { kinds: Record<string, boolean>; webhook?: string };
+    }>(res);
+    expect(config.notifications.kinds['run-stalled']).toBe(false);
+    expect(config.notifications.kinds.question).toBe(true);
+    expect(config.notifications.webhook).toBe(
+      'https://hooks.example.com/services/x'
+    );
+    const got = await json<{ notifications: { webhook?: string } }>(
+      await fetch(`${baseUrl}/api/config`)
+    );
+    expect(got.notifications.webhook).toBe(
+      'https://hooks.example.com/services/x'
+    );
+  });
+
+  it('400s a non-object block, an unknown kind and a bad URL without writing', async () => {
+    for (const body of [
+      { notifications: 'yes' },
+      { notifications: { kinds: { 'fix-loop-caped': false } } },
+      { notifications: { webhook: 'ftp://x' } },
+    ]) {
+      const res = await patchConfig(body);
+      expect(res.status).toBe(400);
+    }
+    const file = readFileSync(join(root, '.dispatch', 'config.yml'), 'utf8');
+    expect(file).not.toContain('notifications');
+  });
+});
+
 describe('PATCH /api/config — orchestrator caps', () => {
   it('accepts a turn cap and a budget cap', async () => {
     const res = await patchConfig({ maxTurns: 40, maxBudgetUsd: 12.5 });
