@@ -76,6 +76,11 @@ import { VerificationRunner } from './orchestrator/verify.js';
 import { WardenManager } from './orchestrator/warden.js';
 import { ClaudeWarden } from './orchestrator/wardens/claude.js';
 import { WardenToolRegistry } from './orchestrator/wardenTools.js';
+import {
+  policyActivityAppender,
+  policyDecisionClassifier,
+  PolicyEngine,
+} from './policyEngine.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -1041,8 +1046,31 @@ export async function startServer(
     fixLoopStore,
     cache,
     events,
+    // The policy engine's classifier: a gate the project's rung auto-decides
+    // shows up as `recorded` rather than `blocking`.
+    policy: policyDecisionClassifier(rootDir, {
+      riskOf: (taskId) => store.get(taskId)?.meta.risk,
+    }),
   });
   const stopDecisionFeed = decisionFeed.start();
+
+  // The gate hooks themselves — verify-retry and merge consult the project's
+  // policy off the daemon's own signals; the scope gate consults inline in
+  // api/scopeRequests.ts. See policyEngine.ts.
+  const policyEngine = new PolicyEngine({
+    rootDir,
+    store,
+    events,
+    orchestrator,
+    fixLoop,
+    verificationRunner,
+    mergeQueue,
+    ledgerStore,
+    actorContext,
+    // The Activity half of each receipt; the ledger half is the engine's own.
+    appendActivity: policyActivityAppender({ store, cache, events }),
+  });
+  const stopPolicyEngine = policyEngine.start();
 
   const apiCtx: ApiContext = {
     rootDir,
@@ -1216,6 +1244,7 @@ export async function startServer(
       await linearSync.stop();
       unsubscribeBoardSync();
       stopDecisionFeed();
+      stopPolicyEngine();
       boardSyncScheduler?.stop();
       // Before stores.close() below, since the exporter reads the database.
       receiptsScheduler?.stop();

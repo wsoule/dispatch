@@ -126,3 +126,30 @@ describe('PATCH /api/config — orchestrator caps', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('PATCH /api/config — policy', () => {
+  it('writes the rung and gate pins and they round-trip through GET', async () => {
+    const res = await patchConfig({
+      policy: { rung: 3, gates: { merge: 'block' } },
+    });
+    expect(res.status).toBe(200);
+    const config = await json<{
+      policy: { rung: number; gates: Record<string, string> };
+    }>(res);
+    expect(config.policy).toEqual({ rung: 3, gates: { merge: 'block' } });
+  });
+
+  it('400s a rung off the ladder without writing anything', async () => {
+    const res = await patchConfig({ policy: { rung: 9 } });
+    expect(res.status).toBe(400);
+    const file = readFileSync(join(root, '.dispatch', 'config.yml'), 'utf8');
+    expect(file).not.toContain('policy');
+  });
+
+  it('400s an unknown gate, and a non-object block outright', async () => {
+    expect(
+      (await patchConfig({ policy: { gates: { review: 'auto' } } })).status
+    ).toBe(400);
+    expect((await patchConfig({ policy: 3 })).status).toBe(400);
+  });
+});

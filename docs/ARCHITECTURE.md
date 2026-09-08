@@ -198,20 +198,21 @@ daemon with a scripted agent, not a mock UI.
 
 Notable modules:
 
-| Module                                         | Lines | Role                                                                  |
-| ---------------------------------------------- | ----- | --------------------------------------------------------------------- |
-| `mergeQueue.ts`                                | 1928  | Serialized merge with verification and stacking                       |
-| `review.ts`                                    | 1068  | Diff review, undeclared-write detection, shared-surface checks        |
-| `worktree.ts`                                  | 955   | Per-run worktree lifecycle                                            |
-| `fixLoop.ts`                                   | 807   | Automatic fix rounds with a cap and escalation steps                  |
-| `warden.ts` + backend/tools                    | ~545+ | Conversational agent with a tool registry and human-confirmed actions |
-| `verify.ts`                                    | 360   | Runs `verifySteps` from config, records structured results            |
-| `planner.ts`                                   | 243   | Proposes a task set; indices resolve to real ids at confirm           |
-| `scopeRequests.ts`                             | —     | Runtime scope escalation, decided by app or API                       |
-| `questions.ts`                                 | —     | Agent-to-human questions, blocking until answered                     |
-| `epic.ts`/`epicBranch.ts`                      | —     | Epic sessions, progress, and their branches                           |
-| `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                         |
-| `jj.ts`                                        | —     | Jujutsu support, including colocation with git                        |
+| Module                                         | Lines | Role                                                                   |
+| ---------------------------------------------- | ----- | ---------------------------------------------------------------------- |
+| `mergeQueue.ts`                                | 1928  | Serialized merge with verification and stacking                        |
+| `review.ts`                                    | 1068  | Diff review, undeclared-write detection, shared-surface checks         |
+| `worktree.ts`                                  | 955   | Per-run worktree lifecycle                                             |
+| `fixLoop.ts`                                   | 807   | Automatic fix rounds with a cap and escalation steps                   |
+| `warden.ts` + backend/tools                    | ~545+ | Conversational agent with a tool registry and human-confirmed actions  |
+| `verify.ts`                                    | 360   | Runs `verifySteps` from config, records structured results             |
+| `planner.ts`                                   | 243   | Proposes a task set; indices resolve to real ids at confirm            |
+| `scopeRequests.ts`                             | —     | Runtime scope escalation, decided by app, API, or policy               |
+| `../policyEngine.ts`                           | —     | Autonomy ladder: gates consult per-project policy, auto-decide, record |
+| `questions.ts`                                 | —     | Agent-to-human questions, blocking until answered                      |
+| `epic.ts`/`epicBranch.ts`                      | —     | Epic sessions, progress, and their branches                            |
+| `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                          |
+| `jj.ts`                                        | —     | Jujutsu support, including colocation with git                         |
 
 ## Clients
 

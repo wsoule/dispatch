@@ -30,6 +30,14 @@ import {
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
 } from './configTypes.js';
+import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
+import {
+  DEFAULT_POLICY,
+  MAX_POLICY_RUNG,
+  MIN_POLICY_RUNG,
+  POLICY_GATE_MODES,
+  POLICY_GATES,
+} from './policy.js';
 import type { QueueWeights, ScoreFactorKey } from './scoring.js';
 import {
   DEFAULT_QUEUE_WEIGHTS,
@@ -96,6 +104,7 @@ const DEFAULTS: DispatchConfig = {
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
   receipts: { ...DEFAULT_RECEIPTS },
+  policy: { ...DEFAULT_POLICY, gates: {} },
   // No `queue` here: it is the one optional block, so a DEFAULTS entry could
   // only be read through a fallback anyway. Both readers call defaultQueue().
 };
@@ -246,6 +255,58 @@ function parseReceiptsConfig(raw: unknown): ReceiptsConfig {
   }
 
   return { enabled: enabled ?? DEFAULT_RECEIPTS.enabled, dir };
+}
+
+// Validates the optional `policy:` block, same contract as the blocks above —
+// only `undefined` falls back to defaults. An unknown gate key or mode is a
+// ConfigError rather than silently ignored: a typo'd override would otherwise
+// leave a gate on the rung's behavior while the file reads as pinning it.
+function parsePolicyConfig(raw: unknown): PolicyConfig {
+  if (raw === undefined) return { ...DEFAULT_POLICY, gates: {} };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: policy must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { rung } = obj;
+  if (
+    rung !== undefined &&
+    (typeof rung !== 'number' ||
+      !Number.isInteger(rung) ||
+      rung < MIN_POLICY_RUNG ||
+      rung > MAX_POLICY_RUNG)
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: policy.rung must be an integer between ${MIN_POLICY_RUNG} and ${MAX_POLICY_RUNG}`
+    );
+  }
+
+  const { gates } = obj;
+  const parsedGates: Partial<Record<PolicyGate, PolicyGateMode>> = {};
+  if (gates !== undefined) {
+    if (typeof gates !== 'object' || gates === null || Array.isArray(gates)) {
+      throw new ConfigError(
+        'invalid .dispatch/config.yml: policy.gates must be an object'
+      );
+    }
+    for (const [gate, mode] of Object.entries(gates)) {
+      if (!POLICY_GATES.includes(gate as PolicyGate)) {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: unknown policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
+        );
+      }
+      if (!POLICY_GATE_MODES.includes(mode as PolicyGateMode)) {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: policy.gates.${gate} must be one of ${POLICY_GATE_MODES.join('|')}`
+        );
+      }
+      parsedGates[gate as PolicyGate] = mode as PolicyGateMode;
+    }
+  }
+
+  return { rung: rung ?? DEFAULT_POLICY.rung, gates: parsedGates };
 }
 
 // Validates the optional `models:` block, same contract as parseOrchestratorConfig.
@@ -606,6 +667,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
       receipts: { ...DEFAULT_RECEIPTS },
+      policy: { ...DEFAULT_POLICY, gates: {} },
       queue: defaultQueue(),
     };
   }
@@ -686,6 +748,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     receipts: parseReceiptsConfig(raw.receipts),
+    policy: parsePolicyConfig(raw.policy),
     queue: parseQueueConfig(raw.queue),
     prWorktreeDir: raw.prWorktreeDir,
   };
@@ -869,6 +932,47 @@ export function updateConfig(
         ['queue', 'weights', key],
         parseWeight(value, `queue.weights.${key}`)
       );
+    }
+  }
+  if (patch.policy !== undefined) {
+    // Same validate-before-write rule as models: a bad rung or gate must never
+    // reach disk, or every later loadConfig refuses the whole file.
+    const { rung, gates } = patch.policy;
+    if (rung !== undefined) {
+      if (
+        !Number.isInteger(rung) ||
+        rung < MIN_POLICY_RUNG ||
+        rung > MAX_POLICY_RUNG
+      ) {
+        throw new ConfigError(
+          `invalid policy.rung: must be an integer between ${MIN_POLICY_RUNG} and ${MAX_POLICY_RUNG}`
+        );
+      }
+      doc.setIn(['policy', 'rung'], rung);
+    }
+    if (gates !== undefined) {
+      // Written key-by-key so a pin the patch omits survives; `null` clears a
+      // pin, handing the gate back to the rung.
+      for (const [gate, mode] of Object.entries(gates)) {
+        if (!POLICY_GATES.includes(gate as PolicyGate)) {
+          throw new ConfigError(
+            `invalid policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
+          );
+        }
+        if (mode === undefined) continue;
+        if (mode === null) {
+          if (doc.hasIn(['policy', 'gates', gate])) {
+            doc.deleteIn(['policy', 'gates', gate]);
+          }
+          continue;
+        }
+        if (!POLICY_GATE_MODES.includes(mode)) {
+          throw new ConfigError(
+            `invalid policy.gates.${gate}: must be one of ${POLICY_GATE_MODES.join('|')}`
+          );
+        }
+        doc.setIn(['policy', 'gates', gate], mode);
+      }
     }
   }
   if (patch.verify !== undefined) {

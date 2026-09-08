@@ -1,10 +1,19 @@
+import { describePolicyAuthorization } from '@dispatch/core';
+
 import type { ApiContext } from '../api.js';
-import { SCOPE_REQUEST_POLL_MS } from '../orchestrator/scopeRequests.js';
+import {
+  SCOPE_REQUEST_POLL_MS,
+  scopePathsInsideRepo,
+} from '../orchestrator/scopeRequests.js';
 import type {
   RunScopeRequest,
   ScopeDecider,
 } from '../orchestrator/scopeRequests.js';
 import { OrchestratorConflictError } from '../orchestrator/types.js';
+import {
+  consultProjectPolicy,
+  policyActivityAppender,
+} from '../policyEngine.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 // The transcript text a scope request lands as, so the session log records
@@ -46,7 +55,55 @@ export async function requestScope(
     runId,
     requestId: record.id,
   });
+  // The policy consult this gate demotes through: at or above the scope rung
+  // the request is granted on the spot and recorded — same decide() path, same
+  // ledger entry a human grant produces, plus an Activity line — instead of
+  // parking the agent on a person. Below the rung nothing changes: the
+  // request blocks as today.
+  const ruling = policyRulingForScope(ctx, runId, paths);
+  if (ruling !== null) {
+    const authorization = describePolicyAuthorization(ruling);
+    const decided = ctx.scopeRequests.decide(
+      record.id,
+      true,
+      authorization,
+      'policy'
+    );
+    const taskId = recordGrantedLedgerEntry(ctx, runId, decided);
+    if (taskId !== null) {
+      policyActivityAppender(ctx)(
+        taskId,
+        `[policy] Scope extended for run ${runId}: ${paths.join(', ')} — ${authorization}`
+      );
+    }
+    ctx.events.broadcast({
+      type: 'scope.decided',
+      runId,
+      requestId: record.id,
+    });
+    return jsonResponse(decided, 201);
+  }
   return jsonResponse(record, 201);
+}
+
+// The auto-grant authorization for one request, or null when it must park
+// for a human: the task's risk caps the rung (a critical task never
+// auto-extends), and only paths inside the run's own checkout and outside
+// `.git/` qualify — anything else is the human's call at every rung. A run
+// or task the daemon cannot find fails closed.
+function policyRulingForScope(
+  ctx: ApiContext,
+  runId: string,
+  paths: string[]
+): Extract<ReturnType<typeof consultProjectPolicy>, { mode: 'auto' }> | null {
+  const run = ctx.orchestrator.list().find((r) => r.id === runId);
+  const task = run === undefined ? null : ctx.store.get(run.taskId);
+  if (run === undefined || task === null) return null;
+  if (!scopePathsInsideRepo(paths, [run.worktreePath, ctx.rootDir])) {
+    return null;
+  }
+  const ruling = consultProjectPolicy(ctx.rootDir, 'scope', task.meta.risk);
+  return ruling.mode === 'auto' ? ruling : null;
 }
 
 // Resolves a request id against its own run, so one run can never read or
@@ -99,11 +156,12 @@ function deciderFor(req: Request): ScopeDecider {
 
 // A granted request extends what its task inherits: the paths it touched,
 // and why, so the next task in the epic sees the fence actually moved.
+// Returns the task the entry was filed under, when the run resolved to one.
 function recordGrantedLedgerEntry(
   ctx: ApiContext,
   runId: string,
   record: RunScopeRequest
-): void {
+): string | null {
   const run = ctx.orchestrator.getRun(runId);
   const taskId = run?.meta.taskId ?? null;
   const task = taskId !== null ? ctx.store.get(taskId) : null;
@@ -123,6 +181,7 @@ function recordGrantedLedgerEntry(
     authoredBy: ctx.actorContext.humanRef,
   });
   ctx.events.broadcast({ type: 'ledger.changed' });
+  return taskId;
 }
 
 // POST /api/runs/:id/scope-requests/:rid/decide {granted, reason?} — unblocks

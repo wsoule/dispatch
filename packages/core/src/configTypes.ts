@@ -1,4 +1,6 @@
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
+import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
+import { DEFAULT_POLICY } from './policy.js';
 import type { QueueWeights } from './scoring.js';
 import { DEFAULT_QUEUE_WEIGHTS } from './scoring.js';
 
@@ -88,6 +90,21 @@ export interface DispatchConfig {
   /** Parent directory for PR review worktrees (Task 7); each PR gets a
    *  `pr-<n>` child inside it. Absent means the default sibling of `rootDir`. */
   prWorktreeDir?: string;
+  /** The autonomy policy: which gates auto-decide instead of blocking.
+   *  `loadConfig` always populates it; optional only so hand-built config
+   *  literals (test fixtures) predating the block stay valid. Read it through
+   *  `projectPolicy()`, never directly, so the default rung applies. */
+  policy?: PolicyConfig;
+}
+
+/** The policy a config implies. The single reader of the optional `policy`
+ *  block, so no gate call site has to remember that a hand-built config may
+ *  not carry one. Returns a fresh object every call — DEFAULT_POLICY is a
+ *  shared module constant, and handing it out by reference would let one
+ *  caller's mutation change every later gate consult process-wide. */
+export function projectPolicy(config: DispatchConfig): PolicyConfig {
+  const policy = config.policy ?? DEFAULT_POLICY;
+  return { rung: policy.rung, gates: { ...policy.gates } };
 }
 
 /** Settings for the planning queue's ranking. Nested under `queue:` rather
@@ -263,4 +280,10 @@ export interface ConfigPatch {
   verify?: Partial<VerifyConfig>;
   /** Weights only — the factor table itself is code, not configuration. */
   queue?: { weights?: Partial<QueueWeights> };
+  /** `gates` is written key-by-key; a `null` pin clears the override so the
+   *  rung decides again. */
+  policy?: {
+    rung?: number;
+    gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+  };
 }

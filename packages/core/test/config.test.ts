@@ -14,6 +14,7 @@ import {
   loadConfig,
   queueWeights,
 } from '../src/config.js';
+import { DEFAULT_POLICY } from '../src/policy.js';
 import { DEFAULT_QUEUE_WEIGHTS } from '../src/scoring.js';
 
 let root: string;
@@ -54,6 +55,7 @@ describe('loadConfig', () => {
       carto: DEFAULT_CARTO,
       repoDigest: DEFAULT_REPO_DIGEST,
       receipts: DEFAULT_RECEIPTS,
+      policy: DEFAULT_POLICY,
       queue: { weights: DEFAULT_QUEUE_WEIGHTS },
     });
   });

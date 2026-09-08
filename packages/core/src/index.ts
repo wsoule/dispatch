@@ -180,8 +180,29 @@ export {
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
+  projectPolicy,
   queueWeights,
 } from './config.js';
+export {
+  consultPolicy,
+  DEFAULT_POLICY,
+  describePolicyAuthorization,
+  effectiveRung,
+  GATE_RUNGS,
+  MAX_POLICY_RUNG,
+  MIN_POLICY_RUNG,
+  POLICY_GATE_MODES,
+  POLICY_GATES,
+  POLICY_RUNGS,
+  RISK_RUNG_CAPS,
+} from './policy.js';
+export type {
+  PolicyConfig,
+  PolicyGate,
+  PolicyGateMode,
+  PolicyRuling,
+  PolicyRungDef,
+} from './policy.js';
 export type {
   CartoConfig,
   CartoMode,
