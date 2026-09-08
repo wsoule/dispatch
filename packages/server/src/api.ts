@@ -3405,8 +3405,10 @@ async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
     createdByRunId:
       typeof body.createdByRunId === 'string' ? body.createdByRunId : null,
   });
-  // `splitCapture` strips bullet and checkbox prefixes, so text that is only
-  // markers stores nothing — a 201 there would claim a capture that never was.
+  // `normalizeCapture` strips the leading bullet or checkbox from the capture's
+  // FIRST line (one dump is one item, so only that line is a marker), leaving
+  // nothing when the whole capture was that one marker — a 201 there would
+  // claim a capture that never was.
   if (created.length === 0) {
     return errorResponse(400, 'text contained no capturable lines');
   }
