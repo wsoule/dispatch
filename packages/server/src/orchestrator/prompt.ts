@@ -175,6 +175,53 @@ export function renderSurveySection(survey: RunSurvey): string {
   return ['## Recovered state from the previous run', ...lines].join('\n');
 }
 
+// The slice of a scope request a resumed agent is told about — see
+// renderScopeRequestsSection. Named here rather than importing the registry's
+// record so the prompt module stays free of orchestrator state.
+export interface CarriedScopeRequest {
+  id: string;
+  paths: string[];
+  reason: string;
+  granted: boolean | null;
+  decisionReason: string | null;
+  decidedBy: string | null;
+}
+
+// Tells a resumed agent what became of the out-of-fence requests its previous
+// process was parked on when dispatchd restarted: still open ones are waiting
+// on a human and re-issuing `request_scope` with the same paths re-parks on
+// them; decided ones carry the ruling, since the poll that would have
+// delivered it died with the process. Null when nothing was carried.
+export function renderScopeRequestsSection(
+  requests: CarriedScopeRequest[]
+): string | null {
+  if (requests.length === 0) return null;
+  const lines = requests.map((r) => {
+    const paths = r.paths.map((p) => `\`${p}\``).join(', ');
+    const why = untrustedInline(r.reason);
+    if (r.granted === null) {
+      return (
+        `- ${r.id} (${paths}) — ${why}. **Still awaiting a decision.** If you ` +
+        'still need these paths, call `request_scope` again with exactly the ' +
+        'same paths: it re-attaches to this pending request rather than filing ' +
+        'a new one, and blocks until a human decides. Until then, stay inside ' +
+        'your declared writes.'
+      );
+    }
+    const verdict = r.granted ? 'GRANTED' : 'DENIED';
+    const by = r.decidedBy === null ? '' : ` via ${r.decidedBy}`;
+    const ruling =
+      r.decisionReason === null ? '' : `: ${untrustedInline(r.decisionReason)}`;
+    return `- ${r.id} (${paths}) — ${why}. **${verdict}${by}**${ruling}`;
+  });
+  return [
+    '## Scope requests from before the restart',
+    'Your previous process asked to edit outside its declared scope and was ' +
+      'interrupted by a dispatchd restart before the answer reached it.',
+    ...lines,
+  ].join('\n');
+}
+
 // The opening message for a run that REATTACHES its predecessor's session
 // (see Orchestrator.resumeRun). The agent still has the whole conversation —
 // the task brief, any amendments, every answer and scope ruling it was given

@@ -40,6 +40,12 @@ export async function requestScope(
   const reason = body.reason.trim();
 
   ctx.orchestrator.messageUser(runId, scopeRequestEntryText(paths, reason));
+  // Idempotent on the path set: a resumed agent re-issuing the request its
+  // previous process was parked on (carried here from the run a restart
+  // killed) re-parks on the card the human already has, rather than putting a
+  // second copy of it in front of them. 200, not 201 — nothing was created.
+  const existing = ctx.scopeRequests.findOpen(runId, paths);
+  if (existing !== null) return jsonResponse(existing);
   const record = ctx.scopeRequests.request(runId, paths, reason);
   ctx.events.broadcast({
     type: 'scope.requested',
@@ -47,6 +53,17 @@ export async function requestScope(
     requestId: record.id,
   });
   return jsonResponse(record, 201);
+}
+
+// GET /api/runs/:id/scope-requests — the run's still-undecided requests,
+// oldest first. This is how a client finds a request it never saw the
+// `scope.requested` event for: one that outlived a daemon restart, or one
+// carried onto a resumed run. 404s an unknown run, like every run route.
+export function listScopeRequests(ctx: ApiContext, runId: string): Response {
+  if (ctx.orchestrator.getRun(runId) === null) {
+    return errorResponse(404, `run not found: ${runId}`);
+  }
+  return jsonResponse(ctx.scopeRequests.listOpen(runId));
 }
 
 // Resolves a request id against its own run, so one run can never read or

@@ -57,12 +57,14 @@ import {
   buildTaskPrompt,
   renderContinuationPrompt,
   renderFreshSessionNotice,
+  renderScopeRequestsSection,
   untrustedInline,
 } from './prompt.js';
 import { prNumberFromOrigin } from './prReviewTask.js';
 import type { PendingApproval } from './registry.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
+import type { RunScopeRequest } from './scopeRequests.js';
 import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
@@ -157,6 +159,16 @@ export interface OrchestratorContext {
   // pre-existing synchronous Bun.spawnSync ones. Same seam PrManager /
   // MergeQueue / GitRepo share, so a test stubs git rather than running it.
   commandRunner?: CommandRunner;
+  // Where a run's out-of-fence requests live, so resumeRun can hand a
+  // predecessor's still-open (or decided-while-dead) requests to the successor
+  // it creates — see the `carry` call there. Optional: a test that never
+  // resumes across a restart has nothing to carry.
+  scopeRequests?: ScopeRequestCarrier;
+}
+
+/** The one thing the orchestrator asks of the scope-request registry. */
+interface ScopeRequestCarrier {
+  carry(fromRunId: string, toRunId: string): RunScopeRequest[];
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -4428,9 +4440,6 @@ export class Orchestrator {
     const now = new Date().toISOString();
     const newRunId = generateRunId(now);
     const continuing = meta.sessionId !== undefined;
-    const prompt = continuing
-      ? renderContinuationPrompt(meta, newRunId)
-      : `${this.promptForTask(task)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
     const newMeta: RunMeta = {
       id: newRunId,
       taskId: meta.taskId,
@@ -4484,9 +4493,43 @@ export class Orchestrator {
       });
     }
 
+    // The predecessor's scope requests follow it into the successor: an open
+    // one is still a card in front of a human, and it has to belong to the run
+    // whose agent can act on the answer. Carried BEFORE the prompt is built so
+    // the agent is told what it was waiting on; the re-broadcast is what moves
+    // the card to the new run in an open app.
+    const carried = this.ctx.scopeRequests?.carry(meta.id, newRunId) ?? [];
+    for (const request of carried) {
+      if (request.granted !== null) continue;
+      this.ctx.events.broadcast({
+        type: 'scope.requested',
+        runId: newRunId,
+        requestId: request.id,
+      });
+    }
+    // A reattached session already holds every ruling the agent was GIVEN,
+    // but not the one its dead request_scope poll never received — so the
+    // carried section goes on both prompt shapes.
+    const prompt = [
+      continuing
+        ? renderContinuationPrompt(meta, newRunId)
+        : `${this.promptForTask(task)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
+      renderScopeRequestsSection(carried),
+    ]
+      .filter((section): section is string => section !== null)
+      .join('\n\n');
+
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
       : '';
+    const openCarried = carried.filter((r) => r.granted === null).length;
+    const carriedNote =
+      openCarried > 0
+        ? `; carried ${openCarried} undecided scope request${openCarried === 1 ? '' : 's'} (${carried
+            .filter((r) => r.granted === null)
+            .map((r) => r.id)
+            .join(', ')})`
+        : '';
     const how =
       opts.auto === true
         ? `auto-resumed after ${meta.state} (daemon restart)`
@@ -4498,7 +4541,7 @@ export class Orchestrator {
       meta.taskId,
       {
         status: 'working',
-        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}`,
+        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}${carriedNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.
         activityActor:

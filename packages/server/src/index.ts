@@ -55,6 +55,7 @@ import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
+import { scopeRequestsPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -72,6 +73,7 @@ import {
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
 import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
+import { TERMINAL_RUN_STATES } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import { WardenManager } from './orchestrator/warden.js';
 import { ClaudeWarden } from './orchestrator/wardens/claude.js';
@@ -734,10 +736,18 @@ export async function startServer(
           readDigestConfig
         )
       : new RepoDigestCache(rootDir);
+  // Out-of-scope edit requests from run agents. Built ahead of the
+  // orchestrator because resumeRun hands a restarted run's requests to its
+  // successor; persisted so the card a human had not decided when dispatchd
+  // restarted comes back instead of vanishing with the process.
+  const scopeRequests = new ScopeRequestRegistry({
+    path: scopeRequestsPath(rootDir),
+  });
   const orchestrator = new Orchestrator({
     rootDir,
     store,
     cache,
+    scopeRequests,
     events,
     jj,
     ledgerStore,
@@ -769,8 +779,15 @@ export async function startServer(
   });
   // Same lifecycle for out-of-scope edit requests: a run that ends still
   // holding one open should not leave it dangling for a human to find later.
-  const scopeRequests = new ScopeRequestRegistry();
+  // A boot force-fail is deliberately NOT a terminal transition here (see
+  // reconcileOnBoot) — that is the one ending a request must outlive.
   orchestrator.onRunTerminal((meta) => {
+    scopeRequests.closeRun(meta.id);
+  });
+  // A force-failed run a human reviews instead of resuming has no successor
+  // for its request to follow; the review is where the card should go. The
+  // run's own review event is what refreshes an open app's view of it.
+  orchestrator.onRunReviewed((meta) => {
     scopeRequests.closeRun(meta.id);
   });
 
@@ -778,6 +795,22 @@ export async function startServer(
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
   orchestrator.reconcileOnBoot();
+  // The requests hydrated from the previous process: kept while their run is
+  // still live (a restart-with-nothing-in-flight reload) or is one this boot
+  // force-failed and can still resume — those re-surface to the human and
+  // follow the run into its successor. Anything else has nobody left to act
+  // on a decision, so it is withdrawn rather than shown.
+  const withdrawn = scopeRequests.reconcile((runId) => {
+    const run = orchestrator.getRun(runId);
+    if (run === null) return false;
+    if (!TERMINAL_RUN_STATES.has(run.meta.state)) return true;
+    return orchestrator.resumeBlockReason(run.meta) === null;
+  });
+  if (withdrawn.length > 0) {
+    console.log(
+      `dispatchd: withdrew ${withdrawn.length} stale scope request(s) at boot: ${withdrawn.join(', ')}`
+    );
+  }
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override

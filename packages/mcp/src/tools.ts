@@ -1640,7 +1640,10 @@ export function registerDispatchTools(
         'genuine dead end. List every path you need in `paths` and explain ' +
         'why in `reason`. If nobody decides in time, this returns denied — ' +
         'proceed within your original fence and report the blocker in your ' +
-        'final summary and in a task_comment. Requires a live dispatch run context.',
+        'final summary and in a task_comment. Calling it again with the same ' +
+        'paths re-attaches to a request that is still pending (after a ' +
+        'dispatchd restart, say) rather than filing a second one. Requires a ' +
+        'live dispatch run context.',
       inputSchema: {
         paths: z.array(z.string()),
         reason: z.string(),

@@ -1,4 +1,9 @@
-import type { ConnectEventsOptions, ServerEvent } from '@dispatch/client';
+import type {
+  ConnectEventsOptions,
+  RunMeta,
+  RunScopeRequest,
+  ServerEvent,
+} from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
@@ -23,12 +28,23 @@ let sink: {
   onEvent: (event: ServerEvent) => void;
 } | null = null;
 
+// What the daemon's run list says right now, and the open scope requests it
+// reports per run — set by the restart test below, empty for everyone else.
+let runsFixture: RunMeta[] = [];
+let openScopeRequests = new Map<string, RunScopeRequest[]>();
+const scopeRequestListings: string[] = [];
+
 // Only `createApiClient` is replaced — the rest of the module (ApiError, which
 // useWardenSession's 404 veto instanceof-checks) has to stay real.
 void mock.module('@dispatch/client', () => ({
   ...dispatchClient,
   createApiClient: () => ({
     baseUrl: `http://127.0.0.1:${PORT}`,
+    fetchRuns: () => Promise.resolve(runsFixture),
+    listScopeRequests: (runId: string) => {
+      scopeRequestListings.push(runId);
+      return Promise.resolve(openScopeRequests.get(runId) ?? []);
+    },
     connectEvents: (
       onChange: () => void,
       options: ConnectEventsOptions = {}
@@ -132,4 +148,70 @@ test('a task change does not invalidate warden records', async () => {
   expect(queryClient.getQueryState(wardenKey(PORT, 'w-1'))?.isInvalidated).toBe(
     false
   );
+});
+
+function runFixture(id: string, state: RunMeta['state']): RunMeta {
+  return {
+    id,
+    taskId: 't-1',
+    taskTitle: 'Needs a shared export',
+    executor: 'claude',
+    state,
+    branch: `dispatch/${id}`,
+    baseBranch: 'main',
+    worktreePath: `/tmp/${id}`,
+    createdAt: '2026-08-23T00:00:00Z',
+    updatedAt: '2026-08-23T00:00:00Z',
+  };
+}
+
+function scopeRequestFixture(id: string, runId: string): RunScopeRequest {
+  return {
+    id,
+    runId,
+    paths: ['packages/core/src/browser.ts'],
+    reason: 'the type my scoped code needs is not re-exported',
+    requestedAt: '2026-08-23T00:00:01Z',
+    granted: null,
+    decisionReason: null,
+    decidedAt: null,
+    decidedBy: null,
+  };
+}
+
+// Incident 2026-08-23: the only way this hook learned of a scope request was
+// the live `scope.requested` frame. An app relaunched after a dispatchd
+// restart never received it, so the card the human had not decided vanished
+// for good. The daemon now persists the request and carries it onto the
+// resumed run; this pins the app's half — the open requests of every live run
+// are read back without any event having arrived.
+test("a live run's open scope request is surfaced from the listing, without a scope.requested event", async () => {
+  runsFixture = [
+    runFixture('r-resumed', 'running'),
+    runFixture('r-dead', 'failed'),
+  ];
+  openScopeRequests = new Map([
+    ['r-resumed', [scopeRequestFixture('sr-abc123', 'r-resumed')]],
+  ]);
+  scopeRequestListings.length = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+
+  await waitFor(() => {
+    expect(result.current.pendingScopeRequests.get('r-resumed')).toEqual({
+      requestId: 'sr-abc123',
+    });
+  });
+  // Only live runs are asked: the force-failed predecessor has no agent
+  // listening, and its card (if any) belongs to the decision feed.
+  expect(scopeRequestListings).toEqual(['r-resumed']);
+  expect(result.current.pendingScopeRequests.has('r-dead')).toBe(false);
+
+  runsFixture = [];
+  openScopeRequests = new Map();
 });

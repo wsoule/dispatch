@@ -164,3 +164,12 @@ export function receiptsDir(rootDir: string): string {
     'receipts'
   );
 }
+
+// Where open scope requests live across a daemon restart — see
+// ScopeRequestRegistry's persist()/hydrate(). Without it a request an agent
+// was parked on when dispatchd restarted vanished with the process, and the
+// human never saw the card again. One file per project, flat alongside
+// merge-queue.json for the same reason.
+export function scopeRequestsPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'scope-requests.json');
+}

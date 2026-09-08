@@ -56,6 +56,7 @@ import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
 import {
   decideScopeRequest,
   getScopeRequest,
+  listScopeRequests,
   requestScope,
 } from './api/scopeRequests.js';
 import { getTaskVerification, startTaskVerification } from './api/verify.js';
@@ -4352,6 +4353,13 @@ export async function handleApi(
         method === 'POST'
       ) {
         return await requestScope(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'scope-requests' &&
+        method === 'GET'
+      ) {
+        return listScopeRequests(ctx, segments[1]);
       }
       if (
         segments.length === 4 &&

@@ -702,6 +702,7 @@ export interface RunScopeRequest {
   granted: boolean | null;
   decisionReason: string | null;
   decidedAt: string | null;
+  decidedBy: 'app' | 'api' | null;
 }
 
 // The body of `GET /api/runs/claims` — one entry per live run.
@@ -1983,7 +1984,10 @@ export interface ApiClient {
     answer: string
   ): Promise<RunQuestion>;
   // The blocking agent->orchestrator channel (`request_scope`'s landing
-  // spot): look up one request by id, and the call that decides it.
+  // spot): the run's still-open requests (what survives a daemon restart —
+  // the only way to find one without having seen its `scope.requested`
+  // event live), one request by id, and the call that decides it.
+  listScopeRequests(runId: string): Promise<RunScopeRequest[]>;
   fetchScopeRequest(runId: string, requestId: string): Promise<RunScopeRequest>;
   decideScopeRequest(
     runId: string,
@@ -2516,6 +2520,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ answer }),
       }),
+    listScopeRequests: (runId) =>
+      request(target, `/api/runs/${runId}/scope-requests`),
     fetchScopeRequest: (runId, requestId) =>
       request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
     decideScopeRequest: (runId, requestId, granted, reason) =>

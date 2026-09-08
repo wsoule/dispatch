@@ -289,3 +289,69 @@ describe('a run going terminal', () => {
     });
   });
 });
+
+describe('GET /api/runs/:id/scope-requests', () => {
+  it("lists the run's undecided requests, oldest first, and nothing decided", async () => {
+    const runId = await liveRun('Lists open requests');
+    const first = await json<ScopeRequestBody>(
+      await requestScope(runId, ['a.ts'], 'needs a')
+    );
+    const second = await json<ScopeRequestBody>(
+      await requestScope(runId, ['b.ts'], 'needs b')
+    );
+    await decide(runId, first.id, true);
+
+    const open = await json<ScopeRequestBody[]>(
+      await fetch(`${baseUrl}/api/runs/${runId}/scope-requests`)
+    );
+    expect(open.map((r) => r.id)).toEqual([second.id]);
+    expect(open[0]?.granted).toBeNull();
+  });
+
+  it('keeps runs apart and 404s an unknown run', async () => {
+    const mine = await liveRun('Mine');
+    const other = await liveRun('Other');
+    await requestScope(other, ['b.ts'], 'needs b');
+
+    const open = await json<ScopeRequestBody[]>(
+      await fetch(`${baseUrl}/api/runs/${mine}/scope-requests`)
+    );
+    expect(open).toEqual([]);
+    expect(
+      (await fetch(`${baseUrl}/api/runs/r-000000/scope-requests`)).status
+    ).toBe(404);
+  });
+});
+
+describe('POST /api/runs/:id/scope-requests re-issued for the same paths', () => {
+  it('200s with the request already open instead of filing a second one', async () => {
+    const runId = await liveRun('Asks twice');
+    const first = await json<ScopeRequestBody>(
+      await requestScope(runId, ['a.ts', 'b.ts'], 'needs both')
+    );
+
+    const again = await requestScope(
+      runId,
+      ['b.ts', 'a.ts'],
+      'still needs both'
+    );
+    expect(again.status).toBe(200);
+    expect((await json<ScopeRequestBody>(again)).id).toBe(first.id);
+    const open = await json<ScopeRequestBody[]>(
+      await fetch(`${baseUrl}/api/runs/${runId}/scope-requests`)
+    );
+    expect(open).toHaveLength(1);
+  });
+
+  it('files a new request once the earlier one for those paths is decided', async () => {
+    const runId = await liveRun('Asks again after a ruling');
+    const first = await json<ScopeRequestBody>(
+      await requestScope(runId, ['a.ts'], 'needs it')
+    );
+    await decide(runId, first.id, false, 'not yet');
+
+    const again = await requestScope(runId, ['a.ts'], 'really needs it');
+    expect(again.status).toBe(201);
+    expect((await json<ScopeRequestBody>(again)).id).not.toBe(first.id);
+  });
+});

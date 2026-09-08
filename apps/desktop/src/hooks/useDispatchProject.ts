@@ -75,8 +75,9 @@ import { wardenKey, wardenKeyPrefix } from './useWardenSession';
 // only the live event carries it (see the WS effect below).
 type PendingApproval = { requestId: string; toolName: string };
 
-// Same shape/reason as `PendingApproval`, for `scope.requested` — there is no
-// listing route for open scope requests, only the live WS event carries the id.
+// Same shape/reason as `PendingApproval`, for `scope.requested`. Seeded from
+// the live WS event, and re-read from `GET /api/runs/:id/scope-requests` for
+// every live run so a request that outlived a daemon restart is found too.
 type PendingScopeRequest = { requestId: string };
 
 // Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
@@ -1456,6 +1457,48 @@ export function useDispatchProject(
       return changed ? next : prev;
     });
   }, [runs]);
+
+  // The restart case: dispatchd persists a scope request a human has not
+  // decided, and a resume carries it onto the successor run — but this window
+  // only hears about a request from the live `scope.requested` event, which an
+  // app opened after the restart (or after the resume) never received. So
+  // whenever the set of live runs changes, their open requests are read back
+  // and folded in. Keyed on the sorted live-id string rather than `runs`, so an
+  // ordinary run.changed refetch with the same live set issues no requests.
+  const liveRunIdsKey = useMemo(
+    () =>
+      (runs ?? [])
+        .filter((r) => !isTerminalRunState(r.state))
+        .map((r) => r.id)
+        .sort()
+        .join(','),
+    [runs]
+  );
+  useEffect(() => {
+    if (client === null || liveRunIdsKey === '') return;
+    let cancelled = false;
+    for (const runId of liveRunIdsKey.split(',')) {
+      client.listScopeRequests(runId).then(
+        (open) => {
+          const first = open[0];
+          if (cancelled || first === undefined) return;
+          setPendingScopeRequests((prev) => {
+            if (prev.get(runId)?.requestId === first.id) return prev;
+            const next = new Map(prev);
+            next.set(runId, { requestId: first.id });
+            return next;
+          });
+        },
+        () => {
+          // A failed read leaves the live event as the only source, which is
+          // exactly what this window had before — nothing to surface.
+        }
+      );
+    }
+    return () => {
+      cancelled = true;
+    };
+  }, [client, liveRunIdsKey]);
 
   // Same cleanup as pendingApprovals above, but keyed on the run going
   // terminal — a scope request doesn't move `meta.state` like an approval.
