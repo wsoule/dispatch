@@ -9,7 +9,7 @@ import type { LedgerEntry, TaskDoc } from '@dispatch/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
-import type { RunSurvey } from './types.js';
+import type { RunMeta, RunSurvey } from './types.js';
 
 // Re-exported from core (where @dispatch/mcp can reach them too) because
 // every prompt builder in this package imports them from './prompt.js'.
@@ -173,4 +173,60 @@ export function renderSurveySection(survey: RunSurvey): string {
     'Review what survived before continuing — keep, fix, or discard it as needed.'
   );
   return ['## Recovered state from the previous run', ...lines].join('\n');
+}
+
+// The opening message for a run that REATTACHES its predecessor's session
+// (see Orchestrator.resumeRun). The agent still has the whole conversation —
+// the task brief, any amendments, every answer and scope ruling it was given
+// — so re-sending the task prompt would read as a brand-new assignment on
+// top of its own history. What it lacks is why it stopped, that its run id
+// changed, and what the worktree looked like when it was picked up.
+export function renderContinuationPrompt(
+  previous: RunMeta,
+  newRunId: string
+): string {
+  const stopped =
+    previous.error !== undefined
+      ? `stopped before finishing: ${previous.error}`
+      : `ended as ${previous.state}`;
+  const sections: string[] = [
+    `## Continuing run ${previous.id} as run ${newRunId}`,
+    `Your previous run on this task, ${previous.id}, ${stopped}. This run ` +
+      'picks the same session back up, so everything already in this ' +
+      'conversation still stands: the task brief, its amendments, and every ' +
+      `answer or scope decision you received. Your run id is now ${newRunId} ` +
+      '(the dispatch MCP tools and DISPATCH_RUN_ID refer to it); the branch ' +
+      'and worktree are unchanged.',
+  ];
+  if (previous.survey !== undefined) {
+    sections.push(renderSurveySection(previous.survey));
+  }
+  sections.push(
+    'Take stock of where you were and carry on from there — do not start ' +
+      'the task over.'
+  );
+  return sections.join('\n\n');
+}
+
+// Appended to the full task prompt when a resume has NO session to pick up
+// — the predecessor died before its agent ever opened one, so there is no
+// conversation to lose, and starting over is the only option. Said out loud
+// here (and in the run's transcript and the task's Activity) so a fresh
+// start never passes as a continuation.
+export function renderFreshSessionNotice(
+  previous: RunMeta,
+  newRunId: string
+): string {
+  const stopped = previous.error !== undefined ? `: ${previous.error}` : '';
+  const sections: string[] = [
+    '## Fresh session',
+    `This run (${newRunId}) is a fresh session resuming run ${previous.id}, ` +
+      `which failed before its agent ever started a conversation${stopped}. ` +
+      'There is no conversation to continue, so you are starting from the ' +
+      'brief above with no memory of that run.',
+  ];
+  if (previous.survey !== undefined) {
+    sections.push(renderSurveySection(previous.survey));
+  }
+  return sections.join('\n\n');
 }

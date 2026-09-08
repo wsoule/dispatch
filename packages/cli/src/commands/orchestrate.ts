@@ -307,7 +307,14 @@ export function registerOrchestrateCommands(
       ctx.log(
         opts.json === true
           ? JSON.stringify(meta, null, 2)
-          : `resumed ${runId} as ${meta.id} (${meta.executor}) on ${meta.branch}`
+          : `resumed ${runId} as ${meta.id} (${meta.executor}) on ${meta.branch}${
+              // Whether the agent still has the conversation, or is starting
+              // from the brief — the difference this command's user most
+              // needs to hear, and one the run id alone never shows.
+              meta.sessionId !== undefined
+                ? ', continuing its session'
+                : ' as a fresh session'
+            }`
       );
     });
 

@@ -54,7 +54,8 @@ import type { CommandRunner } from './pr.js';
 import { defaultCommandRunner, deletePrHeadRef } from './pr.js';
 import {
   buildTaskPrompt,
-  renderSurveySection,
+  renderContinuationPrompt,
+  renderFreshSessionNotice,
   untrustedInline,
 } from './prompt.js';
 import { prNumberFromOrigin } from './prReviewTask.js';
@@ -3859,10 +3860,18 @@ export class Orchestrator {
     // cancel, an escalation — there is nothing left for the stop backstop to
     // catch. This is the one point every terminal state passes through.
     if (TERMINAL_RUN_STATES.has(state)) this.clearStopEscalation(runId);
+    // A finish that reports no session must not erase the one recordSession
+    // already stored: spreading `sessionId: undefined` over the meta did
+    // exactly that, so a run whose agent reported its handle and then died
+    // without a result read as "never started a session" — unresumable — in
+    // the live registry, while its own transcript still carried the handle
+    // (replayTranscript folds a session-less state line over the header's).
+    const { sessionId, ...rest } = finish ?? {};
     this.registry.updateMeta(runId, {
       state,
       updatedAt: now,
-      ...finish,
+      ...rest,
+      ...(sessionId !== undefined ? { sessionId } : {}),
     });
     // The registry already carries the new state; a transcript that can't be
     // appended to must not also cost clients the broadcast that says so.
@@ -3986,6 +3995,24 @@ export class Orchestrator {
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.sessionId === sessionId) return;
     if (TERMINAL_RUN_STATES.has(meta.state)) return;
+    // A resumed run is born holding the session it was told to continue, so
+    // an executor reporting a DIFFERENT one has opened a conversation with
+    // none of the history this run claims. ClaudeExecutor fails the run
+    // itself before this can happen; for any executor that does not, the
+    // Session log at least says so, rather than letting the successor pass
+    // as a continuation while the agent underneath it starts from nothing.
+    if (meta.resumedFrom !== undefined && meta.sessionId !== undefined) {
+      const notice: NormalizedEntry = {
+        ts: new Date().toISOString(),
+        kind: 'system',
+        text: `This run was resumed onto session ${meta.sessionId} but the agent opened a different session (${sessionId}): the conversation from run ${meta.resumedFrom} is not in its memory.`,
+      };
+      this.bestEffort(`logging session mismatch for run ${runId}`, () => {
+        this.transcriptFor(runId).appendEntry(notice);
+      });
+      this.ctx.events.broadcast({ type: 'run.log', runId, entry: notice });
+      console.error(`dispatchd: run ${runId}: ${notice.text}`);
+    }
     this.registry.updateMeta(runId, {
       sessionId,
       updatedAt: new Date().toISOString(),
@@ -4245,8 +4272,21 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
-  // POST /api/runs/:id/resume: a fresh run in the SAME worktree/branch,
-  // always a new session, with the run's survey (if any) in its prompt.
+  // POST /api/runs/:id/resume (and the boot sweep and dispatchOrResume): a
+  // new run in the SAME worktree/branch that REATTACHES the old run's agent
+  // session, so the conversation it was in the middle of — answered design
+  // questions, granted scope, amendments — is still in the agent's memory.
+  // Its prompt is a continuation note carrying why it stopped and the run's
+  // survey (if any), not the task brief over again.
+  //
+  // A run that never reported a session has no conversation to continue, so
+  // the successor is a fresh agent with the full brief — and it is recorded
+  // as exactly that, in the prompt, the successor's transcript and the task's
+  // Activity, never as a resume. (The unattended callers never get here for
+  // such a run: resumeBlockReason() refuses it first.) The other way a resume
+  // can fail to reattach — the executor being handed a session it cannot pick
+  // up — is the executor's to catch, and it fails the run rather than start
+  // over (see ClaudeExecutor).
   //
   // `auto` marks the one caller that is not a person — reconcileOnBoot's
   // recovery sweep — so the Activity line it writes says a restart brought the
@@ -4287,11 +4327,10 @@ export class Orchestrator {
     } = this.resolveExecutorForResume(meta.executor);
     const now = new Date().toISOString();
     const newRunId = generateRunId(now);
-    const basePrompt = this.promptForTask(task);
-    const prompt =
-      meta.survey !== undefined
-        ? `${basePrompt}\n\n${renderSurveySection(meta.survey)}`
-        : basePrompt;
+    const continuing = meta.sessionId !== undefined;
+    const prompt = continuing
+      ? renderContinuationPrompt(meta, newRunId)
+      : `${this.promptForTask(task)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
     const newMeta: RunMeta = {
       id: newRunId,
       taskId: meta.taskId,
@@ -4303,6 +4342,11 @@ export class Orchestrator {
       worktreePath: meta.worktreePath,
       createdAt: now,
       updatedAt: now,
+      // Carried from birth, exactly as requestChanges does: the successor's
+      // own transcript header then holds the handle, so a crash on IT stays
+      // resumable too. Absent on a fresh start — a handle that was never
+      // actually resumed must not be reported as this run's.
+      ...(continuing ? { sessionId: meta.sessionId } : {}),
       model: meta.model,
       // See requestChanges' matching comment — a resumed run keeps whatever
       // its predecessor had already claimed.
@@ -4318,6 +4362,28 @@ export class Orchestrator {
     this.registry.create(newMeta);
     this.transcriptFor(newRunId).writeHeader(newMeta);
 
+    // A fresh start opens the successor's Session log with the reason, so a
+    // reader of that log is never left inferring from an agent that orients
+    // from scratch that it "forgot" a conversation it never had.
+    if (!continuing) {
+      const notice: NormalizedEntry = {
+        ts: now,
+        kind: 'system',
+        text: `Started a fresh session: run ${meta.id} never started a conversation, so there was none to continue.`,
+      };
+      this.bestEffort(
+        `logging fresh-session notice for run ${newRunId}`,
+        () => {
+          this.transcriptFor(newRunId).appendEntry(notice);
+        }
+      );
+      this.ctx.events.broadcast({
+        type: 'run.log',
+        runId: newRunId,
+        entry: notice,
+      });
+    }
+
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
       : '';
@@ -4325,11 +4391,14 @@ export class Orchestrator {
       opts.auto === true
         ? `auto-resumed after ${meta.state} (daemon restart)`
         : `resumed after ${meta.state}`;
+    const sessionNote = continuing
+      ? ', continuing its session'
+      : ` as a fresh session: run ${meta.id} never started a conversation`;
     this.ctx.store.update(
       meta.taskId,
       {
         status: 'working',
-        appendActivity: `${now} ${how} (run ${newRunId})${substitutionNote}`,
+        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.
         activityActor:
@@ -4350,6 +4419,7 @@ export class Orchestrator {
         projectRoot: this.ctx.rootDir,
         runId: newRunId,
         prompt,
+        resumeSessionId: meta.sessionId,
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,

@@ -1698,8 +1698,11 @@ export interface ApiClient {
    * carries `stopRequestedAt`, and the run reaches its terminal state later.
    */
   stopRun(runId: string): Promise<RunMeta>;
-  // Agent-death recovery: dispatches a fresh run into a terminal run's same
-  // worktree, with its survey (if any) rendered into the new prompt.
+  // Agent-death recovery: starts a new run in a terminal run's same worktree
+  // that reattaches its agent session, so the conversation it was in the
+  // middle of carries over, with its survey (if any) rendered into the
+  // continuation prompt. A run that never started a session gets a fresh
+  // agent instead, and the run's Activity/transcript say so.
   resumeRun(runId: string): Promise<RunMeta>;
   fetchRunDiff(runId: string): Promise<DiffResult>;
   reviewRun(

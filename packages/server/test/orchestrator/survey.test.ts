@@ -261,6 +261,82 @@ describe('Orchestrator agent-death recovery', () => {
     );
   });
 
+  it("reattaches the failed run's session instead of briefing the agent from the top", async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        session: 'sess-before-crash',
+        finish: { state: 'failed', error: 'connection dropped' },
+      })
+    );
+    const task = store.create({ title: 'Dies mid-conversation' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(meta.id)?.meta.state === 'failed');
+    expect(orchestrator.getRun(meta.id)?.meta.sessionId).toBe(
+      'sess-before-crash'
+    );
+
+    const capturing = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', capturing);
+    const resumed = await orchestrator.resumeRun(meta.id);
+
+    // The executor is told to reattach, and the successor carries the handle
+    // from birth — a mid-conversation crash on IT stays resumable too.
+    expect(capturing.captured[0]?.resumeSessionId).toBe('sess-before-crash');
+    expect(resumed.sessionId).toBe('sess-before-crash');
+    // The conversation is still in the session, so the agent gets a
+    // continuation note naming what stopped it — not the task from the top,
+    // which would read as a brand-new assignment on top of its own history.
+    expect(capturing.captured[0]?.prompt).not.toContain(
+      `# Task ${task.meta.id}`
+    );
+    expect(capturing.captured[0]?.prompt).toContain(meta.id);
+    expect(capturing.captured[0]?.prompt).toContain('connection dropped');
+    expect(store.get(task.meta.id)!.body).toContain(
+      `resumed after failed (run ${resumed.id}), continuing its session`
+    );
+  });
+
+  it('says so everywhere when a resume has no session to pick up and starts over', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    // No `session`: the agent died before it ever reported one, so there is
+    // no conversation to continue — starting over is the only option, and
+    // the point is that it must not pass as a resume.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        finish: { state: 'failed', error: 'died before init' },
+      })
+    );
+    const task = store.create({ title: 'Dies before the agent starts' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(meta.id)?.meta.state === 'failed');
+    expect(orchestrator.getRun(meta.id)?.meta.sessionId).toBeUndefined();
+
+    const capturing = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', capturing);
+    const resumed = await orchestrator.resumeRun(meta.id);
+
+    expect(capturing.captured[0]?.resumeSessionId).toBeUndefined();
+    expect(resumed.sessionId).toBeUndefined();
+    // A fresh agent needs the whole brief, and is told it IS a fresh agent.
+    expect(capturing.captured[0]?.prompt).toContain(`# Task ${task.meta.id}`);
+    expect(capturing.captured[0]?.prompt).toContain('fresh session');
+    expect(store.get(task.meta.id)!.body).toContain(
+      `resumed after failed (run ${resumed.id}) as a fresh session: run ${meta.id} never started a conversation`
+    );
+    const notice = orchestrator
+      .getRun(resumed.id)
+      ?.entries.find(
+        (entry) =>
+          entry.kind === 'system' &&
+          entry.text !== undefined &&
+          entry.text.includes('fresh session')
+      );
+    expect(notice?.text).toContain(meta.id);
+  });
+
   it('surveys a dirty run left non-terminal by a daemon crash, via reconcileOnBoot', async () => {
     const { orchestrator: first, store } = makeOrchestrator(repo);
     first.registerExecutor('fake', controllableExecutor());
@@ -463,6 +539,33 @@ describe('Orchestrator boot auto-resume', () => {
     // happened to reboot — nobody asked for this one.
     expect(store.get(task.meta.id)!.body).toContain(
       `auto-resumed after failed (daemon restart) (run ${successor!.id})`
+    );
+  });
+
+  it("continues the crashed run's own session rather than re-briefing the agent from the task", async () => {
+    const { orchestrator: first, store } = makeOrchestrator(repo);
+    first.registerExecutor('fake', new StallingExecutor());
+    const task = store.create({ title: 'Daemon dies mid-conversation' });
+    const meta = await first.dispatch(task.meta.id, 'fake');
+    expect(first.getRun(meta.id)?.meta.sessionId).toBe('session-1');
+
+    const second = reboot(store);
+    const after = new StallingExecutor();
+    second.registerExecutor('fake', after);
+    second.reconcileOnBoot();
+    await second.autoResumeSettled(meta.id);
+
+    const successor = second.list().find((r) => r.resumedFrom === meta.id);
+    expect(successor?.sessionId).toBe('session-1');
+    // The whole point of picking the run back up is the conversation it was
+    // in the middle of — the incident this guards against was a successor
+    // that looked like a resume in the registry while the agent underneath
+    // it had been started over from the task prompt with no memory of it.
+    expect(after.started[0]?.resumeSessionId).toBe('session-1');
+    expect(after.started[0]?.prompt).not.toContain(`# Task ${task.meta.id}`);
+    expect(after.started[0]?.prompt).toContain(BOOT_FORCE_FAIL_ERROR);
+    expect(store.get(task.meta.id)!.body).toContain(
+      `auto-resumed after failed (daemon restart) (run ${successor!.id}), continuing its session`
     );
   });
 

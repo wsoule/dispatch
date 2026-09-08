@@ -4202,8 +4202,9 @@ export async function handleApi(
       ) {
         return await createRunMutation(req, ctx, segments[1]);
       }
-      // POST /api/runs/:id/resume — agent-death recovery: dispatches a fresh
-      // run into the same worktree, carrying the prior run's survey.
+      // POST /api/runs/:id/resume — agent-death recovery: a new run in the
+      // same worktree that continues the prior run's agent session (see
+      // Orchestrator.resumeRun), carrying its survey.
       if (
         segments.length === 3 &&
         segments[2] === 'resume' &&

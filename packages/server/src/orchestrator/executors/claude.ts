@@ -647,6 +647,26 @@ export class ClaudeExecutor implements Executor {
             }
           } else if (message.type === 'system') {
             if (message.session_id !== sessionId) {
+              // A resume that did not reattach: the SDK keeps a plain
+              // `resume` on the SAME session id (only `forkSession` mints a
+              // new one), so a different id here means the agent underneath
+              // this run has none of the conversation the run continues.
+              // Failed loudly, before a single entry of the stray session
+              // is streamed as this run's work and before its id is ever
+              // reported as this run's handle — recording it would make the
+              // next resume continue the wrong conversation.
+              if (
+                sessionId === undefined &&
+                opts.resumeSessionId !== undefined &&
+                message.session_id !== opts.resumeSessionId
+              ) {
+                gotResult = true;
+                events.onFinish({
+                  state: 'failed',
+                  error: `resume could not reattach session ${opts.resumeSessionId}: the agent opened a different session (${message.session_id}), so it has none of the conversation this run continues`,
+                });
+                break;
+              }
               sessionId = message.session_id;
               // Handed up now, not just carried to onFinish below — a daemon
               // that dies mid-run never reaches a finish.

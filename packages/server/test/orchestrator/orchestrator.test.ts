@@ -2757,3 +2757,79 @@ describe('Orchestrator.deleteBranch guards', () => {
     );
   });
 });
+
+describe('Orchestrator session bookkeeping across a finish', () => {
+  it('keeps the session the executor reported when the finish carries none', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    // onSession with the handle, then a failure that reports no session —
+    // the shape of an agent dying mid-run. The finish must not erase the
+    // handle: this run is exactly the one a resume has to reattach.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        session: 'sess-reported',
+        finish: { state: 'failed', error: 'connection dropped' },
+      })
+    );
+    const task = store.create({ title: 'Reports a session, then dies' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(meta.id)?.meta.state === 'failed');
+
+    expect(orchestrator.getRun(meta.id)?.meta.sessionId).toBe('sess-reported');
+    expect(
+      orchestrator.resumeBlockReason(orchestrator.getRun(meta.id)!.meta)
+    ).toBeNull();
+    // And a finish that does report one still wins over the earlier report.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        session: 'sess-early',
+        finish: { state: 'finished', sessionId: 'sess-final' },
+      })
+    );
+    const other = store.create({ title: 'Reports twice' });
+    const otherMeta = await orchestrator.dispatch(other.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(otherMeta.id)?.meta.state === 'finished'
+    );
+    expect(orchestrator.getRun(otherMeta.id)?.meta.sessionId).toBe(
+      'sess-final'
+    );
+  });
+
+  it('notes on the Session log when a resumed run comes back on a different session', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
+    );
+    const task = store.create({ title: 'Loses its thread' });
+    const first = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(first.id)?.meta.state === 'finished'
+    );
+
+    // An executor that ignores resumeSessionId and opens its own session —
+    // what a resume that failed to reattach looks like from the outside.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ session: 'sess-2', finish: { state: 'finished' } })
+    );
+    const second = orchestrator.sendMessage(first.id, 'carry on', {
+      resume: true,
+    });
+    await waitFor(
+      () => orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+
+    const notice = orchestrator
+      .getRun(second.id)
+      ?.entries.find((entry) => entry.kind === 'system');
+    expect(notice?.text).toContain('sess-1');
+    expect(notice?.text).toContain('sess-2');
+    expect(notice?.text).toContain(first.id);
+    // Recorded as what the agent actually has, so a further resume continues
+    // the conversation that exists rather than the one that was lost.
+    expect(orchestrator.getRun(second.id)?.meta.sessionId).toBe('sess-2');
+  });
+});

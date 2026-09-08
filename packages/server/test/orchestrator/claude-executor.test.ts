@@ -608,6 +608,101 @@ describe('ClaudeExecutor session-id reporting during a run', () => {
   });
 });
 
+// A resume that does not actually reattach its session is the worst kind of
+// failure: the SDK keeps a plain `resume` on the SAME session id (only
+// `forkSession` mints a new one), so an init message carrying a different id
+// means the agent underneath this run has no memory of the conversation the
+// run claims to continue. That must fail loudly, never quietly start over.
+describe('ClaudeExecutor resume session reattachment', () => {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  function* sessionMessages(sessionId: string): Generator<any> {
+    yield { type: 'system', subtype: 'init', session_id: sessionId };
+    yield {
+      type: 'assistant',
+      session_id: sessionId,
+      message: { content: [{ type: 'text', text: 'carrying on' }] },
+    };
+    yield {
+      type: 'result',
+      subtype: 'success',
+      session_id: sessionId,
+      total_cost_usd: 0.01,
+      num_turns: 1,
+      is_error: false,
+      result: '',
+    };
+  }
+
+  async function resumeOnto(
+    resumeSessionId: string,
+    actualSessionId: string
+  ): Promise<{
+    finish: Parameters<ExecutorEvents['onFinish']>[0];
+    sessions: string[];
+    entries: number;
+  }> {
+    const repo = initGitRepo('dispatch-claude-resume-');
+    try {
+      const executor = new ClaudeExecutor(
+        () => sessionMessages(actualSessionId) as unknown as Query
+      );
+      const sessions: string[] = [];
+      let entries = 0;
+      const finish = await new Promise<
+        Parameters<ExecutorEvents['onFinish']>[0]
+      >((resolve) => {
+        executor.start(
+          {
+            cwd: repo,
+            projectRoot: repo,
+            prompt: 'pick up where you left off',
+            resumeSessionId,
+            permissionMode: 'acceptEdits',
+            maxTurns: 5,
+          },
+          {
+            onEntry: () => {
+              entries++;
+            },
+            onApprovalRequest: () => {},
+            onSession: (sessionId) => sessions.push(sessionId),
+            onFinish: resolve,
+          }
+        );
+      });
+      return { finish, sessions, entries };
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  }
+
+  it('fails the run when the agent opens a different session than the one it was asked to resume', async () => {
+    const { finish, sessions, entries } = await resumeOnto(
+      'sess-lost',
+      'sess-fresh'
+    );
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toContain('sess-lost');
+    expect(finish.error).toContain('sess-fresh');
+    // The fresh session is never reported as this run's handle: recording it
+    // would make the next resume continue the wrong conversation.
+    expect(sessions).toEqual([]);
+    expect(finish.sessionId).toBeUndefined();
+    // Nothing the stray session went on to say is streamed as this run's work.
+    expect(entries).toBe(0);
+  });
+
+  it('continues normally when the resumed session id matches', async () => {
+    const { finish, sessions, entries } = await resumeOnto(
+      'sess-kept',
+      'sess-kept'
+    );
+    expect(finish.state).toBe('finished');
+    expect(sessions).toEqual(['sess-kept']);
+    expect(entries).toBe(1);
+  });
+});
+
 // Bug 2 (fix/executor-mcp-wiring): a run whose underlying SDK stream ends
 // with no 'result' message at all — the CLI process getting killed out from
 // under an approval it was waiting on, or any other abrupt exit — must still
