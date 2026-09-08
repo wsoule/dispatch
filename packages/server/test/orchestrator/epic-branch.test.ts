@@ -10,8 +10,10 @@ import { epicBranchName } from '../../src/orchestrator/epicBranch.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { MergeQueue } from '../../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import { transcriptPath } from '../../src/orchestrator/paths.js';
 import type { CommandRunner } from '../../src/orchestrator/pr.js';
 import { defaultCommandRunner } from '../../src/orchestrator/pr.js';
+import { replayTranscript } from '../../src/orchestrator/transcript.js';
 import { OrchestratorConflictError } from '../../src/orchestrator/types.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
@@ -232,6 +234,43 @@ describe('review-merge onto the epic branch', () => {
     // The run stays unreviewed, so a human can resolve and retry.
     const metaB = h.orchestrator.list().find((r) => r.id === runB)!;
     expect(metaB.reviewedAt).toBeUndefined();
+  });
+
+  it('records why an epic-branch merge failed on the run and the task, and clears it once a review lands', async () => {
+    const h = makeHarness();
+    const { epicId, taskId } = makeEpicWithChild(h, 'Child A');
+    const taskB = h.store.create({ title: 'Child B', parent: epicId });
+    h.cache.rebuild(h.store);
+
+    const runA = await dispatchWithWork(h, taskId, 'same.txt', 'A version');
+    const runB = await dispatchWithWork(
+      h,
+      taskB.meta.id,
+      'same.txt',
+      'B version'
+    );
+    h.orchestrator.review(runA, 'merge');
+    expect(() => h.orchestrator.review(runB, 'merge')).toThrow(
+      OrchestratorConflictError
+    );
+
+    const metaB = h.orchestrator.list().find((r) => r.id === runB)!;
+    expect(metaB.reviewedAt).toBeUndefined();
+    expect(metaB.reviewFailure).toMatchObject({ action: 'merge' });
+    expect(metaB.reviewFailure?.reason).toMatch(/same\.txt/);
+    expect(h.store.get(taskB.meta.id)!.meta.status).toBe('review');
+    expect(h.store.get(taskB.meta.id)!.body).toContain(
+      `run ${runB} merge failed: `
+    );
+    // Survives a restart: a fresh orchestrator replays it from the transcript.
+    const replayed = replayTranscript(transcriptPath(repo, runB))!.meta;
+    expect(replayed.reviewFailure).toEqual(metaB.reviewFailure);
+
+    const discarded = h.orchestrator.review(runB, 'discard');
+    expect(discarded.reviewFailure).toBeUndefined();
+    expect(
+      replayTranscript(transcriptPath(repo, runB))!.meta.reviewFailure
+    ).toBeUndefined();
   });
 
   it('409s with a named reason when the epic branch was deleted by hand', async () => {

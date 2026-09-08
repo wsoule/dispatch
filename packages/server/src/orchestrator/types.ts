@@ -176,6 +176,19 @@ export interface RunSurvey {
 // Everything the registry/transcript/API need to describe a run, independent
 // of whether it is still live (has a real ExecutorRun) or is being replayed
 // from a transcript after a restart.
+// Why a run's most recent review attempt did NOT complete. review() throws
+// on a squash conflict, a dirty main checkout, a worktree that will not
+// remove — and leaves the run unreviewed. Without a record of that, a
+// finished run that failed to merge looks identical to one nobody has
+// reviewed yet: no error, no marker, nothing for the operator to act on.
+export interface ReviewFailure {
+  action: 'merge' | 'discard';
+  // The thrown error's message — for a conflict, git's own output naming the
+  // conflicting files.
+  reason: string;
+  at: string;
+}
+
 export interface RunMeta {
   id: string;
   taskId: string;
@@ -205,6 +218,10 @@ export interface RunMeta {
   // The squash-merge commit sha, set only when review()'s 'merge' action
   // actually produced one (a no-op merge leaves this unset).
   mergeCommit?: string;
+  // Set when a merge/discard threw partway (see ReviewFailure); the run stays
+  // unreviewed and resumable. Cleared the moment a later review really lands,
+  // so a discarded run never keeps advertising a conflict it no longer has.
+  reviewFailure?: ReviewFailure;
   // Phase 5 P1: set once a run's PR review action has pushed the branch and
   // opened a GitHub PR (see PrManager.openPr) — the run stays un-reviewed
   // (reviewedAt unset) until PrManager's poller sees the PR merged and calls

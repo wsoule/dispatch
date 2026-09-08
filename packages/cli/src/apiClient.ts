@@ -44,6 +44,8 @@ export interface RunMeta {
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';
   mergeCommit?: string;
+  // Why the last merge/discard attempt threw and left the run unreviewed.
+  reviewFailure?: { action: 'merge' | 'discard'; reason: string; at: string };
   prUrl?: string;
   archivedAt?: string;
   resumedFrom?: string;

@@ -41,6 +41,7 @@ import {
   isEpicBranch,
 } from './epicBranch.js';
 import { JjManager } from './jj.js';
+import { truncateReason } from './mergeQueue.js';
 import { collectOrientation } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
 import {
@@ -72,6 +73,7 @@ import type {
   ExecutorEvents,
   ExecutorStartOptions,
   NormalizedEntry,
+  ReviewFailure,
   RunKind,
   RunMeta,
   RunState,
@@ -269,6 +271,40 @@ function refuseExecuteOnDerivedTask(task: TaskDoc): void {
   throw new OrchestratorClientError(
     `task ${task.meta.id} was derived from ${task.meta.derivedFrom} and cannot be executed`
   );
+}
+
+// How a reviewed run was closed out, for refusal messages: a run merged by
+// hand and picked up by the external-merge reconciler reads "merged as
+// <sha>", which tells the operator why their resume was refused far better
+// than "already reviewed" alone did. Null when the transcript predates
+// reviewAction and never recorded a merge commit — saying "merged" there
+// would be a guess.
+function describeReview(meta: RunMeta): string | null {
+  switch (meta.reviewAction) {
+    case 'merge':
+      return meta.mergeCommit !== undefined
+        ? `merged as ${meta.mergeCommit.slice(0, 8)}`
+        : 'merged';
+    case 'discard':
+      return 'discarded';
+    case 'pr':
+      return 'merged via PR';
+    default:
+      return meta.mergeCommit !== undefined
+        ? `merged as ${meta.mergeCommit.slice(0, 8)}`
+        : null;
+  }
+}
+
+function alreadyReviewedReason(meta: RunMeta): string {
+  const how = describeReview(meta);
+  return how === null
+    ? 'run has already been reviewed'
+    : `run has already been reviewed (${how})`;
+}
+
+function alreadyReviewedMessage(meta: RunMeta): string {
+  return `${alreadyReviewedReason(meta)}: ${meta.id}`;
 }
 
 /**
@@ -1117,9 +1153,7 @@ export class Orchestrator {
       // to resume into, and resuming would either fail on a missing cwd or
       // silently resurrect a run the user already closed out.
       if (meta.reviewedAt !== undefined) {
-        throw new OrchestratorConflictError(
-          `run has already been reviewed: ${runId}`
-        );
+        throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
       }
       // Same one-live-run-per-task rule dispatch() enforces: a resume forks
       // a NEW run into the task's existing worktree, so two resumes racing
@@ -1792,7 +1826,7 @@ export class Orchestrator {
       return `run is ${meta.state}, not a failed run`;
     }
     if (runKind(meta) !== 'execute') return 'run is not an execute run';
-    if (meta.reviewedAt !== undefined) return 'run has already been reviewed';
+    if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
     if (meta.prUrl !== undefined) return 'run has an open PR';
     if (meta.baseDiscarded === true) return "run's base needs a human";
     if (meta.sessionId === undefined) return 'run never started a session';
@@ -2140,9 +2174,7 @@ export class Orchestrator {
       );
     }
     if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(
-        `run has already been reviewed: ${runId}`
-      );
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
     }
     // Discarding blocked work is exactly what a human should still be able to
     // do; merging it is the thing the ruling exists to prevent.
@@ -2153,35 +2185,48 @@ export class Orchestrator {
     this.requireNoOpenPr(meta);
     const now = new Date().toISOString();
 
+    // Everything above this line is a refusal — the run was never touched.
+    // Everything below is an attempt, and an attempt that throws (a squash
+    // conflict, a worktree that will not remove) is recorded on the run
+    // before the error propagates: the run stays unreviewed and resumable,
+    // but not silently.
     let mergeCommit: string | undefined;
-    if (action === 'merge') {
-      mergeCommit = this.mergeRun(meta, now, actor);
-    } else {
-      this.persistDiffSnapshot(meta);
-      // Not while something else still needs the directory — a sibling run
-      // sitting in the merge queue is about to rebase inside it.
-      if (!this.worktreeIsNeeded(runId)) {
-        this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+    try {
+      if (action === 'merge') {
+        mergeCommit = this.mergeRun(meta, now, actor);
+      } else {
+        this.persistDiffSnapshot(meta);
+        // Not while something else still needs the directory — a sibling run
+        // sitting in the merge queue is about to rebase inside it.
+        if (!this.worktreeIsNeeded(runId)) {
+          this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+        }
+        this.ctx.store.update(
+          meta.taskId,
+          {
+            status: 'ready',
+            appendActivity: `${now} run ${runId} discarded`,
+            activityActor: actor,
+          },
+          now
+        );
+        this.flagStackedDependents(meta);
       }
-      this.ctx.store.update(
-        meta.taskId,
-        {
-          status: 'ready',
-          appendActivity: `${now} run ${runId} discarded`,
-          activityActor: actor,
-        },
-        now
-      );
-      this.flagStackedDependents(meta);
+    } catch (err) {
+      this.recordReviewFailure(meta, action, err, now, actor);
+      throw err;
     }
 
     // Record the review marker as its own state-line append (transition()
     // to the *same* state — reviewing a run never changes its RunState,
-    // only that it's now been reviewed).
+    // only that it's now been reviewed). A review that completes also
+    // clears any earlier failed attempt: `null` is the transcript's
+    // "clear it" value (see TranscriptStateLine.reviewFailure).
     this.transition(runId, meta.state, {
       reviewedAt: now,
       reviewAction: action,
       mergeCommit,
+      ...(meta.reviewFailure !== undefined ? { reviewFailure: null } : {}),
     });
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
@@ -2246,9 +2291,7 @@ export class Orchestrator {
   markRunMergedViaPr(runId: string): RunMeta {
     const meta = this.requireRun(runId);
     if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(
-        `run has already been reviewed: ${runId}`
-      );
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
     }
     const now = new Date().toISOString();
     // Deliberately `diffCommittedOnly`, not the live `diff()` the review
@@ -2300,9 +2343,7 @@ export class Orchestrator {
   markRunMergedExternally(runId: string, mergeCommit?: string): RunMeta {
     const meta = this.requireRun(runId);
     if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(
-        `run has already been reviewed: ${runId}`
-      );
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
     }
     const now = new Date().toISOString();
     // `diffCommittedOnly` for the same reason markRunMergedViaPr uses it:
@@ -2372,6 +2413,57 @@ export class Orchestrator {
       }
     }
     return reconciled;
+  }
+
+  // Records why a merge/discard attempt threw, on the run (a same-state
+  // transcript line, so it survives a restart) and on the task's Activity —
+  // the two places an operator actually looks. A repeat of the same failure
+  // is not re-recorded: the merge queue retries an environment-blocked
+  // merge every few seconds, and a dirty checkout would otherwise write an
+  // identical Activity line on every tick. Best-effort throughout: the
+  // caller is about to rethrow the real error, and nothing here may replace
+  // it with a bookkeeping one.
+  private recordReviewFailure(
+    meta: RunMeta,
+    action: 'merge' | 'discard',
+    err: unknown,
+    now: string,
+    actor: string | undefined
+  ): void {
+    const reason = truncateReason(
+      err instanceof Error ? err.message : String(err)
+    );
+    const previous = meta.reviewFailure;
+    if (
+      previous !== undefined &&
+      previous.action === action &&
+      previous.reason === reason
+    ) {
+      return;
+    }
+    const reviewFailure: ReviewFailure = { action, reason, at: now };
+    this.registry.updateMeta(meta.id, { reviewFailure, updatedAt: now });
+    this.bestEffort(`recording failed ${action} on run ${meta.id}`, () => {
+      this.transcriptFor(meta.id).appendState(meta.state, now, {
+        reviewFailure,
+      });
+    });
+    // One Activity line, however many lines git printed: a conflict report
+    // is multi-line and a raw paste would break the markdown list.
+    const oneLine = reason.replace(/\s+/g, ' ').trim();
+    this.bestEffort(`noting failed ${action} on task ${meta.taskId}`, () => {
+      this.ctx.store.update(
+        meta.taskId,
+        {
+          appendActivity: `${now} run ${meta.id} ${action} failed: ${oneLine}`,
+          activityActor: actor,
+        },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+    });
+    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
   // C1: squash-merges `meta.branch` into the main checkout and folds this
@@ -3833,6 +3925,9 @@ export class Orchestrator {
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
       mergeCommit?: string;
+      // `null` clears a recorded review failure (transcript convention);
+      // the registry copy simply drops the field.
+      reviewFailure?: ReviewFailure | null;
     }
   ): void {
     const meta = this.registry.get(runId);
@@ -3866,12 +3961,17 @@ export class Orchestrator {
     // without a result read as "never started a session" — unresumable — in
     // the live registry, while its own transcript still carried the handle
     // (replayTranscript folds a session-less state line over the header's).
-    const { sessionId, ...rest } = finish ?? {};
+    // `reviewFailure` is likewise only written when the finish carries it:
+    // `null` clears a prior failure, absent leaves it alone.
+    const { reviewFailure, sessionId, ...fields } = finish ?? {};
     this.registry.updateMeta(runId, {
       state,
       updatedAt: now,
-      ...rest,
+      ...fields,
       ...(sessionId !== undefined ? { sessionId } : {}),
+      ...(reviewFailure !== undefined
+        ? { reviewFailure: reviewFailure ?? undefined }
+        : {}),
     });
     // The registry already carries the new state; a transcript that can't be
     // appended to must not also cost clients the broadcast that says so.

@@ -113,6 +113,10 @@ export interface RunMeta {
   // actually produced one. Mirrors RunMeta.mergeCommit in
   // packages/server/src/orchestrator/types.ts.
   mergeCommit?: string;
+  // Why the most recent merge/discard attempt threw and left the run
+  // unreviewed (a squash conflict names its files here). Cleared once a later
+  // review completes. Mirrors RunMeta.reviewFailure.
+  reviewFailure?: { action: 'merge' | 'discard'; reason: string; at: string };
   // Set once the PR review action has pushed the branch and opened a GitHub
   // PR — stays set (and `reviewedAt` stays unset) until the PR poller sees it
   // merged.

@@ -8,7 +8,13 @@ import {
 } from 'node:fs';
 import { dirname } from 'node:path';
 
-import type { NormalizedEntry, RunMeta, RunState, RunSurvey } from './types.js';
+import type {
+  NormalizedEntry,
+  ReviewFailure,
+  RunMeta,
+  RunState,
+  RunSurvey,
+} from './types.js';
 
 interface TranscriptHeaderLine {
   type: 'header';
@@ -54,6 +60,10 @@ interface TranscriptStateLine {
   // Rides along on a state line exactly like reviewedAt/reviewAction — see
   // RunMeta.mergeCommit's comment for what sets this and when.
   mergeCommit?: string;
+  // A failed review attempt (see RunMeta.reviewFailure). Reversible like
+  // archivedAt: a value sets it, `null` clears it (a later review that does
+  // complete), absent leaves it alone — so the fold below is three-way too.
+  reviewFailure?: ReviewFailure | null;
   // Rides along on a state line exactly like reviewedAt/reviewAction — see
   // RunMeta.prUrl's comment for what sets this and when.
   prUrl?: string;
@@ -161,6 +171,8 @@ export class Transcript {
       // `null` clears the archive marker; see TranscriptStateLine.archivedAt.
       archivedAt?: string | null;
       mergeCommit?: string;
+      // `null` clears the failure; see TranscriptStateLine.reviewFailure.
+      reviewFailure?: ReviewFailure | null;
       prUrl?: string;
       baseBranch?: string;
       stackParents?: string[];
@@ -260,6 +272,10 @@ export function replayTranscript(path: string): RunDetail | null {
           line.archivedAt === undefined
             ? meta.archivedAt
             : (line.archivedAt ?? undefined),
+        reviewFailure:
+          line.reviewFailure === undefined
+            ? meta.reviewFailure
+            : (line.reviewFailure ?? undefined),
         baseBranch: line.baseBranch ?? meta.baseBranch,
         stackParents: narrowedStackParents(line, meta),
         baseDiscarded: line.baseDiscarded ?? meta.baseDiscarded,

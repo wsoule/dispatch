@@ -274,6 +274,21 @@ export function RunLogView({
               </div>
             )}
 
+          {/* A merge or discard that threw partway (a squash conflict, say) leaves the
+              run unreviewed and resumable — but the operator has to be told why, or a
+              run that failed to merge looks identical to one nobody has reviewed yet.
+              Cleared by the server the moment a later review completes. */}
+          {meta.reviewedAt === undefined &&
+            meta.reviewFailure !== undefined && (
+              <div className="border-destructive/30 bg-destructive/10 text-destructive flex items-start gap-2 rounded-md border px-3 py-2 text-[12px]">
+                <Info className="size-3.5 shrink-0 translate-y-0.5" />
+                <span className="whitespace-pre-wrap">
+                  {meta.reviewFailure.action} failed:{' '}
+                  {meta.reviewFailure.reason}
+                </span>
+              </div>
+            )}
+
           {/* The run failed but its branch kept moving — the orphaned agent process
               survived and committed. Distinguishes "dead $0 run" from "the work actually
               landed, go look at the branch". */}
