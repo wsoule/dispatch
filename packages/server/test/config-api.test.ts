@@ -139,6 +139,20 @@ describe('PATCH /api/config — policy', () => {
     expect(config.policy).toEqual({ rung: 3, gates: { merge: 'block' } });
   });
 
+  it('a null pin clears the override and leaves the rung alone', async () => {
+    expect(
+      (await patchConfig({ policy: { rung: 3, gates: { merge: 'block' } } }))
+        .status
+    ).toBe(200);
+    const cleared = await patchConfig({ policy: { gates: { merge: null } } });
+    expect(cleared.status).toBe(200);
+    const next = await json<{
+      policy: { rung: number; gates: Record<string, string> };
+    }>(cleared);
+    expect(next.policy.rung).toBe(3);
+    expect(next.policy.gates.merge).toBeUndefined();
+  });
+
   it('400s a rung off the ladder without writing anything', async () => {
     const res = await patchConfig({ policy: { rung: 9 } });
     expect(res.status).toBe(400);
