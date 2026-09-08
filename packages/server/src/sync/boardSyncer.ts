@@ -9,7 +9,7 @@ import {
 } from 'node:fs';
 import { basename, join } from 'node:path';
 
-import type { GitRunner, SyncWorktree } from './worktree.js';
+import type { AsyncGitRunner, GitRunner, SyncWorktree } from './worktree.js';
 
 export interface SyncResult {
   pushed: number;
@@ -41,20 +41,25 @@ function errorText(result: { stdout: string; stderr: string }): string {
  * separate checkout the user never sees.
  */
 export class BoardSyncer {
+  // `run` covers every local git step and stays synchronous; `runAsync` is
+  // for the two commands that reach the network (pull, push) and is awaited,
+  // so a stalled remote never blocks the daemon's event loop. Tests that
+  // inject only `run` get the same runner for both, which keeps every fake
+  // they wire into `run` in the path.
+  private readonly runAsync: AsyncGitRunner;
+
   constructor(
     private readonly rootDir: string,
     private readonly worktree: SyncWorktree,
     private readonly actor: ActorContext,
-    private readonly run: GitRunner
-  ) {}
-
-  // The body is synchronous (GitRunner is synchronous); the wrapper keeps
-  // room for a future async step (e.g. a generated commit message).
-  syncOnce(): Promise<SyncResult> {
-    return Promise.resolve(this.syncOnceSync());
+    private readonly run: GitRunner,
+    runAsync?: AsyncGitRunner
+  ) {
+    this.runAsync =
+      runAsync ?? ((cwd, args) => Promise.resolve(this.run(cwd, args)));
   }
 
-  private syncOnceSync(): SyncResult {
+  async syncOnce(): Promise<SyncResult> {
     this.worktree.ensure();
 
     const localStore = new TaskStore(this.rootDir);
@@ -132,7 +137,7 @@ export class BoardSyncer {
       `refs/remotes/origin/${trunk}`,
     ]);
 
-    const pull = this.run(this.worktree.path, [
+    const pull = await this.runAsync(this.worktree.path, [
       'pull',
       '--rebase',
       'origin',
@@ -228,7 +233,7 @@ export class BoardSyncer {
     const changed =
       beforePull.status === 0 ? this.materialize(beforePull.stdout.trim()) : 0;
 
-    const push = this.run(this.worktree.path, [
+    const push = await this.runAsync(this.worktree.path, [
       'push',
       'origin',
       `HEAD:${trunk}`,

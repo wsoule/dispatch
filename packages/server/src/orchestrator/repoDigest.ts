@@ -5,6 +5,7 @@ import type { RepoDigestConfig } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { spawnGitSync } from '../blockingGit.js';
 import { openClaudeQuery, rewriteMissingCliError } from './claudeCli.js';
 import { runsDir } from './paths.js';
 
@@ -94,13 +95,9 @@ export function writeRepoDigest(rootDir: string, digest: RepoDigest): void {
 // rather than reaching into WorktreeManager, whose runGit is module-private.
 export function headCommit(rootDir: string): string | null {
   try {
-    const result = Bun.spawnSync(['git', 'rev-parse', 'HEAD'], {
-      cwd: rootDir,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
+    const result = spawnGitSync(rootDir, ['rev-parse', 'HEAD']);
     if (result.exitCode !== 0) return null;
-    const sha = result.stdout.toString('utf8').trim();
+    const sha = result.stdout.trim();
     return sha === '' ? null : sha;
   } catch {
     return null;

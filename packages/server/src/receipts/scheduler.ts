@@ -3,6 +3,7 @@ import { loadConfig } from '@dispatch/core';
 
 import type { EventBus, ServerEvent } from '../events.js';
 import type { GitRunner } from '../sync/worktree.js';
+import { markBlockingSection } from '../watchdog.js';
 import type { ReceiptsResult } from './exporter.js';
 import {
   receiptsEnabled,
@@ -146,6 +147,7 @@ export class ReceiptsScheduler {
       );
       return null;
     }
+    markBlockingSection('receipts export');
     const result = this.exporter.exportOnce(dir);
     this.lastResultValue = result;
     this.lastExportedAtIso = new Date().toISOString();

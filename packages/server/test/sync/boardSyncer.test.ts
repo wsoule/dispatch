@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
 import { BoardSyncer } from '../../src/sync/boardSyncer.js';
+import type { GitRunner } from '../../src/sync/worktree.js';
 import { defaultGitRunner, SyncWorktree } from '../../src/sync/worktree.js';
 import { runGitSync } from '../orchestrator/helpers.js';
 import {
@@ -772,10 +773,12 @@ describe('BoardSyncer degradation', () => {
 
     // A stub HTTP server that looks like a git-http-backend demanding
     // credentials: without GIT_TERMINAL_PROMPT=0, `git fetch` against this
-    // sits on "Username for ...:" indefinitely (git pty prompt) — since
-    // syncOnce() is fully synchronous, that freezes the daemon's entire
-    // event loop, not just this one sync. Run as its own OS process, not an
-    // in-process Bun.serve(): syncOnce()'s git call is itself a synchronous
+    // sits on "Username for ...:" indefinitely (git pty prompt), and every
+    // local step of syncOnce() still runs on the daemon's event loop, so
+    // that freezes HTTP and WebSocket too, not just this one sync. This
+    // syncer is built without a runAsync, so even its pull/push go through
+    // the synchronous runner — which is the runner under test. Run as its
+    // own OS process, not an in-process Bun.serve(): the git call is a
     // spawnSync on THIS test's thread, so an in-process server would never
     // get to run its own event loop to answer the request while blocked —
     // it would just look like an even longer hang, for the wrong reason.
@@ -951,5 +954,46 @@ describe('BoardSyncer.pendingCounts', () => {
     rmSync(origin, { recursive: true, force: true });
     cleanupClone(a);
     cleanupClone(b);
+  });
+});
+
+describe('BoardSyncer network runner', () => {
+  it('routes pull and push through the async runner and everything else through the sync one', async () => {
+    const { a, b } = twoClones();
+    try {
+      const asyncCalls: string[][] = [];
+      const syncCalls: string[][] = [];
+      const counting: GitRunner = (cwd, args) => {
+        syncCalls.push(args);
+        return run(cwd, args);
+      };
+      const worktree = SyncWorktree.open(a, counting);
+      if (worktree === null) throw new Error('expected a resolvable trunk');
+      const actor = ActorContext.resolve(a, gitReaderFor(a));
+      const syncer = new BoardSyncer(
+        a,
+        worktree,
+        actor,
+        counting,
+        (cwd, args) => {
+          asyncCalls.push(args);
+          return Promise.resolve(run(cwd, args));
+        }
+      );
+      new TaskStore(a).create({ title: 'routed through the async runner' });
+
+      const result = await syncer.syncOnce();
+      expect(result.state).toBe('idle');
+      expect(result.pushed).toBe(1);
+      // The two commands that reach the network, and only those.
+      expect(asyncCalls.map((args) => args[0])).toEqual(['pull', 'push']);
+      expect(
+        syncCalls.some((args) => args[0] === 'pull' || args[0] === 'push')
+      ).toBe(false);
+      expect(syncCalls.some((args) => args[0] === 'commit')).toBe(true);
+    } finally {
+      cleanupClone(a);
+      cleanupClone(b);
+    }
   });
 });

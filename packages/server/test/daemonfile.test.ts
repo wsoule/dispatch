@@ -1,7 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import {
   daemonFileKey,
@@ -80,11 +86,37 @@ describe('writeDaemonFile / readDaemonFile', () => {
 });
 
 describe('removeDaemonFile', () => {
+  it('leaves a file written by a different daemon in place', () => {
+    const otherPid = process.pid + 100_000;
+    writeDaemonFile({
+      rootDir,
+      port: 4242,
+      pid: otherPid,
+      startedAt: '2026-08-23T13:15:00Z',
+      agentToken: 'b'.repeat(64),
+    });
+    // A late shutdown from a previous daemon must not erase its successor's
+    // record — the app already started the replacement.
+    removeDaemonFile(rootDir);
+    expect(existsSync(daemonFilePath(rootDir))).toBe(true);
+    // The daemon the file names may.
+    removeDaemonFile(rootDir, otherPid);
+    expect(existsSync(daemonFilePath(rootDir))).toBe(false);
+  });
+
+  it('removes a file it cannot parse, since nothing owns it', () => {
+    const path = daemonFilePath(rootDir);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'not json');
+    removeDaemonFile(rootDir);
+    expect(existsSync(path)).toBe(false);
+  });
+
   it('removes the file on clean shutdown, and is a no-op if already gone', () => {
     writeDaemonFile({
       rootDir,
       port: 1,
-      pid: 1,
+      pid: process.pid,
       startedAt: 't',
       agentToken: 'a',
     });

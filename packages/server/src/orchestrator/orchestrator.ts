@@ -27,6 +27,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import { spawnGitSync } from '../blockingGit.js';
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import { FindingStore } from '../findings.js';
@@ -2583,7 +2584,7 @@ export class Orchestrator {
         // clean HEAD so a retry (after the user resolves things by hand, or
         // just discards the run) starts from a sane state instead of a
         // permanently wedged checkout.
-        Bun.spawnSync(['git', 'reset', '--merge'], { cwd: this.ctx.rootDir });
+        spawnGitSync(this.ctx.rootDir, ['reset', '--merge']);
         // git's own stderr (already folded into err.message by
         // WorktreeManager.mergeSquash) is the useful part here — a content
         // conflict is a 409 the user can act on, never an opaque 500.
@@ -2612,7 +2613,7 @@ export class Orchestrator {
     const commitArgs = hasChanges
       ? ['commit', '--amend', '--no-edit']
       : ['commit', '-m', message];
-    Bun.spawnSync(['git', ...commitArgs], { cwd: this.ctx.rootDir });
+    spawnGitSync(this.ctx.rootDir, commitArgs);
 
     this.persistDiffSnapshot(meta, preMergeDiff);
     this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
@@ -2833,7 +2834,7 @@ export class Orchestrator {
         } catch (err) {
           // Restore a clean HEAD after a real conflict, exactly as mergeRun
           // does for its squash — a wedged main checkout helps nobody.
-          Bun.spawnSync(['git', 'reset', '--merge'], { cwd: this.ctx.rootDir });
+          spawnGitSync(this.ctx.rootDir, ['reset', '--merge']);
           throw new OrchestratorConflictError((err as Error).message);
         }
       }
@@ -2861,7 +2862,7 @@ export class Orchestrator {
       const commitArgs = hasChanges
         ? ['commit', '--amend', '--no-edit']
         : ['commit', '-m', message];
-      Bun.spawnSync(['git', ...commitArgs], { cwd: this.ctx.rootDir });
+      spawnGitSync(this.ctx.rootDir, commitArgs);
       if (hasChanges) mergeCommit = this.worktrees.resolveCommit('HEAD');
     }
 
@@ -3820,13 +3821,15 @@ export class Orchestrator {
   // source file). Empty means clean. See the long comment at the call site in
   // `mergeRun()` for why `.dispatch/` itself is excluded from this check.
   private mainDirtyPathsOutsideDispatch(): string[] {
-    const result = Bun.spawnSync(
-      ['git', 'status', '--porcelain', '--', '.', `:!${DISPATCH_DIR}`],
-      { cwd: this.ctx.rootDir, stdout: 'pipe', stderr: 'pipe' }
-    );
+    const result = spawnGitSync(this.ctx.rootDir, [
+      'status',
+      '--porcelain',
+      '--',
+      '.',
+      `:!${DISPATCH_DIR}`,
+    ]);
     return (
       result.stdout
-        .toString('utf8')
         .split('\n')
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
@@ -3852,12 +3855,12 @@ export class Orchestrator {
   // so a merge attempted while main is sitting on some other branch is
   // refused outright rather than landing on the wrong branch.
   private currentMainBranch(): string {
-    const result = Bun.spawnSync(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: this.ctx.rootDir,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    return result.stdout.toString('utf8').trim();
+    const result = spawnGitSync(this.ctx.rootDir, [
+      'rev-parse',
+      '--abbrev-ref',
+      'HEAD',
+    ]);
+    return result.stdout.trim();
   }
 
   // Stages (but does not commit) *only* the one task file belonging to
@@ -3876,7 +3879,7 @@ export class Orchestrator {
     if (!(store instanceof TaskStore)) return;
     const file = store.taskFilePath(taskId);
     if (file === null) return;
-    Bun.spawnSync(['git', 'add', file], { cwd: this.ctx.rootDir });
+    spawnGitSync(this.ctx.rootDir, ['add', file]);
   }
 
   // The onFinish safety net (see its call site's comment): commits whatever
@@ -3893,29 +3896,20 @@ export class Orchestrator {
   // Throws on failure so `finishRun` marks the run `failed` — work that could
   // not be committed is neither reviewable nor mergeable.
   private autoCommitIfDirty(worktreePath: string, runId: string): void {
-    const status = Bun.spawnSync(['git', 'status', '--porcelain'], {
-      cwd: worktreePath,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    if (status.stdout.toString('utf8').trim() === '') return;
-    Bun.spawnSync(['git', 'add', '-A'], { cwd: worktreePath });
-    const commit = Bun.spawnSync(
-      [
-        'git',
-        'commit',
-        '--no-verify',
-        '-m',
-        `wip(dispatch): uncommitted changes from run ${runId}`,
-      ],
-      { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' }
-    );
+    const status = spawnGitSync(worktreePath, ['status', '--porcelain']);
+    if (status.stdout.trim() === '') return;
+    spawnGitSync(worktreePath, ['add', '-A']);
+    const commit = spawnGitSync(worktreePath, [
+      'commit',
+      '--no-verify',
+      '-m',
+      `wip(dispatch): uncommitted changes from run ${runId}`,
+    ]);
     if (commit.exitCode !== 0) {
       // git splits its complaints across both streams; prefer stderr, fall
       // back to stdout so the message is never just an exit code.
-      const stderr = commit.stderr.toString('utf8').trim();
-      const detail =
-        stderr.length > 0 ? stderr : commit.stdout.toString('utf8').trim();
+      const stderr = commit.stderr.trim();
+      const detail = stderr.length > 0 ? stderr : commit.stdout.trim();
       throw new Error(
         `could not commit the changes left in ${worktreePath}: ${detail}`
       );

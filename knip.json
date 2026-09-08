@@ -13,7 +13,12 @@
     "packages/server": {
       // The daemon's `bin` is src/bin.ts, but src/index.ts is the library face
       // (startServer) that the CLI and every server test reach for.
-      "entry": ["src/index.ts"]
+      //
+      // watchdogWorker.ts is loaded as a Worker through `new URL(..., import
+      // .meta.url)` in watchdog.ts, never imported, so nothing static reaches
+      // it. It is also a second `bun build --compile` entrypoint in
+      // apps/desktop/scripts/build-sidecars.ts for the same reason.
+      "entry": ["src/index.ts", "src/watchdogWorker.ts"]
     },
     "packages/demo": {
       // storefront-src is a template copied into the generated demo repo

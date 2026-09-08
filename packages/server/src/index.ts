@@ -29,6 +29,7 @@ import {
   rejectUnauthorized,
 } from './api.js';
 import type { ApiContext, DaemonTokens } from './api.js';
+import { spawnGitSync } from './blockingGit.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
 import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
@@ -82,8 +83,13 @@ import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
-import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
+import {
+  defaultAsyncGitRunner,
+  defaultGitRunner,
+  SyncWorktree,
+} from './sync/worktree.js';
 import { TrackedFilesCache } from './trackedFiles.js';
+import { EventLoopWatchdog } from './watchdog.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -190,6 +196,9 @@ export interface StartServerOptions {
   // enough never to fire, since every startServer()-based test on the database
   // backend would otherwise boot a live interval.
   receiptsSweepMs?: number;
+  // A main-thread heartbeat gap longer than this is logged as a stall, with
+  // the section the daemon was in (see EventLoopWatchdog). Defaults to 5s.
+  watchdogStallMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -371,8 +380,8 @@ async function serveStatic(
 // reader, so this is a thin synchronous wrapper instead.
 function makeGitReader(rootDir: string): GitReader {
   return (args) => {
-    const result = Bun.spawnSync(['git', ...args], { cwd: rootDir });
-    return result.exitCode === 0 ? result.stdout.toString().trim() : null;
+    const result = spawnGitSync(rootDir, args);
+    return result.exitCode === 0 ? result.stdout.trim() : null;
   };
 }
 
@@ -491,6 +500,13 @@ export async function startServer(
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
   const tokens = opts.tokens ?? mintDaemonTokens();
 
+  // Started before anything that can block, so a boot-time stall (a migration,
+  // the run reconcile sweep) is named in the log like any other.
+  const watchdog = new EventLoopWatchdog({
+    thresholdMs: opts.watchdogStallMs,
+  });
+  watchdog.start();
+
   // Who this daemon acts as. Resolved first, before anything touches the
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
@@ -567,6 +583,7 @@ export async function startServer(
   const watcher =
     store instanceof TaskStore
       ? watchTasks(store.tasksDir, () => {
+          watchdog.mark('task watcher: cache rebuild');
           safeRebuild(store, cache);
           events.broadcast({ type: 'task.changed' });
         })
@@ -593,6 +610,7 @@ export async function startServer(
           worktree: syncWorktree,
           actor: actorContext,
           run: defaultGitRunner,
+          runAsync: defaultAsyncGitRunner,
           events,
           debounceMs: opts.boardSyncDebounceMs,
           periodicMs: opts.boardSyncPeriodicMs,
@@ -924,10 +942,10 @@ export async function startServer(
   // "needs review" forever. Reconcile once at boot — catching anything merged
   // while dispatchd was down — and then on the PR poller's cadence.
   orchestrator.reconcileExternallyMergedRuns();
-  const externalMergeTimer = setInterval(
-    () => orchestrator.reconcileExternallyMergedRuns(),
-    opts.prPollIntervalMs ?? 60000
-  );
+  const externalMergeTimer = setInterval(() => {
+    watchdog.mark('reconcileExternallyMergedRuns tick');
+    orchestrator.reconcileExternallyMergedRuns();
+  }, opts.prPollIntervalMs ?? 60000);
 
   // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,
   // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
@@ -1121,6 +1139,9 @@ export async function startServer(
     async fetch(req, srv) {
       const url = new URL(req.url);
       const origin = req.headers.get('origin');
+      // Named before any handler runs: a stall inside a synchronous handler
+      // is then attributed to the request that caused it.
+      watchdog.mark(`${req.method} ${url.pathname}`);
 
       if (url.pathname === '/ws') {
         // CORS never applies to a WebSocket, so without this an untrusted page
@@ -1236,6 +1257,7 @@ export async function startServer(
     prManager,
     prWorktrees,
     async stop() {
+      watchdog.stop();
       // First, so the boot recovery sweep stops before anything it might act
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).

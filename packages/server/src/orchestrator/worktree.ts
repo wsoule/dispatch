@@ -1,6 +1,8 @@
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
+import { spawnGitSync } from '../blockingGit.js';
+
 interface DiffFile {
   path: string;
   status: string;
@@ -39,16 +41,12 @@ interface GitResult {
 // either to parse it (branch names, diff output) or to fold it into a typed
 // error message rather than letting git's own error text reach a client.
 function runGit(cwd: string, args: string[]): GitResult {
-  const result = Bun.spawnSync(['git', ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
+  const result = spawnGitSync(cwd, args);
   return {
     ok: result.exitCode === 0,
-    exitCode: result.exitCode,
-    stdout: result.stdout.toString('utf8'),
-    stderr: result.stderr.toString('utf8'),
+    exitCode: result.exitCode ?? -1,
+    stdout: result.stdout,
+    stderr: result.stderr,
   };
 }
 
@@ -887,11 +885,14 @@ export class WorktreeManager {
     // (whose "Binary files ... differ" stdout has no diff hunks to show) is
     // skipped rather than folded into the patch as noise.
     for (const file of untracked) {
-      const result = Bun.spawnSync(
-        ['git', 'diff', '--no-index', '--', '/dev/null', file],
-        { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' }
-      );
-      const stdout = result.stdout.toString('utf8');
+      const result = spawnGitSync(worktreePath, [
+        'diff',
+        '--no-index',
+        '--',
+        '/dev/null',
+        file,
+      ]);
+      const stdout = result.stdout;
       if (stdout.trim() === '' || stdout.includes('Binary files')) continue;
       if (patchText.length > 0 && !patchText.endsWith('\n')) {
         patchText += '\n';

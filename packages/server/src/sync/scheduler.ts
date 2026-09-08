@@ -2,15 +2,18 @@ import type { ActorContext } from '@dispatch/core';
 import { loadConfig } from '@dispatch/core';
 
 import type { EventBus } from '../events.js';
+import { markBlockingSection } from '../watchdog.js';
 import type { SyncResult } from './boardSyncer.js';
 import { BoardSyncer } from './boardSyncer.js';
-import type { GitRunner, SyncWorktree } from './worktree.js';
+import type { AsyncGitRunner, GitRunner, SyncWorktree } from './worktree.js';
 
 export interface BoardSyncSchedulerDeps {
   rootDir: string;
   worktree: SyncWorktree;
   actor: ActorContext;
   run: GitRunner;
+  /** Awaited runner for pull/push — see BoardSyncer. Defaults to `run`. */
+  runAsync?: AsyncGitRunner;
   events: EventBus;
   /** Debounce for the sync triggered by a local task-file change. */
   debounceMs?: number;
@@ -59,7 +62,8 @@ export class BoardSyncScheduler {
       deps.rootDir,
       deps.worktree,
       deps.actor,
-      deps.run
+      deps.run,
+      deps.runAsync
     );
     // Runs unconditionally so a config edit re-enabling autoCommit takes
     // effect on the next tick without a restart — the gate is checked fresh
@@ -145,6 +149,7 @@ export class BoardSyncScheduler {
     // Re-checked here, not just at schedule time: the debounce window gives
     // a config edit time to land between notifyTaskChanged() and this call.
     if (!this.autoCommitEnabled()) return;
+    markBlockingSection('board sync');
     const result = await this.syncer.syncOnce();
     this.lastSyncResult = result;
     this.lastSyncedAtIso = new Date().toISOString();

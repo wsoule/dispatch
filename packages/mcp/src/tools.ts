@@ -27,6 +27,7 @@ import {
   isDaemonHealthy,
   liveDaemon,
   readDaemonFile,
+  requestDeadline,
 } from './daemon.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
@@ -316,6 +317,7 @@ async function runList(rootDir: string): Promise<ToolOutcome> {
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`, {
       headers: daemonAuth(daemon),
+      signal: requestDeadline(),
     });
     if (!res.ok) return noDaemonResult();
     const runs = await res.json();
@@ -355,6 +357,7 @@ async function fetchLiveRuns(
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/runs`, {
       headers: daemonAuth(daemon),
+      signal: requestDeadline(),
     });
     if (!res.ok) return null;
     const runs = await res.json();
@@ -803,6 +806,7 @@ async function agentMessage(
     const res = await fetch(
       `http://127.0.0.1:${live.daemon.port}/api/runs/${match.id}/inject`,
       {
+        signal: requestDeadline(),
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -856,6 +860,7 @@ async function messageUser(
     const res = await fetch(
       `http://127.0.0.1:${daemon.port}/api/runs/${runId}/message-user`,
       {
+        signal: requestDeadline(),
         method: 'POST',
         headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
         body: JSON.stringify({ text: args.text }),
@@ -920,6 +925,7 @@ async function withdrawQuestion(
 ): Promise<void> {
   try {
     await fetch(`${base}/${id}`, {
+      signal: requestDeadline(),
       method: 'DELETE',
       headers: { ...auth, 'content-type': 'application/json' },
     });
@@ -956,6 +962,7 @@ async function askUser(
   let question: QuestionRecord;
   try {
     const res = await fetch(base, {
+      signal: requestDeadline(),
       method: 'POST',
       headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
       body: JSON.stringify({
@@ -1126,6 +1133,7 @@ async function requestScope(
   let request: ScopeRequestRecord;
   try {
     const res = await fetch(base, {
+      signal: requestDeadline(),
       method: 'POST',
       headers: { 'content-type': 'application/json', ...auth },
       body: JSON.stringify({ paths: args.paths, reason: args.reason }),
@@ -1222,6 +1230,7 @@ async function dispatchNote(
       : args.title.trim();
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/inbox`, {
+      signal: requestDeadline(),
       method: 'POST',
       headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
       body: JSON.stringify({
@@ -1262,6 +1271,7 @@ async function callingTaskAndEpic(
   const headers = daemonAuth(daemon);
   try {
     const runRes = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}`, {
+      signal: requestDeadline(),
       headers,
     });
     if (!runRes.ok) return { taskId: null, epicId: null };
@@ -1269,7 +1279,7 @@ async function callingTaskAndEpic(
     if (typeof run.taskId !== 'string') return { taskId: null, epicId: null };
     const taskRes = await fetch(
       `http://127.0.0.1:${port}/api/tasks/${run.taskId}`,
-      { headers }
+      { headers, signal: requestDeadline() }
     );
     if (!taskRes.ok) return { taskId: run.taskId, epicId: null };
     const task = (await taskRes.json()) as {
@@ -1307,6 +1317,7 @@ async function recordDecision(
   const { taskId, epicId } = await callingTaskAndEpic(daemon, runId);
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/ledger`, {
+      signal: requestDeadline(),
       method: 'POST',
       headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
       body: JSON.stringify({
@@ -1361,6 +1372,7 @@ async function recordEvidence(
     const res = await fetch(
       `http://127.0.0.1:${daemon.port}/api/runs/${runId}/evidence`,
       {
+        signal: requestDeadline(),
         method: 'POST',
         headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
         body: JSON.stringify(args),
@@ -1400,6 +1412,7 @@ async function recordMutation(
     const res = await fetch(
       `http://127.0.0.1:${daemon.port}/api/runs/${runId}/mutations`,
       {
+        signal: requestDeadline(),
         method: 'POST',
         headers: { 'content-type': 'application/json', ...daemonAuth(daemon) },
         body: JSON.stringify(args),

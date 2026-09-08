@@ -10,6 +10,8 @@ import {
 import { homedir } from 'node:os';
 import { dirname, isAbsolute, join } from 'node:path';
 
+import { spawnGitSync } from '../blockingGit.js';
+
 // One git invocation: `cwd` to run it in, `args` after `git`. Injected rather
 // than shelled out internally so tests can point every command at a real
 // temp repo without mocking git itself.
@@ -36,38 +38,131 @@ function errorText(result: { stdout: string; stderr: string }): string {
   return stderr.length > 0 ? stderr : result.stdout.trim();
 }
 
-// syncOnce() is fully synchronous, so a git process that blocks on a
-// credential/passphrase/host-key prompt freezes the daemon's single event
-// loop entirely — HTTP and WebSocket included, not just sync. These env
-// vars make git fail fast instead of prompting (an expired HTTPS token, a
-// passphrase-protected SSH key with no agent, first contact with a new
-// host); `timeout` below is the last-resort backstop for anything they
-// don't cover. Any process this turns away becomes a normal `local-only`
-// result, not a wedged daemon.
+// Every local step of syncOnce() still runs synchronously on the daemon's
+// single event loop, so a git process that blocks on a credential /
+// passphrase / host-key prompt freezes HTTP and WebSocket too, not just the
+// sync. These env vars make git fail fast instead of prompting (an expired
+// HTTPS token, a passphrase-protected SSH key with no agent, first contact
+// with a new host); GIT_TIMEOUT_MS below is the last-resort backstop for
+// anything they don't cover, and both runners set both. Any process this
+// turns away becomes a normal `local-only` result, not a wedged daemon.
 const NO_PROMPT_ENV = {
   GIT_TERMINAL_PROMPT: '0',
   GIT_ASKPASS: '',
   SSH_ASKPASS: '',
   GIT_SSH_COMMAND: 'ssh -o BatchMode=yes -o ConnectTimeout=10',
 };
+// The backstop for a git that neither NO_PROMPT_ENV nor ssh's own timeouts
+// turned away. Enforced with SIGKILL (see spawnGitSync) — with SIGTERM it was
+// advisory, and the 2026-08-23 daemon sat in one of these for 89 minutes.
+const GIT_TIMEOUT_MS = 30_000;
 
 // Production GitRunner: shells out for real. Mirrors the test harness's own
 // `run` in test/sync/helpers.ts exactly, kept separate so src/ has no
 // dependency on test code.
 export const defaultGitRunner: GitRunner = (cwd, args) => {
-  const result = Bun.spawnSync(['git', ...args], {
+  const result = spawnGitSync(cwd, args, {
+    env: { ...process.env, ...NO_PROMPT_ENV },
+    timeoutMs: GIT_TIMEOUT_MS,
+  });
+  return {
+    // A killed child has no exit code; -1 keeps `status !== 0` true for every
+    // caller that only asks whether the command succeeded.
+    status: result.exitCode ?? -1,
+    stdout: result.stdout,
+    stderr: result.stderr,
+  };
+};
+
+/**
+ * The runner for git commands that leave the machine — `pull` and `push` in
+ * BoardSyncer. Same command, same prompt-suppressing env and same deadline
+ * as defaultGitRunner, but awaited off the event loop: a stalled ssh session
+ * then costs the board sync its turn, not the daemon its HTTP server. The
+ * 2026-08-23 wedge was the synchronous version of exactly this call.
+ */
+export type AsyncGitRunner = (
+  cwd: string,
+  args: string[]
+) => Promise<{ status: number; stdout: string; stderr: string }>;
+
+export const defaultAsyncGitRunner: AsyncGitRunner = (cwd, args) =>
+  spawnWithDeadline(['git', ...args], cwd, GIT_TIMEOUT_MS, {
+    ...process.env,
+    ...NO_PROMPT_ENV,
+  });
+
+/**
+ * Runs `cmd` asynchronously and SIGKILLs it at `timeoutMs`. A killed command
+ * reports status -1 with the reason appended to stderr, so every caller's
+ * `status !== 0` check reads a stall the same way it reads a failure.
+ */
+export async function spawnWithDeadline(
+  cmd: string[],
+  cwd: string,
+  timeoutMs: number,
+  env?: Record<string, string | undefined>
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  const proc = Bun.spawn(cmd, {
     cwd,
     stdout: 'pipe',
     stderr: 'pipe',
-    env: { ...process.env, ...NO_PROMPT_ENV },
-    timeout: 30_000,
+    ...(env !== undefined ? { env } : {}),
   });
-  return {
-    status: result.exitCode,
-    stdout: result.stdout.toString('utf8'),
-    stderr: result.stderr.toString('utf8'),
-  };
-};
+  // The pipes are read through cancellable readers rather than awaited to
+  // EOF: a killed `git` can leave an `ssh` grandchild holding both ends open,
+  // and waiting for it to close them would reintroduce the hang the kill is
+  // there to end.
+  const outReader: PipeReader = proc.stdout.getReader();
+  const errReader: PipeReader = proc.stderr.getReader();
+  const readers = [outReader, errReader];
+  let killed = false;
+  const deadline = setTimeout(() => {
+    killed = true;
+    proc.kill('SIGKILL');
+    for (const reader of readers) void reader.cancel();
+  }, timeoutMs);
+  try {
+    const [stdout, stderr, exitCode] = await Promise.all([
+      readAll(outReader),
+      readAll(errReader),
+      proc.exited,
+    ]);
+    if (killed) {
+      const separator = stderr === '' || stderr.endsWith('\n') ? '' : '\n';
+      return {
+        status: -1,
+        stdout,
+        stderr: `${stderr}${separator}${cmd[0] ?? ''} killed after ${String(timeoutMs)}ms\n`,
+      };
+    }
+    return { status: exitCode, stdout, stderr };
+  } finally {
+    clearTimeout(deadline);
+  }
+}
+
+// The half of a stream reader this file uses. Declared structurally because
+// bun-types augments the global ReadableStreamDefaultReader (it adds
+// `readMany`), so a DOM-typed parameter and what `getReader()` actually
+// returns are two different types under this repo's lib set.
+interface PipeReader {
+  read(): Promise<{ done: boolean; value?: Uint8Array | undefined }>;
+  cancel(): Promise<void>;
+}
+
+// Drains one pipe to text; a cancelled reader ends the loop with what was
+// read so far.
+async function readAll(reader: PipeReader): Promise<string> {
+  const decoder = new TextDecoder();
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  return text + decoder.decode();
+}
 
 // Same hash-of-rootDir key as linear/state.ts's linearStatePath and
 // daemonfile.ts's daemonFileKey, so this worktree's location never collides
@@ -293,7 +388,7 @@ export class SyncWorktree {
     // simply unrecognized. That's an optimization failing, not a fatal one —
     // fall back to a full (unsparse, just larger) checkout and carry on
     // rather than bubbling a failure out of ensure() (and, via its retry,
-    // out of syncOnceSync() as an unhandled rejection).
+    // out of syncOnce() as an unhandled rejection).
     const init = this.run(this.path, ['sparse-checkout', 'init', '--cone']);
     const sparse =
       init.status === 0

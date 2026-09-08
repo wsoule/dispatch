@@ -70,16 +70,38 @@ export function writeDaemonFile(info: DaemonFileInfo): void {
   }
 }
 
+// A half-written or corrupt file reads as "no daemon" rather than throwing —
+// same contract as the MCP package's own copy of this reader. A daemon killed
+// mid-write (which is how a wedged one dies) is exactly how this file gets
+// truncated, and the callers that then have to clean it up are the ones least
+// able to handle an exception.
 export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
   const path = daemonFilePath(rootDir);
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  } catch {
+    return null;
+  }
 }
 
 // Removing on shutdown is what lets `dispatch ui` distinguish "no daemon" from
 // "daemon crashed without cleanup" (the latter still leaves a stale file whose
 // /api/health will simply fail to respond — a later slice's concern).
-export function removeDaemonFile(rootDir: string): void {
+//
+// Only the daemon named in the file may remove it. A daemon whose event loop
+// was stalled runs its SIGTERM handler late — possibly after the app has
+// already started a replacement that wrote its own file to this path — and
+// deleting "whatever is here" then erases the healthy successor's record, so
+// every client concludes there is no daemon at all (2026-08-23). A file that
+// cannot be parsed has no owner and is removed as the stale garbage it is.
+export function removeDaemonFile(
+  rootDir: string,
+  ownerPid: number = process.pid
+): void {
   const path = daemonFilePath(rootDir);
-  if (existsSync(path)) rmSync(path);
+  if (!existsSync(path)) return;
+  const current = readDaemonFile(rootDir);
+  if (current !== null && current.pid !== ownerPid) return;
+  rmSync(path);
 }
