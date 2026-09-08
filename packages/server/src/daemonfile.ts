@@ -102,8 +102,10 @@ export function removeDaemonFile(
 }
 
 // Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the
-// process exists under another user, which still counts as alive.
-export function pidAlive(pid: number): boolean {
+// process exists under another user, which still counts as alive. Module-local
+// on purpose: the CLI and MCP each carry their own copy, since neither can
+// import from @dispatch/server (it is Bun-only).
+function pidAlive(pid: number): boolean {
   try {
     process.kill(pid, 0);
     return true;

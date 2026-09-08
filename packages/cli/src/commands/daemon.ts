@@ -283,7 +283,9 @@ export interface LocateDaemonOptions {
 // replacement's boot reconcile force-fails every run the stalled daemon still
 // has in flight — on 2026-09-07 three daemons stacked up on one root this
 // way inside ten minutes, killing two waves of runs.
-export async function locateDaemon(
+// Module-local: `findRunningDaemon` is the exported wrapper every caller uses,
+// and `ensureDaemon` calls this directly.
+async function locateDaemon(
   rootDir: string,
   opts: LocateDaemonOptions = {}
 ): Promise<DaemonConnection | null> {
