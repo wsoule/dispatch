@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
-import { ensureDaemon } from '../src/commands/daemon.js';
+import { daemonFilePath, ensureDaemon } from '../src/commands/daemon.js';
 import type { CliContext } from '../src/context.js';
 
 function sleep(ms: number): Promise<void> {
@@ -55,6 +55,46 @@ afterEach(() => {
 });
 
 describe('ensureDaemon race (I3)', () => {
+  it("waits for the claim holder's daemon instead of spawning a second one", async () => {
+    // Stand in for another `dispatch` process that has taken the spawn claim
+    // and is still starting its daemon.
+    const lockPath = `${daemonFilePath(root)}.spawn.lock`;
+    mkdirSync(dirname(lockPath), { recursive: true });
+    writeFileSync(lockPath, '');
+
+    const daemon = Bun.serve({
+      port: 0,
+      fetch: () => Response.json({ ok: true }),
+    });
+    // Its daemon file lands a beat later, which is exactly the window a
+    // second caller used to spawn into.
+    const appears = setTimeout(() => {
+      writeFileSync(
+        daemonFilePath(root),
+        JSON.stringify({
+          port: daemon.port,
+          pid: process.pid,
+          rootDir: root,
+          startedAt: new Date().toISOString(),
+          agentToken: 'held-by-the-other-process',
+        })
+      );
+    }, 300);
+
+    try {
+      const conn = await ensureDaemon({ cwd: root, log: () => {} });
+
+      expect(conn.port).toBe(daemon.port);
+      expect(conn.agentToken).toBe('held-by-the-other-process');
+      // The whole point: nothing of ours was started.
+      expect(countDaemonProcesses(root)).toBe(0);
+    } finally {
+      clearTimeout(appears);
+      await daemon.stop(true);
+      rmSync(lockPath, { force: true });
+    }
+  }, 30_000);
+
   it('two concurrent ensureDaemon calls for the same project leave exactly one dispatchd process alive', async () => {
     const ctx: CliContext = { cwd: root, log: () => {} };
 

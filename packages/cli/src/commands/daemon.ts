@@ -2,7 +2,15 @@ import type { Command } from 'commander';
 import type { ChildProcess } from 'node:child_process';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -364,6 +372,67 @@ export interface EnsureDaemonOptions extends LocateDaemonOptions {
   port?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Spawn claim
+//
+// Two `dispatch` invocations that both find no daemon used to both spawn one,
+// then each decide after the fact which to keep — and because the daemon file
+// is last-writer-wins, each could read it at a different instant, conclude the
+// OTHER had won, and kill its own child. Both children die, both callers hold
+// a dead port (CI, 2026-09-08: one caller got 40255, the other 36827). The
+// server-side guard cannot close this either: a daemon writes its file only
+// once its port is bound, so two daemons booting together both see no file.
+//
+// So the spawn decision is claimed before anything is spawned, with an
+// O_EXCL create — the one filesystem operation that is atomic across
+// processes. The winner spawns; every loser just waits for the winner's
+// daemon and never spawns at all.
+// ---------------------------------------------------------------------------
+
+function spawnLockPath(rootDir: string): string {
+  return `${daemonFilePath(rootDir)}.spawn.lock`;
+}
+
+// A lock whose owner died before releasing it would block every future spawn,
+// so one this old is treated as abandoned and taken over. Comfortably longer
+// than the 5s health wait a spawner holds it for.
+const SPAWN_LOCK_STALE_MS = 30_000;
+
+// Takes the spawn claim for `rootDir`, or returns false when another process
+// holds it. A lock older than SPAWN_LOCK_STALE_MS is removed and re-attempted
+// once — the only way a lock outlives its spawner is that spawner crashing.
+function claimSpawn(rootDir: string): boolean {
+  const path = spawnLockPath(rootDir);
+  mkdirSync(dirname(path), { recursive: true });
+  for (const attempt of [0, 1]) {
+    try {
+      // 'wx' is O_CREAT | O_EXCL: it fails rather than truncating an existing
+      // file, which is what makes this a claim and not just a write.
+      closeSync(openSync(path, 'wx'));
+      return true;
+    } catch {
+      if (attempt === 1) return false;
+      try {
+        if (Date.now() - statSync(path).mtimeMs < SPAWN_LOCK_STALE_MS) {
+          return false;
+        }
+        rmSync(path);
+      } catch {
+        // Vanished between the two calls — the next attempt settles it.
+      }
+    }
+  }
+  return false;
+}
+
+function releaseSpawn(rootDir: string): void {
+  try {
+    rmSync(spawnLockPath(rootDir));
+  } catch {
+    // Already gone (a stale-lock takeover removed it); nothing to release.
+  }
+}
+
 // Shared "get me a healthy daemon for this project, starting one if none is
 // running" logic — every command that needs to talk to dispatchd (`dispatch
 // ui`, and every Phase 7 orchestrate/plan/epic command) goes through this
@@ -378,6 +447,18 @@ export async function ensureDaemon(
 ): Promise<DaemonConnection> {
   const existing = await locateDaemon(ctx.cwd, opts);
   if (existing !== null) return existing;
+
+  // Someone else is already spawning for this root: wait for their daemon
+  // rather than starting a second one. 20s covers a cold `bun` start on a
+  // loaded machine and still leaves the stale-lock takeover as the backstop.
+  if (!claimSpawn(ctx.cwd)) {
+    const winner = await waitForHealthyDaemon(ctx.cwd, 20_000);
+    if (winner !== null) {
+      return { port: winner.port, agentToken: requireAgentToken(winner) };
+    }
+    // The holder never produced a healthy daemon; fall through and spawn one
+    // ourselves rather than failing because another process misbehaved.
+  }
 
   const launcher = resolveDaemonLauncher();
   const args = [...launcher.leadingArgs, '--root', ctx.cwd];
@@ -412,16 +493,25 @@ export async function ensureDaemon(
   });
   child.unref();
 
-  const info = await waitForHealthyDaemon(ctx.cwd, 5000);
-  if (info === null) {
-    throw new CliError(
-      launcher.usesBun
-        ? 'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
-        : `dispatchd did not become healthy within 5s (launched ${launcher.cmd})`
-    );
+  try {
+    const info = await waitForHealthyDaemon(ctx.cwd, 5000);
+    if (info === null) {
+      throw new CliError(
+        launcher.usesBun
+          ? 'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
+          : `dispatchd did not become healthy within 5s (launched ${launcher.cmd})`
+      );
+    }
+    // Kept as a backstop for the one case the claim cannot cover: a daemon
+    // someone started outside this code path (a bare `dispatch serve`) landing
+    // between our claim and our child's own daemon-file write.
+    const winner = await resolveRaceWinner(ctx.cwd, child, info);
+    return { port: winner.port, agentToken: requireAgentToken(winner) };
+  } finally {
+    // Only once the daemon is up (or has failed): releasing earlier would let
+    // a waiting caller through while there is still nothing to find.
+    releaseSpawn(ctx.cwd);
   }
-  const winner = await resolveRaceWinner(ctx.cwd, child, info);
-  return { port: winner.port, agentToken: requireAgentToken(winner) };
 }
 
 // I3: two concurrent `ensureDaemon` calls for the same rootDir (e.g. two
