@@ -79,9 +79,26 @@ export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
 // Removing on shutdown is what lets `dispatch ui` distinguish "no daemon" from
 // "daemon crashed without cleanup" (the latter still leaves a stale file whose
 // /api/health will simply fail to respond — a later slice's concern).
-export function removeDaemonFile(rootDir: string): void {
+//
+// Only the daemon the file currently names may remove it. A superseded daemon
+// shutting down late — the file already rewritten by its replacement — used
+// to delete the replacement's record, leaving a live daemon nobody could find
+// (2026-09-08: a SIGTERM to an orphan erased the serving daemon's file).
+// `ownerPid` defaults to this process; tests pass the pid they wrote.
+export function removeDaemonFile(
+  rootDir: string,
+  ownerPid: number = process.pid
+): void {
   const path = daemonFilePath(rootDir);
-  if (existsSync(path)) rmSync(path);
+  if (!existsSync(path)) return;
+  let current: DaemonFileInfo | null = null;
+  try {
+    current = JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  } catch {
+    // Unparsable: nothing trustworthy names an owner, so clearing it is safe.
+  }
+  if (current !== null && current.pid !== ownerPid) return;
+  rmSync(path);
 }
 
 // Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the

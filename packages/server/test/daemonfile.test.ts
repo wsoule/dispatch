@@ -90,9 +90,34 @@ describe('removeDaemonFile', () => {
       agentToken: 'a',
     });
     expect(readDaemonFile(rootDir)).not.toBeNull();
+    removeDaemonFile(rootDir, 1);
+    expect(readDaemonFile(rootDir)).toBeNull();
+    expect(() => removeDaemonFile(rootDir, 1)).not.toThrow();
+  });
+
+  it('leaves a file that a different daemon has since written', () => {
+    writeDaemonFile({
+      rootDir,
+      port: 2,
+      pid: 2,
+      startedAt: 't',
+      agentToken: 'b',
+    });
+    // The superseded daemon (pid 1) shuts down late; the file is not its.
+    removeDaemonFile(rootDir, 1);
+    expect(readDaemonFile(rootDir)?.pid).toBe(2);
+  });
+
+  it('defaults the owner to this process', () => {
+    writeDaemonFile({
+      rootDir,
+      port: 3,
+      pid: process.pid,
+      startedAt: 't',
+      agentToken: 'c',
+    });
     removeDaemonFile(rootDir);
     expect(readDaemonFile(rootDir)).toBeNull();
-    expect(() => removeDaemonFile(rootDir)).not.toThrow();
   });
 });
 
