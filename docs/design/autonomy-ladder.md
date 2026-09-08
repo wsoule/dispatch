@@ -18,7 +18,7 @@ The spec's four stops survive contact with the code. Each rung is defined by
 exactly which gates demote from _blocking_ to _recording_; everything not named
 at a rung keeps its previous behavior. Rungs are cumulative.
 
-1. **`review-everything`** — every decision-feed item blocks. This is the
+1. **`review-all`** — every decision-feed item blocks. This is the
    `DecisionFeed` default today (`packages/server/src/decisionFeed.ts:169`,
    `blockingPolicy`). Note this is _not_ "approve every tool call": the default
    `permissionMode: 'auto'` (`packages/core/src/config.ts:67`) already lets the
