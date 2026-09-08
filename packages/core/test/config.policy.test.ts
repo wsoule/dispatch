@@ -9,7 +9,7 @@ import {
   projectPolicy,
   updateConfig,
 } from '../src/config.js';
-import { DEFAULT_POLICY } from '../src/policy.js';
+import { DEFAULT_POLICY, FLOOR_CHECKS } from '../src/policy.js';
 
 function root(contents?: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-policy-'));
@@ -122,5 +122,32 @@ describe('updateConfig policy patch', () => {
       })
     ).toThrow(/invalid policy\.gates\.merge/);
     expect(read(dir)).toBe(before);
+  });
+});
+
+describe('the irreversibility floor at the config seam', () => {
+  it('refuses a floor check under policy.gates on load, in either mode', () => {
+    for (const check of FLOOR_CHECKS) {
+      for (const mode of ['auto', 'block']) {
+        const dir = root(
+          `policy:\n  rung: 4\n  gates:\n    ${check}: ${mode}\n`
+        );
+        expect(() => loadConfig(dir)).toThrow(/irreversibility floor/);
+      }
+    }
+  });
+
+  it('refuses a floor check from updateConfig without touching the file', () => {
+    const dir = root('policy:\n  rung: 4\n');
+    const before = read(dir);
+    for (const check of FLOOR_CHECKS) {
+      expect(() =>
+        updateConfig(dir, {
+          policy: { gates: { [check]: 'auto' } as never },
+        })
+      ).toThrow(/irreversibility floor/);
+    }
+    expect(read(dir)).toBe(before);
+    expect(loadConfig(dir).policy).toEqual({ rung: 4, gates: {} });
   });
 });

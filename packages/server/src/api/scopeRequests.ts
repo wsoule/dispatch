@@ -1,6 +1,7 @@
 import { describePolicyAuthorization } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
+import { scopeRequestEscapesRepo } from '../floor.js';
 import {
   SCOPE_REQUEST_POLL_MS,
   scopePathsInsideRepo,
@@ -59,7 +60,9 @@ export async function requestScope(
   // the request is granted on the spot and recorded — same decide() path, same
   // ledger entry a human grant produces, plus an Activity line — instead of
   // parking the agent on a person. Below the rung nothing changes: the
-  // request blocks as today.
+  // request blocks as today. A request reaching outside the repo or into
+  // .git/ is never policy's to grant: it parks for a human at every rung
+  // (see scopeRequestEscapesRepo).
   const ruling = policyRulingForScope(ctx, runId, paths);
   if (ruling !== null) {
     const authorization = describePolicyAuthorization(ruling);
@@ -90,12 +93,15 @@ export async function requestScope(
 // for a human: the task's risk caps the rung (a critical task never
 // auto-extends), and only paths inside the run's own checkout and outside
 // `.git/` qualify — anything else is the human's call at every rung. A run
-// or task the daemon cannot find fails closed.
+// or task the daemon cannot find fails closed. The floor's own escape test
+// runs first and is checked separately from the ladder, so no rung can reach
+// a path that leaves the repo.
 function policyRulingForScope(
   ctx: ApiContext,
   runId: string,
   paths: string[]
 ): Extract<ReturnType<typeof consultProjectPolicy>, { mode: 'auto' }> | null {
+  if (scopeRequestEscapesRepo(paths).length > 0) return null;
   const run = ctx.orchestrator.list().find((r) => r.id === runId);
   const task = run === undefined ? null : ctx.store.get(run.taskId);
   if (run === undefined || task === null) return null;

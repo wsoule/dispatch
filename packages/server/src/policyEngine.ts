@@ -1,5 +1,6 @@
 import type {
   ActorContext,
+  FloorCheck,
   PolicyGate,
   PolicyRuling,
   TaskRisk,
@@ -7,6 +8,7 @@ import type {
 } from '@dispatch/core';
 import {
   consultPolicy,
+  describeFloorHold,
   describePolicyAuthorization,
   loadConfig,
   projectPolicy,
@@ -15,6 +17,11 @@ import {
 import type { TaskCache } from './cache.js';
 import type { DecisionPolicy } from './decisionFeed.js';
 import type { EventBus } from './events.js';
+import {
+  budgetCapHolds,
+  deletesOutsideDeclaredWrites,
+  scopeRequestEscapesRepo,
+} from './floor.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { FixLoopState } from './orchestrator/fixLoop.js';
 import type { ApprovalDecision, RunMeta } from './orchestrator/types.js';
@@ -95,12 +102,20 @@ export function policyDecisionClassifier(
   opts: PolicyClassifierOptions = {}
 ): DecisionPolicy {
   return (item) => {
+    // The floor answers before any gate is looked up: an item floor.ts's
+    // detectors claimed (`item.floor`) blocks unconditionally. The feed pins
+    // it too, so a different classifier could not demote it either; this is
+    // the classifier saying so itself, where the doc puts the floor.
+    if (item.floor !== undefined) return 'blocking';
     if (item.state === 'open') return 'blocking';
     const gate = DECISION_KIND_GATES[item.kind];
     if (gate === undefined) return 'blocking';
     if (gate === 'approval' && opts.approvalFloor === undefined) {
       return 'blocking';
     }
+    // A scope request outside the repo or into .git/ is the floor's own
+    // pattern for this kind: never auto-granted, so never merely recorded.
+    if (scopeRequestEscapesRepo(item.paths ?? []).length > 0) return 'blocking';
     const risk =
       item.taskId !== undefined ? opts.riskOf?.(item.taskId) : undefined;
     return consultProjectPolicy(rootDir, gate, risk).mode === 'auto'
@@ -147,6 +162,8 @@ interface PolicyEngineRuns {
     input: unknown;
   }[];
   approve(runId: string, requestId: string, decision: ApprovalDecision): void;
+  /** The run's working diff against its base — what auto-merge would land. */
+  diff(runId: string): { files: { path: string; status: string }[] };
 }
 
 interface PolicyEngineFixLoop {
@@ -168,7 +185,12 @@ interface PolicyEngineMergeQueue {
 
 interface PolicyEngineTasks {
   get(id: string): {
-    meta: { parent: string | null; risk: TaskRisk; fixLoop?: boolean };
+    meta: {
+      parent: string | null;
+      risk: TaskRisk;
+      writes: string[];
+      fixLoop?: boolean;
+    };
   } | null;
 }
 
@@ -222,6 +244,12 @@ function describeToolInput(input: unknown): string {
  *   existing green check (rebase, verifySteps, its GitHub holds) still decides
  *   when it lands. A loop that stopped `capped` never enqueues, and a run
  *   with no loop at all is not green.
+ *
+ * Two of the irreversibility floor's members (core/policy.ts) are states of
+ * a run rather than commands, and this engine is where they bite: a task
+ * with an unreviewed budget-exhausted run gets no auto-ignite or auto-retry,
+ * and a run whose diff deletes outside its declared writes gets no
+ * auto-enqueue — at every rung, with a ledger receipt saying why.
  */
 export class PolicyEngine {
   // The failed-result timestamp each task's verify retry was dispatched for,
@@ -233,6 +261,12 @@ export class PolicyEngine {
   // `fixloop.changed` broadcasts of one completed loop enqueue (and record)
   // once, not per event.
   private readonly enqueuedRuns = new Set<string>();
+
+  // Floor holds already written to the ledger, keyed `<check>:<run id>`, so a
+  // re-broadcast of the same signal records the hold once, not per event.
+  // Not a hazard receipt's substitute: the ledger entry is the receipt the
+  // epic promises — an auto-decision that did NOT happen, and why.
+  private readonly recordedFloorHolds = new Set<string>();
 
   constructor(private readonly ctx: PolicyEngineContext) {}
 
@@ -366,6 +400,7 @@ export class PolicyEngine {
       task.meta.risk
     );
     if (ruling.mode !== 'auto') return;
+    if (this.budgetFloorHolds(taskId, 'fix loop auto-ignite')) return;
     if (this.ctx.fixLoop.get(taskId) !== null) return;
     try {
       await this.ctx.fixLoop.ignite(taskId);
@@ -402,6 +437,7 @@ export class PolicyEngine {
       this.riskOf(taskId)
     );
     if (ruling.mode !== 'auto') return;
+    if (this.budgetFloorHolds(taskId, 'verification auto-retry')) return;
     if (this.retriedVerifications.get(taskId) === failed.createdAt) return;
     if (this.hasLiveVerifyRun(taskId)) return;
     const run = this.latestFinishedExecuteRun(taskId);
@@ -454,6 +490,7 @@ export class PolicyEngine {
       this.riskOf(meta.taskId)
     );
     if (ruling.mode !== 'auto') return;
+    if (this.deletesOutsideWritesHold(meta)) return;
     try {
       this.ctx.mergeQueue.enqueue(meta.id);
     } catch (err) {
@@ -470,6 +507,79 @@ export class PolicyEngine {
       `Run ${meta.id} auto-enqueued for merge`,
       `its fix loop completed green and run ${meta.id} entered the merge queue; the queue's existing green check still gates landing`
     );
+  }
+
+  // The floor's budget-cap member on the spend paths: while the task has a run
+  // that died on its cost cap and nobody has reviewed, archived or resumed,
+  // nothing spends on the task's behalf. Deciding to spend past the cap is a
+  // human ruling at every rung — a resume IS that ruling, and lifts the hold.
+  private budgetFloorHolds(taskId: string, action: string): boolean {
+    const holds = budgetCapHolds(this.ctx.orchestrator.list(), taskId);
+    if (holds.length === 0) return false;
+    for (const run of holds) {
+      this.recordFloorHold(
+        'budget-cap',
+        run.id,
+        taskId,
+        `${action} held for ${taskId}`,
+        `run ${run.id} hit its cost budget and has not been reviewed, so policy did not ${action}; more spend is a human decision`
+      );
+    }
+    return true;
+  }
+
+  // The floor's delete-outside-writes member on auto-merge: a run whose diff
+  // deletes a file no declared write covers never enters the queue on policy's
+  // say-so. A diff that cannot be read (no worktree, no snapshot) is held as
+  // well — the floor errs toward a needless question, never a silent landing.
+  private deletesOutsideWritesHold(meta: RunMeta): boolean {
+    const writes = this.ctx.store.get(meta.taskId)?.meta.writes ?? [];
+    let deleted: string[];
+    try {
+      deleted = deletesOutsideDeclaredWrites(
+        writes,
+        this.ctx.orchestrator.diff(meta.id).files
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.error(
+        `dispatchd: policy merge hook could not read the diff of ${meta.id}, holding it for a human: ${message}`
+      );
+      return true;
+    }
+    if (deleted.length === 0) return false;
+    this.recordFloorHold(
+      'delete-outside-writes',
+      meta.id,
+      meta.taskId,
+      `Run ${meta.id} held from auto-merge`,
+      `its diff deletes ${deleted.join(', ')} outside the task's declared writes, so policy did not enqueue it`
+    );
+    return true;
+  }
+
+  // The receipt for a hold: the same ledger decision an auto-decision writes,
+  // phrased with the floor member that stopped it, once per (check, run).
+  private recordFloorHold(
+    check: FloorCheck,
+    runId: string,
+    taskId: string,
+    title: string,
+    detail: string
+  ): void {
+    const key = `${check}:${runId}`;
+    if (this.recordedFloorHolds.has(key)) return;
+    this.recordedFloorHolds.add(key);
+    const task = this.ctx.store.get(taskId);
+    this.ctx.ledgerStore.add({
+      epicId: task?.meta.parent ?? null,
+      sourceTaskId: taskId,
+      kind: 'decision',
+      title,
+      detail: `${detail} — ${describeFloorHold(check)}`,
+      authoredBy: this.ctx.actorContext.humanRef,
+    });
+    this.ctx.events.broadcast({ type: 'ledger.changed' });
   }
 
   // The receipt, both halves: a ledger decision like the one the human would

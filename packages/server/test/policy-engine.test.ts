@@ -72,6 +72,8 @@ interface Harness {
   verifyResults: Map<string, VerificationResult>;
   verifyStarts: { taskId: string; head: string }[];
   enqueued: string[];
+  /** Per-run diff the engine's delete-outside-writes hold reads. */
+  diffs: Map<string, { path: string; status: string }[]>;
   ledger: AddLedgerInput[];
   activity: { taskId: string; text: string }[];
   approved: { runId: string; requestId: string }[];
@@ -97,6 +99,8 @@ function harness(
     risk?: TaskRisk;
     approvalFloor?: ApprovalFloor;
     pending?: PendingApproval[];
+    diffThrows?: Error;
+    writes?: string[];
   } = {}
 ): Harness {
   const root = mkdtempSync(join(tmpdir(), 'dispatch-policy-engine-'));
@@ -109,6 +113,7 @@ function harness(
   const verifyResults = new Map<string, VerificationResult>();
   const verifyStarts: { taskId: string; head: string }[] = [];
   const enqueued: string[] = [];
+  const diffs = new Map<string, { path: string; status: string }[]>();
   const ledger: AddLedgerInput[] = [];
   const activity: { taskId: string; text: string }[] = [];
   const approved: { runId: string; requestId: string }[] = [];
@@ -117,7 +122,11 @@ function harness(
     rootDir: root,
     store: {
       get: () => ({
-        meta: { parent: 'e-000001', risk: opts.risk ?? 'routine' },
+        meta: {
+          parent: 'e-000001',
+          risk: opts.risk ?? 'routine',
+          writes: opts.writes ?? [],
+        },
       }),
     },
     events,
@@ -130,6 +139,10 @@ function harness(
       pendingApprovals: () => opts.pending ?? [],
       approve: (runId, requestId) => {
         approved.push({ runId, requestId });
+      },
+      diff: (runId) => {
+        if (opts.diffThrows !== undefined) throw opts.diffThrows;
+        return { files: diffs.get(runId) ?? [] };
       },
     },
     fixLoop: {
@@ -181,6 +194,7 @@ function harness(
     verifyResults,
     verifyStarts,
     enqueued,
+    diffs,
     ledger,
     activity,
     approved,
@@ -557,5 +571,131 @@ describe('the approval gate', () => {
     expect(unwired.approved).toEqual([]);
     expect(unwired.ledger).toEqual([]);
     unwired.stop();
+  });
+});
+
+// The floor at the top of the ladder: rung 4 demotes every gate, and each
+// of these still blocks. A hold writes one ledger receipt per (check, run),
+// however many times the signal that would have auto-decided fires.
+describe('the irreversibility floor at the maximum rung', () => {
+  const budgetFailed = (id: string) =>
+    runMeta(id, {
+      state: 'failed' as RunState,
+      error: 'run hit its cost budget before the agent finished',
+    });
+
+  it('never auto-ignites the fix loop while a budget-exhausted run is unreviewed', async () => {
+    const h = harness();
+    h.setPolicy('policy:\n  rung: 4\n');
+    h.runs.push(budgetFailed('r-broke'));
+    h.verifyResults.set('t-000001', verifyResult(false));
+    h.events.broadcast({ type: 'verification.changed', taskId: 't-000001' });
+    h.events.broadcast({ type: 'verification.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.ignited).toEqual([]);
+    expect(h.ledger).toHaveLength(1);
+    expect(h.ledger[0].detail).toContain('irreversibility floor');
+    expect(h.ledger[0].detail).toContain('Spend above the budget cap');
+
+    // A human resumed the run: that is the spend decision, and the hold lifts.
+    h.runs.unshift(runMeta('r-again', { resumedFrom: 'r-broke' }));
+    h.events.broadcast({ type: 'verification.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.ignited).toEqual(['t-000001']);
+    h.stop();
+  });
+
+  it('never auto-retries verification while a budget-exhausted run is unreviewed', async () => {
+    const h = harness();
+    h.setPolicy('policy:\n  rung: 4\n');
+    h.runs.push(runMeta('r-impl1'), budgetFailed('r-broke'));
+    h.verifyResults.set('t-000001', verifyResult(false));
+    h.loops.set('t-000001', completeLoop('t-000001'));
+    h.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.verifyStarts).toEqual([]);
+    // The clean loop's auto-enqueue does not spend and is not held by the
+    // budget member; the receipt written is the budget hold, once.
+    expect(
+      h.ledger.filter((e) => e.detail.includes('Spend above the budget cap'))
+    ).toHaveLength(1);
+    h.stop();
+  });
+
+  it('never auto-enqueues a run whose diff deletes outside the declared writes', async () => {
+    const h = harness({ writes: ['packages/server/src/**'] });
+    h.setPolicy('policy:\n  rung: 4\n');
+    h.diffs.set('r-impl1', [
+      { path: 'packages/server/src/new.ts', status: 'A' },
+      { path: 'packages/core/src/types.ts', status: 'D' },
+    ]);
+    // The merge gate fires when a fix loop settles `complete` over a finished
+    // implementer; a repeat broadcast must not re-record the hold.
+    h.runs.push(runMeta('r-impl1'));
+    h.loops.set('t-000001', completeLoop('t-000001'));
+    h.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+    h.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.enqueued).toEqual([]);
+    expect(h.ledger).toHaveLength(1);
+    expect(h.ledger[0].title).toBe('Run r-impl1 held from auto-merge');
+    expect(h.ledger[0].detail).toContain('packages/core/src/types.ts');
+    expect(h.ledger[0].detail).toContain('Deletes outside declared writes');
+
+    // A deletion inside the fence is ordinary work and enqueues as before.
+    h.diffs.set('r-impl2', [
+      { path: 'packages/server/src/old.ts', status: 'D' },
+    ]);
+    h.runs.unshift(runMeta('r-impl2'));
+    h.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.enqueued).toEqual(['r-impl2']);
+    h.stop();
+  });
+
+  it('holds auto-enqueue when the diff cannot be read at all', async () => {
+    const h = harness({ diffThrows: new Error('no worktree') });
+    h.setPolicy('policy:\n  rung: 4\n');
+    h.runs.push(runMeta('r-impl1'));
+    h.loops.set('t-000001', completeLoop('t-000001'));
+    h.events.broadcast({ type: 'fixloop.changed', taskId: 't-000001' });
+    await settle();
+    expect(h.enqueued).toEqual([]);
+    h.stop();
+  });
+
+  it('keeps a floor-held feed item blocking whatever gate its kind maps to', () => {
+    const h = harness();
+    h.setPolicy('policy:\n  rung: 4\n');
+    const classify = policyDecisionClassifier(h.root);
+    const item = (kind: string, floor?: string) =>
+      ({ kind, floor }) as unknown as Parameters<typeof classify>[0];
+    // scope-request is the one kind rung 4 records — unless the floor holds it.
+    expect(classify(item('scope-request'))).toBe('recorded');
+    expect(classify(item('scope-request', 'delete-outside-writes'))).toBe(
+      'blocking'
+    );
+    expect(classify(item('approval', 'force-push'))).toBe('blocking');
+    expect(classify(item('fix-loop-capped', 'finding-ruling'))).toBe(
+      'blocking'
+    );
+    expect(classify(item('run-stalled', 'budget-cap'))).toBe('blocking');
+    h.stop();
+  });
+
+  it('keeps a scope request outside the repo or into .git blocking', () => {
+    const h = harness();
+    h.setPolicy('policy:\n  rung: 4\n');
+    const classify = policyDecisionClassifier(h.root);
+    const scope = (paths: string[]) =>
+      ({ kind: 'scope-request', paths }) as unknown as Parameters<
+        typeof classify
+      >[0];
+    expect(classify(scope(['packages/core/src/index.ts']))).toBe('recorded');
+    expect(classify(scope(['packages/core/src/index.ts', '.git/HEAD']))).toBe(
+      'blocking'
+    );
+    expect(classify(scope(['../other-repo/src/index.ts']))).toBe('blocking');
+    h.stop();
   });
 });

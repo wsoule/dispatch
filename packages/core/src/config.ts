@@ -33,6 +33,7 @@ import {
 import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
 import {
   DEFAULT_POLICY,
+  isFloorCheck,
   MAX_POLICY_RUNG,
   MIN_POLICY_RUNG,
   POLICY_GATE_MODES,
@@ -292,6 +293,14 @@ function parsePolicyConfig(raw: unknown): PolicyConfig {
       );
     }
     for (const [gate, mode] of Object.entries(gates)) {
+      // The irreversibility floor is not configurable at all: naming a floor
+      // check here gets its own error, so the answer reads as "never", not
+      // "you misspelled a gate".
+      if (isFloorCheck(gate)) {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: policy.gates.${gate}: '${gate}' is on the irreversibility floor — it always blocks for a human and cannot be configured`
+        );
+      }
       if (!POLICY_GATES.includes(gate as PolicyGate)) {
         throw new ConfigError(
           `invalid .dispatch/config.yml: unknown policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
@@ -954,6 +963,13 @@ export function updateConfig(
       // Written key-by-key so a pin the patch omits survives; `null` clears a
       // pin, handing the gate back to the rung.
       for (const [gate, mode] of Object.entries(gates)) {
+        // Same floor refusal as parsePolicyConfig: the Settings surface must
+        // not be able to write a demotion the loader would then reject.
+        if (isFloorCheck(gate)) {
+          throw new ConfigError(
+            `invalid policy gate: '${gate}' is on the irreversibility floor — it always blocks for a human and cannot be configured`
+          );
+        }
         if (!POLICY_GATES.includes(gate as PolicyGate)) {
           throw new ConfigError(
             `invalid policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`

@@ -1,18 +1,23 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  consultFloor,
   consultPolicy,
   DEFAULT_POLICY,
+  describeFloorHold,
   describePolicyAuthorization,
   effectiveRung,
+  FLOOR_CHECKS,
   GATE_RUNGS,
+  IRREVERSIBILITY_FLOOR,
+  isFloorCheck,
   MAX_POLICY_RUNG,
   MIN_POLICY_RUNG,
   POLICY_GATES,
   POLICY_RUNGS,
   RISK_RUNG_CAPS,
 } from '../src/policy.js';
-import type { PolicyRuling } from '../src/policy.js';
+import type { FloorCheck, PolicyRuling } from '../src/policy.js';
 
 function auto(ruling: PolicyRuling): Extract<PolicyRuling, { mode: 'auto' }> {
   if (ruling.mode !== 'auto') throw new Error('expected an auto ruling');
@@ -154,6 +159,60 @@ describe('describePolicyAuthorization', () => {
     );
     expect(describePolicyAuthorization(ruling)).toBe(
       'auto-decided by a per-gate override (effective rung 1)'
+    );
+  });
+});
+
+describe('the irreversibility floor', () => {
+  it('has exactly the six members docs/design/autonomy-ladder.md settles', () => {
+    expect(FLOOR_CHECKS).toEqual([
+      'force-push',
+      'delete-outside-writes',
+      'budget-cap',
+      'publish',
+      'repo-settings',
+      'finding-ruling',
+    ]);
+    for (const def of IRREVERSIBILITY_FLOOR) {
+      expect(def.label.length).toBeGreaterThan(0);
+      expect(def.summary.length).toBeGreaterThan(0);
+    }
+  });
+
+  it('is disjoint from the ladder: no floor check is a gate with a rung', () => {
+    for (const check of FLOOR_CHECKS) {
+      expect(POLICY_GATES).not.toContain(check);
+      // GATE_RUNGS has no entry the ladder could lower.
+      expect((GATE_RUNGS as Record<string, number>)[check]).toBeUndefined();
+    }
+    for (const gate of POLICY_GATES) expect(isFloorCheck(gate)).toBe(false);
+    expect(isFloorCheck('force-push')).toBe(true);
+    expect(isFloorCheck('review')).toBe(false);
+  });
+
+  it('blocks every member at the maximum rung, with no policy to consult', () => {
+    // consultFloor takes no PolicyConfig: there is nothing a rung 4 project
+    // could pass that changes the answer. Every member reads as a floor hold.
+    for (const check of FLOOR_CHECKS) {
+      expect(consultFloor(check)).toEqual({
+        mode: 'block',
+        check,
+        floor: true,
+      });
+    }
+    // And the ladder's own decision function still demotes every gate at the
+    // top rung — the floor is not a fifth gate that happens to sit high.
+    for (const gate of POLICY_GATES) {
+      expect(
+        consultPolicy({ rung: MAX_POLICY_RUNG, gates: {} }, gate).mode
+      ).toBe('auto');
+    }
+  });
+
+  it('phrases a hold receipt with the member label and the always-blocks clause', () => {
+    const check: FloorCheck = 'publish';
+    expect(describeFloorHold(check)).toBe(
+      'held by the irreversibility floor (Publishing artifacts) — always blocks for a human at every policy rung'
     );
   });
 });

@@ -144,6 +144,108 @@ export function consultPolicy(
 }
 
 /**
+ * The irreversibility floor: actions that always block for a human, at every
+ * policy rung, in both lenses. Deliberately a DIFFERENT type from PolicyGate —
+ * consultPolicy cannot be asked about a floor check, GATE_RUNGS has no entry
+ * to lower, and PolicyConfig.gates cannot pin one — so the policy engine
+ * cannot demote the floor by construction, not by convention.
+ *
+ * Membership is the six members docs/design/autonomy-ladder.md settles
+ * (t-df1163, "The irreversibility floor"). Amending the floor is an edit to
+ * this table, and only this table: the server's detectors (server/floor.ts)
+ * and both lenses key off it.
+ */
+export type FloorCheck =
+  | 'force-push'
+  | 'delete-outside-writes'
+  | 'budget-cap'
+  | 'publish'
+  | 'repo-settings'
+  | 'finding-ruling';
+
+/** One floor member, with the copy both lenses render: the builder slider's
+ *  always-on footer and the engineer gate table's pinned rows show the same
+ *  label and summary. */
+export interface FloorCheckDef {
+  check: FloorCheck;
+  label: string;
+  summary: string;
+}
+
+export const IRREVERSIBILITY_FLOOR: readonly FloorCheckDef[] = [
+  {
+    check: 'force-push',
+    label: 'Force-push',
+    summary:
+      'Rewriting a pushed ref the run does not own destroys commits others may hold.',
+  },
+  {
+    check: 'delete-outside-writes',
+    label: 'Deletes outside declared writes',
+    summary:
+      'A file or ref deleted beyond the task’s declared fence never lands unreviewed.',
+  },
+  {
+    check: 'budget-cap',
+    label: 'Spend above the budget cap',
+    summary:
+      'A run that hit its cost cap needs a human before anything spends more; no rung raises the cap.',
+  },
+  {
+    check: 'publish',
+    label: 'Publishing artifacts',
+    summary:
+      'A published package or a pushed release tag is public and cannot be recalled.',
+  },
+  {
+    check: 'repo-settings',
+    label: 'Repository visibility and remote settings',
+    summary:
+      'Changing visibility or the default branch, or deleting a remote repo, exposes or loses history irreversibly.',
+  },
+  {
+    check: 'finding-ruling',
+    label: 'Rulings on blocking findings',
+    summary:
+      'A critical or blocking finding, or a capped fix loop, waits for a written human ruling.',
+  },
+];
+
+/** Runtime counterpart of FloorCheck, same pattern as POLICY_GATES. */
+export const FLOOR_CHECKS: readonly FloorCheck[] = IRREVERSIBILITY_FLOOR.map(
+  (def) => def.check
+);
+
+/** Membership test against unvalidated input (config keys, API payloads). */
+export function isFloorCheck(value: string): value is FloorCheck {
+  return FLOOR_CHECKS.includes(value as FloorCheck);
+}
+
+/**
+ * The floor's whole decision function: it takes no PolicyConfig on purpose.
+ * There is no rung, pin, or lens that changes the answer — the return type
+ * cannot even express 'auto'.
+ */
+export interface FloorRuling {
+  mode: 'block';
+  check: FloorCheck;
+  /** Marks the ruling as a floor hold, so surfaces can render the padlock. */
+  floor: true;
+}
+
+export function consultFloor(check: FloorCheck): FloorRuling {
+  return { mode: 'block', check, floor: true };
+}
+
+/** The one-line receipt a floor hold carries, mirroring
+ *  describePolicyAuthorization so ledger entries phrase both directions of the
+ *  policy engine identically. */
+export function describeFloorHold(check: FloorCheck): string {
+  const def = IRREVERSIBILITY_FLOOR.find((d) => d.check === check);
+  return `held by the irreversibility floor (${def?.label ?? check}) — always blocks for a human at every policy rung`;
+}
+
+/**
  * The one-line provenance a recorded auto-decision carries in the ledger, so
  * every gate phrases its authorization identically and the receipt names the
  * exact rung that permitted it.

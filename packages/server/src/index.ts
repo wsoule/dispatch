@@ -42,6 +42,7 @@ import {
 import { EventBus } from './events.js';
 import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
+import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
 import { InboxStore } from './inbox.js';
 import { LedgerStore } from './ledger.js';
@@ -81,6 +82,7 @@ import {
   policyDecisionClassifier,
   PolicyEngine,
 } from './policyEngine.js';
+import type { ApprovalFloor } from './policyEngine.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -1039,6 +1041,13 @@ export async function startServer(
   // rather than stored (see decisionFeed.ts). `start()` subscribes it to the
   // event bus so a decided gate or a moved-on run broadcasts
   // `decisions.changed` without any producer having to know the feed exists.
+  // The irreversibility floor's answer for the approval gate (floor.ts): a
+  // force-push, a registry publish, a release-tag push or a repo-settings
+  // change is never auto-allowed, at any rung. Any tool whose input carries a
+  // shell command is covered, so the tool's name is not what decides.
+  const approvalFloor: ApprovalFloor = (_toolName, input) =>
+    floorCheckForToolInput(input) !== null;
+
   const decisionFeed = new DecisionFeed({
     orchestrator,
     questions,
@@ -1050,6 +1059,7 @@ export async function startServer(
     // shows up as `recorded` rather than `blocking`.
     policy: policyDecisionClassifier(rootDir, {
       riskOf: (taskId) => store.get(taskId)?.meta.risk,
+      approvalFloor,
     }),
   });
   const stopDecisionFeed = decisionFeed.start();
@@ -1067,6 +1077,7 @@ export async function startServer(
     mergeQueue,
     ledgerStore,
     actorContext,
+    approvalFloor,
     // The Activity half of each receipt; the ledger half is the engine's own.
     appendActivity: policyActivityAppender({ store, cache, events }),
   });
