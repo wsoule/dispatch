@@ -104,7 +104,10 @@ describe('filterGroupsToLocalItems', () => {
     const root = mkdtempSync(join(tmpdir(), 'dispatch-inbox-cluster-'));
     const mine = new InboxStore(root, 'wyat');
     const theirs = new InboxStore(root, 'alex');
-    const [a, b] = mine.add({ text: 'fix the parser\nadd the linter' });
+    // One item per add() — capture stopped splitting on newlines in the
+    // brain-dump overhaul, so two of my own items means two calls.
+    const [a] = mine.add({ text: 'fix the parser' });
+    const [b] = mine.add({ text: 'add the linter' });
     const [c] = theirs.add({ text: 'fix the parser too' });
 
     // As if the model grouped one of my items with a teammate's, plus a
