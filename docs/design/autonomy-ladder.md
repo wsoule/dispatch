@@ -103,9 +103,9 @@ one key.
 - **engineer = 2 (`auto-scope`)** — confirmed. Closest stop to today's behavior
   plus relief from the one gate that measurably interrupts (scope requests park
   the agent mid-run on a 30s long-poll).
-- Both presets surface the same `policy.rung` key; the lens epic
-  (`e-3a6884`) sets the default at project creation, the settings escape hatch
-  moves it any time.
+- Both presets surface the same `policy.rung` key; the lens epic (`e-3a6884`)
+  sets the default at project creation, the settings escape hatch moves it any
+  time.
 
 ## Per-task risk modifier
 
@@ -121,12 +121,12 @@ the project rung:
 | `elevated` | `min(project rung, 3)` | a human always merges elevated work |
 | `critical` | `min(project rung, 1)` | never auto-dispatched (see floor)   |
 
-`effectiveRung(task) = min(config.policy.rung, riskCap(task.meta.risk))` is
-the whole function. This also gives the floor's "npm publish is never reachable
-by auto-dispatch" a mechanical home: release/publish tasks are declared
-`critical` (the planner already emits risk; `prReviewTask.ts:93` shows the
-pattern), and the epic engine holds `critical` children for explicit human
-dispatch exactly as it already holds tasks whose declared writes were flagged
+`effectiveRung(task) = min(config.policy.rung, riskCap(task.meta.risk))` is the
+whole function. This also gives the floor's "npm publish is never reachable by
+auto-dispatch" a mechanical home: release/publish tasks are declared `critical`
+(the planner already emits risk; `prReviewTask.ts:93` shows the pattern), and
+the epic engine holds `critical` children for explicit human dispatch exactly as
+it already holds tasks whose declared writes were flagged
 (`packages/server/src/orchestrator/plan.ts:674`).
 
 ## The irreversibility floor
@@ -204,9 +204,9 @@ The decision feed already reserved the seam for exactly this epic:
 (`packages/server/src/decisionFeed.ts:83-87`, and the comment at `:39-41` naming
 `e-ad1978`). Implementation is therefore:
 
-1. A `policy.rung` config key and a `DecisionPolicy` implementation that
-   maps each `UnclassifiedDecisionItem` to `blocking`/`recorded` from the
-   effective rung plus the floor-pattern list.
+1. A `policy.rung` config key and a `DecisionPolicy` implementation that maps
+   each `UnclassifiedDecisionItem` to `blocking`/`recorded` from the effective
+   rung plus the floor-pattern list.
 2. Three behavior switches keyed off the effective rung: the scope auto-decider
    (rung ≥ 2), fix-loop auto-ignition (rung ≥ 3), and auto-enqueue of green runs
    (rung ≥ 4).
