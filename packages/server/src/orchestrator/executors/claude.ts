@@ -15,6 +15,7 @@ import { discoverCarto, supportsMcpServe } from '@dispatch/core/carto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
+import { floorCheckForToolInput } from '../../floor.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type {
   ApprovalDecision,
@@ -386,6 +387,12 @@ const USAGE_LIMIT_LEAD = 'Claude usage limit reached before the agent finished';
 // causes a message a human can act on; anything absent from it still fails
 // (see reasonForTruncation) carrying the raw reason string.
 //
+// The budget-cap failure message, exported so floor.ts's isBudgetCapFailure
+// recognizes exactly the text this executor writes — the two must not drift,
+// or a budget-exhausted run stops registering on the irreversibility floor.
+export const BUDGET_EXHAUSTED_MESSAGE =
+  'run hit its cost budget before the agent finished';
+
 // The load-bearing entry is `'blocking_limit'` — the Claude usage/session
 // limit. See the doc comment on finishFromResult for why that one silently
 // looked like success.
@@ -393,7 +400,7 @@ const TRUNCATING_TERMINAL_REASONS: Record<string, string> = {
   blocking_limit: USAGE_LIMIT_MESSAGE,
   rapid_refill_breaker:
     'Claude rate limiter stopped the session before the agent finished — resume this run shortly',
-  budget_exhausted: 'run hit its cost budget before the agent finished',
+  budget_exhausted: BUDGET_EXHAUSTED_MESSAGE,
   max_turns: 'run hit its turn limit before the agent finished',
   prompt_too_long:
     'conversation grew too long for the model before the agent finished',
@@ -601,14 +608,22 @@ export class ClaudeExecutor implements Executor {
       if (stopRequested) {
         return { behavior: 'deny', message: STOP_DENIAL_MESSAGE };
       }
-      if (
-        opts.permissionMode === 'acceptEdits' &&
-        (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) || toolName === ASK_USER_TOOL)
-      ) {
-        return { behavior: 'allow', updatedInput: input };
-      }
-      if (sessionAllowed.has(toolName)) {
-        return { behavior: 'allow', updatedInput: input };
+      // The irreversibility floor: a force-push, npm publish, or
+      // repo-visibility change always raises the approval flow below — ahead
+      // of every allow branch, so neither an acceptEdits auto-allow nor an
+      // earlier "approve Bash for this session" lets one through. Each
+      // irreversible act gets its own human decision, at every policy rung.
+      const floorHold = floorCheckForToolInput(input);
+      if (floorHold === null) {
+        if (
+          opts.permissionMode === 'acceptEdits' &&
+          (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) || toolName === ASK_USER_TOOL)
+        ) {
+          return { behavior: 'allow', updatedInput: input };
+        }
+        if (sessionAllowed.has(toolName)) {
+          return { behavior: 'allow', updatedInput: input };
+        }
       }
       const { requestId } = callOpts;
       events.onApprovalRequest({ requestId, toolName, input });

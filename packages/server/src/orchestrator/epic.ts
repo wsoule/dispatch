@@ -28,6 +28,9 @@ interface EpicSessionRecord {
   executor: string;
   active: boolean;
   completedAt?: string;
+  /** Critical-risk children already noted as held on the epic's Activity,
+   *  so each is announced once per session rather than on every fill. */
+  heldCritical: Set<string>;
 }
 
 export interface EpicSession {
@@ -153,6 +156,7 @@ export class EpicEngine {
       concurrency,
       executor,
       active: true,
+      heldCritical: new Set(),
     };
     this.sessions.set(epicId, session);
     try {
@@ -372,7 +376,12 @@ export class EpicEngine {
     // must exclude them explicitly rather than rely on childrenOf's filtering.
     const ready = dispatchableTasks(
       this.ctx.cache.query({ includeArchived: true })
-    ).filter((t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined);
+    ).filter(
+      (t) =>
+        childIds.has(t.meta.id) &&
+        t.meta.archivedAt === undefined &&
+        !this.holdCritical(session, epicId, t)
+    );
     // A live run's footprint can have grown past its task's declared writes
     // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
     const liveClaims = this.ctx.orchestrator.liveClaims().map((c) => c.claims);
@@ -406,6 +415,29 @@ export class EpicEngine {
         throw err;
       }
     }
+  }
+
+  // A critical-risk child (a publish, a release, a repo-settings change) is
+  // never auto-dispatched: the autonomy ladder caps such a task at rung 1
+  // (core/policy.ts RISK_RUNG_CAPS), and the epic scheduler's own fill is an
+  // auto-decision. It waits for a human to dispatch it by hand, and the hold
+  // is written to the epic's Activity once so it reads as a decision rather
+  // than a child that silently never starts. Returns true when held.
+  private holdCritical(
+    session: EpicSessionRecord,
+    epicId: string,
+    task: TaskDoc
+  ): boolean {
+    if (task.meta.risk !== 'critical') return false;
+    if (!session.heldCritical.has(task.meta.id)) {
+      session.heldCritical.add(task.meta.id);
+      this.appendEpicActivity(
+        epicId,
+        `holding ${task.meta.id} for explicit human dispatch — critical-risk work is never auto-dispatched`,
+        'none'
+      );
+    }
+    return true;
   }
 
   // True once none of an epic's children is still pending work: nothing sits

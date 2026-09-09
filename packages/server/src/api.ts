@@ -820,6 +820,18 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
       patch.queue = { weights: weights as Partial<QueueWeights> };
     }
   }
+  if ('policy' in body) {
+    if (
+      typeof body.policy !== 'object' ||
+      body.policy === null ||
+      Array.isArray(body.policy)
+    ) {
+      return errorResponse(400, 'policy must be an object');
+    }
+    // Same deal as models/linear: core validates the rung and each gate pin
+    // before writing, and that ConfigError becomes the 400 below.
+    patch.policy = body.policy as ConfigPatch['policy'];
+  }
 
   try {
     const config = updateConfig(ctx.rootDir, patch);

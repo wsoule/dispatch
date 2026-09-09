@@ -204,3 +204,29 @@ test('without onFixFindings there are no checkboxes and no fix button', () => {
   expect(screen.queryByLabelText(/select finding/i)).toBeNull();
   expect(screen.queryByRole('button', { name: /fix.*selected/i })).toBeNull();
 });
+
+// A policy auto-decision is a receipt, not a human ruling; the reviewer must
+// be able to tell which one they are looking at.
+test('a decision the policy engine auto-decided carries the receipt badge', () => {
+  const decision = (id: string, detail: string) => ({
+    id,
+    epicId: null,
+    sourceTaskId: 't-aaaaaa',
+    kind: 'decision' as const,
+    title: `Decision ${id}`,
+    detail,
+    appliesTo: [],
+    authoredBy: 'human:x',
+    createdAt: '2026-09-01T00:00:00.000Z',
+  });
+  render(
+    <ReviewCasePanel
+      {...empty}
+      decisions={[
+        decision('l-1', 'granted — auto-decided by policy rung 2 (auto-scope)'),
+        decision('l-2', 'granted by hand [decided via app]'),
+      ]}
+    />
+  );
+  expect(screen.getAllByText('auto-decided')).toHaveLength(1);
+});

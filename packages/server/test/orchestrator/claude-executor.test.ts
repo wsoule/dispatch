@@ -407,6 +407,114 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
   });
 });
 
+// The irreversibility floor at the executor (see floor.ts): a floor command
+// raises the approval flow ahead of every allow branch. Neither the
+// acceptEdits fast-path nor an earlier "approve Bash for this session" grant
+// may let a force-push, publish, or repo-settings change through — each
+// irreversible act is its own human decision, at every policy rung.
+describe('ClaudeExecutor canUseTool irreversibility floor', () => {
+  function startWithApprovals() {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+    const requested: string[] = [];
+    const run = executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: (request) => {
+          requested.push(request.requestId);
+        },
+        onFinish: () => {},
+      }
+    );
+    return { run, requested, canUseTool: () => captured?.canUseTool };
+  }
+
+  it('re-asks for a floor command even after Bash was approved for the session', async () => {
+    const { run, requested, canUseTool } = startWithApprovals();
+
+    // A routine Bash call, approved for the whole session.
+    const first = canUseTool()?.(
+      'Bash',
+      { command: 'ls' },
+      fakeCanUseToolOptions('req-ls')
+    );
+    await Promise.resolve();
+    expect(requested).toEqual(['req-ls']);
+    run.approve('req-ls', { allow: true, scope: 'session' });
+    expect(await first).toMatchObject({ behavior: 'allow' });
+
+    // The grant now covers Bash: a second routine call never asks.
+    const second = await canUseTool()?.(
+      'Bash',
+      { command: 'git status' },
+      fakeCanUseToolOptions('req-status')
+    );
+    expect(second).toMatchObject({ behavior: 'allow' });
+    expect(requested).toEqual(['req-ls']);
+
+    // But every floor command still parks for its own decision.
+    for (const [requestId, command] of [
+      ['req-force', 'git push --force origin main'],
+      ['req-publish', 'npm publish'],
+      ['req-visibility', 'gh repo edit --visibility public'],
+      ['req-tag', 'git push origin v1.2.3'],
+      ['req-delete', 'git push origin --delete main'],
+    ]) {
+      void canUseTool()?.(
+        'Bash',
+        { command },
+        fakeCanUseToolOptions(requestId)
+      );
+      await Promise.resolve();
+      expect(requested).toContain(requestId);
+    }
+  });
+
+  it('a denied floor command tells the agent why, and a later one asks again', async () => {
+    const { run, requested, canUseTool } = startWithApprovals();
+    const first = canUseTool()?.(
+      'Bash',
+      { command: 'npm publish' },
+      fakeCanUseToolOptions('req-publish-1')
+    );
+    await Promise.resolve();
+    run.approve('req-publish-1', { allow: false, reason: 'not yet' });
+    expect(await first).toEqual({ behavior: 'deny', message: 'not yet' });
+
+    // Allowing one floor command is a once-only decision by construction:
+    // even `scope: 'session'` on it does not pre-approve the next one.
+    const second = canUseTool()?.(
+      'Bash',
+      { command: 'npm publish' },
+      fakeCanUseToolOptions('req-publish-2')
+    );
+    await Promise.resolve();
+    run.approve('req-publish-2', { allow: true, scope: 'session' });
+    expect(await second).toMatchObject({ behavior: 'allow' });
+    void canUseTool()?.(
+      'Bash',
+      { command: 'npm publish' },
+      fakeCanUseToolOptions('req-publish-3')
+    );
+    await Promise.resolve();
+    expect(requested).toEqual([
+      'req-publish-1',
+      'req-publish-2',
+      'req-publish-3',
+    ]);
+  });
+});
+
 // The "keeps saying running" bug's root cause for a packaged app: the SDK
 // spawns a native CLI it can't find, so query() throws
 // "Native CLI binary for <platform>-<arch> not found. Reinstall

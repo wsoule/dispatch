@@ -11,6 +11,8 @@ import type {
   LedgerKind,
   ModelConfig,
   MutationEvidence,
+  PolicyGate,
+  PolicyGateMode,
   Priority,
   TaskDoc,
   TaskRisk,
@@ -1926,6 +1928,12 @@ export interface ApiClient {
     maxBudgetUsd?: number | null;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
+    /** The autonomy policy: the ladder rung, plus per-gate pins where a
+     *  `null` pin clears the override so the rung decides again. */
+    policy?: {
+      rung?: number;
+      gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+    };
   }): Promise<DispatchConfig>;
   // Linear sync. `connectLinear` posts the key once and never gets it back; every later
   // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.

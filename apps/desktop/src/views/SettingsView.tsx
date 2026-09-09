@@ -6,6 +6,7 @@ import { DaemonSection } from '../components/settings/DaemonSection';
 import { DiffsSection } from '../components/settings/DiffsSection';
 import { GeneralSection } from '../components/settings/GeneralSection';
 import { IntegrationsSection } from '../components/settings/IntegrationsSection';
+import { PolicySection } from '../components/settings/PolicySection';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { EmptyState } from '@/ui/chrome';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/ui/tabs';
@@ -15,6 +16,9 @@ interface SettingsViewProps {
    *  `currentProjectRoot()` — not the full observability-database `ProjectSummary`. */
   activeProject: { path: string; name: string } | null;
   data: DispatchProjectData;
+  /** Opens a task's full view — the Autonomy tab's receipts link through to
+   *  the task ledger that holds each auto-decision. */
+  onOpenTask?: (taskId: string) => void;
 }
 
 type SaveState =
@@ -27,7 +31,11 @@ type SaveState =
  *  tabs. Every tab but Diffs saves through the shell's one `save` and its one
  *  indicator beneath the tab bar; Diffs is a local display preference with its own
  *  storage and no save state. */
-export function SettingsView({ activeProject, data }: SettingsViewProps) {
+export function SettingsView({
+  activeProject,
+  data,
+  onOpenTask,
+}: SettingsViewProps) {
   const [saveState, setSaveState] = useState<SaveState>({ kind: 'idle' });
 
   // The one save path every config-backed section's onSave goes through, so
@@ -74,6 +82,7 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
       <Tabs defaultValue="general">
         <TabsList>
           <TabsTrigger value="general">General</TabsTrigger>
+          <TabsTrigger value="autonomy">Autonomy</TabsTrigger>
           <TabsTrigger value="agents">Agents</TabsTrigger>
           <TabsTrigger value="integrations">Integrations</TabsTrigger>
           <TabsTrigger value="daemon">Daemon</TabsTrigger>
@@ -99,6 +108,17 @@ export function SettingsView({ activeProject, data }: SettingsViewProps) {
         <TabsContent value="general">
           {data.config !== null && (
             <GeneralSection config={data.config} onSave={save} />
+          )}
+        </TabsContent>
+
+        <TabsContent value="autonomy">
+          {data.config !== null && (
+            <PolicySection
+              config={data.config}
+              onSave={save}
+              client={data.client}
+              onOpenTask={onOpenTask}
+            />
           )}
         </TabsContent>
 

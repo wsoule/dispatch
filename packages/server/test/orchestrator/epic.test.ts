@@ -260,6 +260,48 @@ describe('EpicEngine.start', () => {
     expect(inReviewCount).toBe(5);
   });
 
+  // The autonomy ladder caps critical-risk work at rung 1 (a publish, a
+  // release): the epic's own auto-fill is an auto-decision, so such a child
+  // waits for a human to dispatch it by hand, and the hold is noted once.
+  it('holds a critical-risk child for explicit human dispatch, noted once on the epic', async () => {
+    const harness = makeHarness();
+    const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
+    harness.store.update(childIds[1], { risk: 'critical' });
+    harness.cache.rebuild(harness.store);
+
+    await harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
+    await waitFor(
+      () =>
+        harness.orchestrator.list().filter((r) => r.taskId === childIds[0])
+          .length === 1
+    );
+    await sleep(30);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === childIds[1])
+    ).toEqual([]);
+    expect(harness.store.get(childIds[1])?.meta.status).toBe('ready');
+
+    // Finishing the routine child refills the queue, but the critical child
+    // still waits, and the hold is not repeated on the Activity.
+    const live = harness.orchestrator
+      .list()
+      .find((r) => r.taskId === childIds[0] && r.state === 'awaiting-approval');
+    expect(live).toBeDefined();
+    harness.orchestrator.approve(live!.id, 'go', true);
+    await sleep(40);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === childIds[1])
+    ).toEqual([]);
+    const body = harness.store.get(epicId)?.body ?? '';
+    const holdLines = body
+      .split('\n')
+      .filter((line) => line.includes(`holding ${childIds[1]}`));
+    expect(holdLines).toHaveLength(1);
+    expect(holdLines[0]).toContain(
+      'critical-risk work is never auto-dispatched'
+    );
+  });
+
   it('dispatches a newly-unblocked child once its blocker finishes (unblock cascade)', async () => {
     const harness = makeHarness();
     const { epicId, childIds } = createEpicWithChildren(
