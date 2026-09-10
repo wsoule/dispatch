@@ -76,7 +76,7 @@ struct HealthResponse {
 /// to `daemonfile.ts`'s `daemonFileKey`. Cross-checked in tests against the
 /// same fixture value `packages/cli/test/daemon-cmd.test.ts` uses, so drift
 /// between the TS and Rust copies of this scheme fails loudly here too.
-fn daemon_file_key(root_dir: &str) -> String {
+pub(crate) fn daemon_file_key(root_dir: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(root_dir.as_bytes());
     let digest = hasher.finalize();

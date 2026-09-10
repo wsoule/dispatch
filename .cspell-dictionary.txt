@@ -330,6 +330,8 @@ Railpack
 railwayignore
 readdirp
 reassignable
+reattribute
+reattributing
 rebasable
 rebuildable
 Recluster
@@ -420,6 +422,7 @@ smol
 soule
 Soule
 specced
+splitn
 stablelib
 standardwebhooks
 startable
