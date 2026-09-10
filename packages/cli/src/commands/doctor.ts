@@ -5,7 +5,11 @@ import {
   parseTaskFile,
 } from '@dispatch/core';
 import type { DispatchConfig, TaskDoc } from '@dispatch/core';
-import { checkCartoHealth, discoverCarto } from '@dispatch/core/carto';
+import {
+  checkCartoHealth,
+  discoverCarto,
+  redirectCartoOutput,
+} from '@dispatch/core/carto';
 import type { Command } from 'commander';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -289,6 +293,15 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
           : null;
         const broken = health !== null && !health.ok;
         if (config.carto.enabled !== 'off') {
+          // A project initialized before carto's output moved into .carto/
+          // still has sync rewriting its committed AGENTS.md on every
+          // checkout; the config is per-machine, so doctor is where it
+          // gets repaired.
+          if (redirectCartoOutput(projectRoot(ctx.cwd))) {
+            ctx.log(
+              "repointed carto's output from AGENTS.md to .carto/CONTEXT.md so sync stops rewriting a committed file"
+            );
+          }
           if (discovery.ok) {
             ctx.log(
               `carto ${discovery.binary.version} at ${discovery.binary.path}`
