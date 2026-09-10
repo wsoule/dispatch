@@ -149,8 +149,22 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         // board over a damaged one. On the file backend the equivalent
         // failures surface as parse errors in the loop above; on the database
         // backend `GET /api/health` is the only place they are named.
-        for (const problem of await api.healthProblems()) {
+        const health = await api.health();
+        for (const problem of health.problems) {
           issues.push({ file: problem.split(':')[0] ?? '', problem });
+        }
+        // Which daemon answered, and what it dispatches on: the two facts
+        // that went unseen when a fleet ran on the wrong model for two days.
+        // Skipped under --json since that output must be a single blob.
+        if (
+          opts.json !== true &&
+          health.pid !== undefined &&
+          health.startedAt !== undefined &&
+          health.executeModel !== undefined
+        ) {
+          ctx.log(
+            `dispatchd pid ${health.pid}, up since ${health.startedAt}, execute model ${health.executeModel}`
+          );
         }
       }
 

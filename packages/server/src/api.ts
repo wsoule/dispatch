@@ -190,6 +190,10 @@ export interface ApiContext {
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
   prCapability: boolean;
+  // When this daemon process started, captured once in startServer — the
+  // same value the daemon file records, surfaced at GET /api/health so a
+  // client can tell which process is answering.
+  startedAt: string;
   // The Git page's backend — see packages/server/src/git/commands.ts.
   gitRepo: GitRepo;
   // The two tokens this daemon accepts — see DaemonTokens.
@@ -3897,6 +3901,15 @@ export async function handleApi(
         // Phase 5 P1: whether this project can use the PR review action
         // (gh on PATH + a configured git remote), detected once at boot.
         pr: ctx.prCapability,
+        // Who is answering and what it will run. On 2026-09-08 a fleet ran
+        // on the wrong model for two days and nothing surfaced it, and two
+        // daemons served one root with only `ps` able to tell them apart.
+        // Health is the one open route every client probes, so it carries
+        // the process identity and the fully-defaulted per-role model map
+        // (read fresh, since config.yml can change under a live daemon).
+        pid: process.pid,
+        startedAt: ctx.startedAt,
+        models: loadConfig(ctx.rootDir).models,
       });
     }
 

@@ -45,6 +45,11 @@ export interface HealthPayload {
   // PATH + a configured git remote) — gates whether the desktop UI shows
   // the "Open PR" action at all.
   pr: boolean;
+  // Which process is answering and what it will run — optional because a
+  // daemon predating these fields still answers health without them.
+  pid?: number;
+  startedAt?: string;
+  models?: ModelConfig;
 }
 
 export interface TaskFilter {

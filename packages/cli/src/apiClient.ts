@@ -275,12 +275,18 @@ export interface TaskApiClient {
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   /**
-   * Records the daemon's last cache rebuild could not read, from
-   * `GET /api/health`. These never appear in `listTasks`, so a caller that
-   * only lists sees a clean board over a damaged one — which is exactly what
-   * `dispatch doctor` is for.
+   * `GET /api/health`, reduced to what doctor reports: `problems` are records
+   * the daemon's last cache rebuild could not read (they never appear in
+   * `listTasks`, so a caller that only lists sees a clean board over a
+   * damaged one), and the identity fields say which process answered and
+   * what model it dispatches — absent on a daemon that predates them.
    */
-  healthProblems(): Promise<string[]>;
+  health(): Promise<{
+    problems: string[];
+    pid?: number;
+    startedAt?: string;
+    executeModel?: string;
+  }>;
 }
 
 /** Builds the task half of the daemon API, bound to one daemon + token. */
@@ -303,14 +309,25 @@ export function createTaskApiClient(
       return request(target, `/api/tasks?${params.toString()}`);
     },
     readyTasks: () => request(target, '/api/tasks/ready'),
-    healthProblems: async () => {
-      const health = await request<{ problems?: unknown }>(
-        target,
-        '/api/health'
-      );
-      return Array.isArray(health.problems)
-        ? health.problems.filter((p): p is string => typeof p === 'string')
-        : [];
+    health: async () => {
+      const health = await request<{
+        problems?: unknown;
+        pid?: unknown;
+        startedAt?: unknown;
+        models?: { execute?: unknown };
+      }>(target, '/api/health');
+      return {
+        problems: Array.isArray(health.problems)
+          ? health.problems.filter((p): p is string => typeof p === 'string')
+          : [],
+        pid: typeof health.pid === 'number' ? health.pid : undefined,
+        startedAt:
+          typeof health.startedAt === 'string' ? health.startedAt : undefined,
+        executeModel:
+          typeof health.models?.execute === 'string'
+            ? health.models.execute
+            : undefined,
+      };
     },
     getTask: (id) => request(target, `/api/tasks/${encodeURIComponent(id)}`),
     createTask: (input) => request(target, '/api/tasks', jsonBody(input)),

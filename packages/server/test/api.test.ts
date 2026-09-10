@@ -60,6 +60,19 @@ describe('GET /api/health', () => {
     expect(body.problems).toEqual([]);
   });
 
+  // Health is the one open route every client probes, so it must say which
+  // process is answering and which model it will dispatch on — the two facts
+  // nothing surfaced when a fleet ran on the wrong model for two days.
+  it('names the answering process and its per-role models', async () => {
+    const body = await json(await fetch(`${baseUrl}/api/health`));
+    expect(Number.isInteger(body.pid)).toBe(true);
+    expect(body.pid).toBeGreaterThan(0);
+    expect(typeof body.startedAt).toBe('string');
+    expect(Number.isNaN(Date.parse(body.startedAt))).toBe(false);
+    expect(typeof body.models.execute).toBe('string');
+    expect(body.models.execute.length).toBeGreaterThan(0);
+  });
+
   it('serves JSON responses with an explicit utf-8 charset', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.headers.get('content-type')).toBe(

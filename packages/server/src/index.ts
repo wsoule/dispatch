@@ -503,6 +503,9 @@ export async function startServer(
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
   const tokens = opts.tokens ?? mintDaemonTokens();
+  // One timestamp for both places that name this process: the daemon file
+  // and GET /api/health.
+  const startedAt = new Date().toISOString();
 
   // Before touching any state: a root another live daemon is serving is not
   // ours to reconcile.
@@ -1111,6 +1114,7 @@ export async function startServer(
     prWorktrees,
     mergeQueue,
     prCapability,
+    startedAt,
     noteStore: new NoteStore(rootDir),
     inboxStore,
     findingStore,
@@ -1243,7 +1247,7 @@ export async function startServer(
       rootDir,
       port,
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt,
       agentToken: tokens.agentToken,
     });
   }
