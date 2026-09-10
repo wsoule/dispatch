@@ -16,8 +16,9 @@ import {
   checkMergeDriverSetup,
   checkTeamMergeDriverSetup,
 } from '../mergeDriver.js';
+import { projectRoot } from '../projectRoot.js';
 import { findRunningDaemon } from './daemon.js';
-import { databaseBacked, projectRoot, requireStore } from './task.js';
+import { databaseBacked, requireStore } from './task.js';
 
 interface Issue {
   file: string;

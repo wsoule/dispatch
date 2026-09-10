@@ -33,6 +33,7 @@ import {
   registerTeamMergeDriverGitConfig,
   writeGitAttributes,
 } from './mergeDriver.js';
+import { projectRoot } from './projectRoot.js';
 
 // Scaffolds `.dispatch/` for `ctx.cwd` if it isn't there yet, and (re-)
 // registers the merge drivers unconditionally. Shared by `dispatch init`
@@ -183,7 +184,9 @@ export function makeProgram(ctx: CliContext): Command {
       registerMcpServer(ctx.cwd);
       ctx.log(`Initialized ${DISPATCH_DIR}/`);
     }
-    upsertRegisteredProject(ctx.cwd);
+    // The registry names projects, and a worktree or subdirectory is not
+    // one — same root ensureDaemon keys its daemon on.
+    upsertRegisteredProject(projectRoot(ctx.cwd));
     const { port } = await ensureDaemon(ctx);
     openDesktopOrBrowser(ctx, port);
   });

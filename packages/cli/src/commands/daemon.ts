@@ -16,6 +16,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { type CliContext, CliError } from '../context.js';
+import { projectRoot } from '../projectRoot.js';
 import { requireInitialized } from './task.js';
 
 // ---------------------------------------------------------------------------
@@ -219,7 +220,7 @@ export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
   if (process.platform === 'darwin') {
     const probe = spawnSync('open', ['-Ra', DESKTOP_PRODUCT_NAME]);
     if (probe.status === 0) {
-      (ctx.openApp ?? defaultOpenApp)(ctx.cwd);
+      (ctx.openApp ?? defaultOpenApp)(projectRoot(ctx.cwd));
       return;
     }
   }
@@ -358,12 +359,14 @@ export interface DaemonConnection {
 
 // Attaches to an already-running daemon without ever starting one — the
 // decide path needs this, because a daemon it started itself would have
-// minted an app token nobody can present.
+// minted an app token nobody can present. `rootDir` may be any directory
+// inside the project (a run's worktree, a subdirectory): the daemon is keyed
+// by the project root it resolves to.
 export async function findRunningDaemon(
   rootDir: string,
   opts: LocateDaemonOptions = {}
 ): Promise<DaemonConnection | null> {
-  return locateDaemon(rootDir, opts);
+  return locateDaemon(projectRoot(rootDir), opts);
 }
 
 export interface EnsureDaemonOptions extends LocateDaemonOptions {
@@ -441,18 +444,24 @@ function releaseSpawn(rootDir: string): void {
 // `/api/health`. Extracted from `dispatch ui`'s own action (which now just
 // calls this and opens a browser at the result) so headless commands get
 // identical auto-start behavior without duplicating it.
+//
+// Everything here is keyed on the resolved project root, never the raw cwd:
+// a cwd inside a run's worktree (or a subdirectory of the checkout) must
+// find — or spawn — the daemon for the project, not one rooted at the
+// checkout it happens to be standing in.
 export async function ensureDaemon(
   ctx: CliContext,
   opts: EnsureDaemonOptions = {}
 ): Promise<DaemonConnection> {
-  const existing = await locateDaemon(ctx.cwd, opts);
+  const rootDir = projectRoot(ctx.cwd);
+  const existing = await locateDaemon(rootDir, opts);
   if (existing !== null) return existing;
 
   // Someone else is already spawning for this root: wait for their daemon
   // rather than starting a second one. 20s covers a cold `bun` start on a
   // loaded machine and still leaves the stale-lock takeover as the backstop.
-  if (!claimSpawn(ctx.cwd)) {
-    const winner = await waitForHealthyDaemon(ctx.cwd, 20_000);
+  if (!claimSpawn(rootDir)) {
+    const winner = await waitForHealthyDaemon(rootDir, 20_000);
     if (winner !== null) {
       return { port: winner.port, agentToken: requireAgentToken(winner) };
     }
@@ -461,7 +470,7 @@ export async function ensureDaemon(
   }
 
   const launcher = resolveDaemonLauncher();
-  const args = [...launcher.leadingArgs, '--root', ctx.cwd];
+  const args = [...launcher.leadingArgs, '--root', rootDir];
   if (opts.port !== undefined) args.push('--port', opts.port);
 
   // Detached + ignored stdio: this daemon should outlive the CLI invocation
@@ -494,7 +503,7 @@ export async function ensureDaemon(
   child.unref();
 
   try {
-    const info = await waitForHealthyDaemon(ctx.cwd, 5000);
+    const info = await waitForHealthyDaemon(rootDir, 5000);
     if (info === null) {
       throw new CliError(
         launcher.usesBun
@@ -505,12 +514,12 @@ export async function ensureDaemon(
     // Kept as a backstop for the one case the claim cannot cover: a daemon
     // someone started outside this code path (a bare `dispatch serve`) landing
     // between our claim and our child's own daemon-file write.
-    const winner = await resolveRaceWinner(ctx.cwd, child, info);
+    const winner = await resolveRaceWinner(rootDir, child, info);
     return { port: winner.port, agentToken: requireAgentToken(winner) };
   } finally {
     // Only once the daemon is up (or has failed): releasing earlier would let
     // a waiting caller through while there is still nothing to find.
-    releaseSpawn(ctx.cwd);
+    releaseSpawn(rootDir);
   }
 }
 
@@ -570,7 +579,7 @@ export function registerDaemonCommands(
       // back with "not initialized".
       requireInitialized(ctx);
       const launcher = resolveDaemonLauncher();
-      const args = [...launcher.leadingArgs, '--root', ctx.cwd];
+      const args = [...launcher.leadingArgs, '--root', projectRoot(ctx.cwd)];
       if (opts.port !== undefined) args.push('--port', opts.port);
 
       const result = spawnSync(launcher.cmd, args, {
