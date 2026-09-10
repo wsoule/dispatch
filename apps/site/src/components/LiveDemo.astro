@@ -1,42 +1,56 @@
-<section class="section" id="demo">
-  <div class="container">
-    <p class="eyebrow">Demo</p>
-    <h2>See for yourself.</h2>
-    <p class="sub">
-      A real board, running in your browser. Nothing ever goes wrong with live demos, right?
-    </p>
+---
+import Section from './Section.astro';
+---
+
+<Section id="demo" number="06" label="Live demo" title="See for yourself.">
+  <p class="sub">
+    A real board, running in your browser. Nothing ever goes wrong with live demos, right?
+  </p>
+  <div class="frame">
     <iframe
       src="https://dispatch-demo-production-aed7.up.railway.app/?embed=1"
       title="Live Dispatch demo"
       loading="lazy"
     ></iframe>
-    <p class="full-link">
-      <a href="https://dispatch-demo-production-aed7.up.railway.app" target="_blank" rel="noopener">
-        Open full screen ↗
-      </a>
-    </p>
   </div>
-</section>
+  <p class="full-link">
+    <span class="live" aria-hidden="true"></span>
+    <a href="https://dispatch-demo-production-aed7.up.railway.app" target="_blank" rel="noopener">
+      Open the demo full screen
+    </a>
+  </p>
+</Section>
 
 <style>
-  .sub {
-    max-width: 36rem;
-    color: var(--text-secondary);
-    margin: 0 0 var(--space-5);
-  }
-  iframe {
-    width: 100%;
-    height: 600px;
-    border: 1px solid var(--border-default);
+  .frame {
+    overflow: hidden;
+    border: 1px solid var(--border-strong);
     border-radius: var(--radius-card);
     background: var(--surface-card);
   }
-  .full-link {
-    margin-top: var(--space-3);
-    font-size: var(--text-sm);
+  iframe {
+    display: block;
+    width: 100%;
+    height: 640px;
+    border: 0;
   }
-  .full-link a {
+  .full-link {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--site-text-sm);
     color: var(--text-secondary);
-    text-decoration: none;
+  }
+  /* The one place the accent shows up as a mark: a dot saying the demo is a real instance. */
+  .live {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 50%;
+    background: var(--accent);
+  }
+  @media (max-width: 720px) {
+    iframe {
+      height: 480px;
+    }
   }
 </style>

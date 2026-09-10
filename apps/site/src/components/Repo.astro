@@ -1,0 +1,46 @@
+---
+import Section from './Section.astro';
+---
+
+<Section id="repo" number="05" label="Your repo" title="Markdown in your repo.">
+  <p class="sub">
+    The backlog lives in <code>.dispatch/</code>, next to the code it describes.
+  </p>
+  <dl class="notes">
+    <div>
+      <dt>Two-way Linear sync</dt>
+      <dd>Your tracker stays current. Replace Linear, or keep it and sync.</dd>
+    </div>
+    <div>
+      <dt>Local by default</dt>
+      <dd>Your code goes nowhere. Opt into team sharing when you want it.</dd>
+    </div>
+  </dl>
+</Section>
+
+<style>
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+    margin: 0;
+  }
+  .notes div {
+    padding: var(--space-4) var(--space-5);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+  }
+  dt {
+    font-weight: 500;
+  }
+  dd {
+    margin: var(--space-1) 0 0;
+    color: var(--text-secondary);
+  }
+  @media (max-width: 720px) {
+    .notes {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>

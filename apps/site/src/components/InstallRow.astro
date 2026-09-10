@@ -1,0 +1,64 @@
+---
+// The install command with a copy button. Shared by the hero and the closing
+// section, so both carry the same command and the same copy behaviour.
+const command = 'brew install --cask wsoule/tap/dispatch';
+---
+
+<div class="install-row">
+  <code class="install-cmd">{command}</code>
+  <button class="copy" type="button" data-copy={command} aria-label="Copy the install command">
+    copy
+  </button>
+</div>
+
+<style>
+  .install-row {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-4);
+    max-width: 100%;
+    padding: var(--space-3) var(--space-3) var(--space-3) var(--space-4);
+    border: 1px solid var(--border-strong);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+  }
+  .install-cmd {
+    min-width: 0;
+    font-size: var(--site-text-sm);
+    overflow-x: auto;
+    white-space: nowrap;
+  }
+  .copy {
+    flex: none;
+    min-height: 1.75rem;
+    padding: 0 var(--space-2);
+    border: 0;
+    border-radius: var(--radius-chip);
+    background: var(--surface-muted);
+    color: var(--text-secondary);
+    font: inherit;
+    font-size: var(--site-text-xs);
+    line-height: 1;
+    cursor: pointer;
+  }
+  .copy:hover {
+    background: var(--surface-hover-strong);
+    color: var(--text-primary);
+  }
+</style>
+
+<script>
+  for (const btn of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+    btn.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(btn.dataset.copy ?? '');
+        btn.textContent = 'copied';
+      } catch {
+        btn.textContent = 'copy failed';
+      }
+      setTimeout(() => {
+        btn.textContent = 'copy';
+      }, 1500);
+    });
+  }
+</script>

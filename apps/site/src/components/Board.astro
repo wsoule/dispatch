@@ -1,0 +1,68 @@
+---
+import Section from './Section.astro';
+---
+
+<Section id="board" number="01" label="Board" title="Everything else is a chat window.">
+  <p class="sub">
+    Same agent, same work. A transcript makes you scroll back and rebuild it in your head. A
+    board just shows you. Every task, every session, one screen.
+  </p>
+  <div class="pair">
+    <div class="transcript" aria-hidden="true">
+      <p>I've finished the auth refactor and moved on to the retry queue.</p>
+      <p>The migration is blocked on the schema change from earlier, so I paused it.</p>
+      <p>Tests are green on the export fix. Want me to open a PR?</p>
+      <p>Also, quick question about the rate limiter config…</p>
+      <p>Picking the payments task back up now.</p>
+    </div>
+    <img
+      class="shot"
+      src="/shots/overview.jpg"
+      alt="The same work on the Dispatch overview: one failed run, four waiting for review"
+      width="1680"
+      height="960"
+      loading="lazy"
+    />
+  </div>
+</Section>
+
+<style>
+  .pair {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+    gap: var(--space-5);
+    align-items: stretch;
+  }
+  .transcript {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-5);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+    font-size: var(--site-text-sm);
+    color: var(--text-secondary);
+    overflow: hidden;
+  }
+  .transcript p {
+    padding-bottom: var(--space-3);
+    border-bottom: 1px solid var(--border-default);
+  }
+  .transcript p:last-child {
+    border-bottom: 0;
+  }
+  .pair .shot {
+    height: 100%;
+    object-fit: cover;
+    object-position: left top;
+  }
+  @media (max-width: 720px) {
+    .pair {
+      grid-template-columns: 1fr;
+    }
+    .pair .shot {
+      height: auto;
+    }
+  }
+</style>

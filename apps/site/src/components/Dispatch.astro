@@ -1,0 +1,62 @@
+---
+import Section from './Section.astro';
+---
+
+<Section id="dispatch" number="02" label="Dispatch" title="Pick a task, pick an agent, go.">
+  <p class="sub">
+    Dispatch from the board. Claude Code today, more harnesses coming.
+  </p>
+  <figure>
+    <img
+      class="shot"
+      src="/shots/runs.jpg"
+      alt="A run in Dispatch: the session turn by turn, with what the agent read, edited and ran"
+      width="1680"
+      height="960"
+      loading="lazy"
+    />
+    <figcaption class="caption">
+      A run. What the agent said, read, edited and ran, and what it cost.
+    </figcaption>
+  </figure>
+  <dl class="notes">
+    <div>
+      <dt>Warden</dt>
+      <dd>One chat to steer every session. It asks first.</dd>
+    </div>
+    <div>
+      <dt>Blocked means blocked</dt>
+      <dd>Blocked tasks don't dispatch.</dd>
+    </div>
+  </dl>
+</Section>
+
+<style>
+  figure {
+    margin: 0;
+  }
+  .notes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-4);
+    margin: 0;
+  }
+  .notes div {
+    padding: var(--space-4) var(--space-5);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+  }
+  dt {
+    font-weight: 500;
+  }
+  dd {
+    margin: var(--space-1) 0 0;
+    color: var(--text-secondary);
+  }
+  @media (max-width: 720px) {
+    .notes {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
