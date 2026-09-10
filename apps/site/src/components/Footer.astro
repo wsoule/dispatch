@@ -1,31 +1,80 @@
-<footer>
-  <div class="container">
-    <code class="mono">brew install --cask wsoule/tap/dispatch</code>
-    <p>
-      Built with itself. This repo's backlog is in <code class="mono">.dispatch/</code>, and
-      commits tagged <code class="mono">(run r-…)</code> were written by its agents.
-    </p>
-    <nav>
+<footer class="site-footer">
+  <div class="container footer-grid">
+    <div class="about">
+      <p class="wordmark">Dispatch</p>
+      <p class="blurb">
+        Built with itself. This repo's backlog is in <code>.dispatch/</code>, and commits
+        tagged <code>(run r-…)</code> were written by its agents.
+      </p>
+    </div>
+    <nav aria-label="Product">
+      <h3>Product</h3>
+      <a href="#board">Board</a>
+      <a href="#dispatch">Dispatch</a>
+      <a href="#review">Review</a>
+      <a href="#land">Land</a>
+      <a href="#repo">Your repo</a>
+      <a href="#questions">Questions</a>
+    </nav>
+    <nav aria-label="Get it">
+      <h3>Get it</h3>
+      <a href="#install">Install with Homebrew</a>
+      <a href="https://github.com/wsoule/dispatch/releases/latest">Download the app</a>
+      <a href="#demo">Live demo</a>
+    </nav>
+    <nav aria-label="Source">
+      <h3>Source</h3>
       <a href="https://github.com/wsoule/dispatch">GitHub</a>
-      <a href="#install">Install</a>
+      <a href="https://github.com/wsoule/dispatch/releases/latest">Releases</a>
     </nav>
   </div>
 </footer>
 
 <style>
-  footer {
+  .site-footer {
+    padding: var(--space-10) 0;
     border-top: 1px solid var(--border-default);
-    padding: var(--space-8) 0;
-    color: var(--text-muted);
-    font-size: var(--text-sm);
-  }
-  footer nav {
-    display: flex;
-    gap: var(--space-5);
-    margin-top: var(--space-4);
-  }
-  footer a {
+    font-size: var(--site-text-sm);
     color: var(--text-secondary);
+  }
+  .footer-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+    gap: var(--space-8);
+  }
+  .wordmark {
+    font-weight: 600;
+    line-height: 1.1;
+    color: var(--text-primary);
+  }
+  .blurb {
+    max-width: 22rem;
+    margin-top: var(--space-3);
+  }
+  nav {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+  h3 {
+    margin-bottom: var(--space-1);
+    font-size: var(--site-text-sm);
+    font-weight: 500;
+    color: var(--text-primary);
+  }
+  nav a {
+    width: fit-content;
     text-decoration: none;
+  }
+  nav a:hover {
+    color: var(--text-primary);
+  }
+  @media (max-width: 720px) {
+    .footer-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .about {
+      grid-column: 1 / -1;
+    }
   }
 </style>

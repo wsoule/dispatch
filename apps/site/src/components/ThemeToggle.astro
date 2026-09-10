@@ -1,0 +1,104 @@
+---
+// A button that flips the page between light and dark. The choice lands on
+// <html data-theme> and in localStorage; Base.astro reapplies it before paint.
+// With no stored choice the OS setting applies and the button reflects it.
+---
+
+<button
+  class="theme-toggle"
+  type="button"
+  aria-label="Use dark theme"
+  aria-pressed="false"
+  data-theme-toggle
+>
+  <svg class="icon-moon" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <path
+      d="M13.5 9.6A6 6 0 0 1 6.4 2.5a6 6 0 1 0 7.1 7.1Z"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linejoin="round"></path>
+  </svg>
+  <svg class="icon-sun" width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+    <circle cx="8" cy="8" r="3" stroke="currentColor" stroke-width="1.5"></circle>
+    <path
+      d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linecap="round"></path>
+  </svg>
+</button>
+
+<style>
+  .theme-toggle {
+    display: inline-grid;
+    place-items: center;
+    width: 2.25rem;
+    height: 2.25rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--radius-control);
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+  .theme-toggle:hover {
+    background: var(--surface-hover);
+    color: var(--text-primary);
+  }
+  /* The icon shows the theme a press switches to: a moon while light, a sun while dark.
+     Driven by CSS so it is right before the script runs. */
+  .icon-sun {
+    display: none;
+  }
+  @media (prefers-color-scheme: dark) {
+    :global(:root:not([data-theme='light'])) .icon-moon {
+      display: none;
+    }
+    :global(:root:not([data-theme='light'])) .icon-sun {
+      display: block;
+    }
+  }
+  :global(:root[data-theme='dark']) .icon-moon {
+    display: none;
+  }
+  :global(:root[data-theme='dark']) .icon-sun {
+    display: block;
+  }
+</style>
+
+<script>
+  const root = document.documentElement;
+  const media = window.matchMedia('(prefers-color-scheme: dark)');
+  const buttons = document.querySelectorAll<HTMLButtonElement>('[data-theme-toggle]');
+
+  // The theme in effect right now: the explicit choice if there is one, else the OS setting.
+  function effectiveTheme(): 'light' | 'dark' {
+    const chosen = root.getAttribute('data-theme');
+    if (chosen === 'light' || chosen === 'dark') return chosen;
+    return media.matches ? 'dark' : 'light';
+  }
+
+  function reflect() {
+    const dark = effectiveTheme() === 'dark';
+    for (const button of buttons) {
+      button.setAttribute('aria-pressed', String(dark));
+      button.setAttribute('aria-label', dark ? 'Use light theme' : 'Use dark theme');
+    }
+  }
+
+  for (const button of buttons) {
+    button.addEventListener('click', () => {
+      const next = effectiveTheme() === 'dark' ? 'light' : 'dark';
+      root.setAttribute('data-theme', next);
+      try {
+        localStorage.setItem('dispatch-theme', next);
+      } catch {
+        /* Storage unavailable; the choice still holds for this page view. */
+      }
+      reflect();
+    });
+  }
+
+  media.addEventListener('change', reflect);
+  reflect();
+</script>

@@ -1,26 +1,38 @@
-<header>
+---
+import ThemeToggle from './ThemeToggle.astro';
+---
+
+<header class="site-header">
   <div class="container nav-row">
     <a class="wordmark" href="/">Dispatch</a>
-    <nav>
-      <a href="https://github.com/wsoule/dispatch">GitHub</a>
-      <a class="btn" href="#install">Download</a>
+    <nav aria-label="Site">
+      <a class="nav-link" href="#board">Board</a>
+      <a class="nav-link" href="#demo">Live demo</a>
+      <a class="nav-link" href="#questions">Questions</a>
+      <a class="nav-link" href="https://github.com/wsoule/dispatch">GitHub</a>
+      <ThemeToggle />
+      <a class="btn btn-primary" href="#install">Install</a>
     </nav>
   </div>
 </header>
 
 <style>
-  header {
+  .site-header {
+    position: sticky;
+    top: 0;
+    z-index: 10;
+    background: var(--surface-page);
     border-bottom: 1px solid var(--border-default);
   }
   .nav-row {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    padding-top: var(--space-3);
-    padding-bottom: var(--space-3);
+    min-height: var(--site-nav-height);
   }
   .wordmark {
     font-weight: 600;
+    letter-spacing: -0.02em;
     text-decoration: none;
   }
   nav {
@@ -28,12 +40,23 @@
     align-items: center;
     gap: var(--space-5);
   }
-  nav a {
-    font-size: var(--text-sm);
-    text-decoration: none;
+  .nav-link {
+    font-size: var(--site-text-sm);
     color: var(--text-secondary);
+    text-decoration: none;
   }
-  nav a.btn {
+  .nav-link:hover {
     color: var(--text-primary);
+  }
+  nav .btn {
+    min-height: 2.25rem;
+  }
+  @media (max-width: 720px) {
+    .nav-link:not([href^='http']) {
+      display: none;
+    }
+    nav {
+      gap: var(--space-3);
+    }
   }
 </style>
