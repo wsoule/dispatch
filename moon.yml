@@ -255,6 +255,16 @@ tasks:
       cache: false
       runInCI: 'always'
 
+  # Cuts a release: bumps the three version files, commits, tags, pushes the
+  # tag that triggers release.yml. Every check runs before anything is
+  # written; `--dry-run` stops after the checks and prints what it would do.
+  # `moonx root:release -- 0.27.0 "one-line summary" [--dry-run]`.
+  release:
+    command: 'bun --silent scripts/release.ts'
+    options:
+      cache: false
+      runInCI: 'skip'
+
   # Worktree manager (create/list/remove dispatch worktrees with port
   # offsets). Forward args with `moonx root:wt -- <args>`.
   wt:
