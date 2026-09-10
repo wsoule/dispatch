@@ -179,11 +179,13 @@ export {
   DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
+  isMaskedSecretUrl,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
   NOTIFICATION_KINDS,
   projectPolicy,
   queueWeights,
+  SECRET_URL_MASK_SUFFIX,
 } from './config.js';
 export {
   consultFloor,

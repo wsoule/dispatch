@@ -250,6 +250,18 @@ export interface NotificationsConfig {
   webhook?: string;
 }
 
+/** What the daemon hands out in place of a webhook URL's path, since the URL
+ *  is the credential: `https://hooks.slack.com/services/T0/B0/x` becomes
+ *  `https://hooks.slack.com/…`. Shared so the server's masking and the
+ *  desktop's "is this value masked?" check cannot drift apart. */
+export const SECRET_URL_MASK_SUFFIX = '/…';
+
+/** True when `value` is a masked webhook the daemon handed out, never a URL a
+ *  user typed. Such a value must not be written back as the webhook. */
+export function isMaskedSecretUrl(value: string): boolean {
+  return value.endsWith(SECRET_URL_MASK_SUFFIX);
+}
+
 // Everything on: the toggles exist to take noise away, so the out-of-the-box
 // behaviour is what the desktop already did before they existed.
 export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
