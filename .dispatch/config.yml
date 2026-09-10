@@ -36,6 +36,13 @@ verifySteps:
     command: moon run :build
   - name: typecheck
     command: moon run :typecheck
+  # CI also runs `cargo test` for apps/desktop/src-tauri. Conditional on the
+  # branch having touched that directory (the script diffs against the merge
+  # base): a cold cargo build is 5-10 minutes, and taxing every merge for a
+  # rare Rust change is the wrong trade — but skipping it is how a Rust change
+  # passes the queue and fails main.
+  - name: rust-test
+    command: bun scripts/rust-verify.ts
   - name: format-check
     command: moon run root:format-check
   - name: lint
