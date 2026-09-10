@@ -293,6 +293,50 @@ describe('doctor', () => {
   });
 });
 
+// carto's config is per-machine (.carto/ is gitignored), so a project set up
+// before the generated map moved out of AGENTS.md keeps rewriting that
+// committed file on every sync until something on this machine repairs the
+// config — doctor is that something. carto itself need not be installed for
+// the repair, which is why these run under the suite-wide stub-free setup.
+describe('doctor — carto output repair', () => {
+  const REPOINTED =
+    "repointed carto's output from AGENTS.md to .carto/CONTEXT.md so sync stops rewriting a committed file";
+
+  function cartoConfig(root: string): { output?: string } {
+    return JSON.parse(
+      readFileSync(join(root, '.carto', 'config.json'), 'utf8')
+    ) as { output?: string };
+  }
+
+  it('repoints an old config from AGENTS.md and says so', () => {
+    const root = writeProject({
+      '.carto/config.json': '{ "output": "AGENTS.md", "hooks": true }\n',
+    });
+    const out = runDoctor(root);
+    expect(out).toContain(REPOINTED);
+    expect(cartoConfig(root).output).toBe('.carto/CONTEXT.md');
+    // The seeded target: sync writes nothing at all into a file that is not
+    // already there, so the repair must leave carto's markers behind.
+    expect(readFileSync(join(root, '.carto', 'CONTEXT.md'), 'utf8')).toContain(
+      'CARTO:AUTO:START'
+    );
+  });
+
+  it('stays quiet when the config already points into .carto/', () => {
+    const root = writeProject({
+      '.carto/config.json': '{ "output": ".carto/CONTEXT.md" }\n',
+    });
+    const out = runDoctor(root);
+    expect(out).not.toContain('repointed');
+    expect(cartoConfig(root).output).toBe('.carto/CONTEXT.md');
+  });
+
+  it('stays quiet when there is no carto config at all', () => {
+    const root = writeProject({});
+    expect(runDoctor(root)).not.toContain('repointed');
+  });
+});
+
 // Separate describe: the outer suite's `root` is never a real git repo, so
 // the merge-driver check (which shells out to `git config`) never fires
 // there — see the `existsSync(.git)` gate in doctor.ts.

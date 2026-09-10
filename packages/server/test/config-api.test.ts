@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -94,7 +94,10 @@ describe('PATCH /api/config — fixLoop', () => {
 });
 
 describe('PATCH /api/config — notifications', () => {
-  it('writes a toggle and a webhook and they round-trip through GET', async () => {
+  // The webhook URL is the credential (see secretUrls.ts), so the full URL
+  // reaches disk but every response — the PATCH echo and GET alike — masks
+  // its path down to the origin.
+  it('writes a toggle and a webhook; responses mask the URL path', async () => {
     const res = await patchConfig({
       notifications: {
         kinds: { 'run-stalled': false },
@@ -107,14 +110,13 @@ describe('PATCH /api/config — notifications', () => {
     }>(res);
     expect(config.notifications.kinds['run-stalled']).toBe(false);
     expect(config.notifications.kinds.question).toBe(true);
-    expect(config.notifications.webhook).toBe(
-      'https://hooks.example.com/services/x'
-    );
+    expect(config.notifications.webhook).toBe('https://hooks.example.com/…');
     const got = await json<{ notifications: { webhook?: string } }>(
       await fetch(`${baseUrl}/api/config`)
     );
-    expect(got.notifications.webhook).toBe(
-      'https://hooks.example.com/services/x'
+    expect(got.notifications.webhook).toBe('https://hooks.example.com/…');
+    expect(readFileSync(join(root, '.dispatch/config.yml'), 'utf8')).toContain(
+      'webhook: https://hooks.example.com/services/x'
     );
   });
 
@@ -204,5 +206,36 @@ describe('PATCH /api/config — policy', () => {
       (await patchConfig({ policy: { gates: { review: 'auto' } } })).status
     ).toBe(400);
     expect((await patchConfig({ policy: 3 })).status).toBe(400);
+  });
+});
+
+// This suite's server boots with `writeDaemonFile: false`, so it never told
+// clients to find it: no file is not a missing file.
+describe('GET /api/health — daemon identity without a daemon file', () => {
+  it('reports ok with no identity problem', async () => {
+    const res = await fetch(`${baseUrl}/api/health`);
+    expect(res.status).toBe(200);
+    const body = await json<{ identity: string; problems: string[] }>(res);
+    expect(body.identity).toBe('ok');
+    expect(body.problems).toEqual([]);
+  });
+});
+
+// A webhook URL is the credential (Slack and Discord put the secret in the
+// path), and GET /api/config answers any request-tier token. The
+// notifications block that stores one lands separately (epic e-6cfcc7);
+// until loadConfig carries it through, this passes because the key is
+// dropped, and once it does, because secretUrls.ts masks it — either way
+// the secret never leaves the daemon.
+describe('GET /api/config — webhook secrets', () => {
+  it('never returns the secret path of a configured webhook URL', async () => {
+    const secretPath = '/services/T000/B000/XXXXXXXXXXXXXXXXXXXXXXXX';
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      `notifications:\n  webhook: https://hooks.slack.com${secretPath}\n`
+    );
+    const res = await fetch(`${baseUrl}/api/config`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain(secretPath);
   });
 });

@@ -62,6 +62,7 @@ import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
+import { checkDaemonIdentity } from './daemonfile.js';
 import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
@@ -135,6 +136,7 @@ import {
 } from './reviewComments.js';
 import type { AddCommentInput, ReviewComment } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
+import { redactSecretUrls } from './secretUrls.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { TrackedFilesCache } from './trackedFiles.js';
@@ -222,6 +224,11 @@ export interface ApiContext {
   // terminal, so a value snapshotted at boot keeps telling the user to run a
   // command they already ran successfully. See index.ts.
   mergeDriverOk: () => boolean;
+  // Whether this daemon wrote the per-root daemon file at boot (index.ts's
+  // `writeDaemonFile` option). GET /api/health checks that file on every
+  // probe to notice when another daemon has overwritten or removed it — a
+  // daemon that never claimed one has nothing to be displaced from.
+  claimsDaemonFile: boolean;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -861,7 +868,8 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // gated on an actual true→false transition: SyncWorktree.remove() is
     // already a safe no-op when there's nothing to remove.
     if (patch.autoCommit === false) ctx.boardSyncScheduler?.removeWorktree();
-    return jsonResponse(config);
+    // Echoes the config the same way GET does, masked the same way.
+    return jsonResponse(redactSecretUrls(config));
   } catch (err) {
     return errorResponse(400, (err as Error).message);
   }
@@ -3901,6 +3909,10 @@ export async function handleApi(
       // `rootDir` lets the web UI show a project name (its basename) in the
       // top bar without a separate endpoint — see the phase-2 plan's Slice
       // S3 TopBar requirement.
+      //
+      // Whether this process is still the daemon the file under
+      // ~/.dispatch/daemons names — read fresh per probe (see daemonfile.ts).
+      const identity = checkDaemonIdentity(ctx.rootDir, ctx.claimsDaemonFile);
       return jsonResponse({
         ok: true,
         version: ctx.version,
@@ -3908,8 +3920,17 @@ export async function handleApi(
         // Files the most recent cache rebuild couldn't parse (e.g. missing
         // frontmatter, invalid kind) — empty when the task set is clean. The
         // daemon keeps serving the last-good cache regardless; this is
-        // visibility, not a fatal signal (`ok` stays true).
-        problems: ctx.cache.problems(),
+        // visibility, not a fatal signal (`ok` stays true). A displaced or
+        // unregistered daemon adds its own line here for the same reason:
+        // it still serves whoever reaches it, but clients following the
+        // daemon file will not.
+        problems: [
+          ...ctx.cache.problems(),
+          ...(identity.problem === null ? [] : [identity.problem]),
+        ],
+        // The same fact as an enum, so a client can branch on it without
+        // matching the problem string.
+        identity: identity.identity,
         // Phase 5 P1: whether this project can use the PR review action
         // (gh on PATH + a configured git remote), detected once at boot.
         pr: ctx.prCapability,
@@ -3926,7 +3947,8 @@ export async function handleApi(
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {
-      return jsonResponse(loadConfig(ctx.rootDir));
+      // Webhook URLs are credentials; see secretUrls.ts.
+      return jsonResponse(redactSecretUrls(loadConfig(ctx.rootDir)));
     }
     if (
       segments[0] === 'config' &&

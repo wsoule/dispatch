@@ -1149,6 +1149,7 @@ export async function startServer(
     receiptsScheduler,
     storeBackend: backend,
     mergeDriverOk,
+    claimsDaemonFile: shouldWriteDaemonFile,
   };
 
   const server = Bun.serve({

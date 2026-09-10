@@ -172,6 +172,63 @@ describe('open routes', () => {
   });
 });
 
+interface HealthIdentity {
+  ok: boolean;
+  identity: 'ok' | 'displaced' | 'unregistered';
+  problems: string[];
+}
+
+function health(): Promise<HealthIdentity> {
+  return rawFetch(`${baseUrl}/api/health`).then((res) =>
+    json<HealthIdentity>(res)
+  );
+}
+
+// On 2026-09-07 three daemons served one root and only `ps` could tell;
+// health is the one route every client probes, so it is where a displaced
+// daemon says so.
+describe('daemon identity at GET /api/health', () => {
+  it('reports ok while the daemon file still names this process', async () => {
+    const body = await health();
+    expect(body.identity).toBe('ok');
+    expect(body.problems).toEqual([]);
+  });
+
+  it('reports displaced once another pid has rewritten the daemon file', async () => {
+    const prior = readDaemonFile(root);
+    expect(prior).not.toBeNull();
+    const otherPid = process.pid + 100000;
+    writeFileSync(
+      daemonFilePath(root),
+      JSON.stringify({
+        ...prior,
+        pid: otherPid,
+        startedAt: '2026-09-07T10:00:00.000Z',
+      })
+    );
+    const body = await health();
+    expect(body.ok).toBe(true);
+    expect(body.identity).toBe('displaced');
+    expect(body.problems).toHaveLength(1);
+    expect(body.problems[0]).toContain(`pid ${otherPid}`);
+    expect(body.problems[0]).toContain('2026-09-07T10:00:00.000Z');
+    expect(body.problems[0]).toContain(`pid ${process.pid}`);
+    // Written by the test, not this daemon: removeDaemonFile would refuse to
+    // clear it at stop(), so restore ownership for the afterEach cleanup.
+    writeFileSync(daemonFilePath(root), JSON.stringify(prior));
+  });
+
+  it('reports unregistered once the daemon file is gone', async () => {
+    rmSync(daemonFilePath(root));
+    const body = await health();
+    expect(body.ok).toBe(true);
+    expect(body.identity).toBe('unregistered');
+    expect(body.problems).toEqual([
+      "this project's daemon file is gone; clients will spawn a second daemon on their next call",
+    ]);
+  });
+});
+
 describe('request tier', () => {
   it('401s a read with no token, and says where to find one', async () => {
     const res = await rawFetch(`${baseUrl}/api/tasks`);

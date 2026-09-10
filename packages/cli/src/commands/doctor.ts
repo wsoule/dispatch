@@ -5,7 +5,11 @@ import {
   parseTaskFile,
 } from '@dispatch/core';
 import type { DispatchConfig, TaskDoc } from '@dispatch/core';
-import { checkCartoHealth, discoverCarto } from '@dispatch/core/carto';
+import {
+  checkCartoHealth,
+  discoverCarto,
+  redirectCartoOutput,
+} from '@dispatch/core/carto';
 import type { Command } from 'commander';
 import { type Dirent, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -16,8 +20,9 @@ import {
   checkMergeDriverSetup,
   checkTeamMergeDriverSetup,
 } from '../mergeDriver.js';
+import { projectRoot } from '../projectRoot.js';
 import { findRunningDaemon } from './daemon.js';
-import { databaseBacked, projectRoot, requireStore } from './task.js';
+import { databaseBacked, requireStore } from './task.js';
 
 interface Issue {
   file: string;
@@ -149,9 +154,17 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         // board over a damaged one. On the file backend the equivalent
         // failures surface as parse errors in the loop above; on the database
         // backend `GET /api/health` is the only place they are named.
+        // Cache problems lead with the record they name (`<file>: <why>`);
+        // the daemon-identity problems (a displaced or unregistered
+        // dispatchd, see server's daemonfile.ts) name no record, so a prefix
+        // containing whitespace is prose, not a file.
         const health = await api.health();
         for (const problem of health.problems) {
-          issues.push({ file: problem.split(':')[0] ?? '', problem });
+          const prefix = problem.split(':')[0] ?? '';
+          issues.push({
+            file: /\s/.test(prefix) ? 'dispatchd' : prefix,
+            problem,
+          });
         }
         // Which daemon answered, and what it dispatches on: the two facts
         // that went unseen when a fleet ran on the wrong model for two days.
@@ -280,6 +293,15 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
           : null;
         const broken = health !== null && !health.ok;
         if (config.carto.enabled !== 'off') {
+          // A project initialized before carto's output moved into .carto/
+          // still has sync rewriting its committed AGENTS.md on every
+          // checkout; the config is per-machine, so doctor is where it
+          // gets repaired.
+          if (redirectCartoOutput(projectRoot(ctx.cwd))) {
+            ctx.log(
+              "repointed carto's output from AGENTS.md to .carto/CONTEXT.md so sync stops rewriting a committed file"
+            );
+          }
           if (discovery.ok) {
             ctx.log(
               `carto ${discovery.binary.version} at ${discovery.binary.path}`
