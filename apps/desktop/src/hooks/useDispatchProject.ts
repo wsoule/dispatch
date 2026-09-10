@@ -48,6 +48,8 @@ import {
   decideAvailability,
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
+import type { DecisionItem } from '../lib/decisionFeed';
+import { fetchDecisions, isDecisionsChanged } from '../lib/decisionFeed';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import { addEntries, loadInbox, markAllRead, saveInbox } from '../lib/inbox';
@@ -413,6 +415,10 @@ export interface DispatchProjectData {
   /** Run id -> every question that run's agent is blocked on, oldest first. Usually one, but
    * an agent can dispatch several `ask_user` calls in the same turn. */
   openQuestions: Map<string, RunQuestion[]>;
+  /** The daemon's decision feed: everything awaiting a human plus the
+   * just-resolved tail, in the server's order (open longest-waiting first).
+   * Feeds the titlebar notification center and its badge. */
+  decisions: DecisionItem[];
   handleAnswerQuestion: (
     runId: string,
     questionId: string,
@@ -684,6 +690,7 @@ export function useDispatchProject(
   const landingQueryKey = useMemo(() => landingKey(port), [port]);
   const branchesQueryKey = useMemo(() => ['dispatch-branches', port], [port]);
   const questionsQueryKey = useMemo(() => ['dispatch-questions', port], [port]);
+  const decisionsQueryKey = useMemo(() => ['dispatch-decisions', port], [port]);
   // Task 8 fix: a *separate* archived-inclusive tasks query, used only for
   // countMergeReady's own-task/blocker lookups — `tasks` below stays the
   // default board-view (archived-excluded) list every other consumer here
@@ -891,6 +898,21 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // The daemon's decision feed — everything awaiting a human, resolved tail
+  // included (see lib/decisionFeed.ts). Event-driven via `decisions.changed`,
+  // with a slow interval on top: the daemon prunes its five-minute resolved
+  // retention only when something reads or triggers the feed, so without a
+  // periodic poll a settled row could sit dimmed in the panel indefinitely.
+  const { data: decisionList } = useQuery({
+    queryKey: decisionsQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return fetchDecisions(client.baseUrl, auth.token);
+    },
+    enabled: client !== null,
+    refetchInterval: 60_000,
+  });
+
   const { data: notes } = useQuery({
     queryKey: notesQueryKey,
     queryFn: () => {
@@ -1081,7 +1103,13 @@ export function useDispatchProject(
       },
       {
         onEvent: (event) => {
-          if (event.type === 'run.changed') {
+          // Checked structurally (see isDecisionsChanged): the client's
+          // ServerEvent union predates this broadcast, so a literal comparison
+          // here would not typecheck. First in the chain because no later
+          // branch can match an out-of-union frame anyway.
+          if (isDecisionsChanged(event)) {
+            void queryClient.invalidateQueries({ queryKey: decisionsQueryKey });
+          } else if (event.type === 'run.changed') {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-run', port],
@@ -1382,6 +1410,7 @@ export function useDispatchProject(
     landingQueryKey,
     branchesQueryKey,
     questionsQueryKey,
+    decisionsQueryKey,
     linearStatusQueryKey,
     linearLinksQueryKey,
     syncStatusQueryKey,
@@ -2357,6 +2386,7 @@ export function useDispatchProject(
     scopeDecide,
     handleRestartDaemon,
     openQuestions,
+    decisions: decisionList ?? [],
     handleAnswerQuestion,
 
     planId,

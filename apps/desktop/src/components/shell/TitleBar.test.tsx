@@ -13,6 +13,7 @@ const props = {
   onSelectProject: () => {},
   onAddProject: () => {},
   onOpenPalette: () => {},
+  pendingCount: 0,
   unreadCount: 0,
   inboxOpen: false,
   onToggleInbox: () => {},
@@ -60,4 +61,20 @@ test('the bell drops the unread suffix and attention dot at zero', () => {
   render(<TitleBar {...props} />);
   const bell = screen.getByRole('button', { name: 'Notifications' });
   expect(bell.querySelector('.bg-primary')).toBeNull();
+});
+
+test('pending decisions render a numeric pill and lead the accessible name', () => {
+  render(<TitleBar {...props} pendingCount={3} unreadCount={4} />);
+  const bell = screen.getByRole('button', {
+    name: 'Notifications (3 waiting, 4 unread)',
+  });
+  expect(bell.textContent).toContain('3');
+});
+
+test('the pill caps its display at 99+', () => {
+  render(<TitleBar {...props} pendingCount={120} />);
+  const bell = screen.getByRole('button', {
+    name: 'Notifications (120 waiting)',
+  });
+  expect(bell.textContent).toContain('99+');
 });

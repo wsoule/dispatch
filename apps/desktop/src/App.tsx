@@ -36,6 +36,8 @@ import { withActionFeedback } from './lib/actionFeedback';
 import type { GlobalView, ProjectView, TaskTab } from './lib/appNav';
 import { initialNavState, navReducer } from './lib/appNav';
 import { hideArchivedRuns } from './lib/archiveFilter';
+import type { DecisionItem } from './lib/decisionFeed';
+import { decisionTarget, pendingDecisionCount } from './lib/decisionFeed';
 import type { InboxTarget } from './lib/inbox';
 import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
@@ -559,6 +561,23 @@ function App() {
     [selectProjectView, markNotificationInboxRead, dispatchNav, jumpToRun]
   );
 
+  // Click-through for a decision-feed row: deep-links to the surface where the
+  // decision is answered (see decisionTarget). No mark-as-read here — the feed
+  // clears itself when the underlying gate resolves.
+  const openDecision = useCallback(
+    (item: DecisionItem) => {
+      const target = decisionTarget(item);
+      if (target === null) return;
+      if (target.kind === 'task') {
+        openTaskView(target.taskId, target.tab, target.runId ?? undefined);
+      } else {
+        jumpToRun(target.runId);
+      }
+      setInboxOpen(false);
+    },
+    [openTaskView, jumpToRun]
+  );
+
   const paletteEntries = useMemo<PaletteEntry[]>(() => {
     const entries: PaletteEntry[] = [];
 
@@ -723,11 +742,14 @@ function App() {
             setAddProjectOpen(true);
           }}
           onOpenPalette={() => dispatchNav({ type: 'openPalette' })}
+          pendingCount={pendingDecisionCount(data.decisions)}
           unreadCount={unreadCount(data.notificationInbox)}
           inboxOpen={inboxOpen}
           onToggleInbox={toggleInbox}
           inboxPanel={
             <InboxPanel
+              decisions={data.decisions}
+              onOpenDecision={openDecision}
               entries={notificationInbox.entries}
               onNavigate={navigateFromInbox}
               onMarkAllRead={markNotificationInboxRead}
