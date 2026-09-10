@@ -136,6 +136,7 @@ import {
 } from './reviewComments.js';
 import type { AddCommentInput, ReviewComment } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
+import { redactSecretUrls } from './secretUrls.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { TrackedFilesCache } from './trackedFiles.js';
@@ -855,7 +856,8 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // gated on an actual true→false transition: SyncWorktree.remove() is
     // already a safe no-op when there's nothing to remove.
     if (patch.autoCommit === false) ctx.boardSyncScheduler?.removeWorktree();
-    return jsonResponse(config);
+    // Echoes the config the same way GET does, masked the same way.
+    return jsonResponse(redactSecretUrls(config));
   } catch (err) {
     return errorResponse(400, (err as Error).message);
   }
@@ -3933,7 +3935,8 @@ export async function handleApi(
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {
-      return jsonResponse(loadConfig(ctx.rootDir));
+      // Webhook URLs are credentials; see secretUrls.ts.
+      return jsonResponse(redactSecretUrls(loadConfig(ctx.rootDir)));
     }
     if (
       segments[0] === 'config' &&

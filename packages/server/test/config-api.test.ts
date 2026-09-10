@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -177,5 +177,24 @@ describe('GET /api/health — daemon identity without a daemon file', () => {
     const body = await json<{ identity: string; problems: string[] }>(res);
     expect(body.identity).toBe('ok');
     expect(body.problems).toEqual([]);
+  });
+});
+
+// A webhook URL is the credential (Slack and Discord put the secret in the
+// path), and GET /api/config answers any request-tier token. The
+// notifications block that stores one lands separately (epic e-6cfcc7);
+// until loadConfig carries it through, this passes because the key is
+// dropped, and once it does, because secretUrls.ts masks it — either way
+// the secret never leaves the daemon.
+describe('GET /api/config — webhook secrets', () => {
+  it('never returns the secret path of a configured webhook URL', async () => {
+    const secretPath = '/services/T000/B000/XXXXXXXXXXXXXXXXXXXXXXXX';
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      `notifications:\n  webhook: https://hooks.slack.com${secretPath}\n`
+    );
+    const res = await fetch(`${baseUrl}/api/config`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain(secretPath);
   });
 });
