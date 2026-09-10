@@ -649,7 +649,7 @@ describe('the fix loop', () => {
 });
 
 describe('a review that produced unusable output', () => {
-  it('never reads as clean and never completes the loop', async () => {
+  it('is re-dispatched, and only the finished retry judges the round', async () => {
     agent = new ScriptedAgent(1);
     await restartWith(agent);
 
@@ -657,12 +657,175 @@ describe('a review that produced unusable output', () => {
     await advance({ baseSha, cap: 1 });
     await waitFor(async () => (await fixLoopState()).state === 'capped');
 
-    // The finding that went in is still open: a failed review cleared nothing.
-    expect((await openFindings()).map((f) => f.id)).toEqual([findingId]);
+    // The failed review itself cleared nothing — the retry that finished did,
+    // and it raised its own finding, so the loop capped instead of settling.
+    const byId = new Map((await allFindings()).map((f) => [f.id, f.verdict]));
+    expect(byId.get(findingId)).toBe('addressed');
+    expect((await openFindings()).map((f) => f.title)).toEqual([
+      'still wrong after pass 2',
+    ]);
     const runs = await listRuns();
     expect(
       runs.some((run) => run.kind === 'review' && run.state === 'failed')
     ).toBe(true);
+    expect(
+      runs.some((run) => run.kind === 'review' && run.state === 'finished')
+    ).toBe(true);
+  }, 30000);
+});
+
+// The incident behind t-350f21: a round-0 review died (killed by a restart, or
+// failed outright) having recorded zero findings, and the loop settled
+// `complete` off its silence — a false green on a branch nobody reviewed.
+describe('a review run that died without completing', () => {
+  it('re-reviews after a daemon restart instead of settling complete', async () => {
+    const gated = new GatedAgent('review');
+    await restartWith(gated);
+    await seedImplementerRun();
+    expect((await startLoop()).status).toBe(200);
+    expect((await fixLoopState()).state).toBe('reviewing');
+
+    // The daemon dies with the round-0 review in flight; boot force-fails it.
+    // The dead review counted for nothing, so the loop must review again —
+    // and this reviewer finds a real problem, which costs a real fix round.
+    await restartWith(new ConvergingAgent());
+    const settled = await settle();
+
+    expect(settled.state).toBe('complete');
+    expect(settled.round).toBe(1);
+    const findings = await allFindings();
+    expect(findings).toHaveLength(1);
+    expect(findings[0].verdict).toBe('addressed');
+    const reviews = (await listRuns()).filter((run) => run.kind === 'review');
+    expect(reviews.some((run) => run.state === 'finished')).toBe(true);
+  }, 30000);
+
+  it('caps as an error after repeated deaths instead of completing, and ignite retries it', async () => {
+    // Every review this agent runs emits unusable output and fails.
+    agent = new ScriptedAgent(99);
+    await restartWith(agent);
+    await seedImplementerRun();
+    expect((await startLoop()).status).toBe(200);
+
+    const settled = await settle();
+    expect(settled.state).toBe('capped');
+    expect(settled.stopReason).toBe('error');
+    // The optimistic dispatch-time stamp is gone: nothing was reviewed.
+    expect(settled.lastReviewedSha).toBeNull();
+    const reviews = (await listRuns()).filter((run) => run.kind === 'review');
+    expect(reviews).toHaveLength(3);
+    expect(reviews.every((run) => run.state === 'failed')).toBe(true);
+
+    // The error cap is not a dead end: the Review & fix button retries the
+    // review with a fresh attempt budget.
+    const retried = await json<FixLoopState>(await startLoop());
+    expect(retried.state).toBe('reviewing');
+    const recapped = await settle();
+    expect(recapped.stopReason).toBe('error');
+    expect(
+      (await listRuns()).filter((run) => run.kind === 'review')
+    ).toHaveLength(6);
+  }, 30000);
+
+  // Drives the loop into the review-died-3x error cap. That cap has zero open
+  // findings by construction (the dead reviews recorded none), which is what
+  // made it a side door: any settle path that reads "nothing open" as the bar
+  // cleared would go green here.
+  async function capOnDeadReviews(): Promise<FixLoopState> {
+    agent = new ScriptedAgent(99);
+    await restartWith(agent);
+    await seedImplementerRun();
+    expect((await startLoop()).status).toBe(200);
+    const capped = await settle();
+    expect(capped.stopReason).toBe('error');
+    return capped;
+  }
+
+  // Everything that must still be true of the error cap after an attempt to
+  // settle it: no green, no sha claimed as reviewed, no findings, no new
+  // review dispatched behind the caller's back.
+  async function expectStillErrorCapped(): Promise<void> {
+    const state = await fixLoopState();
+    expect(state.state).toBe('capped');
+    expect(state.stopReason).toBe('error');
+    expect(state.lastReviewedSha).toBeNull();
+    expect(await allFindings()).toEqual([]);
+    expect(
+      (await listRuns()).filter((run) => run.kind === 'review')
+    ).toHaveLength(3);
+  }
+
+  it('stays an error cap on the API advance instead of settling complete', async () => {
+    await capOnDeadReviews();
+
+    // The verifier's probe: POST /fix-loop/advance on the capped loop lands in
+    // settleCapped, where zero open findings used to read as a cleared bar.
+    const res = await advance({});
+    expect(res.status).toBe(200);
+    const advanced = await json<FixLoopState>(res);
+    expect(advanced.state).toBe('capped');
+    expect(advanced.stopReason).toBe('error');
+    expect(advanced.lastReviewedSha).toBeNull();
+    await expectStillErrorCapped();
+  }, 30000);
+
+  it("is not settled by a later run's terminal hook either", async () => {
+    await capOnDeadReviews();
+
+    // A later implementer on the same task goes terminal; its hook advances
+    // the loop in the background through the same settleCapped path. The
+    // explicit advance afterwards queues behind that hook's step, so by the
+    // time it returns the hook has had its chance to settle the loop.
+    await seedImplementerRun();
+    expect((await advance({})).status).toBe(200);
+    await expectStillErrorCapped();
+  }, 30000);
+
+  it('does not let a resumed user-stop settle on the dead review', async () => {
+    const gated = new GatedAgent('review');
+    await restartWith(gated);
+    await seedImplementerRun();
+    expect((await startLoop()).status).toBe(200);
+    expect((await fixLoopState()).state).toBe('reviewing');
+
+    // Stopped mid-review, then the daemon restarts: the review run is
+    // force-failed on boot while the loop sits capped as a user-stop.
+    const stopped = await json<FixLoopState>(await stopLoop());
+    expect(stopped.stopReason).toBe('stopped');
+    await restartWith(new ConvergingAgent());
+
+    // Resuming must notice the review it was waiting on never finished and
+    // review again, not read the empty findings store as a clean result.
+    const resumed = await json<FixLoopState>(await startLoop());
+    expect(resumed.state).toBe('reviewing');
+    const settled = await settle();
+    expect(settled.state).toBe('complete');
+    expect(settled.round).toBe(1);
+    expect((await allFindings()).map((f) => f.verdict)).toEqual(['addressed']);
+  }, 30000);
+});
+
+// Recovery from a loop that settled when it should not have (or that a human
+// simply wants re-judged): `complete` must not be a state with no way out.
+describe('reopening a complete loop', () => {
+  it('ignite re-reviews the branch instead of returning unchanged', async () => {
+    await restartWith(new ConvergingAgent());
+    await seedImplementerRun();
+    expect((await startLoop()).status).toBe(200);
+    const first = await settle();
+    expect(first.state).toBe('complete');
+    const reviewsBefore = (await listRuns()).filter(
+      (run) => run.kind === 'review'
+    ).length;
+
+    const reopened = await json<FixLoopState>(await startLoop());
+    expect(reopened.state).toBe('reviewing');
+
+    const again = await settle();
+    expect(again.state).toBe('complete');
+    expect(
+      (await listRuns()).filter((run) => run.kind === 'review')
+    ).toHaveLength(reviewsBefore + 1);
   }, 30000);
 });
 
