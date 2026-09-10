@@ -11,6 +11,8 @@ import type {
   LedgerKind,
   ModelConfig,
   MutationEvidence,
+  PolicyGate,
+  PolicyGateMode,
   Priority,
   TaskDoc,
   TaskRisk,
@@ -43,6 +45,22 @@ export interface HealthPayload {
   // PATH + a configured git remote) — gates whether the desktop UI shows
   // the "Open PR" action at all.
   pr: boolean;
+  // Which process is answering and what it will run — optional because a
+  // daemon predating these fields still answers health without them.
+  pid?: number;
+  startedAt?: string;
+  models?: ModelConfig;
+  // Whether the answering process is still the one this project's daemon
+  // file names: 'displaced' when another dispatchd has overwritten the file
+  // (clients following it reach that one instead), 'unregistered' when the
+  // file is gone (the next CLI call will spawn a second daemon). The same
+  // fact is spelled out in `problems`; this is for branching without
+  // matching the string.
+  identity?: 'ok' | 'displaced' | 'unregistered';
+  // Records the daemon's last cache rebuild could not read, plus the
+  // identity problem above when there is one — visibility only, `ok` stays
+  // true.
+  problems: string[];
 }
 
 export interface TaskFilter {
@@ -1934,6 +1952,12 @@ export interface ApiClient {
     maxBudgetUsd?: number | null;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
+    /** The autonomy policy: the ladder rung, plus per-gate pins where a
+     *  `null` pin clears the override so the rung decides again. */
+    policy?: {
+      rung?: number;
+      gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+    };
   }): Promise<DispatchConfig>;
   // Linear sync. `connectLinear` posts the key once and never gets it back; every later
   // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.

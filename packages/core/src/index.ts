@@ -180,8 +180,37 @@ export {
   FIX_STRATEGIES,
   LINEAR_DIRECTIONS,
   MODEL_ROLES,
+  projectPolicy,
   queueWeights,
 } from './config.js';
+export {
+  consultFloor,
+  consultPolicy,
+  DEFAULT_POLICY,
+  describeFloorHold,
+  describePolicyAuthorization,
+  effectiveRung,
+  FLOOR_CHECKS,
+  GATE_RUNGS,
+  IRREVERSIBILITY_FLOOR,
+  isFloorCheck,
+  MAX_POLICY_RUNG,
+  MIN_POLICY_RUNG,
+  POLICY_GATE_MODES,
+  POLICY_GATES,
+  POLICY_RUNGS,
+  RISK_RUNG_CAPS,
+} from './policy.js';
+export type {
+  FloorCheck,
+  FloorCheckDef,
+  FloorRuling,
+  PolicyConfig,
+  PolicyGate,
+  PolicyGateMode,
+  PolicyRuling,
+  PolicyRungDef,
+} from './policy.js';
 export type {
   CartoConfig,
   CartoMode,

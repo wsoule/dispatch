@@ -1915,7 +1915,19 @@ export class Orchestrator {
     const executorName =
       request.executor ?? request.defaults?.executor ?? DEFAULT_EXECUTOR_NAME;
     return await this.dispatch(taskId, executorName, {
-      model: request.model ?? request.defaults?.model,
+      // The project's configured `models.execute` is the last fallback, so a
+      // caller that resolves no default still lands where settings chose. It
+      // sits at the same precedence as `defaults.model` — after anything the
+      // caller NAMED — so the named-vs-defaulted distinction resume turns on
+      // is untouched (resumeHonoursRequest has already run, on the raw
+      // request). Resolving this per caller instead is what silently ran a
+      // whole 2026-09-08 fleet on the CLI's default model: only the HTTP
+      // route passed `defaults`, while the epic auto-fill and the warden's
+      // dispatch tool passed none, and the config key looked ignored.
+      model:
+        request.model ??
+        request.defaults?.model ??
+        loadConfig(this.ctx.rootDir).models.execute,
       actor: request.actor,
     });
   }
@@ -2214,10 +2226,17 @@ export class Orchestrator {
         if (!this.worktreeIsNeeded(runId)) {
           this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
         }
+        // Discarding a superseded predecessor must not reopen a task another
+        // run already landed: a failed run resumed into a successor on the
+        // same branch stays reviewable after that successor merges (when it
+        // predates closeSupersededPredecessors, or if the walk stopped short),
+        // and clearing it out of the queue is housekeeping, not a verdict on
+        // the landed work.
+        const taskStatus = this.ctx.store.get(meta.taskId)?.meta.status;
         this.ctx.store.update(
           meta.taskId,
           {
-            status: 'ready',
+            ...(taskStatus === 'landed' ? {} : { status: 'ready' }),
             appendActivity: `${now} run ${runId} discarded`,
             activityActor: actor,
           },
@@ -2241,12 +2260,66 @@ export class Orchestrator {
       mergeCommit,
       ...(meta.reviewFailure !== undefined ? { reviewFailure: null } : {}),
     });
+    if (action === 'merge') {
+      this.closeSupersededPredecessors(runId, now, mergeCommit);
+    }
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
     this.ctx.events.broadcast({ type: 'run.changed' });
     const reviewed = this.registry.get(runId)!;
     this.invokeHooksSafely(this.reviewedHooks, reviewed);
     return reviewed;
+  }
+
+  // Once a run merges, walks its `resumedFrom` chain and marks every
+  // superseded predecessor reviewed with the same merge. A failed run resumed
+  // into a successor shares that successor's branch, so the successor's merge
+  // commit genuinely is where the predecessor's work landed — no new
+  // reviewAction value is needed, and epicLandStatus's "still the base of an
+  // unreviewed run" gate then sees the whole chain as reviewed instead of
+  // refusing to land an epic over runs whose work is already in. Without
+  // this, the only way past that gate was review(id, 'discard') on each
+  // predecessor. The walk stops at the first ancestor that is already
+  // reviewed (everything before it was closed out when it was) or that is
+  // not terminal (a live run is never touched); `visited` guards against a
+  // cycle in hand-edited transcripts.
+  private closeSupersededPredecessors(
+    successorId: string,
+    now: string,
+    mergeCommit: string | undefined
+  ): void {
+    const successor = this.registry.get(successorId);
+    if (successor === undefined) return;
+    // What the Activity line names as the landing: the squash sha when the
+    // merge produced one, otherwise how it landed (a PR merge carries no
+    // local sha; a no-op merge made no commit at all).
+    const landedAs =
+      mergeCommit !== undefined
+        ? mergeCommit.slice(0, 7)
+        : successor.reviewAction === 'pr'
+          ? 'a PR merge'
+          : 'a no-op merge';
+    const visited = new Set<string>([successorId]);
+    let ancestorId = successor.resumedFrom;
+    while (ancestorId !== undefined && !visited.has(ancestorId)) {
+      visited.add(ancestorId);
+      const ancestor = this.registry.get(ancestorId);
+      if (ancestor === undefined) return;
+      if (ancestor.reviewedAt !== undefined) return;
+      if (!TERMINAL_RUN_STATES.has(ancestor.state)) return;
+      this.transition(ancestor.id, ancestor.state, {
+        reviewedAt: now,
+        reviewAction: 'merge',
+        mergeCommit,
+      });
+      // Best-effort: the merge already happened and the marker is recorded,
+      // so a task file that cannot take the note must not fail the review.
+      this.noteTaskActivity(
+        ancestor.taskId,
+        `run ${ancestor.id} superseded by run ${successorId}, which merged as ${landedAs}`
+      );
+      ancestorId = ancestor.resumedFrom;
+    }
   }
 
   // Phase 5 P1: records a run's freshly-opened PR url. Called by
@@ -2338,6 +2411,7 @@ export class Orchestrator {
       reviewedAt: now,
       reviewAction: 'pr',
     });
+    this.closeSupersededPredecessors(runId, now, undefined);
     this.ctx.cache.rebuild(this.ctx.store);
     this.ctx.events.broadcast({ type: 'task.changed' });
     const reviewedViaPr = this.registry.get(runId)!;

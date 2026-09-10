@@ -4,6 +4,7 @@
 export * from './status.js';
 export * from './types.js';
 export * from './configTypes.js';
+export * from './policy.js';
 export * from './linearMap.js';
 export type {
   Finding,

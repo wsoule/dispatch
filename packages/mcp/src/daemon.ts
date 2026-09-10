@@ -146,28 +146,58 @@ export interface LiveDaemon {
  */
 export async function liveDaemon(
   rootDir: string,
-  probeTimeoutMs = HEALTH_TIMEOUT_MS
+  probeTimeoutMs = HEALTH_TIMEOUT_MS,
+  stalledWaitMs = STALLED_DAEMON_WAIT_MS
 ): Promise<LiveDaemon | null> {
   const daemon = readDaemonFile(rootDir);
   if (daemon === null) return null;
   if (daemon.agentToken === undefined || daemon.agentToken === '') return null;
+  const deadline = Date.now() + stalledWaitMs;
+  for (;;) {
+    let timedOut = false;
+    try {
+      // Same deadline as isDaemonHealthy, for the same reason — and for one
+      // more: this MCP server lives as long as the agent's session, so a
+      // daemon that wedged with its port still open (2026-08-23) would
+      // otherwise hold every task tool for the client's 31-minute ceiling,
+      // and never re-read the daemon file to find the healthy replacement.
+      const res = await fetch(`http://127.0.0.1:${daemon.port}/api/health`, {
+        headers: daemonAuth(daemon),
+        signal: AbortSignal.timeout(probeTimeoutMs),
+      });
+      if (!res.ok) return null;
+      const body = (await res.json().catch(() => ({}))) as {
+        problems?: string[];
+      };
+      return { info: daemon, problems: body.problems ?? [] };
+    } catch (err) {
+      timedOut = (err as { name?: string }).name === 'TimeoutError';
+    }
+    // A refused connection is a stale file. A stall from a pid that is still
+    // alive is a busy daemon: keep probing for a while rather than telling
+    // the agent its daemon is gone (which, before the deadline existed, was
+    // instead an indefinite hang on the first tool call).
+    if (!timedOut || !pidAlive(daemon.pid) || Date.now() >= deadline) {
+      return null;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+}
+
+// How long `liveDaemon` keeps re-probing a daemon whose pid is alive but whose
+// health check stalls before reporting it as unreachable. Bounded, so a
+// daemon that wedged for good still reads as unreachable rather than holding
+// the tool call for the MCP client's own idle ceiling.
+const STALLED_DAEMON_WAIT_MS = 30_000;
+
+// Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the
+// process exists under another user, which still counts as alive.
+function pidAlive(pid: number): boolean {
   try {
-    // Same deadline as isDaemonHealthy, for the same reason — and for one
-    // more: this MCP server lives as long as the agent's session, so a daemon
-    // that wedged with its port still open (2026-08-23) would otherwise hold
-    // every task tool for the client's 31-minute ceiling, and never re-read
-    // the daemon file to find the healthy replacement.
-    const res = await fetch(`http://127.0.0.1:${daemon.port}/api/health`, {
-      headers: daemonAuth(daemon),
-      signal: AbortSignal.timeout(probeTimeoutMs),
-    });
-    if (!res.ok) return null;
-    const body = (await res.json().catch(() => ({}))) as {
-      problems?: string[];
-    };
-    return { info: daemon, problems: body.problems ?? [] };
-  } catch {
-    return null;
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
   }
 }
 

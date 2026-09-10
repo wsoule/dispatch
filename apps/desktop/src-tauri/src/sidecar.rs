@@ -76,7 +76,7 @@ struct HealthResponse {
 /// to `daemonfile.ts`'s `daemonFileKey`. Cross-checked in tests against the
 /// same fixture value `packages/cli/test/daemon-cmd.test.ts` uses, so drift
 /// between the TS and Rust copies of this scheme fails loudly here too.
-fn daemon_file_key(root_dir: &str) -> String {
+pub(crate) fn daemon_file_key(root_dir: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(root_dir.as_bytes());
     let digest = hasher.finalize();
@@ -164,6 +164,73 @@ async fn is_healthy(client: &reqwest::Client, port: u16) -> bool {
     };
     parse_health_response(&body).unwrap_or(false)
 }
+
+/// What one `/api/health` probe learned about a port. `Unresponsive` is the
+/// case a plain bool hid: something accepted the connection and then stalled
+/// past the deadline. For the port a daemon file names, that is usually a live
+/// dispatchd too busy to answer (provisioning several run worktrees at once
+/// does it), not a dead one — and spawning a replacement over it force-fails
+/// every run it has in flight (2026-09-07: three daemons stacked up on one
+/// root this way inside ten minutes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthProbe {
+    Healthy,
+    Unresponsive,
+    Down,
+}
+
+async fn probe_health(client: &reqwest::Client, port: u16) -> HealthProbe {
+    match client
+        .get(format!("http://127.0.0.1:{port}/api/health"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+    {
+        Ok(response) => match response.text().await {
+            Ok(body) if parse_health_response(&body).unwrap_or(false) => HealthProbe::Healthy,
+            _ => HealthProbe::Down,
+        },
+        Err(e) if e.is_timeout() => HealthProbe::Unresponsive,
+        Err(_) => HealthProbe::Down,
+    }
+}
+
+/// Whether `pid` is still a live process — `kill -0` sends no signal, it only
+/// checks. Same shell-out rationale as `kill_pid_best_effort`.
+fn pid_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// What the reuse fast path should do with the daemon a daemon file names.
+#[derive(Debug, PartialEq, Eq)]
+enum ReuseDecision {
+    /// It answered: attach to it.
+    Reuse,
+    /// Its pid is alive but it stalled: keep polling, never spawn over it.
+    WaitForStalled,
+    /// Nothing dispatch-like is there: spawn a fresh daemon.
+    Spawn,
+}
+
+/// Pure decision behind the reuse fast path, split out so the one rule that
+/// matters — a stalled daemon whose pid is alive is waited on, not replaced —
+/// is unit-testable without a network.
+fn reuse_decision(probe: HealthProbe, pid_alive: bool) -> ReuseDecision {
+    match probe {
+        HealthProbe::Healthy => ReuseDecision::Reuse,
+        HealthProbe::Unresponsive if pid_alive => ReuseDecision::WaitForStalled,
+        HealthProbe::Unresponsive | HealthProbe::Down => ReuseDecision::Spawn,
+    }
+}
+
+/// How long to keep polling a live-but-stalled daemon before giving up with
+/// an error rather than spawning a second one.
+const STALLED_DAEMON_WAIT: Duration = Duration::from_secs(30);
 
 /// Parses `/api/health`'s response body in full (both `ok` and `rootDir`) —
 /// used by `fetch_health`, which lets the stale-daemon kill decision
@@ -793,12 +860,29 @@ pub async fn ensure_dispatchd(
     // one every subsequent health check and root lookup will find anyway.
     if !needs_init(root) && !force_spawn {
         if let Some(info) = read_daemon_file(root) {
-            if is_healthy(&client, info.port).await {
-                return Ok(DaemonConnection {
-                    port: info.port,
-                    app_token: app_tokens.get(root, info.pid),
-                    agent_token: info.agent_token,
-                });
+            let attach = |info: DaemonFileInfo| DaemonConnection {
+                port: info.port,
+                app_token: app_tokens.get(root, info.pid),
+                agent_token: info.agent_token,
+            };
+            match reuse_decision(probe_health(&client, info.port).await, pid_alive(info.pid)) {
+                ReuseDecision::Reuse => return Ok(attach(info)),
+                ReuseDecision::WaitForStalled => {
+                    let (pid, port) = (info.pid, info.port);
+                    if poll_for_healthy_daemon(&client, root, STALLED_DAEMON_WAIT)
+                        .await
+                        .is_some()
+                    {
+                        if let Some(info) = read_daemon_file(root) {
+                            return Ok(attach(info));
+                        }
+                    }
+                    return Err(format!(
+                        "dispatchd for this project (pid {pid}, port {port}) is running but has not answered a health check in {}s — it is probably overloaded. Wait and retry, or restart it once no run is in flight; a second daemon would force-fail the runs it has in flight.",
+                        STALLED_DAEMON_WAIT.as_secs()
+                    ));
+                }
+                ReuseDecision::Spawn => {}
             }
         }
     }
@@ -964,6 +1048,28 @@ mod tests {
     fn enrich_path_tolerates_an_empty_path() {
         let result = enrich_path("", None);
         assert_eq!(result, "/opt/homebrew/bin:/usr/local/bin");
+    }
+
+    #[test]
+    fn reuse_decision_waits_on_a_stalled_daemon_whose_pid_is_alive() {
+        assert_eq!(
+            reuse_decision(HealthProbe::Unresponsive, true),
+            ReuseDecision::WaitForStalled
+        );
+    }
+
+    #[test]
+    fn reuse_decision_attaches_to_a_healthy_daemon_and_spawns_over_a_dead_one() {
+        assert_eq!(reuse_decision(HealthProbe::Healthy, true), ReuseDecision::Reuse);
+        assert_eq!(reuse_decision(HealthProbe::Healthy, false), ReuseDecision::Reuse);
+        assert_eq!(reuse_decision(HealthProbe::Down, true), ReuseDecision::Spawn);
+        assert_eq!(reuse_decision(HealthProbe::Down, false), ReuseDecision::Spawn);
+        // A stall from a pid that no longer exists is a stale file plus some
+        // unrelated listener on the old port — nothing to wait for.
+        assert_eq!(
+            reuse_decision(HealthProbe::Unresponsive, false),
+            ReuseDecision::Spawn
+        );
     }
 
     #[test]

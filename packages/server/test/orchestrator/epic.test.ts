@@ -113,6 +113,29 @@ function createEpicWithChildren(
   return { epicId: epic.meta.id, childIds };
 }
 
+// 2026-09-08: every run in a 35-run fleet executed on the CLI's default model
+// instead of the project's configured `models.execute`, because only the HTTP
+// dispatch route resolved that fallback — the epic engine's auto-fill (and the
+// warden's dispatch tool) passed no `defaults` at all. It surfaced as a whole
+// epic dying on one model's usage limit while the config named another.
+describe('dispatch model default', () => {
+  it('records the project-configured models.execute on an epic auto-fill', async () => {
+    const { epics, store, orchestrator } = makeHarness();
+    // After the harness, whose TaskStore.init creates `.dispatch`. The config
+    // is read fresh at dispatch time, so writing it here still counts.
+    writeFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'models:\n  execute: claude-sonnet-5\n'
+    );
+    const { epicId } = createEpicWithChildren(store, 1);
+
+    await epics.start(epicId, { executor: 'fake', concurrency: 1 });
+    await waitFor(() => orchestrator.list().length > 0);
+
+    expect(orchestrator.list()[0]?.model).toBe('claude-sonnet-5');
+  });
+});
+
 describe('EpicEngine.start', () => {
   it('404s starting an unknown epic', async () => {
     const { epics } = makeHarness();
@@ -235,6 +258,48 @@ describe('EpicEngine.start', () => {
       (id) => harness.store.get(id)?.meta.status === 'review'
     ).length;
     expect(inReviewCount).toBe(5);
+  });
+
+  // The autonomy ladder caps critical-risk work at rung 1 (a publish, a
+  // release): the epic's own auto-fill is an auto-decision, so such a child
+  // waits for a human to dispatch it by hand, and the hold is noted once.
+  it('holds a critical-risk child for explicit human dispatch, noted once on the epic', async () => {
+    const harness = makeHarness();
+    const { epicId, childIds } = createEpicWithChildren(harness.store, 2);
+    harness.store.update(childIds[1], { risk: 'critical' });
+    harness.cache.rebuild(harness.store);
+
+    await harness.epics.start(epicId, { concurrency: 2, executor: 'fake' });
+    await waitFor(
+      () =>
+        harness.orchestrator.list().filter((r) => r.taskId === childIds[0])
+          .length === 1
+    );
+    await sleep(30);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === childIds[1])
+    ).toEqual([]);
+    expect(harness.store.get(childIds[1])?.meta.status).toBe('ready');
+
+    // Finishing the routine child refills the queue, but the critical child
+    // still waits, and the hold is not repeated on the Activity.
+    const live = harness.orchestrator
+      .list()
+      .find((r) => r.taskId === childIds[0] && r.state === 'awaiting-approval');
+    expect(live).toBeDefined();
+    harness.orchestrator.approve(live!.id, 'go', true);
+    await sleep(40);
+    expect(
+      harness.orchestrator.list().filter((r) => r.taskId === childIds[1])
+    ).toEqual([]);
+    const body = harness.store.get(epicId)?.body ?? '';
+    const holdLines = body
+      .split('\n')
+      .filter((line) => line.includes(`holding ${childIds[1]}`));
+    expect(holdLines).toHaveLength(1);
+    expect(holdLines[0]).toContain(
+      'critical-risk work is never auto-dispatched'
+    );
   });
 
   it('dispatches a newly-unblocked child once its blocker finishes (unblock cascade)', async () => {

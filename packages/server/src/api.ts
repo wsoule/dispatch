@@ -63,6 +63,7 @@ import { getTaskVerification, startTaskVerification } from './api/verify.js';
 import type { TaskCache } from './cache.js';
 import type { ConversationStore } from './conversations.js';
 import { isSnippet, isSubjectRef } from './conversations.js';
+import { checkDaemonIdentity } from './daemonfile.js';
 import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
@@ -136,6 +137,7 @@ import {
 } from './reviewComments.js';
 import type { AddCommentInput, ReviewComment } from './reviewComments.js';
 import type { ReviewTarget } from './reviewTarget.js';
+import { redactSecretUrls } from './secretUrls.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { TrackedFilesCache } from './trackedFiles.js';
@@ -191,6 +193,10 @@ export interface ApiContext {
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
   prCapability: boolean;
+  // When this daemon process started, captured once in startServer — the
+  // same value the daemon file records, surfaced at GET /api/health so a
+  // client can tell which process is answering.
+  startedAt: string;
   // The Git page's backend — see packages/server/src/git/commands.ts.
   gitRepo: GitRepo;
   // The two tokens this daemon accepts — see DaemonTokens.
@@ -219,6 +225,11 @@ export interface ApiContext {
   // terminal, so a value snapshotted at boot keeps telling the user to run a
   // command they already ran successfully. See index.ts.
   mergeDriverOk: () => boolean;
+  // Whether this daemon wrote the per-root daemon file at boot (index.ts's
+  // `writeDaemonFile` option). GET /api/health checks that file on every
+  // probe to notice when another daemon has overwritten or removed it — a
+  // daemon that never claimed one has nothing to be displaced from.
+  claimsDaemonFile: boolean;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -821,6 +832,18 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
       patch.queue = { weights: weights as Partial<QueueWeights> };
     }
   }
+  if ('policy' in body) {
+    if (
+      typeof body.policy !== 'object' ||
+      body.policy === null ||
+      Array.isArray(body.policy)
+    ) {
+      return errorResponse(400, 'policy must be an object');
+    }
+    // Same deal as models/linear: core validates the rung and each gate pin
+    // before writing, and that ConfigError becomes the 400 below.
+    patch.policy = body.policy as ConfigPatch['policy'];
+  }
 
   try {
     const config = updateConfig(ctx.rootDir, patch);
@@ -834,7 +857,8 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // gated on an actual true→false transition: SyncWorktree.remove() is
     // already a safe no-op when there's nothing to remove.
     if (patch.autoCommit === false) ctx.boardSyncScheduler?.removeWorktree();
-    return jsonResponse(config);
+    // Echoes the config the same way GET does, masked the same way.
+    return jsonResponse(redactSecretUrls(config));
   } catch (err) {
     return errorResponse(400, (err as Error).message);
   }
@@ -3406,8 +3430,10 @@ async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
     createdByRunId:
       typeof body.createdByRunId === 'string' ? body.createdByRunId : null,
   });
-  // `splitCapture` strips bullet and checkbox prefixes, so text that is only
-  // markers stores nothing — a 201 there would claim a capture that never was.
+  // `normalizeCapture` strips the leading bullet or checkbox from the capture's
+  // FIRST line (one dump is one item, so only that line is a marker), leaving
+  // nothing when the whole capture was that one marker — a 201 there would
+  // claim a capture that never was.
   if (created.length === 0) {
     return errorResponse(400, 'text contained no capturable lines');
   }
@@ -3872,6 +3898,10 @@ export async function handleApi(
       // `rootDir` lets the web UI show a project name (its basename) in the
       // top bar without a separate endpoint — see the phase-2 plan's Slice
       // S3 TopBar requirement.
+      //
+      // Whether this process is still the daemon the file under
+      // ~/.dispatch/daemons names — read fresh per probe (see daemonfile.ts).
+      const identity = checkDaemonIdentity(ctx.rootDir, ctx.claimsDaemonFile);
       return jsonResponse({
         ok: true,
         version: ctx.version,
@@ -3879,16 +3909,35 @@ export async function handleApi(
         // Files the most recent cache rebuild couldn't parse (e.g. missing
         // frontmatter, invalid kind) — empty when the task set is clean. The
         // daemon keeps serving the last-good cache regardless; this is
-        // visibility, not a fatal signal (`ok` stays true).
-        problems: ctx.cache.problems(),
+        // visibility, not a fatal signal (`ok` stays true). A displaced or
+        // unregistered daemon adds its own line here for the same reason:
+        // it still serves whoever reaches it, but clients following the
+        // daemon file will not.
+        problems: [
+          ...ctx.cache.problems(),
+          ...(identity.problem === null ? [] : [identity.problem]),
+        ],
+        // The same fact as an enum, so a client can branch on it without
+        // matching the problem string.
+        identity: identity.identity,
         // Phase 5 P1: whether this project can use the PR review action
         // (gh on PATH + a configured git remote), detected once at boot.
         pr: ctx.prCapability,
+        // Who is answering and what it will run. On 2026-09-08 a fleet ran
+        // on the wrong model for two days and nothing surfaced it, and two
+        // daemons served one root with only `ps` able to tell them apart.
+        // Health is the one open route every client probes, so it carries
+        // the process identity and the fully-defaulted per-role model map
+        // (read fresh, since config.yml can change under a live daemon).
+        pid: process.pid,
+        startedAt: ctx.startedAt,
+        models: loadConfig(ctx.rootDir).models,
       });
     }
 
     if (segments[0] === 'config' && segments.length === 1 && method === 'GET') {
-      return jsonResponse(loadConfig(ctx.rootDir));
+      // Webhook URLs are credentials; see secretUrls.ts.
+      return jsonResponse(redactSecretUrls(loadConfig(ctx.rootDir)));
     }
     if (
       segments[0] === 'config' &&

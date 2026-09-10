@@ -19,14 +19,61 @@ autoCommit: true
 # default kept killing the test step mid-run.
 orchestrator:
   verifyTimeoutSec: 1500
+  # 2026-09-07: seven concurrent runs hit the Claude usage limit in ~40 min,
+  # twice, and every force-fail-and-resume re-spent most of a run's cost.
+  epicConcurrency: 3
 
+#
+# Every root gate ci.yml runs is named here too, one step each, so a run that
+# would go red on main is caught in its own worktree before the squash-merge.
+# It used to be install/build/lint/test only: on 2026-09-08 four runs merged
+# green and then failed main on format-check, lint-spelling, lint-deadcode and
+# audit, none of which verify had run. scripts/check-ci-targets.ts now fails
+# CI if this list and ci.yml's `moon ci` target list drift apart, so add new
+# gates to both. Fast gates come before the ~8-minute test step, so a typo
+# fails in seconds rather than after the suite.
 verifySteps:
   - name: install
     command: pnpm install --frozen-lockfile
   - name: build
     command: moon run :build
+  - name: typecheck
+    command: moon run :typecheck
+  # CI also runs `cargo test` for apps/desktop/src-tauri. Conditional on the
+  # branch having touched that directory (the script diffs against the merge
+  # base): a cold cargo build is 5-10 minutes, and taxing every merge for a
+  # rare Rust change is the wrong trade — but skipping it is how a Rust change
+  # passes the queue and fails main.
+  - name: rust-test
+    command: bun scripts/rust-verify.ts
+  - name: format-check
+    command: moon run root:format-check
   - name: lint
     command: moon run root:lint
+  - name: lint-css
+    command: moon run root:lint-css
+  - name: lint-deadcode
+    command: moon run root:lint-deadcode
+  - name: lint-dup
+    command: moon run root:lint-dup
+  - name: lint-arch
+    command: moon run root:lint-arch
+  - name: lint-spelling
+    command: moon run root:lint-spelling
+  - name: lint-md
+    command: moon run root:lint-md
+  - name: lint-types
+    command: moon run root:lint-types
+  - name: lint-chrome
+    command: moon run root:lint-chrome
+  - name: check-licenses
+    command: moon run root:check-licenses
+  - name: check-ci-targets
+    command: moon run root:check-ci-targets
+  - name: check-own-build-deps
+    command: moon run root:check-own-build-deps
+  - name: audit
+    command: moon run root:audit
   - name: test
     command: moon run :test
 models:

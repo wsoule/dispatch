@@ -44,7 +44,8 @@ jobs:
           moon ci --include-relations :build :typecheck :test root:format-check
           root:lint root:lint-css root:lint-deadcode root:lint-dup
           root:lint-arch root:lint-spelling root:lint-md root:lint-types
-          root:lint-chrome root:check-licenses root:check-ci-targets root:audit
+          root:lint-chrome root:check-licenses root:check-ci-targets
+          root:check-own-build-deps root:audit
 
       - name: Audit (full report)
         run: pnpm audit

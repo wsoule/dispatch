@@ -13,6 +13,13 @@
 //
 // The opt-out is deliberate and narrow: a task that should exist but not gate
 // CI lists itself in EXPECTED_ABSENT with a reason.
+//
+// The same drift exists on a second axis: the merge queue verifies each run
+// with `.dispatch/config.yml`'s verifySteps before squash-merging it, and that
+// list is bookkeeping independent of ci.yml too. On 2026-09-08 it was
+// install/build/lint/test while CI gated on fourteen root tasks, so four runs
+// verified green and then turned main red on gates verify had never run. So
+// every root target ci.yml names must also appear in verifySteps.
 
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
@@ -21,6 +28,7 @@ import { fileURLToPath } from 'node:url';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const workflowPath = resolve(repoRoot, '.github/workflows/ci.yml');
+const verifyConfigPath = resolve(repoRoot, '.dispatch/config.yml');
 
 // Root tasks that are CI-eligible but intentionally not gates.
 const EXPECTED_ABSENT = new Map<string, string>([
@@ -63,6 +71,31 @@ function targetsInWorkflow(): Set<string> {
       `Parsed the \`moon ci\` step in ${workflowPath} but found no root: targets. The parser is out of step with the workflow.`
     );
     process.exit(1);
+  }
+  return targets;
+}
+
+// Root targets the merge queue's verify runs, pulled from the `verifySteps:`
+// block of .dispatch/config.yml the same way the workflow is read: scan the
+// block for `root:<task>` tokens rather than parsing YAML, and stop at the
+// next top-level key so a comment elsewhere in the file cannot satisfy it.
+function targetsInVerifySteps(): Set<string> {
+  const text = readFileSync(verifyConfigPath, 'utf8');
+  const start = /^verifySteps:/m.exec(text);
+  if (start === null) {
+    console.error(
+      `No \`verifySteps:\` block found in ${verifyConfigPath}; the merge queue would verify nothing.`
+    );
+    process.exit(1);
+  }
+  const rest = text.slice(start.index + 'verifySteps:'.length);
+  const end = rest.search(/^[A-Za-z]/m);
+  const block = end === -1 ? rest : rest.slice(0, end);
+  // Only `command:` lines count — a step's name is free text.
+  const targets = new Set<string>();
+  for (const line of block.split('\n')) {
+    if (!/^\s*command:/.test(line)) continue;
+    for (const m of line.matchAll(/\broot:([a-z0-9-]+)/g)) targets.add(m[1]);
   }
   return targets;
 }
@@ -128,6 +161,21 @@ for (const name of listed) {
   }
 }
 
+const verified = targetsInVerifySteps();
+for (const name of listed) {
+  if (verified.has(name)) continue;
+  problems.push(
+    `root:${name} gates CI but is missing from verifySteps in .dispatch/config.yml, so a run can verify green and still turn main red. Add a step running \`moon run root:${name}\`.`
+  );
+}
+for (const name of verified) {
+  if (!eligible.has(name)) {
+    problems.push(
+      `.dispatch/config.yml's verifySteps names root:${name}, but no such task exists on the root project.`
+    );
+  }
+}
+
 for (const name of EXPECTED_ABSENT.keys()) {
   if (listed.has(name)) {
     problems.push(
@@ -143,5 +191,5 @@ if (problems.length > 0) {
 }
 
 console.log(
-  `CI target check passed: ci.yml gates on all ${listed.size} root tasks that run in CI.`
+  `CI target check passed: ci.yml gates on all ${listed.size} root tasks that run in CI, and verifySteps runs every one of them.`
 );

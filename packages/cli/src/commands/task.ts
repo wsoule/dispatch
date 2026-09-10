@@ -27,6 +27,7 @@ import type { TaskApiClient } from '../apiClient.js';
 import { createTaskApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { formatTable } from '../output.js';
+import { projectRoot } from '../projectRoot.js';
 import { findRunningDaemon } from './daemon.js';
 
 // The status alias layer, tolerant of an omitted flag.
@@ -71,11 +72,21 @@ export function requireStore(ctx: CliContext): TaskStore {
  * project has no `.dispatch/tasks` directory, and gating on one would refuse
  * every orchestrate/plan/scope command in exactly the projects this epic is
  * moving towards.
+ *
+ * Checked at the resolved project root first: a run's worktree carries only
+ * the tracked `.dispatch/config.yml`, while the backend marker and the task
+ * board live at the root the daemon serves. The raw cwd is still accepted
+ * so a plain project directory behaves exactly as before.
  */
 export function requireInitialized(ctx: CliContext): void {
-  if (new TaskStore(ctx.cwd).isInitialized()) return;
-  if (databaseBacked(ctx.cwd)) return;
+  const root = projectRoot(ctx.cwd);
+  if (isInitialized(root)) return;
+  if (root !== ctx.cwd && isInitialized(ctx.cwd)) return;
   throw new CliError(NOT_INITIALIZED);
+}
+
+function isInitialized(rootDir: string): boolean {
+  return new TaskStore(rootDir).isInitialized() || databaseBacked(rootDir);
 }
 
 /**
@@ -93,28 +104,6 @@ export function requireInitialized(ctx: CliContext): void {
  */
 export function databaseBacked(rootDir: string): boolean {
   return readProjectBackend(rootDir) === 'sqlite';
-}
-
-/**
- * The PROJECT root, which inside an agent's run worktree is not the cwd.
- *
- * A dispatched run executes in `~/.dispatch/worktrees/<hash>/<runId>`, a
- * checkout with its own `.dispatch/` copy and no daemon of its own. Resolving
- * a task command against that raw cwd finds no daemon file and — once the
- * project is database-backed — no marker either, so `dispatch task list` from
- * inside a run either reports an uninitialized project or throws
- * DAEMON_REQUIRED while the real daemon is running perfectly well a few
- * directories away.
- *
- * The executor already publishes the mapping as DISPATCH_PROJECT_ROOT whenever
- * the worktree differs from the project. The MCP tools have consumed it since
- * they were written (see projectRoot() in packages/mcp/src/tools.ts); the CLI
- * simply never did, which is why the same task command works through MCP and
- * fails through the terminal in the same worktree.
- */
-export function projectRoot(cwd: string): string {
-  const override = process.env.DISPATCH_PROJECT_ROOT;
-  return override !== undefined && override !== '' ? override : cwd;
 }
 
 /**
@@ -146,6 +135,8 @@ async function resolveTaskRoute(ctx: CliContext): Promise<TaskRoute> {
   // projectRoot(), not the raw cwd — see its doc comment: inside a run's
   // worktree the daemon, the marker and the real board all live at the
   // project root, and resolving against the worktree finds none of them.
+  // findRunningDaemon resolves too, but the marker check below needs the
+  // root as well.
   const root = projectRoot(ctx.cwd);
   const daemon = await findRunningDaemon(root).catch(() => null);
   if (daemon !== null) {

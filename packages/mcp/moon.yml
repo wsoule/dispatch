@@ -3,3 +3,13 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 language: 'typescript'
 layer: 'library'
 tags: ['tsdown', 'publishable']
+
+tasks:
+  # test/e2e.test.ts spawns `node ../dist/bin.js` and speaks MCP to it over real
+  # stdio, so this needs its OWN build; the inherited test task only depends on
+  # `^:build` (upstream projects). Without this edge the test raced its own
+  # build and hung until the 15s timeout — tsdown runs with --clean, so the
+  # binary is deleted and rewritten underneath a spawn that is already running.
+  test:
+    deps:
+      - 'build'

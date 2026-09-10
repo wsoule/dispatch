@@ -122,73 +122,13 @@ executable code or package config.
   only when a specific step is still non-obvious.
 - Keep comments concrete and behavior-focused.
 
-<!-- CARTO:AUTO:START -->
-## Project Structure (auto)
+## Repository Map
 
-- 📁 .agents/
-- 📁 .claude/
-- 📁 .dispatch/
-- 📁 .github/
-- 📁 .husky/
-- 📁 .moon/
-- 📁 .proto/
-- 📁 .superpowers/
-- 📁 apps/
-- 📁 docs/
-- 📁 packages/
-- 📁 scripts/
-- 📄 .18c47b9fefbf7fbc-00000000.bun-build
-- 📄 .18c47bbf8f9dfff8-00000000.bun-build
-- 📄 .browserslistrc
-- 📄 .cspell-dictionary.txt
-- 📄 .dependency-cruiser.json
-- 📄 .dockerignore
-- 📄 .DS_Store
-- 📄 .gitattributes
-- 📄 .gitignore
-- 📄 .jscpd.json
-- 📄 .markdownlint-cli2.jsonc
-- 📄 .mcp.json
-- 📄 .node-version
-- 📄 .nvim.lua
-- 📄 .oxfmtrc.json
-- 📄 .oxlintrc.json
-- 📄 .prototools
-- 📄 .stylelintignore
-- 📄 bun.lock
-- 📄 bunfig.toml
-- 📄 CLAUDE.md
-- 📄 CONTRIBUTING.md
-- 📄 cspell.json
-- 📄 dispatch-fix-changed-files.zip
-- 📄 knip.json
-- 📄 LICENSE
-- 📄 LICENSING.md
-- 📄 moon.yml
-- 📄 package.json
-- 📄 pnpm-lock.yaml
-- 📄 pnpm-workspace.yaml
-- 📄 README.md
-- 📄 stylelint.config.js
-- 📄 tsconfig.json
-- 📄 tsconfig.options.json
-- 📄 tsconfig.oxlint.json
-- 📄 tsconfig.tsbuildinfo
-**High impact:** packages/core/src/status.ts (97 dependents), packages/core/src/types.ts (96 dependents), packages/core/src/actor.ts (93 dependents), packages/core/src/describe.ts (93 dependents), packages/core/src/findings.ts (93 dependents), packages/core/src/ledger.ts (93 dependents), packages/core/src/evidence.ts (92 dependents), packages/core/src/ids.ts (92 dependents), packages/core/src/slug.ts (92 dependents), packages/core/src/taskfile.ts (92 dependents), packages/core/src/store.ts (91 dependents), packages/core/src/storeBackend.ts (91 dependents), packages/core/src/sqliteDb.ts (89 dependents), packages/core/src/sqliteRecords.ts (89 dependents), packages/core/src/sqliteTaskStore.ts (89 dependents)
-
-## Context Files (auto)
-
-Carto generated domain-specific context files in `.carto/context/`.
-Read the relevant file before working on that area:
-
-| Domain | File | Read when... |
-|--------|------|--------------|
-| Auth | `.carto/context/AUTH.md` | Working on login, sessions, OAuth |
-| Payments | `.carto/context/PAYMENTS.md` | Working on billing, Stripe |
-| tRPC | `.carto/context/TRPC.md` | Working on API procedures |
-| Database | `.carto/context/DATABASE.md` | Working on models, schema |
-| Events | `.carto/context/EVENTS.md` | Working on webhooks, jobs |
-| Core | `.carto/context/CORE.md` | General utilities, shared code |
-
-> Run `carto serve` to enable live graph queries from Kiro, Cursor, and Claude.
-<!-- CARTO:AUTO:END -->
+Carto keeps a generated map of this repo — file tree, import graph, and the
+highest-impact modules by dependent count — at `.carto/CONTEXT.md`, which is
+gitignored and refreshed by `carto sync` on every checkout, merge, and rebase.
+Read it when a change touches shared code and you want to know what depends on
+it. It used to live in this file as a generated block, which meant every sync
+dirtied a committed file with live dependency counts that no formatter could
+agree on; `dispatch doctor` repoints an older carto config that still targets
+`AGENTS.md`.

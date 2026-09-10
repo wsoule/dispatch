@@ -7,7 +7,7 @@ import type {
   PlanProposal,
   PlanRecord,
 } from '../apiClient.js';
-import { createApiClient } from '../apiClient.js';
+import { createApiClient, DaemonUnreachableError } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
   formatEpicProgress,
@@ -95,8 +95,15 @@ export function createEpicWatcher(
     }
   });
 
+  // Same rule as the run watcher: a refetch that failed because the daemon
+  // went away defers to the socket layer's own give-up (which reports "lost
+  // connection to dispatchd"), rather than racing it with a second message
+  // for the same condition. Anything else genuinely stops the watch.
   function triggerRefetch(): void {
     void refetch().catch((err: unknown) => {
+      if (err instanceof TypeError || err instanceof DaemonUnreachableError) {
+        return;
+      }
       fail(err instanceof Error ? err : new Error(String(err)));
     });
   }

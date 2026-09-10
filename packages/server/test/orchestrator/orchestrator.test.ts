@@ -22,6 +22,7 @@ import {
   transcriptPath,
   worktreesDir,
 } from '../../src/orchestrator/paths.js';
+import type { RunRegistry } from '../../src/orchestrator/registry.js';
 import {
   replayTranscript,
   Transcript,
@@ -1207,6 +1208,173 @@ describe('Orchestrator.review discard', () => {
     orchestrator.review(meta.id, 'discard');
 
     expect(existsSync(meta.worktreePath)).toBe(false);
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
+  });
+});
+
+// A failed run resumed into a successor shares that successor's branch, so
+// the successor's merge is where the predecessor's work landed too. Merging
+// the successor must close out every unreviewed predecessor in the
+// `resumedFrom` chain — otherwise epicLandStatus keeps refusing to land the
+// epic over "unreviewed" runs whose work is already in, and the only way past
+// it (discard) used to un-land the task.
+describe('Orchestrator.review merge closes superseded predecessors', () => {
+  // An executor whose first `failCount` starts fail with a resumable session
+  // (the truncated-run shape) and whose later starts finish normally, so a
+  // test can build a resume chain of any length through the public API.
+  function registerFailThenFinish(
+    orchestrator: Orchestrator,
+    failCount: number
+  ): void {
+    let starts = 0;
+    orchestrator.registerExecutor('fake', {
+      start(_opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+        starts += 1;
+        if (starts <= failCount) {
+          events.onFinish({
+            state: 'failed',
+            sessionId: `sess-${starts}`,
+            error: 'cut off',
+          });
+        } else {
+          events.onFinish({ state: 'finished', sessionId: `sess-${starts}` });
+        }
+        return {
+          interrupt: async () => {},
+          requestStop: () => {},
+          send: () => {},
+          approve: () => {},
+        };
+      },
+    });
+  }
+
+  it("marks a failed, unreviewed predecessor merged with the successor's commit", async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    registerFailThenFinish(orchestrator, 1);
+    const task = store.create({ title: 'Resume then merge' });
+    const first = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(first.id)?.meta.state === 'failed');
+    const second = orchestrator.sendMessage(first.id, 'keep going', {
+      resume: true,
+    });
+    await waitFor(
+      () => orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+    writeFileSync(join(second.worktreePath, 'work.txt'), 'landed\n');
+    runGitSync(second.worktreePath, ['add', '-A']);
+    runGitSync(second.worktreePath, ['commit', '-m', 'agent: work']);
+
+    const merged = orchestrator.review(second.id, 'merge');
+    expect(merged.mergeCommit).toBeDefined();
+
+    const predecessor = orchestrator.getRun(first.id)!.meta;
+    expect(predecessor.reviewedAt).toBeDefined();
+    expect(predecessor.reviewAction).toBe('merge');
+    expect(predecessor.mergeCommit).toBe(merged.mergeCommit);
+    // Recorded through the transcript too, so a restart sees it the same way.
+    expect(
+      replayTranscript(transcriptPath(repo, first.id))!.meta
+    ).toMatchObject({
+      reviewedAt: predecessor.reviewedAt,
+      reviewAction: 'merge',
+    });
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
+    expect(store.get(task.meta.id)!.body).toContain(
+      `run ${first.id} superseded by run ${second.id}, which merged as ${merged.mergeCommit!.slice(0, 7)}`
+    );
+  });
+
+  it('closes every predecessor in a chain of three (A -> B -> C, merge C)', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    registerFailThenFinish(orchestrator, 2);
+    const task = store.create({ title: 'Resume twice then merge' });
+    const a = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(a.id)?.meta.state === 'failed');
+    const b = orchestrator.sendMessage(a.id, 'again', { resume: true });
+    await waitFor(() => orchestrator.getRun(b.id)?.meta.state === 'failed');
+    const c = orchestrator.sendMessage(b.id, 'once more', { resume: true });
+    await waitFor(() => orchestrator.getRun(c.id)?.meta.state === 'finished');
+    expect(c.resumedFrom).toBe(b.id);
+    expect(b.resumedFrom).toBe(a.id);
+
+    orchestrator.review(c.id, 'merge');
+
+    for (const id of [a.id, b.id]) {
+      const meta = orchestrator.getRun(id)!.meta;
+      expect(meta.reviewedAt).toBeDefined();
+      expect(meta.reviewAction).toBe('merge');
+    }
+    const body = store.get(task.meta.id)!.body;
+    expect(body).toContain(`run ${a.id} superseded by run ${c.id}`);
+    expect(body).toContain(`run ${b.id} superseded by run ${c.id}`);
+  });
+
+  // No public path leaves a live run behind a successor (resume refuses a
+  // non-terminal run), so the guard is exercised by flipping the predecessor
+  // back to 'running' in the registry after the chain is built.
+  it('leaves a predecessor that is still running untouched', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    registerFailThenFinish(orchestrator, 1);
+    const task = store.create({ title: 'Live predecessor' });
+    const first = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(first.id)?.meta.state === 'failed');
+    const second = orchestrator.sendMessage(first.id, 'keep going', {
+      resume: true,
+    });
+    await waitFor(
+      () => orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+    const registry = (orchestrator as unknown as { registry: RunRegistry })
+      .registry;
+    registry.updateMeta(first.id, { state: 'running' });
+
+    orchestrator.review(second.id, 'merge');
+
+    const predecessor = orchestrator.getRun(first.id)!.meta;
+    expect(predecessor.state).toBe('running');
+    expect(predecessor.reviewedAt).toBeUndefined();
+    expect(store.get(task.meta.id)!.body).not.toContain('superseded by');
+  });
+});
+
+describe('Orchestrator.review discard on a landed task', () => {
+  it('leaves the task landed when a superseded predecessor is discarded', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Already landed' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    // Another run landed this task in the meantime (the shape a predecessor
+    // closed out before this fix, or a hand-merged branch, leaves behind).
+    store.update(task.meta.id, { status: 'landed' });
+
+    orchestrator.review(meta.id, 'discard');
+
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
+    expect(store.get(task.meta.id)!.body).toContain(`run ${meta.id} discarded`);
+  });
+
+  it('still resets a task in review to ready', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Back to ready' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
+
+    orchestrator.review(meta.id, 'discard');
+
     expect(store.get(task.meta.id)!.meta.status).toBe('ready');
   });
 });

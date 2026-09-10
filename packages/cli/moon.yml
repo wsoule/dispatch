@@ -3,3 +3,14 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 language: 'typescript'
 layer: 'library'
 tags: ['tsdown', 'publishable']
+
+tasks:
+  # test/{e2e,orchestrate-e2e,mcp-stdio-e2e}.test.ts spawn `node ../dist/cli.js`
+  # as a real subprocess, so this needs its OWN build. The inherited test task
+  # depends on `^:build` — upstream projects only — which never builds this one.
+  # Without this edge `cli:build` and `cli:test` are unordered siblings: locally
+  # a warm dist/ hid that, but on a cold CI checkout the test ran first and every
+  # spawn died with "Cannot find module .../packages/cli/dist/cli.js".
+  test:
+    deps:
+      - 'build'

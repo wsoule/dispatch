@@ -1,6 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -124,5 +124,77 @@ describe('PATCH /api/config — orchestrator caps', () => {
   it('rejects a negative budget with 400, unvalidated here', async () => {
     const res = await patchConfig({ maxBudgetUsd: -5 });
     expect(res.status).toBe(400);
+  });
+});
+
+describe('PATCH /api/config — policy', () => {
+  it('writes the rung and gate pins and they round-trip through GET', async () => {
+    const res = await patchConfig({
+      policy: { rung: 3, gates: { merge: 'block' } },
+    });
+    expect(res.status).toBe(200);
+    const config = await json<{
+      policy: { rung: number; gates: Record<string, string> };
+    }>(res);
+    expect(config.policy).toEqual({ rung: 3, gates: { merge: 'block' } });
+  });
+
+  it('a null pin clears the override and leaves the rung alone', async () => {
+    expect(
+      (await patchConfig({ policy: { rung: 3, gates: { merge: 'block' } } }))
+        .status
+    ).toBe(200);
+    const cleared = await patchConfig({ policy: { gates: { merge: null } } });
+    expect(cleared.status).toBe(200);
+    const next = await json<{
+      policy: { rung: number; gates: Record<string, string> };
+    }>(cleared);
+    expect(next.policy.rung).toBe(3);
+    expect(next.policy.gates.merge).toBeUndefined();
+  });
+
+  it('400s a rung off the ladder without writing anything', async () => {
+    const res = await patchConfig({ policy: { rung: 9 } });
+    expect(res.status).toBe(400);
+    const file = readFileSync(join(root, '.dispatch', 'config.yml'), 'utf8');
+    expect(file).not.toContain('policy');
+  });
+
+  it('400s an unknown gate, and a non-object block outright', async () => {
+    expect(
+      (await patchConfig({ policy: { gates: { review: 'auto' } } })).status
+    ).toBe(400);
+    expect((await patchConfig({ policy: 3 })).status).toBe(400);
+  });
+});
+
+// This suite's server boots with `writeDaemonFile: false`, so it never told
+// clients to find it: no file is not a missing file.
+describe('GET /api/health — daemon identity without a daemon file', () => {
+  it('reports ok with no identity problem', async () => {
+    const res = await fetch(`${baseUrl}/api/health`);
+    expect(res.status).toBe(200);
+    const body = await json<{ identity: string; problems: string[] }>(res);
+    expect(body.identity).toBe('ok');
+    expect(body.problems).toEqual([]);
+  });
+});
+
+// A webhook URL is the credential (Slack and Discord put the secret in the
+// path), and GET /api/config answers any request-tier token. The
+// notifications block that stores one lands separately (epic e-6cfcc7);
+// until loadConfig carries it through, this passes because the key is
+// dropped, and once it does, because secretUrls.ts masks it — either way
+// the secret never leaves the daemon.
+describe('GET /api/config — webhook secrets', () => {
+  it('never returns the secret path of a configured webhook URL', async () => {
+    const secretPath = '/services/T000/B000/XXXXXXXXXXXXXXXXXXXXXXXX';
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      `notifications:\n  webhook: https://hooks.slack.com${secretPath}\n`
+    );
+    const res = await fetch(`${baseUrl}/api/config`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).not.toContain(secretPath);
   });
 });

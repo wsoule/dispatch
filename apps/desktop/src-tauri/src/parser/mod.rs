@@ -1,6 +1,7 @@
 pub mod claude_jsonl;
 pub mod codex_jsonl;
 pub mod cursor_jsonl;
+pub mod dispatch_worktree;
 pub mod gemini_log;
 pub mod record;
 pub mod session_builder;

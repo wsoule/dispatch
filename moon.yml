@@ -163,8 +163,13 @@ tasks:
     options:
       runInCI: 'always'
 
+  # Through audit-gate.ts: a critical advisory fails; an unreachable registry
+  # warns and passes — npm timeouts failed two otherwise-green CI runs.
   audit:
-    command: 'pnpm audit --audit-level critical'
+    command: 'bun --silent scripts/audit-gate.ts'
+    inputs:
+      - 'scripts/audit-gate.ts'
+      - 'pnpm-lock.yaml'
     options:
       cache: false
       runInCI: 'always'
@@ -227,11 +232,38 @@ tasks:
       - 'scripts/check-ci-targets.ts'
       - 'moon.yml'
       - '.github/workflows/ci.yml'
+      - '.dispatch/config.yml'
     options:
       # Shells out to `moon query`, which must not be cached against a stale
       # graph.
       cache: false
       runInCI: 'always'
+
+  # Guards the build graph against tests that spawn their own build output
+  # without an edge to it. cli:test and mcp:test raced their own builds on a
+  # cold CI checkout while passing locally against a warm dist/.
+  check-own-build-deps:
+    command: 'bun --silent scripts/check-own-build-deps.ts'
+    inputs:
+      - 'scripts/check-own-build-deps.ts'
+      - '/packages/*/moon.yml'
+      - '/apps/*/moon.yml'
+      - '/.moon/tasks/*.yml'
+    options:
+      # Shells out to `moon query`, which must not be cached against a stale
+      # graph.
+      cache: false
+      runInCI: 'always'
+
+  # Cuts a release: bumps the three version files, commits, tags, pushes the
+  # tag that triggers release.yml. Every check runs before anything is
+  # written; `--dry-run` stops after the checks and prints what it would do.
+  # `moonx root:release -- 0.27.0 "one-line summary" [--dry-run]`.
+  release:
+    command: 'bun --silent scripts/release.ts'
+    options:
+      cache: false
+      runInCI: 'skip'
 
   # Worktree manager (create/list/remove dispatch worktrees with port
   # offsets). Forward args with `moonx root:wt -- <args>`.

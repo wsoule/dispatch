@@ -20,7 +20,13 @@ const webIndexHtml = join(webDistDir, 'index.html');
 // force-killing it if it runs past `timeoutMs`.
 function runWebBuild(timeoutMs: number): Promise<number> {
   return new Promise((resolve) => {
-    const proc = spawn('bun', ['run', 'build'], {
+    // `process.execPath` rather than the bare name 'bun': these tests already
+    // run under bun, and under moon's task runner (and in CI, where bun comes
+    // from the proto toolchain) the child's PATH has no 'bun' to resolve —
+    // which failed as ENOENT with no 'error' handler, so this promise settled
+    // only on the 120s timeout and the module's `describe.skip` then ran after
+    // the suite had finished, crashing the whole file.
+    const proc = spawn(process.execPath, ['run', 'build'], {
       cwd: webPackageDir,
       stdio: 'inherit',
     });
@@ -28,10 +34,12 @@ function runWebBuild(timeoutMs: number): Promise<number> {
       proc.kill();
       resolve(1);
     }, timeoutMs);
-    proc.on('close', (code) => {
+    const settle = (code: number): void => {
       clearTimeout(timer);
-      resolve(code ?? 1);
-    });
+      resolve(code);
+    };
+    proc.on('error', () => settle(1));
+    proc.on('close', (code) => settle(code ?? 1));
   });
 }
 

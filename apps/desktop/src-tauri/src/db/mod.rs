@@ -1,5 +1,6 @@
 pub mod queries;
 
+use crate::parser::{dispatch_worktree, session_builder};
 use rusqlite::Connection;
 use rusqlite_migration::{Migrations, M};
 use std::path::Path;
@@ -50,7 +51,76 @@ pub fn open(db_path: &Path) -> anyhow::Result<Connection> {
     ]);
     migrations.to_latest(&mut conn)?;
 
+    let known_roots = session_builder::known_project_roots(&conn)?;
+    reattribute_dispatch_worktree_projects(&conn, &known_roots)?;
+
     Ok(conn)
+}
+
+/// Folds project rows that were created from a Dispatch run worktree cwd (before ingest
+/// learned to resolve them) into the project the worktree was checked out from: the
+/// canonical row is created or refreshed, the sessions move over, and the run-shaped row is
+/// deleted. Rows whose worktree can't be resolved are left alone. Idempotent and a no-op on
+/// a database without such rows. Returns how many rows were folded.
+pub(crate) fn reattribute_dispatch_worktree_projects(
+    conn: &Connection,
+    known_roots: &[String],
+) -> anyhow::Result<usize> {
+    struct Row {
+        id: String,
+        path: String,
+        created_at: i64,
+        last_active: i64,
+    }
+    let mut stmt = conn.prepare("SELECT id, path, created_at, last_active FROM projects")?;
+    let rows: Vec<Row> = stmt
+        .query_map([], |r| {
+            Ok(Row {
+                id: r.get(0)?,
+                path: r.get(1)?,
+                created_at: r.get(2)?,
+                last_active: r.get(3)?,
+            })
+        })?
+        .collect::<rusqlite::Result<_>>()?;
+    drop(stmt);
+
+    let mut folded = 0;
+    let tx = conn.unchecked_transaction()?;
+    for row in rows {
+        if !dispatch_worktree::is_dispatch_worktree_path(&row.path) {
+            continue;
+        }
+        let canonical = dispatch_worktree::canonical_project_cwd(&row.path, known_roots);
+        let new_id = session_builder::project_id_for_path(&canonical);
+        if canonical == row.path || new_id == row.id {
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO projects (id, name, path, created_at, last_active)
+             VALUES (?1, ?2, ?3, ?4, ?5)
+             ON CONFLICT(id) DO UPDATE SET
+                created_at = MIN(created_at, excluded.created_at),
+                last_active = MAX(last_active, excluded.last_active)",
+            rusqlite::params![
+                new_id,
+                session_builder::project_name_for_path(&canonical),
+                canonical,
+                row.created_at,
+                row.last_active
+            ],
+        )?;
+        // `sessions` is the only table still referencing projects (0007 dropped the kanban
+        // boards); add any future project_id column here.
+        tx.execute(
+            "UPDATE sessions SET project_id = ?1 WHERE project_id = ?2",
+            rusqlite::params![new_id, row.id],
+        )?;
+        tx.execute("DELETE FROM projects WHERE id = ?1", [&row.id])?;
+        folded += 1;
+    }
+    tx.commit()?;
+    Ok(folded)
 }
 
 #[cfg(test)]
@@ -111,6 +181,124 @@ mod tests {
         adopt_legacy_db(&dir, "relay.db", "dispatch.db").unwrap();
 
         assert!(!dir.join("dispatch.db").exists());
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    fn insert_project(
+        conn: &Connection,
+        id: &str,
+        path: &str,
+        created_at: i64,
+        last_active: i64,
+    ) {
+        conn.execute(
+            "INSERT INTO projects (id, name, path, created_at, last_active) \
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            rusqlite::params![
+                id,
+                session_builder::project_name_for_path(path),
+                path,
+                created_at,
+                last_active
+            ],
+        )
+        .unwrap();
+    }
+
+    fn insert_session(conn: &Connection, id: &str, project_id: &str) {
+        conn.execute(
+            "INSERT INTO sessions (id, project_id, last_activity_at, raw_log_path) \
+             VALUES (?1, ?2, 1000, '/tmp/log.jsonl')",
+            rusqlite::params![id, project_id],
+        )
+        .unwrap();
+    }
+
+    fn project_ids_and_paths(conn: &Connection) -> Vec<(String, String)> {
+        let mut stmt = conn
+            .prepare("SELECT id, path FROM projects ORDER BY path")
+            .unwrap();
+        stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .unwrap()
+            .collect::<rusqlite::Result<_>>()
+            .unwrap()
+    }
+
+    #[test]
+    fn reattributing_folds_worktree_projects_into_their_repo_root() {
+        let dir = temp_dir();
+        let conn = open(&dir.join("dispatch.db")).unwrap();
+
+        let root = "/Users/someone/Sites/dispatch".to_string();
+        let key = crate::sidecar::daemon_file_key(&root);
+        let worktree_a = format!("/Users/someone/.dispatch/worktrees/{key}/r-aaaaaa");
+        let worktree_b = format!("/Users/someone/.dispatch/worktrees/{key}/r-bbbbbb");
+        let unknown = "/Users/someone/.dispatch/worktrees/0123456789ab/r-cccccc";
+        // The canonical row already exists for one worktree (later last_active) and is
+        // missing for the other; the third worktree's key matches no known root.
+        let root_id = session_builder::project_id_for_path(&root);
+        insert_project(&conn, &root_id, &root, 500, 900);
+        insert_project(&conn, "old-a", &worktree_a, 600, 2000);
+        insert_project(&conn, "old-b", &worktree_b, 700, 800);
+        insert_project(&conn, "old-c", unknown, 700, 800);
+        insert_session(&conn, "s-a", "old-a");
+        insert_session(&conn, "s-b", "old-b");
+        insert_session(&conn, "s-c", "old-c");
+        insert_project(&conn, "plain", "/tmp/plain", 1, 1);
+
+        let folded = reattribute_dispatch_worktree_projects(&conn, &[root.clone()]).unwrap();
+        assert_eq!(folded, 2);
+
+        assert_eq!(
+            project_ids_and_paths(&conn),
+            vec![
+                ("old-c".to_string(), unknown.to_string()),
+                (root_id.clone(), root.clone()),
+                ("plain".to_string(), "/tmp/plain".to_string()),
+            ]
+        );
+        let (created_at, last_active): (i64, i64) = conn
+            .query_row(
+                "SELECT created_at, last_active FROM projects WHERE id = ?1",
+                [&root_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((created_at, last_active), (500, 2000));
+
+        let session_project = |sid: &str| -> String {
+            conn.query_row(
+                "SELECT project_id FROM sessions WHERE id = ?1",
+                [sid],
+                |r| r.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(session_project("s-a"), root_id);
+        assert_eq!(session_project("s-b"), root_id);
+        assert_eq!(session_project("s-c"), "old-c");
+
+        // Second run: nothing left to fold.
+        let before = project_ids_and_paths(&conn);
+        let folded = reattribute_dispatch_worktree_projects(&conn, &[root]).unwrap();
+        assert_eq!(folded, 0);
+        assert_eq!(project_ids_and_paths(&conn), before);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn reattributing_is_a_no_op_on_a_clean_db() {
+        let dir = temp_dir();
+        let conn = open(&dir.join("dispatch.db")).unwrap();
+        insert_project(&conn, "plain", "/tmp/plain", 1, 1);
+
+        let folded =
+            reattribute_dispatch_worktree_projects(&conn, &["/tmp/plain".to_string()]).unwrap();
+        assert_eq!(folded, 0);
+        assert_eq!(
+            project_ids_and_paths(&conn),
+            vec![("plain".to_string(), "/tmp/plain".to_string())]
+        );
         std::fs::remove_dir_all(&dir).unwrap();
     }
 

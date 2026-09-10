@@ -56,11 +56,30 @@ afterEach(async () => {
 });
 
 describe('daemon deadlines', () => {
+  // The daemon file names this very process, so the pid is alive and
+  // liveDaemon keeps re-probing (a busy daemon must not be mistaken for a
+  // dead one) — but only up to the stall bound, after which "still not
+  // answering" reads as unreachable rather than an indefinite hang.
   it('liveDaemon gives up on a daemon that accepts but never answers', async () => {
     const started = Date.now();
-    const live = await liveDaemon(rootDir, 200);
+    const live = await liveDaemon(rootDir, 200, 600);
     expect(live).toBeNull();
-    expect(Date.now() - started).toBeLessThan(5_000);
+    const elapsed = Date.now() - started;
+    expect(elapsed).toBeGreaterThanOrEqual(600);
+    expect(elapsed).toBeLessThan(5_000);
+  });
+
+  it('liveDaemon does not wait on a stalled port whose pid is dead', async () => {
+    // A pid no process holds: a stale file from a crashed daemon whose port
+    // some other process now sits on.
+    writeFileSync(
+      daemonFilePath(rootDir),
+      JSON.stringify({ ...daemonInfo(), pid: 2 ** 31 - 1 })
+    );
+    const started = Date.now();
+    const live = await liveDaemon(rootDir, 200, 30_000);
+    expect(live).toBeNull();
+    expect(Date.now() - started).toBeLessThan(2_000);
   });
 
   it('daemonRequest turns a stalled daemon into DaemonUnreachableError', async () => {

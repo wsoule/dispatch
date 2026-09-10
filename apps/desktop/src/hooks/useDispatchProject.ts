@@ -28,6 +28,8 @@ import type {
   DispatchConfig,
   EscalationStep,
   ModelConfig,
+  PolicyGate,
+  PolicyGateMode,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core/browser';
@@ -347,6 +349,10 @@ export interface DispatchProjectData {
     maxBudgetUsd?: number | null;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
+    policy?: {
+      rung?: number;
+      gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+    };
   }) => Promise<void>;
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source.
    * `null` until the status query has ever resolved. */
@@ -2293,6 +2299,10 @@ export function useDispatchProject(
       maxBudgetUsd?: number | null;
       fixLoop?: { cap?: number; escalation?: EscalationStep[] };
       verify?: { command?: string; url?: string; notes?: string };
+      policy?: {
+        rung?: number;
+        gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+      };
     }): Promise<void> => {
       if (client === null) return;
       await client.updateConfig(patch);

@@ -242,6 +242,7 @@ liveframe
 livefull
 liveiframe
 lostconn
+macrotask
 Mapbox
 materializer
 Materializer
@@ -332,6 +333,8 @@ Railpack
 railwayignore
 readdirp
 reassignable
+reattribute
+reattributing
 rebasable
 rebuildable
 Recluster
@@ -422,6 +425,7 @@ smol
 soule
 Soule
 specced
+splitn
 stablelib
 standardwebhooks
 startable
@@ -555,6 +559,7 @@ unticked
 unvalidated
 unviewed
 Unviewed
+unwired
 unwritable
 uppercased
 upserts

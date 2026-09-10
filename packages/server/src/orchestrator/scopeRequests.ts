@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname } from 'node:path';
+import { dirname, isAbsolute, posix, relative } from 'node:path';
 
 import {
   OrchestratorConflictError,
@@ -8,8 +8,9 @@ import {
 } from './types.js';
 
 /** Where a decision came in from: `app` carries the desktop app's webview
- *  origin, `api` is anything else — including a run's own agent. */
-export type ScopeDecider = 'app' | 'api';
+ *  origin, `api` is anything else — including a run's own agent. `policy` is
+ *  the daemon itself auto-granting under the project's autonomy policy. */
+export type ScopeDecider = 'app' | 'api' | 'policy';
 
 /** One out-of-scope edit an agent asked to make, and the decision once it lands. */
 export interface RunScopeRequest {
@@ -24,6 +25,35 @@ export interface RunScopeRequest {
   /** So a self-grant cannot read as a human's ruling. Advisory only: the
    *  daemon is unauthenticated, so this attributes, it does not authenticate. */
   decidedBy: ScopeDecider | null;
+}
+
+/**
+ * Whether every path an agent asked to edit lies inside one of the given
+ * checkouts (its run worktree, the project root) and outside `.git/`. The
+ * policy engine auto-grants only such requests (rung 2 of the ladder,
+ * docs/design/autonomy-ladder.md): a path that escapes the checkout, or the
+ * repository's own metadata, blocks for a human at every rung. Paths are
+ * taken as the agent wrote them — relative to its worktree, or absolute.
+ */
+export function scopePathsInsideRepo(
+  paths: string[],
+  roots: string[]
+): boolean {
+  return paths.every((path) => {
+    const candidates = isAbsolute(path)
+      ? roots.map((root) => relative(root, path))
+      : [posix.normalize(path)];
+    return candidates.some(
+      (rel) =>
+        rel !== '' &&
+        rel !== '.' &&
+        rel !== '..' &&
+        !rel.startsWith('../') &&
+        !isAbsolute(rel) &&
+        rel !== '.git' &&
+        !rel.startsWith('.git/')
+    );
+  });
 }
 
 // How long one long-poll parks before returning the still-undecided record.

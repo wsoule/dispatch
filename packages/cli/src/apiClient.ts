@@ -206,6 +206,21 @@ export const REQUEST_TIMEOUT_MS = 60_000;
 
 // Throws a CliError carrying the server's own `{ error }` message on any non-2xx, so
 // cli.ts renders API failures in the server's wording rather than a bare status code.
+/**
+ * The daemon could not be reached at all — the request never got an answer.
+ *
+ * A distinct type rather than a plain CliError because callers must be able to
+ * tell "the daemon went away" from "the daemon said no". The `--watch` loops
+ * key on exactly that: a refetch failing because the connection died is not
+ * fatal (the socket layer's reconnect/give-up is what reports it), while any
+ * other failure means the run is genuinely unreadable and must stop the watch.
+ * Before this existed those loops tested `err instanceof TypeError` — fetch's
+ * own network-failure signal — which this very wrapper had already swallowed,
+ * so a daemon killed mid-refetch died with the wrong message (and, on a slow
+ * enough machine, beat the right one to it).
+ */
+export class DaemonUnreachableError extends CliError {}
+
 async function request<T>(
   target: ApiTarget,
   path: string,
@@ -229,14 +244,16 @@ async function request<T>(
   } catch (err) {
     // A timeout and a dropped connection need different advice: the first
     // means the daemon is still there and stuck, so telling the user to start
-    // it again sends them to restart something that is already running.
+    // it again sends them to restart something that is already running. Both
+    // are still "no answer from the daemon", so the `--watch` loops treat
+    // them alike.
     if ((err as Error).name === 'TimeoutError') {
-      throw new CliError(
+      throw new DaemonUnreachableError(
         `dispatchd accepted the request at ${target.baseUrl} but did not answer within ${String(REQUEST_TIMEOUT_MS / 1000)}s. ` +
           'It is running with a blocked event loop; check its log for an "event loop stalled" line, then restart it.'
       );
     }
-    throw new CliError(
+    throw new DaemonUnreachableError(
       `dispatchd stopped responding at ${target.baseUrl} (${(err as Error).message}). ` +
         'It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve'
     );
@@ -284,12 +301,18 @@ export interface TaskApiClient {
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   /**
-   * Records the daemon's last cache rebuild could not read, from
-   * `GET /api/health`. These never appear in `listTasks`, so a caller that
-   * only lists sees a clean board over a damaged one — which is exactly what
-   * `dispatch doctor` is for.
+   * `GET /api/health`, reduced to what doctor reports: `problems` are records
+   * the daemon's last cache rebuild could not read (they never appear in
+   * `listTasks`, so a caller that only lists sees a clean board over a
+   * damaged one), and the identity fields say which process answered and
+   * what model it dispatches — absent on a daemon that predates them.
    */
-  healthProblems(): Promise<string[]>;
+  health(): Promise<{
+    problems: string[];
+    pid?: number;
+    startedAt?: string;
+    executeModel?: string;
+  }>;
 }
 
 /** Builds the task half of the daemon API, bound to one daemon + token. */
@@ -312,14 +335,25 @@ export function createTaskApiClient(
       return request(target, `/api/tasks?${params.toString()}`);
     },
     readyTasks: () => request(target, '/api/tasks/ready'),
-    healthProblems: async () => {
-      const health = await request<{ problems?: unknown }>(
-        target,
-        '/api/health'
-      );
-      return Array.isArray(health.problems)
-        ? health.problems.filter((p): p is string => typeof p === 'string')
-        : [];
+    health: async () => {
+      const health = await request<{
+        problems?: unknown;
+        pid?: unknown;
+        startedAt?: unknown;
+        models?: { execute?: unknown };
+      }>(target, '/api/health');
+      return {
+        problems: Array.isArray(health.problems)
+          ? health.problems.filter((p): p is string => typeof p === 'string')
+          : [],
+        pid: typeof health.pid === 'number' ? health.pid : undefined,
+        startedAt:
+          typeof health.startedAt === 'string' ? health.startedAt : undefined,
+        executeModel:
+          typeof health.models?.execute === 'string'
+            ? health.models.execute
+            : undefined,
+      };
     },
     getTask: (id) => request(target, `/api/tasks/${encodeURIComponent(id)}`),
     createTask: (input) => request(target, '/api/tasks', jsonBody(input)),

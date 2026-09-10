@@ -32,7 +32,11 @@ import type { ApiContext, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
-import { removeDaemonFile, writeDaemonFile } from './daemonfile.js';
+import {
+  assertRootNotServed,
+  removeDaemonFile,
+  writeDaemonFile,
+} from './daemonfile.js';
 import { DecisionFeed } from './decisionFeed.js';
 import {
   createSourceChangeHandler,
@@ -43,6 +47,7 @@ import {
 import { EventBus } from './events.js';
 import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
+import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
 import { InboxStore } from './inbox.js';
 import { LedgerStore } from './ledger.js';
@@ -79,6 +84,12 @@ import { VerificationRunner } from './orchestrator/verify.js';
 import { WardenManager } from './orchestrator/warden.js';
 import { ClaudeWarden } from './orchestrator/wardens/claude.js';
 import { WardenToolRegistry } from './orchestrator/wardenTools.js';
+import {
+  policyActivityAppender,
+  policyDecisionClassifier,
+  PolicyEngine,
+} from './policyEngine.js';
+import type { ApprovalFloor } from './policyEngine.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
@@ -131,6 +142,10 @@ export interface StartServerOptions {
   // Tests pass false so parallel test runs don't fight over the one
   // per-rootDir daemon file.
   writeDaemonFile?: boolean;
+  // Boot even when the daemon file names a live dispatchd for this root. Off
+  // by default: a second daemon force-fails the first one's runs (see
+  // assertRootNotServed). bin.ts sets it for `--replace` and `--init`.
+  replaceRunningDaemon?: boolean;
   // Which backend this daemon's state lives in. Left unset it comes from
   // `DISPATCH_STORE_BACKEND` (see `resolveStoreBackend`), which itself
   // defaults to `files` — so production behaviour is unchanged until a
@@ -499,6 +514,15 @@ export async function startServer(
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
   const shouldWriteDaemonFile = opts.writeDaemonFile ?? true;
   const tokens = opts.tokens ?? mintDaemonTokens();
+  // One timestamp for both places that name this process: the daemon file
+  // and GET /api/health.
+  const startedAt = new Date().toISOString();
+
+  // Before touching any state: a root another live daemon is serving is not
+  // ours to reconcile.
+  if (shouldWriteDaemonFile && opts.replaceRunningDaemon !== true) {
+    await assertRootNotServed(rootDir);
+  }
 
   // Started before anything that can block, so a boot-time stall (a migration,
   // the run reconcile sweep) is named in the log like any other.
@@ -1085,6 +1109,13 @@ export async function startServer(
   // rather than stored (see decisionFeed.ts). `start()` subscribes it to the
   // event bus so a decided gate or a moved-on run broadcasts
   // `decisions.changed` without any producer having to know the feed exists.
+  // The irreversibility floor's answer for the approval gate (floor.ts): a
+  // force-push, a registry publish, a release-tag push or a repo-settings
+  // change is never auto-allowed, at any rung. Any tool whose input carries a
+  // shell command is covered, so the tool's name is not what decides.
+  const approvalFloor: ApprovalFloor = (_toolName, input) =>
+    floorCheckForToolInput(input) !== null;
+
   const decisionFeed = new DecisionFeed({
     orchestrator,
     questions,
@@ -1092,8 +1123,33 @@ export async function startServer(
     fixLoopStore,
     cache,
     events,
+    // The policy engine's classifier: a gate the project's rung auto-decides
+    // shows up as `recorded` rather than `blocking`.
+    policy: policyDecisionClassifier(rootDir, {
+      riskOf: (taskId) => store.get(taskId)?.meta.risk,
+      approvalFloor,
+    }),
   });
   const stopDecisionFeed = decisionFeed.start();
+
+  // The gate hooks themselves — verify-retry and merge consult the project's
+  // policy off the daemon's own signals; the scope gate consults inline in
+  // api/scopeRequests.ts. See policyEngine.ts.
+  const policyEngine = new PolicyEngine({
+    rootDir,
+    store,
+    events,
+    orchestrator,
+    fixLoop,
+    verificationRunner,
+    mergeQueue,
+    ledgerStore,
+    actorContext,
+    approvalFloor,
+    // The Activity half of each receipt; the ledger half is the engine's own.
+    appendActivity: policyActivityAppender({ store, cache, events }),
+  });
+  const stopPolicyEngine = policyEngine.start();
 
   const apiCtx: ApiContext = {
     rootDir,
@@ -1109,6 +1165,7 @@ export async function startServer(
     prWorktrees,
     mergeQueue,
     prCapability,
+    startedAt,
     noteStore: new NoteStore(rootDir),
     inboxStore,
     findingStore,
@@ -1131,6 +1188,7 @@ export async function startServer(
     receiptsScheduler,
     storeBackend: backend,
     mergeDriverOk,
+    claimsDaemonFile: shouldWriteDaemonFile,
   };
 
   const server = Bun.serve({
@@ -1244,7 +1302,7 @@ export async function startServer(
       rootDir,
       port,
       pid: process.pid,
-      startedAt: new Date().toISOString(),
+      startedAt,
       agentToken: tokens.agentToken,
     });
   }
@@ -1271,6 +1329,7 @@ export async function startServer(
       await linearSync.stop();
       unsubscribeBoardSync();
       stopDecisionFeed();
+      stopPolicyEngine();
       boardSyncScheduler?.stop();
       // Before stores.close() below, since the exporter reads the database.
       receiptsScheduler?.stop();

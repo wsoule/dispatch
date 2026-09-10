@@ -929,7 +929,11 @@ function App() {
                     <WardenView data={data} warden={warden} />
                   )}
                   {navState.globalView === 'settings' && (
-                    <SettingsView activeProject={activeProject} data={data} />
+                    <SettingsView
+                      activeProject={activeProject}
+                      data={data}
+                      onOpenTask={(taskId) => openTaskView(taskId, 'details')}
+                    />
                   )}
                   {import.meta.env.DEV && navState.globalView === 'gallery' && (
                     <GalleryView />
