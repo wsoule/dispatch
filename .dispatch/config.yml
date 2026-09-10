@@ -19,6 +19,9 @@ autoCommit: true
 # default kept killing the test step mid-run.
 orchestrator:
   verifyTimeoutSec: 1500
+  # 2026-09-07: seven concurrent runs hit the Claude usage limit in ~40 min,
+  # twice, and every force-fail-and-resume re-spent most of a run's cost.
+  epicConcurrency: 3
 
 #
 # Every root gate ci.yml runs is named here too, one step each, so a run that
