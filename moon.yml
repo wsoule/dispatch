@@ -232,6 +232,7 @@ tasks:
       - 'scripts/check-ci-targets.ts'
       - 'moon.yml'
       - '.github/workflows/ci.yml'
+      - '.dispatch/config.yml'
     options:
       # Shells out to `moon query`, which must not be cached against a stale
       # graph.
