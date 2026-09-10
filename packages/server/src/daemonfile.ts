@@ -144,3 +144,53 @@ export async function assertRootNotServed(
     `another dispatchd (pid ${prior.pid}) is already serving ${rootDir} on port ${prior.port}; refusing to start a second one, which would force-fail the runs it has in flight. Stop it first (kill ${prior.pid}), or pass --replace to take over anyway.`
   );
 }
+
+// Whether this process is still the daemon clients will find for `rootDir`.
+// Health reports it on every probe so a displaced daemon stops being visible
+// only to `ps`: on 2026-09-07 three dispatchd processes served one project,
+// each rewrote the daemon file last-writer-wins, and the two losers kept
+// running agents nobody could reach. `assertRootNotServed` stops a new
+// daemon from booting over a live one; this is the live one noticing after
+// the fact.
+type DaemonIdentity = 'ok' | 'displaced' | 'unregistered';
+
+export interface DaemonIdentityCheck {
+  identity: DaemonIdentity;
+  // The human-readable form for GET /api/health's `problems`; null when
+  // `identity` is 'ok'.
+  problem: string | null;
+}
+
+// `claimed` is whether this daemon wrote a daemon file at boot. One started
+// with `writeDaemonFile: false` never told clients to find it, so neither a
+// missing file nor a file naming some other pid is news to it. The file is
+// read fresh each call — it is one small JSON blob, and a stale answer here
+// is the whole thing being guarded against. A file that exists but does not
+// parse is not counted as either state: a replacement daemon may be
+// mid-write, and removeDaemonFile already treats unparsable as ownerless.
+export function checkDaemonIdentity(
+  rootDir: string,
+  claimed: boolean,
+  ownPid: number = process.pid
+): DaemonIdentityCheck {
+  if (!claimed) return { identity: 'ok', problem: null };
+  const path = daemonFilePath(rootDir);
+  if (!existsSync(path)) {
+    return {
+      identity: 'unregistered',
+      problem:
+        "this project's daemon file is gone; clients will spawn a second daemon on their next call",
+    };
+  }
+  let current: DaemonFileInfo;
+  try {
+    current = JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  } catch {
+    return { identity: 'ok', problem: null };
+  }
+  if (current.pid === ownPid) return { identity: 'ok', problem: null };
+  return {
+    identity: 'displaced',
+    problem: `another dispatchd (pid ${current.pid}, started ${current.startedAt}) has claimed this project's daemon file; this process (pid ${ownPid}) is no longer the one clients will find — stop one of them`,
+  };
+}

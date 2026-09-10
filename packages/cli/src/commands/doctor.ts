@@ -149,9 +149,17 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
         // board over a damaged one. On the file backend the equivalent
         // failures surface as parse errors in the loop above; on the database
         // backend `GET /api/health` is the only place they are named.
+        // Cache problems lead with the record they name (`<file>: <why>`);
+        // the daemon-identity problems (a displaced or unregistered
+        // dispatchd, see server's daemonfile.ts) name no record, so a prefix
+        // containing whitespace is prose, not a file.
         const health = await api.health();
         for (const problem of health.problems) {
-          issues.push({ file: problem.split(':')[0] ?? '', problem });
+          const prefix = problem.split(':')[0] ?? '';
+          issues.push({
+            file: /\s/.test(prefix) ? 'dispatchd' : prefix,
+            problem,
+          });
         }
         // Which daemon answered, and what it dispatches on: the two facts
         // that went unseen when a fleet ran on the wrong model for two days.

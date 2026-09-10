@@ -50,6 +50,17 @@ export interface HealthPayload {
   pid?: number;
   startedAt?: string;
   models?: ModelConfig;
+  // Whether the answering process is still the one this project's daemon
+  // file names: 'displaced' when another dispatchd has overwritten the file
+  // (clients following it reach that one instead), 'unregistered' when the
+  // file is gone (the next CLI call will spawn a second daemon). The same
+  // fact is spelled out in `problems`; this is for branching without
+  // matching the string.
+  identity?: 'ok' | 'displaced' | 'unregistered';
+  // Records the daemon's last cache rebuild could not read, plus the
+  // identity problem above when there is one — visibility only, `ok` stays
+  // true.
+  problems: string[];
 }
 
 export interface TaskFilter {

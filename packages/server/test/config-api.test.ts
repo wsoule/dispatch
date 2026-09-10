@@ -167,3 +167,15 @@ describe('PATCH /api/config — policy', () => {
     expect((await patchConfig({ policy: 3 })).status).toBe(400);
   });
 });
+
+// This suite's server boots with `writeDaemonFile: false`, so it never told
+// clients to find it: no file is not a missing file.
+describe('GET /api/health — daemon identity without a daemon file', () => {
+  it('reports ok with no identity problem', async () => {
+    const res = await fetch(`${baseUrl}/api/health`);
+    expect(res.status).toBe(200);
+    const body = await json<{ identity: string; problems: string[] }>(res);
+    expect(body.identity).toBe('ok');
+    expect(body.problems).toEqual([]);
+  });
+});
