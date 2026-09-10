@@ -1,12 +1,41 @@
-/* Site-wide primitives on top of the app tokens. Sizes only; all color comes from tokens.css. */
+/* Site-wide primitives on top of the app tokens. All color comes from tokens.css; this file
+   only adds the marketing-scale type sizes, the page rhythm, and the shared controls. */
 :root {
-  --site-display: clamp(2.5rem, 6vw, 4rem);
-  --site-h2: clamp(1.5rem, 3vw, 2rem);
-  --site-max: 68rem;
+  --site-display: clamp(2.5rem, 1.5rem + 4.5vw, 4.25rem);
+  --site-h2: clamp(1.625rem, 1.2rem + 1.6vw, 2.25rem);
+  --site-text-lg: 1.1875rem;
+  --site-text: 1.0625rem;
+  --site-text-sm: 0.9375rem;
+  --site-text-xs: 0.8125rem;
+  --site-max: 72rem;
+  --site-measure: 36rem;
+  --site-rail: 7.5rem;
+  --site-gap: clamp(5rem, 4rem + 5vw, 7.5rem);
+  --site-nav-height: 3.5rem;
+
+  color-scheme: light;
 }
 
-* {
+/* Form controls and scrollbars follow the effective theme. The palette itself flips in the
+   inlined tokens block (see src/lib/themeTokens.ts); this only mirrors that condition. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+}
+
+html {
+  scroll-padding-top: calc(var(--site-nav-height) + 1rem);
 }
 
 body {
@@ -14,27 +43,16 @@ body {
   background: var(--surface-page);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: var(--text-base);
-  line-height: 1.6;
+  font-size: var(--site-text);
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
+  text-rendering: optimizelegibility;
 }
 
 .container {
   max-width: var(--site-max);
   margin: 0 auto;
-  padding: 0 var(--space-5);
-}
-
-.section {
-  padding: var(--space-10) 0;
-}
-
-.eyebrow {
-  font-family: var(--font-mono);
-  font-size: var(--text-xs);
-  letter-spacing: var(--label-tracking);
-  text-transform: uppercase;
-  color: var(--text-muted);
+  padding: 0 var(--space-6);
 }
 
 .mono {
@@ -42,33 +60,91 @@ body {
 }
 
 h1,
-h2 {
-  margin: 0 0 var(--space-4);
-  line-height: 1.15;
-  letter-spacing: -0.02em;
+h2,
+h3 {
+  margin: 0;
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+
+h1 {
+  font-size: var(--site-display);
+  letter-spacing: -0.035em;
 }
 
 h2 {
   font-size: var(--site-h2);
 }
 
-a {
-  color: inherit;
+h3 {
+  font-size: var(--site-text-lg);
+  letter-spacing: -0.015em;
 }
 
+p {
+  margin: 0;
+}
+
+a {
+  color: inherit;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  text-decoration-color: var(--border-strong);
+}
+
+a:hover {
+  text-decoration-color: currentcolor;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.92em;
+}
+
+img {
+  max-width: 100%;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Prose blocks: the one-paragraph explanations under each heading. */
+.lede {
+  max-width: var(--site-measure);
+  font-size: var(--site-text-lg);
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
+
+.sub {
+  max-width: var(--site-measure);
+  color: var(--text-secondary);
+}
+
+/* Buttons. The primary is ink-on-page rather than accent so the page stays near-monochrome;
+   the accent is reserved for focus rings and the live indicator. */
 .btn {
   display: inline-flex;
   align-items: center;
   gap: var(--space-2);
-  padding: var(--space-2) var(--space-4);
-  border: 1px solid var(--border-default);
+  min-height: 2.5rem;
+  padding: 0 var(--space-4);
+  border: 1px solid var(--border-strong);
   border-radius: var(--radius-control);
   background: var(--surface-card);
   color: var(--text-primary);
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--site-text-sm);
+  font-weight: 500;
+  line-height: 1;
   text-decoration: none;
+  white-space: nowrap;
   cursor: pointer;
+  transition: background-color 120ms var(--ease-out-expo);
 }
 
 .btn:hover {
@@ -76,13 +152,31 @@ a {
 }
 
 .btn-primary {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--accent-contrast);
+  background: var(--text-primary);
+  border-color: var(--text-primary);
+  color: var(--surface-page);
 }
 
 .btn-primary:hover {
-  background: var(--accent-hover);
+  background: color-mix(in srgb, var(--text-primary) 84%, var(--surface-page));
+  border-color: transparent;
+}
+
+/* Product screenshots sit directly on the page: a hairline and the card radius, nothing
+   framing them. The shots are dark captures, so the hairline uses the stronger border. */
+.shot {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-card);
+  background: var(--surface-card);
+}
+
+.caption {
+  margin-top: var(--space-3);
+  font-size: var(--site-text-sm);
+  color: var(--text-secondary);
 }
 
 @media (prefers-reduced-motion: reduce) {

@@ -4,8 +4,14 @@ import '@fontsource/inter/500.css';
 import '@fontsource/inter/600.css';
 import '@fontsource/jetbrains-mono/400.css';
 import '@fontsource/jetbrains-mono/500.css';
-import '@dispatch/tokens/tokens.css';
+import tokensCss from '@dispatch/tokens/tokens.css?raw';
+import { themeAwareTokens } from '../lib/themeTokens';
 import '../styles/global.css';
+
+// The palette is inlined rather than bundled so that the dark block can be
+// re-emitted under the `data-theme` attribute the nav toggle sets. See
+// src/lib/themeTokens.ts.
+const tokens = themeAwareTokens(tokensCss);
 ---
 
 <!doctype html>
@@ -24,6 +30,21 @@ import '../styles/global.css';
       content="Linear, for agents. A board, reviews, and a merge queue in your repo."
     />
     <!-- The old site had no og:url, og:image, or canonical tag to carry forward (see Step 1). -->
+    <style is:inline set:html={tokens}></style>
+    <!-- Applies a stored theme choice before first paint so the page never flashes the
+         wrong palette. No choice stored means the OS setting applies. -->
+    <script is:inline>
+      (function () {
+        try {
+          var theme = localStorage.getItem('dispatch-theme');
+          if (theme === 'light' || theme === 'dark') {
+            document.documentElement.setAttribute('data-theme', theme);
+          }
+        } catch (_) {
+          /* Storage is unavailable (private mode, blocked). Fall through to the OS setting. */
+        }
+      })();
+    </script>
   </head>
   <body>
     <slot />

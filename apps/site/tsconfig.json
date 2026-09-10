@@ -14,5 +14,5 @@
   // dependency. Worth adding; this file deliberately does not pretend to.
   "extends": "../../tsconfig.options.json",
   "compilerOptions": { "noEmit": true },
-  "include": ["server.ts", "test/**/*.ts"]
+  "include": ["server.ts", "src/lib/**/*.ts", "test/**/*.ts"]
 }
