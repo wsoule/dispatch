@@ -8,6 +8,12 @@
     ".dispatch/**",
     ".agents/ignore/**",
     ".superpowers/**",
+    // carto's generated map and context files; gitignored, so CI never
+    // sees them, and linting them locally only ever reported carto's style.
+    ".carto/**",
+    // Private business notes kept out of the public repo (gitignored); they
+    // are not held to the house markdown style.
+    "docs/business/**",
   ],
   "config": {
     // Prose here is written to an 80-column ruler by hand, but tables and
