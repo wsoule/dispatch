@@ -479,6 +479,39 @@ function finishFromResult(message: SDKResultMessage): {
   };
 }
 
+// The last of finishFromResult's sibling guards: downgrades a `finished`
+// result that did no work at all to `failed`. A resume onto an expired or
+// terminal session id makes the CLI start, find nothing to continue, and exit
+// *cleanly* — `subtype: 'success'`, `terminal_reason: 'completed'`,
+// `num_turns: 0`, zero assistant messages — so every check above passes and
+// the run read as a successful finish while the requested work was silently
+// never started (t-ed735b: runs r-297e7b, r-3b5a48; both resumed sessions
+// predating a daemon restart). Two independent signals, either one fails the
+// run: an explicit zero turn count, and the stream having carried no
+// assistant output at all (which also covers a hypothetical resumed session
+// reporting *cumulative* turns). An absent `num_turns` is "no opinion" —
+// same back-compat convention as reasonForTruncation's absent
+// `terminal_reason`. Accounting and sessionId are preserved, so a failed
+// no-op resume can simply be re-driven with another follow-up message.
+function guardZeroTurnFinish(
+  finish: ReturnType<typeof finishFromResult>,
+  info: { sawAssistantOutput: boolean; resumed: boolean }
+): ReturnType<typeof finishFromResult> {
+  if (finish.state !== 'finished') return finish;
+  const zeroTurns = finish.turns === 0;
+  if (!zeroTurns && info.sawAssistantOutput) return finish;
+  return {
+    ...finish,
+    state: 'failed',
+    error: info.resumed
+      ? 'agent session ended without executing a turn — the resumed session ' +
+        'was not continued (it may have expired or predate a daemon ' +
+        'restart), so the requested work was not done; send the follow-up ' +
+        'again to retry on a fresh resume'
+      : 'agent session ended without executing a turn — no work was done',
+  };
+}
+
 /**
  * The real agent backend: wraps the Claude Agent SDK's `query()` behind the
  * exact same Executor interface FakeExecutor implements, so the orchestrator
@@ -634,10 +667,15 @@ export class ClaudeExecutor implements Executor {
       // reconcileOnBoot eventually force-fails it with no error/turns/cost
       // recorded (the bug this flag exists to prevent).
       let gotResult = false;
+      // Whether ANY assistant message arrived on this run's own stream —
+      // one input to guardZeroTurnFinish's did-anything-actually-happen
+      // check when the terminal result claims success.
+      let sawAssistantOutput = false;
       try {
         for await (const message of sdkQuery) {
           if (interrupted) break;
           if (message.type === 'assistant') {
+            sawAssistantOutput = true;
             const ts = new Date().toISOString();
             for (const entry of entriesForAssistantContent(
               message.message.content,
@@ -674,7 +712,14 @@ export class ClaudeExecutor implements Executor {
             }
           } else if (message.type === 'result') {
             gotResult = true;
-            if (!interrupted) events.onFinish(finishFromResult(message));
+            if (!interrupted) {
+              events.onFinish(
+                guardZeroTurnFinish(finishFromResult(message), {
+                  sawAssistantOutput,
+                  resumed: opts.resumeSessionId !== undefined,
+                })
+              );
+            }
             break;
           }
         }

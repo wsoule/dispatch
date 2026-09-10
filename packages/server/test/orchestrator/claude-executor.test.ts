@@ -762,16 +762,38 @@ describe('ClaudeExecutor abrupt stream end with no result message', () => {
 });
 
 // Drives one scripted `result` message through the executor and returns the
-// finish it reported. Every truncation test below differs only in the fields
-// on that single result message, so they share this harness.
+// finish it reported. Every truncation/zero-turn test below differs only in
+// the fields on that single result message (plus whether the stream carried
+// any assistant output and whether the run was a resume), so they share this
+// harness. `assistantOutput` defaults to true — a real session that reaches a
+// result has produced at least one assistant message, and the zero-turn tests
+// below are exactly the ones that opt out.
 async function finishForResult(
-  result: Record<string, unknown>
-): Promise<{ state: string; error?: string; turns?: number }> {
+  result: Record<string, unknown>,
+  opts: { resumeSessionId?: string; assistantOutput?: boolean } = {}
+): Promise<{
+  state: string;
+  error?: string;
+  turns?: number;
+  sessionId?: string;
+}> {
   const repo = initGitRepo('dispatch-claude-terminal-reason-');
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function* fakeMessages(): Generator<any> {
-      yield { type: 'system', subtype: 'init', session_id: 'sess-tr' };
+      // A resume's init echoes the session it reattached; anything else trips
+      // the landed reattach guard before the zero-turn one under test here.
+      yield {
+        type: 'system',
+        subtype: 'init',
+        session_id: opts.resumeSessionId ?? 'sess-tr',
+      };
+      if (opts.assistantOutput !== false) {
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'working on it' }] },
+        };
+      }
       yield { type: 'result', ...result };
     }
     const executor = new ClaudeExecutor(
@@ -784,6 +806,7 @@ async function finishForResult(
           prompt: 'do the thing',
           permissionMode: 'acceptEdits',
           maxTurns: 100,
+          resumeSessionId: opts.resumeSessionId,
         },
         {
           onEntry: () => {},
@@ -918,6 +941,95 @@ describe('ClaudeExecutor truncated-run detection', () => {
 
     expect(finish.state).toBe('failed');
     expect(finish.error).toBeTruthy();
+  });
+});
+
+// The zero-turn no-op bug (t-ed735b, runs r-297e7b and r-3b5a48): resuming a
+// session that had expired or gone terminal (both incidents resumed sessions
+// predating a daemon restart) makes the CLI start, find nothing to continue,
+// and exit *cleanly* — `subtype: 'success'`, `terminal_reason: 'completed'`,
+// `num_turns: 0`, not one assistant message. Every existing guard passes and
+// the run was recorded `finished`, silently dropping the follow-up work it
+// was asked to do. A finish that did no work at all must be `failed`.
+describe('ClaudeExecutor zero-turn finish detection', () => {
+  const cleanExit = {
+    subtype: 'success',
+    is_error: false,
+    total_cost_usd: 0,
+    session_id: 'sess-tr',
+    stop_reason: null,
+    terminal_reason: 'completed',
+    errors: [],
+  };
+
+  it('reports failed when a resumed run finishes with zero turns and no assistant output', async () => {
+    // Init and result both carry the resumed id, as a real reattach does.
+    const finish = await finishForResult(
+      { ...cleanExit, session_id: 'sess-old', num_turns: 0 },
+      { resumeSessionId: 'sess-old', assistantOutput: false }
+    );
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toMatch(/the resumed session/);
+    expect(finish.error).toMatch(/no work|without executing/i);
+    // The accounting the SDK reported is preserved, and the sessionId must
+    // survive so the run can be re-driven with another resume.
+    expect(finish.turns).toBe(0);
+    expect(finish.sessionId).toBe('sess-old');
+  });
+
+  it('reports failed when a fresh run finishes with zero turns and no assistant output', async () => {
+    const finish = await finishForResult(
+      { ...cleanExit, num_turns: 0 },
+      { assistantOutput: false }
+    );
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toBeTruthy();
+    // Not a resume, so the error must not blame session resumption.
+    expect(finish.error).not.toMatch(/the resumed session/);
+  });
+
+  // Defense against cumulative turn accounting: if a resumed session's
+  // num_turns ever counts the *prior* session's turns, a no-op resume would
+  // report turns > 0 — the absence of any assistant output in THIS stream is
+  // the signal that nothing actually happened.
+  it('reports failed when a run claims turns but produced no assistant output at all', async () => {
+    const finish = await finishForResult(
+      { ...cleanExit, num_turns: 40 },
+      { resumeSessionId: 'sess-old', assistantOutput: false }
+    );
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toBeTruthy();
+  });
+
+  it('reports finished for a resumed run that actually executed turns', async () => {
+    const finish = await finishForResult(
+      { ...cleanExit, num_turns: 3, total_cost_usd: 0.2 },
+      { resumeSessionId: 'sess-old' }
+    );
+
+    expect(finish.state).toBe('finished');
+    expect(finish.error).toBeUndefined();
+  });
+
+  // Back-compat, mirroring the terminal_reason convention above: a result
+  // that never carries num_turns at all is "no opinion", so assistant output
+  // alone keeps the run finished rather than failing every run under an SDK
+  // (or fixture) without the field.
+  it('reports finished when num_turns is absent but assistant output was seen', async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: false,
+      total_cost_usd: 0.2,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      terminal_reason: 'completed',
+      errors: [],
+    });
+
+    expect(finish.state).toBe('finished');
   });
 });
 

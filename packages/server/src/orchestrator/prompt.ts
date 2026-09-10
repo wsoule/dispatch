@@ -147,7 +147,7 @@ export function buildTaskPrompt(
 
 // Renders a prior run's git survey into extra prompt context, so a resumed
 // agent knows what already survived instead of rediscovering it.
-export function renderSurveySection(survey: RunSurvey): string {
+function renderSurveySection(survey: RunSurvey): string {
   const lines: string[] = [
     `This resumes a run that did not finish cleanly on branch \`${survey.branch}\`.`,
   ];

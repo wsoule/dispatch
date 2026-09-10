@@ -21,6 +21,7 @@ automations
 autostash
 backgrounded
 backgrounding
+badgrant
 baselining
 basenames
 bceb
@@ -271,6 +272,7 @@ nixpacks
 Nixpacks
 nobase
 nodelib
+nopath
 normalises
 Norte
 nosuch
@@ -296,6 +298,7 @@ passthroughs
 pathspec
 pathspecs
 pcss
+Persistable
 pgrep
 pickable
 pids
@@ -530,6 +533,7 @@ unresolve
 unresolves
 unresolving
 unrestorable
+unresumable
 unretirable
 unretired
 unreviewable
