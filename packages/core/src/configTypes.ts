@@ -1,4 +1,8 @@
 import { DEFAULT_STATUS_MAP } from './linearMap.js';
+import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
+import { DEFAULT_POLICY } from './policy.js';
+import type { QueueWeights } from './scoring.js';
+import { DEFAULT_QUEUE_WEIGHTS } from './scoring.js';
 
 // The browser-safe half of the config module: shapes and defaults with no
 // filesystem access, so the desktop webview can import them.
@@ -29,6 +33,25 @@ export const DEFAULT_REPO_DIGEST: RepoDigestConfig = {
   cooldownHours: 6,
 };
 
+/**
+ * The git-versioned audit trail the daemon exports outside the project repo.
+ *
+ * On by default, because the receipt log is what keeps the project's history
+ * auditable once the database — not git — is the sync layer. Turning it off
+ * stops the export; it never deletes a log already written.
+ */
+export interface ReceiptsConfig {
+  enabled: boolean;
+  /**
+   * Where the log lives. Absent means the default under DISPATCH_HOME, keyed
+   * by a hash of the project path the same way runs and worktrees are. A
+   * relative path is resolved against the project root.
+   */
+  dir?: string;
+}
+
+export const DEFAULT_RECEIPTS: ReceiptsConfig = { enabled: true };
+
 /** One named gate in the verify pipeline. */
 export interface VerifyStep {
   name: string;
@@ -52,9 +75,78 @@ export interface DispatchConfig {
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
   notifications: NotificationsConfig;
+  /**
+   * The git receipt log. `loadConfig` always populates this, so a config it
+   * returns can be read without a fallback; it is optional only so callers
+   * that build a DispatchConfig literal by hand — test fixtures, mostly — do
+   * not all have to be updated at once. Absent means DEFAULT_RECEIPTS.
+   */
+  receipts?: ReceiptsConfig;
+  /** Optional in the type, but `loadConfig` always populates it — the marker
+   *  is for hand-built config objects (test fixtures) written before the block
+   *  existed. Read it through `queueWeights()`, never directly: that is what
+   *  forces a caller to handle a rejected block instead of silently ranking
+   *  against defaults. */
+  queue?: QueueConfig;
   /** Parent directory for PR review worktrees (Task 7); each PR gets a
    *  `pr-<n>` child inside it. Absent means the default sibling of `rootDir`. */
   prWorktreeDir?: string;
+  /** The autonomy policy: which gates auto-decide instead of blocking.
+   *  `loadConfig` always populates it; optional only so hand-built config
+   *  literals (test fixtures) predating the block stay valid. Read it through
+   *  `projectPolicy()`, never directly, so the default rung applies. */
+  policy?: PolicyConfig;
+}
+
+/** The policy a config implies. The single reader of the optional `policy`
+ *  block, so no gate call site has to remember that a hand-built config may
+ *  not carry one. Returns a fresh object every call — DEFAULT_POLICY is a
+ *  shared module constant, and handing it out by reference would let one
+ *  caller's mutation change every later gate consult process-wide. */
+export function projectPolicy(config: DispatchConfig): PolicyConfig {
+  const policy = config.policy ?? DEFAULT_POLICY;
+  return { rung: policy.rung, gates: { ...policy.gates } };
+}
+
+/** Settings for the planning queue's ranking. Nested under `queue:` rather
+ *  than sitting at the top level so the pull actions and dispatch policy that
+ *  come later have somewhere obvious to land. */
+export interface QueueConfig {
+  /** Per-factor weights for the scoring function (see scoring.ts). Every
+   *  factor key is always present — a partial `queue.weights:` block layers
+   *  over the defaults rather than replacing them. Holds the defaults when
+   *  `error` is set, so a Settings screen still has something to render. */
+  weights: QueueWeights;
+  /** Why the `queue:` block on disk was rejected, when it was.
+   *
+   *  Carried rather than thrown from `loadConfig`, because throwing there
+   *  turns one mistyped weight into a 422 on every config-reading endpoint in
+   *  the daemon. The blast radius belongs to the queue: consumers whose answer
+   *  must be correct go through `queueWeights()`, which refuses. */
+  error?: string;
+}
+
+/** Either the weights to rank with, or the reason the configured block cannot
+ *  be used. A result rather than a plain value so a caller cannot accidentally
+ *  rank against defaults while the user's real config is broken. */
+export type QueueWeightsResult =
+  | { ok: true; weights: QueueWeights }
+  | { ok: false; error: string };
+
+/** The scoring weights a config implies. The single reader of the optional
+ *  `queue` block, so no caller has to remember that a hand-built config may
+ *  not carry one — or that the one on disk may not have parsed.
+ *
+ *  Returns a fresh object every call: DEFAULT_QUEUE_WEIGHTS is a module-level
+ *  constant read live by every loadConfig, so handing it out by reference
+ *  would let one caller's mutation corrupt every later ranking process-wide. */
+export function queueWeights(config: DispatchConfig): QueueWeightsResult {
+  const queue = config.queue;
+  if (queue?.error !== undefined) return { ok: false, error: queue.error };
+  return {
+    ok: true,
+    weights: { ...(queue?.weights ?? DEFAULT_QUEUE_WEIGHTS) },
+  };
 }
 
 /** Whether Dispatch uses carto for the dependency graph, and whether it may
@@ -245,5 +337,13 @@ export interface ConfigPatch {
   notifications?: {
     kinds?: Partial<Record<NotificationKind, boolean>>;
     webhook?: string | null;
+  };
+  /** Weights only — the factor table itself is code, not configuration. */
+  queue?: { weights?: Partial<QueueWeights> };
+  /** `gates` is written key-by-key; a `null` pin clears the override so the
+   *  rung decides again. */
+  policy?: {
+    rung?: number;
+    gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
   };
 }

@@ -1,0 +1,35 @@
+$schema: 'https://moonrepo.dev/schemas/tasks.json'
+
+# Guard chain for packages the open-core epic will publish. Each such package
+# gets "prepublishOnly": "moon run <name>:prepublish".
+#
+# BOTH TASKS ARE runInCI: 'always', and that is the fix for a real hole. They
+# were 'skip', on the theory that skipping keeps publish guards out of a CI
+# run. It does not work that way and it broke publishing: `moon ci` only runs
+# the targets it is GIVEN, and ci.yml never names `prepublish`, so skipping
+# bought nothing — while in any CI-marked shell `pnpm publish` died with
+# "No tasks found. Unable to execute action pipeline." Fail-closed, but it
+# meant no release automation could ever publish, and the message points
+# nowhere near the cause. A guard that cannot run where releases happen is not
+# a guard.
+inheritedBy:
+  tags: ['publishable']
+
+tasks:
+  # Publishes must use the pnpm pinned in .prototools; the script reads the
+  # pin itself and cross-checks package.json's packageManager.
+  assert-pnpm-version:
+    command: 'bun $workspaceRoot/scripts/assert-pnpm-version.ts'
+    options:
+      cache: false
+      internal: true
+      runInCI: 'always'
+
+  prepublish:
+    command: 'noop'
+    deps:
+      - 'assert-pnpm-version'
+      - 'build'
+    options:
+      cache: false
+      runInCI: 'always'

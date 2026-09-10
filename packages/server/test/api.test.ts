@@ -60,6 +60,19 @@ describe('GET /api/health', () => {
     expect(body.problems).toEqual([]);
   });
 
+  // Health is the one open route every client probes, so it must say which
+  // process is answering and which model it will dispatch on — the two facts
+  // nothing surfaced when a fleet ran on the wrong model for two days.
+  it('names the answering process and its per-role models', async () => {
+    const body = await json(await fetch(`${baseUrl}/api/health`));
+    expect(Number.isInteger(body.pid)).toBe(true);
+    expect(body.pid).toBeGreaterThan(0);
+    expect(typeof body.startedAt).toBe('string');
+    expect(Number.isNaN(Date.parse(body.startedAt))).toBe(false);
+    expect(typeof body.models.execute).toBe('string');
+    expect(body.models.execute.length).toBeGreaterThan(0);
+  });
+
   it('serves JSON responses with an explicit utf-8 charset', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.headers.get('content-type')).toBe(
@@ -141,12 +154,13 @@ describe('GET /api/config', () => {
     expect(res.status).toBe(200);
     const body = await json(res);
     expect(body.statuses).toEqual([
-      'backlog',
-      'todo',
-      'in-progress',
-      'in-review',
-      'done',
-      'cancelled',
+      'draft',
+      'ready',
+      'working',
+      'review',
+      'landing',
+      'landed',
+      'dropped',
     ]);
     expect(body.autoCommit).toBe(true);
   });
@@ -171,7 +185,7 @@ describe('task CRUD round-trip', () => {
     expect(createRes.status).toBe(201);
     const created = await json(createRes);
     expect(created.meta.title).toBe('Fix login');
-    expect(created.meta.status).toBe('todo');
+    expect(created.meta.status).toBe('ready');
 
     const getRes = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`);
     expect(getRes.status).toBe(200);
@@ -185,16 +199,16 @@ describe('task CRUD round-trip', () => {
     const patchRes = await fetch(`${baseUrl}/api/tasks/${created.meta.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'in-progress' }),
+      body: JSON.stringify({ status: 'working' }),
     });
     expect(patchRes.status).toBe(200);
     const patched = await json(patchRes);
-    expect(patched.meta.status).toBe('in-progress');
+    expect(patched.meta.status).toBe('working');
 
     const afterPatch = await json(
       await fetch(`${baseUrl}/api/tasks/${created.meta.id}`)
     );
-    expect(afterPatch.meta.status).toBe('in-progress');
+    expect(afterPatch.meta.status).toBe('working');
   });
 
   it('edits the Description and Acceptance Criteria body sections via PATCH', async () => {
@@ -310,7 +324,7 @@ describe('filter + ready queries', () => {
     await fetch(`${baseUrl}/api/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: 'Backlogged', status: 'backlog' }),
+      body: JSON.stringify({ title: 'Backlogged', status: 'draft' }),
     });
 
     const byKind = await json(await fetch(`${baseUrl}/api/tasks?kind=epic`));
@@ -375,7 +389,7 @@ describe('error paths', () => {
     const res = await fetch(`${baseUrl}/api/tasks/t-000000`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'done' }),
+      body: JSON.stringify({ status: 'landed' }),
     });
     expect(res.status).toBe(404);
   });
@@ -399,7 +413,7 @@ describe('error paths', () => {
     expect(res.status).toBe(400);
     const body = await json(res);
     expect(body.error).toBe(
-      'invalid status: nope (expected backlog|todo|in-progress|in-review|done|cancelled)'
+      'invalid status: nope (expected draft|ready|working|review|landing|landed|dropped)'
     );
   });
 

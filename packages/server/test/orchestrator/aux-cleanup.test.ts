@@ -225,7 +225,7 @@ describe('aux run cleanup on a derived task', () => {
   it('retires the derived task once its review run is cleaned up', async () => {
     const { orchestrator, store } = makeOrchestrator();
     const { task, meta } = await derivedReviewRun(orchestrator, store);
-    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
 
     await orchestrator.cancel(meta.id);
     orchestrator.cleanupAuxRun(meta.id);
@@ -233,7 +233,7 @@ describe('aux run cleanup on a derived task', () => {
     // Done and archived: the board must not keep a permanently outstanding
     // PR-derived row, and both syncers skip an archived doc.
     const retired = store.get(task.meta.id)!;
-    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.status).toBe('landed');
     expect(retired.meta.archivedAt).not.toBeUndefined();
   });
 
@@ -246,7 +246,7 @@ describe('aux run cleanup on a derived task', () => {
     orchestrator.cleanupAuxRun(aux.runId);
 
     const after = store.get(taskId)!;
-    expect(after.meta.status).not.toBe('done');
+    expect(after.meta.status).not.toBe('landed');
     expect(after.meta.archivedAt).toBeUndefined();
   });
 });
@@ -296,7 +296,7 @@ describe('a retiring PR review takes its head ref with it', () => {
     await orchestrator.prRefDeleteSettled(meta.id);
 
     const retired = store.get(task.meta.id)!;
-    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.status).toBe('landed');
     expect(retired.meta.archivedAt).not.toBeUndefined();
     // Non-vacuous: the delete really was attempted, and really did fail.
     expect(calls).toEqual([['git', 'update-ref', '-d', 'refs/dispatch/pr/7']]);
@@ -342,7 +342,7 @@ describe('a retiring PR review takes its head ref with it', () => {
     orchestrator.cleanupAuxRun(meta.id);
     await orchestrator.prRefDeleteSettled(meta.id);
 
-    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
     expect(calls).toEqual([]);
   });
 });
@@ -359,7 +359,7 @@ describe('a restarted daemon retires the review it lost', () => {
     second.reconcileOnBoot();
 
     const retired = store.get(task.meta.id)!;
-    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.status).toBe('landed');
     expect(retired.meta.archivedAt).not.toBeUndefined();
     expect(existsSync(meta.worktreePath)).toBe(false);
     expect(runGitSync(repo, ['branch', '--list', meta.branch]).trim()).toBe('');
@@ -371,13 +371,13 @@ describe('a restarted daemon retires the review it lost', () => {
     // Terminal before the restart, with no cleanup: the crash landed between
     // the run finishing and its ingest.
     await orchestrator.cancel(meta.id);
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
 
     const second = rebootOrchestrator(store);
     second.reconcileOnBoot();
 
     const retired = store.get(task.meta.id)!;
-    expect(retired.meta.status).toBe('done');
+    expect(retired.meta.status).toBe('landed');
     expect(retired.meta.archivedAt).not.toBeUndefined();
     expect(existsSync(meta.worktreePath)).toBe(false);
   });
@@ -436,7 +436,7 @@ describe('a restarted daemon retires the review it lost', () => {
       second.reconcileOnBoot();
     }).not.toThrow();
 
-    expect(store.get(intact.task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(intact.task.meta.id)!.meta.status).toBe('landed');
   });
 
   // The test above never reaches the sweep's error containment: the cache is
@@ -472,7 +472,7 @@ describe('a restarted daemon retires the review it lost', () => {
     expect(runGitSync(repo, ['branch', '--list', aux.branch]).trim()).not.toBe(
       ''
     );
-    expect(store.get(taskId)!.meta.status).not.toBe('done');
+    expect(store.get(taskId)!.meta.status).not.toBe('landed');
   });
 });
 

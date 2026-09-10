@@ -207,6 +207,41 @@ describe('connectEvents', () => {
     dispose();
   });
 
+  it('delivers a hello from every socket generation, not just the first', async () => {
+    // The desktop's daemon-restart reconciliation hangs off `hello`: a
+    // restarted dispatchd drops every in-memory warden record, and the only
+    // signal that reaches the client is this frame, which the server sends
+    // from its websocket `open` handler. That is worth nothing unless
+    // `onEvent` is still wired to the *replacement* socket after a reconnect —
+    // the generation where the restart actually happened. Without this,
+    // nothing in the repo catches the listener failing to be re-registered.
+    const created: FakeSocket[] = [];
+    const versions: string[] = [];
+    const dispose = connectEvents(BASE_URL, () => {}, {
+      createSocket: () => {
+        const socket = new FakeSocket();
+        created.push(socket);
+        return socket;
+      },
+      reconnectDelayMs: 5,
+      onEvent: (event) => {
+        if (event.type === 'hello') versions.push(event.version);
+      },
+    });
+
+    created[0].emitMessage(JSON.stringify({ type: 'hello', version: '0.0.1' }));
+    created[0].emitClose();
+    await sleep(30);
+    expect(created.length).toBe(2);
+
+    // The daemon that answers the reconnect is a fresh process, so its
+    // greeting can carry a different version than the one that went away.
+    created[1].emitMessage(JSON.stringify({ type: 'hello', version: '0.0.2' }));
+
+    expect(versions).toEqual(['0.0.1', '0.0.2']);
+    dispose();
+  });
+
   it('dispose closes the current socket and stops further reconnects', async () => {
     const created: FakeSocket[] = [];
     const dispose = connectEvents(BASE_URL, () => {}, {

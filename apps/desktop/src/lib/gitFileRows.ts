@@ -15,10 +15,12 @@ export function fileRowsFromStatus(
     section: 'conflicted' as const,
     path,
   }));
-  for (const f of staged) rows.push({ section: 'staged', path: f.path });
+  for (const f of staged) {
+    rows.push({ section: 'staged', path: f.path, code: f.status });
+  }
   for (const f of unstaged) {
     if (!conflictedSet.has(f.path))
-      rows.push({ section: 'unstaged', path: f.path });
+      rows.push({ section: 'unstaged', path: f.path, code: f.status });
   }
   for (const path of untracked) rows.push({ section: 'untracked', path });
   return rows;

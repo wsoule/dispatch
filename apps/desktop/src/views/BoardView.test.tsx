@@ -81,6 +81,7 @@ function mount(onSelectTask: (taskId: string) => void = () => {}) {
     <TooltipProvider>
       <BoardView
         data={boardData()}
+        mode="board"
         onSelectTask={onSelectTask}
         onNewTask={() => {}}
         onPlanWork={() => {}}
@@ -120,10 +121,45 @@ beforeEach(() => {
   window.localStorage.clear();
 });
 
-test('the view toggle offers list, board and milestones — swim lanes is no longer its own', () => {
-  mount();
-  const tabs = screen.getAllByRole('tab').map((el) => el.textContent);
-  expect(tabs).toEqual(['List view', 'Board view', 'Milestones']);
+// The lane-behavior tests below exercise the opt-in grouped board — the default is the
+// flat kanban, so they seed the persisted pref the Display menu would set.
+function enableEpicLanes() {
+  window.localStorage.setItem(
+    'dispatch:board-columns-v1',
+    JSON.stringify({ hideEmpty: false, hidden: [], groupByEpic: true })
+  );
+}
+
+test('the mode prop selects the layout — the switcher lives in the sidebar, not the page', () => {
+  const { rerender } = render(
+    <TooltipProvider>
+      <BoardView
+        data={boardData()}
+        mode="board"
+        onSelectTask={() => {}}
+        onNewTask={() => {}}
+        onPlanWork={() => {}}
+      />
+    </TooltipProvider>
+  );
+  // No in-page view tabs any more.
+  expect(screen.queryAllByRole('tab')).toHaveLength(0);
+  expect(screen.queryByText('Card one')).not.toBeNull();
+
+  rerender(
+    <TooltipProvider>
+      <BoardView
+        data={boardData()}
+        mode="list"
+        onSelectTask={() => {}}
+        onNewTask={() => {}}
+        onPlanWork={() => {}}
+      />
+    </TooltipProvider>
+  );
+  expect(
+    screen.queryByPlaceholderText('Filter by id or title…')
+  ).not.toBeNull();
 });
 
 test('the board opens on the unified kanban with every epic expanded', () => {
@@ -134,6 +170,7 @@ test('the board opens on the unified kanban with every epic expanded', () => {
 });
 
 test('j walks the cards lane by lane, and Enter opens the one it stopped on', () => {
+  enableEpicLanes();
   const opened: string[] = [];
   mount((taskId) => opened.push(taskId));
   const anchor = cardRoot('Card one');
@@ -158,6 +195,7 @@ test('j walks the cards lane by lane, and Enter opens the one it stopped on', ()
 // The regression this guards: an order built from all the project's tasks would walk the cursor
 // into a folded-up lane, moving real DOM focus to a card nobody can see.
 test('j/k skip the cards a collapsed epic is hiding', () => {
+  enableEpicLanes();
   mount();
   fireEvent.click(screen.getByRole('button', { name: /Payments epic/ }));
   const anchor = cardRoot('Card three');
@@ -169,12 +207,24 @@ test('j/k skip the cards a collapsed epic is hiding', () => {
 });
 
 test('a collapsed lane stays collapsed after switching to the list and back', () => {
-  mount();
+  enableEpicLanes();
+  const view = (mode: 'board' | 'list') => (
+    <TooltipProvider>
+      <BoardView
+        data={boardData()}
+        mode={mode}
+        onSelectTask={() => {}}
+        onNewTask={() => {}}
+        onPlanWork={() => {}}
+      />
+    </TooltipProvider>
+  );
+  const { rerender } = render(view('board'));
   fireEvent.click(screen.getByRole('button', { name: /Payments epic/ }));
   expect(screen.queryByText('Card one')).toBeNull();
 
-  fireEvent.click(screen.getByRole('tab', { name: 'List view' }));
-  fireEvent.click(screen.getByRole('tab', { name: 'Board view' }));
+  rerender(view('list'));
+  rerender(view('board'));
   expect(screen.queryByText('Card one')).toBeNull();
   expect(screen.queryByText('Card three')).not.toBeNull();
 });

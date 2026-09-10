@@ -1,5 +1,6 @@
 import {
   ASSIGNEES,
+  canonicalStatus,
   ConfigError,
   describeValue,
   getSection,
@@ -7,7 +8,6 @@ import {
   loadConfig,
   PRIORITIES,
   TaskParseError,
-  TaskStore,
   updateConfig,
 } from '@dispatch/core';
 import type {
@@ -17,10 +17,12 @@ import type {
   FixLoopConfig,
   LinearConfig,
   ModelConfig,
+  QueueWeights,
+  TaskStoreBackend,
   UpdatePatch,
   VerifyConfig,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc } from '@dispatch/core';
+import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -36,7 +38,9 @@ import {
   adjudicateFinding,
   advanceFixLoop,
   getFixLoop,
+  listFixLoops,
   startFixLoop,
+  stopFixLoop,
 } from './api/fixLoop.js';
 import {
   errorResponse,
@@ -45,6 +49,7 @@ import {
   readJsonBodyOptional,
 } from './api/http.js';
 import { getImpact } from './api/impact.js';
+import { getQueue } from './api/queue.js';
 import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
@@ -60,7 +65,7 @@ import { isSnippet, isSubjectRef } from './conversations.js';
 import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
 import type { EventBus } from './events.js';
-import type { FindingStore } from './findings.js';
+import type { FindingStorePort } from './findings.js';
 import {
   COMMIT_SHA_UNRESOLVED_PREFIX,
   CONFIRM_REQUIRED_ERROR,
@@ -76,9 +81,13 @@ import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
-import { filterGroupsToLocalItems, InboxClusterer } from './inboxClusterer.js';
+import {
+  filterGroupsToLocalItems,
+  InboxClusterer,
+  InboxClusterSnapshotStore,
+} from './inboxClusterer.js';
 import { buildLandingSnapshot } from './landing.js';
-import type { LedgerStore } from './ledger.js';
+import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Note, NoteKind } from './notes.js';
@@ -117,6 +126,7 @@ import {
 import type { RunMeta } from './orchestrator/types.js';
 import type { VerificationRunner } from './orchestrator/verify.js';
 import type { WardenManager } from './orchestrator/warden.js';
+import type { ReceiptsScheduler } from './receipts/scheduler.js';
 import {
   formatCommentsForAgent,
   resolveAnchor,
@@ -134,7 +144,12 @@ import type { TrackedFilesCache } from './trackedFiles.js';
 // this is what makes it easy to hit with plain fetch() in tests.
 export interface ApiContext {
   rootDir: string;
-  store: TaskStore;
+  // The port, not a concrete TaskStore: this daemon owns whichever backend
+  // the project was opened with (markdown files or its SQLite database), and
+  // every handler below works the same against either. A handler that needs
+  // a path on disk has to narrow to `TaskStore` itself — see
+  // Orchestrator.stageTaskFile, the one place that does.
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
@@ -152,8 +167,8 @@ export interface ApiContext {
   mergeQueue: MergeQueue;
   noteStore: NoteStore;
   inboxStore: InboxStore;
-  findingStore: FindingStore;
-  ledgerStore: LedgerStore;
+  findingStore: FindingStorePort;
+  ledgerStore: LedgerStorePort;
   reviewRunner: ReviewRunner;
   verificationRunner: VerificationRunner;
   fixLoop: FixLoop;
@@ -175,6 +190,10 @@ export interface ApiContext {
   // GET /api/health as `pr` so a client can hide/disable the PR action
   // without probing per-run.
   prCapability: boolean;
+  // When this daemon process started, captured once in startServer — the
+  // same value the daemon file records, surfaced at GET /api/health so a
+  // client can tell which process is answering.
+  startedAt: string;
   // The Git page's backend — see packages/server/src/git/commands.ts.
   gitRepo: GitRepo;
   // The two tokens this daemon accepts — see DaemonTokens.
@@ -187,6 +206,14 @@ export interface ApiContext {
   // boot (see index.ts) — GET /api/sync synthesizes a `disabled` status in
   // that case, since no real SyncResult ever reports it.
   boardSyncScheduler: BoardSyncScheduler | null;
+  // Which backend this project's state lives in. GET /api/sync needs it to
+  // tell the two reasons `boardSyncScheduler` is null apart: no trunk (a
+  // setup problem worth warning about) versus a database-backed project
+  // (which has no task files to sync and is not broken at all).
+  storeBackend: TaskStoreBackend;
+  // The receipts exporter's scheduler, or `null` on the file backend, whose
+  // task files the board syncer already commits into the user's own repo.
+  receiptsScheduler: ReceiptsScheduler | null;
   // Whether `dispatch merge-task` actually resolves on this daemon's PATH.
   // Surfaced at GET /api/sync as `mergeDriverWarning` so a broken setup is
   // visible somewhere, since git itself never reports it as an error.
@@ -295,8 +322,13 @@ function validateTaskFields(
     // would otherwise get the template back with their text silently dropped.
     return 'invalid body: a new task builds its body from the template — set it with PATCH instead';
   }
+  // Canonicalized before the membership check so callers speaking the
+  // pre-rename names ('done', 'in-progress', …) stay valid forever — the
+  // store canonicalizes again at write, so the alias never reaches disk.
   const statusError = validateEnumField(
-    value.status,
+    typeof value.status === 'string'
+      ? canonicalStatus(value.status)
+      : value.status,
     config.statuses,
     'status'
   );
@@ -507,6 +539,17 @@ async function createTaskComment(
 // actually registered on this Orchestrator instance (M6: derived live via
 // `registeredExecutorNames()`, not a separately hardcoded list) is a 400
 // here.
+//
+// A task whose most recent run failed with its worktree and branch intact is
+// RESUMED rather than started over (see Orchestrator.resumableRunForTask).
+// Losing a nearly-finished run because a re-dispatch quietly began again from
+// nothing is the expensive mistake; resuming when the caller wanted a clean
+// slate costs one discard. So resume is the default and `fresh: true` opts out.
+//
+// A resume keeps the failed run's own model, so a `model` sent alongside one is
+// not applied — handing the rest of a conversation to a different model is what
+// requestChanges' `model` comment exists to prevent. A caller that specifically
+// wants a different model wants `fresh: true`.
 async function createRun(
   req: Request,
   ctx: ApiContext,
@@ -535,7 +578,7 @@ async function createRun(
   const task = ctx.store.get(taskId);
   if (
     task !== null &&
-    (task.meta.status === 'done' || task.meta.status === 'cancelled')
+    (task.meta.status === 'landed' || task.meta.status === 'dropped')
   ) {
     return errorResponse(409, `cannot dispatch a ${task.meta.status} task`);
   }
@@ -545,16 +588,21 @@ async function createRun(
     return errorResponse(400, 'invalid model: expected a string');
   }
 
-  const executorName =
-    typeof executorField === 'string' ? executorField : 'claude';
-  // Omitting `model` falls back to the project's configured `models.execute`,
-  // so a script or an older UI build still runs on the model settings chose.
-  const model =
-    typeof modelField === 'string'
-      ? modelField
-      : loadConfig(ctx.rootDir).models.execute;
-  const meta = await ctx.orchestrator.dispatch(taskId, executorName, {
-    model,
+  const freshField = parsed.value.fresh;
+  if (freshField !== undefined && typeof freshField !== 'boolean') {
+    return errorResponse(400, 'invalid fresh: expected a boolean');
+  }
+  // Named vs defaulted is the whole distinction dispatchOrResume turns on, so
+  // the raw fields go through untouched and only the FALLBACKS are resolved
+  // here: omitting `model` still runs a fresh dispatch on the project's
+  // configured `models.execute` (so a script or an older UI build lands where
+  // settings chose), while naming one that the resumable run cannot honour is
+  // what sends the call down the fresh path in the first place.
+  const meta = await ctx.orchestrator.dispatchOrResume(taskId, {
+    executor: typeof executorField === 'string' ? executorField : undefined,
+    model: typeof modelField === 'string' ? modelField : undefined,
+    fresh: freshField === true,
+    defaults: { model: loadConfig(ctx.rootDir).models.execute },
   });
   return jsonResponse(meta, 201);
 }
@@ -766,6 +814,40 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // before writing, and that ConfigError becomes the 400 below.
     patch.notifications = body.notifications as ConfigPatch['notifications'];
   }
+  if ('queue' in body) {
+    if (
+      typeof body.queue !== 'object' ||
+      body.queue === null ||
+      Array.isArray(body.queue)
+    ) {
+      return errorResponse(400, 'queue must be an object');
+    }
+    const { weights } = body.queue as Record<string, unknown>;
+    if (weights !== undefined) {
+      if (
+        typeof weights !== 'object' ||
+        weights === null ||
+        Array.isArray(weights)
+      ) {
+        return errorResponse(400, 'queue.weights must be an object');
+      }
+      // Same deal as models/linear: core validates each factor and weight
+      // before writing, and that ConfigError becomes the 400 below.
+      patch.queue = { weights: weights as Partial<QueueWeights> };
+    }
+  }
+  if ('policy' in body) {
+    if (
+      typeof body.policy !== 'object' ||
+      body.policy === null ||
+      Array.isArray(body.policy)
+    ) {
+      return errorResponse(400, 'policy must be an object');
+    }
+    // Same deal as models/linear: core validates the rung and each gate pin
+    // before writing, and that ConfigError becomes the 400 below.
+    patch.policy = body.policy as ConfigPatch['policy'];
+  }
 
   try {
     const config = updateConfig(ctx.rootDir, patch);
@@ -802,6 +884,67 @@ interface SyncStatus extends SyncResult {
    * line-based one, with no other diagnostic anywhere.
    */
   mergeDriverWarning: string | null;
+  /**
+   * The receipt log's last export. Reported here rather than on an endpoint of
+   * its own because this is already the "is dispatch keeping git up to date"
+   * question, and the two are the file and database halves of one answer: a
+   * project has a board syncer or a receipts exporter, never both.
+   */
+  receipts: ReceiptsStatus;
+}
+
+/** The receipt log's last export attempt, or why there wasn't one. */
+interface ReceiptsStatus {
+  /** `disabled` on the file backend; `idle` before the first export. */
+  state: 'committed' | 'clean' | 'failed' | 'idle' | 'disabled';
+  detail: string | null;
+  /** The commit the last export made, when it made one. */
+  commit: string | null;
+  changed: number;
+  removed: number;
+  /** Records the export could not read out of the database. */
+  problems: number;
+  lastExportedAt: string | null;
+}
+
+// Reads the exporter's retained last result. Its own null-vs-result
+// distinction is preserved: `disabled` means this project has no exporter at
+// all, `idle` means it has one that has not yet run.
+function receiptsStatus(ctx: ApiContext): ReceiptsStatus {
+  const scheduler = ctx.receiptsScheduler;
+  if (scheduler === null) {
+    return {
+      state: 'disabled',
+      detail:
+        'this project keeps its state as files, which the board syncer commits',
+      commit: null,
+      changed: 0,
+      removed: 0,
+      problems: 0,
+      lastExportedAt: null,
+    };
+  }
+  const last = scheduler.lastResult();
+  if (last === null) {
+    return {
+      state: 'idle',
+      detail: null,
+      commit: null,
+      changed: 0,
+      removed: 0,
+      problems: 0,
+      lastExportedAt: null,
+    };
+  }
+  return {
+    state: last.state,
+    detail: last.detail,
+    commit: last.commit,
+    changed: last.changed,
+    removed: last.removed,
+    problems: last.problems,
+    lastExportedAt: scheduler.lastExportedAt(),
+  };
 }
 
 const DISABLED_SYNC_DETAIL =
@@ -809,6 +952,12 @@ const DISABLED_SYNC_DETAIL =
   'remote or a local main/master branch. SyncWorktree.open() only runs at ' +
   'boot, so fixing that (adding an origin, or a main/master branch) needs a ' +
   'daemon restart before syncing can start.';
+
+const DATABASE_SYNC_DETAIL =
+  'board sync does not apply to this project — its tasks live in the ' +
+  "daemon's database, not in task files, so there is nothing for the board " +
+  'syncer to commit. The audit trail is exported to the git receipt log ' +
+  'instead; see `receipts` below.';
 
 const OFF_SYNC_DETAIL =
   'board sync is off for this project — turn on auto-commit in Settings ' +
@@ -843,13 +992,22 @@ function getSyncStatus(ctx: ApiContext): Response {
   if (ctx.boardSyncScheduler === null) {
     const disabled: SyncStatus = {
       state: 'disabled',
-      detail: DISABLED_SYNC_DETAIL,
+      // Two different reasons, and reporting the wrong one is worse than
+      // saying nothing. On the database backend there is no board syncer by
+      // design — the receipts exporter carries the audit trail instead — so
+      // the trunk warning below would send someone off adding a remote to fix
+      // a daemon that is working exactly as intended.
+      detail:
+        ctx.storeBackend === 'sqlite'
+          ? DATABASE_SYNC_DETAIL
+          : DISABLED_SYNC_DETAIL,
       pushed: 0,
       pulled: 0,
       pendingOutgoing: 0,
       pendingIncoming: 0,
       lastSyncedAt: null,
       mergeDriverWarning,
+      receipts: receiptsStatus(ctx),
     };
     return jsonResponse(disabled);
   }
@@ -870,6 +1028,7 @@ function getSyncStatus(ctx: ApiContext): Response {
       pendingIncoming: 0,
       lastSyncedAt: null,
       mergeDriverWarning,
+      receipts: receiptsStatus(ctx),
     };
     return jsonResponse(off);
   }
@@ -885,6 +1044,7 @@ function getSyncStatus(ctx: ApiContext): Response {
     pendingIncoming: pending.incoming,
     lastSyncedAt: ctx.boardSyncScheduler.lastSyncedAt(),
     mergeDriverWarning,
+    receipts: receiptsStatus(ctx),
   };
   return jsonResponse(status);
 }
@@ -3244,9 +3404,10 @@ function promoteNote(ctx: ApiContext, id: string): Response {
   return jsonResponse(task, 201);
 }
 
-// POST /api/inbox — capture raw text. The body's `text` is split server-side into one item
-// per non-empty line, so the splitting rule lives in exactly one place rather than being
-// reimplemented by every client (the desktop composer, the MCP tool, a future CLI).
+// POST /api/inbox — capture raw text as ONE item, however many lines it takes.
+// The normalization rule lives server-side in exactly one place rather than
+// being reimplemented by every client (the desktop composer, the MCP tool, a
+// future CLI).
 async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -3272,8 +3433,10 @@ async function addInbox(req: Request, ctx: ApiContext): Promise<Response> {
     createdByRunId:
       typeof body.createdByRunId === 'string' ? body.createdByRunId : null,
   });
-  // `splitCapture` strips bullet and checkbox prefixes, so text that is only
-  // markers stores nothing — a 201 there would claim a capture that never was.
+  // `normalizeCapture` strips the leading bullet or checkbox from the capture's
+  // FIRST line (one dump is one item, so only that line is a marker), leaving
+  // nothing when the whole capture was that one marker — a 201 there would
+  // claim a capture that never was.
   if (created.length === 0) {
     return errorResponse(400, 'text contained no capturable lines');
   }
@@ -3367,7 +3530,15 @@ async function convertInbox(req: Request, ctx: ApiContext): Promise<Response> {
       continue;
     }
     try {
-      const task = ctx.store.create({ title: item.text, kind: 'task' });
+      // A multiline dump converts as first line -> title, the rest -> the
+      // task's description — a paragraph is not a title.
+      const [firstLine = '', ...restLines] = item.text.split('\n');
+      const description = restLines.join('\n').trim();
+      const task = ctx.store.create({
+        title: firstLine,
+        kind: 'task',
+        ...(description === '' ? {} : { description }),
+      });
       links.push({ id, taskId: task.meta.id });
       results.push({ id, taskId: task.meta.id });
     } catch (err) {
@@ -3430,13 +3601,27 @@ async function clusterInbox(ctx: ApiContext): Promise<Response> {
     // seed selection with an id the UI can't resolve, and fail convert outright. Filtering here
     // — rather than widening display/convert to cross-file reads — also keeps a teammate's
     // private capture text from ever reaching the local UI or a future model call over it.
-    const localIds = new Set(ctx.inboxStore.list().map((i) => i.id));
+    const localOpen = ctx.inboxStore.list().filter((i) => !i.done);
+    const localIds = new Set(localOpen.map((i) => i.id));
     const groups = await clusterer.cluster(ctx.inboxStore.listAll());
     const localGroups = filterGroupsToLocalItems(groups, localIds);
+    // Persisted so a page load renders this pass instead of billing a new one;
+    // a failed pass below deliberately leaves the previous snapshot standing.
+    new InboxClusterSnapshotStore(ctx.rootDir).save({
+      groups: localGroups,
+      itemIds: [...localIds],
+      updatedAt: new Date().toISOString(),
+    });
     return jsonResponse({ groups: localGroups, error: null });
   } catch (err) {
     return jsonResponse({ groups: [], error: (err as Error).message });
   }
+}
+
+// GET /api/inbox/clusters — the persisted result of the last clustering pass,
+// or null when none has ever run (or the cache was corrupt).
+function getInboxClusters(ctx: ApiContext): Response {
+  return jsonResponse(new InboxClusterSnapshotStore(ctx.rootDir).load());
 }
 
 /**
@@ -3728,6 +3913,15 @@ export async function handleApi(
         // Phase 5 P1: whether this project can use the PR review action
         // (gh on PATH + a configured git remote), detected once at boot.
         pr: ctx.prCapability,
+        // Who is answering and what it will run. On 2026-09-08 a fleet ran
+        // on the wrong model for two days and nothing surfaced it, and two
+        // daemons served one root with only `ps` able to tell them apart.
+        // Health is the one open route every client probes, so it carries
+        // the process identity and the fully-defaulted per-role model map
+        // (read fresh, since config.yml can change under a live daemon).
+        pid: process.pid,
+        startedAt: ctx.startedAt,
+        models: loadConfig(ctx.rootDir).models,
       });
     }
 
@@ -3936,6 +4130,14 @@ export async function handleApi(
         return await startFixLoop(ctx, segments[1]);
       }
       if (
+        segments.length === 4 &&
+        segments[2] === 'fix-loop' &&
+        segments[3] === 'stop' &&
+        method === 'POST'
+      ) {
+        return stopFixLoop(ctx, segments[1]);
+      }
+      if (
         segments.length === 5 &&
         segments[2] === 'findings' &&
         segments[4] === 'adjudicate' &&
@@ -3943,6 +4145,20 @@ export async function handleApi(
       ) {
         return await adjudicateFinding(req, ctx, segments[1], segments[3]);
       }
+    }
+
+    if (
+      segments[0] === 'fix-loops' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return listFixLoops(ctx);
+    }
+
+    // GET /api/plans — every plan's summary, newest activity first, for the
+    // Plans page's history (persisted server-side; localStorage is gone).
+    if (segments[0] === 'plans' && segments.length === 1 && method === 'GET') {
+      return jsonResponse(ctx.planManager.list());
     }
 
     if (segments[0] === 'runs') {
@@ -4637,6 +4853,13 @@ export async function handleApi(
       ) {
         return await clusterInbox(ctx);
       }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'clusters' &&
+        method === 'GET'
+      ) {
+        return getInboxClusters(ctx);
+      }
       if (segments.length === 2 && method === 'PATCH') {
         return await updateInbox(req, ctx, segments[1]);
       }
@@ -4665,6 +4888,13 @@ export async function handleApi(
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
       return await getImpact(ctx, url);
+    }
+
+    // GET /api/queue — dispatchable tasks ranked by the scoring function, with
+    // the per-factor breakdown. Computed per request; `task.changed` and
+    // `config.changed` are the refetch signals.
+    if (segments[0] === 'queue' && segments.length === 1 && method === 'GET') {
+      return getQueue(ctx, url);
     }
 
     // GET /api/agents — every in-memory conversation agent (planner chats,

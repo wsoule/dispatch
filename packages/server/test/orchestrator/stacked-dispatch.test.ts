@@ -101,7 +101,7 @@ async function makeInReviewBlockers(
     runGitSync(run.worktreePath, ['commit', '-m', `${title} work`]);
     h.store.update(
       task.meta.id,
-      { status: 'in-review' },
+      { status: 'review' },
       new Date().toISOString()
     );
     ids.push(task.meta.id);
@@ -134,7 +134,7 @@ async function makeStackedPair(h: Harness): Promise<{
   runGitSync(blockerRun.worktreePath, ['commit', '-m', 'A work']);
   h.store.update(
     blocker.meta.id,
-    { status: 'in-review' },
+    { status: 'review' },
     new Date().toISOString()
   );
   h.cache.rebuild(h.store);
@@ -235,7 +235,7 @@ describe('base selection', () => {
     runGitSync(blockerRun.worktreePath, ['commit', '-m', 'A work']);
     h.store.update(
       blocker.meta.id,
-      { status: 'in-review' },
+      { status: 'review' },
       new Date().toISOString()
     );
     h.cache.rebuild(h.store);
@@ -259,7 +259,7 @@ describe('base selection', () => {
 
   it('falls back to the default base when the blocker is already done', async () => {
     const h = makeHarness();
-    const blocker = h.store.create({ title: 'A', status: 'done' });
+    const blocker = h.store.create({ title: 'A', status: 'landed' });
     const dependent = h.store.create({
       title: 'B',
       blockedBy: [blocker.meta.id],
@@ -273,7 +273,7 @@ describe('base selection', () => {
 
   it('falls back to the default base when an in-review blocker has no run', async () => {
     const h = makeHarness();
-    const blocker = h.store.create({ title: 'A', status: 'in-review' });
+    const blocker = h.store.create({ title: 'A', status: 'review' });
     const dependent = h.store.create({
       title: 'B',
       blockedBy: [blocker.meta.id],
@@ -579,7 +579,7 @@ describe('discarding a stacked-on run', () => {
     runGitSync(blockerRun.worktreePath, ['commit', '-m', 'A work']);
     h.store.update(
       blocker.meta.id,
-      { status: 'in-review' },
+      { status: 'review' },
       new Date().toISOString()
     );
     h.cache.rebuild(h.store);

@@ -1,5 +1,6 @@
 import type { EpicProgress } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
+import { PRIORITY_ORDER } from '@dispatch/core/browser';
 import { ChevronRight, SearchX, Waypoints } from 'lucide-react';
 import type { ReactNode } from 'react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -16,22 +17,30 @@ import { StackBadge } from '../components/tasks/StackRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { deriveEpicPulse } from '../lib/epicPulse';
 import { resolveListKeyCommand } from '../lib/keyboard';
-import { Input } from '../ui/input';
+import { computeTaskWeights, describeWeight } from '../lib/taskWeight';
 import { cn } from '@/lib/utils';
 import {
   type RecordsColumn,
   type RecordsGroup,
   type RecordsRow,
+  type RecordsSort,
   RecordsTable,
+  sortRows,
 } from '@/ui/ai/records-table';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 import { StateDot } from '@/ui/chrome/StateDot';
+import { Input } from '@/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/ui/tooltip';
 
 interface TasksListViewProps {
   data: DispatchProjectData;
   onSelectTask: (taskId: string) => void;
+  /** The Tasks page's shared chip filters (status/priority), applied on top of this view's
+   * own text filter. Omitted passes everything. */
+  taskFilter?: (doc: TaskDoc) => boolean;
+  /** Column keys the Display menu has hidden. */
+  hiddenColumns?: ReadonlySet<string>;
 }
 
 // A group of rows under one epic-grouping header: `epicId` is `null` for the catch-all "No
@@ -65,18 +74,31 @@ function matchesFilter(doc: TaskDoc, filter: string): boolean {
 
 // `RecordsTable` columns for the list — priority/status/assignee are blank-labelled since
 // they render as bare inline-picker glyphs (see `renderTaskCell`), matching the dense
-// board-card/list-row anatomy those glyphs use everywhere else in the app. No column carries
-// a `RecordsCellKind` that would sort meaningfully on its own for priority/status/assignee
-// (they're objects-shaped-as-scalars edited via a picker, not compared), so — like the
-// pre-reskin row — this list has no header-click sort; `sort`/`onSortChange` are omitted.
+// board-card/list-row anatomy those glyphs use everywhere else in the app. Sortable columns
+// carry numeric cell values (`kind: 'strength'`): priority sorts by rank, status by pipeline
+// position, weight by score — the pickers only override how the cell *renders*, never what
+// it sorts by.
 const COLUMNS: RecordsColumn[] = [
-  { key: 'priority', label: '' },
+  { key: 'priority', label: '', kind: 'strength' },
   { key: 'id', label: 'ID' },
-  { key: 'status', label: 'Status' },
+  { key: 'status', label: 'Status', kind: 'strength' },
   { key: 'title', label: 'Title' },
+  { key: 'weight', label: 'Weight', kind: 'strength' },
   { key: 'tags', label: 'Tags', kind: 'tags' },
   { key: 'assignee', label: '' },
   { key: 'updated', label: 'Updated', kind: 'time' },
+];
+
+/** The columns the Display menu offers to hide (everything but the title, which is the
+ * row's identity), with human labels for the glyph columns whose headers are blank. */
+export const HIDEABLE_LIST_COLUMNS: { key: string; label: string }[] = [
+  { key: 'priority', label: 'Priority' },
+  { key: 'id', label: 'ID' },
+  { key: 'status', label: 'Status' },
+  { key: 'weight', label: 'Weight' },
+  { key: 'tags', label: 'Tags' },
+  { key: 'assignee', label: 'Assignee' },
+  { key: 'updated', label: 'Updated' },
 ];
 
 /**
@@ -95,8 +117,14 @@ const COLUMNS: RecordsColumn[] = [
  * it doesn't duplicate that container's own empty-project state — it only needs its own empty
  * state for "the search filter matched nothing."
  */
-export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
+export function TasksListView({
+  data,
+  onSelectTask,
+  taskFilter,
+  hiddenColumns,
+}: TasksListViewProps) {
   const [filter, setFilter] = useState('');
+  const [sort, setSort] = useState<RecordsSort>(null);
   const [focusedTaskId, setFocusedTaskId] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(
     () => new Set()
@@ -146,7 +174,9 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   // that don't resolve to a known epic, then "No epic" last.
   const groups = useMemo<EpicGroup[]>(() => {
     if (data.config === null) return [];
-    const filtered = data.tasks.filter((doc) => matchesFilter(doc, filter));
+    const filtered = data.tasks.filter(
+      (doc) => matchesFilter(doc, filter) && (taskFilter?.(doc) ?? true)
+    );
 
     const byParent = new Map<string, TaskDoc[]>();
     const noEpic: TaskDoc[] = [];
@@ -194,8 +224,8 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
     // With the toggle on, archived tasks get their own trailing group rather than
     // rejoining their original epic bucket.
     if (data.showArchived) {
-      const archived = data.archivedTasks.filter((doc) =>
-        matchesFilter(doc, filter)
+      const archived = data.archivedTasks.filter(
+        (doc) => matchesFilter(doc, filter) && (taskFilter?.(doc) ?? true)
       );
       if (archived.length > 0) {
         result.push({
@@ -216,7 +246,37 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
     data.showArchived,
     data.archivedTasks,
     filter,
+    taskFilter,
   ]);
+
+  // Client-side v0 of the planning queue's weighted scoring — see `taskWeight.ts`. Archived
+  // tasks are included so their rows still render a (zero) score rather than a blank cell.
+  const weightById = useMemo(
+    () =>
+      computeTaskWeights(
+        [...data.tasks, ...data.archivedTasks],
+        // Recomputed whenever the task set changes — the age factor moves too slowly for
+        // anything finer-grained to matter.
+        new Date()
+      ),
+    [data.tasks, data.archivedTasks]
+  );
+
+  // Pipeline position per status, in the project's own configured order — the numeric cell
+  // value the Status column sorts by.
+  const statusRank = useMemo(() => {
+    const map = new Map<string, number>();
+    (data.config?.statuses ?? []).forEach((status, i) => map.set(status, i));
+    return map;
+  }, [data.config]);
+
+  const visibleColumns = useMemo(
+    () =>
+      hiddenColumns === undefined
+        ? COLUMNS
+        : COLUMNS.filter((c) => !hiddenColumns.has(c.key)),
+    [hiddenColumns]
+  );
 
   // Every task currently rendered, keyed by id — `renderTaskCell` looks the full `TaskDoc` back
   // up from a `RecordsRow`'s bare `id`, since a row's `cells` only carry plain sortable/
@@ -239,16 +299,44 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
     return set;
   }, [groups]);
 
+  // Each group's rows with sortable cell values, sorted by the active header sort — shared
+  // by the table rendering and the j/k traversal order below, so the cursor always walks
+  // exactly what's on screen.
+  const sortedGroupRows = useMemo(
+    () =>
+      groups.map((group) => ({
+        group,
+        rows: sortRows(
+          group.tasks.map((doc) => ({
+            id: doc.meta.id,
+            cells: {
+              priority: PRIORITY_ORDER[doc.meta.priority],
+              id: doc.meta.id,
+              status: statusRank.get(doc.meta.status) ?? statusRank.size,
+              title: doc.meta.title,
+              weight: weightById.get(doc.meta.id)?.score ?? 0,
+              tags: doc.meta.labels,
+              assignee: doc.meta.assignee,
+              updated: doc.meta.updated,
+            },
+          })),
+          COLUMNS,
+          sort
+        ),
+      })),
+    [groups, sort, statusRank, weightById]
+  );
+
   // j/k roving-focus + Enter-to-open only ever considers rows in expanded groups — a collapsed
   // group's tasks are no more reachable by keyboard than they are visible.
   const orderedIds = useMemo(
     () =>
-      groups.flatMap((g) =>
-        collapsedGroups.has(g.epicId ?? NO_EPIC_KEY)
+      sortedGroupRows.flatMap(({ group, rows }) =>
+        collapsedGroups.has(group.epicId ?? NO_EPIC_KEY)
           ? []
-          : g.tasks.map((t) => t.meta.id)
+          : rows.map((r) => r.id)
       ),
-    [groups, collapsedGroups]
+    [sortedGroupRows, collapsedGroups]
   );
 
   // The selection, resolved back to tasks — and the subset that can actually start, which is
@@ -378,6 +466,19 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
         />
       );
     }
+    if (column.key === 'weight') {
+      const weight = weightById.get(doc.meta.id);
+      if (weight === undefined || weight.score === 0) return null;
+      // The score is explainable, never a black box — hover names every factor.
+      return (
+        <span
+          title={describeWeight(weight)}
+          className="text-muted-foreground font-mono text-[11px] tabular-nums"
+        >
+          {weight.score.toFixed(1)}
+        </span>
+      );
+    }
     return undefined;
   }
 
@@ -406,12 +507,12 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
   // table's full width instead of sitting above a plain `<div>` of rows.
   const recordsGroups = useMemo<RecordsGroup[]>(
     () =>
-      groups.map((group) => {
+      sortedGroupRows.map(({ group, rows }) => {
         const key = group.epicId ?? NO_EPIC_KEY;
         const collapsed = collapsedGroups.has(key);
         const doneCount =
           group.progress?.children.filter(
-            (c) => c.status === 'done' || c.status === 'cancelled'
+            (c) => c.status === 'landed' || c.status === 'dropped'
           ).length ?? 0;
         const totalCount = group.progress?.children.length ?? 0;
         const pulse = deriveEpicPulse(
@@ -455,7 +556,7 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
                   <span
                     className={cn(
                       'dense-meta',
-                      pulse.state === 'waiting' && 'text-state-waiting'
+                      pulse.state === 'answer' && 'text-state-waiting'
                     )}
                   >
                     {pulse.label}
@@ -484,24 +585,11 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
               )}
             </div>
           ),
-          rows: collapsed
-            ? []
-            : group.tasks.map((doc) => ({
-                id: doc.meta.id,
-                cells: {
-                  priority: doc.meta.priority,
-                  id: doc.meta.id,
-                  status: doc.meta.status,
-                  title: doc.meta.title,
-                  tags: doc.meta.labels,
-                  assignee: doc.meta.assignee,
-                  updated: doc.meta.updated,
-                },
-              })),
+          rows: collapsed ? [] : rows,
         };
       }),
     [
-      groups,
+      sortedGroupRows,
       collapsedGroups,
       data.latestRunByTaskId,
       data.readyIds,
@@ -534,9 +622,10 @@ export function TasksListView({ data, onSelectTask }: TasksListViewProps) {
           className="min-h-0 flex-1 overflow-y-auto"
         >
           <RecordsTable
-            columns={COLUMNS}
+            columns={visibleColumns}
             groups={recordsGroups}
-            sort={null}
+            sort={sort}
+            onSortChange={setSort}
             onRowClick={(row) => onSelectTask(row.id)}
             onRowMouseEnter={setFocusedTaskId}
             selectable

@@ -57,7 +57,7 @@ function makeTask(
 describe('countMergeReady', () => {
   test('a finished, unreviewed run with no blockers counts', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
-    const tasks = [makeTask('t1', 'in-review')];
+    const tasks = [makeTask('t1', 'review')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(1);
   });
 
@@ -65,7 +65,7 @@ describe('countMergeReady', () => {
     const runs = [
       run({ id: 'r1', taskId: 't1', reviewedAt: '2026-01-02T00:00:00.000Z' }),
     ];
-    const tasks = [makeTask('t1', 'in-review')];
+    const tasks = [makeTask('t1', 'review')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
   });
 
@@ -73,15 +73,15 @@ describe('countMergeReady', () => {
     const runs = [
       run({ id: 'r1', taskId: 't1', prUrl: 'https://example.com/pr/1' }),
     ];
-    const tasks = [makeTask('t1', 'in-review')];
+    const tasks = [makeTask('t1', 'review')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
   });
 
   test('a run whose task is blocked by an undone task does not count', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
     const tasks = [
-      makeTask('blocker', 'todo'),
-      makeTask('t1', 'in-review', ['blocker']),
+      makeTask('blocker', 'ready'),
+      makeTask('t1', 'review', ['blocker']),
     ];
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
   });
@@ -89,22 +89,22 @@ describe('countMergeReady', () => {
   test('a run whose task is blocked only by done/cancelled tasks counts', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
     const tasks = [
-      makeTask('done-blocker', 'done'),
-      makeTask('cancelled-blocker', 'cancelled'),
-      makeTask('t1', 'in-review', ['done-blocker', 'cancelled-blocker']),
+      makeTask('done-blocker', 'landed'),
+      makeTask('cancelled-blocker', 'dropped'),
+      makeTask('t1', 'review', ['done-blocker', 'cancelled-blocker']),
     ];
     expect(countMergeReady(runs, tasks, new Set())).toBe(1);
   });
 
   test('a run already sitting in the merge queue does not count again', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
-    const tasks = [makeTask('t1', 'in-review')];
+    const tasks = [makeTask('t1', 'review')];
     expect(countMergeReady(runs, tasks, new Set(['r1']))).toBe(0);
   });
 
   test('a run whose own task is already cancelled does not count', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
-    const tasks = [makeTask('t1', 'cancelled')];
+    const tasks = [makeTask('t1', 'dropped')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
   });
 
@@ -115,22 +115,22 @@ describe('countMergeReady', () => {
   // is actually present in the array.
   test('an archived, done own task does not count, even though it is archived', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
-    const tasks = [makeTask('t1', 'done', [], '2026-01-03T00:00:00.000Z')];
+    const tasks = [makeTask('t1', 'landed', [], '2026-01-03T00:00:00.000Z')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
   });
 
   test('an archived, done blocker still satisfies the blockedBy gate', () => {
     const runs = [run({ id: 'r1', taskId: 't1' })];
     const tasks = [
-      makeTask('archived-blocker', 'done', [], '2026-01-03T00:00:00.000Z'),
-      makeTask('t1', 'in-review', ['archived-blocker']),
+      makeTask('archived-blocker', 'landed', [], '2026-01-03T00:00:00.000Z'),
+      makeTask('t1', 'review', ['archived-blocker']),
     ];
     expect(countMergeReady(runs, tasks, new Set())).toBe(1);
   });
 
   test('a still-running or non-finished-terminal run does not count', () => {
     const runs = [run({ id: 'r1', taskId: 't1', state: 'failed' })];
-    const tasks = [makeTask('t1', 'in-review')];
+    const tasks = [makeTask('t1', 'review')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(0);
   });
 
@@ -139,7 +139,7 @@ describe('countMergeReady', () => {
       run({ id: 'r1', taskId: 't1' }),
       run({ id: 'r2', taskId: 't2' }),
     ];
-    const tasks = [makeTask('t1', 'in-review'), makeTask('t2', 'in-review')];
+    const tasks = [makeTask('t1', 'review'), makeTask('t2', 'review')];
     expect(countMergeReady(runs, tasks, new Set())).toBe(2);
   });
 });

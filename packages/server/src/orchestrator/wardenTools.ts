@@ -1,10 +1,10 @@
 import { untrustedInline } from '@dispatch/core';
-import type { LedgerEntry, TaskDoc, TaskStore } from '@dispatch/core';
+import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
 import type { TaskCache } from '../cache.js';
-import type { LedgerStore } from '../ledger.js';
+import type { LedgerStorePort } from '../ledger.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { QuestionRegistry, RunQuestion } from './questions.js';
@@ -53,12 +53,12 @@ export class WardenToolError extends Error {}
  * bus on this context would only be a second, easily-desynced way to do it.
  */
 export interface WardenToolContext {
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   orchestrator: Orchestrator;
   mergeQueue: MergeQueue;
   questions: QuestionRegistry;
-  ledgerStore: LedgerStore;
+  ledgerStore: LedgerStorePort;
   /**
    * Executor `dispatch_task` uses when the warden doesn't name one. Matches
    * api.ts's own fallback rather than being configurable per call site, so
@@ -245,8 +245,8 @@ const blockedTasksTool: WardenStatusTool<NoInput> = {
           const blocker = byId.get(id);
           return (
             blocker !== undefined &&
-            blocker.meta.status !== 'done' &&
-            blocker.meta.status !== 'cancelled'
+            blocker.meta.status !== 'landed' &&
+            blocker.meta.status !== 'dropped'
           );
         }),
       }))
@@ -392,11 +392,16 @@ const dispatchTask: WardenMutatingTool<z.infer<typeof dispatchInput>> = {
     // confirming the action in the chat UI is precisely who caused it. The
     // explicit 'none' actor is for callers with no human behind them at all
     // (EpicEngine's auto-fill), which the warden never is.
-    await ctx.orchestrator.dispatch(
-      input.taskId,
-      executorFor(ctx, input.executor),
-      { model: input.model }
-    );
+    // dispatchOrResume, not dispatch: a task whose last run a daemon restart
+    // left recoverable is picked back up rather than started over. `executor`
+    // and `model` carry what the warden's caller actually NAMED — the daemon's
+    // default executor is passed separately, so defaulting to it never reads
+    // as an explicit ask that a resume would have to refuse.
+    await ctx.orchestrator.dispatchOrResume(input.taskId, {
+      executor: input.executor,
+      model: input.model,
+      defaults: { executor: executorFor(ctx) },
+    });
   },
 };
 

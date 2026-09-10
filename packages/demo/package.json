@@ -1,6 +1,7 @@
 {
   "name": "@dispatch/demo",
   "private": true,
+  "license": "FSL-1.1-ALv2",
   "bin": {
     "demo": "./src/cli.ts"
   },
@@ -13,9 +14,9 @@
     "./teammate": "./src/teammate.ts"
   },
   "scripts": {
-    "tsc": "tsc --noEmit",
+    "demo": "bun src/cli.ts",
     "test": "bun test",
-    "demo": "bun src/cli.ts"
+    "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
     "@dispatch/core": "workspace:*"

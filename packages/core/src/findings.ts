@@ -30,3 +30,55 @@ export interface Finding {
   /** Serialized ActorRef of whoever raised it; empty for pre-team records. */
   raisedBy: string;
 }
+
+// The write surface every findings backend takes. Declared here beside the
+// record it produces so the file-backed store in the daemon and the
+// database-backed one in sqliteRecords.ts agree on inputs without either
+// importing the other.
+
+export interface AddFindingInput {
+  taskId: string;
+  runId: string | null;
+  severity: FindingSeverity;
+  title: string;
+  detail: string;
+  file?: string | null;
+  line?: number | null;
+  /** Paths this finding covers when one check fired across many files. */
+  files?: string[];
+  round?: number;
+  recommendation?: FindingRecommendation;
+  /** Serialized ActorRef of whoever raised it. */
+  raisedBy: string;
+}
+
+export interface FindingUpdatePatch {
+  verdict?: FindingVerdict;
+  ruling?: string | null;
+}
+
+export interface FindingListFilter {
+  taskId?: string;
+  verdict?: FindingVerdict;
+  severity?: FindingSeverity;
+}
+
+// Runtime counterparts of the closed sets above, for readers that have to
+// check a value rather than trust it — the SQLite backend validates every
+// enum column against these. Mirrors how types.ts pairs STATUSES/KINDS with
+// their types.
+export const FINDING_SEVERITIES: readonly FindingSeverity[] = [
+  'critical',
+  'important',
+  'minor',
+];
+export const FINDING_VERDICTS: readonly FindingVerdict[] = [
+  'open',
+  'addressed',
+  'parked',
+  'blocked',
+];
+export const FINDING_RECOMMENDATIONS: readonly FindingRecommendation[] = [
+  'blocks',
+  'park',
+];

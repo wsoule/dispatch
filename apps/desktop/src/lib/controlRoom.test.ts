@@ -43,7 +43,7 @@ function task(
   parent: string | null = null
 ): TaskDoc {
   return {
-    meta: { id, title, parent, status: 'todo', kind: 'task' },
+    meta: { id, title, parent, status: 'ready', kind: 'task' },
   } as TaskDoc;
 }
 
@@ -57,6 +57,7 @@ function input(over: Partial<BuildFeedInput> = {}): BuildFeedInput {
     mergeQueue: null,
     pendingApprovals: new Map(),
     openQuestions: new Map(),
+    fixLoops: new Map(),
     query: '',
     activeStates: new Set(),
     collapsed: new Set(),
@@ -78,15 +79,25 @@ describe('grouping', () => {
       input({
         runs: [
           run({ id: 'r-a', state: 'finished' }),
-          run({ id: 'r-b', state: 'running' }),
-          run({ id: 'r-c', state: 'awaiting-approval' }),
+          run({
+            id: 'r-b',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'running',
+          }),
+          run({
+            id: 'r-c',
+            taskId: 't-3',
+            branch: 'dispatch/t-3',
+            state: 'awaiting-approval',
+          }),
         ],
       })
     );
     expect(model.groups.map((g) => g.state)).toEqual([
-      'waiting',
-      'working',
+      'approve',
       'review',
+      'working',
     ]);
   });
 
@@ -201,7 +212,12 @@ describe('filtering', () => {
       input({
         runs: [
           run({ id: 'r-a', state: 'running' }),
-          run({ id: 'r-b', state: 'finished' }),
+          run({
+            id: 'r-b',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'finished',
+          }),
         ],
         activeStates: new Set(),
       })
@@ -214,13 +230,23 @@ describe('filtering', () => {
       input({
         runs: [
           run({ id: 'r-a', state: 'running' }),
-          run({ id: 'r-b', state: 'finished' }),
-          run({ id: 'r-c', state: 'awaiting-approval' }),
+          run({
+            id: 'r-b',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'finished',
+          }),
+          run({
+            id: 'r-c',
+            taskId: 't-3',
+            branch: 'dispatch/t-3',
+            state: 'awaiting-approval',
+          }),
         ],
         activeStates: new Set<FeedState>(['working', 'review']),
       })
     );
-    expect(model.groups.map((g) => g.state)).toEqual(['working', 'review']);
+    expect(model.groups.map((g) => g.state)).toEqual(['review', 'working']);
     expect(model.shown).toBe(2);
   });
 });
@@ -243,7 +269,12 @@ describe('counts', () => {
   test('ribbon counts are unaffected by the active filter', () => {
     const runs = [
       run({ id: 'r-a', state: 'running' }),
-      run({ id: 'r-b', state: 'finished' }),
+      run({
+        id: 'r-b',
+        taskId: 't-2',
+        branch: 'dispatch/t-2',
+        state: 'finished',
+      }),
     ];
     const unfiltered = buildFeed(input({ runs }));
     const filtered = buildFeed(
@@ -278,10 +309,10 @@ describe('row content', () => {
       reason: 'Wants to run Bash',
       detail: null,
     });
-    expect(model.groups[0]?.rows[0]?.waitingOn).toBe('approval');
+    expect(model.groups[0]?.rows[0]?.state).toBe('approve');
   });
 
-  test('a running run with an open question moves to waiting and quotes it', () => {
+  test('a running run with an open question moves to answer and quotes it', () => {
     const model = buildFeed(
       input({
         runs: [run({ id: 'r-a', state: 'running' })],
@@ -289,13 +320,12 @@ describe('row content', () => {
       })
     );
     const row = model.groups[0]?.rows[0];
-    expect(row?.state).toBe('waiting');
-    expect(row?.waitingOn).toBe('question');
+    expect(row?.state).toBe('answer');
     expect(row?.attention).toEqual({
       reason: 'Asked you a question',
       detail: 'Which database?',
     });
-    expect(model.counts.waiting).toBe(1);
+    expect(model.counts.answer).toBe(1);
     expect(model.counts.working).toBe(0);
   });
 
@@ -325,7 +355,7 @@ describe('row content', () => {
       })
     );
     expect(model.groups[0]?.rows[0]?.state).toBe('review');
-    expect(model.groups[0]?.rows[0]?.waitingOn).toBeNull();
+    expect(model.groups[0]?.rows[0]?.attention).toBeNull();
   });
 
   // After a reload this window never saw the approval.requested event, so the tool name is
@@ -396,7 +426,7 @@ describe('row content', () => {
 });
 
 describe('auxiliary runs fold into the execute run they are about', () => {
-  test('a live review agent produces one working row, not a second row', () => {
+  test('a live review agent produces one checking row, not a second row', () => {
     const model = buildFeed(
       input({
         runs: [
@@ -410,10 +440,10 @@ describe('auxiliary runs fold into the execute run they are about', () => {
     const rows = model.groups.flatMap((g) => g.rows);
     expect(rows).toHaveLength(1);
     expect(rows[0]?.runId).toBe('r-exec');
-    expect(rows[0]?.state).toBe('working');
+    expect(rows[0]?.state).toBe('checking');
     expect(rows[0]?.activity).toBe('AI review running');
     // The ribbon must agree with the feed, or the counts contradict the rows.
-    expect(model.counts.working).toBe(1);
+    expect(model.counts.checking).toBe(1);
     expect(model.counts.review).toBe(0);
   });
 
@@ -472,10 +502,15 @@ describe('auxiliary runs fold into the execute run they are about', () => {
 describe('group configuration', () => {
   test('only run-backed states are fed; ready and blocked are ribbon-only', () => {
     expect(FEED_GROUPS).toEqual([
-      'waiting',
+      'answer',
+      'approve',
+      'review',
+      'ruling',
+      'unblock',
       'failed',
       'working',
-      'review',
+      'fixing',
+      'checking',
       'landing',
     ]);
   });
@@ -484,4 +519,179 @@ describe('group configuration', () => {
     expect(groupCap('working')).toBe(7);
     expect(groupCap('review')).toBe(5);
   });
+});
+
+describe('superseded runs collapse to one row per task', () => {
+  // Three fix-loop rounds left three finished execute runs on t-1; only the
+  // newest speaks for the task.
+  test('older review-state runs of the same task are dropped', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({
+            id: 'r-1',
+            state: 'finished',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          run({
+            id: 'r-2',
+            state: 'finished',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+          run({
+            id: 'r-3',
+            state: 'finished',
+            createdAt: '2026-07-26T02:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    const review = model.groups.find((g) => g.state === 'review');
+    expect(review?.rows.map((r) => r.runId)).toEqual(['r-3']);
+    expect(model.counts.review).toBe(1);
+  });
+
+  test('an older failed round is history once a newer run exists', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({
+            id: 'r-1',
+            state: 'failed',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          run({
+            id: 'r-2',
+            state: 'finished',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    expect(model.counts.failed).toBe(0);
+    expect(model.counts.review).toBe(1);
+  });
+
+  test('runs of different tasks never fold into each other', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({ id: 'r-1', state: 'finished' }),
+          run({
+            id: 'r-2',
+            taskId: 't-2',
+            branch: 'dispatch/t-2',
+            state: 'finished',
+          }),
+        ],
+      })
+    );
+    expect(model.counts.review).toBe(2);
+  });
+
+  test('rows carry the task fix-loop state for the loop status and Stop', () => {
+    const loop = {
+      taskId: 't-1',
+      round: 2,
+      cap: 5,
+      state: 'reviewing',
+      baseSha: 'abc',
+      lastReviewedSha: null,
+      updatedAt: '2026-07-26T00:00:00.000Z',
+    } as const;
+    const model = buildFeed(
+      input({
+        runs: [run({ state: 'finished' })],
+        fixLoops: new Map([['t-1', loop]]),
+      })
+    );
+    const review = model.groups.find((g) => g.state === 'review');
+    expect(review?.rows[0]?.fixLoop).toEqual(loop);
+  });
+});
+
+// The screenshot case behind the rule: review agents whose execute run is gone (merged away
+// or healed as a zombie after a daemon restart) each keep a row of their own — three
+// "failed" and three "needs review" rows all naming one task.
+describe('stacked standalone review agents collapse too', () => {
+  test('zombie review runs of one task collapse to the newest', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          auxRun({
+            id: 'rv-1',
+            kind: 'review',
+            state: 'failed',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          auxRun({
+            id: 'rv-2',
+            kind: 'review',
+            state: 'failed',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+          auxRun({
+            id: 'rv-3',
+            kind: 'review',
+            state: 'finished',
+            createdAt: '2026-07-26T02:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    expect(model.total).toBe(1);
+    expect(model.groups.map((g) => g.state)).toEqual(['review']);
+    expect(model.groups[0]?.rows.map((r) => r.runId)).toEqual(['rv-3']);
+  });
+
+  test('an old execute round and a newer standalone review agent are one row', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          // An execute round still reading 'review', on a branch no aux run points at.
+          run({
+            id: 'r-old',
+            branch: 'dispatch/t-1-round1',
+            state: 'finished',
+            createdAt: '2026-07-26T00:00:00.000Z',
+          }),
+          // A newer review agent for the same task whose own execute run is gone.
+          auxRun({
+            id: 'rv-1',
+            kind: 'review',
+            state: 'failed',
+            createdAt: '2026-07-26T01:00:00.000Z',
+          }),
+        ],
+      })
+    );
+    expect(model.total).toBe(1);
+    expect(model.groups[0]?.rows.map((r) => r.runId)).toEqual(['rv-1']);
+    expect(model.groups[0]?.state).toBe('failed');
+  });
+});
+
+test("a live run suppresses the task's older review and failed rows", () => {
+  const model = buildFeed(
+    input({
+      runs: [
+        run({
+          id: 'r-old',
+          branch: 'dispatch/t-1-round1',
+          state: 'finished',
+          createdAt: '2026-07-26T00:00:00.000Z',
+        }),
+        run({
+          id: 'r-live',
+          branch: 'dispatch/t-1-round2',
+          state: 'running',
+          createdAt: '2026-07-26T01:00:00.000Z',
+        }),
+      ],
+    })
+  );
+  // Only the working row: the run in flight supersedes the older round's review.
+  expect(model.total).toBe(1);
+  expect(model.groups.map((g) => g.state)).toEqual(['working']);
+  expect(model.counts.review).toBe(0);
 });

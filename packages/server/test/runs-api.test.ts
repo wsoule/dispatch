@@ -145,7 +145,7 @@ describe('POST /api/tasks/:id/runs', () => {
     await fetch(`${baseUrl}/api/tasks/${task.meta.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'done' }),
+      body: JSON.stringify({ status: 'landed' }),
     });
 
     const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
@@ -154,7 +154,7 @@ describe('POST /api/tasks/:id/runs', () => {
       body: JSON.stringify({ executor: 'fake' }),
     });
     expect(res.status).toBe(409);
-    expect((await json(res)).error).toBe('cannot dispatch a done task');
+    expect((await json(res)).error).toBe('cannot dispatch a landed task');
   });
 
   it('409s dispatching a task whose status is cancelled', async () => {
@@ -162,7 +162,7 @@ describe('POST /api/tasks/:id/runs', () => {
     await fetch(`${baseUrl}/api/tasks/${task.meta.id}`, {
       method: 'PATCH',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'cancelled' }),
+      body: JSON.stringify({ status: 'dropped' }),
     });
 
     const res = await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
@@ -171,7 +171,7 @@ describe('POST /api/tasks/:id/runs', () => {
       body: JSON.stringify({ executor: 'fake' }),
     });
     expect(res.status).toBe(409);
-    expect((await json(res)).error).toBe('cannot dispatch a cancelled task');
+    expect((await json(res)).error).toBe('cannot dispatch a dropped task');
   });
 
   it('dispatches with the default executor when the field is omitted', async () => {
@@ -202,7 +202,7 @@ describe('POST /api/tasks/:id/runs', () => {
 
     await waitFor(async () => {
       const t = await json(await fetch(`${baseUrl}/api/tasks/${task.meta.id}`));
-      return t.meta.status === 'in-review';
+      return t.meta.status === 'review';
     });
     const finished = await json(
       await fetch(`${baseUrl}/api/tasks/${task.meta.id}`)
@@ -405,7 +405,7 @@ describe('run review: merge and discard', () => {
     const finishedTask = await json(
       await fetch(`${baseUrl}/api/tasks/${task.meta.id}`)
     );
-    expect(finishedTask.meta.status).toBe('done');
+    expect(finishedTask.meta.status).toBe('landed');
     const log = runGitSync(root, ['log', '-1', '--pretty=%s']).trim();
     expect(log).toContain('Merge via API');
   });
@@ -528,7 +528,7 @@ describe('run review: merge and discard', () => {
     const task2 = await json(
       await fetch(`${baseUrl}/api/tasks/${task.meta.id}`)
     );
-    expect(task2.meta.status).toBe('todo');
+    expect(task2.meta.status).toBe('ready');
   });
 });
 

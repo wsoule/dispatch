@@ -1,9 +1,9 @@
-import { generateFindingId } from '@dispatch/core';
+import { generateFindingId, scanFindingsJsonl } from '@dispatch/core';
 import type {
+  AddFindingInput,
   Finding,
-  FindingRecommendation,
-  FindingSeverity,
-  FindingVerdict,
+  FindingListFilter,
+  FindingUpdatePatch,
 } from '@dispatch/core';
 import { appendFileSync, existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -11,55 +11,36 @@ import { dirname, join } from 'node:path';
 // Review findings raised against a task, one JSON line per write in
 // `.dispatch/findings.jsonl`. An update is a fresh line, not a rewrite.
 
-export interface AddFindingInput {
-  taskId: string;
-  runId: string | null;
-  severity: FindingSeverity;
-  title: string;
-  detail: string;
-  file?: string | null;
-  line?: number | null;
-  /** Paths this finding covers when one check fired across many files. */
-  files?: string[];
-  round?: number;
-  recommendation?: FindingRecommendation;
-  /** Serialized ActorRef of whoever raised it. */
-  raisedBy: string;
-}
+// Re-exported, not re-declared: `@dispatch/core` owns these shapes (they sit
+// beside the `Finding` they produce, so the database-backed store can take
+// the same inputs), and a second copy here is one that can drift from the
+// backend on the other side of the port below.
+export type {
+  AddFindingInput,
+  FindingListFilter,
+  FindingUpdatePatch,
+} from '@dispatch/core';
 
-export interface FindingUpdatePatch {
-  verdict?: FindingVerdict;
-  ruling?: string | null;
-}
-
-export interface FindingListFilter {
-  taskId?: string;
-  verdict?: FindingVerdict;
-  severity?: FindingSeverity;
+/**
+ * The findings surface every backend answers, so the daemon can hold either
+ * the JSONL store below or core's `SqliteFindingStore` without any handler
+ * knowing which. Structural, not `implements`: `SqliteFindingStore` lives in
+ * `@dispatch/core` and cannot import this file, and its extra optional `now`
+ * parameters are compatible with these signatures anyway.
+ */
+export interface FindingStorePort {
+  get(id: string): Finding | null;
+  list(filter?: FindingListFilter): Finding[];
+  openFor(taskId: string): Finding[];
+  add(input: AddFindingInput): Finding;
+  update(id: string, patch: FindingUpdatePatch): Finding;
 }
 
 // How many times add() will re-roll an id before giving up. Far beyond what
 // randomness needs; it only bounds a generator that keeps returning a taken id.
 const MINT_ATTEMPTS = 32;
 
-// The fields every read path dereferences. A hand-edited line missing one is
-// not a finding: without an id, update() writes past it and never edits it.
-function isFinding(value: unknown): value is Finding {
-  if (typeof value !== 'object' || value === null) return false;
-  const record = value as Record<string, unknown>;
-  return (
-    typeof record.id === 'string' &&
-    record.id !== '' &&
-    typeof record.taskId === 'string' &&
-    typeof record.severity === 'string' &&
-    typeof record.verdict === 'string' &&
-    typeof record.title === 'string' &&
-    typeof record.detail === 'string' &&
-    typeof record.createdAt === 'string'
-  );
-}
-
-export class FindingStore {
+export class FindingStore implements FindingStorePort {
   private readonly file: string;
   private readonly generateId: (now: string) => string;
   // Ids already reported as colliding, so a damaged file logs once, not on
@@ -79,30 +60,19 @@ export class FindingStore {
 
   // Compacts the append-only file, keyed by id + createdAt because update()
   // re-appends both — so two records that minted one id both survive.
+  //
+  // The compaction itself lives in `@dispatch/core`'s scanFindingsJsonl, not
+  // here: the one-time import of this file into the database has to serve
+  // exactly the set this store serves, and two copies of the rule would drift
+  // apart silently. What stays here is the reporting — which lines this
+  // daemon has already complained about — since that is per-process state a
+  // pure scanner has no business holding.
   private read(): Finding[] {
     if (!existsSync(this.file)) return [];
-    const byRecord = new Map<string, Finding>();
-    const firstKeyForId = new Map<string, string>();
-    for (const line of readFileSync(this.file, 'utf8').split('\n')) {
-      if (line.trim() === '') continue;
-      try {
-        const parsed: unknown = JSON.parse(line);
-        if (!isFinding(parsed)) {
-          this.reportInvalidLine(line);
-          continue;
-        }
-        // Older lines pre-date raisedBy; default it so they stay loadable.
-        const record: Finding = { ...parsed, raisedBy: parsed.raisedBy ?? '' };
-        const key = `${record.id}\n${record.createdAt}`;
-        const first = firstKeyForId.get(record.id);
-        if (first === undefined) firstKeyForId.set(record.id, key);
-        else if (first !== key) this.reportCollision(record.id);
-        byRecord.set(key, record);
-      } catch {
-        // A hand-corrupted line costs itself, not the rest of the store.
-      }
-    }
-    return [...byRecord.values()];
+    const scan = scanFindingsJsonl(readFileSync(this.file, 'utf8'));
+    for (const line of scan.invalidLines) this.reportInvalidLine(line);
+    for (const id of scan.duplicateIds) this.reportCollision(id);
+    return scan.records;
   }
 
   // A repeated id with a different createdAt is two findings, not an edit —

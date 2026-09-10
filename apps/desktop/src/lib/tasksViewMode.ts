@@ -1,3 +1,5 @@
+import { useCallback, useState } from 'react';
+
 /**
  * Which layout the Tasks view opens in.
  *
@@ -27,4 +29,27 @@ export function parseViewMode(stored: string | null): TasksViewMode {
     return stored;
   }
   return 'board';
+}
+
+/**
+ * The Tasks view mode as App-level state: read once from storage, written only on an
+ * explicit change — never on mount, which is exactly the auto-save-the-default flaw that
+ * poisoned the v1 key (see `VIEW_MODE_STORAGE_KEY`).
+ */
+export function useTasksViewMode(): [
+  TasksViewMode,
+  (mode: TasksViewMode) => void,
+] {
+  const [mode, setMode] = useState<TasksViewMode>(() =>
+    parseViewMode(
+      typeof window === 'undefined'
+        ? null
+        : window.localStorage.getItem(VIEW_MODE_STORAGE_KEY)
+    )
+  );
+  const set = useCallback((next: TasksViewMode) => {
+    setMode(next);
+    window.localStorage.setItem(VIEW_MODE_STORAGE_KEY, next);
+  }, []);
+  return [mode, set];
 }

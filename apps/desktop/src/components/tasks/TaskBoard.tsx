@@ -18,9 +18,11 @@ import { Plus } from 'lucide-react';
 import { useMemo, useState } from 'react';
 
 import {
+  type BoardLane,
   countLaneStatuses,
   dropZoneId,
   groupTasksByEpicLane,
+  groupTasksByStatus,
   laneKey,
   statusFromDropZoneId,
 } from '../../lib/boardGrouping';
@@ -51,6 +53,11 @@ interface TaskBoardProps {
   epicConcurrencyDefault: number;
   /** Every epic in the project — one lane per epic that has children, in this order. */
   epics: TaskDoc[];
+  /** One lane per epic (the original board) vs one flat set of dense status columns with an
+   * epic breadcrumb on each card. Flat is the default the app ships: the lane-per-epic
+   * matrix is sparse (most lanes fill one column), and the Milestones view is the
+   * per-epic surface now. */
+  groupByEpic?: boolean;
   /** Lane keys (see `laneKey`) whose epic is folded up right now. */
   collapsedLaneKeys: ReadonlySet<string>;
   /** Flips one lane between expanded and collapsed — owned by `BoardView`, which also needs the
@@ -192,6 +199,7 @@ export function TaskBoard({
   epicProgressById,
   epicConcurrencyDefault,
   epics,
+  groupByEpic = true,
   collapsedLaneKeys,
   onToggleLane,
   onRequestWorkEpic,
@@ -212,10 +220,23 @@ export function TaskBoard({
   // The same lanes `BoardView` derives for its j/k order, from the same pure function and the
   // same inputs — deliberately recomputed here rather than passed down, so the two never have to
   // be kept in sync as a pair of props that could disagree.
-  const lanes = useMemo(
-    () => groupTasksByEpicLane(tasks, statuses, epics),
-    [tasks, statuses, epics]
-  );
+  const lanes = useMemo<BoardLane[]>(() => {
+    if (groupByEpic) return groupTasksByEpicLane(tasks, statuses, epics);
+    // Flat board: one headerless lane holding every task (epics are lane headings in the
+    // grouped board, so they have no card to show here either).
+    const columns = groupTasksByStatus(
+      tasks.filter((t) => t.meta.kind !== 'epic'),
+      statuses
+    );
+    return [
+      {
+        epicId: null,
+        title: '',
+        columns,
+        total: columns.reduce((n, c) => n + c.tasks.length, 0),
+      },
+    ];
+  }, [tasks, statuses, epics, groupByEpic]);
   const statusCounts = useMemo(
     () => countLaneStatuses(lanes, statuses, collapsedLaneKeys),
     [lanes, statuses, collapsedLaneKeys]
@@ -340,36 +361,39 @@ export function TaskBoard({
             <div className="flex w-max flex-col gap-5">
               {lanes.map((lane, laneIndex) => {
                 const key = laneKey(lane.epicId);
-                const expanded = !collapsedLaneKeys.has(key);
+                // The flat board's single lane has no header to collapse from — always open.
+                const expanded = !groupByEpic || !collapsedLaneKeys.has(key);
                 const epic =
                   lane.epicId !== null
                     ? (epicById.get(lane.epicId) ?? null)
                     : null;
                 return (
                   <section key={key}>
-                    <EpicLaneHeader
-                      epic={epic}
-                      title={lane.title}
-                      total={lane.total}
-                      expanded={expanded}
-                      onToggle={() => onToggleLane(key)}
-                      progress={
-                        epic !== null
-                          ? epicProgressById.get(epic.meta.id)
-                          : undefined
-                      }
-                      concurrencyDefault={epicConcurrencyDefault}
-                      childTasks={
-                        epic !== null
-                          ? (childrenByEpicId.get(epic.meta.id) ?? [])
-                          : []
-                      }
-                      onOpenTask={onSelect}
-                      onWork={onWorkEpic}
-                      onRequestWork={onRequestWorkEpic}
-                      onStop={onStopEpic}
-                      onLand={onLandEpic}
-                    />
+                    {groupByEpic && (
+                      <EpicLaneHeader
+                        epic={epic}
+                        title={lane.title}
+                        total={lane.total}
+                        expanded={expanded}
+                        onToggle={() => onToggleLane(key)}
+                        progress={
+                          epic !== null
+                            ? epicProgressById.get(epic.meta.id)
+                            : undefined
+                        }
+                        concurrencyDefault={epicConcurrencyDefault}
+                        childTasks={
+                          epic !== null
+                            ? (childrenByEpicId.get(epic.meta.id) ?? [])
+                            : []
+                        }
+                        onOpenTask={onSelect}
+                        onWork={onWorkEpic}
+                        onRequestWork={onRequestWorkEpic}
+                        onStop={onStopEpic}
+                        onLand={onLandEpic}
+                      />
+                    )}
                     {expanded && (
                       <div className="flex gap-6">
                         {lane.columns.map(({ status, tasks: laneTasks }) => (
@@ -399,10 +423,15 @@ export function TaskBoard({
                                         doc.meta.id
                                       )}
                                       run={latestRunByTaskId.get(doc.meta.id)}
-                                      // No epic breadcrumb inside a lane: the lane heading
-                                      // already says which epic this is, so repeating it on
-                                      // every card is noise.
-                                      epicTitle={undefined}
+                                      // Grouped board: the lane heading already names the
+                                      // epic, so the card skips the breadcrumb. Flat board:
+                                      // the breadcrumb is how a card keeps its epic.
+                                      epicTitle={
+                                        groupByEpic || doc.meta.parent === null
+                                          ? undefined
+                                          : epicById.get(doc.meta.parent)?.meta
+                                              .title
+                                      }
                                       statuses={statuses}
                                       onStatusChange={(next) =>
                                         void onMoveStatus?.(doc.meta.id, next)

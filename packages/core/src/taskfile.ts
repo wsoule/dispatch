@@ -2,6 +2,7 @@ import YAML from 'yaml';
 
 import { isValidAssignee } from './actor.js';
 import { describeValue } from './describe.js';
+import { canonicalStatus } from './status.js';
 import type {
   Assignee,
   Priority,
@@ -101,7 +102,7 @@ export function parseTaskFile(content: string, file?: string): TaskDoc {
   const meta: TaskMeta = {
     id: String(raw.id),
     title: String(raw.title),
-    status: String(raw.status),
+    status: canonicalStatus(String(raw.status)),
     kind: raw.kind as TaskKind,
     parent: (raw.parent as string | null) ?? null,
     milestone: (raw.milestone as string | null) ?? null,

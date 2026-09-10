@@ -260,7 +260,7 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
       meta: { id: string; status: string };
     }[];
     const found = tasks.find((t) => t.meta.id === taskId);
-    expect(found?.meta.status).toBe('done');
+    expect(found?.meta.status).toBe('landed');
   }, 20_000);
 
   it('plan --planner fake --yes -> epic start -> completion', async () => {
@@ -308,7 +308,9 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
       cli('epic', 'status', epicId!, '--json')
     ) as EpicProgressLike;
     expect(finalProgress.active).toBe(false);
-    expect(finalProgress.children.every((c) => c.status === 'done')).toBe(true);
+    expect(finalProgress.children.every((c) => c.status === 'landed')).toBe(
+      true
+    );
   }, 20_000);
 
   it('renders a 409 verbatim when reviewing an already-reviewed run', () => {

@@ -246,3 +246,91 @@ export function relativeTime(iso: string, now: number): string {
   if (diffMs < WEEK_MS) return `${Math.floor(diffMs / DAY_MS)}d ago`;
   return new Date(then).toLocaleDateString();
 }
+
+export interface DedupedLanding {
+  rows: LandingRow[];
+  /** taskId -> how many additional runs the surviving row speaks for. */
+  extraRunsByTask: Map<string, number>;
+}
+
+/**
+ * One row per task — the same superseded-round rule the Inbox and Control room apply. A
+ * task the fix loop ran several times leaves one landing row per run; among a task's plain
+ * rows only the newest (by its run's createdAt, supplied by the caller) survives, and none
+ * survive while the task has a queue-backed row — the queue entry is the row that's real.
+ * Rows without a task (bare repo PRs) always pass through.
+ */
+export function dedupeLandingRows(
+  rows: LandingRow[],
+  runCreatedAt: ReadonlyMap<string, string>
+): DedupedLanding {
+  const createdOf = (row: LandingRow): string =>
+    row.runId !== undefined ? (runCreatedAt.get(row.runId) ?? '') : '';
+
+  const queuedTasks = new Set(
+    rows
+      .filter((r) => r.queue !== undefined && r.taskId !== undefined)
+      .map((r) => r.taskId)
+  );
+  const survivorByTask = new Map<string, LandingRow>();
+  for (const row of rows) {
+    if (row.taskId === undefined || row.queue !== undefined) continue;
+    const seen = survivorByTask.get(row.taskId);
+    if (seen === undefined || createdOf(row) > createdOf(seen)) {
+      survivorByTask.set(row.taskId, row);
+    }
+  }
+
+  const out: LandingRow[] = [];
+  const extraRunsByTask = new Map<string, number>();
+  const dropped = (taskId: string) => {
+    extraRunsByTask.set(taskId, (extraRunsByTask.get(taskId) ?? 0) + 1);
+  };
+  for (const row of rows) {
+    if (row.taskId === undefined || row.queue !== undefined) {
+      out.push(row);
+      continue;
+    }
+    if (queuedTasks.has(row.taskId)) {
+      dropped(row.taskId);
+      continue;
+    }
+    if (survivorByTask.get(row.taskId) === row) out.push(row);
+    else dropped(row.taskId);
+  }
+  return { rows: out, extraRunsByTask };
+}
+
+export interface LandedTaskRow {
+  id: string;
+  title: string;
+  landedAt: string;
+}
+
+/**
+ * "Recently landed", from the task store instead of the merge queue's in-memory history —
+ * the queue forgets on every daemon restart, while a landed task's status is durable. The
+ * caller passes the archived-inclusive task list (most landed tasks get archived).
+ */
+export function landedFromTasks(
+  tasks: readonly {
+    meta: {
+      id: string;
+      title: string;
+      status: string;
+      kind: string;
+      updated: string;
+    };
+  }[],
+  cap = 30
+): LandedTaskRow[] {
+  return tasks
+    .filter((t) => t.meta.status === 'landed' && t.meta.kind !== 'epic')
+    .sort((a, b) => b.meta.updated.localeCompare(a.meta.updated))
+    .slice(0, cap)
+    .map((t) => ({
+      id: t.meta.id,
+      title: t.meta.title,
+      landedAt: t.meta.updated,
+    }));
+}

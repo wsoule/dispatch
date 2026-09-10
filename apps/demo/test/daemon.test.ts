@@ -75,7 +75,7 @@ describe('demo daemon', () => {
       // never a real git ref, so the worktree add 500s. A plain unblocked
       // dispatch runs against the real default base branch instead.
       const todo = tasks.find(
-        (t) => t.meta.status === 'todo' && t.meta.blockedBy.length === 0
+        (t) => t.meta.status === 'ready' && t.meta.blockedBy.length === 0
       );
       expect(todo).toBeDefined();
 

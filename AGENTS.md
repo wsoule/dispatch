@@ -1,4 +1,4 @@
-# Bun TypeScript Monorepo Template
+# Dispatch Monorepo
 
 ## Agent Environment
 
@@ -9,17 +9,63 @@ AI-friendly output:
 export AGENT=1
 ```
 
+Most local moon tasks (`root:format`, the worktree manager) are configured with
+`runInCI: 'always'` so they keep working in CI-marked shells like agent
+harnesses. Two groups stay CI-skipped and need
+`moonx <target> --ignore-ci-checks`:
+
+- Tasks connected to the build graph — dev servers, e2e variants, publish
+  guards. `moonx desktop:dev --ignore-ci-checks`.
+- Tasks that destroy or rewrite the tree — `root:clean`, `root:clean-all`,
+  `root:lint-fix`, `root:lint-css-fix`. `moon ci` with no explicit targets runs
+  every affected task that is not skipped, and an eligible `clean-all` would
+  delete `node_modules` from under the pipeline running it.
+
+For non-moon commands that CI-gate themselves, unset the var:
+`CI= pnpm publish --dry-run`.
+
+## Toolchain
+
+- Tool versions (bun, pnpm, node, moon, gh) are pinned in `.prototools` and
+  managed by [proto](https://moonrepo.dev/docs/proto); run `proto use` if a tool
+  is missing or a pin changed.
+- [moon](https://moonrepo.dev/docs) is the task runner. Each package also keeps
+  a `package.json` script mirroring its moon task, and the two must move
+  together: knip discovers entry points through plugins that key off those
+  scripts, and tauri shells into `apps/desktop`'s by name. Where moon expresses
+  a step as a task dependency instead of a shell `&&` (site's build before its
+  test, say), the two read differently on purpose — moon is what CI runs.
+
 ## Core Rules
 
-- Use `bun` for commands and dependency work. Do not use `npm`, `pnpm`, `npx`,
-  or similar tools unless there is a specific reason.
-- Dependencies use Bun's root `workspaces.catalog`. Never add dependency
+- Use `pnpm` for install/add/remove/dedupe/package-manager work. Do not use
+  `bun`, `npm`, `yarn`, `npx`, or similar tools for package operations unless
+  there is a specific reason.
+- Dependencies use the `catalog` in `pnpm-workspace.yaml`. Never add dependency
   versions directly to package-level `package.json` files unless a published
   package intentionally needs its own range.
-- Run commands from the monorepo root when they operate across the repo. Use
-  package directories for package-local scripts, or use
-  `bun ws <project> <task>` as the root shortcut when that fits the task.
+- Run tasks through moon: `moon run <project>:<task>` (or the `moonx` shorthand)
+  works from anywhere in the repo. `moonx <project>:<task> -- args` forwards
+  arguments. Discover tasks with `moon tasks <project>`.
 - Preserve trailing newlines at the end of files.
+- Setup steps for a fresh clone live in `CONTRIBUTING.md`.
+
+## Licensing
+
+Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
+
+- `packages/core`, `packages/client`, `packages/cli`, `packages/mcp` are MIT.
+- Everything else (`packages/server`, `packages/ui`, `packages/web`,
+  `packages/demo`, `apps/desktop`, `apps/demo`, `apps/site`) is `FSL-1.1-ALv2`
+  (`LICENSE`), source-available and converting to Apache-2.0 two years after
+  each release.
+
+When adding a new workspace package, add it to the `EXPECTED` map in
+`scripts/check-licenses.ts` with the license the split above assigns it, set
+`package.json`'s `"license"` field to match, and add a sibling `LICENSE` file
+carrying that license's text (skip the file only for `UNLICENSED` packages).
+`moon run root:check-licenses` enforces the package.json/LICENSE-file pairing
+for every mapped package and runs in CI on every PR.
 
 ## Skills
 
@@ -54,16 +100,17 @@ Do not put source files, tests, or committed documentation under
 ## Verification Baseline
 
 After code changes, verification is not complete until you have run these from
-the monorepo root:
+anywhere in the repo:
 
 ```bash
-bun run format
-bun run lint
+moon run root:format
+moon run root:lint
 ```
 
-Also run the relevant package-level `bun run tsc` and focused tests for the
-changed area. For docs-only or AGENTS/skill-only changes, formatting and linting
-are sufficient unless the edit touches executable code or package config.
+Also run the relevant `moonx <project>:typecheck` and focused
+`moonx <project>:test` for the changed area. For docs-only or AGENTS/skill-only
+changes, formatting and linting are sufficient unless the edit touches
+executable code or package config.
 
 ## Code Readability
 
@@ -75,79 +122,13 @@ are sufficient unless the edit touches executable code or package config.
   only when a specific step is still non-obvious.
 - Keep comments concrete and behavior-focused.
 
-<!-- CARTO:AUTO:START -->
+## Repository Map
 
-## Project Structure (auto)
-
-- 📁 .agents/
-- 📁 .claude/
-- 📁 .dispatch/
-- 📁 .github/
-- 📁 .husky/
-- 📁 .superpowers/
-- 📁 apps/
-- 📁 docs/
-- 📁 packages/
-- 📁 scripts/
-- 📄 .18c47b9fefbf7fbc-00000000.bun-build
-- 📄 .18c47bbf8f9dfff8-00000000.bun-build
-- 📄 .browserslistrc
-- 📄 .cspell-dictionary.txt
-- 📄 .dependency-cruiser.json
-- 📄 .dockerignore
-- 📄 .DS_Store
-- 📄 .gitattributes
-- 📄 .gitignore
-- 📄 .jscpd.json
-- 📄 .markdownlint-cli2.jsonc
-- 📄 .mcp.json
-- 📄 .node-version
-- 📄 .nvim.lua
-- 📄 .oxfmtrc.json
-- 📄 .oxlintrc.json
-- 📄 .prototools
-- 📄 .stylelintignore
-- 📄 bun.lock
-- 📄 bunfig.toml
-- 📄 CLAUDE.md
-- 📄 cspell.json
-- 📄 dispatch-fix-changed-files.zip
-- 📄 knip.json
-- 📄 LICENSE
-- 📄 package.json
-- 📄 README.md
-- 📄 stylelint.config.js
-- 📄 tsconfig.json
-- 📄 tsconfig.options.json
-- 📄 tsconfig.oxlint.json
-- 📄 tsconfig.tsbuildinfo
-
-**Stack:** React **High impact:** apps/desktop/src/lib/utils.ts (191
-dependents), apps/desktop/src/ui/button.tsx (101 dependents),
-packages/core/src/types.ts (79 dependents), packages/core/src/actor.ts (77
-dependents), packages/core/src/describe.ts (77 dependents),
-packages/core/src/ids.ts (76 dependents), packages/core/src/slug.ts (76
-dependents), packages/core/src/taskfile.ts (76 dependents),
-packages/core/src/store.ts (75 dependents), packages/core/src/linearMap.ts (73
-dependents), packages/core/src/configTypes.ts (72 dependents),
-packages/core/src/team.ts (72 dependents), packages/core/src/conflicts.ts (71
-dependents), packages/core/src/evidence.ts (71 dependents),
-packages/core/src/findings.ts (71 dependents)
-
-## Context Files (auto)
-
-Carto generated domain-specific context files in `.carto/context/`. Read the
-relevant file before working on that area:
-
-| Domain   | File                         | Read when...                      |
-| -------- | ---------------------------- | --------------------------------- |
-| Auth     | `.carto/context/AUTH.md`     | Working on login, sessions, OAuth |
-| Payments | `.carto/context/PAYMENTS.md` | Working on billing, Stripe        |
-| tRPC     | `.carto/context/TRPC.md`     | Working on API procedures         |
-| Database | `.carto/context/DATABASE.md` | Working on models, schema         |
-| Events   | `.carto/context/EVENTS.md`   | Working on webhooks, jobs         |
-| Core     | `.carto/context/CORE.md`     | General utilities, shared code    |
-
-> Run `carto serve` to enable live graph queries from Kiro, Cursor, and Claude.
-
-<!-- CARTO:AUTO:END -->
+Carto keeps a generated map of this repo — file tree, import graph, and the
+highest-impact modules by dependent count — at `.carto/CONTEXT.md`, which is
+gitignored and refreshed by `carto sync` on every checkout, merge, and rebase.
+Read it when a change touches shared code and you want to know what depends on
+it. It used to live in this file as a generated block, which meant every sync
+dirtied a committed file with live dependency counts that no formatter could
+agree on; `dispatch doctor` repoints an older carto config that still targets
+`AGENTS.md`.

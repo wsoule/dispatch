@@ -94,12 +94,7 @@ describe('hideArchivedRuns vs countMergeReady — archived is not the same as do
   test('a run whose task is archived but still in-review is hidden from the list filter yet still counted as merge-ready', () => {
     const runs = [run({ id: 'r1', taskId: 'archived-in-review' })];
     const tasks = [
-      makeTask(
-        'archived-in-review',
-        'in-review',
-        [],
-        '2026-01-03T00:00:00.000Z'
-      ),
+      makeTask('archived-in-review', 'review', [], '2026-01-03T00:00:00.000Z'),
     ];
     const archivedIds = new Set(['archived-in-review']);
 

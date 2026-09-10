@@ -1,8 +1,10 @@
 // The browser-safe entry point. Everything reachable from here is pure — no
 // `node:*` import — so the desktop webview can import it in dev and in a build.
 
+export * from './status.js';
 export * from './types.js';
 export * from './configTypes.js';
+export * from './policy.js';
 export * from './linearMap.js';
 export type {
   Finding,
@@ -12,7 +14,11 @@ export type {
 } from './findings.js';
 export type { LedgerEntry, LedgerKind } from './ledger.js';
 export type { CommandEvidence, MutationEvidence } from './evidence.js';
-export { schedulableBatch, tasksConflict } from './conflicts.js';
+export {
+  claimConflictsWithWrites,
+  schedulableBatch,
+  tasksConflict,
+} from './conflicts.js';
 export {
   ActorRefError,
   formatActorRef,
@@ -31,6 +37,23 @@ export {
   readyTasks,
 } from './graph.js';
 export type { TaskStack } from './graph.js';
+export {
+  AGE_HORIZON_DAYS,
+  DEFAULT_QUEUE_WEIGHTS,
+  isQueueWeight,
+  QUEUE_FACTOR_KEYS,
+  QUEUE_FACTORS,
+  rankTasks,
+  UNBLOCKING_HALF_VALUE,
+} from './scoring.js';
+export type {
+  QueueFactorInfo,
+  QueueWeights,
+  RankOptions,
+  ScoredTask,
+  ScoreFactor,
+  ScoreFactorKey,
+} from './scoring.js';
 export { slugify } from './slug.js';
 export { describeValue } from './describe.js';
 export { isOutstanding } from './timeline.js';

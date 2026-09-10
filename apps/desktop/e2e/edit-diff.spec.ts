@@ -43,7 +43,7 @@ function authedUrl(baseURL: string | undefined): string {
  * `Apply now`, anchor drift, and the 409 error paths are out of scope here on
  * purpose — they're covered by unit/render tests in `packages/server` and
  * `apps/desktop` instead. See that plan's Testing section
- * (`docs/superpowers/specs/2026-08-04-editable-review-diff-design.md`).
+ * (`docs/archive/specs/2026-08-04-editable-review-diff-design.md`).
  *
  * FIXME (branch: the task-centric consolidation, 98bf1858): the Review page
  * this drives was retired; the run review surface now lives on a task's Diff

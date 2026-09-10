@@ -76,7 +76,7 @@ struct HealthResponse {
 /// to `daemonfile.ts`'s `daemonFileKey`. Cross-checked in tests against the
 /// same fixture value `packages/cli/test/daemon-cmd.test.ts` uses, so drift
 /// between the TS and Rust copies of this scheme fails loudly here too.
-fn daemon_file_key(root_dir: &str) -> String {
+pub(crate) fn daemon_file_key(root_dir: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(root_dir.as_bytes());
     let digest = hasher.finalize();
@@ -164,6 +164,73 @@ async fn is_healthy(client: &reqwest::Client, port: u16) -> bool {
     };
     parse_health_response(&body).unwrap_or(false)
 }
+
+/// What one `/api/health` probe learned about a port. `Unresponsive` is the
+/// case a plain bool hid: something accepted the connection and then stalled
+/// past the deadline. For the port a daemon file names, that is usually a live
+/// dispatchd too busy to answer (provisioning several run worktrees at once
+/// does it), not a dead one — and spawning a replacement over it force-fails
+/// every run it has in flight (2026-09-07: three daemons stacked up on one
+/// root this way inside ten minutes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HealthProbe {
+    Healthy,
+    Unresponsive,
+    Down,
+}
+
+async fn probe_health(client: &reqwest::Client, port: u16) -> HealthProbe {
+    match client
+        .get(format!("http://127.0.0.1:{port}/api/health"))
+        .timeout(Duration::from_secs(2))
+        .send()
+        .await
+    {
+        Ok(response) => match response.text().await {
+            Ok(body) if parse_health_response(&body).unwrap_or(false) => HealthProbe::Healthy,
+            _ => HealthProbe::Down,
+        },
+        Err(e) if e.is_timeout() => HealthProbe::Unresponsive,
+        Err(_) => HealthProbe::Down,
+    }
+}
+
+/// Whether `pid` is still a live process — `kill -0` sends no signal, it only
+/// checks. Same shell-out rationale as `kill_pid_best_effort`.
+fn pid_alive(pid: u32) -> bool {
+    Command::new("kill")
+        .arg("-0")
+        .arg(pid.to_string())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+/// What the reuse fast path should do with the daemon a daemon file names.
+#[derive(Debug, PartialEq, Eq)]
+enum ReuseDecision {
+    /// It answered: attach to it.
+    Reuse,
+    /// Its pid is alive but it stalled: keep polling, never spawn over it.
+    WaitForStalled,
+    /// Nothing dispatch-like is there: spawn a fresh daemon.
+    Spawn,
+}
+
+/// Pure decision behind the reuse fast path, split out so the one rule that
+/// matters — a stalled daemon whose pid is alive is waited on, not replaced —
+/// is unit-testable without a network.
+fn reuse_decision(probe: HealthProbe, pid_alive: bool) -> ReuseDecision {
+    match probe {
+        HealthProbe::Healthy => ReuseDecision::Reuse,
+        HealthProbe::Unresponsive if pid_alive => ReuseDecision::WaitForStalled,
+        HealthProbe::Unresponsive | HealthProbe::Down => ReuseDecision::Spawn,
+    }
+}
+
+/// How long to keep polling a live-but-stalled daemon before giving up with
+/// an error rather than spawning a second one.
+const STALLED_DAEMON_WAIT: Duration = Duration::from_secs(30);
 
 /// Parses `/api/health`'s response body in full (both `ok` and `rootDir`) —
 /// used by `fetch_health`, which lets the stale-daemon kill decision
@@ -793,12 +860,29 @@ pub async fn ensure_dispatchd(
     // one every subsequent health check and root lookup will find anyway.
     if !needs_init(root) && !force_spawn {
         if let Some(info) = read_daemon_file(root) {
-            if is_healthy(&client, info.port).await {
-                return Ok(DaemonConnection {
-                    port: info.port,
-                    app_token: app_tokens.get(root, info.pid),
-                    agent_token: info.agent_token,
-                });
+            let attach = |info: DaemonFileInfo| DaemonConnection {
+                port: info.port,
+                app_token: app_tokens.get(root, info.pid),
+                agent_token: info.agent_token,
+            };
+            match reuse_decision(probe_health(&client, info.port).await, pid_alive(info.pid)) {
+                ReuseDecision::Reuse => return Ok(attach(info)),
+                ReuseDecision::WaitForStalled => {
+                    let (pid, port) = (info.pid, info.port);
+                    if poll_for_healthy_daemon(&client, root, STALLED_DAEMON_WAIT)
+                        .await
+                        .is_some()
+                    {
+                        if let Some(info) = read_daemon_file(root) {
+                            return Ok(attach(info));
+                        }
+                    }
+                    return Err(format!(
+                        "dispatchd for this project (pid {pid}, port {port}) is running but has not answered a health check in {}s — it is probably overloaded. Wait and retry, or restart it once no run is in flight; a second daemon would force-fail the runs it has in flight.",
+                        STALLED_DAEMON_WAIT.as_secs()
+                    ));
+                }
+                ReuseDecision::Spawn => {}
             }
         }
     }
@@ -884,12 +968,36 @@ pub fn has_dispatch(root: &str) -> bool {
     Path::new(root).join(".dispatch").is_dir()
 }
 
-/// True when `root` has no `.dispatch/tasks` tracker directory yet — the signal
-/// `BunSpawner::spawn` uses to decide whether to pass dispatchd `--init` on the
-/// first spawn for a newly onboarded project. Mirrors the same missing-tracker
-/// check bin.ts's `--init` handling performs on the daemon side.
+/// True when `root` has no usable Dispatch state yet — the signal
+/// `BunSpawner::spawn` uses to decide whether to pass dispatchd `--init`, and
+/// (more consequentially) the signal `ensure_dispatchd` uses to decide whether
+/// it may reuse an already-running daemon.
+///
+/// Both backends count as initialized, which is the whole point. Testing only
+/// for `.dispatch/tasks` made this permanently true for every database-backed
+/// project — they have no tasks directory and never will — so the reuse fast
+/// path was skipped on every single launch, and the code below it killed the
+/// perfectly healthy daemon and respawned it. For a project whose runs live in
+/// that daemon, that force-fails whatever was in flight, every time the app
+/// starts.
+///
+/// `dispatch.db` presence is the database-side signal rather than the
+/// `storage.json` marker, and deliberately so: the marker without a database
+/// beside it is exactly the freshly-cloned state that DOES still need
+/// `--init`, so that the daemon creates the database and its boot-time import
+/// can repopulate it. Keying on the marker would skip init there and serve an
+/// empty board. Mirrors bin.ts's `--init` handling on the daemon side.
 fn needs_init(root: &str) -> bool {
-    !Path::new(root).join(".dispatch").join("tasks").is_dir()
+    let dispatch = Path::new(root).join(".dispatch");
+    // File backend: the markdown tracker is present.
+    if dispatch.join("tasks").is_dir() {
+        return false;
+    }
+    // Database backend: the daemon's database already exists.
+    if dispatch.join("dispatch.db").is_file() {
+        return false;
+    }
+    true
 }
 
 /// Normalizes `root` before it's hashed into a daemon-file key or handed to
@@ -940,6 +1048,28 @@ mod tests {
     fn enrich_path_tolerates_an_empty_path() {
         let result = enrich_path("", None);
         assert_eq!(result, "/opt/homebrew/bin:/usr/local/bin");
+    }
+
+    #[test]
+    fn reuse_decision_waits_on_a_stalled_daemon_whose_pid_is_alive() {
+        assert_eq!(
+            reuse_decision(HealthProbe::Unresponsive, true),
+            ReuseDecision::WaitForStalled
+        );
+    }
+
+    #[test]
+    fn reuse_decision_attaches_to_a_healthy_daemon_and_spawns_over_a_dead_one() {
+        assert_eq!(reuse_decision(HealthProbe::Healthy, true), ReuseDecision::Reuse);
+        assert_eq!(reuse_decision(HealthProbe::Healthy, false), ReuseDecision::Reuse);
+        assert_eq!(reuse_decision(HealthProbe::Down, true), ReuseDecision::Spawn);
+        assert_eq!(reuse_decision(HealthProbe::Down, false), ReuseDecision::Spawn);
+        // A stall from a pid that no longer exists is a stale file plus some
+        // unrelated listener on the old port — nothing to wait for.
+        assert_eq!(
+            reuse_decision(HealthProbe::Unresponsive, false),
+            ReuseDecision::Spawn
+        );
     }
 
     #[test]
@@ -1199,6 +1329,45 @@ mod tests {
         // `.dispatch/tasks/` present → already initialized.
         fs::create_dir_all(dir.join(".dispatch").join("tasks")).unwrap();
         assert!(!needs_init(root));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn needs_init_false_for_a_database_backed_project() {
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-needs-init-db-{}",
+            std::process::id()
+        ));
+        let dispatch = dir.join(".dispatch");
+        fs::create_dir_all(&dispatch).unwrap();
+        let root = dir.to_str().unwrap();
+
+        // A database-backed project has no `.dispatch/tasks` and never will.
+        // Reporting it as needing init skipped daemon reuse on every launch,
+        // which killed the running daemon and force-failed its live runs.
+        assert!(needs_init(root));
+        fs::write(dispatch.join("dispatch.db"), b"").unwrap();
+        assert!(!needs_init(root));
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn needs_init_true_for_a_clone_with_a_marker_but_no_database() {
+        // The clone trap: `storage.json` may arrive without the database it
+        // names. That project DOES need `--init`, so the daemon creates the
+        // database and its boot import can repopulate it.
+        let dir = std::env::temp_dir().join(format!(
+            "dispatch-sidecar-needs-init-clone-{}",
+            std::process::id()
+        ));
+        let dispatch = dir.join(".dispatch");
+        fs::create_dir_all(&dispatch).unwrap();
+        let root = dir.to_str().unwrap();
+
+        fs::write(dispatch.join("storage.json"), br#"{"backend":"sqlite"}"#).unwrap();
+        assert!(needs_init(root));
 
         fs::remove_dir_all(&dir).unwrap();
     }

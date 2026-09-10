@@ -29,7 +29,7 @@ function task(
     meta: {
       id,
       title,
-      status: 'todo',
+      status: 'ready',
       priority: 2,
       parent,
       labels,

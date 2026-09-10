@@ -407,6 +407,114 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
   });
 });
 
+// The irreversibility floor at the executor (see floor.ts): a floor command
+// raises the approval flow ahead of every allow branch. Neither the
+// acceptEdits fast-path nor an earlier "approve Bash for this session" grant
+// may let a force-push, publish, or repo-settings change through — each
+// irreversible act is its own human decision, at every policy rung.
+describe('ClaudeExecutor canUseTool irreversibility floor', () => {
+  function startWithApprovals() {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+    const requested: string[] = [];
+    const run = executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: (request) => {
+          requested.push(request.requestId);
+        },
+        onFinish: () => {},
+      }
+    );
+    return { run, requested, canUseTool: () => captured?.canUseTool };
+  }
+
+  it('re-asks for a floor command even after Bash was approved for the session', async () => {
+    const { run, requested, canUseTool } = startWithApprovals();
+
+    // A routine Bash call, approved for the whole session.
+    const first = canUseTool()?.(
+      'Bash',
+      { command: 'ls' },
+      fakeCanUseToolOptions('req-ls')
+    );
+    await Promise.resolve();
+    expect(requested).toEqual(['req-ls']);
+    run.approve('req-ls', { allow: true, scope: 'session' });
+    expect(await first).toMatchObject({ behavior: 'allow' });
+
+    // The grant now covers Bash: a second routine call never asks.
+    const second = await canUseTool()?.(
+      'Bash',
+      { command: 'git status' },
+      fakeCanUseToolOptions('req-status')
+    );
+    expect(second).toMatchObject({ behavior: 'allow' });
+    expect(requested).toEqual(['req-ls']);
+
+    // But every floor command still parks for its own decision.
+    for (const [requestId, command] of [
+      ['req-force', 'git push --force origin main'],
+      ['req-publish', 'npm publish'],
+      ['req-visibility', 'gh repo edit --visibility public'],
+      ['req-tag', 'git push origin v1.2.3'],
+      ['req-delete', 'git push origin --delete main'],
+    ]) {
+      void canUseTool()?.(
+        'Bash',
+        { command },
+        fakeCanUseToolOptions(requestId)
+      );
+      await Promise.resolve();
+      expect(requested).toContain(requestId);
+    }
+  });
+
+  it('a denied floor command tells the agent why, and a later one asks again', async () => {
+    const { run, requested, canUseTool } = startWithApprovals();
+    const first = canUseTool()?.(
+      'Bash',
+      { command: 'npm publish' },
+      fakeCanUseToolOptions('req-publish-1')
+    );
+    await Promise.resolve();
+    run.approve('req-publish-1', { allow: false, reason: 'not yet' });
+    expect(await first).toEqual({ behavior: 'deny', message: 'not yet' });
+
+    // Allowing one floor command is a once-only decision by construction:
+    // even `scope: 'session'` on it does not pre-approve the next one.
+    const second = canUseTool()?.(
+      'Bash',
+      { command: 'npm publish' },
+      fakeCanUseToolOptions('req-publish-2')
+    );
+    await Promise.resolve();
+    run.approve('req-publish-2', { allow: true, scope: 'session' });
+    expect(await second).toMatchObject({ behavior: 'allow' });
+    void canUseTool()?.(
+      'Bash',
+      { command: 'npm publish' },
+      fakeCanUseToolOptions('req-publish-3')
+    );
+    await Promise.resolve();
+    expect(requested).toEqual([
+      'req-publish-1',
+      'req-publish-2',
+      'req-publish-3',
+    ]);
+  });
+});
+
 // The "keeps saying running" bug's root cause for a packaged app: the SDK
 // spawns a native CLI it can't find, so query() throws
 // "Native CLI binary for <platform>-<arch> not found. Reinstall
@@ -670,13 +778,17 @@ describe('ClaudeExecutor abrupt stream end with no result message', () => {
 // finish it reported. Every truncation test below differs only in the fields
 // on that single result message, so they share this harness.
 async function finishForResult(
-  result: Record<string, unknown>
+  result: Record<string, unknown>,
+  // Messages the SDK streams before the terminal result — e.g. the synthetic
+  // assistant message explaining an API error.
+  preceding: Record<string, unknown>[] = []
 ): Promise<{ state: string; error?: string; turns?: number }> {
   const repo = initGitRepo('dispatch-claude-terminal-reason-');
   try {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     function* fakeMessages(): Generator<any> {
       yield { type: 'system', subtype: 'init', session_id: 'sess-tr' };
+      yield* preceding;
       yield { type: 'result', ...result };
     }
     const executor = new ClaudeExecutor(
@@ -729,6 +841,134 @@ describe('ClaudeExecutor truncated-run detection', () => {
     // The partial work still happened — turn/cost accounting must survive the
     // reclassification so the run's cost isn't silently lost.
     expect(finish.turns).toBe(72);
+  });
+
+  // 2026-09-04: seven runs died to the usage limit, but the SDK tagged the
+  // stop `terminal_reason: 'api_error'` (not 'blocking_limit'), so every run
+  // record said only "the Claude API errored" and the real reason had to be
+  // dug out of each transcript's last assistant line — a synthetic message
+  // carrying `error: 'rate_limit'` and the limit text.
+  it("names the usage limit when a rate_limit assistant message precedes an 'api_error' stop", async () => {
+    const finish = await finishForResult(
+      {
+        subtype: 'success',
+        is_error: false,
+        num_turns: 67,
+        total_cost_usd: 18.12,
+        session_id: 'sess-tr',
+        stop_reason: null,
+        terminal_reason: 'api_error',
+        errors: [],
+      },
+      [
+        {
+          type: 'assistant',
+          error: 'rate_limit',
+          session_id: 'sess-tr',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: "You've hit your session limit · resets 10pm (America/Detroit)",
+              },
+            ],
+          },
+        },
+      ]
+    );
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toMatch(/usage limit/i);
+    expect(finish.error).toContain('resets 10pm');
+    expect(finish.turns).toBe(67);
+  });
+
+  // The other rate_limit: credits exhausted rather than a session window, and
+  // the remedy is the opposite of "wait for the reset" — so the lead must not
+  // supply one, only the SDK's own text.
+  it('carries the out-of-credits text without contradicting it', async () => {
+    const finish = await finishForResult(
+      {
+        subtype: 'success',
+        is_error: false,
+        num_turns: 15,
+        total_cost_usd: 2.5,
+        session_id: 'sess-tr',
+        stop_reason: null,
+        terminal_reason: 'api_error',
+        errors: [],
+      },
+      [
+        {
+          type: 'assistant',
+          error: 'rate_limit',
+          session_id: 'sess-tr',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [
+              {
+                type: 'text',
+                text: "You're out of usage credits. Switch to another model, or manage usage credits at https://example.invalid/usage",
+              },
+            ],
+          },
+        },
+      ]
+    );
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toContain('out of usage credits');
+    expect(finish.error).not.toMatch(/once your limit resets/);
+  });
+
+  it("keeps the generic message for an 'api_error' stop with no API-error message before it", async () => {
+    const finish = await finishForResult({
+      subtype: 'success',
+      is_error: false,
+      num_turns: 2,
+      total_cost_usd: 0.1,
+      session_id: 'sess-tr',
+      stop_reason: null,
+      terminal_reason: 'api_error',
+      errors: [],
+    });
+
+    expect(finish.state).toBe('failed');
+    expect(finish.error).toMatch(/Claude API errored/);
+  });
+
+  it("appends the SDK's text for an API error kind it has no specific wording for", async () => {
+    const finish = await finishForResult(
+      {
+        subtype: 'success',
+        is_error: false,
+        num_turns: 2,
+        total_cost_usd: 0.1,
+        session_id: 'sess-tr',
+        stop_reason: null,
+        terminal_reason: 'api_error',
+        errors: [],
+      },
+      [
+        {
+          type: 'assistant',
+          error: 'server_error',
+          session_id: 'sess-tr',
+          parent_tool_use_id: null,
+          message: {
+            role: 'assistant',
+            content: [{ type: 'text', text: 'API Error: 500 upstream' }],
+          },
+        },
+      ]
+    );
+
+    expect(finish.error).toBe(
+      'the Claude API errored before the agent finished (API Error: 500 upstream)'
+    );
   });
 
   it.each([

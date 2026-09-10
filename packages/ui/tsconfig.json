@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.options.json",
+  "compilerOptions": {
+    "rootDir": ".",
+    "outDir": "dist",
+    "types": ["bun"],
+    "jsx": "react-jsx",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

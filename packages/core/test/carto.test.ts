@@ -401,12 +401,23 @@ describe('redirectCartoOutput', () => {
         join(root, '.carto', 'config.json'),
         JSON.stringify({ version: '2', output: 'AGENTS.md' })
       );
-      redirectCartoOutput(root);
+      expect(redirectCartoOutput(root)).toBe(true);
       const config = JSON.parse(
         readFileSync(join(root, '.carto', 'config.json'), 'utf8')
       ) as { output: string; version: string };
       expect(config.output).toBe('.carto/CONTEXT.md');
       expect(config.version).toBe('2');
+      // Seeded with the markers carto fills between — sync writes nothing to
+      // a file that is not already there.
+      expect(readFileSync(join(root, '.carto', 'CONTEXT.md'), 'utf8')).toBe(
+        '<!-- CARTO:AUTO:START -->\n<!-- CARTO:AUTO:END -->\n'
+      );
+      // Already repointed: reports nothing to repair and keeps the file.
+      writeFileSync(join(root, '.carto', 'CONTEXT.md'), 'filled by carto\n');
+      expect(redirectCartoOutput(root)).toBe(false);
+      expect(readFileSync(join(root, '.carto', 'CONTEXT.md'), 'utf8')).toBe(
+        'filled by carto\n'
+      );
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

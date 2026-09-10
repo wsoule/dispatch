@@ -1,5 +1,6 @@
 import type { LedgerEntry } from '@dispatch/core/browser';
 
+import { PolicyReceiptBadge } from '../../ledger/PolicyReceiptBadge';
 import { MainSection } from './MainSection';
 
 const LEDGER_KIND_ORDER: readonly LedgerEntry['kind'][] = [
@@ -42,6 +43,7 @@ export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
                     <span className="min-w-0 text-[13px] font-medium break-words">
                       {entry.title}
                     </span>
+                    <PolicyReceiptBadge entry={entry} />
                     {entry.sourceTaskId !== null && (
                       <span className="text-muted-foreground ml-auto shrink-0 font-mono text-[11px]">
                         {entry.sourceTaskId}

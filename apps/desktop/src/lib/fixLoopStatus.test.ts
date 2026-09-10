@@ -8,6 +8,7 @@ import {
   fixLoopStatusLabel,
   fixLoopStopDetail,
   fixLoopTone,
+  fixLoopTraceLabel,
   willEscalateNextRound,
 } from './fixLoopStatus';
 
@@ -223,5 +224,32 @@ describe('willEscalateNextRound', () => {
         escalation
       )
     ).toBe(false);
+  });
+});
+
+describe('fixLoopTraceLabel', () => {
+  const base = {
+    taskId: 't-1',
+    round: 2,
+    cap: 5,
+    state: 'reviewing',
+    baseSha: 'abc',
+    lastReviewedSha: null,
+    updatedAt: '',
+  } as const;
+
+  test('joins the per-pass counts with arrows', () => {
+    expect(fixLoopTraceLabel({ ...base, findingsTrace: [9, 4, 1] })).toBe(
+      '9→4→1'
+    );
+  });
+
+  test('a single reviewed round still reads as information', () => {
+    expect(fixLoopTraceLabel({ ...base, findingsTrace: [9] })).toBe('9');
+  });
+
+  test('no reviewed rounds yields nothing', () => {
+    expect(fixLoopTraceLabel({ ...base, findingsTrace: [] })).toBeNull();
+    expect(fixLoopTraceLabel({ ...base })).toBeNull();
   });
 });

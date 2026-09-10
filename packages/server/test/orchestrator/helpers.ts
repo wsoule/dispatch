@@ -2,6 +2,37 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
+import type {
+  Executor,
+  ExecutorEvents,
+  ExecutorRun,
+  ExecutorStartOptions,
+} from '../../src/orchestrator/types.js';
+
+/**
+ * An executor that starts, reports a session id, and then never finishes —
+ * the shape a run has at the instant a daemon restart loses track of it.
+ *
+ * The session id is load-bearing rather than decorative: a run that never
+ * reported one has no agent history to pick back up, and the boot recovery
+ * sweep's resumeBlockReason deliberately refuses those. `started` is what a
+ * test reads to prove whether a resume actually launched anything.
+ */
+export class StallingExecutor implements Executor {
+  readonly started: ExecutorStartOptions[] = [];
+
+  start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+    this.started.push(opts);
+    events.onSession?.(`session-${this.started.length}`);
+    return {
+      interrupt: () => Promise.resolve(),
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+    };
+  }
+}
+
 // Runs a git command synchronously and throws with stderr on failure — used
 // by tests that need to set up or inspect real repo state (as opposed to the
 // orchestrator's own git wrapper, which is exactly what's under test).
@@ -45,7 +76,13 @@ export function initBareRepo(prefix = 'dispatch-origin-'): string {
 // worktree add -b <branch> <path> <base>` fails against an empty repo with no
 // commits, and every orchestrator test needs a realistic starting point.
 export function initGitRepo(prefix = 'dispatch-orch-'): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  return initGitRepoAt(mkdtempSync(join(tmpdir(), prefix)));
+}
+
+// The same setup against a directory that already exists — for a suite whose
+// own fixture root (a temp dir a TaskStore was already initialized in) has to
+// become the git repo, rather than the other way round.
+export function initGitRepoAt(dir: string): string {
   runGitSync(dir, ['init', '-b', 'main']);
   runGitSync(dir, ['config', 'user.email', 'test@example.com']);
   runGitSync(dir, ['config', 'user.name', 'Test']);

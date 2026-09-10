@@ -59,12 +59,12 @@ describe('task show', () => {
 describe('task status', () => {
   it('updates status and logs activity', async () => {
     const id = await createTask('Move me');
-    await run('task', 'status', id, 'in-progress');
+    await run('task', 'status', id, 'working');
     lines = [];
     await run('task', 'show', id);
     const out = lines.join('\n');
-    expect(out).toContain('status: in-progress');
-    expect(out).toMatch(/- .*status → in-progress/);
+    expect(out).toContain('status: working');
+    expect(out).toMatch(/- .*status → working/);
   });
   it('rejects unknown status', async () => {
     const id = await createTask('X');
@@ -77,7 +77,7 @@ describe('task status', () => {
 describe('task status id-prefix guard', () => {
   it('rejects a degenerate id instead of matching an arbitrary task file', async () => {
     await createTask('Innocent bystander');
-    await expect(run('task', 'status', 't', 'done')).rejects.toThrow(
+    await expect(run('task', 'status', 't', 'landed')).rejects.toThrow(
       /task not found: t/
     );
   });

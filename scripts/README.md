@@ -2,31 +2,39 @@
 
 This folder contains small development helpers for the monorepo.
 
-## `bun ws`
+## Running tasks
 
-`bun ws <package> <script> [args...]` runs a package script from the repository
-root.
+moon is the task runner. Run a project's task with `moonx <project>:<task>`, or
+a root-level task with `moonx root:<task>`; discover what a project exposes with
+`moon tasks <project>`.
 
 ```bash
-bun ws template build
-bun ws template test
-bun ws packages/template tsc
-bun ws "packages/*" test --sequential
-bun ws "*" tsc --sequential
+moonx core:test
+moonx desktop:typecheck
+moon run root:format root:lint
 ```
 
-Package resolution works in this order:
+## `wt` — worktree manager
 
-1. An explicit path such as `packages/template` or `apps/web`.
-2. A short directory name under `packages/` or `apps/`.
-3. A glob passed to Bun's `-F` workspace filter.
+`moonx root:wt -- <subcommand> [args]` creates, lists, and removes git worktrees
+for this repo (see `scripts/wt.ts`). Worktrees live at
+`../dispatch-worktrees/<slug>`, each with its own port offset recorded in
+`.env.worktree`.
 
-If the root package name is scoped, name globs inherit that scope. For example,
-with a root name of `@workspace/template-monorepo`, `bun ws "template*" test`
-filters workspace package names as `@workspace/template*`.
+```bash
+moonx root:wt -- new my-feature
+moonx root:wt -- list
+moonx root:wt -- ps
+moonx root:wt -- rm my-feature
+```
 
-`--parallel` and `--sequential` are handled as Bun workspace run-mode flags.
-`-v` and `--verbose` are accepted for compatibility and otherwise ignored.
+Run `moonx root:wt -- help` for the full subcommand list.
+
+The offset in `.env.worktree` is currently a **reservation, not an
+enforcement**: `wt` allocates and reports it, but no dev server reads
+`DISPATCH_PORT_OFFSET` yet, so two worktrees running `moonx desktop:dev` still
+collide on 5173. The design notes at the top of `wt.ts` name the three configs
+that would have to pick the offset up to close it.
 
 ## Stale Dev Servers
 

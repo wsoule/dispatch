@@ -7,15 +7,15 @@ import {
   listGithubRepos,
   pickDirectory,
 } from '../../lib/tauri';
-import { Button } from '../../ui/button';
+import { Button } from '@/ui/button';
+import { EmptyState } from '@/ui/chrome';
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from '../../ui/dialog';
-import { EmptyState } from '@/ui/chrome';
+} from '@/ui/dialog';
 import { InputGroup, InputGroupAddon, InputGroupInput } from '@/ui/input-group';
 import { ScrollArea } from '@/ui/scroll-area';
 import { Spinner } from '@/ui/spinner';

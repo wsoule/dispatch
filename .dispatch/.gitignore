@@ -1,0 +1,15 @@
+# Written by dispatch. Add your own entries below; dispatch only ever
+# appends the lines it needs and never rewrites this file.
+# The daemon's database is per-machine state, never committable, and
+# neither is the marker naming it — a clone carrying the marker without
+# the database reads as a board that is confidently empty.
+dispatch.db
+dispatch.db-wal
+dispatch.db-shm
+storage.json
+
+# Daemon working state that has no database table yet, so it is still
+# written here as files rather than held in dispatch.db.
+fix-loops.jsonl
+notes.json
+inbox/

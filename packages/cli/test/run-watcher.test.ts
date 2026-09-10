@@ -81,6 +81,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
   return {
     baseUrl: '',
     createRun: () => Promise.reject(new Error('not used')),
+    resumeRun: () => Promise.reject(new Error('not used')),
     listRuns: () => Promise.reject(new Error('not used')),
     getRun,
     approveRun: () => Promise.reject(new Error('not used')),

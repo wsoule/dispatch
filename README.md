@@ -5,11 +5,17 @@ work — runs, review, and merge in one desktop app.
 
 <!-- TODO(asset): docs/assets/dispatch-hero.gif — task → dispatch → review loop -->
 
-- **Tasks live in your repo.** Every task is a markdown file in
-  `.dispatch/tasks/*.md` — synced by git, readable by humans and agents alike.
+- **Your repo stays yours.** `.dispatch/` holds config you would want to commit
+  anyway. Point a project at the daemon's database (`dispatch init --db`) and
+  `dispatchd` owns the tasks, findings and history outright, writing them to a
+  git-versioned receipt log _outside_ your repo — a full audit trail with no
+  churn in your own diffs. Or keep the default and have every task be a markdown
+  file in `.dispatch/tasks/*.md`, synced by git.
 - **Agents run with guardrails.** A task declares the paths it may write before
   the agent starts; runs carry budget and turn caps, verify gates, and
   human-gated scope escalation.
+- **Everything is on the record.** Findings, decisions, evidence, and
+  transcripts from every run are kept — reviewable, not scrolled past.
 - **Local-first.** Runs on your machine, against your checkout, with your API
   key. No account, no server, nothing uploaded.
 
@@ -22,7 +28,7 @@ Desktop app for macOS via Homebrew:
 Or grab an installer from the
 [latest release](https://github.com/wsoule/dispatch/releases/latest): macOS DMGs
 (Apple Silicon and Intel) and Linux `.deb`/`.rpm`/`.AppImage`. macOS builds are
-signed and notarized (Developer ID) as of v0.1.1.
+signed and notarized (Developer ID).
 
 On macOS, installing the app also puts the `dispatch` CLI on your `PATH` (the
 cask links the binary bundled inside `Dispatch.app`).
@@ -37,6 +43,10 @@ In any git repo:
     dispatch task next
     dispatch doctor
 
+To keep the tasks in the daemon's database instead of markdown files, use
+`dispatch init --db` (and start `dispatch serve` before creating tasks — only
+the daemon may open the database). See [How it works](#how-it-works).
+
 Then open the Dispatch app and point it at the repo: the board shows your tasks,
 and dispatching one hands it to a coding agent in an isolated git worktree —
 live output, review, and merge all happen in the app.
@@ -49,10 +59,28 @@ Every read command accepts `--json` for agent/script consumption.
 
 ## How it works
 
-A task is a markdown file with frontmatter — status, priority, `blocked-by`,
-declared `writes` paths, and more — and a human-readable body. The CLI, the
-desktop app, the MCP server, and the orchestrator all read and write those same
-files, so git is both the sync layer and the history.
+A task carries frontmatter — status, priority, `blocked-by`, declared `writes`
+paths, and more — and a human-readable body. The CLI, the desktop app, the MCP
+server and the orchestrator all reach the same task through `dispatchd`, which
+is the single writer.
+
+Where that state lives is a per-project choice, recorded in
+`.dispatch/storage.json`:
+
+- **Files** (the default) keeps every task as markdown in
+  `.dispatch/tasks/*.md`, committed to your repo. Git is both the sync layer and
+  the history, and the CLI can read the board with no daemon running.
+- **Database** (`dispatch init --db`, or `dispatch migrate` for a project you
+  already have) keeps them in a SQLite database only `dispatchd` may open. Your
+  `.dispatch/` shrinks to `config.yml`, `team.yml` and the marker; the database
+  is gitignored, and the audit trail reaches git as a _receipt log_ — a
+  standalone repository under `~/.dispatch/projects/<id>/receipts` that the
+  daemon commits to as things change. Because that log is laid out exactly like
+  a file-backed project, restoring it needs no special tooling: copy its
+  `.dispatch/` into a repo and it is a working board again.
+
+  On this backend `dispatch task` commands go through the daemon, so start one
+  (`dispatch serve`) before creating tasks.
 
 Dispatching a task runs a coding agent in an isolated git worktree, scoped to
 the task's declared `writes`. Touching anything else requires a human-gated
@@ -62,6 +90,27 @@ decisions from each run are recorded alongside the tasks.
 
 `dispatchd`, a local daemon, watches the repo and feeds the app live runs,
 review, and merge. It is local HTTP only — nothing leaves the machine.
+
+### Moving a project to the database
+
+An existing project moves in two deliberate steps, with the daemon stopped:
+
+    dispatch migrate --dry-run    # rehearse: report what would move, write nothing
+    dispatch migrate              # import tasks, findings and ledger into the database
+
+The import is additive — it copies, never moves, so it is safe to re-run and
+your markdown is untouched if anything goes wrong. Once the daemon has been up
+long enough to export a receipt log, retire the copies it left behind:
+
+    dispatch migrate --retire --dry-run
+    dispatch migrate --retire
+
+`--retire` deletes only what the receipt log already contains, checked record by
+record, and reports anything it kept and why. Three files stay behind on
+purpose: `fix-loops.jsonl`, `notes.json` and `inbox/` have no table in the
+database yet, so the daemon still writes them as ordinary files and the receipt
+log does not carry them. On the database backend they are gitignored rather than
+committed.
 
 ## MCP server
 
@@ -78,10 +127,12 @@ Pass `--no-mcp` to skip this. Start the server directly with `dispatch mcp`
 (reads the current directory) or the standalone `dispatch-mcp --root <dir>`
 binary from `@dispatch/mcp`.
 
-The five `task_*` tools operate directly on `.dispatch/tasks/*.md` and need no
-daemon (a running `dispatchd` picks up their file changes through its watcher
-like any other edit). The other nine talk to `dispatchd` over its local HTTP
-API, and return a clear error when it isn't running.
+On the file backend the five `task_*` tools operate directly on
+`.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
+file changes through its watcher like any other edit); on the database backend
+they go through the daemon like everything else. The other nine always talk to
+`dispatchd` over its local HTTP API, and return a clear error when it isn't
+running.
 
 Tools (server name `dispatch`):
 
@@ -106,8 +157,8 @@ Tools (server name `dispatch`):
 given fields otherwise; `kind` and `description` take effect on create only.
 `ask_user` and `request_scope` block until a human answers or the wait times
 out. A `workflow://onboarding` resource briefs a connecting agent on the same
-conventions. See `docs/superpowers/plans/2026-07-20-phase-3-mcp-server.md` for
-the original design.
+conventions. See `docs/archive/plans/2026-07-20-phase-3-mcp-server.md` for the
+original design.
 
 ## Dependency graph with Carto (optional)
 
@@ -152,17 +203,19 @@ container as a library, not over MCP.
 
 All six roadmap phases are complete — tracker core, CLI, `dispatchd`, the MCP
 server, the desktop app, and the orchestrator. Roadmap:
-`docs/superpowers/plans/2026-07-13-dispatch-roadmap.md`.
+`docs/archive/plans/2026-07-13-dispatch-roadmap.md`.
 
 To run the CLI from a checkout instead of the installed app:
 
-    bun install && bun run build
+    proto use && pnpm install && moon run :build
     node packages/cli/dist/cli.js init
     node packages/cli/dist/cli.js doctor
 
-Bun monorepo (workspace catalog, tsdown builds, `bun test`, oxlint/oxfmt). From
-the repo root: `bun run build`, `bun run test`, `bun run tsc`, `bun run format`,
-`bun run lint`. Agent conventions live in `AGENTS.md` and `.agents/skills/`.
+pnpm + moon monorepo (dependency catalog in `pnpm-workspace.yaml`, tsdown
+builds, `bun test`, oxlint/oxfmt). From anywhere in the repo: `moon run :build`,
+`moon run :test`, `moonx <project>:typecheck`, `moon run root:format`,
+`moon run root:lint`. Agent conventions live in `AGENTS.md` and
+`.agents/skills/`.
 
 ### Daemon + web UI
 
@@ -173,31 +226,41 @@ Run the daemon and the web UI's dev server side by side for live-reloading
 frontend work:
 
     bun packages/server/src/bin.ts --root <path-to-a-dispatch-repo> --port 4771
-    bun ws web dev
+    moonx web:dev
 
-`bun ws web dev` proxies `/api` and `/ws` to `http://127.0.0.1:4771` (see
+`moonx web:dev` proxies `/api` and `/ws` to `http://127.0.0.1:4771` (see
 `packages/web/vite.config.ts`), so the Vite dev server on its own port talks to
-a real dispatchd. For a production-style check, `bun run build` builds the web
+a real dispatchd. For a production-style check, `moonx web:build` builds the web
 UI into `packages/web/dist`, then dispatchd serves it directly — no separate
 frontend server needed. `dispatch serve` / `dispatch ui` (from `@dispatch/cli`)
 wrap this daemon for end users.
 
 ## Design docs
 
-- Spec:
-  `docs/superpowers/specs/2026-07-13-agent-orchestration-platform-design.md`
-- Research: `docs/research/2026-07-13-landscape-research.md`
+- **Architecture: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)** — what the
+  system is today. Start here.
+- Historical plans, specs, and research live in
+  [`docs/archive/`](docs/archive/README.md). They record why decisions were made
+  and are not maintained; where they disagree with `ARCHITECTURE.md`, the
+  architecture doc is the checked one.
 
 ## License
 
-[Functional Source License 1.1, Apache 2.0 Future License](LICENSE)
-(`FSL-1.1-ALv2`) — source-available, not OSI open source.
+Dispatch is open core — see [`LICENSING.md`](LICENSING.md) for the
+plain-language map:
 
-In practice you may read, build, modify, self-host, and redistribute Dispatch
-for any purpose except shipping a competing product or service. Internal use,
-non-commercial education and research, and professional services you deliver to
-a licensee are all explicitly permitted. **Each release converts to Apache-2.0
-two years after it ships**, and that grant is irrevocable.
+- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/client`,
+  `@dispatch/cli`, `@dispatch/mcp`. Build on the task model, drive the daemon,
+  or embed the MCP tools without a license review.
+- **[FSL-1.1-ALv2](LICENSE)** — the desktop app and the daemon/orchestrator.
+  Source-available, not OSI open source: read, build, modify, self-host, and
+  redistribute for any purpose except shipping a competing product or service.
+  Internal use, non-commercial education and research, and professional services
+  you deliver to a licensee are all explicitly permitted. **Each release
+  converts to Apache-2.0 two years after it ships**, irrevocably.
+- **Commercial** — team features (presence, claims, shared run visibility, web
+  dashboard, audit) live in the team server, a separate private repo
+  ([direction](docs/TEAM-SERVER.md)). The solo app is complete without it.
 
 Versions up to and including v0.13.1 were published under Apache-2.0 and remain
 Apache-2.0 forever.

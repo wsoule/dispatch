@@ -292,24 +292,51 @@ export interface CartoRunResult {
   detail: string;
 }
 
+// Where carto's generated block lives once repointed: inside the gitignored
+// .carto/ directory, so the block's live dependency counts can churn on every
+// index change without dirtying a committed file.
+const CARTO_OUTPUT = '.carto/CONTEXT.md';
+
 // carto sync resolves its output destination from config.json's `output`
 // key; repointing it once keeps AGENTS.md permanently safe.
-export function redirectCartoOutput(projectRoot: string): void {
+//
+// The target is seeded with carto's own AUTO markers when it does not exist:
+// sync fills the block between the markers of a file that is already there
+// and writes nothing at all otherwise (measured with carto-md 2.1.4), so a
+// bare repoint would silently lose the map until someone created the file.
+// Returns whether the config was actually pointed at AGENTS.md before the
+// call, so a caller repairing an old setup can say so.
+export function redirectCartoOutput(projectRoot: string): boolean {
   const path = join(projectRoot, '.carto', 'config.json');
-  if (!existsSync(path)) return;
+  if (!existsSync(path)) return false;
   let config: Record<string, unknown>;
   try {
     config = JSON.parse(readFileSync(path, 'utf8')) as Record<string, unknown>;
   } catch {
-    return;
+    return false;
   }
-  config.output = '.carto/CONTEXT.md';
+  const wasAgents = config.output !== CARTO_OUTPUT;
+  config.output = CARTO_OUTPUT;
   try {
     writeFileSync(path, `${JSON.stringify(config, null, 2)}\n`);
   } catch {
     // Best-effort: a read-only config leaves carto pointed at AGENTS.md,
     // which the snapshot/restore in cartoInit still covers.
+    return false;
   }
+  const target = join(projectRoot, CARTO_OUTPUT);
+  if (!existsSync(target)) {
+    try {
+      writeFileSync(
+        target,
+        '<!-- CARTO:AUTO:START -->\n<!-- CARTO:AUTO:END -->\n'
+      );
+    } catch {
+      // Best-effort: the next carto init recreates the directory and the
+      // markers land then.
+    }
+  }
+  return wasAgents;
 }
 
 // Appends a `.carto/` ignore entry to .gitignore (creating it if needed);

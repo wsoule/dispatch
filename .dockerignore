@@ -1,5 +1,6 @@
 # Build context for apps/demo/Dockerfile is the repo root, not apps/demo/
-# itself — it needs workspace deps and the desktop bundle. Only excludes what a fresh `bun install && bun run build` never reads.
+# itself — it needs workspace deps and the desktop bundle. Only excludes what
+# a fresh `pnpm install` + filtered `pnpm run build` never reads.
 node_modules
 
 # Rebuilt inside the image; a stale local copy must never leak into it.
@@ -21,6 +22,9 @@ apps/desktop/e2e
 .agents
 .dispatch
 .github
-.husky
 .vscode
 docs
+
+# moon's local task cache — potentially hundreds of MB of hashes and cached
+# outputs, and the image never runs moon (the build uses pnpm directly).
+.moon/cache

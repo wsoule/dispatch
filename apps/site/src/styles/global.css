@@ -1,0 +1,95 @@
+/* Site-wide primitives on top of the app tokens. Sizes only; all color comes from tokens.css. */
+:root {
+  --site-display: clamp(2.5rem, 6vw, 4rem);
+  --site-h2: clamp(1.5rem, 3vw, 2rem);
+  --site-max: 68rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--surface-page);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+.container {
+  max-width: var(--site-max);
+  margin: 0 auto;
+  padding: 0 var(--space-5);
+}
+
+.section {
+  padding: var(--space-10) 0;
+}
+
+.eyebrow {
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: var(--label-tracking);
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.mono {
+  font-family: var(--font-mono);
+}
+
+h1,
+h2 {
+  margin: 0 0 var(--space-4);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: var(--site-h2);
+}
+
+a {
+  color: inherit;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-4);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-control);
+  background: var(--surface-card);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-sm);
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.btn:hover {
+  background: var(--surface-hover);
+}
+
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+  }
+}

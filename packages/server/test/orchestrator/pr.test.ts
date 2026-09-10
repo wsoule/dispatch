@@ -641,7 +641,7 @@ describe('PrManager polling', () => {
       stderr: '',
     };
     await pr.pollOnce();
-    expect(harness.store.get(taskId)?.meta.status).toBe('in-review');
+    expect(harness.store.get(taskId)?.meta.status).toBe('review');
 
     stub.viewResult = {
       ok: true,
@@ -651,7 +651,7 @@ describe('PrManager polling', () => {
     await pr.pollOnce();
 
     const task = harness.store.get(taskId);
-    expect(task?.meta.status).toBe('done');
+    expect(task?.meta.status).toBe('landed');
     const run = harness.orchestrator.getRun(runId);
     expect(run?.meta.reviewedAt).toBeDefined();
     expect(run?.meta.reviewAction).toBe('pr');
@@ -660,6 +660,69 @@ describe('PrManager polling', () => {
     // its diff must survive via the same snapshot fallback rather than
     // 409ing now that there's nothing left to diff live.
     expect(() => harness.orchestrator.diff(runId)).not.toThrow();
+  });
+
+  // The PR counterpart of review(merge)'s predecessor close-out: a failed run
+  // resumed into the run whose PR merged shares that PR's branch, so it must
+  // come out of the review queue with the same reviewedAt.
+  it("closes a superseded predecessor once the successor's PR merges", async () => {
+    const harness = makeHarness();
+    let starts = 0;
+    harness.orchestrator.registerExecutor('fail-then-finish', {
+      start(_opts, events) {
+        starts += 1;
+        if (starts === 1) {
+          events.onFinish({
+            state: 'failed',
+            sessionId: 'sess-1',
+            error: 'cut off',
+          });
+        } else {
+          events.onFinish({ state: 'finished', sessionId: 'sess-2' });
+        }
+        return {
+          interrupt: async () => {},
+          requestStop: () => {},
+          send: () => {},
+          approve: () => {},
+        };
+      },
+    });
+    const task = harness.store.create({ title: 'PR me after a resume' });
+    const first = await harness.orchestrator.dispatch(
+      task.meta.id,
+      'fail-then-finish'
+    );
+    await waitFor(
+      () => harness.orchestrator.getRun(first.id)?.meta.state === 'failed'
+    );
+    const second = harness.orchestrator.sendMessage(first.id, 'keep going', {
+      resume: true,
+    });
+    await waitFor(
+      () => harness.orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+
+    const stub = new StubRunner();
+    const pr = new PrManager(harness, true, stub.run);
+    await pr.openPr(second.id);
+    stub.viewResult = {
+      ok: true,
+      stdout: JSON.stringify({ state: 'MERGED' }),
+      stderr: '',
+    };
+    await pr.pollOnce();
+
+    const successor = harness.orchestrator.getRun(second.id)!.meta;
+    expect(successor.reviewAction).toBe('pr');
+    const predecessor = harness.orchestrator.getRun(first.id)!.meta;
+    expect(successor.reviewedAt).toBeDefined();
+    expect(predecessor.reviewedAt).toBe(successor.reviewedAt);
+    expect(predecessor.reviewAction).toBe('merge');
+    expect(harness.store.get(task.meta.id)?.meta.status).toBe('landed');
+    expect(harness.store.get(task.meta.id)?.body).toContain(
+      `run ${first.id} superseded by run ${second.id}, which merged as a PR merge`
+    );
   });
 
   // Regression: markRunMergedViaPr used to call persistDiffSnapshot with no
@@ -732,7 +795,7 @@ describe('PrManager polling', () => {
     };
     await pr.pollOnce();
 
-    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+    expect(harness.store.get(taskId)?.meta.status).toBe('landed');
 
     // Worktree is gone now, so this reads the persisted snapshot.
     const persisted = harness.orchestrator.diff(runId);
@@ -750,7 +813,7 @@ describe('PrManager polling', () => {
 
     stub.viewResult = { ok: false, stdout: '', stderr: 'rate limited' };
     await expect(pr.pollOnce()).resolves.toBeUndefined();
-    expect(harness.store.get(taskId)?.meta.status).toBe('in-review');
+    expect(harness.store.get(taskId)?.meta.status).toBe('review');
   });
 
   it('does not poll at all when the project lacks the pr capability', () => {

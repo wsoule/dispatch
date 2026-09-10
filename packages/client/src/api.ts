@@ -12,6 +12,8 @@ import type {
   ModelConfig,
   MutationEvidence,
   NotificationKind,
+  PolicyGate,
+  PolicyGateMode,
   Priority,
   TaskDoc,
   TaskRisk,
@@ -44,6 +46,11 @@ export interface HealthPayload {
   // PATH + a configured git remote) — gates whether the desktop UI shows
   // the "Open PR" action at all.
   pr: boolean;
+  // Which process is answering and what it will run — optional because a
+  // daemon predating these fields still answers health without them.
+  pid?: number;
+  startedAt?: string;
+  models?: ModelConfig;
 }
 
 export interface TaskFilter {
@@ -481,8 +488,9 @@ export interface UpdateFindingPatch {
 }
 
 // Why a stopped fix loop is not `complete`. Mirrors FixLoopStop in
-// packages/server/src/orchestrator/fixLoop.ts.
-type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error';
+// packages/server/src/orchestrator/fixLoop.ts. `stopped` is the user's own
+// Stop button — resumable through `startFixLoop`.
+type FixLoopStop = 'rounds-exhausted' | 'standing-block' | 'error' | 'stopped';
 
 // Mirrors FixLoopState in packages/server/src/orchestrator/fixLoop.ts: where a
 // task's review -> fix -> re-review loop currently stands.
@@ -496,6 +504,9 @@ export interface FixLoopState {
   // Set while `capped`: what the loop is waiting for. `round` alone does not
   // say — a loop can stop well short of its cap on a ruling or an error.
   stopReason?: FixLoopStop;
+  /** Open findings handed to each round's review, oldest first — [9, 4, 1] is
+   * converging, [9, 9] is thrashing. Present on API reads. */
+  findingsTrace?: number[];
   stopDetail?: string;
   updatedAt: string;
 }
@@ -661,6 +672,9 @@ export type ServerEvent =
   // render the outcome without a follow-up fetch. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'board.sync'; result: SyncResult }
+  // The receipts exporter attempted an export of the git audit trail. The
+  // database backend's counterpart to `board.sync`.
+  | { type: 'receipts.export'; result: ReceiptsResult }
   // The PR poll's cached repo-PR set changed (a delta in number, head sha,
   // state, mergeable, review decision, checks, draft-ness, or updatedAt) —
   // refetch GET /api/landing. No payload: the cache itself is the source of
@@ -812,6 +826,18 @@ export interface PlanRecord {
 export interface ConfirmResult {
   epicId?: string;
   taskIds: string[];
+}
+
+// Mirrors PlanSummary in packages/server/src/orchestrator/plan.ts — one row
+// of GET /api/plans, the record minus its heavy transcript.
+export interface PlanSummary {
+  id: string;
+  prompt: string;
+  subject?: string;
+  state: PlanState;
+  createdAt: string;
+  updatedAt: string;
+  confirmedAt?: string;
 }
 
 // Mirrors DraftRecord in packages/server/src/orchestrator/plan.ts — the body
@@ -1062,6 +1088,15 @@ export interface InboxClusterGroup {
   itemIds: string[];
 }
 
+/** The persisted last clustering pass — mirrors InboxClusterSnapshot in
+ * packages/server/src/inboxClusterer.ts. */
+export interface InboxClusterSnapshot {
+  groups: InboxClusterGroup[];
+  /** The open item ids the pass covered, for judging staleness client-side. */
+  itemIds: string[];
+  updatedAt: string;
+}
+
 export interface InboxConvertResponse {
   results: InboxConvertResult[];
   converted: number;
@@ -1232,6 +1267,42 @@ export interface SyncStatus extends SyncResult {
   lastSyncedAt: string | null;
   /** Null when `dispatch merge-task` resolves on the daemon's PATH; otherwise why it doesn't. */
   mergeDriverWarning: string | null;
+  /**
+   * The receipt log's last export — the database backend's half of "is
+   * dispatch keeping git up to date". A project has a board syncer or a
+   * receipts exporter, never both, so a UI that only reads the board-sync
+   * fields reports a database-backed project as permanently disabled.
+   */
+  receipts: ReceiptsStatus;
+}
+
+/**
+ * Mirrors `ReceiptsStatus` in packages/server/src/api.ts.
+ *
+ * `disabled` means the file backend, where the board syncer commits task
+ * files directly and there is no receipt log — not that anything is wrong.
+ */
+export interface ReceiptsStatus {
+  state: 'committed' | 'clean' | 'failed' | 'idle' | 'disabled';
+  detail: string | null;
+  /** The commit the last export made, when it made one. */
+  commit: string | null;
+  changed: number;
+  removed: number;
+  /** Records the export could not read out of the database. */
+  problems: number;
+  lastExportedAt: string | null;
+}
+
+/** Mirrors `ReceiptsResult` in packages/server/src/receipts/exporter.ts. */
+export interface ReceiptsResult {
+  state: 'committed' | 'clean' | 'failed';
+  dir: string;
+  commit: string | null;
+  changed: number;
+  removed: number;
+  problems: number;
+  detail: string;
 }
 
 // Mirrors LinearSyncSummary in packages/server/src/linear/sync.ts: `created`
@@ -1599,9 +1670,12 @@ export interface ApiClient {
   // these mirror. `executor` defaults to 'claude' server-side when omitted;
   // 'fake' stays reachable for the dev-only manual-smoke toggle the desktop
   // UI gates behind a localStorage flag (see apps/desktop/src/lib/devTools.ts).
+  // `fresh` forces a brand-new run: without it the server resumes the task's
+  // most recent run when that run failed with its worktree still intact, so a
+  // re-dispatch cannot silently abandon work an agent had nearly finished.
   createRun(
     taskId: string,
-    opts?: { executor?: 'fake' | 'claude'; model?: string }
+    opts?: { executor?: 'fake' | 'claude'; model?: string; fresh?: boolean }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   // Every in-memory conversation agent (planner chats, enrich agents, task
@@ -1755,12 +1829,16 @@ export interface ApiClient {
   convertInbox(ids: string[]): Promise<InboxConvertResponse>;
   /** Starts an AI draft that fleshes out a task that already exists, preserving what is there. */
   enrichTask(id: string): Promise<{ planId: string }>;
-  /** Model-backed grouping of related captures, run in the background. Always
-   * resolves with a 200 — `error` carries a failed model call. */
+  /** Model-backed grouping of related captures. Always resolves with a 200 —
+   * `error` carries a failed model call. A successful pass is persisted
+   * server-side; `fetchInboxClusters` reads it back. */
   clusterInbox(): Promise<{
     groups: InboxClusterGroup[];
     error: string | null;
   }>;
+  /** The persisted result of the last clustering pass, or null when none has
+   * ever run — what a page load renders instead of billing a fresh call. */
+  fetchInboxClusters(): Promise<InboxClusterSnapshot | null>;
 
   /** One side of a file in a run's worktree. `sha` is the precondition for applyRunEdit. */
   fetchRunFile(
@@ -1861,6 +1939,12 @@ export interface ApiClient {
       kinds?: Partial<Record<NotificationKind, boolean>>;
       webhook?: string | null;
     };
+    /** The autonomy policy: the ladder rung, plus per-gate pins where a
+     *  `null` pin clears the override so the rung decides again. */
+    policy?: {
+      rung?: number;
+      gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+    };
   }): Promise<DispatchConfig>;
   // Linear sync. `connectLinear` posts the key once and never gets it back; every later
   // call reads `fetchLinearStatus`, which reports where a key was found but not what it is.
@@ -1926,6 +2010,9 @@ export interface ApiClient {
   // scratch and is the only place that actually writes the epic/tasks.
   startPlan(prompt: string): Promise<{ planId: string }>;
   fetchPlan(planId: string): Promise<PlanRecord>;
+  /** Every plan's summary, newest activity first — the Plans page's history.
+   * Persisted server-side, so it survives restarts and spans windows. */
+  fetchPlans(): Promise<PlanSummary[]>;
   // Send a follow-up message on an existing plan conversation. Resolves (202)
   // with the record already back in `running` — poll `fetchPlan`/watch
   // `plan.changed` for the assistant's reply + refined proposal to land.
@@ -2032,7 +2119,12 @@ export interface ApiClient {
   // `advanceFixLoop` drives one step (and opens the loop when `baseSha` is
   // supplied); `adjudicateFinding` is the ruling a capped loop demands.
   fetchFixLoop(taskId: string): Promise<FixLoopState>;
+  /** Every task's loop state in one read — feeds annotate rows from this. */
+  fetchFixLoops(): Promise<FixLoopState[]>;
   startFixLoop(taskId: string): Promise<FixLoopState>;
+  /** Caps the loop where it stands (`stopped`) and winds down its live runs.
+   * `startFixLoop` on a stopped loop resumes it. */
+  stopFixLoop(taskId: string): Promise<FixLoopState>;
   advanceFixLoop(
     taskId: string,
     input?: AdvanceFixLoopInput
@@ -2118,6 +2210,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({
           ...(opts.executor !== undefined ? { executor: opts.executor } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
         }),
       }),
     fetchRuns: () => request(target, '/api/runs'),
@@ -2321,6 +2414,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       }),
     clusterInbox: () =>
       request(target, '/api/inbox/cluster', { method: 'POST' }),
+    fetchInboxClusters: () => request(target, '/api/inbox/clusters'),
     fetchRunFile: (runId, path, side) =>
       request(
         target,
@@ -2447,6 +2541,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({ prompt }),
       }),
     fetchPlan: (planId) => request(target, `/api/plan/${planId}`),
+    fetchPlans: () => request(target, '/api/plans'),
     sendPlanMessage: (planId, text) =>
       request(target, `/api/plan/${planId}/message`, {
         method: 'POST',
@@ -2564,10 +2659,17 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/verification`),
     fetchFixLoop: (taskId) =>
       request(target, `/api/tasks/${encodeURIComponent(taskId)}/fix-loop`),
+    fetchFixLoops: () => request(target, '/api/fix-loops'),
     startFixLoop: (taskId) =>
       request(
         target,
         `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/start`,
+        { method: 'POST' }
+      ),
+    stopFixLoop: (taskId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(taskId)}/fix-loop/stop`,
         { method: 'POST' }
       ),
     advanceFixLoop: (taskId, input = {}) =>

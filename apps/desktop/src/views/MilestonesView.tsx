@@ -1,17 +1,20 @@
 import type { TaskDoc } from '@dispatch/core/browser';
-import { Target, TriangleAlert } from 'lucide-react';
+import { statusLabel } from '@dispatch/core/browser';
+import { ChevronRight, Target, TriangleAlert } from 'lucide-react';
+import { useMemo, useState } from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { PriorityIcon } from '../components/tasks/PriorityIcon';
 import { StatusIcon } from '../components/tasks/StatusIcon';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { deriveMilestoneStatus } from '../lib/milestoneRisk';
 import {
-  deriveMilestoneStatus,
-  MILESTONE_HEALTH_LABEL,
-} from '../lib/milestoneRisk';
+  isMilestoneFinished,
+  rollupMilestoneStatus,
+} from '../lib/milestoneRollup';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
-import { EmptyState, Panel } from '@/ui/chrome';
+import { EmptyState } from '@/ui/chrome';
 import { ProgressTrack } from '@/ui/chrome/ProgressTrack';
 import { StateDot } from '@/ui/chrome/StateDot';
 
@@ -20,27 +23,59 @@ interface MilestonesViewProps {
   onOpenTask: (taskId: string) => void;
 }
 
-interface MilestoneGroup {
-  name: string;
-  tasks: TaskDoc[];
-  done: number;
+function isClosed(task: TaskDoc): boolean {
+  return task.meta.status === 'landed' || task.meta.status === 'dropped';
 }
 
-// A task counts as "done" for milestone progress when its status is a terminal one — the two
-// built-in closed statuses. (A custom tracker could name these differently, but done/cancelled
-// cover every default project and degrade gracefully otherwise.)
-function isClosed(task: TaskDoc): boolean {
-  return task.meta.status === 'done' || task.meta.status === 'cancelled';
+interface MilestoneGroup {
+  epic: TaskDoc;
+  children: TaskDoc[];
+  done: number;
+  /** The milestone's own rolled-up pipeline state — see `rollupMilestoneStatus`. */
+  rollup: string;
+  finished: boolean;
 }
 
 /**
- * Top-level Milestones view — the Linear-style grouping *above* epics/tasks (product vision:
- * "projects or milestones like Linear"). Groups every task with a milestone name into a card
- * showing its progress (closed/total + a bar) and its tasks; unassigned tasks are left out so
- * a milestone reads as a deliberate slice of work. Milestones are free-form names (no
- * per-project setup) assigned from a task's detail rail.
+ * Milestones view — each milestone rendered as a big task: the epic wears its own rolled-up
+ * pipeline state (the same status glyph vocabulary its children use, via
+ * `rollupMilestoneStatus`), a progress track, and its tasks inside. A finished milestone
+ * (every child landed/dropped) reads as landed: checked glyph, dimmed, collapsed, and
+ * sorted to the bottom. Milestone = epic here, front-running the epic→milestone rename
+ * (e-be4827) — the old free-form `meta.milestone` string grouping is retired.
  */
 export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
+  // Which milestones the user has flipped away from their default expansion (unfinished
+  // start open, finished start collapsed).
+  const [toggledIds, setToggledIds] = useState<ReadonlySet<string>>(
+    () => new Set()
+  );
+
+  const groups = useMemo<MilestoneGroup[]>(() => {
+    const childrenByEpic = new Map<string, TaskDoc[]>();
+    for (const doc of data.tasks) {
+      if (doc.meta.kind === 'epic' || doc.meta.parent === null) continue;
+      const bucket = childrenByEpic.get(doc.meta.parent);
+      if (bucket !== undefined) bucket.push(doc);
+      else childrenByEpic.set(doc.meta.parent, [doc]);
+    }
+    const result = data.epics.map((epic) => {
+      const children = childrenByEpic.get(epic.meta.id) ?? [];
+      return {
+        epic,
+        children,
+        done: children.filter(isClosed).length,
+        rollup: rollupMilestoneStatus(children),
+        finished: isMilestoneFinished(children),
+      };
+    });
+    // Finished milestones sink to the bottom; everything else keeps the project's epic order.
+    return [
+      ...result.filter((g) => !g.finished),
+      ...result.filter((g) => g.finished),
+    ];
+  }, [data.tasks, data.epics]);
+
   if (data.portLoading || data.portError || data.client === null) {
     return (
       <DaemonUnavailable
@@ -51,83 +86,105 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
     );
   }
 
-  const byName = new Map<string, MilestoneGroup>();
-  for (const task of data.tasks) {
-    const name = task.meta.milestone;
-    if (name === null || name === '') continue;
-    const group = byName.get(name) ?? { name, tasks: [], done: 0 };
-    group.tasks.push(task);
-    if (isClosed(task)) group.done += 1;
-    byName.set(name, group);
+  function toggle(id: string) {
+    setToggledIds((prev) => {
+      const next = new Set(prev);
+      if (!next.delete(id)) next.add(id);
+      return next;
+    });
   }
-  const groups = [...byName.values()].sort((a, b) =>
-    a.name.localeCompare(b.name)
-  );
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-4">
-      <h1 className="sr-only">Milestones</h1>
-
+    <div className="flex h-full min-h-0 flex-col gap-3">
       {groups.length === 0 ? (
         <EmptyState
           icon={Target}
-          message="No milestones yet. Assign a task to a milestone from its detail panel to group work here."
+          message="No milestones yet. “Plan work…” drafts one with its tasks."
           className="flex-1 justify-center gap-2 p-0 text-[13px] [&_[data-slot=empty-description]]:text-[length:inherit] [&_[data-slot=empty-icon]_svg]:size-6"
         />
       ) : (
-        <div className="grid min-h-0 flex-1 auto-rows-min grid-cols-1 gap-3 overflow-y-auto lg:grid-cols-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto">
           {groups.map((group) => {
+            const expanded = toggledIds.has(group.epic.meta.id)
+              ? group.finished
+              : !group.finished;
             const pct =
-              group.tasks.length === 0
+              group.children.length === 0
                 ? 0
-                : Math.round((group.done / group.tasks.length) * 100);
+                : group.done / group.children.length;
             const status = deriveMilestoneStatus(
-              group.tasks,
+              group.children,
               data.latestRunByTaskId,
-              group.done === group.tasks.length
+              group.finished
             );
             const stalled = status.health === 'stalled';
             return (
-              <Panel
-                key={group.name}
+              <div
+                key={group.epic.meta.id}
                 className={cn(
-                  'flex flex-col',
-                  stalled && 'bg-state-waiting-surface'
+                  // `shrink-0` matters: these are flex children of an overflow-y-auto
+                  // column, and the default flex-shrink would squash every card to fit.
+                  'bg-card rounded-card shadow-card shrink-0 overflow-hidden',
+                  group.finished && 'opacity-60 saturate-50'
                 )}
               >
-                <div className="flex flex-col gap-2 px-4 py-3">
+                <div className="flex flex-col gap-2 px-3 py-2.5">
                   <div className="flex items-center gap-2">
-                    <Target className="text-primary size-4 shrink-0" />
-                    <h2 className="text-foreground min-w-0 flex-1 truncate text-[14px] font-medium">
-                      {group.name}
-                    </h2>
-                    <span
-                      className={cn(
-                        'dense-meta shrink-0',
-                        stalled && 'text-state-waiting'
-                      )}
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon-xs"
+                      onClick={() => toggle(group.epic.meta.id)}
+                      aria-expanded={expanded}
+                      aria-label={`${expanded ? 'Collapse' : 'Expand'} ${group.epic.meta.title}`}
+                      className="text-muted-foreground shrink-0"
                     >
-                      {MILESTONE_HEALTH_LABEL[status.health]}
+                      <ChevronRight
+                        className={cn(
+                          'size-3.5 transition-transform',
+                          expanded && 'rotate-90'
+                        )}
+                      />
+                    </Button>
+                    {/* The milestone wears its rolled-up state in the same glyph
+                        vocabulary as its tasks — a big task, not a different species. */}
+                    <StatusIcon status={group.rollup} className="size-4" />
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => onOpenTask(group.epic.meta.id)}
+                      className="text-foreground h-auto min-w-0 flex-1 justify-start px-0 text-left text-[14px] font-medium hover:bg-transparent"
+                    >
+                      <span className="min-w-0 truncate">
+                        {group.epic.meta.title}
+                      </span>
+                    </Button>
+                    <span className="dense-meta shrink-0 capitalize">
+                      {statusLabel(group.rollup)}
                     </span>
                     <span className="dense-meta shrink-0">
-                      {group.done}/{group.tasks.length}
+                      {group.done}/{group.children.length}
                     </span>
+                    <PriorityIcon
+                      priority={group.epic.meta.priority}
+                      className="size-3.5 shrink-0"
+                    />
                   </div>
                   <ProgressTrack
-                    value={pct / 100}
-                    label={`${group.name} milestone progress`}
+                    value={pct}
+                    label={`${group.epic.meta.title} progress`}
                     className={cn(
-                      'bg-muted h-1.5 rounded-full',
+                      'bg-muted h-1 rounded-full',
                       '[&>[data-slot=progress-indicator]]:transition-transform [&>[data-slot=progress-indicator]]:duration-300',
-                      pct === 100
+                      group.finished
                         ? '[&>[data-slot=progress-indicator]]:bg-state-review'
                         : '[&>[data-slot=progress-indicator]]:bg-primary'
                     )}
                   />
                   {/* Never "at risk" without saying why — an unexplained warning is just
-                      anxiety. There is no target date to be late against (milestones are
-                      free-form names), so the reason is always about what is stuck. */}
-                  {status.reason !== null && (
+                      anxiety. */}
+                  {stalled && status.reason !== null && (
                     <div className="flex items-center gap-2">
                       <TriangleAlert className="text-state-waiting size-3.5 shrink-0" />
                       <span className="text-state-waiting text-[12.5px]">
@@ -144,36 +201,33 @@ export function MilestonesView({ data, onOpenTask }: MilestonesViewProps) {
                     </div>
                   )}
                 </div>
-                <div className="border-border/60 flex flex-col gap-0.5 border-t p-1.5">
-                  {group.tasks.map((task) => (
-                    <Button
-                      key={task.meta.id}
-                      variant="ghost"
-                      size="xs"
-                      onClick={() => onOpenTask(task.meta.id)}
-                      className="hover:bg-surface-hover hover:text-foreground rounded-control h-auto w-full justify-start gap-2 px-2.5 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-2.5"
-                    >
-                      <PriorityIcon priority={task.meta.priority} />
-                      <StatusIcon status={task.meta.status} />
-                      <span
-                        className={cn(
-                          'min-w-0 flex-1 truncate text-[13px]',
-                          isClosed(task)
-                            ? 'text-muted-foreground'
-                            : 'text-foreground'
-                        )}
+                {expanded && group.children.length > 0 && (
+                  <div className="border-border/60 bg-surface-inset flex flex-col gap-0.5 border-t p-1.5">
+                    {group.children.map((task) => (
+                      <Button
+                        key={task.meta.id}
+                        variant="ghost"
+                        size="xs"
+                        onClick={() => onOpenTask(task.meta.id)}
+                        className="hover:bg-surface-hover hover:text-foreground rounded-control h-auto w-full justify-start gap-2 px-2.5 py-1.5 text-left text-[length:inherit] font-normal has-[>svg]:px-2.5"
                       >
-                        {task.meta.title}
-                      </span>
-                      {task.meta.kind === 'epic' && (
-                        <span className="text-muted-foreground/70 shrink-0 text-[10px] uppercase">
-                          epic
+                        <PriorityIcon priority={task.meta.priority} />
+                        <StatusIcon status={task.meta.status} />
+                        <span
+                          className={cn(
+                            'min-w-0 flex-1 truncate text-[13px]',
+                            isClosed(task)
+                              ? 'text-muted-foreground'
+                              : 'text-foreground'
+                          )}
+                        >
+                          {task.meta.title}
                         </span>
-                      )}
-                    </Button>
-                  ))}
-                </div>
-              </Panel>
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>

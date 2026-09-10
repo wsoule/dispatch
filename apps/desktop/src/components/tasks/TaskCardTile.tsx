@@ -74,9 +74,9 @@ interface TaskCardTileProps {
    * drops the drag affordance; `TaskBoard` also disables the drag itself and the underlying
    * `moveTaskStatus` call is gated centrally in `useDispatchProject`, so this is purely visual. */
   archived?: boolean;
-  /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) — tints
-   * the card's border and background with the amber "waiting" tokens so it stands out on a
-   * dense board without breaking the uniform card anatomy. */
+  /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) — a
+   * hairline amber ring so it stands out on a dense board without breaking the uniform card
+   * anatomy. */
   needsAttention?: boolean;
 }
 
@@ -149,11 +149,9 @@ export function TaskCardTile({
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
         'data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
         drag?.isDragging === true && 'opacity-40',
-        // The tint replaces both the resting and hover surfaces — flashing back to the
-        // neutral card color on hover would read as the highlight switching off.
-        needsAttention &&
-          !archived &&
-          'bg-state-waiting-surface hover:bg-state-waiting-surface',
+        // A hairline amber ring, not a surface wash — the card stands out without the
+        // whole tile turning into alarm wallpaper.
+        needsAttention && !archived && 'ring-state-waiting-edge ring-1',
         archived && 'cursor-default opacity-55 saturate-50 hover:bg-card'
       )}
       onClick={onClick}

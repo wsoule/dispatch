@@ -20,7 +20,13 @@ const webIndexHtml = join(webDistDir, 'index.html');
 // force-killing it if it runs past `timeoutMs`.
 function runWebBuild(timeoutMs: number): Promise<number> {
   return new Promise((resolve) => {
-    const proc = spawn('bun', ['run', 'build'], {
+    // `process.execPath` rather than the bare name 'bun': these tests already
+    // run under bun, and under moon's task runner (and in CI, where bun comes
+    // from the proto toolchain) the child's PATH has no 'bun' to resolve —
+    // which failed as ENOENT with no 'error' handler, so this promise settled
+    // only on the 120s timeout and the module's `describe.skip` then ran after
+    // the suite had finished, crashing the whole file.
+    const proc = spawn(process.execPath, ['run', 'build'], {
       cwd: webPackageDir,
       stdio: 'inherit',
     });
@@ -28,21 +34,24 @@ function runWebBuild(timeoutMs: number): Promise<number> {
       proc.kill();
       resolve(1);
     }, timeoutMs);
-    proc.on('close', (code) => {
+    const settle = (code: number): void => {
       clearTimeout(timer);
-      resolve(code ?? 1);
-    });
+      resolve(code);
+    };
+    proc.on('error', () => settle(1));
+    proc.on('close', (code) => settle(code ?? 1));
   });
 }
 
 // This test plugs Slice S3's built web UI into the static serving Slice S1
-// already added to startServer. Root `bun run build` builds every package
-// (web included) before `bun run test` runs, but scripts/ws.ts matches
-// packages in directory order — "server" sorts before "web" — so a
-// server-only test run (or a fresh checkout that only ran `bun run test`)
-// can't assume packages/web/dist already exists. Building it here, once, up
-// front makes this test self-sufficient either way; 120s covers a cold vite
-// build plus dependency resolution.
+// already added to startServer. moon's `test` task depends on `^:build`,
+// which builds packages/server's own upstream dependencies — but web is not
+// one of them (web depends on server's types, not the reverse), so it is not
+// in server's build graph at all. A server-only run (`moonx server:test`, or
+// `moon run :test --affected` when nothing touched web) therefore cannot
+// assume packages/web/dist already exists. Building it here, once, up front
+// makes this test self-sufficient either way; 120s covers a cold vite build
+// plus dependency resolution.
 let distAvailable = existsSync(webIndexHtml);
 if (!distAvailable) {
   console.log(

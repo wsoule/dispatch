@@ -57,7 +57,7 @@ export function claimIn(cwd: string, file: string, handle: string): void {
 export function conflictIn(cwd: string, file: string): void {
   const path = join(cwd, file);
   const updated = touchUpdated(
-    rewriteField(readFileSync(path, 'utf8'), 'status', 'in-progress')
+    rewriteField(readFileSync(path, 'utf8'), 'status', 'working')
   );
   writeFileSync(path, updated);
   git(cwd, 'add', file);

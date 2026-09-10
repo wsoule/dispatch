@@ -11,19 +11,25 @@ import {
   CircleAlert,
   History,
   Link2,
+  Maximize2,
   Minus,
   Plus,
+  Rows3,
   Send,
   SignalHigh,
   SignalLow,
   SignalMedium,
   Trash2,
+  Waypoints,
 } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { DependencyGraph } from '../components/graph/DependencyGraph';
 import { PlanQuestionsForm } from '../components/plans/PlanQuestionsForm';
+import { PlanTaskSpecDialog } from '../components/plans/PlanTaskSpecDialog';
 import { Markdown } from '../components/runs/Markdown';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
+import { useToasts } from '../components/shell/Toasts';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { formatRelativeTimeFromIso } from '../lib/format';
 import type { PlanDraft, PlanThreadItem } from '../lib/planThread';
@@ -47,44 +53,9 @@ import {
 import { Skeleton } from '@/ui/skeleton';
 import { Spinner } from '@/ui/spinner';
 import { Textarea } from '@/ui/textarea';
+import { ToggleGroup, ToggleGroupItem } from '@/ui/toggle-group';
 
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
-
-interface PlanHistoryEntry {
-  id: string;
-  prompt: string;
-  createdAt: string;
-  state: PlanState | 'unknown';
-}
-
-/** dispatchd has no "list every plan" endpoint (each plan is fetched by id) — history is
- * this window's own session record of prompts it started, persisted to localStorage per
- * project so switching views (or a reload) doesn't lose it. This is a deliberate scope cut
- * from a server-backed plan history; see the phase-8 report for the tradeoff. */
-function historyStorageKey(projectPath: string): string {
-  return `dispatch:planHistory:${projectPath}`;
-}
-
-function loadHistory(projectPath: string): PlanHistoryEntry[] {
-  try {
-    const raw = window.localStorage.getItem(historyStorageKey(projectPath));
-    return raw !== null ? (JSON.parse(raw) as PlanHistoryEntry[]) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveHistory(projectPath: string, history: PlanHistoryEntry[]): void {
-  try {
-    window.localStorage.setItem(
-      historyStorageKey(projectPath),
-      JSON.stringify(history)
-    );
-  } catch {
-    // Best-effort — a full/disabled localStorage just means history doesn't persist across
-    // reloads this session, not a reason to break the plan flow itself.
-  }
-}
 
 /** Small color-coded lucide icon in place of a text pill — only urgent/high get a color
  * treatment (matches `priorityTone`'s "don't compete for attention" rule elsewhere in the
@@ -119,7 +90,7 @@ function PriorityIcon({
 /** Small colored dot for a history entry's plan state — the brief's "status = a dot, not a
  * text pill" rule. `running` pulses (mirrors the Board's live-run pulse) since it's the one
  * state that's actively changing underneath the user. */
-function PlanStateDot({ state }: { state: PlanHistoryEntry['state'] }) {
+function PlanStateDot({ state }: { state: PlanState | 'unknown' }) {
   return (
     <span
       className={cn(
@@ -150,15 +121,17 @@ function PlanMessageBubble({
     <div
       className={cn(
         'rounded-control flex max-w-[85%] flex-col gap-1 px-3 py-2',
+        // A quiet tint, not a solid fill — a wall of saturated bubbles was the
+        // loudest surface in the app, and the words are the point.
         fromUser
-          ? 'bg-primary text-primary-foreground self-end'
+          ? 'bg-primary/10 shadow-hairline self-end'
           : 'bg-card shadow-hairline self-start'
       )}
     >
       <div
         className={cn(
           'flex items-baseline gap-1.5 text-[11px] font-medium tracking-wide uppercase',
-          fromUser ? 'text-primary-foreground/70' : 'text-muted-foreground'
+          fromUser ? 'text-primary' : 'text-muted-foreground'
         )}
       >
         {fromUser ? 'You' : 'Planner'}
@@ -343,30 +316,89 @@ interface PlanTaskRowProps {
    * patch object, so the row and the reducer can never disagree about what an edit means. */
   onEdit: (action: ProposalAction) => void;
   onRemove: (index: number) => void;
+  /** Expands a task (this one, or a blocker named in its chips) into the full spec dialog. */
+  onExpand: (index: number) => void;
 }
 
-/** One card of the proposal review list. "Dependency arrows" are rendered as a plain
- * "blocked by …" badge line naming the blocking tasks by their (possibly just-edited)
- * title — a real arrow-diagram would need a layout engine this view doesn't have yet; the
- * badges convey the same ordering information, and titles are looked up live off the current
- * draft so an edited blocker's new title shows immediately in its dependents' rows. */
+/** One card of the proposal review list, in the ai components' RecommendationCard shape:
+ * a round accent-tinted badge (the task's number) beside the editable title and muted
+ * description, then one inset top-bordered footer strip holding the blocked-by chips on the
+ * left and the priority/expand/remove controls on the right. Blocker titles are looked up
+ * live off the current draft so an edited blocker's new title shows immediately in its
+ * dependents' rows. */
 function PlanTaskRow({
   task,
   index,
   allTasks,
   onEdit,
   onRemove,
+  onExpand,
 }: PlanTaskRowProps) {
-  const blockerTitles = task.blockedByIndices
-    .map((i) => allTasks[i]?.title)
-    .filter((title): title is string => title !== undefined);
-
   return (
-    <div className="bg-card rounded-card shadow-card ease-out-expo hover:bg-surface-hover flex flex-col gap-2 p-3 transition-colors duration-100">
-      <div className="flex items-center gap-2">
-        <span className="text-muted-foreground w-5 shrink-0 font-mono text-[11px]">
+    <div className="bg-card rounded-card shadow-card group/plan-task flex flex-col overflow-hidden">
+      <div className="flex items-start gap-2.5 px-4 pt-3 pb-2.5">
+        <span className="bg-accent-tint text-primary flex size-7 shrink-0 items-center justify-center rounded-full font-mono text-[11px]">
           {index + 1}
         </span>
+        <div className="min-w-0 flex-1 pt-0.5">
+          <Input
+            value={task.title}
+            onChange={(e) =>
+              onEdit({ type: 'setTaskTitle', index, title: e.target.value })
+            }
+            aria-label={`Task ${index + 1} title`}
+            className="focus-visible:ring-ring/40 h-auto w-full min-w-0 border-none bg-transparent px-0 py-0 text-[13px] font-semibold shadow-none focus-visible:ring-1"
+          />
+          <Textarea
+            rows={2}
+            value={task.description}
+            onChange={(e) =>
+              onEdit({
+                type: 'setTaskDescription',
+                index,
+                description: e.target.value,
+              })
+            }
+            aria-label={`Task ${index + 1} description`}
+            className="text-muted-foreground focus-visible:ring-ring/40 mt-1 min-h-0 resize-none border-none bg-transparent p-0 text-[12.5px] leading-relaxed shadow-none focus-visible:ring-1"
+          />
+        </div>
+      </div>
+
+      <div className="border-border bg-surface-inset flex items-center gap-2 border-t px-4 py-1.5">
+        <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
+          {task.blockedByIndices.length > 0 && (
+            <>
+              <Link2 className="text-muted-foreground size-3 shrink-0" />
+              {task.blockedByIndices.map((blockerIndex) => {
+                const title = allTasks[blockerIndex]?.title;
+                if (title === undefined) return null;
+                return (
+                  <button
+                    key={blockerIndex}
+                    type="button"
+                    onClick={() => onExpand(blockerIndex)}
+                    aria-label={`Expand task ${blockerIndex + 1}`}
+                    className="rounded-control focus-visible:ring-ring/40 focus-visible:ring-1 focus-visible:outline-none"
+                  >
+                    {/* `justify-start` matters: Badge centers its content, and a
+                        centered flex box with overflow clips the START of the text. */}
+                    <Badge
+                      variant="secondary"
+                      title={title}
+                      className="hover:bg-accent max-w-[11rem] cursor-pointer justify-start font-normal"
+                    >
+                      <span className="text-muted-foreground shrink-0 font-mono">
+                        #{blockerIndex + 1}
+                      </span>
+                      <span className="truncate">{title}</span>
+                    </Badge>
+                  </button>
+                );
+              })}
+            </>
+          )}
+        </div>
         <Select
           value={task.priority}
           onValueChange={(value) =>
@@ -377,15 +409,17 @@ function PlanTaskRow({
             })
           }
         >
+          {/* No icon of its own: SelectValue already renders the selected
+              item's icon+label — a second icon was how the trigger ended up
+              double-glyphed and clipped. */}
           <SelectTrigger
             size="sm"
             aria-label={`Task ${index + 1} priority`}
-            className="h-7 w-[112px] gap-1.5 px-2 text-[12px]"
+            className="h-6.5 w-[6.75rem] shrink-0 gap-1 border-none bg-transparent px-2 text-[12px] shadow-none"
           >
-            <PriorityIcon priority={task.priority} className="size-3.5" />
             <SelectValue className="capitalize" />
           </SelectTrigger>
-          <SelectContent align="start">
+          <SelectContent align="end">
             {PRIORITIES.map((p) => (
               <SelectItem key={p} value={p}>
                 <PriorityIcon priority={p} className="size-3.5" />
@@ -394,63 +428,40 @@ function PlanTaskRow({
             ))}
           </SelectContent>
         </Select>
-        <div className="flex-1" />
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          onClick={() => onExpand(index)}
+          aria-label={`Expand task ${index + 1}`}
+          className="text-muted-foreground hover:text-foreground shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
+        >
+          <Maximize2 className="size-3.5" />
+        </Button>
         <Button
           type="button"
           variant="ghost"
           size="icon-xs"
           onClick={() => onRemove(index)}
           aria-label={`Remove task ${index + 1}`}
-          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10"
+          className="text-muted-foreground hover:text-destructive hover:bg-destructive/10 shrink-0 opacity-0 transition-opacity duration-100 group-focus-within/plan-task:opacity-100 group-hover/plan-task:opacity-100"
         >
           <Trash2 className="size-3.5" />
         </Button>
       </div>
-
-      <Input
-        value={task.title}
-        onChange={(e) =>
-          onEdit({ type: 'setTaskTitle', index, title: e.target.value })
-        }
-        aria-label={`Task ${index + 1} title`}
-        className="focus-visible:ring-ring/40 h-auto border-none bg-transparent px-0 py-0.5 text-[13px] font-medium shadow-none focus-visible:ring-1"
-      />
-      <Textarea
-        rows={2}
-        value={task.description}
-        onChange={(e) =>
-          onEdit({
-            type: 'setTaskDescription',
-            index,
-            description: e.target.value,
-          })
-        }
-        aria-label={`Task ${index + 1} description`}
-        className="text-muted-foreground focus-visible:ring-ring/40 min-h-0 resize-y border-none bg-transparent px-0 py-0.5 text-[12px] shadow-none focus-visible:ring-1"
-      />
-
-      {blockerTitles.length > 0 && (
-        <div className="flex flex-wrap items-center gap-1.5 pt-1">
-          <Link2 className="text-muted-foreground size-3" />
-          <span className="text-muted-foreground text-[11px]">Blocked by</span>
-          {blockerTitles.map((title, i) => (
-            <Badge
-              key={`${title}-${i}`}
-              variant="secondary"
-              className="max-w-[12rem] truncate font-normal"
-            >
-              {title}
-            </Badge>
-          ))}
-        </div>
-      )}
     </div>
   );
 }
 
+/** The list row's text for a free-form plan: the ask's own first line. */
+function firstPromptLine(prompt: string): string {
+  return prompt.split('\n', 1)[0] ?? '';
+}
+
 interface PlansViewProps {
   data: DispatchProjectData;
-  projectPath: string;
+  /** Navigates to the board — the confirm toast's "View board" action. */
+  onGoToBoard: () => void;
   /**
    * Text to open the composer with, when the user arrived here from somewhere that already had
    * the words — "hand it to the planner" in Brain dump, or "plan it" on a single inbox item.
@@ -470,12 +481,10 @@ interface PlansViewProps {
  */
 export function PlansView({
   data,
-  projectPath,
+  onGoToBoard,
   initialPrompt,
 }: PlansViewProps) {
-  const [history, setHistory] = useState<PlanHistoryEntry[]>(() =>
-    loadHistory(projectPath)
-  );
+  const toasts = useToasts();
   const [prompt, setPrompt] = useState(initialPrompt ?? '');
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -485,26 +494,36 @@ export function PlansView({
   const [draft, setDraft] = useState<PlanDraft | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  // Which proposal task is expanded into the full spec dialog (by index), and whether the
+  // proposal renders as the editable list or the dependency graph.
+  const [specIndex, setSpecIndex] = useState<number | null>(null);
+  const [proposalView, setProposalView] = useState<'list' | 'graph'>('list');
 
-  // Keeps the visible history entry's state snapshot fresh whenever the currently-open
-  // plan's record changes (running -> ready/failed), and folds each turn's proposal into
-  // the editable draft as the conversation produces it.
+  // The proposal projected onto the shared graph shape. Drafts have no task ids, so nodes
+  // are keyed by proposal index; `created` is the same index (zero-padded) purely as the
+  // layout's deterministic tie-break.
+  const graphTasks = useMemo(() => {
+    if (draft === null) return [];
+    return draft.proposal.tasks.map((task, i) => ({
+      id: String(i),
+      title: task.title.trim() === '' ? `Task ${i + 1}` : task.title,
+      status: 'draft',
+      created: String(i).padStart(4, '0'),
+      blockedBy: task.blockedByIndices.map(String),
+    }));
+  }, [draft]);
+
+  // Folds each turn's proposal into the editable draft as the conversation
+  // produces it. History is server truth now — no snapshot to keep fresh.
   useEffect(() => {
     if (data.planId === null || data.planRecord === undefined) return;
     const planId = data.planId;
     const planRecord = data.planRecord;
-    setHistory((prev) => {
-      const next = prev.map((entry) =>
-        entry.id === planId ? { ...entry, state: planRecord.state } : entry
-      );
-      saveHistory(projectPath, next);
-      return next;
-    });
     if (planRecord.state === 'ready' && planRecord.proposal) {
       const proposal = planRecord.proposal;
       setDraft((prev) => syncPlanDraft(prev, proposal, planId));
     }
-  }, [data.planId, data.planRecord, projectPath]);
+  }, [data.planId, data.planRecord]);
 
   const thread = useMemo(
     () => buildPlanThread(data.planRecord),
@@ -517,18 +536,7 @@ export function PlansView({
     setSubmitError(null);
     setDraft(null);
     try {
-      const newPlanId = await data.handleSubmitPrompt(prompt.trim());
-      const entry: PlanHistoryEntry = {
-        id: newPlanId,
-        prompt: prompt.trim(),
-        createdAt: new Date().toISOString(),
-        state: 'running',
-      };
-      setHistory((prev) => {
-        const next = [entry, ...prev];
-        saveHistory(projectPath, next);
-        return next;
-      });
+      await data.handleSubmitPrompt(prompt.trim());
       setPrompt('');
     } catch (err) {
       setSubmitError(err instanceof Error ? err.message : String(err));
@@ -550,7 +558,13 @@ export function PlansView({
     setConfirming(true);
     setConfirmError(null);
     try {
+      const count = draft.proposal.tasks.length;
       await data.handleConfirmPlan(draft.proposal);
+      toasts.push({
+        tone: 'success',
+        title: `${count} ${count === 1 ? 'task' : 'tasks'} created`,
+        action: { label: 'View board', onClick: onGoToBoard },
+      });
       closePlan();
     } catch (err) {
       setConfirmError(err instanceof Error ? err.message : String(err));
@@ -565,13 +579,15 @@ export function PlansView({
   function closePlan() {
     setDraft(null);
     setConfirmError(null);
+    setSpecIndex(null);
     data.setPlanId(null);
   }
 
-  function openHistoryEntry(entry: PlanHistoryEntry) {
+  function openHistoryEntry(planId: string) {
     setDraft(null);
     setConfirmError(null);
-    data.setPlanId(entry.id);
+    setSpecIndex(null);
+    data.setPlanId(planId);
   }
 
   // A plan whose tasks are already written (reopened from history): dispatchd 409s both a
@@ -616,8 +632,7 @@ export function PlansView({
 
   return (
     <div className="mx-auto flex w-full max-w-[60rem] flex-col gap-6">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="view-topbar-title">Plans</h1>
+      <div className="flex items-center justify-end gap-3">
         {data.planId !== null && (
           <Button variant="outline" size="sm" onClick={closePlan}>
             <Plus className="size-3.5" /> New plan
@@ -651,7 +666,7 @@ export function PlansView({
                 </>
               ) : (
                 <>
-                  <Send className="size-4" /> Plan work…
+                  <Send className="size-4" /> Plan
                 </>
               )}
             </Button>
@@ -710,7 +725,7 @@ export function PlansView({
           {draft.proposal.epic !== undefined && (
             <div className="bg-card rounded-card shadow-card flex flex-col gap-2 p-4">
               <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
-                Epic
+                Milestone
               </div>
               <Input
                 value={draft.proposal.epic.title}
@@ -735,18 +750,71 @@ export function PlansView({
             </div>
           )}
 
-          <div className="flex flex-col gap-2">
-            {draft.proposal.tasks.map((task, i) => (
-              <PlanTaskRow
-                key={draft.taskKeys[i] ?? i}
-                task={task}
-                index={i}
-                allTasks={draft.proposal.tasks}
-                onEdit={applyEdit}
-                onRemove={(index) => applyEdit({ type: 'removeTask', index })}
+          {draft.proposal.tasks.length > 1 && (
+            <div className="flex justify-end">
+              <ToggleGroup
+                type="single"
+                variant="outline"
+                size="sm"
+                value={proposalView}
+                onValueChange={(value) => {
+                  // Radix clears to '' when the active item is re-clicked; a proposal is
+                  // always one of the two views, so ignore the deselect.
+                  if (value === 'list' || value === 'graph')
+                    setProposalView(value);
+                }}
+                aria-label="Proposal layout"
+              >
+                <ToggleGroupItem value="list" aria-label="List view">
+                  <Rows3 className="size-3.5" /> List
+                </ToggleGroupItem>
+                <ToggleGroupItem value="graph" aria-label="Graph view">
+                  <Waypoints className="size-3.5" /> Graph
+                </ToggleGroupItem>
+              </ToggleGroup>
+            </div>
+          )}
+
+          {proposalView === 'graph' && draft.proposal.tasks.length > 1 ? (
+            <div className="bg-card rounded-card shadow-card p-4">
+              <DependencyGraph
+                tasks={graphTasks}
+                refFor={(id) => `#${Number(id) + 1}`}
+                accessoryFor={(id) => {
+                  const task = draft.proposal.tasks[Number(id)];
+                  return task === undefined ? undefined : (
+                    <PriorityIcon
+                      priority={task.priority}
+                      className="size-3.5"
+                    />
+                  );
+                }}
+                onOpenNode={(id) => setSpecIndex(Number(id))}
+                ariaLabel="Plan dependency graph"
               />
-            ))}
-          </div>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {draft.proposal.tasks.map((task, i) => (
+                <PlanTaskRow
+                  key={draft.taskKeys[i] ?? i}
+                  task={task}
+                  index={i}
+                  allTasks={draft.proposal.tasks}
+                  onEdit={applyEdit}
+                  onRemove={(index) => applyEdit({ type: 'removeTask', index })}
+                  onExpand={setSpecIndex}
+                />
+              ))}
+            </div>
+          )}
+
+          <PlanTaskSpecDialog
+            index={specIndex}
+            tasks={draft.proposal.tasks}
+            onOpenIndex={setSpecIndex}
+            onClose={() => setSpecIndex(null)}
+          />
 
           <div className="shadow-hairline-top flex items-center justify-end gap-2 pt-3">
             <Button variant="ghost" onClick={closePlan} disabled={confirming}>
@@ -781,7 +849,7 @@ export function PlansView({
         <div className="text-muted-foreground text-[11px] font-medium tracking-wide uppercase">
           History
         </div>
-        {history.length === 0 ? (
+        {data.plans.length === 0 ? (
           <EmptyState
             icon={History}
             message="No plans yet."
@@ -789,13 +857,13 @@ export function PlansView({
           />
         ) : (
           <div className="flex flex-col gap-1.5">
-            {history.map((entry) => (
+            {data.plans.map((entry) => (
               <Button
                 key={entry.id}
                 type="button"
                 variant="ghost"
                 size="xs"
-                onClick={() => openHistoryEntry(entry)}
+                onClick={() => openHistoryEntry(entry.id)}
                 className={cn(
                   'rounded-control ease-out-expo h-auto w-full items-center justify-start gap-2 px-3 py-2 text-left text-[length:inherit] font-normal transition-colors duration-100 hover:text-foreground',
                   entry.id === data.planId
@@ -804,9 +872,14 @@ export function PlansView({
                 )}
               >
                 <PlanStateDot state={entry.state} />
-                <span className="min-w-0 flex-1 truncate">{entry.prompt}</span>
+                <span className="min-w-0 flex-1 truncate">
+                  {entry.subject ?? firstPromptLine(entry.prompt)}
+                </span>
                 <span className="text-muted-foreground shrink-0 text-[11px] capitalize">
-                  {entry.state}
+                  {entry.confirmedAt !== undefined ? 'confirmed' : entry.state}
+                </span>
+                <span className="dense-meta shrink-0">
+                  {formatRelativeTimeFromIso(entry.updatedAt)}
                 </span>
               </Button>
             ))}

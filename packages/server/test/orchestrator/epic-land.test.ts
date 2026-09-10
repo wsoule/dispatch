@@ -169,7 +169,7 @@ describe('landing an epic locally', () => {
     expect(parents.length).toBe(3);
     expect(parents[2]).toBe(epicTip);
     // Epic closed out like review-merge closes a run.
-    expect(h.store.get(epicId)?.meta.status).toBe('done');
+    expect(h.store.get(epicId)?.meta.status).toBe('landed');
     expect(h.store.get(epicId)?.body).toContain('landed on main');
     expect(branchExists(branch)).toBe(false);
   });
@@ -222,7 +222,7 @@ describe('landing an epic locally', () => {
     expect(result.mergeCommit).toBe(
       runGitSync(repo, ['rev-parse', 'main']).trim()
     );
-    expect(h.store.get(epicId)?.meta.status).toBe('done');
+    expect(h.store.get(epicId)?.meta.status).toBe('landed');
   });
 
   it('refuses a partially-done epic with a message naming the pending children', async () => {
@@ -240,12 +240,12 @@ describe('landing an epic locally', () => {
       /partially done — 1 of 2 child task\(s\) still pending/
     );
     expect(() => h.orchestrator.landEpicLocally(epic.meta.id)).toThrow(
-      new RegExp(`${b.meta.id}: todo`)
+      new RegExp(`${b.meta.id}: ready`)
     );
     // Nothing landed, nothing was cleaned up, the epic stays open.
     expect(branchExists(branch)).toBe(true);
     expect(fileOnBranch('main', 'a.txt')).toBeNull();
-    expect(h.store.get(epic.meta.id)?.meta.status).not.toBe('done');
+    expect(h.store.get(epic.meta.id)?.meta.status).not.toBe('landed');
   });
 
   it('refuses while an in-review child has not merged onto the epic branch yet', async () => {
@@ -269,7 +269,7 @@ describe('landing an epic locally', () => {
     const runA = await dispatchWithWork(h, a.meta.id, 'a.txt');
     // The task gets hand-flipped past review while the run still exists —
     // landing would delete the branch that run's diff/merge are anchored on.
-    h.store.update(a.meta.id, { status: 'done' });
+    h.store.update(a.meta.id, { status: 'landed' });
     h.cache.rebuild(h.store);
 
     expect(() => h.orchestrator.landEpicLocally(epic.meta.id)).toThrow(
@@ -304,7 +304,7 @@ describe('landing an epic locally', () => {
       /default base branch trunk does not exist locally/
     );
     expect(branchExists(branch)).toBe(true);
-    expect(h.store.get(epicId)?.meta.status).not.toBe('done');
+    expect(h.store.get(epicId)?.meta.status).not.toBe('landed');
   });
 
   it('refuses to land the same epic twice', async () => {
@@ -335,7 +335,7 @@ describe('landing an epic locally', () => {
     const result = h.orchestrator.landEpicLocally(epic.meta.id);
 
     expect(result.mergeCommit).toBeUndefined();
-    expect(h.store.get(epic.meta.id)?.meta.status).toBe('done');
+    expect(h.store.get(epic.meta.id)?.meta.status).toBe('landed');
     expect(branchExists(branch)).toBe(false);
     expect(h.store.get(epic.meta.id)?.body).toContain('no commits to merge');
     // Main gained exactly the epic's own task-file bookkeeping commit —
@@ -373,7 +373,7 @@ describe('landing an epic via PR', () => {
     expect(h.store.get(epicId)?.body).toContain(`opened landing PR: ${url}`);
     expect(existsSync(epicPrsPath(repo))).toBe(true);
     expect(pr.epicPrUrl(epicId)).toBe(url);
-    expect(h.store.get(epicId)?.meta.status).not.toBe('done');
+    expect(h.store.get(epicId)?.meta.status).not.toBe('landed');
 
     await expect(pr.openEpicPr(epicId)).rejects.toThrow(
       /already has an open landing PR/
@@ -414,7 +414,7 @@ describe('landing an epic via PR', () => {
     };
     await restarted.pollOnce();
 
-    expect(h.store.get(epicId)?.meta.status).toBe('done');
+    expect(h.store.get(epicId)?.meta.status).toBe('landed');
     expect(h.store.get(epicId)?.body).toContain(`landed via PR (${url})`);
     expect(branchExists(branch)).toBe(false);
     // The record is gone, so the next pass has nothing left to poll.
@@ -441,7 +441,7 @@ describe('landing an epic via PR', () => {
     };
     await pr.pollOnce();
 
-    expect(h.store.get(epicId)?.meta.status).not.toBe('done');
+    expect(h.store.get(epicId)?.meta.status).not.toBe('landed');
     expect(branchExists(branch)).toBe(true);
     expect(pr.epicPrUrl(epicId)).toBeUndefined();
     expect(h.store.get(epicId)?.body).toContain(

@@ -1,12 +1,16 @@
-statuses: [ backlog, todo, in-progress, in-review, done, cancelled ]
+statuses: [ draft, ready, working, review, landing, landed, dropped ]
 autoCommit: true
 # Run by the merge queue in each run's own worktree after a clean rebase and
 # before the squash-merge, so a branch that breaks the build never lands. A
 # worktree is a fresh checkout with no node_modules or dist/, and @dispatch/*
-# resolve through exports maps pointing at dist/ — so install and build have to
-# come first or lint/test fail on unresolved workspace imports rather than on
-# anything real. Mirrors what CI gates on (build -> lint -> test); takes ~2 min
-# per entry.
+# resolve through exports maps pointing at dist/ — so install has to come first
+# or everything after it fails on unresolved workspace imports rather than on
+# anything real. Mirrors what CI gates on (build -> lint -> test).
+#
+# These are deliberately `moon run <target>` and NOT `moon ci`: moon ci is
+# affected-aware against a merge base, and a merge-queue entry has already been
+# rebased, so "affected" is not the question here — the question is whether the
+# whole repo still builds with this branch in it. Full targets, every time.
 #
 # Named steps rather than one shell line: a failure then says WHICH gate broke.
 # The whole reason this was hard to diagnose once was that "verify failed" is
@@ -16,15 +20,52 @@ autoCommit: true
 orchestrator:
   verifyTimeoutSec: 1500
 
+#
+# Every root gate ci.yml runs is named here too, one step each, so a run that
+# would go red on main is caught in its own worktree before the squash-merge.
+# It used to be install/build/lint/test only: on 2026-09-08 four runs merged
+# green and then failed main on format-check, lint-spelling, lint-deadcode and
+# audit, none of which verify had run. scripts/check-ci-targets.ts now fails
+# CI if this list and ci.yml's `moon ci` target list drift apart, so add new
+# gates to both. Fast gates come before the ~8-minute test step, so a typo
+# fails in seconds rather than after the suite.
 verifySteps:
   - name: install
-    command: bun install --frozen-lockfile
+    command: pnpm install --frozen-lockfile
   - name: build
-    command: bun run build
+    command: moon run :build
+  - name: typecheck
+    command: moon run :typecheck
+  - name: format-check
+    command: moon run root:format-check
   - name: lint
-    command: bun run lint
+    command: moon run root:lint
+  - name: lint-css
+    command: moon run root:lint-css
+  - name: lint-deadcode
+    command: moon run root:lint-deadcode
+  - name: lint-dup
+    command: moon run root:lint-dup
+  - name: lint-arch
+    command: moon run root:lint-arch
+  - name: lint-spelling
+    command: moon run root:lint-spelling
+  - name: lint-md
+    command: moon run root:lint-md
+  - name: lint-types
+    command: moon run root:lint-types
+  - name: lint-chrome
+    command: moon run root:lint-chrome
+  - name: check-licenses
+    command: moon run root:check-licenses
+  - name: check-ci-targets
+    command: moon run root:check-ci-targets
+  - name: check-own-build-deps
+    command: moon run root:check-own-build-deps
+  - name: audit
+    command: moon run root:audit
   - name: test
-    command: bun run test
+    command: moon run :test
 models:
   execute: claude-opus-5
   plan: claude-opus-5

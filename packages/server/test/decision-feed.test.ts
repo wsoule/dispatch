@@ -510,3 +510,79 @@ describe('DecisionFeed policy seam', () => {
     expect(withPolicy.feed.list()).toHaveLength(2);
   });
 });
+
+// The floor in the feed: a classifier that records everything (the most
+// permissive policy expressible) still cannot demote a floor item, because
+// list() pins the disposition before the classifier is consulted.
+describe('DecisionFeed irreversibility floor', () => {
+  const recordEverything: DecisionPolicy = () => 'recorded';
+
+  it('keeps a floor command approval blocking under a record-everything policy', () => {
+    const h = harness(recordEverything);
+    h.runs.push(runMeta('r-1'));
+    h.approvals.push(
+      {
+        runId: 'r-1',
+        taskId: 't-r-1',
+        taskTitle: 'Task r-1',
+        requestId: 'req-force',
+        toolName: 'Bash',
+        input: { command: 'git push --force origin main' },
+      },
+      {
+        runId: 'r-1',
+        taskId: 't-r-1',
+        taskTitle: 'Task r-1',
+        requestId: 'req-publish',
+        toolName: 'Bash',
+        input: { command: 'npm publish' },
+      },
+      {
+        runId: 'r-1',
+        taskId: 't-r-1',
+        taskTitle: 'Task r-1',
+        requestId: 'req-ls',
+        toolName: 'Bash',
+        input: { command: 'ls' },
+      }
+    );
+    const byId = new Map(h.feed.list().map((item) => [item.id, item]));
+    expect(byId.get('approval:req-force')).toMatchObject({
+      floor: 'force-push',
+      disposition: 'blocking',
+    });
+    expect(byId.get('approval:req-publish')).toMatchObject({
+      floor: 'publish',
+      disposition: 'blocking',
+    });
+    expect(byId.get('approval:req-ls')).toMatchObject({
+      disposition: 'recorded',
+    });
+    expect(byId.get('approval:req-ls')?.floor).toBeUndefined();
+    expect(h.feed.list({ disposition: 'blocking' })).toHaveLength(2);
+  });
+
+  it('keeps a budget-exhausted run and a capped loop blocking under the same policy', () => {
+    const h = harness(recordEverything);
+    h.runs.push(
+      runMeta('r-broke', {
+        state: 'failed' as RunState,
+        error: 'run hit its cost budget before the agent finished',
+      }),
+      runMeta('r-crashed', { state: 'failed' as RunState, error: 'boom' })
+    );
+    h.loops.push(cappedLoop('t-capped'));
+    const byId = new Map(h.feed.list().map((item) => [item.id, item]));
+    expect(byId.get('run-stalled:r-broke')).toMatchObject({
+      floor: 'budget-cap',
+      disposition: 'blocking',
+    });
+    expect(byId.get('run-stalled:r-crashed')).toMatchObject({
+      disposition: 'recorded',
+    });
+    expect(byId.get('fix-loop-capped:t-capped')).toMatchObject({
+      floor: 'finding-ruling',
+      disposition: 'blocking',
+    });
+  });
+});

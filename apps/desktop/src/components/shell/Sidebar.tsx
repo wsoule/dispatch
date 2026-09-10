@@ -8,17 +8,21 @@ import {
   GitMerge,
   Inbox,
   LayoutDashboard,
+  LayoutGrid,
   ListChecks,
   NotebookPen,
   Palette,
   Play,
   Radar,
+  Rows3,
   Shield,
+  Target,
   Waypoints,
 } from 'lucide-react';
 import { type ReactNode, useCallback, useEffect, useState } from 'react';
 
 import type { GlobalView, ProjectView } from '../../lib/appNav';
+import type { TasksViewMode } from '../../lib/tasksViewMode';
 import { SyncChip } from './SyncChip';
 import { cn } from '@/lib/utils';
 import {
@@ -55,7 +59,7 @@ const PROJECT_VIEWS: {
 }[] = [
   // The two pages this app is actually used from: one is where everything gets
   // captured, the other is where everything gets watched.
-  { id: 'overview', label: 'Overview', icon: LayoutDashboard },
+  { id: 'overview', label: 'Control room', icon: LayoutDashboard },
   { id: 'brain-dump', label: 'Brain dump', icon: Brain },
 
   { id: 'plans', label: 'Plans', icon: NotebookPen, group: 'Plan' },
@@ -97,6 +101,18 @@ PROJECT_VIEWS.forEach((view, index) => {
     current.entries.push({ view, index });
   }
 });
+
+// The Tasks destination's layout options — surfaced as a nested list of rows under the
+// Tasks row while it's the active view, per the "view names belong in the sidebar" direction.
+const TASKS_VIEW_OPTIONS: {
+  id: TasksViewMode;
+  label: string;
+  icon: typeof LayoutGrid;
+}[] = [
+  { id: 'board', label: 'Board', icon: LayoutGrid },
+  { id: 'list', label: 'List', icon: Rows3 },
+  { id: 'milestones', label: 'Milestones', icon: Target },
+];
 
 const GLOBAL_VIEWS: { id: GlobalView; label: string; icon: typeof Radar }[] = [
   { id: 'all-agents', label: 'All Agents', icon: Radar },
@@ -164,6 +180,9 @@ interface SidebarProps {
   spendToday: number | null;
   onSetProjectView: (view: ProjectView) => void;
   onSetGlobalView: (view: GlobalView) => void;
+  /** The Tasks view's active layout — drives the nested switcher under its rail row. */
+  tasksViewMode: TasksViewMode;
+  onSetTasksViewMode: (mode: TasksViewMode) => void;
   /** The board syncer's status — `null` until it has ever loaded, in which case the chip
    * renders nothing. */
   syncStatus: SyncStatus | null;
@@ -195,6 +214,8 @@ export function Sidebar({
   spendToday,
   onSetProjectView,
   onSetGlobalView,
+  tasksViewMode,
+  onSetTasksViewMode,
   syncStatus,
   onDisableAutoCommit,
   liveRail,
@@ -216,6 +237,38 @@ export function Sidebar({
         const Icon = view.icon;
         const count = badges[view.id];
         const hasCount = count !== undefined && count > 0;
+        // The Tasks row grows a nested list of its layouts while it's the active view —
+        // the page itself carries no view tabs any more. Plain indented rows, not a
+        // dropdown: the rail is a list, so its children read as list rows too.
+        const tasksSwitcher =
+          view.id === 'board' &&
+          section === 'project' &&
+          projectView === 'board' &&
+          !collapsed ? (
+            <div className="flex flex-col gap-px py-0.5 pr-1 pl-6">
+              {TASKS_VIEW_OPTIONS.map((option) => {
+                const OptionIcon = option.icon;
+                const optionActive = option.id === tasksViewMode;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => onSetTasksViewMode(option.id)}
+                    aria-current={optionActive ? 'true' : undefined}
+                    className={cn(
+                      'rounded-control ease-out-expo flex w-full items-center gap-2 px-2 py-1 text-left text-[12px] transition-colors duration-150',
+                      optionActive
+                        ? 'bg-surface-hover-strong text-foreground font-medium'
+                        : 'text-muted-foreground hover:bg-surface-hover hover:text-foreground'
+                    )}
+                  >
+                    <OptionIcon className="size-3.5 shrink-0" />
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          ) : undefined;
         return {
           id: view.id,
           label: view.label,
@@ -231,6 +284,7 @@ export function Sidebar({
             index < 9 ? (
               <Kbd className={ROW_HINT_CLASS}>⌘{index + 1}</Kbd>
             ) : undefined,
+          children: tasksSwitcher,
         } satisfies SidebarNavItem;
       }),
     })

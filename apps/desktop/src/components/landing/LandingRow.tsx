@@ -87,6 +87,13 @@ interface LandingRowProps {
    * needs the whole set to name the entry one ahead. */
   queueRows: readonly LandingRowData[];
   now: number;
+  /** Whether the PR-only columns (Checks/Changes/Worktree) render at all — the view hides
+   * them for an all-local snapshot instead of printing a page of dashes. */
+  showPrColumns: boolean;
+  /** How many older runs this task's surviving row also speaks for. */
+  extraRuns?: number;
+  /** The run's reviewedAt — fills the Review column for queue-local rows. */
+  reviewedAt?: string;
   onFilterAuthor: (author: string) => void;
   onFilterGate: (gate: GateStatus) => void;
   /** Opens the run's work in its task view — App.tsx routes this to the task's
@@ -108,6 +115,9 @@ export function LandingRow({
   row,
   queueRows,
   now,
+  showPrColumns,
+  extraRuns,
+  reviewedAt,
   onFilterAuthor,
   onFilterGate,
   onOpenRun,
@@ -190,6 +200,9 @@ export function LandingRow({
               </span>
             </>
           ) : null}
+          {extraRuns !== undefined && extraRuns > 0 && (
+            <span className="shrink-0">· ×{extraRuns + 1} runs</span>
+          )}
         </div>
       </TableCell>
 
@@ -207,37 +220,45 @@ export function LandingRow({
         )}
       </TableCell>
 
-      <TableCell className="hidden md:table-cell">
-        <ChecksPopover checks={pr?.checks ?? NO_CHECKS} url={pr?.url} />
-      </TableCell>
+      {showPrColumns && (
+        <TableCell className="hidden md:table-cell">
+          <ChecksPopover checks={pr?.checks ?? NO_CHECKS} url={pr?.url} />
+        </TableCell>
+      )}
 
-      <TableCell className="hidden sm:table-cell">
-        {pr !== undefined ? (
-          <div className="flex flex-col">
-            <span className="dense-meta">
-              <span className="text-state-review">+{pr.additions}</span>{' '}
-              <span className="text-destructive">−{pr.deletions}</span>
-            </span>
-            <span className="dense-meta text-muted-foreground">
-              {pr.changedFiles} file{pr.changedFiles === 1 ? '' : 's'}
-            </span>
-          </div>
-        ) : (
-          <span className="dense-meta text-muted-foreground">—</span>
-        )}
-      </TableCell>
+      {showPrColumns && (
+        <TableCell className="hidden sm:table-cell">
+          {pr !== undefined ? (
+            <div className="flex flex-col">
+              <span className="dense-meta">
+                <span className="text-state-review">+{pr.additions}</span>{' '}
+                <span className="text-destructive">−{pr.deletions}</span>
+              </span>
+              <span className="dense-meta text-muted-foreground">
+                {pr.changedFiles} file{pr.changedFiles === 1 ? '' : 's'}
+              </span>
+            </div>
+          ) : (
+            <span className="dense-meta text-muted-foreground">—</span>
+          )}
+        </TableCell>
+      )}
 
       <TableCell className="hidden md:table-cell">
         {verdict !== undefined ? (
           <StatusPill tone={verdict.tone}>{verdict.label}</StatusPill>
+        ) : reviewedAt !== undefined ? (
+          <StatusPill tone="green">Reviewed</StatusPill>
         ) : (
           <span className="dense-meta text-muted-foreground">—</span>
         )}
       </TableCell>
 
-      <TableCell>
-        <WorktreeCell row={row} client={client} port={port} />
-      </TableCell>
+      {showPrColumns && (
+        <TableCell>
+          <WorktreeCell row={row} client={client} port={port} />
+        </TableCell>
+      )}
     </TableRow>
   );
 }

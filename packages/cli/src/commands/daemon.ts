@@ -2,13 +2,21 @@ import type { Command } from 'commander';
 import type { ChildProcess } from 'node:child_process';
 import { spawn, spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import {
+  closeSync,
+  existsSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { createRequire } from 'node:module';
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { type CliContext, CliError } from '../context.js';
-import { requireStore } from './task.js';
+import { requireInitialized } from './task.js';
 
 // ---------------------------------------------------------------------------
 // Daemon-file discovery
@@ -218,12 +226,93 @@ export function openDesktopOrBrowser(ctx: CliContext, port: number): void {
   openBrowserFor(ctx, `http://127.0.0.1:${port}`);
 }
 
-async function isHealthy(port: number): Promise<boolean> {
+// A stale daemon file can name a port some OTHER process now holds — one that
+// accepts the connection and then simply never answers. Without a deadline the
+// probe inherits fetch's default (effectively none), so `dispatch task list`
+// hangs indefinitely on a port that has nothing to do with dispatch. A health
+// check is the one request that must never be the slow thing.
+const HEALTH_TIMEOUT_MS = 2000;
+
+// What one `/api/health` probe learned about a port. `unresponsive` is the
+// case a plain boolean hid: something accepted the connection and stalled
+// past the deadline. For the port a daemon file names, that is usually a live
+// dispatchd too busy to answer — provisioning several run worktrees at once
+// does it — not a dead one, and the two must not be treated alike (see
+// locateDaemon).
+type HealthProbe = 'healthy' | 'unresponsive' | 'down';
+
+async function probeHealth(
+  port: number,
+  timeoutMs = HEALTH_TIMEOUT_MS
+): Promise<HealthProbe> {
   try {
-    const res = await fetch(`http://127.0.0.1:${port}/api/health`);
-    return res.ok;
-  } catch {
-    return false;
+    const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    return res.ok ? 'healthy' : 'down';
+  } catch (err) {
+    return (err as { name?: string }).name === 'TimeoutError'
+      ? 'unresponsive'
+      : 'down';
+  }
+}
+
+async function isHealthy(port: number): Promise<boolean> {
+  return (await probeHealth(port)) === 'healthy';
+}
+
+// Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the
+// process exists under another user, which still counts as alive.
+function pidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as { code?: string }).code === 'EPERM';
+  }
+}
+
+// How long to keep re-probing a daemon whose pid is alive but whose health
+// check stalls, before giving up on it with an error.
+const STALLED_DAEMON_WAIT_MS = 30_000;
+
+export interface LocateDaemonOptions {
+  // Per-probe deadline; tests shorten it.
+  healthTimeoutMs?: number;
+  // Total patience for a live-but-stalled daemon; tests shorten it.
+  stalledWaitMs?: number;
+}
+
+// The daemon this project's daemon file names, or null when the file is
+// absent or stale (nothing answers on its port, or its pid is gone). A live
+// pid whose health check merely stalls is NEITHER: it is re-probed for up to
+// `stalledWaitMs`, and if it never answers this throws instead of returning
+// null. Null is what makes ensureDaemon spawn a replacement, and a
+// replacement's boot reconcile force-fails every run the stalled daemon still
+// has in flight — on 2026-09-07 three daemons stacked up on one root this
+// way inside ten minutes, killing two waves of runs.
+// Module-local: `findRunningDaemon` is the exported wrapper every caller uses,
+// and `ensureDaemon` calls this directly.
+async function locateDaemon(
+  rootDir: string,
+  opts: LocateDaemonOptions = {}
+): Promise<DaemonConnection | null> {
+  const info = readDaemonFile(rootDir);
+  if (info === null) return null;
+  const stalledWaitMs = opts.stalledWaitMs ?? STALLED_DAEMON_WAIT_MS;
+  const deadline = Date.now() + stalledWaitMs;
+  for (;;) {
+    const probe = await probeHealth(info.port, opts.healthTimeoutMs);
+    if (probe === 'healthy') {
+      return { port: info.port, agentToken: requireAgentToken(info) };
+    }
+    if (probe === 'down' || !pidAlive(info.pid)) return null;
+    if (Date.now() >= deadline) {
+      throw new CliError(
+        `dispatchd for this project (pid ${info.pid}, port ${info.port}) is running but has not answered a health check in ${Math.round(stalledWaitMs / 1000)}s — it is probably overloaded. Wait and retry, or stop it (kill ${info.pid}) before starting another; a second daemon would force-fail the runs it has in flight.`
+      );
+    }
+    await sleep(500);
   }
 }
 
@@ -271,17 +360,77 @@ export interface DaemonConnection {
 // decide path needs this, because a daemon it started itself would have
 // minted an app token nobody can present.
 export async function findRunningDaemon(
-  rootDir: string
+  rootDir: string,
+  opts: LocateDaemonOptions = {}
 ): Promise<DaemonConnection | null> {
-  const info = readDaemonFile(rootDir);
-  if (info === null || !(await isHealthy(info.port))) return null;
-  return { port: info.port, agentToken: requireAgentToken(info) };
+  return locateDaemon(rootDir, opts);
 }
 
-export interface EnsureDaemonOptions {
+export interface EnsureDaemonOptions extends LocateDaemonOptions {
   // Port to request when a fresh daemon must be spawned (default: ephemeral,
   // same as `dispatch serve`/`dispatch ui` with no `--port`).
   port?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Spawn claim
+//
+// Two `dispatch` invocations that both find no daemon used to both spawn one,
+// then each decide after the fact which to keep — and because the daemon file
+// is last-writer-wins, each could read it at a different instant, conclude the
+// OTHER had won, and kill its own child. Both children die, both callers hold
+// a dead port (CI, 2026-09-08: one caller got 40255, the other 36827). The
+// server-side guard cannot close this either: a daemon writes its file only
+// once its port is bound, so two daemons booting together both see no file.
+//
+// So the spawn decision is claimed before anything is spawned, with an
+// O_EXCL create — the one filesystem operation that is atomic across
+// processes. The winner spawns; every loser just waits for the winner's
+// daemon and never spawns at all.
+// ---------------------------------------------------------------------------
+
+function spawnLockPath(rootDir: string): string {
+  return `${daemonFilePath(rootDir)}.spawn.lock`;
+}
+
+// A lock whose owner died before releasing it would block every future spawn,
+// so one this old is treated as abandoned and taken over. Comfortably longer
+// than the 5s health wait a spawner holds it for.
+const SPAWN_LOCK_STALE_MS = 30_000;
+
+// Takes the spawn claim for `rootDir`, or returns false when another process
+// holds it. A lock older than SPAWN_LOCK_STALE_MS is removed and re-attempted
+// once — the only way a lock outlives its spawner is that spawner crashing.
+function claimSpawn(rootDir: string): boolean {
+  const path = spawnLockPath(rootDir);
+  mkdirSync(dirname(path), { recursive: true });
+  for (const attempt of [0, 1]) {
+    try {
+      // 'wx' is O_CREAT | O_EXCL: it fails rather than truncating an existing
+      // file, which is what makes this a claim and not just a write.
+      closeSync(openSync(path, 'wx'));
+      return true;
+    } catch {
+      if (attempt === 1) return false;
+      try {
+        if (Date.now() - statSync(path).mtimeMs < SPAWN_LOCK_STALE_MS) {
+          return false;
+        }
+        rmSync(path);
+      } catch {
+        // Vanished between the two calls — the next attempt settles it.
+      }
+    }
+  }
+  return false;
+}
+
+function releaseSpawn(rootDir: string): void {
+  try {
+    rmSync(spawnLockPath(rootDir));
+  } catch {
+    // Already gone (a stale-lock takeover removed it); nothing to release.
+  }
 }
 
 // Shared "get me a healthy daemon for this project, starting one if none is
@@ -296,8 +445,20 @@ export async function ensureDaemon(
   ctx: CliContext,
   opts: EnsureDaemonOptions = {}
 ): Promise<DaemonConnection> {
-  const existing = await findRunningDaemon(ctx.cwd);
+  const existing = await locateDaemon(ctx.cwd, opts);
   if (existing !== null) return existing;
+
+  // Someone else is already spawning for this root: wait for their daemon
+  // rather than starting a second one. 20s covers a cold `bun` start on a
+  // loaded machine and still leaves the stale-lock takeover as the backstop.
+  if (!claimSpawn(ctx.cwd)) {
+    const winner = await waitForHealthyDaemon(ctx.cwd, 20_000);
+    if (winner !== null) {
+      return { port: winner.port, agentToken: requireAgentToken(winner) };
+    }
+    // The holder never produced a healthy daemon; fall through and spawn one
+    // ourselves rather than failing because another process misbehaved.
+  }
 
   const launcher = resolveDaemonLauncher();
   const args = [...launcher.leadingArgs, '--root', ctx.cwd];
@@ -332,16 +493,25 @@ export async function ensureDaemon(
   });
   child.unref();
 
-  const info = await waitForHealthyDaemon(ctx.cwd, 5000);
-  if (info === null) {
-    throw new CliError(
-      launcher.usesBun
-        ? 'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
-        : `dispatchd did not become healthy within 5s (launched ${launcher.cmd})`
-    );
+  try {
+    const info = await waitForHealthyDaemon(ctx.cwd, 5000);
+    if (info === null) {
+      throw new CliError(
+        launcher.usesBun
+          ? 'dispatchd did not become healthy within 5s (is bun installed? https://bun.sh)'
+          : `dispatchd did not become healthy within 5s (launched ${launcher.cmd})`
+      );
+    }
+    // Kept as a backstop for the one case the claim cannot cover: a daemon
+    // someone started outside this code path (a bare `dispatch serve`) landing
+    // between our claim and our child's own daemon-file write.
+    const winner = await resolveRaceWinner(ctx.cwd, child, info);
+    return { port: winner.port, agentToken: requireAgentToken(winner) };
+  } finally {
+    // Only once the daemon is up (or has failed): releasing earlier would let
+    // a waiting caller through while there is still nothing to find.
+    releaseSpawn(ctx.cwd);
   }
-  const winner = await resolveRaceWinner(ctx.cwd, child, info);
-  return { port: winner.port, agentToken: requireAgentToken(winner) };
 }
 
 // I3: two concurrent `ensureDaemon` calls for the same rootDir (e.g. two
@@ -392,7 +562,13 @@ export function registerDaemonCommands(
     .description('Run dispatchd (REST + WebSocket + web UI) in the foreground')
     .option('--port <n>', 'port to listen on (default: ephemeral)')
     .action((opts: { port?: string }) => {
-      requireStore(ctx);
+      // requireInitialized, NOT requireStore: the latter demands
+      // `.dispatch/tasks`, which a database-backed project does not have and
+      // never will. Gating on it made this command refuse to start the daemon
+      // in exactly the projects that CANNOT be used without one — the CLI
+      // sends them here ("Start it with: dispatch serve") and this sent them
+      // back with "not initialized".
+      requireInitialized(ctx);
       const launcher = resolveDaemonLauncher();
       const args = [...launcher.leadingArgs, '--root', ctx.cwd];
       if (opts.port !== undefined) args.push('--port', opts.port);
@@ -419,7 +595,8 @@ export function registerDaemonCommands(
     .description('Open the dispatch web UI, starting dispatchd if needed')
     .option('--port <n>', 'port to use when starting dispatchd')
     .action(async (opts: { port?: string }) => {
-      requireStore(ctx);
+      // Same reason as `serve` above.
+      requireInitialized(ctx);
       const { port } = await ensureDaemon(ctx, { port: opts.port });
       openBrowserFor(ctx, `http://127.0.0.1:${port}`);
     });

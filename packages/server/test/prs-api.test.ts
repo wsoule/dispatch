@@ -389,7 +389,7 @@ function viewResultForMergedPr(): CommandResult {
 }
 
 // One GitHub REST review comment on COMMENT_PR, shaped per the spec's
-// verified payload facts (docs/superpowers/specs/2026-08-04-review-github-
+// verified payload facts (docs/archive/specs/2026-08-04-review-github-
 // sync-design.md) — `diff_hunk`'s last line keeps its `+` prefix, which
 // mapGitHubComment strips into `anchorText`.
 function rawGitHubComment(
@@ -2210,7 +2210,7 @@ describe('POST /api/prs/:number/review-agent dispatch', () => {
     expect(
       (await postReviewAgent(FORK_PR.number, { confirmFork: true })).status
     ).toBe(202);
-    await waitFor(() => tasks()[0]?.meta.status === 'done');
+    await waitFor(() => tasks()[0]?.meta.status === 'landed');
 
     const [task] = tasks();
     expect(task.meta.archivedAt).not.toBeUndefined();

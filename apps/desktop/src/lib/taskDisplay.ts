@@ -12,13 +12,15 @@ type Tone = 'green' | 'blue' | 'red' | 'amber' | 'gray' | 'accent';
  * header never renders unstyled. */
 export function statusTone(status: string): Tone {
   switch (status) {
-    case 'in-progress':
+    case 'working':
       return 'blue';
-    case 'in-review':
+    case 'review':
       return 'amber';
-    case 'done':
+    case 'landing':
+      return 'blue';
+    case 'landed':
       return 'green';
-    case 'cancelled':
+    case 'dropped':
       return 'red';
     default:
       return 'gray';

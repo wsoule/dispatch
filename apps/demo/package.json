@@ -1,12 +1,13 @@
 {
   "name": "@dispatch/sandbox",
   "private": true,
+  "license": "FSL-1.1-ALv2",
   "type": "module",
   "scripts": {
     "start": "bun run src/server.ts",
     "dev": "bun run src/server.ts",
-    "tsc": "tsc --noEmit",
-    "test": "bun test"
+    "test": "bun test",
+    "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
     "@dispatch/demo": "workspace:*",

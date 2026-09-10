@@ -72,3 +72,31 @@ export async function readJsonBodyOptional(
     return { ok: false, response: errorResponse(400, 'invalid JSON body') };
   }
 }
+
+/**
+ * Parses an optional non-negative-integer query param (`?limit=`, `?count=`).
+ *
+ * Rejected rather than clamped when it is not one, so a client bug surfaces as
+ * a 400 instead of a silently different-sized result. The blank check runs
+ * before Number(), which reads '' and '  ' as 0 — a caller that meant to send
+ * a count and sent nothing would otherwise get an empty result and a 200, with
+ * no sign anything went wrong.
+ */
+export function parseCountParam(
+  url: URL,
+  name: string
+): { ok: true; value?: number } | { ok: false; response: Response } {
+  const raw = url.searchParams.get(name);
+  if (raw === null) return { ok: true };
+  const value = raw.trim() === '' ? Number.NaN : Number(raw);
+  if (!Number.isInteger(value) || value < 0) {
+    return {
+      ok: false,
+      response: errorResponse(
+        400,
+        `invalid ${name}: ${raw} (expected a non-negative integer)`
+      ),
+    };
+  }
+  return { ok: true, value };
+}

@@ -1,7 +1,7 @@
 # @dispatch/desktop
 
 Dispatch's desktop shell: a Tauri app that pairs a Rust "observability plane"
-with the git-native task/orchestration work of the rest of this monorepo.
+with the task/orchestration work of the rest of this monorepo.
 
 ## Architecture
 

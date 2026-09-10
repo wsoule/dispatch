@@ -11,7 +11,6 @@ export function GalleryView() {
   return (
     <div className="bg-background flex h-full min-h-0 flex-col gap-4 overflow-y-auto">
       <div className="flex items-center gap-2">
-        <h1 className="view-topbar-title">Gallery</h1>
         <span className="text-muted-foreground text-[12px]">
           {galleryStories.length}{' '}
           {galleryStories.length === 1 ? 'primitive' : 'primitives'}

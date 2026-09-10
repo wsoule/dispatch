@@ -28,9 +28,11 @@ never change.
 
 ## Statuses are config-driven
 
-The built-in statuses are \`backlog\`, \`todo\`, \`in-progress\`, \`in-review\`,
-\`done\`, \`cancelled\`, but a given repo's \`.dispatch/config.yml\` can define a
-different set — that file is always the source of truth. \`task_list\` and
+The built-in statuses are \`draft\`, \`ready\`, \`working\`, \`review\`,
+\`landing\`, \`landed\`, \`dropped\` (the old names — backlog, todo,
+in-progress, in-review, done, cancelled — are accepted as aliases), but a given
+repo's \`.dispatch/config.yml\` can define a different set — that file is
+always the source of truth. \`task_list\` and
 \`task_save\` validate \`status\` against it, not against this list.
 
 ## Creating and updating tasks

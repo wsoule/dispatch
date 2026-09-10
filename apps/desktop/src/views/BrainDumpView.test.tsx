@@ -1,9 +1,17 @@
 import type { InboxItem } from '@dispatch/client';
 import { act, fireEvent, render, screen } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import { beforeEach, expect, test } from 'bun:test';
 
+import { ToastProvider } from '../components/shell/Toasts';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { BRAIN_DUMP_DRAFT_KEY } from '../hooks/usePersistedDraft';
 import { BrainDumpView } from './BrainDumpView';
+
+// The capture draft persists to localStorage now; one test's typing must not
+// leak into the next mount's textarea.
+beforeEach(() => {
+  window.localStorage.removeItem(BRAIN_DUMP_DRAFT_KEY);
+});
 
 interface UpdateCall {
   id: string;
@@ -62,10 +70,14 @@ function mount(
       calls.push('cluster');
       return Promise.resolve({ groups: [], error: null });
     },
+    inboxClusters: null,
+    handleEnrichTask: () => Promise.resolve(),
   } as unknown as DispatchProjectData;
 
   render(
-    <BrainDumpView data={data} onPlanText={() => {}} onOpenTask={() => {}} />
+    <ToastProvider>
+      <BrainDumpView data={data} onPlanText={() => {}} onOpenTask={() => {}} />
+    </ToastProvider>
   );
   return { updates, calls };
 }
@@ -217,4 +229,58 @@ test('an emptied editor refuses to save', async () => {
   fireEvent.keyDown(editor(item), { key: 'Enter', metaKey: true });
   await act(async () => {});
   expect(updates).toEqual([]);
+});
+
+test('shift-click extends the selection from the last plainly-clicked row', () => {
+  const items = [
+    inboxItem({ id: 'in-1', text: 'first' }),
+    inboxItem({ id: 'in-2', text: 'second' }),
+    inboxItem({ id: 'in-3', text: 'third' }),
+  ];
+  mount(items);
+
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select "first"' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select "third"' }), {
+    shiftKey: true,
+  });
+
+  expect(screen.getByText('3 selected')).toBeTruthy();
+});
+
+test('shift-click with the anchor selected clears the whole range too', () => {
+  const items = [
+    inboxItem({ id: 'in-1', text: 'first' }),
+    inboxItem({ id: 'in-2', text: 'second' }),
+    inboxItem({ id: 'in-3', text: 'third' }),
+  ];
+  mount(items);
+
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select "first"' }));
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select "third"' }), {
+    shiftKey: true,
+  });
+  // The clicked row was already selected, so the shift-click turns the range off.
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select "third"' }), {
+    shiftKey: true,
+  });
+
+  expect(screen.queryByText(/selected/)).toBeNull();
+});
+
+test('tapping the row text drops the editor down and tapping again folds it', () => {
+  const item = inboxItem({
+    id: 'in-ml1',
+    text: 'first line\nsecond line\nthird line',
+  });
+  mount([item]);
+
+  expect(screen.getByText('+2 more')).toBeTruthy();
+  const rowText = screen.getByRole('button', { name: 'first line' });
+  fireEvent.click(rowText);
+  expect(
+    screen.getByLabelText<HTMLTextAreaElement>('Edit "first line"').value
+  ).toBe('first line\nsecond line\nthird line');
+
+  fireEvent.click(rowText);
+  expect(screen.queryByLabelText('Edit "first line"')).toBeNull();
 });

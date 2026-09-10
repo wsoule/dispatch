@@ -60,7 +60,7 @@ describe('dispatch e2e', () => {
       a.meta.id,
     ]);
 
-    dispatch('task', 'status', a.meta.id, 'done');
+    dispatch('task', 'status', a.meta.id, 'landed');
     next = JSON.parse(dispatch('task', 'next', '--json'));
     expect(next.map((t: { meta: { id: string } }) => t.meta.id)).toEqual([
       b.meta.id,

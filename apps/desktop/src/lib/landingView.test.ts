@@ -9,9 +9,11 @@ import type {
 import { describe, expect, test } from 'bun:test';
 
 import {
+  dedupeLandingRows,
   EMPTY_FILTERS,
   gateChipLabel,
   GROUP_LABELS,
+  landedFromTasks,
   landingNavBadge,
   readLandingFilters,
   relativeTime,
@@ -463,5 +465,77 @@ describe('relativeTime', () => {
 
   test('an unparseable timestamp falls back to an em dash', () => {
     expect(relativeTime('not a date', now)).toBe('—');
+  });
+});
+
+describe('dedupeLandingRows', () => {
+  const row = (over: Partial<LandingRow>): LandingRow =>
+    ({
+      id: over.runId ?? 'row',
+      kind: 'queue-local',
+      title: 'T',
+      gate: { status: 'none', detail: '' },
+      ...over,
+    }) as LandingRow;
+
+  test('only the newest run speaks for a task, extras counted', () => {
+    const created = new Map([
+      ['r-old', '2026-08-01T00:00:00.000Z'],
+      ['r-new', '2026-08-03T00:00:00.000Z'],
+    ]);
+    const result = dedupeLandingRows(
+      [
+        row({ taskId: 't-1', runId: 'r-old' }),
+        row({ taskId: 't-1', runId: 'r-new' }),
+      ],
+      created
+    );
+    expect(result.rows.map((r) => r.runId)).toEqual(['r-new']);
+    expect(result.extraRunsByTask.get('t-1')).toBe(1);
+  });
+
+  test('a queue-backed row wins over its task’s plain rows', () => {
+    const result = dedupeLandingRows(
+      [
+        row({ taskId: 't-1', runId: 'r-plain' }),
+        row({
+          taskId: 't-1',
+          runId: 'r-queued',
+          queue: { position: 1, entry: {} },
+        } as Partial<LandingRow>),
+      ],
+      new Map()
+    );
+    expect(result.rows.map((r) => r.runId)).toEqual(['r-queued']);
+    expect(result.extraRunsByTask.get('t-1')).toBe(1);
+  });
+
+  test('bare PR rows pass through untouched', () => {
+    const result = dedupeLandingRows([row({ runId: undefined })], new Map());
+    expect(result.rows).toHaveLength(1);
+  });
+});
+
+describe('landedFromTasks', () => {
+  const task = (
+    id: string,
+    status: string,
+    updated: string,
+    kind = 'task'
+  ) => ({
+    meta: { id, title: id, status, kind, updated },
+  });
+
+  test('landed tasks only, newest first, epics excluded, capped', () => {
+    const rows = landedFromTasks(
+      [
+        task('t-old', 'landed', '2026-08-01T00:00:00.000Z'),
+        task('t-new', 'landed', '2026-08-03T00:00:00.000Z'),
+        task('t-open', 'ready', '2026-08-04T00:00:00.000Z'),
+        task('e-1', 'landed', '2026-08-05T00:00:00.000Z', 'epic'),
+      ],
+      1
+    );
+    expect(rows.map((r) => r.id)).toEqual(['t-new']);
   });
 });

@@ -106,6 +106,12 @@ function writeFakeDaemonFile(port: number): void {
       pid: process.pid,
       rootDir: root,
       startedAt: new Date().toISOString(),
+      // A real daemon always writes one, and the tools now require it: every
+      // route but /api/health rejects a request without a token, so a
+      // token-less daemon file is one whose every call would 401. The tools
+      // treat that as "no daemon" and use the local path instead, which would
+      // make this test silently stop exercising the proxy it is about.
+      agentToken: 'a'.repeat(64),
     })
   );
 }

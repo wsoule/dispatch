@@ -66,14 +66,14 @@ describe('SessionManager', () => {
         'show',
         'main:.dispatch/tasks/t-58cc03-rank-exact-sku-matches-above-fuzzy.md'
       );
-      expect(conflicted).toContain('status: in-progress');
+      expect(conflicted).toContain('status: working');
 
       const ignored = git(
         session.paths.origin,
         'show',
         'main:.dispatch/tasks/t-1d77e5-cache-the-search-index-in-redis.md'
       );
-      expect(ignored).not.toContain('status: in-progress');
+      expect(ignored).not.toContain('status: working');
     } finally {
       await mgr.stop();
     }
@@ -94,7 +94,7 @@ describe('SessionManager', () => {
         'show',
         'main:.dispatch/tasks/t-1d77e5-cache-the-search-index-in-redis.md'
       );
-      expect(claimed).toContain('status: in-progress');
+      expect(claimed).toContain('status: working');
     } finally {
       await mgr.stop();
     }

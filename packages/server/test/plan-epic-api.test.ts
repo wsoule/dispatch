@@ -615,7 +615,7 @@ describe('POST /api/plan/:id/confirm', () => {
       await fetch(`${baseUrl}/api/tasks/${result.epicId}`)
     );
     expect(epic.meta.kind).toBe('epic');
-    expect(epic.meta.status).toBe('todo');
+    expect(epic.meta.status).toBe('ready');
   });
 
   it('404s confirming an unknown plan', async () => {

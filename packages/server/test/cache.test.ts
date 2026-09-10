@@ -19,13 +19,13 @@ beforeEach(() => {
 describe('rebuild + query', () => {
   it('mirrors store.list() after a rebuild', () => {
     store.create({ title: 'A' }, '2026-07-13T01:00:00Z');
-    store.create({ title: 'B', status: 'backlog' }, '2026-07-13T02:00:00Z');
+    store.create({ title: 'B', status: 'draft' }, '2026-07-13T02:00:00Z');
     cache.rebuild(store);
 
     expect(cache.query().map((t) => t.meta.title)).toEqual(['A', 'B']);
-    expect(cache.query({ status: 'backlog' }).map((t) => t.meta.title)).toEqual(
-      ['B']
-    );
+    expect(cache.query({ status: 'draft' }).map((t) => t.meta.title)).toEqual([
+      'B',
+    ]);
   });
 
   it('reflects deletions and edits after a subsequent rebuild', () => {
@@ -52,7 +52,7 @@ describe('ready', () => {
   it('delegates to core readyTasks over all cached docs', () => {
     store.create({ title: 'Ready one' }, '2026-07-13T01:00:00Z');
     store.create(
-      { title: 'Not ready', status: 'backlog' },
+      { title: 'Not ready', status: 'draft' },
       '2026-07-13T02:00:00Z'
     );
     cache.rebuild(store);

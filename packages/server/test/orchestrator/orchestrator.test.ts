@@ -21,6 +21,7 @@ import {
   transcriptPath,
   worktreesDir,
 } from '../../src/orchestrator/paths.js';
+import type { RunRegistry } from '../../src/orchestrator/registry.js';
 import {
   replayTranscript,
   Transcript,
@@ -114,7 +115,7 @@ describe('Orchestrator.dispatch full lifecycle', () => {
     );
 
     const finishedTask = store.get(task.meta.id)!;
-    expect(finishedTask.meta.status).toBe('in-review');
+    expect(finishedTask.meta.status).toBe('review');
     expect(finishedTask.body).toContain(
       `dispatched (fake, branch ${meta.branch})`
     );
@@ -149,7 +150,7 @@ describe('Orchestrator execute runs on a derived task', () => {
     );
     // Refused before anything existed: no run, and the task untouched.
     expect(orchestrator.list()).toEqual([]);
-    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
   });
 
   // The other door. FixLoop's fresh-implementer step goes through
@@ -259,7 +260,7 @@ describe('Orchestrator.cancel', () => {
     // M2: task status is deliberately left alone (a cancelled run says
     // nothing about whether the task itself should move), but the
     // cancellation is still recorded as a durable Activity line.
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-progress');
+    expect(store.get(task.meta.id)!.meta.status).toBe('working');
     expect(store.get(task.meta.id)!.body).toContain(
       `[run ${meta.id}] cancelled`
     );
@@ -521,7 +522,7 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
     await waitFor(
       () => orchestrator.getRun(second.id)?.meta.state === 'finished'
     );
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
     expect(store.get(task.meta.id)!.body).toContain(
       `requested changes (run ${second.id}): please fix x`
     );
@@ -720,7 +721,7 @@ describe('Orchestrator.review merge', () => {
     expect(existsSync(join(repo, 'merged.txt'))).toBe(true);
     const log = runGitSync(repo, ['log', '-1', '--pretty=%s']).trim();
     expect(log).toBe(`dispatch: Merge me (run ${meta.id})`);
-    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
     expect(existsSync(meta.worktreePath)).toBe(false);
   });
 
@@ -771,7 +772,7 @@ describe('Orchestrator.review merge', () => {
     expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
       OrchestratorConflictError
     );
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
   });
 
   // A bare "main checkout has uncommitted changes" sent users hunting: in the
@@ -823,7 +824,7 @@ describe('Orchestrator.review merge', () => {
     expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
       /staged changes/
     );
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
     // The staged edit is still staged, untouched by the refused merge.
     const staged = runGitSync(repo, ['diff', '--cached', '--name-only']);
     expect(staged.trim()).toBe('.dispatch/config.yml');
@@ -875,7 +876,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
 
     // Nothing about the run or the task moved: the branch/worktree are
     // still there to retry against once the user checks main back out.
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
     expect(existsSync(meta.worktreePath)).toBe(true);
     expect(runGitSync(repo, ['branch', '--list', meta.branch])).toContain(
       meta.branch
@@ -922,7 +923,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
 
     // Task status must not have moved to done for a merge that never
     // actually happened.
-    expect(store.get(task.meta.id)!.meta.status).not.toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
     // Main must be back to a clean, mergeable state (git reset --merge),
     // not stuck mid-conflict — a retry after manual resolution must be
     // possible.
@@ -932,7 +933,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     // Retry after resolving manually: bring the run's own change in by
     // hand, then merge/discard cleanly resolves the run.
     orchestrator.review(meta.id, 'discard');
-    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
   });
 
   it("C: keeps a user's own unrelated .dispatch/config.yml edit out of the squash commit", async () => {
@@ -1034,8 +1035,8 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
 
     expect(existsSync(join(repo, 'first.txt'))).toBe(true);
     expect(existsSync(join(repo, 'second.txt'))).toBe(true);
-    expect(store.get(taskA.meta.id)!.meta.status).toBe('done');
-    expect(store.get(taskB.meta.id)!.meta.status).toBe('done');
+    expect(store.get(taskA.meta.id)!.meta.status).toBe('landed');
+    expect(store.get(taskB.meta.id)!.meta.status).toBe('landed');
   });
 
   it('I: merges successfully with tracked task files and a mainline commit landed since the branch point', async () => {
@@ -1074,7 +1075,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     expect(() => orchestrator.review(meta.id, 'merge')).not.toThrow();
     expect(existsSync(join(repo, 'feature.txt'))).toBe(true);
     expect(existsSync(join(repo, 'unrelated.txt'))).toBe(true);
-    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
   });
 
   // Regression guard for the "squash first" reordering: a run that made no
@@ -1095,7 +1096,7 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     );
 
     expect(() => orchestrator.review(meta.id, 'merge')).not.toThrow();
-    expect(store.get(task.meta.id)!.meta.status).toBe('done');
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
     const log = runGitSync(repo, ['log', '-1', '--pretty=%s']).trim();
     expect(log).toBe(`dispatch: No-op run (run ${meta.id})`);
   });
@@ -1117,7 +1118,174 @@ describe('Orchestrator.review discard', () => {
     orchestrator.review(meta.id, 'discard');
 
     expect(existsSync(meta.worktreePath)).toBe(false);
-    expect(store.get(task.meta.id)!.meta.status).toBe('todo');
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
+  });
+});
+
+// A failed run resumed into a successor shares that successor's branch, so
+// the successor's merge is where the predecessor's work landed too. Merging
+// the successor must close out every unreviewed predecessor in the
+// `resumedFrom` chain — otherwise epicLandStatus keeps refusing to land the
+// epic over "unreviewed" runs whose work is already in, and the only way past
+// it (discard) used to un-land the task.
+describe('Orchestrator.review merge closes superseded predecessors', () => {
+  // An executor whose first `failCount` starts fail with a resumable session
+  // (the truncated-run shape) and whose later starts finish normally, so a
+  // test can build a resume chain of any length through the public API.
+  function registerFailThenFinish(
+    orchestrator: Orchestrator,
+    failCount: number
+  ): void {
+    let starts = 0;
+    orchestrator.registerExecutor('fake', {
+      start(_opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+        starts += 1;
+        if (starts <= failCount) {
+          events.onFinish({
+            state: 'failed',
+            sessionId: `sess-${starts}`,
+            error: 'cut off',
+          });
+        } else {
+          events.onFinish({ state: 'finished', sessionId: `sess-${starts}` });
+        }
+        return {
+          interrupt: async () => {},
+          requestStop: () => {},
+          send: () => {},
+          approve: () => {},
+        };
+      },
+    });
+  }
+
+  it("marks a failed, unreviewed predecessor merged with the successor's commit", async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    registerFailThenFinish(orchestrator, 1);
+    const task = store.create({ title: 'Resume then merge' });
+    const first = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(first.id)?.meta.state === 'failed');
+    const second = orchestrator.sendMessage(first.id, 'keep going', {
+      resume: true,
+    });
+    await waitFor(
+      () => orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+    writeFileSync(join(second.worktreePath, 'work.txt'), 'landed\n');
+    runGitSync(second.worktreePath, ['add', '-A']);
+    runGitSync(second.worktreePath, ['commit', '-m', 'agent: work']);
+
+    const merged = orchestrator.review(second.id, 'merge');
+    expect(merged.mergeCommit).toBeDefined();
+
+    const predecessor = orchestrator.getRun(first.id)!.meta;
+    expect(predecessor.reviewedAt).toBeDefined();
+    expect(predecessor.reviewAction).toBe('merge');
+    expect(predecessor.mergeCommit).toBe(merged.mergeCommit);
+    // Recorded through the transcript too, so a restart sees it the same way.
+    expect(
+      replayTranscript(transcriptPath(repo, first.id))!.meta
+    ).toMatchObject({
+      reviewedAt: predecessor.reviewedAt,
+      reviewAction: 'merge',
+    });
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
+    expect(store.get(task.meta.id)!.body).toContain(
+      `run ${first.id} superseded by run ${second.id}, which merged as ${merged.mergeCommit!.slice(0, 7)}`
+    );
+  });
+
+  it('closes every predecessor in a chain of three (A -> B -> C, merge C)', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    registerFailThenFinish(orchestrator, 2);
+    const task = store.create({ title: 'Resume twice then merge' });
+    const a = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(a.id)?.meta.state === 'failed');
+    const b = orchestrator.sendMessage(a.id, 'again', { resume: true });
+    await waitFor(() => orchestrator.getRun(b.id)?.meta.state === 'failed');
+    const c = orchestrator.sendMessage(b.id, 'once more', { resume: true });
+    await waitFor(() => orchestrator.getRun(c.id)?.meta.state === 'finished');
+    expect(c.resumedFrom).toBe(b.id);
+    expect(b.resumedFrom).toBe(a.id);
+
+    orchestrator.review(c.id, 'merge');
+
+    for (const id of [a.id, b.id]) {
+      const meta = orchestrator.getRun(id)!.meta;
+      expect(meta.reviewedAt).toBeDefined();
+      expect(meta.reviewAction).toBe('merge');
+    }
+    const body = store.get(task.meta.id)!.body;
+    expect(body).toContain(`run ${a.id} superseded by run ${c.id}`);
+    expect(body).toContain(`run ${b.id} superseded by run ${c.id}`);
+  });
+
+  // No public path leaves a live run behind a successor (resume refuses a
+  // non-terminal run), so the guard is exercised by flipping the predecessor
+  // back to 'running' in the registry after the chain is built.
+  it('leaves a predecessor that is still running untouched', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    registerFailThenFinish(orchestrator, 1);
+    const task = store.create({ title: 'Live predecessor' });
+    const first = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(first.id)?.meta.state === 'failed');
+    const second = orchestrator.sendMessage(first.id, 'keep going', {
+      resume: true,
+    });
+    await waitFor(
+      () => orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+    const registry = (orchestrator as unknown as { registry: RunRegistry })
+      .registry;
+    registry.updateMeta(first.id, { state: 'running' });
+
+    orchestrator.review(second.id, 'merge');
+
+    const predecessor = orchestrator.getRun(first.id)!.meta;
+    expect(predecessor.state).toBe('running');
+    expect(predecessor.reviewedAt).toBeUndefined();
+    expect(store.get(task.meta.id)!.body).not.toContain('superseded by');
+  });
+});
+
+describe('Orchestrator.review discard on a landed task', () => {
+  it('leaves the task landed when a superseded predecessor is discarded', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Already landed' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    // Another run landed this task in the meantime (the shape a predecessor
+    // closed out before this fix, or a hand-merged branch, leaves behind).
+    store.update(task.meta.id, { status: 'landed' });
+
+    orchestrator.review(meta.id, 'discard');
+
+    expect(store.get(task.meta.id)!.meta.status).toBe('landed');
+    expect(store.get(task.meta.id)!.body).toContain(`run ${meta.id} discarded`);
+  });
+
+  it('still resets a task in review to ready', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const task = store.create({ title: 'Back to ready' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
+
+    orchestrator.review(meta.id, 'discard');
+
+    expect(store.get(task.meta.id)!.meta.status).toBe('ready');
   });
 });
 
@@ -1327,7 +1495,7 @@ describe('Orchestrator hook isolation', () => {
     // handleFinish's own outcome (task -> in-review) must have landed
     // despite the subscriber throwing, and the failure gets logged rather
     // than silently swallowed.
-    expect(store.get(task.meta.id)?.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)?.meta.status).toBe('review');
     expect(store.get(task.meta.id)?.body).toContain('[hook error]');
   });
 
@@ -1349,7 +1517,7 @@ describe('Orchestrator hook isolation', () => {
     const reviewed = orchestrator.review(meta.id, 'merge');
 
     expect(reviewed.reviewedAt).toBeDefined();
-    expect(store.get(task.meta.id)?.meta.status).toBe('done');
+    expect(store.get(task.meta.id)?.meta.status).toBe('landed');
     expect(store.get(task.meta.id)?.body).toContain('[hook error]');
   });
 });
@@ -2064,7 +2232,7 @@ describe('Orchestrator eager fail on executor start failure (no zombie)', () => 
     expect(persisted.state).toBe('failed');
     // Same "only an in-progress task moves to in-review" rule handleFinish
     // uses for a normal finish/failure — shared via markRunFailed().
-    expect(store.get(task.meta.id)!.meta.status).toBe('in-review');
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
     expect(store.get(task.meta.id)!.body).toContain(
       `[run ${meta.id}] failed to start:`
     );

@@ -1,3 +1,4 @@
+use super::dispatch_worktree;
 use super::record::{ParsedRecord, ToolUse};
 use crate::cost::pricing;
 use crate::db::queries::{self, TokenDelta};
@@ -45,15 +46,18 @@ pub fn ingest_record(
         return Ok(outcome);
     };
 
-    let project_id = project_id_for_path(&cwd);
+    // A Dispatch run's cwd is a throwaway worktree; attribute the session to the project it
+    // was checked out from so runs don't surface as separate projects. Gathering known
+    // roots costs registry and DB reads, so it happens only for worktree-shaped paths.
+    let project_path = if dispatch_worktree::is_dispatch_worktree_path(&cwd) {
+        dispatch_worktree::canonical_project_cwd(&cwd, &known_project_roots(conn)?)
+    } else {
+        cwd.clone()
+    };
+    let project_id = project_id_for_path(&project_path);
+    let project_name = project_name_for_path(&project_path);
 
-    let project_name = std::path::Path::new(&cwd)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or(&cwd)
-        .to_string();
-
-    queries::upsert_project(conn, &project_id, &project_name, &cwd, timestamp)?;
+    queries::upsert_project(conn, &project_id, &project_name, &project_path, timestamp)?;
     outcome.project_touched = Some(project_id.clone());
 
     // `system` records only carry cwd/gitBranch metadata refresh, no session content.
@@ -202,10 +206,34 @@ fn diff_counts(old: &str, new: &str) -> (i64, i64) {
 
 /// Stable id derived from the real filesystem path (never the dash-encoded log directory
 /// name, which is ambiguous when the real path itself contains hyphens).
-fn project_id_for_path(path: &str) -> String {
+pub(crate) fn project_id_for_path(path: &str) -> String {
     let mut hasher = DefaultHasher::new();
     path.to_lowercase().hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+/// Display name for a project row: the path's last component.
+pub(crate) fn project_name_for_path(path: &str) -> String {
+    std::path::Path::new(path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(path)
+        .to_string()
+}
+
+/// Candidate repo roots for resolving a worktree's project key: the project registry plus
+/// every project path already ingested.
+pub(crate) fn known_project_roots(conn: &Connection) -> rusqlite::Result<Vec<String>> {
+    let mut roots: Vec<String> = crate::registry::list()
+        .into_iter()
+        .map(|p| p.path)
+        .collect();
+    let mut stmt = conn.prepare("SELECT path FROM projects")?;
+    roots.extend(
+        stmt.query_map([], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?,
+    );
+    Ok(roots)
 }
 
 #[cfg(test)]
@@ -462,6 +490,40 @@ mod tests {
             text: Some("hello".to_string()),
             ai_title: None,
         }
+    }
+
+    #[test]
+    fn ingesting_a_dispatch_worktree_cwd_attributes_the_session_to_the_repo_root() {
+        let conn = in_memory_db();
+        let (repo, worktree) =
+            crate::parser::dispatch_worktree::tests::linked_worktree("ingest");
+
+        let record = synthetic_record(&worktree, "wt-session", 1_700_000_000);
+        let outcome = ingest_record(&conn, RAW_LOG_PATH, record).unwrap();
+        assert_eq!(outcome.session_created.as_deref(), Some("wt-session"));
+
+        let project_count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM projects", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(project_count, 1);
+
+        let (id, name, path): (String, String, String) = conn
+            .query_row("SELECT id, name, path FROM projects", [], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get(2)?))
+            })
+            .unwrap();
+        assert_eq!(path, repo);
+        assert_eq!(name, "repo");
+        assert_eq!(id, project_id_for_path(&repo));
+
+        let session_project: String = conn
+            .query_row(
+                "SELECT project_id FROM sessions WHERE id = 'wt-session'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(session_project, id);
     }
 
     #[test]

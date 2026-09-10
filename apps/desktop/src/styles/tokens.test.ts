@@ -3,7 +3,9 @@ import { expect, test } from 'bun:test';
 const tailwind = await Bun.file(
   new URL('./tailwind.css', import.meta.url)
 ).text();
-const tokens = await Bun.file(new URL('./tokens.css', import.meta.url)).text();
+const tokens = await Bun.file(
+  Bun.resolveSync('@dispatch/tokens/tokens.css', import.meta.dir)
+).text();
 
 // tailwind.css must only alias tokens.css — never restate the palette.
 test('tailwind.css declares no hex literals', () => {

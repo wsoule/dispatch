@@ -16,3 +16,30 @@ export interface LedgerEntry {
   /** Serialized ActorRef of whoever wrote it; empty for pre-team records. */
   authoredBy: string;
 }
+
+// The write surface every ledger backend takes — see the note on
+// AddFindingInput in findings.ts. A decision is a ledger entry with
+// `kind: 'decision'`, not a record of its own.
+
+export interface AddLedgerInput {
+  epicId?: string | null;
+  sourceTaskId?: string | null;
+  kind: LedgerKind;
+  title: string;
+  detail: string;
+  appliesTo?: string[];
+  /** Serialized ActorRef of whoever wrote it. */
+  authoredBy: string;
+}
+
+export interface LedgerListFilter {
+  epicId?: string | null;
+}
+
+// Runtime counterpart of LedgerKind — see the note on FINDING_SEVERITIES.
+export const LEDGER_KINDS: readonly LedgerKind[] = [
+  'constraint',
+  'hazard',
+  'decision',
+  'handoff',
+];

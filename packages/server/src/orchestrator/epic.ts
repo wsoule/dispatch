@@ -4,7 +4,7 @@ import {
   loadConfig,
   schedulableBatch,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc, TaskStore } from '@dispatch/core';
+import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
@@ -28,6 +28,9 @@ interface EpicSessionRecord {
   executor: string;
   active: boolean;
   completedAt?: string;
+  /** Critical-risk children already noted as held on the epic's Activity,
+   *  so each is announced once per session rather than on every fill. */
+  heldCritical: Set<string>;
 }
 
 export interface EpicSession {
@@ -53,7 +56,7 @@ export interface EpicProgress {
 
 export interface EpicEngineContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;
@@ -153,6 +156,7 @@ export class EpicEngine {
       concurrency,
       executor,
       active: true,
+      heldCritical: new Set(),
     };
     this.sessions.set(epicId, session);
     try {
@@ -370,8 +374,13 @@ export class EpicEngine {
 
     // childIds now includes archived children (see childrenOf); dispatchability
     // must exclude them explicitly rather than rely on childrenOf's filtering.
-    const ready = dispatchableTasks(this.ctx.cache.query()).filter(
-      (t) => childIds.has(t.meta.id) && t.meta.archivedAt === undefined
+    const ready = dispatchableTasks(
+      this.ctx.cache.query({ includeArchived: true })
+    ).filter(
+      (t) =>
+        childIds.has(t.meta.id) &&
+        t.meta.archivedAt === undefined &&
+        !this.holdCritical(session, epicId, t)
     );
     // A live run's footprint can have grown past its task's declared writes
     // (see Orchestrator.liveClaims) — a newly-ready task must avoid that too.
@@ -391,8 +400,12 @@ export class EpicEngine {
     for (const taskId of batch) {
       try {
         // The epic scheduler's own auto-fill decided this task was next —
-        // no human pressed dispatch for it specifically.
-        await this.ctx.orchestrator.dispatch(taskId, session.executor, {
+        // no human pressed dispatch for it specifically. Through
+        // dispatchOrResume, not dispatch: a task whose last run a restart left
+        // recoverable must be picked back up here too, since a fresh run would
+        // strand that worktree and cancel the sweep still watching it.
+        await this.ctx.orchestrator.dispatchOrResume(taskId, {
+          executor: session.executor,
           actor: 'none',
         });
       } catch (err) {
@@ -402,6 +415,29 @@ export class EpicEngine {
         throw err;
       }
     }
+  }
+
+  // A critical-risk child (a publish, a release, a repo-settings change) is
+  // never auto-dispatched: the autonomy ladder caps such a task at rung 1
+  // (core/policy.ts RISK_RUNG_CAPS), and the epic scheduler's own fill is an
+  // auto-decision. It waits for a human to dispatch it by hand, and the hold
+  // is written to the epic's Activity once so it reads as a decision rather
+  // than a child that silently never starts. Returns true when held.
+  private holdCritical(
+    session: EpicSessionRecord,
+    epicId: string,
+    task: TaskDoc
+  ): boolean {
+    if (task.meta.risk !== 'critical') return false;
+    if (!session.heldCritical.has(task.meta.id)) {
+      session.heldCritical.add(task.meta.id);
+      this.appendEpicActivity(
+        epicId,
+        `holding ${task.meta.id} for explicit human dispatch — critical-risk work is never auto-dispatched`,
+        'none'
+      );
+    }
+    return true;
   }
 
   // True once none of an epic's children is still pending work: nothing sits
@@ -418,7 +454,7 @@ export class EpicEngine {
     const children = this.childrenOf(epicId);
     if (children.length === 0) return false;
     return !children.some(
-      (c) => c.meta.status === 'todo' || c.meta.status === 'in-progress'
+      (c) => c.meta.status === 'ready' || c.meta.status === 'working'
     );
   }
 

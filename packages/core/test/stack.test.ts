@@ -12,7 +12,7 @@ function mkTask(
     meta: {
       id,
       title: id,
-      status: 'todo',
+      status: 'ready',
       kind: 'task',
       parent: null,
       milestone: null,

@@ -1,39 +1,21 @@
-import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
-import { DAG_NODE_HEIGHT, DAG_NODE_WIDTH, dagLayout } from './dagLayout';
+import {
+  DAG_NODE_HEIGHT,
+  DAG_NODE_WIDTH,
+  dagLayout,
+  type DagTask,
+} from './dagLayout';
 
-// Mirrors taskGraph.test.ts's fixture convention — a minimal TaskDoc with just the fields
-// dagLayout reads (id, title, status, blockedBy, created).
+// dagLayout takes its own minimal `DagTask` shape rather than a full TaskDoc, so the fixture
+// is exactly the fields the layout reads.
 function makeTask(
   id: string,
   blockedBy: string[] = [],
   created = '2026-01-01T00:00:00.000Z',
-  status = 'todo'
-): TaskDoc {
-  return {
-    meta: {
-      id,
-      title: `Task ${id}`,
-      status,
-      kind: 'task',
-      parent: null,
-      milestone: null,
-      blockedBy,
-      labels: [],
-      priority: 'none',
-      assignee: 'none',
-      created,
-      updated: created,
-      external: null,
-      selfReview: false,
-      writes: [],
-      risk: 'routine',
-      model: null,
-      exercised: false,
-    },
-    body: '',
-  };
+  status = 'ready'
+): DagTask {
+  return { id, title: `Task ${id}`, status, created, blockedBy };
 }
 
 function layerOf(nodes: ReturnType<typeof dagLayout>['nodes'], id: string) {

@@ -15,6 +15,7 @@ import { discoverCarto, supportsMcpServe } from '@dispatch/core/carto';
 import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 
+import { floorCheckForToolInput } from '../../floor.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type {
   ApprovalDecision,
@@ -371,21 +372,35 @@ function entriesForAssistantContent(
   return entries;
 }
 
+const USAGE_LIMIT_MESSAGE =
+  'Claude usage limit reached before the agent finished — resume this run once your limit resets';
+
+// The same stop reached through `api_error`, where the SDK's own explanation
+// follows in parentheses. This lead deliberately offers no remedy: the two
+// limits differ ("resets 10pm" vs "you're out of usage credits, switch model
+// or top up") and guessing produced a message that contradicted the SDK's.
+const USAGE_LIMIT_LEAD = 'Claude usage limit reached before the agent finished';
+
 // Human-readable explanations for the `terminal_reason` values that mean the
 // agent was CUT OFF rather than finishing its work. Only `'completed'` means
 // genuinely done, so this map exists purely to give the common truncation
 // causes a message a human can act on; anything absent from it still fails
 // (see reasonForTruncation) carrying the raw reason string.
 //
+// The budget-cap failure message, exported so floor.ts's isBudgetCapFailure
+// recognizes exactly the text this executor writes — the two must not drift,
+// or a budget-exhausted run stops registering on the irreversibility floor.
+export const BUDGET_EXHAUSTED_MESSAGE =
+  'run hit its cost budget before the agent finished';
+
 // The load-bearing entry is `'blocking_limit'` — the Claude usage/session
 // limit. See the doc comment on finishFromResult for why that one silently
 // looked like success.
 const TRUNCATING_TERMINAL_REASONS: Record<string, string> = {
-  blocking_limit:
-    'Claude usage limit reached before the agent finished — resume this run once your limit resets',
+  blocking_limit: USAGE_LIMIT_MESSAGE,
   rapid_refill_breaker:
     'Claude rate limiter stopped the session before the agent finished — resume this run shortly',
-  budget_exhausted: 'run hit its cost budget before the agent finished',
+  budget_exhausted: BUDGET_EXHAUSTED_MESSAGE,
   max_turns: 'run hit its turn limit before the agent finished',
   prompt_too_long:
     'conversation grew too long for the model before the agent finished',
@@ -428,6 +443,56 @@ function reasonForTruncation(message: SDKResultMessage): string | null {
   return TRUNCATING_TERMINAL_REASONS[reason] ?? `agent stopped: ${reason}`;
 }
 
+// The SDK's synthetic assistant message explaining an API-side stop — e.g.
+// `error: 'rate_limit'` carrying "You've hit your session limit · resets
+// 10pm". It arrives BEFORE the terminal `result`, whose `terminal_reason` is
+// then only `'api_error'`; without remembering it, a usage-limit stop is
+// recorded as "the Claude API errored" and the real reason lives only in the
+// transcript (2026-09-04: seven runs, all diagnosed by hand).
+interface ApiErrorNote {
+  kind: string;
+  text: string;
+}
+
+// Per-kind explanations for the API errors that end a run. A kind absent here
+// keeps the generic terminal-reason message, with the SDK's own text appended.
+const API_ERROR_MESSAGES: Record<string, string> = {
+  rate_limit: USAGE_LIMIT_LEAD,
+  overloaded: 'the Claude API is overloaded — resume this run shortly',
+  billing_error:
+    'a Claude billing problem stopped the agent before it finished',
+  authentication_failed:
+    'Claude authentication failed before the agent finished — sign in again and resume this run',
+};
+
+// The plain text of an assistant message — where the SDK's synthetic
+// API-error messages carry their human-readable explanation.
+function assistantText(content: unknown): string {
+  return (content as AssistantContentBlock[])
+    .filter((block) => block.type === 'text')
+    .map((block) => block.text ?? '')
+    .join('\n')
+    .trim();
+}
+
+// Replaces the generic API/model-error truncation message with the specific
+// reason the SDK's last API-error assistant message reported, when there was one.
+function withApiErrorDetail(
+  truncation: string,
+  message: SDKResultMessage,
+  apiError: ApiErrorNote | undefined
+): string {
+  const reason = (message as { terminal_reason?: string }).terminal_reason;
+  if (
+    apiError === undefined ||
+    (reason !== 'api_error' && reason !== 'model_error')
+  ) {
+    return truncation;
+  }
+  const lead = API_ERROR_MESSAGES[apiError.kind] ?? truncation;
+  return apiError.text === '' ? lead : `${lead} (${apiError.text})`;
+}
+
 // Turns the SDK's terminal `result` message into the ExecutorEvents.onFinish
 // shape. Every subtype other than `'success'` (error_max_turns,
 // error_max_budget_usd, error_during_execution, ...) is a failed run, with
@@ -441,7 +506,10 @@ function reasonForTruncation(message: SDKResultMessage): string | null {
 // (and/or `is_error`) instead — so both are checked here before a run is
 // allowed to claim it finished. Turn/cost accounting is preserved either way,
 // so reclassifying a run never loses what it already spent.
-function finishFromResult(message: SDKResultMessage): {
+function finishFromResult(
+  message: SDKResultMessage,
+  apiError?: ApiErrorNote
+): {
   state: 'finished' | 'failed';
   costUsd?: number;
   turns?: number;
@@ -456,7 +524,11 @@ function finishFromResult(message: SDKResultMessage): {
   if (message.subtype === 'success') {
     const truncation = reasonForTruncation(message);
     if (truncation !== null) {
-      return { state: 'failed', ...base, error: truncation };
+      return {
+        state: 'failed',
+        ...base,
+        error: withApiErrorDetail(truncation, message, apiError),
+      };
     }
     if (message.is_error) {
       const detail = message.result.trim();
@@ -536,14 +608,22 @@ export class ClaudeExecutor implements Executor {
       if (stopRequested) {
         return { behavior: 'deny', message: STOP_DENIAL_MESSAGE };
       }
-      if (
-        opts.permissionMode === 'acceptEdits' &&
-        (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) || toolName === ASK_USER_TOOL)
-      ) {
-        return { behavior: 'allow', updatedInput: input };
-      }
-      if (sessionAllowed.has(toolName)) {
-        return { behavior: 'allow', updatedInput: input };
+      // The irreversibility floor: a force-push, npm publish, or
+      // repo-visibility change always raises the approval flow below — ahead
+      // of every allow branch, so neither an acceptEdits auto-allow nor an
+      // earlier "approve Bash for this session" lets one through. Each
+      // irreversible act gets its own human decision, at every policy rung.
+      const floorHold = floorCheckForToolInput(input);
+      if (floorHold === null) {
+        if (
+          opts.permissionMode === 'acceptEdits' &&
+          (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) || toolName === ASK_USER_TOOL)
+        ) {
+          return { behavior: 'allow', updatedInput: input };
+        }
+        if (sessionAllowed.has(toolName)) {
+          return { behavior: 'allow', updatedInput: input };
+        }
       }
       const { requestId } = callOpts;
       events.onApprovalRequest({ requestId, toolName, input });
@@ -624,6 +704,10 @@ export class ClaudeExecutor implements Executor {
       // sessionId, making it impossible to resume via sendMessage's
       // `resume: true` path.
       let sessionId: string | undefined;
+      // The latest SDK assistant message that carried an API error (`error:
+      // 'rate_limit'` and friends), so the terminal result can name the real
+      // reason the run stopped — see withApiErrorDetail.
+      let lastApiError: ApiErrorNote | undefined;
       // Set only by the 'result' branch below — tracks whether the loop
       // actually reached a terminal SDK message, as opposed to the
       // underlying async iterator simply running out (the CLI process
@@ -638,6 +722,12 @@ export class ClaudeExecutor implements Executor {
         for await (const message of sdkQuery) {
           if (interrupted) break;
           if (message.type === 'assistant') {
+            if (message.error !== undefined) {
+              lastApiError = {
+                kind: message.error,
+                text: assistantText(message.message.content),
+              };
+            }
             const ts = new Date().toISOString();
             for (const entry of entriesForAssistantContent(
               message.message.content,
@@ -654,7 +744,9 @@ export class ClaudeExecutor implements Executor {
             }
           } else if (message.type === 'result') {
             gotResult = true;
-            if (!interrupted) events.onFinish(finishFromResult(message));
+            if (!interrupted) {
+              events.onFinish(finishFromResult(message, lastApiError));
+            }
             break;
           }
         }

@@ -2,7 +2,7 @@ import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
-import { deriveFeedState } from './feedState';
+import { deriveFeedState, isInFlightState, isUrgentState } from './feedState';
 
 /**
  * The one-line "what is happening in this epic right now", shown beside its progress bar.
@@ -32,17 +32,21 @@ export function deriveEpicPulse(
     const run = latestRunByTaskId.get(task.meta.id);
     if (run === undefined) continue;
     const state = deriveFeedState(run);
-    // Waiting and failed both mean "a human is the blocker", which is the same ask from the
-    // reader's point of view even though the fix differs — so they share one counter.
-    if (state === 'waiting' || state === 'failed') needsYou += 1;
-    else if (state === 'working' || state === 'landing') running += 1;
-    else if (state === 'review') review += 1;
+    if (state === null) continue;
+    // Every your-move state and every failure means "a human is the blocker" — the same ask
+    // from the reader's point of view even though the fix differs — so they share one
+    // counter. Review keeps its own softer bucket, as before.
+    if (state === 'review') review += 1;
+    else if (isUrgentState(state)) needsYou += 1;
+    else if (isInFlightState(state)) running += 1;
   }
 
   const ready = tasks.filter((t) => readyIds.has(t.meta.id)).length;
 
   if (needsYou > 0) {
-    return { state: 'waiting', label: `${needsYou} need you` };
+    // 'answer' as the summary mark: any your-move state renders amber, and the
+    // label already carries the count.
+    return { state: 'answer', label: `${needsYou} need you` };
   }
   if (running > 0) {
     return { state: 'working', label: `${running} running` };

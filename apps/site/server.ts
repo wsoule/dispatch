@@ -1,7 +1,7 @@
 /**
  * Static server for the marketing site.
  *
- * Bun's own file serving rather than a dependency: the site is three files, and adding a static
+ * Bun's own file serving rather than a dependency: it's Astro's build output, and adding a static
  * server package would be more moving parts than the thing it serves. Railway sets PORT; the
  * fallback is only for running it locally.
  */
@@ -9,11 +9,11 @@ import { resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.PORT ?? 3000);
-const ROOT = fileURLToPath(new URL('./public/', import.meta.url));
+const ROOT = fileURLToPath(new URL('./dist/', import.meta.url));
 const INDEX = resolve(ROOT, 'index.html');
 
 /**
- * Maps a request path to a file inside public/, or null if it points anywhere else.
+ * Maps a request path to a file inside dist/, or null if it points anywhere else.
  *
  * This started as `new URL(pathname, publicDir)`, which is wrong in a way worth recording: that
  * constructor resolves URLs, it does not join paths, so a request for `/file:///etc/hosts`
@@ -47,11 +47,8 @@ Bun.serve({
       const file = Bun.file(path);
       if (await file.exists()) {
         return new Response(file, {
-          // A year of caching is only safe for a filename that changes when its
-          // contents do, and nothing here is content-hashed — app.js keeps its
-          // name across deploys, so a year would pin visitors to whichever
-          // version they happened to load first. Revalidation is cheap at this
-          // size; being wrong about it is not.
+          // Hashed _astro/ assets could take long cache lifetimes, but no-cache
+          // revalidation is cheap at this size, so it stays.
           headers: { 'cache-control': 'no-cache' },
         });
       }

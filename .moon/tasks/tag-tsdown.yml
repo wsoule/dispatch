@@ -1,0 +1,30 @@
+$schema: 'https://moonrepo.dev/schemas/tasks.json'
+
+# Build/watch for packages bundled with tsdown (core, client, cli, mcp).
+inheritedBy:
+  tags: ['tsdown']
+
+tasks:
+  build:
+    command: 'tsdown --clean'
+    deps:
+      - '^:build'
+    inputs:
+      # tsdown loads the package tsconfig for dts emit, so compiler-option
+      # changes must invalidate the cache.
+      - 'src/**/*'
+      - 'tsdown.config.ts'
+      - 'tsconfig.json'
+    outputs:
+      - 'dist'
+
+  # Non-cleaning watcher: dependents resolve exports through dist while it
+  # runs. Graph-connected, so runInCI stays skip (CI= moonx <pkg>:dev).
+  dev:
+    command: 'tsdown --watch --no-clean --log-level error'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      persistent: true
+      runInCI: 'skip'

@@ -62,9 +62,10 @@ function list(): Promise<Response> {
 }
 
 describe('POST /api/inbox', () => {
-  // `splitCapture` strips a leading bullet or checkbox before filtering empty
-  // lines, so text that is only markers clears `text.trim()` and stores nothing.
-  it.each([['-'], ['*'], ['- [ ]'], ['-\n*\n- [x]']])(
+  // One dump is one item, so `normalizeCapture` strips the leading bullet or
+  // checkbox from the FIRST line only; a capture that was nothing but that one
+  // marker clears `text.trim()` and stores nothing.
+  it.each([['-'], ['*'], ['- [ ]']])(
     'rejects %p, which stores nothing',
     async (text) => {
       const res = await capture(text);
@@ -75,6 +76,18 @@ describe('POST /api/inbox', () => {
       expect(await (await list()).json()).toEqual([]);
     }
   );
+
+  // The multiline counterpart: only the first line's marker comes off, so the
+  // lines below it are kept verbatim and the capture is a real item. Splitting
+  // every line (and rejecting this whole input) was the pre-'one dump, one
+  // item' behaviour.
+  it('keeps the lines below a leading marker as one item', async () => {
+    const res = await capture('-\n*\n- [x]');
+    expect(res.status).toBe(201);
+    const created = (await res.json()) as { text: string }[];
+    expect(created).toHaveLength(1);
+    expect(created[0]?.text).toBe('*\n- [x]');
+  });
 
   it('still accepts a bullet with prose after it', async () => {
     const res = await capture('- diffs go blank mid-run');

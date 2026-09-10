@@ -10,9 +10,13 @@ import {
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
+  DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   loadConfig,
+  queueWeights,
 } from '../src/config.js';
+import { DEFAULT_POLICY } from '../src/policy.js';
+import { DEFAULT_QUEUE_WEIGHTS } from '../src/scoring.js';
 
 let root: string;
 beforeEach(() => {
@@ -32,12 +36,13 @@ describe('loadConfig', () => {
   it('returns defaults when file missing', () => {
     expect(loadConfig(root)).toEqual({
       statuses: [
-        'backlog',
-        'todo',
-        'in-progress',
-        'in-review',
-        'done',
-        'cancelled',
+        'draft',
+        'ready',
+        'working',
+        'review',
+        'landing',
+        'landed',
+        'dropped',
       ],
       autoCommit: false,
       orchestrator: {
@@ -51,6 +56,9 @@ describe('loadConfig', () => {
       carto: DEFAULT_CARTO,
       repoDigest: DEFAULT_REPO_DIGEST,
       notifications: DEFAULT_NOTIFICATIONS,
+      receipts: DEFAULT_RECEIPTS,
+      policy: DEFAULT_POLICY,
+      queue: { weights: DEFAULT_QUEUE_WEIGHTS },
     });
   });
   it('merges file values over defaults', () => {
@@ -58,17 +66,43 @@ describe('loadConfig', () => {
     writeFileSync(join(root, '.dispatch/config.yml'), 'autoCommit: true\n');
     const cfg = loadConfig(root);
     expect(cfg.autoCommit).toBe(true);
-    expect(cfg.statuses).toHaveLength(6);
+    expect(cfg.statuses).toHaveLength(7);
+  });
+  // The policy and notifications blocks landed on separate branches; this
+  // pins that one file carrying both parses both, so neither loader can
+  // silently shadow the other after a merge.
+  it('reads policy and notifications from the same file', () => {
+    const cfg = loadConfig(
+      writeConfig(
+        [
+          'policy:',
+          '  rung: 3',
+          '  gates:',
+          '    merge: auto',
+          'notifications:',
+          '  kinds:',
+          '    fix-loop-capped: false',
+          '  webhook: https://hooks.example.com/services/T0/B0/x',
+          '',
+        ].join('\n')
+      )
+    );
+    expect(cfg.policy).toEqual({ rung: 3, gates: { merge: 'auto' } });
+    expect(cfg.notifications).toEqual({
+      kinds: { ...DEFAULT_NOTIFICATIONS.kinds, 'fix-loop-capped': false },
+      webhook: 'https://hooks.example.com/services/T0/B0/x',
+    });
   });
   it('mutating a returned config does not poison later loads', () => {
     loadConfig(root).statuses.push('x');
     expect(loadConfig(root).statuses).toEqual([
-      'backlog',
-      'todo',
-      'in-progress',
-      'in-review',
-      'done',
-      'cancelled',
+      'draft',
+      'ready',
+      'working',
+      'review',
+      'landing',
+      'landed',
+      'dropped',
     ]);
   });
   it('throws a ConfigError on malformed YAML', () => {
@@ -357,9 +391,164 @@ describe('repoDigest config', () => {
       /repoDigest must be an object/
     );
   });
+});
+
+describe('receipts config', () => {
+  it('defaults to enabled with no directory override', () => {
+    expect(loadConfig(writeConfig('statuses: [todo]\n')).receipts).toEqual({
+      enabled: true,
+      dir: undefined,
+    });
+  });
+
+  it('reads enabled and dir from the file', () => {
+    const dir = writeConfig('receipts:\n  enabled: false\n  dir: ../audit\n');
+    expect(loadConfig(dir).receipts).toEqual({
+      enabled: false,
+      dir: '../audit',
+    });
+  });
+
+  it('rejects a non-boolean enabled', () => {
+    expect(() =>
+      loadConfig(writeConfig('receipts:\n  enabled: "yes"\n'))
+    ).toThrow(/receipts\.enabled must be a boolean/);
+  });
+
+  // Empty rather than absent: falling back to the default location would write
+  // the audit trail somewhere the author did not ask for and would not look.
+  it('rejects an empty dir instead of falling back to the default', () => {
+    expect(() => loadConfig(writeConfig('receipts:\n  dir: "   "\n'))).toThrow(
+      /receipts\.dir must be a non-empty string/
+    );
+  });
+
+  it('rejects a non-string dir', () => {
+    expect(() => loadConfig(writeConfig('receipts:\n  dir: 5\n'))).toThrow(
+      /receipts\.dir must be a non-empty string/
+    );
+  });
+
+  it('rejects a non-object block', () => {
+    expect(() => loadConfig(writeConfig('receipts: 5\n'))).toThrow(
+      /receipts must be an object/
+    );
+  });
 
   it('mutating a returned block does not poison later loads', () => {
     loadConfig(root).repoDigest.cooldownHours = 999;
     expect(loadConfig(root).repoDigest.cooldownHours).toBe(6);
+  });
+});
+
+// The queue's weights are the one part of the scoring function a project tunes.
+// A bad value must be refused loudly — a NaN weight would make every task's
+// score NaN — but the refusal is carried on the config rather than thrown, so
+// one mistyped weight does not 422 every config-reading endpoint in the daemon.
+describe('queue.weights', () => {
+  it('layers a partial weights block over the defaults', () => {
+    const dir = writeConfig('queue:\n  weights:\n    urgency: 4\n');
+    expect(queueWeights(loadConfig(dir))).toEqual({
+      ok: true,
+      weights: { ...DEFAULT_QUEUE_WEIGHTS, urgency: 4 },
+    });
+  });
+
+  it('accepts zero as "turn this factor off"', () => {
+    const dir = writeConfig('queue:\n  weights:\n    age: 0\n');
+    const result = queueWeights(loadConfig(dir));
+    expect(result.ok && result.weights.age).toBe(0);
+  });
+
+  it('falls back to defaults when the block is absent or empty', () => {
+    for (const contents of ['autoCommit: true\n', 'queue: {}\n']) {
+      expect(queueWeights(loadConfig(writeConfig(contents)))).toEqual({
+        ok: true,
+        weights: DEFAULT_QUEUE_WEIGHTS,
+      });
+    }
+  });
+
+  // Every rejection below is reported through queueWeights rather than thrown
+  // from loadConfig: the file still loads, so runs/tasks/settings keep working
+  // while the queue itself refuses to rank against a config it cannot read.
+  describe('rejections are loud but contained', () => {
+    const bad: [string, string, RegExp][] = [
+      [
+        'a negative weight, which would invert the factor',
+        'queue:\n  weights:\n    age: -1\n',
+        /queue\.weights\.age/,
+      ],
+      [
+        'a non-numeric weight',
+        'queue:\n  weights:\n    urgency: high\n',
+        /queue\.weights\.urgency/,
+      ],
+      [
+        'an unknown factor inside weights',
+        'queue:\n  weights:\n    urgncy: 2\n',
+        /unknown queue\.weights factor "urgncy"/,
+      ],
+      // The typo one level up used to parse as an empty block and hand back
+      // defaults, which is the quietest possible way to ignore a setting.
+      [
+        'a typo beside weights',
+        'queue:\n  wieghts:\n    urgency: 2\n',
+        /unknown queue key "wieghts"/,
+      ],
+      ['a non-object queue block', 'queue: 3\n', /queue must be an object/],
+      [
+        'a non-object weights block',
+        'queue:\n  weights: []\n',
+        /queue\.weights must be an object/,
+      ],
+    ];
+
+    for (const [label, contents, expected] of bad) {
+      it(`reports ${label} without failing the whole load`, () => {
+        const dir = writeConfig(contents);
+        // loadConfig itself must not throw, or every endpoint 422s.
+        const config = loadConfig(dir);
+        expect(config.autoCommit).toBe(false);
+
+        const result = queueWeights(config);
+        expect(result.ok).toBe(false);
+        expect(result.ok ? '' : result.error).toMatch(expected);
+      });
+    }
+  });
+
+  it('still exposes renderable weights alongside the error', () => {
+    const config = loadConfig(writeConfig('queue:\n  weights:\n    age: -1\n'));
+    expect(config.queue?.weights).toEqual(DEFAULT_QUEUE_WEIGHTS);
+    expect(config.queue?.error).toBeDefined();
+  });
+
+  // DEFAULT_QUEUE_WEIGHTS is a frozen module constant every fallback reads, so
+  // handing it out by reference would either throw under the caller (frozen)
+  // or, unfrozen, let one mutation corrupt every later ranking process-wide.
+  // A config with no `queue` block at all is the path that hits the fallback —
+  // one built by hand rather than by loadConfig, which always copies.
+  it('never hands out the shared defaults object', () => {
+    const handBuilt = loadConfig(root);
+    delete handBuilt.queue;
+
+    const first = queueWeights(handBuilt);
+    expect(first.ok && first.weights).not.toBe(DEFAULT_QUEUE_WEIGHTS);
+    // Must be safe to mutate: a caller normalizing weights should not blow up
+    // on the frozen constant.
+    if (first.ok) first.weights.urgency = 99;
+
+    const second = queueWeights(handBuilt);
+    expect(second.ok && second.weights.urgency).toBe(1);
+    expect(DEFAULT_QUEUE_WEIGHTS.urgency).toBe(1);
+  });
+
+  it('mutating a loaded config does not poison later loads', () => {
+    const dir = writeConfig('queue:\n  weights:\n    urgency: 4\n');
+    const loaded = loadConfig(dir);
+    if (loaded.queue !== undefined) loaded.queue.weights.urgency = 99;
+    const reloaded = queueWeights(loadConfig(dir));
+    expect(reloaded.ok && reloaded.weights.urgency).toBe(4);
   });
 });

@@ -1,6 +1,7 @@
-import type { NotificationKind } from '@dispatch/core';
+import type { FloorCheck, NotificationKind } from '@dispatch/core';
 
 import type { EventBus, ServerEvent } from './events.js';
+import { floorCheckForToolInput, isBudgetCapFailure } from './floor.js';
 import type { FixLoopState } from './orchestrator/fixLoop.js';
 import type { QuestionRegistry } from './orchestrator/questions.js';
 import type { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
@@ -57,6 +58,9 @@ export interface DecisionItem {
   /** Which flavour of `kind` this is, when the kind alone is ambiguous: the
    *  fix loop's stop reason, or why a run counts as stalled. */
   reason?: string;
+  /** `scope-request` only: every path the agent asked for, untruncated, so a
+   *  classifier can judge the request and a surface can list it in full. */
+  paths?: string[];
   runId?: string;
   taskId?: string;
   taskTitle?: string;
@@ -69,6 +73,13 @@ export interface DecisionItem {
   state: 'open' | 'resolved';
   /** Set only on `resolved` items: when the feed noticed it had gone. */
   resolvedAt?: string;
+  /**
+   * Set when this item is held by the irreversibility floor (core/policy.ts).
+   * A floor item is `blocking` unconditionally — `list()` never consults the
+   * policy classifier for it, so no rung or override can demote it. Surfaces
+   * in both lenses render the hold from this field.
+   */
+  floor?: FloorCheck;
   disposition: DecisionDisposition;
 }
 
@@ -290,9 +301,13 @@ export class DecisionFeed {
   list(opts: DecisionFeedListOptions = {}): DecisionItem[] {
     const { open, resolved } = this.recompute();
     const items = opts.includeResolved === true ? [...open, ...resolved] : open;
+    // The floor is checked ahead of the classifier, not inside it: an item the
+    // irreversibility floor holds is blocking no matter what any DecisionPolicy
+    // — including the policy engine's — would have said.
     const classified = items.map((item) => ({
       ...item,
-      disposition: this.policy(item),
+      disposition:
+        item.floor !== undefined ? ('blocking' as const) : this.policy(item),
     }));
     if (opts.disposition === undefined) return classified;
     return classified.filter((item) => item.disposition === opts.disposition);
@@ -392,6 +407,10 @@ export class DecisionFeed {
       // exactly when this started waiting.
       const since =
         runs.get(approval.runId)?.updatedAt ?? new Date(nowMs).toISOString();
+      // An approval for a floor command (force-push, npm publish, repo
+      // visibility) carries the check, which pins its disposition to blocking
+      // in list() regardless of the policy classifier.
+      const floor = floorCheckForToolInput(approval.input) ?? undefined;
       return {
         id: `approval:${approval.requestId}`,
         kind: 'approval' as const,
@@ -402,6 +421,7 @@ export class DecisionFeed {
         since,
         ageMs: ageSince(since, nowMs),
         state: 'open' as const,
+        floor,
       };
     });
   }
@@ -421,6 +441,7 @@ export class DecisionFeed {
         kind: 'scope-request' as const,
         summary: `agent asked to edit outside its scope: ${paths}`,
         reason: oneLine(request.reason),
+        paths: request.paths,
         runId: request.runId,
         taskId: run?.taskId,
         taskTitle: run?.taskTitle,
@@ -467,6 +488,10 @@ export class DecisionFeed {
           since: state.updatedAt,
           ageMs: ageSince(state.updatedAt, nowMs),
           state: 'open' as const,
+          // A capped loop wants a written ruling on findings only a human may
+          // retire — the floor's finding-ruling member, so no rung classifies
+          // it as merely recorded.
+          floor: 'finding-ruling' as const,
         };
       });
   }
@@ -480,11 +505,19 @@ export class DecisionFeed {
     for (const run of runs.values()) {
       const reason = stalledReason(run, superseded);
       if (reason === null) continue;
+      // A run that died on its cost cap is a floor item: deciding to spend
+      // past the cap is a human ruling at every rung, so no classifier may
+      // file this under "merely recorded".
+      const floor =
+        reason === 'failed' && isBudgetCapFailure(run.error)
+          ? ('budget-cap' as const)
+          : undefined;
       items.push({
         id: `run-stalled:${run.id}`,
         kind: 'run-stalled',
         summary: `${run.taskTitle}: ${STALLED_SUMMARY[reason]}`,
         reason,
+        floor,
         runId: run.id,
         taskId: run.taskId,
         taskTitle: run.taskTitle,

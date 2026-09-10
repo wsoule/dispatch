@@ -30,30 +30,30 @@ function makeTask(id: string, status: string): TaskDoc {
 describe('groupTasksByStatus', () => {
   test('buckets tasks under their status, preserving the configured status order', () => {
     const tasks = [
-      makeTask('a', 'todo'),
-      makeTask('b', 'done'),
-      makeTask('c', 'todo'),
+      makeTask('a', 'ready'),
+      makeTask('b', 'landed'),
+      makeTask('c', 'ready'),
     ];
-    const groups = groupTasksByStatus(tasks, ['backlog', 'todo', 'done']);
-    expect(groups.map((g) => g.status)).toEqual(['backlog', 'todo', 'done']);
+    const groups = groupTasksByStatus(tasks, ['draft', 'ready', 'landed']);
+    expect(groups.map((g) => g.status)).toEqual(['draft', 'ready', 'landed']);
     expect(groups[0].tasks).toEqual([]);
     expect(groups[1].tasks.map((t) => t.meta.id)).toEqual(['a', 'c']);
     expect(groups[2].tasks.map((t) => t.meta.id)).toEqual(['b']);
   });
 
   test('a task whose status is not in the configured list is dropped from every column', () => {
-    const tasks = [makeTask('a', 'todo'), makeTask('b', 'archived')];
-    const groups = groupTasksByStatus(tasks, ['todo']);
-    expect(groups).toEqual([{ status: 'todo', tasks: [tasks[0]] }]);
+    const tasks = [makeTask('a', 'ready'), makeTask('b', 'archived')];
+    const groups = groupTasksByStatus(tasks, ['ready']);
+    expect(groups).toEqual([{ status: 'ready', tasks: [tasks[0]] }]);
   });
 
   test('an empty status list returns no columns', () => {
-    expect(groupTasksByStatus([makeTask('a', 'todo')], [])).toEqual([]);
+    expect(groupTasksByStatus([makeTask('a', 'ready')], [])).toEqual([]);
   });
 
   test('preserves original task order within a column', () => {
-    const tasks = [makeTask('z', 'todo'), makeTask('a', 'todo')];
-    const groups = groupTasksByStatus(tasks, ['todo']);
+    const tasks = [makeTask('z', 'ready'), makeTask('a', 'ready')];
+    const groups = groupTasksByStatus(tasks, ['ready']);
     expect(groups[0].tasks.map((t) => t.meta.id)).toEqual(['z', 'a']);
   });
 });

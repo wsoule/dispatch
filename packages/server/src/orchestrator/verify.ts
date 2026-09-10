@@ -1,5 +1,5 @@
 import { loadConfig } from '@dispatch/core';
-import type { TaskDoc, TaskStore, VerifyConfig } from '@dispatch/core';
+import type { TaskDoc, TaskStorePort, VerifyConfig } from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
@@ -205,7 +205,7 @@ export function buildVerificationPrompt(
 
 export interface VerificationRunnerContext {
   rootDir: string;
-  store: TaskStore;
+  store: TaskStorePort;
   cache: TaskCache;
   events: EventBus;
   orchestrator: Orchestrator;

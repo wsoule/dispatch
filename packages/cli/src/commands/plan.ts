@@ -7,7 +7,7 @@ import type {
   PlanProposal,
   PlanRecord,
 } from '../apiClient.js';
-import { createApiClient } from '../apiClient.js';
+import { createApiClient, DaemonUnreachableError } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
   formatEpicProgress,
@@ -18,12 +18,12 @@ import { singleFlight } from '../singleFlight.js';
 import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
 import { ensureDaemon } from './daemon.js';
-import { requireStore } from './task.js';
+import { requireInitialized } from './task.js';
 
 async function daemonFor(
   ctx: CliContext
 ): Promise<{ baseUrl: string; token: string; client: ApiClient }> {
-  requireStore(ctx);
+  requireInitialized(ctx);
   const { port, agentToken } = await ensureDaemon(ctx);
   const baseUrl = `http://127.0.0.1:${port}`;
   return {
@@ -95,8 +95,15 @@ export function createEpicWatcher(
     }
   });
 
+  // Same rule as the run watcher: a refetch that failed because the daemon
+  // went away defers to the socket layer's own give-up (which reports "lost
+  // connection to dispatchd"), rather than racing it with a second message
+  // for the same condition. Anything else genuinely stops the watch.
   function triggerRefetch(): void {
     void refetch().catch((err: unknown) => {
+      if (err instanceof TypeError || err instanceof DaemonUnreachableError) {
+        return;
+      }
       fail(err instanceof Error ? err : new Error(String(err)));
     });
   }

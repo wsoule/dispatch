@@ -75,7 +75,9 @@
       // truthiness assumptions than these two rules expect. Rewriting every branch to
       // satisfy them risks changing behavior; deferred to a dedicated cleanup pass.
       // Other typescript-eslint rules (floating promises, no-explicit-any, etc.) still apply.
-      "files": ["apps/desktop/**"],
+      // packages/ui is the component library extracted from apps/desktop/src/ui — same code,
+      // same truthiness assumptions, so it keeps the same profile.
+      "files": ["apps/desktop/**", "packages/ui/**"],
       "rules": {
         "typescript/strict-boolean-expressions": "off",
         "typescript/prefer-nullish-coalescing": "off",

@@ -13,9 +13,9 @@ import { join } from 'node:path';
 import {
   InboxStore,
   inferKind,
+  normalizeCapture,
   parseInbox,
   serializeInbox,
-  splitCapture,
 } from '../src/inbox';
 
 function root(): string {
@@ -24,23 +24,19 @@ function root(): string {
   return dir;
 }
 
-describe('splitCapture', () => {
-  test('one item per non-empty line', () => {
-    expect(splitCapture('a\n\nb\n  c  \n')).toEqual(['a', 'b', 'c']);
+describe('normalizeCapture', () => {
+  test('keeps a multiline dump as one blob, tidied', () => {
+    expect(normalizeCapture('a\r\nb  \n\nc\n\n')).toBe('a\nb\n\nc');
   });
 
-  // Pasting a markdown list you copied from somewhere else must not double up its bullets.
-  test('strips bullets and checkboxes a user might paste in', () => {
-    expect(splitCapture('- one\n* two\n- [ ] three\n- [x] four')).toEqual([
-      'one',
-      'two',
-      'three',
-      'four',
-    ]);
+  // Pasting a copied item must not nest its bullet in the stored file.
+  test('strips a bullet or checkbox prefix off the first line only', () => {
+    expect(normalizeCapture('- [ ] one\n- two')).toBe('one\n- two');
+    expect(normalizeCapture('* one')).toBe('one');
   });
 
   test('an empty capture yields nothing', () => {
-    expect(splitCapture('   \n\n  ')).toEqual([]);
+    expect(normalizeCapture('   \n\n  ')).toBe('');
   });
 });
 
@@ -132,13 +128,16 @@ describe('parse and serialize', () => {
 });
 
 describe('InboxStore', () => {
-  test('add splits a blob and persists across instances', () => {
+  test('add keeps a multiline blob as one item and persists across instances', () => {
     const dir = root();
     const created = new InboxStore(dir, 'wyat').add({
       text: 'one thing\ntwo thing',
     });
-    expect(created).toHaveLength(2);
-    expect(new InboxStore(dir, 'wyat').list()).toHaveLength(2);
+    expect(created).toHaveLength(1);
+    expect(created[0]?.text).toBe('one thing\ntwo thing');
+    const reread = new InboxStore(dir, 'wyat').list();
+    expect(reread).toHaveLength(1);
+    expect(reread[0]?.text).toBe('one thing\ntwo thing');
   });
 
   test('newest capture lands first', () => {
@@ -189,9 +188,11 @@ describe('InboxStore', () => {
   test('remove drops items', () => {
     const dir = root();
     const store = new InboxStore(dir, 'wyat');
-    const ids = store.add({ text: 'a\nb' }).map((i) => i.id);
+    store.add({ text: 'a' });
+    const ids = store.add({ text: 'b' }).map((i) => i.id);
     store.remove([ids[0] ?? '']);
     expect(store.list()).toHaveLength(1);
+    expect(store.list()[0]?.text).toBe('a');
   });
 
   test('markConverted records the task and archives the item', () => {
@@ -512,5 +513,56 @@ describe('migrateNotes', () => {
     const dir = root();
     writeNotes(dir, [{ title: '   ', kind: 'note' }, { kind: 'note' }]);
     expect(new InboxStore(dir, 'wyat').migrateNotes(dir)).toBe(0);
+  });
+});
+
+describe('multiline items in the file format', () => {
+  test('round-trips a multiline item through serialize and parse', () => {
+    const items = parseInbox(
+      serializeInbox([
+        {
+          id: 'in-aaa111',
+          kind: 'task',
+          text: 'first line\nsecond line\n\nfourth line',
+          done: false,
+          linkedTaskId: null,
+          createdByRunId: null,
+          created: '',
+        },
+      ])
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]?.text).toBe('first line\nsecond line\n\nfourth line');
+    expect(items[0]?.id).toBe('in-aaa111');
+  });
+
+  test('markers stay on the first line, continuations are prose', () => {
+    const markdown = serializeInbox([
+      {
+        id: 'in-bbb222',
+        kind: 'task',
+        text: 'do the thing\nwith some detail',
+        done: true,
+        linkedTaskId: 't-123',
+        createdByRunId: null,
+        created: '',
+      },
+    ]);
+    const itemLine = markdown
+      .split('\n')
+      .find((l) => l.includes('do the thing'));
+    expect(itemLine).toContain('→ t-123');
+    expect(itemLine).toContain('^in-bbb222');
+    const parsed = parseInbox(markdown)[0];
+    expect(parsed?.text).toBe('do the thing\nwith some detail');
+    expect(parsed?.linkedTaskId).toBe('t-123');
+  });
+
+  test('an indented stray line after a header attaches to nothing', () => {
+    const items = parseInbox(
+      '# Inbox\n  stray indented prose\n\n- [ ] (note) real item ^in-1\n'
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]?.text).toBe('real item');
   });
 });

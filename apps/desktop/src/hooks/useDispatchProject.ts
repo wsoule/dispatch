@@ -3,6 +3,7 @@ import type {
   ApiClient,
   DraftRecord,
   EpicProgress,
+  FixLoopState,
   LandingSnapshot,
   LinearIssueLink,
   LinearStatus,
@@ -28,6 +29,8 @@ import type {
   EscalationStep,
   ModelConfig,
   NotificationKind,
+  PolicyGate,
+  PolicyGateMode,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core/browser';
@@ -63,12 +66,14 @@ import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
 import { gitQueryRootKey } from './useGit';
 import {
   findingsQueryRootKey,
-  fixLoopKey,
+  fixLoopQueryRootKey,
   ledgerQueryRootKey,
   taskVerificationKey,
+  useFixLoops,
+  useStopFixLoop,
 } from './useOrchestration';
 import { useTransitionNotifications } from './useTransitionNotifications';
-import { wardenKey } from './useWardenSession';
+import { wardenKey, wardenKeyPrefix } from './useWardenSession';
 
 // One entry per pending approval this window has seen live via the `approval.requested` WS
 // event — the REST API has no way to hand back a paused run's requestId on a plain refetch,
@@ -288,6 +293,13 @@ export interface DispatchProjectData {
     groups: import('@dispatch/client').InboxClusterGroup[];
     error: string | null;
   }>;
+  /** The persisted result of the last clustering pass — rendered on load so a
+   * page visit never bills a model call of its own. Null until fetched or when
+   * no pass has ever run. */
+  inboxClusters: import('@dispatch/client').InboxClusterSnapshot | null;
+  /** Every plan's summary, newest activity first — the Plans page's history,
+   * persisted server-side so it survives restarts and spans windows. */
+  plans: import('@dispatch/client').PlanSummary[];
 
   /** Line-level review comments on the selected run's diff. */
   reviewComments: import('@dispatch/client').ReviewComment[];
@@ -342,6 +354,10 @@ export interface DispatchProjectData {
     notifications?: {
       kinds?: Partial<Record<NotificationKind, boolean>>;
       webhook?: string | null;
+    };
+    policy?: {
+      rung?: number;
+      gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
     };
   }) => Promise<void>;
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source.
@@ -496,6 +512,11 @@ export interface DispatchProjectData {
   // reviewable runs in this stack" surfaces as a thrown Error).
   handleEnqueueMergeStack: (taskId: string) => Promise<void>;
   handleDequeueMerge: (runId: string) => Promise<void>;
+  /** Every task's fix-loop state, by task id — the feed annotates rows and
+   * offers Stop from this. Empty until the bulk fetch resolves. */
+  fixLoops: ReadonlyMap<string, FixLoopState>;
+  /** Caps a task's fix loop where it stands; "Review & fix" resumes it. */
+  handleStopFixLoop: (taskId: string) => Promise<void>;
   // Task 8: enqueues every eligible run across the project in one shot (the
   // "Merge all ready" toolbar action) — thin wrapper over enqueueMergeReady,
   // since the server owns the actual eligibility/ordering logic.
@@ -664,6 +685,10 @@ export function useDispatchProject(
   const healthQueryKey = useMemo(() => ['dispatch-health', port], [port]);
   const notesQueryKey = useMemo(() => ['dispatch-notes', port], [port]);
   const inboxQueryKey = useMemo(() => ['dispatch-inbox', port], [port]);
+  const inboxClustersQueryKey = useMemo(
+    () => ['dispatch-inbox-clusters', port],
+    [port]
+  );
   // The drafts list (`GET /api/tasks/drafts`) query key, invalidated below
   // on `draft.changed`.
   const draftsQueryKey = useMemo(() => ['dispatch-drafts', port], [port]);
@@ -964,6 +989,27 @@ export function useDispatchProject(
     enabled: client !== null,
   });
 
+  // Every plan's summary — the Plans page's server-backed history.
+  const { data: plans } = useQuery({
+    queryKey: ['dispatch-plans', port],
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchPlans();
+    },
+    enabled: client !== null,
+  });
+
+  // The persisted last clustering pass — what BrainDumpView renders on load
+  // instead of billing a fresh model call per visit (see handleClusterInbox).
+  const { data: inboxClusters } = useQuery({
+    queryKey: inboxClustersQueryKey,
+    queryFn: () => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.fetchInboxClusters();
+    },
+    enabled: client !== null,
+  });
+
   // Every dispatch worktree/branch on disk. Each row costs several `git`
   // shell-outs on the server (ahead count, merged check, dirty check), so this
   // deliberately has no `refetchInterval` — it refreshes on `run.changed` (see
@@ -1109,6 +1155,27 @@ export function useDispatchProject(
           // branch can match an out-of-union frame anyway.
           if (isDecisionsChanged(event)) {
             void queryClient.invalidateQueries({ queryKey: decisionsQueryKey });
+          } else if (event.type === 'hello') {
+            // The daemon sends `hello` from its websocket `open` handler
+            // (packages/server/src/index.ts), so this fires once per socket:
+            // on the first connect and again on every reconnect. A reconnect
+            // usually means dispatchd restarted, and warden records live in an
+            // in-memory Map — so every cached id 404s now, and no
+            // `warden.changed` can ever arrive for a conversation the daemon
+            // no longer has. Without this refetch the cached record keeps a
+            // pending action alive that exists nowhere: the rail shows a
+            // waiting row and an amber badge, Approve/Deny 404, and
+            // `hasPendingAction` disables both "New conversation" controls
+            // until the window happens to lose and regain focus.
+            //
+            // It has to be the whole prefix rather than one conversation's
+            // key: the open conversation, and its id, live in
+            // useWardenSession, which this hook cannot see. On the first
+            // connect nothing is cached yet, so the invalidation is a no-op
+            // there rather than a wasted refetch.
+            void queryClient.invalidateQueries({
+              queryKey: wardenKeyPrefix(port),
+            });
           } else if (event.type === 'run.changed') {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({
@@ -1191,6 +1258,11 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: ['dispatch-plan', port, event.planId],
             });
+            // The history list carries every plan's state — refresh it with
+            // the record so the two never disagree.
+            void queryClient.invalidateQueries({
+              queryKey: ['dispatch-plans', port],
+            });
             void queryClient.invalidateQueries({
               queryKey: agentSessionsQueryKey,
             });
@@ -1246,12 +1318,13 @@ export function useDispatchProject(
               queryKey: ledgerQueryRootKey(port),
             });
           } else if (event.type === 'fixloop.changed') {
+            // The root covers the per-task query and the bulk by-task map.
             void queryClient.invalidateQueries({
-              queryKey: fixLoopKey(port, event.taskId),
+              queryKey: fixLoopQueryRootKey(port),
             });
           } else if (event.type === 'fixloop.capped') {
             void queryClient.invalidateQueries({
-              queryKey: fixLoopKey(port, event.taskId),
+              queryKey: fixLoopQueryRootKey(port),
             });
             // A stopped loop needs a human — a toast plus a durable inbox row,
             // worded from the stop reason.
@@ -1303,10 +1376,15 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),
             });
-          } else if (event.type === 'board.sync') {
-            // Refetches rather than reading `event.result` straight into the
-            // cache: the pending counts the chip also shows are computed
-            // live server-side and aren't part of this event's payload.
+          } else if (
+            event.type === 'board.sync' ||
+            event.type === 'receipts.export'
+          ) {
+            // Both feed the same chip — a project has a board syncer or a
+            // receipts exporter, never both — and GET /api/sync carries both
+            // halves. Refetches rather than reading `event.result` straight
+            // into the cache: the pending counts the chip also shows are
+            // computed live server-side and aren't part of either payload.
             void queryClient.invalidateQueries({
               queryKey: syncStatusQueryKey,
             });
@@ -2009,6 +2087,17 @@ export function useDispatchProject(
     [client, queryClient, mergeQueueQueryKey]
   );
 
+  // The feed's per-task fix-loop annotations and its Stop button.
+  const fixLoops = useFixLoops(client, port);
+  const stopFixLoop = useStopFixLoop(client, port);
+  const handleStopFixLoop = useCallback(
+    async (taskId: string): Promise<void> => {
+      if (client === null) return;
+      await stopFixLoop(taskId);
+    },
+    [client, stopFixLoop]
+  );
+
   // Task 8: the "Merge all ready" toolbar action — enqueues every eligible
   // run in the project in one call. Also doubles as the Landing table's push-failure
   // Retry: called with nothing new to enqueue, this still kicks the queue's
@@ -2220,6 +2309,10 @@ export function useDispatchProject(
         kinds?: Partial<Record<NotificationKind, boolean>>;
         webhook?: string | null;
       };
+      policy?: {
+        rung?: number;
+        gates?: Partial<Record<PolicyGate, PolicyGateMode | null>>;
+      };
     }): Promise<void> => {
       if (client === null) return;
       await client.updateConfig(patch);
@@ -2291,8 +2384,12 @@ export function useDispatchProject(
 
   const handleClusterInbox = useCallback(async () => {
     if (client === null) return { groups: [], error: null };
-    return await client.clusterInbox();
-  }, [client]);
+    const res = await client.clusterInbox();
+    // A successful pass was persisted server-side; refetch the snapshot so
+    // every consumer renders the same result the call returned.
+    void queryClient.invalidateQueries({ queryKey: inboxClustersQueryKey });
+    return res;
+  }, [client, queryClient, inboxClustersQueryKey]);
 
   // Retries every entry the queue is holding on a `blocked-environment` (a dirty checkout, a
   // staged index, the wrong branch). Deliberately queue-wide rather than per-entry, because the
@@ -2419,6 +2516,8 @@ export function useDispatchProject(
     handleEnqueueMerge,
     handleEnqueueMergeStack,
     handleDequeueMerge,
+    fixLoops,
+    handleStopFixLoop,
     handleMergeAllReady,
     handleRecheckMergeQueue,
     lastPushError,
@@ -2436,6 +2535,8 @@ export function useDispatchProject(
     enrichPlanRecord,
     handleDismissEnrich,
     handleClusterInbox,
+    inboxClusters: inboxClusters ?? null,
+    plans: plans ?? [],
     reviewComments: reviewComments ?? [],
     handleAddReviewComment,
     handleApplySuggestion,

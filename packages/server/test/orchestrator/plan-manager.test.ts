@@ -144,13 +144,13 @@ describe('PlanManager.confirm', () => {
 
     const epic = store.get(result.epicId!);
     expect(epic?.meta.kind).toBe('epic');
-    expect(epic?.meta.status).toBe('todo');
+    expect(epic?.meta.status).toBe('ready');
     expect(epic?.meta.title).toBe('Ship the widget');
 
     const [designId, implementId] = result.taskIds;
     const design = store.get(designId);
     const implement = store.get(implementId);
-    expect(design?.meta.status).toBe('todo');
+    expect(design?.meta.status).toBe('ready');
     expect(design?.meta.parent).toBe(result.epicId);
     expect(design?.meta.blockedBy).toEqual([]);
     expect(implement?.meta.parent).toBe(result.epicId);
@@ -438,7 +438,7 @@ describe('PlanManager.confirm', () => {
     );
     const started = await startAndSettle(manager, 'build a widget feature');
     const withStatus = {
-      epic: { title: 'Sneaky epic', description: '', status: 'done' },
+      epic: { title: 'Sneaky epic', description: '', status: 'landed' },
       tasks: [
         {
           title: 'Sneaky task',
@@ -446,13 +446,13 @@ describe('PlanManager.confirm', () => {
           acceptanceCriteria: [],
           blockedByIndices: [],
           priority: 'none',
-          status: 'in-progress',
+          status: 'working',
         },
       ],
     };
     const result = manager.confirm(started.id, withStatus);
-    expect(store.get(result.epicId!)?.meta.status).toBe('todo');
-    expect(store.get(result.taskIds[0])?.meta.status).toBe('todo');
+    expect(store.get(result.epicId!)?.meta.status).toBe('ready');
+    expect(store.get(result.taskIds[0])?.meta.status).toBe('ready');
   });
 
   // Minor fix: confirm is only meaningful against a plan that actually

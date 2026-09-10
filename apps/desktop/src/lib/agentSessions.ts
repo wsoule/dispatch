@@ -29,5 +29,7 @@ export function agentSessionBucket(session: AgentSessionMeta): RunStateBucket {
  * an errored turn failed. */
 export function agentSessionFeedState(session: AgentSessionMeta): FeedState {
   if (session.state === 'running') return 'working';
-  return session.state === 'failed' ? 'failed' : 'waiting';
+  // A settled turn waits on the human's next message — an answer, in the
+  // whose-move vocabulary.
+  return session.state === 'failed' ? 'failed' : 'answer';
 }

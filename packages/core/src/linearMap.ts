@@ -83,24 +83,27 @@ export function priorityFromLinear(value: number): Priority {
 
 /** Default dispatch-status -> Linear-state mapping, matching Linear's out-of-the-box state names. */
 export const DEFAULT_STATUS_MAP: Record<string, string> = {
-  backlog: 'Backlog',
-  todo: 'Todo',
-  'in-progress': 'In Progress',
-  'in-review': 'In Review',
-  done: 'Done',
-  cancelled: 'Canceled',
+  draft: 'Backlog',
+  ready: 'Todo',
+  working: 'In Progress',
+  review: 'In Review',
+  // Linear has no landing lane; In Review is the closest started-category
+  // state for "approved, merging".
+  landing: 'In Review',
+  landed: 'Done',
+  dropped: 'Canceled',
 };
 
 // Fallback for a Linear state the configured map says nothing about: its `type`
 // is a fixed enum, so it always yields a sensible local status.
 const STATUS_BY_STATE_TYPE: Record<string, string> = {
-  backlog: 'backlog',
-  triage: 'todo',
-  unstarted: 'todo',
-  started: 'in-progress',
-  completed: 'done',
-  canceled: 'cancelled',
-  duplicate: 'cancelled',
+  backlog: 'draft',
+  triage: 'ready',
+  unstarted: 'ready',
+  started: 'working',
+  completed: 'landed',
+  canceled: 'dropped',
+  duplicate: 'dropped',
 };
 
 function normalize(value: string): string {

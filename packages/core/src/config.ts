@@ -14,6 +14,8 @@ import type {
   NotificationKind,
   NotificationsConfig,
   OrchestratorConfig,
+  QueueConfig,
+  ReceiptsConfig,
   RepoDigestConfig,
   VerifyConfig,
 } from './configTypes.js';
@@ -24,6 +26,7 @@ import {
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
+  DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
@@ -31,6 +34,22 @@ import {
   MODEL_ROLES,
   NOTIFICATION_KINDS,
 } from './configTypes.js';
+import type { PolicyConfig, PolicyGate, PolicyGateMode } from './policy.js';
+import {
+  DEFAULT_POLICY,
+  isFloorCheck,
+  MAX_POLICY_RUNG,
+  MIN_POLICY_RUNG,
+  POLICY_GATE_MODES,
+  POLICY_GATES,
+} from './policy.js';
+import type { QueueWeights, ScoreFactorKey } from './scoring.js';
+import {
+  DEFAULT_QUEUE_WEIGHTS,
+  isQueueWeight,
+  QUEUE_FACTOR_KEYS,
+} from './scoring.js';
+import { canonicalStatus } from './status.js';
 import { DISPATCH_DIR } from './store.js';
 import { STATUSES } from './types.js';
 
@@ -74,6 +93,12 @@ function cloneFixLoop(config: FixLoopConfig): FixLoopConfig {
   };
 }
 
+// A fresh QueueConfig carrying a copy of the frozen defaults, so no loaded
+// config ever shares a weights object with another.
+function defaultQueue(): QueueConfig {
+  return { weights: { ...DEFAULT_QUEUE_WEIGHTS } };
+}
+
 const DEFAULTS: DispatchConfig = {
   statuses: [...STATUSES],
   autoCommit: false,
@@ -84,6 +109,10 @@ const DEFAULTS: DispatchConfig = {
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
   notifications: cloneNotifications(DEFAULT_NOTIFICATIONS),
+  receipts: { ...DEFAULT_RECEIPTS },
+  policy: { ...DEFAULT_POLICY, gates: {} },
+  // No `queue` here: it is the one optional block, so a DEFAULTS entry could
+  // only be read through a fallback anyway. Both readers call defaultQueue().
 };
 
 // `kinds` is an object, so a shallow spread would share the toggle map
@@ -286,6 +315,97 @@ function parseRepoDigestConfig(raw: unknown): RepoDigestConfig {
     enabled: enabled ?? DEFAULT_REPO_DIGEST.enabled,
     cooldownHours: cooldownHours ?? DEFAULT_REPO_DIGEST.cooldownHours,
   };
+}
+
+// Validates the optional `receipts:` block, same contract as the two above.
+// `dir` is rejected empty rather than defaulted, matching prWorktreeDir: a
+// blank path in config.yml is a typo, and silently falling back to the default
+// location would export the audit trail somewhere the author did not ask for
+// and would not think to look.
+function parseReceiptsConfig(raw: unknown): ReceiptsConfig {
+  if (raw === undefined) return { ...DEFAULT_RECEIPTS };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: receipts must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { enabled } = obj;
+  if (enabled !== undefined && typeof enabled !== 'boolean') {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: receipts.enabled must be a boolean'
+    );
+  }
+
+  const { dir } = obj;
+  if (dir !== undefined && (typeof dir !== 'string' || dir.trim() === '')) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: receipts.dir must be a non-empty string'
+    );
+  }
+
+  return { enabled: enabled ?? DEFAULT_RECEIPTS.enabled, dir };
+}
+
+// Validates the optional `policy:` block, same contract as the blocks above —
+// only `undefined` falls back to defaults. An unknown gate key or mode is a
+// ConfigError rather than silently ignored: a typo'd override would otherwise
+// leave a gate on the rung's behavior while the file reads as pinning it.
+function parsePolicyConfig(raw: unknown): PolicyConfig {
+  if (raw === undefined) return { ...DEFAULT_POLICY, gates: {} };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: policy must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+
+  const { rung } = obj;
+  if (
+    rung !== undefined &&
+    (typeof rung !== 'number' ||
+      !Number.isInteger(rung) ||
+      rung < MIN_POLICY_RUNG ||
+      rung > MAX_POLICY_RUNG)
+  ) {
+    throw new ConfigError(
+      `invalid .dispatch/config.yml: policy.rung must be an integer between ${MIN_POLICY_RUNG} and ${MAX_POLICY_RUNG}`
+    );
+  }
+
+  const { gates } = obj;
+  const parsedGates: Partial<Record<PolicyGate, PolicyGateMode>> = {};
+  if (gates !== undefined) {
+    if (typeof gates !== 'object' || gates === null || Array.isArray(gates)) {
+      throw new ConfigError(
+        'invalid .dispatch/config.yml: policy.gates must be an object'
+      );
+    }
+    for (const [gate, mode] of Object.entries(gates)) {
+      // The irreversibility floor is not configurable at all: naming a floor
+      // check here gets its own error, so the answer reads as "never", not
+      // "you misspelled a gate".
+      if (isFloorCheck(gate)) {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: policy.gates.${gate}: '${gate}' is on the irreversibility floor — it always blocks for a human and cannot be configured`
+        );
+      }
+      if (!POLICY_GATES.includes(gate as PolicyGate)) {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: unknown policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
+        );
+      }
+      if (!POLICY_GATE_MODES.includes(mode as PolicyGateMode)) {
+        throw new ConfigError(
+          `invalid .dispatch/config.yml: policy.gates.${gate} must be one of ${POLICY_GATE_MODES.join('|')}`
+        );
+      }
+      parsedGates[gate as PolicyGate] = mode as PolicyGateMode;
+    }
+  }
+
+  return { rung: rung ?? DEFAULT_POLICY.rung, gates: parsedGates };
 }
 
 // Validates the optional `models:` block, same contract as parseOrchestratorConfig.
@@ -542,6 +662,94 @@ function parseCarto(raw: unknown): CartoConfig {
   return { enabled: normalized as CartoMode };
 }
 
+// Reads one factor weight, rejecting anything that would make a score
+// meaningless: a non-number, a NaN/Infinity, or a negative (which would invert
+// the factor's meaning — turning a factor off is what `0` is for). `label`
+// names the source so the same checks can report a config.yml path or a patch
+// field.
+function parseWeight(raw: unknown, label: string): number {
+  if (!isQueueWeight(raw)) {
+    throw new ConfigError(`invalid ${label}: must be a number >= 0`);
+  }
+  return raw;
+}
+
+// Every key the `queue:` block accepts. Checked so a typo one level *up* from
+// the weights — `queue.wieghts:` — is refused too, rather than parsing as an
+// empty block and silently handing back the defaults.
+const QUEUE_KEYS: readonly string[] = ['weights'];
+
+// Validates the `queue:` block, throwing on anything it will not accept.
+// Weights layer over the defaults key by key, so a config naming only
+// `urgency` keeps the default unblocking and age weights instead of silently
+// zeroing them. An unknown key at either level is an error rather than
+// ignored: it is almost always a typo for a real one, and swallowing it would
+// leave the setting the user wrote with no effect at all.
+function parseQueueBlock(raw: unknown): QueueWeights {
+  if (raw === undefined) return { ...DEFAULT_QUEUE_WEIGHTS };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: queue must be an object'
+    );
+  }
+  const block = raw as Record<string, unknown>;
+  for (const key of Object.keys(block)) {
+    if (!QUEUE_KEYS.includes(key)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown queue key "${key}" (expected ${QUEUE_KEYS.join('|')})`
+      );
+    }
+  }
+
+  const { weights } = block;
+  if (weights === undefined) return { ...DEFAULT_QUEUE_WEIGHTS };
+  if (
+    typeof weights !== 'object' ||
+    weights === null ||
+    Array.isArray(weights)
+  ) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: queue.weights must be an object'
+    );
+  }
+
+  const merged: QueueWeights = { ...DEFAULT_QUEUE_WEIGHTS };
+  for (const [key, value] of Object.entries(weights)) {
+    if (!QUEUE_FACTOR_KEYS.includes(key as ScoreFactorKey)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown queue.weights factor "${key}" (expected ${QUEUE_FACTOR_KEYS.join('|')})`
+      );
+    }
+    if (value === undefined) continue;
+    merged[key as ScoreFactorKey] = parseWeight(
+      value,
+      `.dispatch/config.yml: queue.weights.${key}`
+    );
+  }
+  return merged;
+}
+
+/**
+ * Loads the `queue:` block, keeping any rejection as `error` instead of
+ * throwing it.
+ *
+ * Deliberately the one block that does not fail `loadConfig`. Every other
+ * block is read by machinery the daemon cannot run without, so refusing the
+ * whole file is right for them. The queue's weights are read by one endpoint,
+ * and throwing here would turn a single mistyped weight into a 422 on every
+ * config-reading route — runs, tasks, settings, all of it — for a mistake that
+ * only makes the ranking wrong. `queueWeights()` is where it becomes loud, for
+ * the callers that actually depend on it.
+ */
+function parseQueueConfig(raw: unknown): QueueConfig {
+  try {
+    return { weights: parseQueueBlock(raw) };
+  } catch (err) {
+    if (!(err instanceof ConfigError)) throw err;
+    return { weights: { ...DEFAULT_QUEUE_WEIGHTS }, error: err.message };
+  }
+}
+
 export function loadConfig(rootDir: string): DispatchConfig {
   const path = join(rootDir, DISPATCH_DIR, 'config.yml');
   if (!existsSync(path)) {
@@ -558,6 +766,9 @@ export function loadConfig(rootDir: string): DispatchConfig {
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
       notifications: cloneNotifications(DEFAULTS.notifications),
+      receipts: { ...DEFAULT_RECEIPTS },
+      policy: { ...DEFAULT_POLICY, gates: {} },
+      queue: defaultQueue(),
     };
   }
   let parsed: unknown;
@@ -621,7 +832,11 @@ export function loadConfig(rootDir: string): DispatchConfig {
     );
   }
   return {
-    statuses: [...(raw.statuses ?? DEFAULTS.statuses)],
+    // Old config files list the pre-rename names; canonicalize (and dedupe,
+    // in case a file lists both an old name and its successor) on load.
+    statuses: [
+      ...new Set((raw.statuses ?? DEFAULTS.statuses).map(canonicalStatus)),
+    ],
     autoCommit: raw.autoCommit ?? DEFAULTS.autoCommit,
     verifyCommand: raw.verifyCommand,
     verifySteps: raw.verifySteps,
@@ -633,6 +848,9 @@ export function loadConfig(rootDir: string): DispatchConfig {
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     notifications: parseNotificationsConfig(raw.notifications),
+    receipts: parseReceiptsConfig(raw.receipts),
+    policy: parsePolicyConfig(raw.policy),
+    queue: parseQueueConfig(raw.queue),
     prWorktreeDir: raw.prWorktreeDir,
   };
 }
@@ -829,6 +1047,74 @@ export function updateConfig(
   if (patch.fixLoop !== undefined) applyFixLoopPatch(doc, patch.fixLoop);
   if (patch.notifications !== undefined) {
     applyNotificationsPatch(doc, patch.notifications);
+  }
+  if (patch.queue?.weights !== undefined) {
+    // Same validate-before-write rule as models: a bad weight must never reach
+    // disk, or every later loadConfig refuses the whole file. Written key by
+    // key so a weight the patch omits keeps whatever is already on disk.
+    for (const [key, value] of Object.entries(patch.queue.weights)) {
+      if (!QUEUE_FACTOR_KEYS.includes(key as ScoreFactorKey)) {
+        throw new ConfigError(
+          `invalid queue.weights factor: ${key} (expected ${QUEUE_FACTOR_KEYS.join('|')})`
+        );
+      }
+      // `Partial<QueueWeights>` built with a conditional field carries the key
+      // with an explicit `undefined`; that means "not in this patch", not "set
+      // it to nothing", so skip rather than reject the whole write.
+      if (value === undefined) continue;
+      doc.setIn(
+        ['queue', 'weights', key],
+        parseWeight(value, `queue.weights.${key}`)
+      );
+    }
+  }
+  if (patch.policy !== undefined) {
+    // Same validate-before-write rule as models: a bad rung or gate must never
+    // reach disk, or every later loadConfig refuses the whole file.
+    const { rung, gates } = patch.policy;
+    if (rung !== undefined) {
+      if (
+        !Number.isInteger(rung) ||
+        rung < MIN_POLICY_RUNG ||
+        rung > MAX_POLICY_RUNG
+      ) {
+        throw new ConfigError(
+          `invalid policy.rung: must be an integer between ${MIN_POLICY_RUNG} and ${MAX_POLICY_RUNG}`
+        );
+      }
+      doc.setIn(['policy', 'rung'], rung);
+    }
+    if (gates !== undefined) {
+      // Written key-by-key so a pin the patch omits survives; `null` clears a
+      // pin, handing the gate back to the rung.
+      for (const [gate, mode] of Object.entries(gates)) {
+        // Same floor refusal as parsePolicyConfig: the Settings surface must
+        // not be able to write a demotion the loader would then reject.
+        if (isFloorCheck(gate)) {
+          throw new ConfigError(
+            `invalid policy gate: '${gate}' is on the irreversibility floor — it always blocks for a human and cannot be configured`
+          );
+        }
+        if (!POLICY_GATES.includes(gate as PolicyGate)) {
+          throw new ConfigError(
+            `invalid policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
+          );
+        }
+        if (mode === undefined) continue;
+        if (mode === null) {
+          if (doc.hasIn(['policy', 'gates', gate])) {
+            doc.deleteIn(['policy', 'gates', gate]);
+          }
+          continue;
+        }
+        if (!POLICY_GATE_MODES.includes(mode)) {
+          throw new ConfigError(
+            `invalid policy.gates.${gate}: must be one of ${POLICY_GATE_MODES.join('|')}`
+          );
+        }
+        doc.setIn(['policy', 'gates', gate], mode);
+      }
+    }
   }
   if (patch.verify !== undefined) {
     // Same validate-before-write rule as models: a bad field must never reach

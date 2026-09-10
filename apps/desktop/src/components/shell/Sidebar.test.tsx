@@ -14,6 +14,8 @@ const props = {
   spendToday: 1.5,
   onSetProjectView: () => {},
   onSetGlobalView: () => {},
+  tasksViewMode: 'board' as const,
+  onSetTasksViewMode: () => {},
   syncStatus: null,
   onDisableAutoCommit: () => {},
   liveRail: null,
@@ -30,7 +32,7 @@ function mount(open: boolean, overrides: Partial<typeof props> = {}) {
 }
 
 const RAIL_LABELS = [
-  'Overview',
+  'Control room',
   'Brain dump',
   'Plans',
   'Tasks',
@@ -144,8 +146,10 @@ test('collapsing the rail persists the choice and flips the rail', () => {
   expect(window.localStorage.getItem('dispatch:sidebar-collapsed')).toBe('1');
   expect(screen.queryByText('⌘K')).toBeNull();
   expect(
-    screen.getByRole('button', { name: 'Overview' }).getAttribute('aria-label')
-  ).toBe('Overview');
+    screen
+      .getByRole('button', { name: 'Control room' })
+      .getAttribute('aria-label')
+  ).toBe('Control room');
 
   fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }));
   expect(window.localStorage.getItem('dispatch:sidebar-collapsed')).toBe('0');
@@ -179,6 +183,6 @@ test('the collapsed preference round-trips through its long-standing key', () =>
 
 test('project rows are disabled until a project resolves', () => {
   mount(true, { hasActiveProject: false });
-  const row = screen.getByRole('button', { name: /^Overview/ });
+  const row = screen.getByRole('button', { name: /^Control room/ });
   expect((row as HTMLButtonElement).disabled).toBe(true);
 });

@@ -5,7 +5,7 @@ import type { TaskDoc } from '@dispatch/core/browser';
 // resolved once it's done OR cancelled — the same semantics enqueueReady's
 // own-task guard and nextEligible's blocker check both use.
 function isTaskDone(task: TaskDoc): boolean {
-  return task.meta.status === 'done' || task.meta.status === 'cancelled';
+  return task.meta.status === 'landed' || task.meta.status === 'dropped';
 }
 
 /**

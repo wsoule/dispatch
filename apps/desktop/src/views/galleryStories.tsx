@@ -13,6 +13,17 @@ import {
 } from 'lucide-react';
 import { type ReactNode, useState } from 'react';
 
+import { codeBlockStories } from './stories/code-block.stories';
+import { contextCardsStories } from './stories/context-cards.stories';
+import { diffTableStories } from './stories/diff-table.stories';
+import { filterTableStories } from './stories/filter-table.stories';
+import { fineTuneCardStories } from './stories/fine-tune-card.stories';
+import { insightCardsStories } from './stories/insight-cards.stories';
+import { recommendationCardStories } from './stories/recommendation-card.stories';
+import { recordsTableStories } from './stories/records-table.stories';
+import { searchStories } from './stories/search.stories';
+import { selectionActionsStories } from './stories/selection-actions.stories';
+import { sidebarNavStories } from './stories/sidebar-nav.stories';
 import { ApprovalCard, type ApprovalCardOption } from '@/ui/ai/approval-card';
 import {
   ChatMessage,
@@ -20,12 +31,6 @@ import {
   ChatPanel,
   type ChatTab,
 } from '@/ui/ai/chat';
-import { codeBlockStories } from '@/ui/ai/code-block.stories';
-import { contextCardsStories } from '@/ui/ai/context-cards.stories';
-import { diffTableStories } from '@/ui/ai/diff-table.stories';
-import { filterTableStories } from '@/ui/ai/filter-table.stories';
-import { fineTuneCardStories } from '@/ui/ai/fine-tune-card.stories';
-import { insightCardsStories } from '@/ui/ai/insight-cards.stories';
 import { LoadingState } from '@/ui/ai/loading-state';
 import {
   PromptBar,
@@ -33,11 +38,6 @@ import {
   type PromptBarModel,
   type PromptBarReference,
 } from '@/ui/ai/prompt-bar';
-import { recommendationCardStories } from '@/ui/ai/recommendation-card.stories';
-import { recordsTableStories } from '@/ui/ai/records-table.stories';
-import { searchStories } from '@/ui/ai/search.stories';
-import { selectionActionsStories } from '@/ui/ai/selection-actions.stories';
-import { sidebarNavStories } from '@/ui/ai/sidebar-nav.stories';
 import {
   StreamingText,
   type StreamingTextSource,

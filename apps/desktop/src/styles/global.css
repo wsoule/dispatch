@@ -72,15 +72,6 @@ button {
   padding: var(--space-6);
 }
 
-/* Shared "topbar with title" pattern for full-width single-column views
-   (Sessions, Timeline) per SPEC §8.7. */
-.view-topbar-title {
-  font-size: var(--text-lg);
-  font-weight: 600;
-  color: var(--text-primary);
-  margin: 0;
-}
-
 /* The two type treatments every dense list surface repeats, bundled as one class each so a
    component says what a thing *is* rather than restating three properties per call site.
    In `@layer components` so a Tailwind colour utility on the same element always wins: these

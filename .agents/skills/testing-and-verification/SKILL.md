@@ -10,52 +10,56 @@ description:
 
 ## Baseline Commands
 
-After code changes, run the required baseline from the monorepo root:
+After code changes, run the required baseline from anywhere in the repo:
 
 ```bash
-bun run format
-bun run lint
+moon run root:format
+moon run root:lint
 ```
 
-Useful check/fix pairs also run from the monorepo root:
+Useful check/fix pairs also run from anywhere in the repo:
 
 ```bash
-bun run format:check
-bun run format
-bun run lint
-bun run lint:fix
-bun run lint:css
-bun run lint:css:fix
-bun run lint:deadcode
-bun run lint:deadcode:fix
+moon run root:format-check
+moon run root:format
+moon run root:lint
+moon run root:lint-css
+moon run root:lint-deadcode
+```
+
+The `-fix` lanes rewrite source, so they are `runInCI: 'skip'` and a CI-marked
+shell (any agent harness, where `CI` is set) refuses them under `moon run`. Use
+`moonx` with the escape hatch:
+
+```bash
+moonx root:lint-fix --ignore-ci-checks
+moonx root:lint-css-fix --ignore-ci-checks
+moonx root:lint-deadcode-fix --ignore-ci-checks
 ```
 
 ## Dead Code
 
-`bun run lint:deadcode` runs knip, which fails CI on any unused file, export,
+`moon run root:lint-deadcode` runs knip, which fails on any unused file, export,
 type, dependency, or binary. It is gated at zero, so deleting the last caller of
 something makes the build red until the thing itself goes too.
 
-Run it after removing code, and note that it needs a build first — knip resolves
-cross-package imports through each `package.json`'s `exports` field, which
-points at `dist/`:
+The task needs a build first — knip resolves cross-package imports through each
+`package.json`'s `exports` field, which points at `dist/`; moon's
+`deps: ['^:build']` handles this automatically, so just run:
 
 ```bash
-bun run build
-bun run lint:deadcode
+moon run root:lint-deadcode
 ```
 
-`bun run lint:deadcode:fix` strips the `export` keyword from unused exports
-rather than deleting them, which usually turns the finding into a `tsc`/oxlint
-unused-local error pointing at the declaration to remove. Config lives in
-`knip.json`; entry points it cannot infer, plus the two runtime-resolved
-workspace deps, are declared there with comments.
+Config lives in `knip.json`. Entry points it cannot infer, runtime-resolved
+workspace deps, and moon-specific false positives (the built-in `noop` command,
+per-package build tools the root-only `moonrepo` plugin can't see) are declared
+there with comments.
 
-For code changes, also run the relevant package-level typecheck:
+For code changes, also run the relevant project-level typecheck:
 
 ```bash
-cd <package-or-app>
-bun run tsc
+moonx <project>:typecheck
 ```
 
 ## Unit and Integration Tests
@@ -66,9 +70,9 @@ each package and use `describe`, `test`, and `expect` from `bun:test`.
 Prefer unit or integration tests by default:
 
 ```bash
-cd packages/template && bun test
-bun ws template test
-bun ws "packages/*" test --sequential
+moonx <project>:test
+moon run :test           # every project that has a test task
+moonx :test --affected   # only projects affected by staged/changed files
 ```
 
 Other packages and apps should expose local test scripts when relevant.
@@ -81,7 +85,7 @@ shallow and narrowly scoped to the exact behavior under test.
 Update snapshots from the package directory:
 
 ```bash
-bun test -u
+cd <package-or-app> && bun test -u
 ```
 
 ## Browser and E2E Tests
@@ -93,8 +97,7 @@ boundaries, and browser-only rendering behavior.
 Keep E2E coverage small and high-value:
 
 ```bash
-cd apps/web && bun run test:e2e
-bun ws web test:e2e
+moonx desktop:e2e
 ```
 
 If E2E fixtures or dev servers are started in a worktree, follow the cleanup

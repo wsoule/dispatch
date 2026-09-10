@@ -533,7 +533,7 @@ describe('MergeQueue local-run happy path', () => {
     expect(stub.calls.some((c) => c.cmd[0] === 'bash')).toBe(false);
 
     const task = harness.store.get(taskId);
-    expect(task?.meta.status).toBe('done');
+    expect(task?.meta.status).toBe('landed');
     const run = harness.orchestrator.getRun(runId);
     expect(run?.meta.reviewedAt).toBeDefined();
     expect(run?.meta.reviewAction).toBe('merge');
@@ -603,7 +603,7 @@ describe('MergeQueue local-run happy path', () => {
     const run = harness.orchestrator.getRun(runId);
     expect(run?.meta.reviewedAt).toBeUndefined();
     const task = harness.store.get(taskId);
-    expect(task?.meta.status).not.toBe('done');
+    expect(task?.meta.status).not.toBe('landed');
   });
 
   it('aborts a failed rebase, fails the entry, and still processes the next queued entry', async () => {
@@ -836,7 +836,7 @@ describe('MergeQueue environmental blockers', () => {
 
     // Nothing landed: the run is unreviewed and the task is not done.
     expect(harness.orchestrator.getRun(runId)?.meta.reviewedAt).toBeUndefined();
-    expect(harness.store.get(taskId)?.meta.status).not.toBe('done');
+    expect(harness.store.get(taskId)?.meta.status).not.toBe('landed');
   });
 
   it('merges the blocked entry once the checkout is clean again and the queue is re-checked', async () => {
@@ -859,7 +859,7 @@ describe('MergeQueue environmental blockers', () => {
     await waitFor(() => queue.snapshot().history.length === 1);
     expect(queue.snapshot().history[0].state).toBe('merged');
     expect(queue.snapshot().entries).toHaveLength(0);
-    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+    expect(harness.store.get(taskId)?.meta.status).toBe('landed');
   });
 
   // The stale-reason half of the "merge queue does not work" report: a
@@ -905,7 +905,7 @@ describe('MergeQueue environmental blockers', () => {
     queue.recheck();
     await waitFor(() => queue.snapshot().history.length === 1);
     expect(queue.snapshot().history[0].state).toBe('merged');
-    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+    expect(harness.store.get(taskId)?.meta.status).toBe('landed');
   });
 
   // The self-retry itself, isolated from recheck(): armBlockedRetry's timer is
@@ -929,7 +929,7 @@ describe('MergeQueue environmental blockers', () => {
     rmSync(stray);
     await waitFor(() => queue.snapshot().history.length === 1, 1000);
     expect(queue.snapshot().history[0].state).toBe('merged');
-    expect(harness.store.get(taskId)?.meta.status).toBe('done');
+    expect(harness.store.get(taskId)?.meta.status).toBe('landed');
   });
 
   // What teardown relies on: a queue keeping this timer past its own test
@@ -1350,7 +1350,7 @@ describe('MergeQueue.enqueueReady', () => {
   it('skips a finished unreviewed run whose task was since cancelled', async () => {
     const harness = makeHarness();
     const { runId, taskId } = await dispatchAndFinish(harness, 'cancel me');
-    harness.store.update(taskId, { status: 'cancelled' });
+    harness.store.update(taskId, { status: 'dropped' });
     harness.cache.rebuild(harness.store);
     const stub = new StubRunner();
     const queue = makeQueue(harness, stub.run);
@@ -2298,7 +2298,7 @@ describe('MergeQueue multi-parent dependent that was live when its blocker merge
 
 describe('MergeQueue refuses a run whose base was discarded', () => {
   // The plain discard flow, with NO manual state tampering: discarding
-  // blockerRun reopens task A to 'todo' (Orchestrator.review's discard
+  // blockerRun reopens task A to 'ready' (Orchestrator.review's discard
   // branch), which is exactly the task id stacked dispatch put in task B's
   // `blockedBy` — so B's task-level dependency gate (nextEligible's `unmet`
   // check, a separate and correctly-behaving mechanism; see "MergeQueue

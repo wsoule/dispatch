@@ -64,6 +64,25 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
   ).toHaveCount(0);
 }
 
+// BASELINES, EXACTLY (branch: the rail's Runs | Warden tab toggle). The loop
+// below produces 14 screenshot tests — 7 views x 2 themes — but
+// views.spec.ts-snapshots/ holds 10 PNGs, and they fail in two different ways:
+//
+//   - overview, braindump, plans, tasks, git (10 PNGs) were captured before
+//     the live rail existed, which every project view has carried since. These
+//     diff against a stale baseline. The mask below is what stops the next
+//     rail edit from re-staling them; it does not un-stale them now.
+//   - inbox and impact (4 shots) have NO baseline at all — they were added to
+//     VIEWS when they took the retired Runs/Review accelerators and never
+//     captured. Playwright fails these with "A snapshot doesn't exist" and
+//     writes the file, so `bun run e2e:update` does not refresh them, it
+//     AUTHORS them. Look at those four before committing them; nobody has.
+//
+// All of it needs one run from an environment where Playwright can launch,
+// which this branch's is not, for two independent reasons: the webServer
+// cannot `posix_spawn` git, and the storefront fixture (e2e/paths.ts) is
+// gitignored and keyed by root path, so a worktree has none to seed from.
+// Neither ci.yml nor release.yml runs Playwright, so nothing else catches it.
 for (const view of VIEWS) {
   test(`${view.name} renders`, async ({ page, baseURL }) => {
     await page.goto(authedUrl(baseURL));
@@ -73,9 +92,96 @@ for (const view of VIEWS) {
     // The pulse on in-flight rows is the only animation these surfaces have;
     // let it settle so it can't shift a screenshot.
     await page.waitForTimeout(1000);
-    await expect(page).toHaveScreenshot(`${view.name}.png`, { fullPage: true });
+    await expect(page).toHaveScreenshot(`${view.name}.png`, {
+      fullPage: true,
+      // The live rail is on every project screen but is not what any of these
+      // baselines is about, and it is chrome that keeps moving — the Runs |
+      // Warden tab strip alone has changed shape three times. Unmasked, each
+      // of those edits silently invalidates all 14 PNGs here with no CI job to
+      // catch it. Masked, the rail still occupies its 240px, so a view
+      // squeezed beside it still regresses visibly.
+      //
+      // What the mask does cost is every pixel *inside* that column, and
+      // LiveRail.test.tsx cannot make up the difference: happy-dom has no
+      // layout engine at all, so nothing there can see the rail render at the
+      // wrong width, overflow its column, or clip its composer. The
+      // 'the live rail keeps its column' test below covers that directly
+      // instead — as measured geometry rather than as pixels, so it needs no
+      // baseline of its own and stays honest through cosmetic rail edits.
+      mask: [page.locator('[data-testid="live-rail"]')],
+    });
   });
 }
+
+/**
+ * The coverage the mask above removes, put back as geometry instead of pixels.
+ * A rail that renders at the wrong width, overflows its column, or clips its
+ * composer is invisible to both suites otherwise: the screenshots paint it
+ * magenta, and LiveRail.test.tsx runs in happy-dom, which has no layout engine
+ * (WardenChat.test.tsx has to hand-define scrollHeight/scrollTop for exactly
+ * that reason). Measured rather than captured, so it needs no baseline to
+ * review and does not re-break every time the tab strip changes shape.
+ *
+ * NOT YET OBSERVED GREEN, the same as warden.spec.ts's rail case and for the
+ * same two reasons — `bun run e2e --list` discovers it, which proves only that
+ * it parses and type-checks. Running it here dies in the webServer with
+ * `ENOENT: posix_spawn 'git'` before a browser ever launches.
+ *
+ * It is also narrower than what the mask removes: width, horizontal overflow
+ * and composer containment on one view in one theme, versus every pixel of the
+ * rail across 7 views x 2 themes. The tab strip, run rows, attention strip,
+ * amber badge and collapsed strip have no visual coverage anywhere. That trade
+ * is a human's to rule on, not a closed question.
+ */
+test('the live rail keeps its column on a project view', async ({
+  page,
+  baseURL,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== 'dark', 'layout is theme-independent');
+
+  // '0' is expanded — the state the rail boots in for every screenshot above.
+  await page.addInitScript(() => {
+    window.localStorage.setItem('dispatch:live-rail', '0');
+  });
+  await page.goto(authedUrl(baseURL));
+  await page.getByText('Dispatch').first().waitFor();
+  await assertFixtureDataLoaded(page);
+
+  const rail = page.getByTestId('live-rail');
+  await expect(rail).toBeVisible();
+  const railBox = await rail.boundingBox();
+  if (railBox === null) throw new Error('the live rail has no layout box');
+
+  // The invariant is `w-60` — 15rem — not a pixel count. global.css sets
+  // `html { font-size: clamp(16px, 0.55vw + 9.5px, 21px) }`, so 15rem is the
+  // 240px the mask reserved only while the viewport stays at or below roughly
+  // 1182px; playwright.config.ts pins 1036 today, but a later change there
+  // would fail this test with the rail perfectly correct. Measuring the root
+  // font-size and multiplying keeps the assertion on the rail's width rather
+  // than on the viewport the config happens to use.
+  const remPx = await page.evaluate(() =>
+    Number.parseFloat(getComputedStyle(document.documentElement).fontSize)
+  );
+  expect(railBox.width).toBeCloseTo(15 * remPx, 0);
+
+  // Nothing inside may spill past that column — a long task title or the tab
+  // strip overflowing is precisely what the mask would now hide.
+  const overflow = await rail.evaluate((el) => el.scrollWidth - el.clientWidth);
+  expect(overflow).toBeLessThanOrEqual(0);
+
+  // The Warden tab's composer is the tallest thing the rail has to fit, and
+  // the surface this branch added: it has to land inside the column, not be
+  // clipped out of it by the transcript above.
+  await page.getByRole('tab', { name: 'Warden' }).click();
+  const composer = page.getByLabel('Warden opening question');
+  await expect(composer).toBeVisible();
+  const composerBox = await composer.boundingBox();
+  if (composerBox === null) throw new Error('the rail composer has no box');
+  expect(composerBox.x).toBeGreaterThanOrEqual(railBox.x);
+  expect(composerBox.x + composerBox.width).toBeLessThanOrEqual(
+    railBox.x + railBox.width
+  );
+});
 
 // The queue-only "review" shot above never opened a diff, which is exactly the
 // surface that regressed in fix/review-surface (60e99e8): `CodeView` rendered

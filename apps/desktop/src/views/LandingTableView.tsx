@@ -7,7 +7,9 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { LandingFilters } from '../lib/landingView';
 import {
+  dedupeLandingRows,
   EMPTY_FILTERS,
+  landedFromTasks,
   readLandingFilters,
   relativeTime,
   serializeLandingFilters,
@@ -105,20 +107,38 @@ export function LandingTableView({
   const hasActiveFilters =
     filters.query !== '' || authorFilter !== null || gateFilter !== null;
 
+  // One row per task — see `dedupeLandingRows`; the run map supplies recency.
+  const deduped =
+    snapshot !== null
+      ? dedupeLandingRows(
+          snapshot.rows,
+          new Map(data.runs.map((r) => [r.id, r.createdAt]))
+        )
+      : null;
   const visibleRows =
-    snapshot !== null ? visibleLandingRows(snapshot, filters) : [];
+    snapshot !== null && deduped !== null
+      ? visibleLandingRows({ ...snapshot, rows: deduped.rows }, filters)
+      : [];
   // Unfiltered, so a facet chip narrowing the visible rows never also hides
   // the entry `gateChipLabel` needs to name "behind <title>".
   const queueRows =
     snapshot !== null ? snapshot.rows.filter((r) => r.queue !== undefined) : [];
+  // An all-local snapshot renders a page of dashes in the PR columns — they only earn
+  // their width once a row actually has GitHub data.
+  const showPrColumns =
+    snapshot !== null && snapshot.rows.some((r) => r.pr !== undefined);
+  const reviewedAtByRunId = new Map(
+    data.runs
+      .filter((r) => r.reviewedAt !== undefined)
+      .map((r) => [r.id, r.reviewedAt])
+  );
+  // Durable across daemon restarts, unlike the queue's in-memory history — see
+  // `landedFromTasks`.
+  const landedTasks = landedFromTasks(data.tasksIncludingArchived);
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-baseline gap-2">
-        <h1 className="view-topbar-title">Landing</h1>
-        <span className="text-muted-foreground text-[12px]">
-          Every run, PR, and queue entry in flight, in one table.
-        </span>
         {/* react-query keeps the last snapshot on a failed refetch — this
             badge is the only thing that flags it as stale, not current. */}
         {snapshot !== null && data.landingIsError && (
@@ -218,14 +238,20 @@ export function LandingTableView({
               <TableHeader>
                 <TableRow>
                   <TableHead className="w-6" />
-                  <TableHead>Pull request</TableHead>
+                  <TableHead>Change</TableHead>
                   <TableHead>Lands</TableHead>
-                  <TableHead className="hidden md:table-cell">Checks</TableHead>
-                  <TableHead className="hidden sm:table-cell">
-                    Changes
-                  </TableHead>
+                  {showPrColumns && (
+                    <TableHead className="hidden md:table-cell">
+                      Checks
+                    </TableHead>
+                  )}
+                  {showPrColumns && (
+                    <TableHead className="hidden sm:table-cell">
+                      Changes
+                    </TableHead>
+                  )}
                   <TableHead className="hidden md:table-cell">Review</TableHead>
-                  <TableHead>Worktree</TableHead>
+                  {showPrColumns && <TableHead>Worktree</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -235,7 +261,10 @@ export function LandingTableView({
                       key={`group-${entry.id}`}
                       className="hover:bg-transparent"
                     >
-                      <TableCell colSpan={7} className="bg-muted/20 py-1.5">
+                      <TableCell
+                        colSpan={showPrColumns ? 7 : 4}
+                        className="bg-muted/20 py-1.5"
+                      >
                         <span className="dense-label">{entry.label}</span>{' '}
                         <Badge variant="outline" className="ml-1">
                           {entry.count}
@@ -248,6 +277,17 @@ export function LandingTableView({
                       row={entry.row}
                       queueRows={queueRows}
                       now={now}
+                      showPrColumns={showPrColumns}
+                      extraRuns={
+                        entry.row.taskId !== undefined
+                          ? deduped?.extraRunsByTask.get(entry.row.taskId)
+                          : undefined
+                      }
+                      reviewedAt={
+                        entry.row.runId !== undefined
+                          ? reviewedAtByRunId.get(entry.row.runId)
+                          : undefined
+                      }
                       onFilterAuthor={toggleAuthor}
                       onFilterGate={toggleGate}
                       onOpenRun={onOpenRun}
@@ -270,39 +310,50 @@ export function LandingTableView({
                 className="text-muted-foreground hover:text-foreground h-auto w-fit px-1.5 py-1 text-[11.5px] font-normal"
               >
                 {landedOpen ? 'Hide' : 'Show'} recently landed (
-                {snapshot.landed.length})
+                {landedTasks.length})
               </Button>
             </CollapsibleTrigger>
             <CollapsibleContent className="mt-1 flex flex-col gap-0.5">
-              {snapshot.landed.length === 0 ? (
+              {landedTasks.length === 0 ? (
                 <p className="text-muted-foreground text-[12.5px]">
                   Nothing has landed yet.
                 </p>
               ) : (
-                snapshot.landed.map((landed) => (
-                  <div
-                    key={landed.id}
-                    className="dense-meta flex items-center gap-1.5 truncate px-1 py-0.5"
-                  >
-                    <span className="text-foreground truncate">
-                      {landed.title}
-                    </span>
-                    <span>·</span>
-                    <span>
-                      {landed.via === 'pr'
-                        ? `via PR #${landed.prNumber}`
-                        : 'via local'}
-                    </span>
-                    {landed.mergeCommit !== undefined && (
-                      <>
-                        <span>·</span>
-                        <span>{landed.mergeCommit.slice(0, 7)}</span>
-                      </>
-                    )}
-                    <span>·</span>
-                    <span>{relativeTime(landed.finishedAt, now)}</span>
-                  </div>
-                ))
+                landedTasks.map((landed) => {
+                  // The queue's own history enriches a row with how it landed,
+                  // when this daemon session still remembers it.
+                  const queueEntry = snapshot.landed.find(
+                    (l) => l.title === landed.title
+                  );
+                  return (
+                    <div
+                      key={landed.id}
+                      className="dense-meta flex items-center gap-1.5 truncate px-1 py-0.5"
+                    >
+                      <span className="text-foreground truncate">
+                        {landed.title}
+                      </span>
+                      {queueEntry !== undefined && (
+                        <>
+                          <span>·</span>
+                          <span>
+                            {queueEntry.via === 'pr'
+                              ? `via PR #${queueEntry.prNumber}`
+                              : 'via local'}
+                          </span>
+                          {queueEntry.mergeCommit !== undefined && (
+                            <>
+                              <span>·</span>
+                              <span>{queueEntry.mergeCommit.slice(0, 7)}</span>
+                            </>
+                          )}
+                        </>
+                      )}
+                      <span>·</span>
+                      <span>{relativeTime(landed.landedAt, now)}</span>
+                    </div>
+                  );
+                })
               )}
             </CollapsibleContent>
           </Collapsible>

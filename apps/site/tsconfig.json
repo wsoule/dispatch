@@ -1,0 +1,18 @@
+{
+  // apps/site had NO tsconfig, so `tsgo --noEmit` walked up to the repo-root
+  // solution file (`"files": []` plus references) and checked zero files —
+  // site:typecheck passed vacuously.
+  //
+  // Extends the repo options rather than one of astro's presets: astro's `base`
+  // leaves strictNullChecks off, which then trips oxlint's type-aware rules
+  // ("This rule requires the strictNullChecks compiler option") on every file
+  // this config newly covers. Same settings as every other package here.
+  //
+  // Covers the real TypeScript in the app: the container entrypoint and the
+  // build-output tests. NOT the .astro components — typechecking those needs
+  // `astro check` (@astrojs/check plus a language server), a separate tool and
+  // dependency. Worth adding; this file deliberately does not pretend to.
+  "extends": "../../tsconfig.options.json",
+  "compilerOptions": { "noEmit": true },
+  "include": ["server.ts", "test/**/*.ts"]
+}

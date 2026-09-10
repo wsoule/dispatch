@@ -21,6 +21,7 @@ import type { CheckGroup } from '../../lib/findings';
 import { partitionFindings } from '../../lib/findings';
 import { isDeadGuard } from '../../lib/reviewCase';
 import { ImpactPanel } from '../impact/ImpactPanel';
+import { PolicyReceiptBadge } from '../ledger/PolicyReceiptBadge';
 import { cn } from '@/lib/utils';
 import { Button } from '@/ui/button';
 import { Checkbox } from '@/ui/checkbox';
@@ -439,6 +440,7 @@ function DecisionList({ entries }: { entries: LedgerEntry[] }) {
             />
             <span className="dense-meta shrink-0">{d.kind}</span>
             <span className="min-w-0 flex-1 truncate">{d.title}</span>
+            <PolicyReceiptBadge entry={d} />
           </div>
           <p className="text-muted-foreground pl-4.5 text-[11px] leading-snug">
             {d.detail}

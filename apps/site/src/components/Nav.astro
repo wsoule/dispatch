@@ -1,0 +1,39 @@
+<header>
+  <div class="container nav-row">
+    <a class="wordmark" href="/">Dispatch</a>
+    <nav>
+      <a href="https://github.com/wsoule/dispatch">GitHub</a>
+      <a class="btn" href="#install">Download</a>
+    </nav>
+  </div>
+</header>
+
+<style>
+  header {
+    border-bottom: 1px solid var(--border-default);
+  }
+  .nav-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-top: var(--space-3);
+    padding-bottom: var(--space-3);
+  }
+  .wordmark {
+    font-weight: 600;
+    text-decoration: none;
+  }
+  nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+  }
+  nav a {
+    font-size: var(--text-sm);
+    text-decoration: none;
+    color: var(--text-secondary);
+  }
+  nav a.btn {
+    color: var(--text-primary);
+  }
+</style>

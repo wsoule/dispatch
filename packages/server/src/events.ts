@@ -1,6 +1,7 @@
 import type { LinearSyncSummary } from './linear/sync.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
+import type { ReceiptsResult } from './receipts/exporter.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
@@ -101,6 +102,10 @@ export type ServerEvent =
   // Carries its own result, unlike the *.changed events, so a live feed can
   // render the outcome without a follow-up fetch.
   | { type: 'board.sync'; result: SyncResult }
+  // The receipts exporter attempted an export of the git audit trail.
+  // Carries its result for the same reason `board.sync` does: this is a
+  // live feed of an activity nothing else would tell a client about.
+  | { type: 'receipts.export'; result: ReceiptsResult }
   // A warden chat conversation changed: a turn started or settled, a tool call
   // landed in its transcript, or a queued action was confirmed. Same "go
   // refetch, no payload beyond the id" contract as `plan.changed` — a turn

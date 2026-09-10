@@ -24,30 +24,31 @@ Keep every worktree for a repo in one predictable place: a sibling directory
 next to the repo named `<repo-dir>-worktrees/`, with one subdirectory per
 worktree slug.
 
-```
+```text
 ../<repo-dir>-worktrees/<slug>
 ```
 
 A sibling directory (rather than a path inside the repo) keeps worktree files
 out of the main working tree, so `git status`, file watchers, typecheck, and
-`bun install` do not scan them. Never create a worktree inside the repo — for
+`pnpm install` do not scan them. Never create a worktree inside the repo — for
 example under `.agents/ignore/` — because nesting one working tree inside
 another confuses git and tooling.
 
-If the repo exposes a `bun run wt` suite, let it own worktree placement instead
-of choosing a path manually.
+If the repo exposes a `moonx root:wt` suite, let it own worktree placement
+instead of choosing a path manually.
 
 ## Worktree Commands
 
-If the repo exposes a `bun run wt` suite, inspect its help or source before use:
+If the repo exposes a `moonx root:wt` suite, inspect its help or source before
+use:
 
 ```bash
-bun run wt new <slug>    # create a worktree, allocate offset, bun install
-bun run wt rm <slug>     # kill its processes, remove the worktree
-bun run wt clean         # clean stale servers for managed worktrees
-bun run wt clean <slug>  # clean one managed worktree
-bun run wt ps            # show per-worktree port status (LISTEN / -)
-bun run wt list          # summary of managed + external worktrees
+moonx root:wt -- new <slug>    # create a worktree, allocate offset, pnpm install
+moonx root:wt -- rm <slug>     # kill its processes, remove the worktree
+moonx root:wt -- clean         # clean stale servers for managed worktrees
+moonx root:wt -- clean <slug>  # clean one managed worktree
+moonx root:wt -- ps            # show per-worktree port status (LISTEN / -)
+moonx root:wt -- list          # summary of managed + external worktrees
 ```
 
 Do not assume these commands exist. If they do not, use plain `git worktree`
@@ -71,7 +72,7 @@ processes you started.
 Use the repo cleanup helper when one exists:
 
 ```bash
-bun run wt clean <slug>
+moonx root:wt -- clean <slug>
 ```
 
 If there is no helper, kill only the exact process you started or the exact port
