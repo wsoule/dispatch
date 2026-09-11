@@ -481,6 +481,17 @@ export function BoardView({
                 {mode === 'board' ? (
                   <div className="flex flex-col gap-0.5">
                     <DisplayRow
+                      checked={boardColumnPrefs.compact}
+                      onChange={(checked) =>
+                        setBoardColumnPrefs((prev) => ({
+                          ...prev,
+                          compact: checked,
+                        }))
+                      }
+                    >
+                      Compact cards
+                    </DisplayRow>
+                    <DisplayRow
                       checked={boardColumnPrefs.groupByEpic}
                       onChange={(checked) =>
                         setBoardColumnPrefs((prev) => ({
@@ -609,6 +620,7 @@ export function BoardView({
             archivedTaskIds={archivedTaskIds}
             statuses={visibleStatuses}
             groupByEpic={boardColumnPrefs.groupByEpic}
+            compact={boardColumnPrefs.compact}
             readyIds={data.readyIds}
             blockedIds={data.blockedIds}
             liveRunStateByTaskId={data.liveRunStateByTaskId}

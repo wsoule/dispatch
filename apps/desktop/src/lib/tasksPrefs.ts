@@ -24,6 +24,10 @@ export interface BoardColumnPrefs {
    * matrix is sparse — most lanes fill one column — so the dense flat kanban is the default
    * and the Milestones view is the per-milestone surface. */
   groupByEpic: boolean;
+  /** Two-row cards (default on): status, title and the trailing controls on one line, the
+   * id / epic / labels / age on a second. The four-row comfortable card stays one toggle
+   * away in the Display menu for anyone who wants labels and run state spelled out. */
+  compact: boolean;
 }
 
 export const TASK_FILTERS_STORAGE_KEY = 'dispatch:tasks-filters-v1';
@@ -39,6 +43,7 @@ export const DEFAULT_BOARD_COLUMN_PREFS: BoardColumnPrefs = {
   hideEmpty: true,
   hidden: ['landed', 'dropped'],
   groupByEpic: false,
+  compact: true,
 };
 
 function stringArray(value: unknown): string[] {
@@ -78,6 +83,7 @@ export function parseBoardColumnPrefs(stored: string | null): BoardColumnPrefs {
       hidden: stringArray(record.hidden),
       groupByEpic:
         typeof record.groupByEpic === 'boolean' ? record.groupByEpic : false,
+      compact: typeof record.compact === 'boolean' ? record.compact : true,
     };
   } catch {
     return DEFAULT_BOARD_COLUMN_PREFS;

@@ -58,12 +58,21 @@ describe('parseBoardColumnPrefs', () => {
       hideEmpty: true,
       hidden: ['dropped'],
       groupByEpic: false,
+      compact: true,
     });
     expect(parseBoardColumnPrefs('{"hideEmpty": false}')).toEqual({
       hideEmpty: false,
       hidden: [],
       groupByEpic: false,
+      compact: true,
     });
+  });
+
+  it('defaults compact cards on and honours an explicit off', () => {
+    expect(parseBoardColumnPrefs('{}').compact).toBe(true);
+    expect(parseBoardColumnPrefs('{"compact": false}').compact).toBe(false);
+    // A stale payload written before the key existed still reads as compact.
+    expect(parseBoardColumnPrefs('{"compact": "no"}').compact).toBe(true);
   });
 });
 
@@ -117,7 +126,7 @@ describe('visibleBoardStatuses', () => {
     expect(
       visibleBoardStatuses(
         statuses,
-        { hideEmpty: true, hidden: [], groupByEpic: false },
+        { hideEmpty: true, hidden: [], groupByEpic: false, compact: true },
         counts
       )
     ).toEqual(['ready', 'working']);
@@ -127,7 +136,7 @@ describe('visibleBoardStatuses', () => {
     expect(
       visibleBoardStatuses(
         statuses,
-        { hideEmpty: false, hidden: [], groupByEpic: false },
+        { hideEmpty: false, hidden: [], groupByEpic: false, compact: true },
         counts
       )
     ).toEqual(statuses);
@@ -137,7 +146,12 @@ describe('visibleBoardStatuses', () => {
     expect(
       visibleBoardStatuses(
         statuses,
-        { hideEmpty: false, hidden: ['ready'], groupByEpic: false },
+        {
+          hideEmpty: false,
+          hidden: ['ready'],
+          groupByEpic: false,
+          compact: true,
+        },
         counts
       )
     ).toEqual(['draft', 'working', 'landed']);

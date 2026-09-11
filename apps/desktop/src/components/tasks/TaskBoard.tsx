@@ -58,6 +58,8 @@ interface TaskBoardProps {
    * matrix is sparse (most lanes fill one column), and the Milestones view is the
    * per-epic surface now. */
   groupByEpic?: boolean;
+  /** Two-row cards in narrower, tighter columns (see `TaskCardTile`'s `compact`). */
+  compact?: boolean;
   /** Lane keys (see `laneKey`) whose epic is folded up right now. */
   collapsedLaneKeys: ReadonlySet<string>;
   /** Flips one lane between expanded and collapsed — owned by `BoardView`, which also needs the
@@ -110,7 +112,11 @@ const NO_ARCHIVED_IDS: ReadonlySet<string> = new Set();
 
 // One column width, shared by the sticky status header and every lane's columns — they only
 // line up as a grid because both read this constant.
-const COLUMN_WIDTH_CLASS = 'w-[272px] shrink-0';
+// Compact cards carry one line of title, so the column can give back some width and the
+// board fits one more status on screen; the comfortable card keeps its two-line measure.
+function columnWidthClass(compact: boolean): string {
+  return compact ? 'w-[248px] shrink-0' : 'w-[272px] shrink-0';
+}
 
 // A card's draggable id doubles as its task id — plain `useDraggable`, not `useSortable`,
 // since the board never persists intra-column order, only which column (status) a card sits
@@ -148,9 +154,11 @@ function DraggableCard({
 // stays a valid drop target with no cards inside it to anchor to.
 function DroppableColumn({
   id,
+  compact,
   children,
 }: {
   id: string;
+  compact: boolean;
   children: React.ReactNode;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id });
@@ -159,7 +167,8 @@ function DroppableColumn({
       ref={setNodeRef}
       data-over={isOver}
       className={cn(
-        'flex min-h-16 flex-1 flex-col gap-2 rounded-lg p-1 transition-colors duration-150',
+        'flex min-h-16 flex-1 flex-col rounded-lg p-1 transition-colors duration-150',
+        compact ? 'gap-1' : 'gap-2',
         'data-[over=true]:bg-accent/40 data-[over=true]:ring-1 data-[over=true]:ring-ring/40'
       )}
     >
@@ -200,6 +209,7 @@ export function TaskBoard({
   epicConcurrencyDefault,
   epics,
   groupByEpic = true,
+  compact = false,
   collapsedLaneKeys,
   onToggleLane,
   onRequestWorkEpic,
@@ -309,7 +319,12 @@ export function TaskBoard({
             {/* One column header row for the whole board rather than a set per lane: the lanes
                 already repeat the same statuses in the same order, and a header that sticks to
                 the top stays useful however far down the epics you scroll. */}
-            <div className="bg-background sticky top-0 z-10 flex w-max gap-6 pb-2">
+            <div
+              className={cn(
+                'bg-background sticky top-0 z-10 flex w-max pb-2',
+                compact ? 'gap-4' : 'gap-6'
+              )}
+            >
               {statuses.map((status) => {
                 const count = statusCounts.get(status) ?? {
                   visible: 0,
@@ -320,7 +335,7 @@ export function TaskBoard({
                     key={status}
                     className={cn(
                       'group/header flex items-center px-0.5',
-                      COLUMN_WIDTH_CLASS
+                      columnWidthClass(compact)
                     )}
                   >
                     {/* Filter-chip-styled column identity — same pill shape/tokens as
@@ -395,16 +410,19 @@ export function TaskBoard({
                       />
                     )}
                     {expanded && (
-                      <div className="flex gap-6">
+                      <div className={cn('flex', compact ? 'gap-4' : 'gap-6')}>
                         {lane.columns.map(({ status, tasks: laneTasks }) => (
                           <div
                             key={status}
                             className={cn(
                               'flex flex-col gap-2',
-                              COLUMN_WIDTH_CLASS
+                              columnWidthClass(compact)
                             )}
                           >
-                            <DroppableColumn id={dropZoneId(laneIndex, status)}>
+                            <DroppableColumn
+                              id={dropZoneId(laneIndex, status)}
+                              compact={compact}
+                            >
                               {laneTasks.length === 0 && (
                                 <div className="text-muted-foreground/40 min-h-8 px-0.5 py-1 text-[11px]" />
                               )}
@@ -416,6 +434,7 @@ export function TaskBoard({
                                 >
                                   {(drag) => (
                                     <TaskCardTile
+                                      compact={compact}
                                       doc={doc}
                                       ready={readyIds.has(doc.meta.id)}
                                       blocked={blockedIds.has(doc.meta.id)}
@@ -478,10 +497,11 @@ export function TaskBoard({
           <div
             className={cn(
               'scale-[1.02] cursor-grabbing shadow-lg',
-              COLUMN_WIDTH_CLASS
+              columnWidthClass(compact)
             )}
           >
             <TaskCardTile
+              compact={compact}
               doc={activeDoc}
               ready={readyIds.has(activeDoc.meta.id)}
               blocked={blockedIds.has(activeDoc.meta.id)}

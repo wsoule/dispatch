@@ -78,6 +78,10 @@ interface TaskCardTileProps {
    * hairline amber ring so it stands out on a dense board without breaking the uniform card
    * anatomy. */
   needsAttention?: boolean;
+  /** Two-row layout (the board's default): status, title and the trailing controls on one
+   * line, id / epic / labels / age on the next. Run state and blocked collapse to glyphs
+   * with a title tooltip. False renders the four-row comfortable card. */
+  compact?: boolean;
 }
 
 // Only shows the first few label pills before collapsing the rest into a "+N" — Linear's own
@@ -109,6 +113,7 @@ export function TaskCardTile({
   drag,
   archived = false,
   needsAttention = false,
+  compact = false,
 }: TaskCardTileProps) {
   const [dispatching, setDispatching] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
@@ -144,7 +149,8 @@ export function TaskCardTile({
       tabIndex={0}
       data-focused={focused}
       className={cn(
-        'group bg-card rounded-card shadow-card ease-out-expo flex w-full cursor-pointer flex-col gap-2 p-3 text-left transition-colors duration-150',
+        'group bg-card rounded-card shadow-card ease-out-expo flex w-full cursor-pointer flex-col text-left transition-colors duration-150',
+        compact ? 'gap-1 px-2 py-1.5' : 'gap-2 p-3',
         'hover:bg-surface-hover',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50',
         'data-[focused=true]:ring-2 data-[focused=true]:ring-ring/40',
@@ -183,140 +189,247 @@ export function TaskCardTile({
         }
       }}
     >
-      <div className="flex min-w-0 items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-1 text-[11px]">
-          <span className="text-muted-foreground/60 shrink-0 font-mono tracking-tight">
-            {doc.meta.id}
-          </span>
-          {epicTitle !== undefined && (
-            <>
-              <ChevronRight className="text-muted-foreground/40 size-3 shrink-0" />
-              {/* Dot in the epic's own color, matching its swim-lane swatch — makes a card's
-                  epic scannable in the flat board and list, where there's no lane heading to
-                  group by. */}
-              {doc.meta.parent !== undefined && (
+      {compact ? (
+        <>
+          {/* Row one: everything needed to read and act on the card in a single line.
+              The title truncates rather than wrapping so every card is the same height
+              and a column scans like a list. */}
+          <div className="flex min-w-0 items-center gap-1.5">
+            <span className="-ml-0.5 shrink-0">
+              <StatusControl
+                value={doc.meta.status}
+                statuses={statuses}
+                onChange={onStatusChange}
+              />
+            </span>
+            <MergeLadderDot meta={run} className="shrink-0" />
+            <span
+              className="text-foreground min-w-0 flex-1 truncate text-[13px] leading-5 font-medium"
+              title={doc.meta.title}
+            >
+              {doc.meta.title}
+            </span>
+            {blocked && (
+              <RunStateIcon
+                state="blocked"
+                className="text-destructive size-3.5 shrink-0"
+                aria-label="Blocked"
+              />
+            )}
+            {liveRunState !== undefined && (
+              <span
+                role="img"
+                aria-label={runStateLabel(liveRunState)}
+                title={runStateLabel(liveRunState)}
+                className={cn(
+                  'size-2 shrink-0 rounded-full',
+                  runStateDotClass(liveRunState),
+                  liveRunState === 'running' && 'motion-safe:animate-pulse'
+                )}
+              />
+            )}
+            <PriorityControl
+              value={doc.meta.priority}
+              onChange={(p) => onEditTask({ priority: p })}
+            />
+            <AssigneeControl
+              value={doc.meta.assignee}
+              onChange={(a) => onEditTask({ assignee: a })}
+            />
+          </div>
+          {/* Row two: the scent line — where the card lives and how stale it is. */}
+          <div className="text-muted-foreground/60 flex min-w-0 items-center gap-1.5 text-[10.5px] leading-4">
+            <span className="shrink-0 font-mono tracking-tight">
+              {doc.meta.id}
+            </span>
+            {epicTitle !== undefined && (
+              <span className="flex min-w-0 items-center gap-1">
+                {doc.meta.parent !== undefined && (
+                  <span
+                    aria-hidden
+                    className="size-1.5 shrink-0 rounded-full"
+                    style={{ background: colorForEpic(doc.meta.parent) }}
+                  />
+                )}
+                <span className="min-w-0 truncate">{epicTitle}</span>
+              </span>
+            )}
+            {visibleLabels.length > 0 && (
+              <span className="min-w-0 truncate">
+                {visibleLabels.join(' · ')}
+                {hiddenLabelCount > 0 && ` +${hiddenLabelCount}`}
+              </span>
+            )}
+            {archived && <span className="shrink-0">Archived</span>}
+            <span className="ml-auto shrink-0 whitespace-nowrap">
+              {formatRelativeTimeFromIso(doc.meta.updated)}
+            </span>
+            {ready && onDispatch !== undefined && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={dispatching}
+                onClick={(e) => void dispatchNow(e)}
+                className={cn(
+                  'text-muted-foreground -my-1 h-auto gap-1 rounded-md px-1 py-0.5 text-[10.5px] font-medium opacity-0 transition-opacity duration-150 has-[>svg]:px-1',
+                  'hover:bg-primary/10 hover:text-primary',
+                  'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100',
+                  dispatching && 'pointer-events-none opacity-100'
+                )}
+              >
+                {dispatching ? (
+                  <>
+                    <Spinner className="size-3" />
+                    Dispatching
+                  </>
+                ) : (
+                  <>
+                    Dispatch
+                    <ArrowRight className="size-3" />
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex min-w-0 items-center justify-between gap-2">
+            <div className="flex min-w-0 items-center gap-1 text-[11px]">
+              <span className="text-muted-foreground/60 shrink-0 font-mono tracking-tight">
+                {doc.meta.id}
+              </span>
+              {epicTitle !== undefined && (
+                <>
+                  <ChevronRight className="text-muted-foreground/40 size-3 shrink-0" />
+                  {/* Dot in the epic's own color, matching its swim-lane swatch — makes a card's
+                      epic scannable in the flat board and list, where there's no lane heading to
+                      group by. */}
+                  {doc.meta.parent !== undefined && (
+                    <span
+                      aria-hidden
+                      className="size-1.5 shrink-0 rounded-full"
+                      style={{ background: colorForEpic(doc.meta.parent) }}
+                    />
+                  )}
+                  <span className="text-muted-foreground/80 min-w-0 truncate">
+                    {epicTitle}
+                  </span>
+                </>
+              )}
+              {archived && (
+                <Badge
+                  variant="outline"
+                  className="text-muted-foreground h-4 shrink-0 rounded px-1.5 py-0 text-[10px] font-normal"
+                >
+                  Archived
+                </Badge>
+              )}
+            </div>
+            <AssigneeControl
+              value={doc.meta.assignee}
+              onChange={(a) => onEditTask({ assignee: a })}
+            />
+          </div>
+
+          <div className="flex items-start gap-1.5">
+            <span className="mt-px -ml-0.5 shrink-0">
+              <StatusControl
+                value={doc.meta.status}
+                statuses={statuses}
+                onChange={onStatusChange}
+              />
+            </span>
+            {/* Merge-ladder dot: same affordance TasksListView/StackRail/TaskDetailPanel show. */}
+            <MergeLadderDot meta={run} className="mt-1.5" />
+            <span className="text-foreground line-clamp-2 text-[13.5px] leading-[1.35] font-medium">
+              {doc.meta.title}
+            </span>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <PriorityControl
+              value={doc.meta.priority}
+              onChange={(p) => onEditTask({ priority: p })}
+            />
+            {blocked && (
+              <span className="text-destructive inline-flex items-center gap-1 text-[11px]">
+                <RunStateIcon state="blocked" className="size-3.5" />
+                Blocked
+              </span>
+            )}
+            {visibleLabels.map((label) => (
+              <Badge
+                key={label}
+                variant="outline"
+                className="text-muted-foreground h-4 rounded px-1.5 py-0 text-[10px] font-normal"
+              >
+                {label}
+              </Badge>
+            ))}
+            {hiddenLabelCount > 0 && (
+              <span className="text-muted-foreground/70 text-[10px]">
+                +{hiddenLabelCount}
+              </span>
+            )}
+            {liveRunState !== undefined && (
+              <span
+                className={cn(
+                  'inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium',
+                  runStateColorClass(liveRunState)
+                )}
+                title={runStateLabel(liveRunState)}
+              >
+                {/* TaskRow's state-dot language: a small pulsing dot ahead of the glyph, so a
+                    board card reads the same "something is happening" cue as the dense task
+                    rows (SessionsHub, AllAgents). */}
                 <span
                   aria-hidden
-                  className="size-1.5 shrink-0 rounded-full"
-                  style={{ background: colorForEpic(doc.meta.parent) }}
+                  className={cn(
+                    'size-2 shrink-0 rounded-full',
+                    runStateDotClass(liveRunState),
+                    liveRunState === 'running' && 'motion-safe:animate-pulse'
+                  )}
                 />
-              )}
-              <span className="text-muted-foreground/80 min-w-0 truncate">
-                {epicTitle}
+                <RunStateIcon state={liveRunState} className="size-3.5" />
+                {runStateLabel(liveRunState)}
               </span>
-            </>
-          )}
-          {archived && (
-            <Badge
-              variant="outline"
-              className="text-muted-foreground h-4 shrink-0 rounded px-1.5 py-0 text-[10px] font-normal"
-            >
-              Archived
-            </Badge>
-          )}
-        </div>
-        <AssigneeControl
-          value={doc.meta.assignee}
-          onChange={(a) => onEditTask({ assignee: a })}
-        />
-      </div>
-
-      <div className="flex items-start gap-1.5">
-        <span className="mt-px -ml-0.5 shrink-0">
-          <StatusControl
-            value={doc.meta.status}
-            statuses={statuses}
-            onChange={onStatusChange}
-          />
-        </span>
-        {/* Merge-ladder dot: same affordance TasksListView/StackRail/TaskDetailPanel show. */}
-        <MergeLadderDot meta={run} className="mt-1.5" />
-        <span className="text-foreground line-clamp-2 text-[13.5px] leading-[1.35] font-medium">
-          {doc.meta.title}
-        </span>
-      </div>
-
-      <div className="flex flex-wrap items-center gap-1.5">
-        <PriorityControl
-          value={doc.meta.priority}
-          onChange={(p) => onEditTask({ priority: p })}
-        />
-        {blocked && (
-          <span className="text-destructive inline-flex items-center gap-1 text-[11px]">
-            <RunStateIcon state="blocked" className="size-3.5" />
-            Blocked
-          </span>
-        )}
-        {visibleLabels.map((label) => (
-          <Badge
-            key={label}
-            variant="outline"
-            className="text-muted-foreground h-4 rounded px-1.5 py-0 text-[10px] font-normal"
-          >
-            {label}
-          </Badge>
-        ))}
-        {hiddenLabelCount > 0 && (
-          <span className="text-muted-foreground/70 text-[10px]">
-            +{hiddenLabelCount}
-          </span>
-        )}
-        {liveRunState !== undefined && (
-          <span
-            className={cn(
-              'inline-flex shrink-0 items-center gap-1.5 text-[11px] font-medium',
-              runStateColorClass(liveRunState)
             )}
-            title={runStateLabel(liveRunState)}
-          >
-            {/* TaskRow's state-dot language: a small pulsing dot ahead of the glyph, so a
-                board card reads the same "something is happening" cue as the dense task
-                rows (SessionsHub, AllAgents). */}
-            <span
-              aria-hidden
-              className={cn(
-                'size-2 shrink-0 rounded-full',
-                runStateDotClass(liveRunState),
-                liveRunState === 'running' && 'motion-safe:animate-pulse'
-              )}
-            />
-            <RunStateIcon state={liveRunState} className="size-3.5" />
-            {runStateLabel(liveRunState)}
-          </span>
-        )}
-      </div>
+          </div>
 
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
-          {formatRelativeTimeFromIso(doc.meta.updated)}
-        </span>
-        {ready && onDispatch !== undefined && (
-          <Button
-            type="button"
-            variant="ghost"
-            disabled={dispatching}
-            onClick={(e) => void dispatchNow(e)}
-            className={cn(
-              'h-auto gap-1 rounded-md px-1.5 py-0.5 has-[>svg]:px-1.5 text-[11px] font-medium text-muted-foreground opacity-0 transition-opacity duration-150',
-              'hover:bg-primary/10 hover:text-primary',
-              'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100',
-              dispatching && 'pointer-events-none opacity-100'
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-muted-foreground/60 shrink-0 text-[11px] whitespace-nowrap">
+              {formatRelativeTimeFromIso(doc.meta.updated)}
+            </span>
+            {ready && onDispatch !== undefined && (
+              <Button
+                type="button"
+                variant="ghost"
+                disabled={dispatching}
+                onClick={(e) => void dispatchNow(e)}
+                className={cn(
+                  'h-auto gap-1 rounded-md px-1.5 py-0.5 has-[>svg]:px-1.5 text-[11px] font-medium text-muted-foreground opacity-0 transition-opacity duration-150',
+                  'hover:bg-primary/10 hover:text-primary',
+                  'group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100',
+                  dispatching && 'pointer-events-none opacity-100'
+                )}
+              >
+                {dispatching ? (
+                  <>
+                    <Spinner className="size-3" />
+                    Dispatching
+                  </>
+                ) : (
+                  <>
+                    Dispatch
+                    <ArrowRight className="size-3" />
+                  </>
+                )}
+              </Button>
             )}
-          >
-            {dispatching ? (
-              <>
-                <Spinner className="size-3" />
-                Dispatching
-              </>
-            ) : (
-              <>
-                Dispatch
-                <ArrowRight className="size-3" />
-              </>
-            )}
-          </Button>
-        )}
-      </div>
+          </div>
+        </>
+      )}
     </div>
   );
 }
