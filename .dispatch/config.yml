@@ -72,6 +72,8 @@ verifySteps:
     command: moon run root:check-ci-targets
   - name: check-own-build-deps
     command: moon run root:check-own-build-deps
+  - name: check-worker-entries
+    command: moon run root:check-worker-entries
   - name: audit
     command: moon run root:audit
   - name: test

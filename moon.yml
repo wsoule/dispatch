@@ -255,6 +255,20 @@ tasks:
       cache: false
       runInCI: 'always'
 
+  # Guards build-sidecars.ts's extra compile entries against the Worker
+  # modules the server source spawns. A worker missing from that list is
+  # absent from the compiled daemon, and the watchdog then never loads.
+  check-worker-entries:
+    command: 'bun --silent scripts/check-worker-entries.ts'
+    inputs:
+      - 'scripts/check-worker-entries.ts'
+      - 'apps/desktop/scripts/build-sidecars.ts'
+      - 'packages/server/src/**/*.ts'
+      - 'packages/mcp/src/**/*.ts'
+      - 'packages/cli/src/**/*.ts'
+    options:
+      runInCI: 'always'
+
   # Cuts a release: bumps the three version files, commits, tags, pushes the
   # tag that triggers release.yml. Every check runs before anything is
   # written; `--dry-run` stops after the checks and prints what it would do.
