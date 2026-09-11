@@ -8,6 +8,7 @@ import type {
   RunQuestion,
   RunState,
 } from '@dispatch/client';
+import type { NotificationKind } from '@dispatch/core/browser';
 
 import type { InboxTarget } from './inbox';
 import { questionsSignature } from './planQuestions';
@@ -18,6 +19,26 @@ export interface PendingNotification {
   title: string;
   body: string;
   target: InboxTarget;
+  /** Which config.yml `notifications.kinds` toggle gates the OS notification.
+   *  Absent means ungated — the transition is not one of the feed's kinds. */
+  kind?: NotificationKind;
+}
+
+/** The per-kind toggles from config.yml, or null before config has loaded. */
+export type NotificationKinds = Readonly<Record<NotificationKind, boolean>>;
+
+/**
+ * Whether a notification of `kind` may fire under `kinds`. An ungated
+ * notification (no kind) always may; so does everything while config has not
+ * loaded yet, since the toggles exist to take noise away and a missing config
+ * must not silently mute the app.
+ */
+export function isKindEnabled(
+  kinds: NotificationKinds | null,
+  kind: NotificationKind | undefined
+): boolean {
+  if (kind === undefined || kinds === null) return true;
+  return kinds[kind] !== false;
 }
 
 const RUN_NOTIFY_STATES: ReadonlySet<RunState> = new Set([
@@ -52,10 +73,13 @@ export function diffRunNotifications(
       prevState !== run.state &&
       RUN_NOTIFY_STATES.has(run.state)
     ) {
+      // A failed run is the feed's `run-stalled` kind; a finished one is not
+      // awaiting anyone, so it stays ungated.
       notifications.push({
         title: run.state === 'finished' ? 'Run finished' : 'Run failed',
         body: run.taskTitle,
         target: { kind: 'run', runId: run.id },
+        ...(run.state === 'failed' ? { kind: 'run-stalled' as const } : {}),
       });
     }
   }
@@ -190,6 +214,7 @@ export function diffQuestionNotifications(
         title: asker.title,
         body: asker.body,
         target: asker.target,
+        kind: 'question',
       });
     }
   }
@@ -203,6 +228,7 @@ export function diffQuestionNotifications(
         title: 'An agent needs your answer',
         body: question.question,
         target: { kind: 'run', runId },
+        kind: 'question',
       });
     }
   }

@@ -1,3 +1,5 @@
+import { SECRET_URL_MASK_SUFFIX } from '@dispatch/core';
+
 // Webhook URLs (Slack, Discord) carry their secret in the path — the URL is
 // the credential. GET /api/config hands the whole config back to any client
 // with a request-tier token, so this masks those paths on the way out. The
@@ -20,7 +22,7 @@ function maskUrlPath(value: string): string {
     return value;
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return value;
-  return `${url.origin}/…`;
+  return `${url.origin}${SECRET_URL_MASK_SUFFIX}`;
 }
 
 function walk(value: unknown, underSecretKey: boolean): unknown {

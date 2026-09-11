@@ -11,6 +11,7 @@ import type {
   LedgerKind,
   ModelConfig,
   MutationEvidence,
+  NotificationKind,
   PolicyGate,
   PolicyGateMode,
   Priority,
@@ -1952,6 +1953,11 @@ export interface ApiClient {
     maxBudgetUsd?: number | null;
     fixLoop?: { cap?: number; escalation?: EscalationStep[] };
     verify?: { command?: string; url?: string; notes?: string };
+    /** `webhook: null` (or '') clears the URL; `kinds` merges over what is on disk. */
+    notifications?: {
+      kinds?: Partial<Record<NotificationKind, boolean>>;
+      webhook?: string | null;
+    };
     /** The autonomy policy: the ladder rung, plus per-gate pins where a
      *  `null` pin clears the override so the rung decides again. */
     policy?: {

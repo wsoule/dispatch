@@ -233,6 +233,7 @@ lede
 Lesk
 libc
 libvips
+lifecycles
 lightningcss
 linearizes
 linetos
@@ -507,6 +508,7 @@ unemphasised
 unfiled
 unfoldable
 ungap
+ungated
 unhovered
 unhydratable
 unignorable

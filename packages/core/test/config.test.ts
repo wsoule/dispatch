@@ -9,6 +9,7 @@ import {
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
   DEFAULT_MODELS,
+  DEFAULT_NOTIFICATIONS,
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   loadConfig,
@@ -54,6 +55,7 @@ describe('loadConfig', () => {
       fixLoop: DEFAULT_FIX_LOOP,
       carto: DEFAULT_CARTO,
       repoDigest: DEFAULT_REPO_DIGEST,
+      notifications: DEFAULT_NOTIFICATIONS,
       receipts: DEFAULT_RECEIPTS,
       policy: DEFAULT_POLICY,
       queue: { weights: DEFAULT_QUEUE_WEIGHTS },
@@ -65,6 +67,31 @@ describe('loadConfig', () => {
     const cfg = loadConfig(root);
     expect(cfg.autoCommit).toBe(true);
     expect(cfg.statuses).toHaveLength(7);
+  });
+  // The policy and notifications blocks landed on separate branches; this
+  // pins that one file carrying both parses both, so neither loader can
+  // silently shadow the other after a merge.
+  it('reads policy and notifications from the same file', () => {
+    const cfg = loadConfig(
+      writeConfig(
+        [
+          'policy:',
+          '  rung: 3',
+          '  gates:',
+          '    merge: auto',
+          'notifications:',
+          '  kinds:',
+          '    fix-loop-capped: false',
+          '  webhook: https://hooks.example.com/services/T0/B0/x',
+          '',
+        ].join('\n')
+      )
+    );
+    expect(cfg.policy).toEqual({ rung: 3, gates: { merge: 'auto' } });
+    expect(cfg.notifications).toEqual({
+      kinds: { ...DEFAULT_NOTIFICATIONS.kinds, 'fix-loop-capped': false },
+      webhook: 'https://hooks.example.com/services/T0/B0/x',
+    });
   });
   it('mutating a returned config does not poison later loads', () => {
     loadConfig(root).statuses.push('x');

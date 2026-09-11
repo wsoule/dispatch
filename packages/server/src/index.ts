@@ -102,6 +102,7 @@ import {
 import { TrackedFilesCache } from './trackedFiles.js';
 import { EventLoopWatchdog } from './watchdog.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
+import { WebhookDelivery } from './webhookDelivery.js';
 
 export interface ServerHandle {
   port: number;
@@ -1132,6 +1133,17 @@ export async function startServer(
   });
   const stopDecisionFeed = decisionFeed.start();
 
+  // Delivery beyond the app: each newly-blocking feed item POSTed to the
+  // webhook in config.yml's `notifications:` block. Config is read per pass so
+  // an edit applies live; the in-app record stays whatever the feed says.
+  const webhookDelivery = new WebhookDelivery({
+    rootDir,
+    feed: decisionFeed,
+    events,
+    readConfig: () => loadConfig(rootDir).notifications,
+  });
+  const stopWebhookDelivery = webhookDelivery.start();
+
   // The gate hooks themselves — verify-retry and merge consult the project's
   // policy off the daemon's own signals; the scope gate consults inline in
   // api/scopeRequests.ts. See policyEngine.ts.
@@ -1328,6 +1340,7 @@ export async function startServer(
       unsubscribeLinear();
       await linearSync.stop();
       unsubscribeBoardSync();
+      stopWebhookDelivery();
       stopDecisionFeed();
       stopPolicyEngine();
       boardSyncScheduler?.stop();

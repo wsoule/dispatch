@@ -115,7 +115,7 @@ export function useTransitionNotifications(
       const ts = new Date().toISOString();
       onRecord(notifications.map((n) => ({ ...n, ts })));
     }
-    for (const n of notifications) void notify(n.title, n.body);
+    for (const n of notifications) void notify(n.title, n.body, n.kind);
   }, [runs, onRecord]);
 
   useEffect(() => {
@@ -133,7 +133,7 @@ export function useTransitionNotifications(
       const ts = new Date().toISOString();
       onRecord(notifications.map((n) => ({ ...n, ts })));
     }
-    for (const n of notifications) void notify(n.title, n.body);
+    for (const n of notifications) void notify(n.title, n.body, n.kind);
   }, [mergeQueue, onRecord]);
 
   useEffect(() => {
@@ -148,6 +148,6 @@ export function useTransitionNotifications(
       const ts = new Date().toISOString();
       onRecord(notifications.map((n) => ({ ...n, ts })));
     }
-    for (const n of notifications) void notify(n.title, n.body);
+    for (const n of notifications) void notify(n.title, n.body, n.kind);
   }, [drafts, planRecord, openQuestions, onRecord]);
 }

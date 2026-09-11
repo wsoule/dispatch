@@ -36,6 +36,9 @@ interface TitleBarProps {
   onSelectProject: (path: string) => void;
   onAddProject: () => void;
   onOpenPalette: () => void;
+  /** Open decisions awaiting a human (the daemon's decision feed) — rendered
+   * as a numeric pill on the bell, cleared only by the items resolving. */
+  pendingCount: number;
   unreadCount: number;
   /** Whether the bell's notifications popover is open — owned by App, which marks the inbox
    * read on open. */
@@ -47,6 +50,17 @@ interface TitleBarProps {
   drafts: DraftRecord[];
   onOpenDraft: (id: string) => void;
   onDismissDraft: (id: string) => void;
+}
+
+/** The bell's accessible name, carrying both counts the visuals split across
+ * the pill (pending decisions) and the dot (unread history). */
+function bellAriaLabel(pendingCount: number, unreadCount: number): string {
+  const parts: string[] = [];
+  if (pendingCount > 0) parts.push(`${pendingCount} waiting`);
+  if (unreadCount > 0) parts.push(`${unreadCount} unread`);
+  return parts.length > 0
+    ? `Notifications (${parts.join(', ')})`
+    : 'Notifications';
 }
 
 /** True on the packaged macOS app, where the window uses `titleBarStyle: "Overlay"` and the
@@ -104,6 +118,7 @@ export function TitleBar({
   onSelectProject,
   onAddProject,
   onOpenPalette,
+  pendingCount,
   unreadCount,
   inboxOpen,
   onToggleInbox,
@@ -223,18 +238,28 @@ export function TitleBar({
             type="button"
             variant="ghost"
             size="icon-xs"
-            aria-label={`Notifications${unreadCount > 0 ? ` (${unreadCount} unread)` : ''}`}
+            aria-label={bellAriaLabel(pendingCount, unreadCount)}
             title="Notifications"
             className="text-muted-foreground hover:text-foreground relative shrink-0 transition-colors duration-150"
           >
             <Bell className="size-4" strokeWidth={2} />
-            {/* Same attention affordance as the old sidebar row: a bare accent dot, with the
-                actual count carried by the aria-label rather than a numeric pill. */}
-            {unreadCount > 0 && (
+            {/* Decisions awaiting a human get the persistent numeric pill — it clears only
+                when the items resolve, never by opening the popover. The bare accent dot
+                stays as the milder affordance for unread history entries. */}
+            {pendingCount > 0 ? (
               <span
                 aria-hidden
-                className="bg-primary absolute top-0.5 right-0.5 size-1.5 rounded-full"
-              />
+                className="bg-primary text-primary-foreground absolute -top-0.5 -right-0.5 flex h-3.5 min-w-3.5 items-center justify-center rounded-full px-0.5 font-mono text-[9px] leading-none font-medium tabular-nums"
+              >
+                {pendingCount > 99 ? '99+' : pendingCount}
+              </span>
+            ) : (
+              unreadCount > 0 && (
+                <span
+                  aria-hidden
+                  className="bg-primary absolute top-0.5 right-0.5 size-1.5 rounded-full"
+                />
+              )
             )}
           </Button>
         </PopoverTrigger>

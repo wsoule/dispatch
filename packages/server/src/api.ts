@@ -810,6 +810,18 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     // and that ConfigError becomes the 400 below.
     patch.verify = body.verify as Partial<VerifyConfig>;
   }
+  if ('notifications' in body) {
+    if (
+      typeof body.notifications !== 'object' ||
+      body.notifications === null ||
+      Array.isArray(body.notifications)
+    ) {
+      return errorResponse(400, 'notifications must be an object');
+    }
+    // Same deal again: core rejects an unknown kind or a non-http(s) webhook
+    // before writing, and that ConfigError becomes the 400 below.
+    patch.notifications = body.notifications as ConfigPatch['notifications'];
+  }
   if ('queue' in body) {
     if (
       typeof body.queue !== 'object' ||

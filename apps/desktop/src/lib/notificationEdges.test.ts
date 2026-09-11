@@ -13,6 +13,7 @@ import {
   diffQueueNotifications,
   diffRunNotifications,
   emptyQuestionTracking,
+  isKindEnabled,
 } from './notificationEdges';
 
 // Minimal RunMeta fixture — only the fields diffRunNotifications reads
@@ -84,13 +85,23 @@ describe('diffRunNotifications', () => {
     const { notifications } = diffRunNotifications(previous, [
       run('a', 'failed', 'Ship the thing'),
     ]);
+    // Tagged with the feed's kind so config.yml's `run-stalled` toggle gates it.
     expect(notifications).toEqual([
       {
         title: 'Run failed',
         body: 'Ship the thing',
         target: { kind: 'run', runId: 'a' },
+        kind: 'run-stalled',
       },
     ]);
+  });
+
+  test('running -> finished is ungated: a finished run is not awaiting anyone', () => {
+    const previous = new Map([['a', 'running' as const]]);
+    const { notifications } = diffRunNotifications(previous, [
+      run('a', 'finished', 'Ship the thing'),
+    ]);
+    expect(notifications[0]?.kind).toBeUndefined();
   });
 
   test('a non-terminal transition (running -> awaiting-approval) does not notify', () => {
@@ -286,6 +297,9 @@ describe('diffQuestionNotifications', () => {
       new Map()
     );
     expect(notifications).toHaveLength(1);
+    // Planner questions are input requests too, so the `question` toggle
+    // covers them alongside a run agent's ask_user.
+    expect(notifications[0].kind).toBe('question');
     expect(next.askers.has('draft:d-1')).toBe(true);
   });
 
@@ -457,5 +471,28 @@ describe('diffQuestionNotifications', () => {
     );
     expect(notifications).toHaveLength(1);
     expect(notifications[0].target).toEqual({ kind: 'plan', planId: 'plan-1' });
+  });
+});
+
+describe('isKindEnabled', () => {
+  const kinds = {
+    question: true,
+    approval: true,
+    'scope-request': true,
+    'fix-loop-capped': false,
+    'run-stalled': false,
+  };
+
+  test('gates a kind by its toggle', () => {
+    expect(isKindEnabled(kinds, 'question')).toBe(true);
+    expect(isKindEnabled(kinds, 'fix-loop-capped')).toBe(false);
+  });
+
+  test('an ungated notification always fires', () => {
+    expect(isKindEnabled(kinds, undefined)).toBe(true);
+  });
+
+  test('everything fires until config has loaded', () => {
+    expect(isKindEnabled(null, 'run-stalled')).toBe(true);
   });
 });

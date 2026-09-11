@@ -1,4 +1,4 @@
-import type { FloorCheck } from '@dispatch/core';
+import type { FloorCheck, NotificationKind } from '@dispatch/core';
 
 import type { EventBus, ServerEvent } from './events.js';
 import { floorCheckForToolInput, isBudgetCapFailure } from './floor.js';
@@ -14,24 +14,18 @@ import { runKind } from './orchestrator/types.js';
 // caller uses. Export one the day a caller genuinely needs it.
 
 /**
- * What kind of thing is waiting on a human.
+ * What kind of thing is waiting on a human. The vocabulary lives in core as
+ * NotificationKind (see its doc comment for each kind) because the
+ * per-kind notification toggles in config.yml are keyed on it: aliasing
+ * rather than redeclaring is what stops a kind being added here without the
+ * toggles knowing about it.
  *
- * - `approval`        a run is parked mid-tool-call on a permission gate.
- * - `scope-request`   an agent asked to edit outside its declared writes.
- * - `question`        an agent called `ask_user` and is blocked on the answer.
- * - `fix-loop-capped` a review/fix loop stopped and wants a written ruling.
- * - `run-stalled`     a run ended or dead-ended and nobody has dealt with it.
- *
- * The first two are the "gates awaiting a decision" pair: they are separate
- * kinds rather than one because they are answered through different routes
- * and carry different payloads, and a surface has to render them differently.
+ * `approval` and `scope-request` are the "gates awaiting a decision" pair:
+ * they are separate kinds rather than one because they are answered through
+ * different routes and carry different payloads, and a surface has to render
+ * them differently.
  */
-type DecisionKind =
-  | 'approval'
-  | 'scope-request'
-  | 'question'
-  | 'fix-loop-capped'
-  | 'run-stalled';
+type DecisionKind = NotificationKind;
 
 /**
  * Whether an item demands an answer before work continues (`blocking`) or is

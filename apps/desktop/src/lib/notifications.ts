@@ -1,10 +1,25 @@
+import type { NotificationKind } from '@dispatch/core/browser';
 import {
   isPermissionGranted,
   requestPermission,
   sendNotification,
 } from '@tauri-apps/plugin-notification';
 
+import { isKindEnabled } from './notificationEdges';
+import type { NotificationKinds } from './notificationEdges';
 import { isTauri } from './tauri';
+
+// The active project's per-kind toggles, kept at module level (like the
+// permission cache below) because `notify` is called from event handlers that
+// deliberately do not re-subscribe when config changes. `null` until config
+// loads, which `isKindEnabled` treats as everything on.
+let enabledKinds: NotificationKinds | null = null;
+
+/** Installs the active project's `notifications.kinds` toggles. Called from
+ *  useDispatchProject whenever config (re)loads or the project switches. */
+export function setNotificationKinds(kinds: NotificationKinds | null): void {
+  enabledKinds = kinds;
+}
 
 // Cached across every `notify` call so the OS permission prompt (and the
 // `isPermissionGranted` round trip) only happens once per app session,
@@ -35,9 +50,15 @@ function ensurePermission(): Promise<boolean> {
  * live UI already shows the same state change). Callers pass a short title
  * (the notification category, e.g. "Run finished") and a body with the
  * specific detail (e.g. the task title) — see notificationEdges.ts for the
- * exact title/body pairs this app sends.
+ * exact title/body pairs this app sends. `kind` names which config.yml toggle
+ * gates this one; a notification with no kind is never gated.
  */
-export async function notify(title: string, body: string): Promise<void> {
+export async function notify(
+  title: string,
+  body: string,
+  kind?: NotificationKind
+): Promise<void> {
+  if (!isKindEnabled(enabledKinds, kind)) return;
   if (!isTauri()) return;
   if (document.hasFocus()) return;
   const granted = await ensurePermission();

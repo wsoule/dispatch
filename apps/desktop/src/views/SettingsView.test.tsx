@@ -1,3 +1,4 @@
+import type { ApiClient } from '@dispatch/client';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
@@ -28,6 +29,29 @@ test('it opens on General and switches to Integrations', () => {
   ).toBe('true');
   selectTab('Integrations');
   expect(screen.getByText('Linear')).toBeDefined();
+});
+
+// Autonomy and Notifications landed on separate branches; this pins that the
+// merged tab bar carries both and each one's section mounts on selection.
+// PolicySection fetches the ledger on mount, so the client has to answer it.
+test('it registers the Autonomy and Notifications tabs', () => {
+  const ledgerData = dataWith({
+    client: { fetchLedger: () => Promise.resolve([]) } as unknown as ApiClient,
+  });
+  render(<SettingsView activeProject={project} data={ledgerData} />);
+  expect(screen.getAllByRole('tab').map((tab) => tab.textContent)).toEqual([
+    'General',
+    'Autonomy',
+    'Agents',
+    'Integrations',
+    'Notifications',
+    'Daemon',
+    'Diffs',
+  ]);
+  selectTab('Autonomy');
+  expect(screen.getByRole('slider', { name: 'Autonomy' })).toBeDefined();
+  selectTab('Notifications');
+  expect(screen.getByLabelText('Webhook URL')).toBeDefined();
 });
 
 // AgentsSection no longer tracks its own saving/saved state, so this now only

@@ -74,6 +74,7 @@ export interface DispatchConfig {
   verify?: VerifyConfig;
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
+  notifications: NotificationsConfig;
   /**
    * The git receipt log. `loadConfig` always populates this, so a config it
    * returns can be read without a fallback; it is optional only so callers
@@ -207,6 +208,72 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
   ],
 };
 
+/**
+ * The kinds of thing that can wait on a human — the decision feed's own
+ * vocabulary, owned here so the notification toggles and the feed cannot
+ * drift apart. The server's DecisionFeed aliases its item kind to this type.
+ *
+ * - `approval`        a run is parked on a permission gate.
+ * - `scope-request`   an agent asked to edit outside its declared writes.
+ * - `question`        an agent called `ask_user` and is blocked on the answer.
+ * - `fix-loop-capped` a review/fix loop exhausted its rounds and wants a ruling.
+ * - `run-stalled`     a run failed or dead-ended and nobody has dealt with it.
+ */
+export type NotificationKind =
+  | 'approval'
+  | 'scope-request'
+  | 'question'
+  | 'fix-loop-capped'
+  | 'run-stalled';
+
+/** Every kind, in the order the Settings UI renders them. */
+export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
+  'question',
+  'approval',
+  'scope-request',
+  'fix-loop-capped',
+  'run-stalled',
+];
+
+/**
+ * Delivery beyond the app for things awaiting a human. `kinds` gates both
+ * channels — the desktop's OS notifications and the webhook — so a noisy
+ * kind (a stalled run, a capped fix loop) can be quieted without also muting
+ * an agent's question. The in-app record (the inbox, the decision feed) is
+ * never gated: these toggles tune what interrupts you, not what is kept.
+ */
+export interface NotificationsConfig {
+  kinds: Record<NotificationKind, boolean>;
+  /** An http(s) URL every newly-blocking feed item is POSTed to as JSON — the
+   *  seam for Slack or anything else; no per-service integrations. Absent
+   *  means no webhook. */
+  webhook?: string;
+}
+
+/** What the daemon hands out in place of a webhook URL's path, since the URL
+ *  is the credential: `https://hooks.slack.com/services/T0/B0/x` becomes
+ *  `https://hooks.slack.com/…`. Shared so the server's masking and the
+ *  desktop's "is this value masked?" check cannot drift apart. */
+export const SECRET_URL_MASK_SUFFIX = '/…';
+
+/** True when `value` is a masked webhook the daemon handed out, never a URL a
+ *  user typed. Such a value must not be written back as the webhook. */
+export function isMaskedSecretUrl(value: string): boolean {
+  return value.endsWith(SECRET_URL_MASK_SUFFIX);
+}
+
+// Everything on: the toggles exist to take noise away, so the out-of-the-box
+// behaviour is what the desktop already did before they existed.
+export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
+  kinds: {
+    question: true,
+    approval: true,
+    'scope-request': true,
+    'fix-loop-capped': true,
+    'run-stalled': true,
+  },
+};
+
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
 export interface LinearConfig {
   enabled: boolean;
@@ -278,6 +345,11 @@ export interface ConfigPatch {
   linear?: Partial<LinearConfig>;
   fixLoop?: Partial<FixLoopConfig>;
   verify?: Partial<VerifyConfig>;
+  /** `webhook: null` clears the URL. `kinds` merges over what is on disk. */
+  notifications?: {
+    kinds?: Partial<Record<NotificationKind, boolean>>;
+    webhook?: string | null;
+  };
   /** Weights only — the factor table itself is code, not configuration. */
   queue?: { weights?: Partial<QueueWeights> };
   /** `gates` is written key-by-key; a `null` pin clears the override so the
