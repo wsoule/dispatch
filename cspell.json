@@ -24,6 +24,11 @@
     ".agents/ignore/**",
     // Compiler cache blobs (concatenated declaration text, minified), not
     // source — never meant for spell-checking.
-    "**/*.tsbuildinfo"
+    "**/*.tsbuildinfo",
+    // Gitignored on every machine, so CI never sees them; locally they only
+    // ever reported carto's and tauri's generated vocabulary and private notes.
+    ".carto/**",
+    "docs/business/**",
+    "**/src-tauri/gen/**"
   ]
 }
