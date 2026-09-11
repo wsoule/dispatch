@@ -14,7 +14,7 @@ import type { EventBus } from '../events.js';
 import type { FindingStorePort } from '../findings.js';
 import type { Orchestrator } from './orchestrator.js';
 import { untrustedBlock, untrustedFenced, untrustedInline } from './prompt.js';
-import type { ReviewRunner } from './review.js';
+import type { ReviewRunner, ReviewScope } from './review.js';
 import type { RunKind, RunMeta } from './types.js';
 import {
   OrchestratorClientError,
@@ -50,6 +50,10 @@ const MIN_FIX_LOOP_CAP = 1;
 /** An upper bound on the round budget: every round dispatches a real agent
  *  run, so an unbounded cap is an unbounded spend. */
 const MAX_FIX_LOOP_CAP = 50;
+/** How many reviews one round may dispatch before a review that keeps dying
+ *  caps the loop as an error. Each attempt is a real agent run, so this is a
+ *  spend bound as much as a loop guard. */
+const MAX_REVIEW_ATTEMPTS = 3;
 
 export interface FixLoopState {
   taskId: string;
@@ -60,10 +64,19 @@ export interface FixLoopState {
   /** The commit before the task's first implementer. Every round is reviewed
    *  against it, so a later round sees the whole change, not just its own. */
   baseSha: string;
+  /** The head handed to the loop's most recent review dispatch — cleared when
+   *  that review dies, so the record never claims an unreviewed sha. */
   lastReviewedSha: string | null;
   /** The findings handed to the review this loop is waiting on — the only ones
    *  a clean result may retire. */
   reviewInputIds?: string[];
+  /** The run id of the review this loop dispatched last. Only that run
+   *  reaching `finished` makes the round count as reviewed: a review that
+   *  died judged nothing, however empty the findings store looks. */
+  reviewRunId?: string;
+  /** Reviews dispatched for the current round — what bounds the re-dispatch
+   *  of a review that keeps dying (see MAX_REVIEW_ATTEMPTS). */
+  reviewAttempts?: number;
   /** Set while `capped`, cleared on `complete`. */
   stopReason?: FixLoopStop;
   /** The failure text behind a `stopReason` of `error`. */
@@ -400,8 +413,14 @@ export class FixLoop {
         `dispatchd: fix loop store unreadable, no loops resumed: ${error}`
       );
     }
+    // `idle` counts as stalled too: it is only ever persisted moments before
+    // an advance (opening a loop, reopening a stopped one), so an idle loop
+    // on disk at boot is one whose advance died with the previous process.
     const stalled = states.filter(
-      (s) => s.state === 'implementing' || s.state === 'reviewing'
+      (s) =>
+        s.state === 'idle' ||
+        s.state === 'implementing' ||
+        s.state === 'reviewing'
     );
     for (const state of stalled) this.advanceInBackground(state.taskId);
     return stalled.length;
@@ -475,21 +494,11 @@ export class FixLoop {
     // which would read as clean — better not to open a loop at all.
     if (baseSha === null || head === null || head === baseSha) return;
     const state = this.start(meta.taskId, { baseSha });
-    const handed = this.ctx.findingStore.openFor(meta.taskId);
-    await this.ctx.reviewRunner.startReview({
-      taskId: meta.taskId,
-      base: state.baseSha,
+    await this.dispatchReview(state, {
       head,
-      round: 0,
       scope: 'full',
-      openFindings: handed,
+      attempt: 1,
       runId: meta.id,
-    });
-    this.save({
-      ...state,
-      state: 'reviewing',
-      lastReviewedSha: head,
-      reviewInputIds: handed.map((f) => f.id),
     });
   }
 
@@ -500,17 +509,30 @@ export class FixLoop {
   async ignite(taskId: string): Promise<FixLoopState> {
     const existing = this.ctx.fixLoopStore.get(taskId);
     if (existing !== null) {
-      // A user-stopped loop resumes here — the same button that started it.
-      // Reopened as `idle` so `step` re-derives what the next move is (clean
-      // findings settle it; open ones dispatch the next round) instead of
-      // trusting a phase the stop interrupted.
-      if (existing.state === 'capped' && existing.stopReason === 'stopped') {
+      // A user-stopped loop resumes here — the same button that started it —
+      // and an error-capped one retries: both are explicit presses by a human
+      // asking for another go. Reopened as `idle` so `step` re-derives what
+      // the next move is (clean findings settle it; open ones dispatch the
+      // next round) instead of trusting a phase the stop interrupted. The
+      // review-attempt budget resets with it.
+      if (
+        existing.state === 'capped' &&
+        (existing.stopReason === 'stopped' || existing.stopReason === 'error')
+      ) {
         this.save({
           ...existing,
           state: 'idle',
           stopReason: undefined,
           stopDetail: undefined,
+          reviewAttempts: 0,
         });
+      }
+      // `complete` must not be a dead end either: a loop that settled off a
+      // review that never really happened (the false green this file guards
+      // against) needs an API path back — pressing Review & fix re-reviews
+      // the branch rather than returning the settled state unchanged.
+      if (existing.state === 'complete') {
+        return await this.enqueue(taskId, () => this.reopenComplete(taskId));
       }
       return await this.advance(taskId);
     }
@@ -649,7 +671,7 @@ export class FixLoop {
     // it hands the task to a human, and this can never reach `complete` anyway.
     const stop = this.stopReasonFor(state.taskId);
     if (stop === 'standing-block') return this.reachCap(state, stop);
-    if (open.length === 0) return this.settle(state);
+    if (open.length === 0) return await this.settleOrReviewAgain(state);
     if (state.round >= state.cap) return this.reachCap(state);
     const round = state.round + 1;
     const step = escalationFor(
@@ -729,21 +751,41 @@ export class FixLoop {
     if (head === null || head === state.baseSha) {
       return await this.openRound(state);
     }
+    return await this.dispatchReview(state, {
+      head,
+      scope: 'fix',
+      attempt: 1,
+      runId: run.id,
+    });
+  }
+
+  // The one place a round's review is dispatched, whatever triggered it —
+  // ignition, a finished fix run, the retry of a review that died, or a
+  // reopened loop. Stamps everything settling later depends on: the head
+  // handed over, the findings this review alone may retire, and the run id
+  // whose `finished` state is the only thing that makes the round count as
+  // reviewed.
+  private async dispatchReview(
+    state: FixLoopState,
+    opts: { head: string; scope: ReviewScope; attempt: number; runId?: string }
+  ): Promise<FixLoopState> {
     const handed = this.ctx.findingStore.openFor(state.taskId);
-    await this.ctx.reviewRunner.startReview({
+    const review = await this.ctx.reviewRunner.startReview({
       taskId: state.taskId,
       base: state.baseSha,
-      head,
+      head: opts.head,
       round: state.round,
-      scope: 'fix',
+      scope: opts.scope,
       openFindings: handed,
-      runId: run.id,
+      runId: opts.runId,
     });
     return this.save({
       ...state,
       state: 'reviewing',
-      lastReviewedSha: head,
+      lastReviewedSha: opts.head,
       reviewInputIds: handed.map((f) => f.id),
+      reviewRunId: review.id,
+      reviewAttempts: opts.attempt,
     });
   }
 
@@ -758,12 +800,118 @@ export class FixLoop {
   }
 
   private async afterReviewRun(state: FixLoopState): Promise<FixLoopState> {
-    const run = this.latestRun(state.taskId, 'review');
-    if (run === null || !TERMINAL_RUN_STATES.has(run.state)) return state;
-    // Only a review that actually finished clears anything. A failed one (an
-    // unusable findings payload) must never read as a clean result.
-    if (run.state === 'finished') this.closeInputFindings(state);
+    const run = this.reviewRunFor(state);
+    if (run !== null && !TERMINAL_RUN_STATES.has(run.state)) return state;
+    // Only a review that actually finished judged anything. One that died —
+    // an unusable findings payload, a kill, a daemon restart force-failing it
+    // — must never read as a clean result, and must not fall through to
+    // openRound either, where its zero recorded findings would settle a
+    // branch nobody reviewed. It is dispatched again instead.
+    if (run === null || run.state !== 'finished') {
+      return await this.redispatchReview(state);
+    }
+    this.closeInputFindings(state);
     return await this.openRound(state);
+  }
+
+  // The review run this loop is waiting on. Records written before
+  // `reviewRunId` existed fall back to the task's latest review run, which is
+  // what this always keyed on.
+  private reviewRunFor(state: FixLoopState): RunMeta | null {
+    if (state.reviewRunId !== undefined) return this.runById(state.reviewRunId);
+    return this.latestRun(state.taskId, 'review');
+  }
+
+  // A registry lookup by id — same source as latestRun, and deliberately not
+  // Orchestrator.getRun, which replays the whole transcript for a state check.
+  private runById(runId: string): RunMeta | null {
+    return this.ctx.orchestrator.list().find((run) => run.id === runId) ?? null;
+  }
+
+  // A review that terminated without finishing judged nothing: its round is
+  // not reviewed, so the review is dispatched again over the same range.
+  // Bounded — each attempt is a real agent run, and a review that keeps dying
+  // needs a human, not a retry loop — and the bound caps the loop as an
+  // error, never as `complete`.
+  private async redispatchReview(state: FixLoopState): Promise<FixLoopState> {
+    // Drop the optimistic dispatch-time stamp first: whatever happens next,
+    // the persisted record must not claim this sha was reviewed.
+    const unreviewed: FixLoopState = { ...state, lastReviewedSha: null };
+    const attempt = (state.reviewAttempts ?? 1) + 1;
+    if (attempt > MAX_REVIEW_ATTEMPTS) {
+      return this.reachCap(
+        unreviewed,
+        'error',
+        `the round-${state.round} review died ${MAX_REVIEW_ATTEMPTS} times without completing`
+      );
+    }
+    // The head the dead review was handed, or the latest implementer's when
+    // that stamp is gone (an earlier attempt already cleared it).
+    const latest = this.latestRun(state.taskId, 'execute');
+    const head =
+      (state.lastReviewedSha === null
+        ? null
+        : this.resolveHead(state.lastReviewedSha)) ??
+      (latest === null ? null : this.resolveHead(latest.branch));
+    if (head === null || head === state.baseSha) {
+      return this.reachCap(
+        unreviewed,
+        'error',
+        `the round-${state.round} review died and no commit is left to re-review`
+      );
+    }
+    return await this.dispatchReview(unreviewed, {
+      head,
+      scope: state.round === 0 ? 'full' : 'fix',
+      attempt,
+      runId: latest?.id,
+    });
+  }
+
+  // Zero open findings only clears the bar when the loop is not sitting on a
+  // review that never finished. A dispatched review that died recorded
+  // nothing, and settling on its silence is exactly the false green this file
+  // guards against; a still-live one is simply waited for.
+  private async settleOrReviewAgain(
+    state: FixLoopState
+  ): Promise<FixLoopState> {
+    if (this.roundReviewed(state)) return this.settle(state);
+    // Not reviewed, so a review is tracked: live means wait, dead means again.
+    const review = this.reviewRunFor(state);
+    if (review !== null && !TERMINAL_RUN_STATES.has(review.state)) {
+      return state;
+    }
+    return await this.redispatchReview(state);
+  }
+
+  // The reopen behind pressing Review & fix on a settled loop: dispatches a
+  // fresh full review of the branch, because a reopened `complete` has no
+  // open findings — going back to `idle` would only settle it again without
+  // anyone reviewing anything.
+  private async reopenComplete(taskId: string): Promise<FixLoopState> {
+    const state = this.ctx.fixLoopStore.get(taskId);
+    if (state === null || state.state !== 'complete') {
+      // Something ahead in the chain moved the loop first — fall in behind it
+      // rather than dispatching a review on top of whatever it did.
+      return await this.step(taskId);
+    }
+    const latest = this.latestRun(taskId, 'execute');
+    const head =
+      (latest === null ? null : this.resolveHead(latest.branch)) ??
+      (state.lastReviewedSha === null
+        ? null
+        : this.resolveHead(state.lastReviewedSha));
+    if (head === null || head === state.baseSha) {
+      throw new OrchestratorClientError(
+        `nothing to re-review on ${taskId}: no implementer branch or reviewed commit survives`
+      );
+    }
+    return await this.dispatchReview(state, {
+      head,
+      scope: 'full',
+      attempt: 1,
+      runId: latest?.id,
+    });
   }
 
   // Closes exactly what this review was handed — the ids named when it was
@@ -816,7 +964,24 @@ export class FixLoop {
     return null;
   }
 
+  // Whether the round the loop sits on was actually judged: the review it
+  // tracks reached `finished`. A review that died judged nothing, a live one
+  // has not judged yet, and a tracked id that names no run is a review that
+  // cannot be shown to have finished. A loop with no tracked review has
+  // nothing to gate on — its zero findings were never a review's silence.
+  private roundReviewed(state: FixLoopState): boolean {
+    if (state.reviewRunId === undefined) return true;
+    const review = this.runById(state.reviewRunId);
+    return review !== null && review.state === 'finished';
+  }
+
+  // The one way a loop goes `complete`, whichever path asks for it, and so
+  // the one place the review gate lives: a loop whose tracked review did not
+  // finish is returned untouched, however empty the findings store looks.
+  // Callers that can do better than wait (re-dispatch the dead review) check
+  // `roundReviewed` first; the rest simply do not settle.
   private settle(state: FixLoopState): FixLoopState {
+    if (!this.roundReviewed(state)) return state;
     return this.save({
       ...state,
       state: 'complete',
@@ -827,15 +992,18 @@ export class FixLoop {
 
   // The cap never resolves itself. A ruling either settles it or changes what
   // it waits for, so it stops asking for rulings that no longer exist. A
-  // user-stop is as sticky as an error: only an explicit resume reopens it,
-  // never the background hook that fires when its own runs wind down.
+  // user-stop and an error are equally sticky: only an explicit resume
+  // (`ignite`) reopens them, never the background hook that fires when the
+  // task's runs wind down — an error cap has zero open findings whenever the
+  // review itself is what died, and reading that as a cleared bar is the
+  // false green this file guards against.
   private settleCapped(state: FixLoopState): FixLoopState {
-    if (state.stopReason === 'stopped') return state;
-    const reason = this.stopReasonFor(state.taskId);
-    if (reason === null) return this.settle(state);
-    if (state.stopReason === 'error' || reason === state.stopReason) {
+    if (state.stopReason === 'stopped' || state.stopReason === 'error') {
       return state;
     }
+    const reason = this.stopReasonFor(state.taskId);
+    if (reason === null) return this.settle(state);
+    if (reason === state.stopReason) return state;
     return this.save({ ...state, stopReason: reason, stopDetail: undefined });
   }
 

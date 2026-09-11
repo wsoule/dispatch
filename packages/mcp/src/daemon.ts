@@ -75,6 +75,18 @@ export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
 // check is the one request that must never be the slow thing.
 const HEALTH_TIMEOUT_MS = 2000;
 
+// The ceiling on any one ordinary daemon request from this process. Every
+// tool here is a loopback call the daemon answers from memory or SQLite;
+// the long-polls (ask_user, request_scope) bring their own signal. Anything
+// slower than this is a daemon that has stopped serving, and the answer the
+// agent needs is "unreachable", not a silent wait.
+export const REQUEST_TIMEOUT_MS = 30_000;
+
+/** The abort signal every bare daemon `fetch` in this package should carry. */
+export function requestDeadline(): AbortSignal {
+  return AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+}
+
 export async function isDaemonHealthy(port: number): Promise<boolean> {
   try {
     const res = await fetch(`http://127.0.0.1:${port}/api/health`, {
@@ -132,17 +144,26 @@ export interface LiveDaemon {
  * every caller that would otherwise fetch it a second time to fill in
  * `problems` gets them from the request already being made.
  */
-export async function liveDaemon(rootDir: string): Promise<LiveDaemon | null> {
+export async function liveDaemon(
+  rootDir: string,
+  probeTimeoutMs = HEALTH_TIMEOUT_MS,
+  stalledWaitMs = STALLED_DAEMON_WAIT_MS
+): Promise<LiveDaemon | null> {
   const daemon = readDaemonFile(rootDir);
   if (daemon === null) return null;
   if (daemon.agentToken === undefined || daemon.agentToken === '') return null;
-  const deadline = Date.now() + STALLED_DAEMON_WAIT_MS;
+  const deadline = Date.now() + stalledWaitMs;
   for (;;) {
     let timedOut = false;
     try {
+      // Same deadline as isDaemonHealthy, for the same reason — and for one
+      // more: this MCP server lives as long as the agent's session, so a
+      // daemon that wedged with its port still open (2026-08-23) would
+      // otherwise hold every task tool for the client's 31-minute ceiling,
+      // and never re-read the daemon file to find the healthy replacement.
       const res = await fetch(`http://127.0.0.1:${daemon.port}/api/health`, {
         headers: daemonAuth(daemon),
-        signal: AbortSignal.timeout(HEALTH_TIMEOUT_MS),
+        signal: AbortSignal.timeout(probeTimeoutMs),
       });
       if (!res.ok) return null;
       const body = (await res.json().catch(() => ({}))) as {
@@ -164,7 +185,9 @@ export async function liveDaemon(rootDir: string): Promise<LiveDaemon | null> {
 }
 
 // How long `liveDaemon` keeps re-probing a daemon whose pid is alive but whose
-// health check stalls before reporting it as unreachable.
+// health check stalls before reporting it as unreachable. Bounded, so a
+// daemon that wedged for good still reads as unreachable rather than holding
+// the tool call for the MCP client's own idle ceiling.
 const STALLED_DAEMON_WAIT_MS = 30_000;
 
 // Whether `pid` is a live process. Signal 0 sends nothing; EPERM means the
@@ -288,6 +311,7 @@ export async function daemonRequest<T>(
     res = await fetch(`http://127.0.0.1:${daemon.port}${path}`, {
       ...init,
       headers,
+      signal: init?.signal ?? requestDeadline(),
     });
   } catch (err) {
     throw new DaemonUnreachableError(daemon.port, (err as Error).message);

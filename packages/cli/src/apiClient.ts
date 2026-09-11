@@ -44,6 +44,8 @@ export interface RunMeta {
   reviewedAt?: string;
   reviewAction?: 'merge' | 'discard' | 'pr';
   mergeCommit?: string;
+  // Why the last merge/discard attempt threw and left the run unreviewed.
+  reviewFailure?: { action: 'merge' | 'discard'; reason: string; at: string };
   prUrl?: string;
   archivedAt?: string;
   resumedFrom?: string;
@@ -193,6 +195,15 @@ interface ApiTarget {
   token: string;
 }
 
+// The ceiling on one daemon request. Every route the CLI calls answers from
+// memory, SQLite or a local git command; the two that kick off real work
+// (POST /api/plan, POST /api/tasks/:id/runs) hand back an id and let the
+// client poll, so nothing here is legitimately slow. Without a deadline a
+// daemon that is alive with a blocked event loop takes the CLI down with it
+// — `dispatch runs` sat past 120s that way on 2026-08-23 — because fetch on
+// an accepted-but-unanswered connection waits forever.
+export const REQUEST_TIMEOUT_MS = 60_000;
+
 // Throws a CliError carrying the server's own `{ error }` message on any non-2xx, so
 // cli.ts renders API failures in the server's wording rather than a bare status code.
 /**
@@ -225,8 +236,23 @@ async function request<T>(
   // fix.
   let res: Response;
   try {
-    res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
+    res = await fetch(`${target.baseUrl}${path}`, {
+      ...init,
+      headers,
+      signal: init?.signal ?? AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
   } catch (err) {
+    // A timeout and a dropped connection need different advice: the first
+    // means the daemon is still there and stuck, so telling the user to start
+    // it again sends them to restart something that is already running. Both
+    // are still "no answer from the daemon", so the `--watch` loops treat
+    // them alike.
+    if ((err as Error).name === 'TimeoutError') {
+      throw new DaemonUnreachableError(
+        `dispatchd accepted the request at ${target.baseUrl} but did not answer within ${String(REQUEST_TIMEOUT_MS / 1000)}s. ` +
+          'It is running with a blocked event loop; check its log for an "event loop stalled" line, then restart it.'
+      );
+    }
     throw new DaemonUnreachableError(
       `dispatchd stopped responding at ${target.baseUrl} (${(err as Error).message}). ` +
         'It answered a health check moments ago, so it has probably just exited — start it again with: dispatch serve'

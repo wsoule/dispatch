@@ -34,6 +34,13 @@ const SIDECARS = [
   {
     entry: join(repoRoot, 'packages', 'server', 'src', 'bin.ts'),
     name: 'dispatchd',
+    // The event-loop watchdog runs on a Worker, which a compiled binary only
+    // embeds when its module is a build entrypoint of its own — otherwise
+    // `new Worker(...)` fails silently at runtime and the daemon boots with
+    // no watchdog. Keep in step with packages/server/src/watchdog.ts.
+    extraEntries: [
+      join(repoRoot, 'packages', 'server', 'src', 'watchdogWorker.ts'),
+    ],
   },
   {
     entry: join(repoRoot, 'packages', 'mcp', 'src', 'bin.ts'),
@@ -71,13 +78,14 @@ function run(label: string, cmd: string[]): void {
   }
 }
 
-for (const { entry, name } of SIDECARS) {
+for (const { entry, name, extraEntries = [] } of SIDECARS) {
   const outfile = join(resourcesDir, name);
   run(`compile ${name}`, [
     'bun',
     'build',
     '--compile',
     entry,
+    ...extraEntries,
     '--outfile',
     outfile,
   ]);

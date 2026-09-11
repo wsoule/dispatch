@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   writeFileSync,
 } from 'node:fs';
@@ -926,14 +927,103 @@ describe('Orchestrator.review merge ordering and failure handling', () => {
     expect(store.get(task.meta.id)!.meta.status).not.toBe('landed');
     // Main must be back to a clean, mergeable state (git reset --merge),
     // not stuck mid-conflict — a retry after manual resolution must be
-    // possible.
-    expect(runGitSync(repo, ['status', '--porcelain']).trim()).toBe('');
-    expect(existsSync(join(repo, 'shared.txt'))).toBe(true);
+    // possible. The task file under `.dispatch/` is allowed to be dirty: the
+    // failed attempt is recorded in its Activity, and the merge gate admits
+    // dispatchd's own bookkeeping edits there.
+    const dirty = runGitSync(repo, ['status', '--porcelain'])
+      .split('\n')
+      .filter((line) => line.trim() !== '' && !line.includes('.dispatch/'));
+    expect(dirty).toEqual([]);
+    expect(readFileSync(join(repo, 'shared.txt'), 'utf8')).toBe(
+      'human version\n'
+    );
+    expect(store.get(task.meta.id)!.body).toMatch(
+      new RegExp(`run ${meta.id} merge failed: .*shared\\.txt`)
+    );
 
     // Retry after resolving manually: bring the run's own change in by
     // hand, then merge/discard cleanly resolves the run.
     orchestrator.review(meta.id, 'discard');
     expect(store.get(task.meta.id)!.meta.status).toBe('ready');
+  });
+
+  // The states-that-lie invariant for review: an action that does not
+  // complete leaves the run exactly as it found it — unreviewed and still
+  // resumable — but not silently. The reason the merge failed is recorded on
+  // the run (surviving a restart) and on the task's Activity, and it clears
+  // the moment a later review really lands.
+  it('a conflicting merge leaves the run unreviewed and resumable, and records why it failed', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        session: 'sess-conflict',
+        steps: [
+          {
+            write: (cwd) => {
+              writeFileSync(join(cwd, 'shared.txt'), 'agent version\n');
+            },
+            commitMessage: 'agent: edit shared.txt',
+          },
+        ],
+        finish: { state: 'finished', sessionId: 'sess-conflict' },
+      })
+    );
+    const task = store.create({ title: 'Conflicting merge, then resume' });
+    writeFileSync(join(repo, 'shared.txt'), 'original\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'add shared.txt']);
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    writeFileSync(join(repo, 'shared.txt'), 'human version\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'human edits shared.txt']);
+
+    expect(() => orchestrator.review(meta.id, 'merge')).toThrow(
+      OrchestratorConflictError
+    );
+
+    // Untouched: no review marker, no task status change.
+    const after = orchestrator.getRun(meta.id)!.meta;
+    expect(after.reviewedAt).toBeUndefined();
+    expect(after.reviewAction).toBeUndefined();
+    expect(after.mergeCommit).toBeUndefined();
+    expect(after.state).toBe('finished');
+    expect(store.get(task.meta.id)!.meta.status).toBe('review');
+
+    // Not silent: the run carries the conflict, naming the file, and so does
+    // the task's Activity — and both survive a daemon restart.
+    expect(after.reviewFailure).toMatchObject({ action: 'merge' });
+    expect(after.reviewFailure?.reason).toMatch(/shared\.txt/);
+    expect(after.reviewFailure?.at).toBeString();
+    expect(store.get(task.meta.id)!.body).toMatch(
+      new RegExp(`run ${meta.id} merge failed: .*shared\\.txt`)
+    );
+    const replayed = replayTranscript(transcriptPath(repo, meta.id))!.meta;
+    expect(replayed.reviewedAt).toBeUndefined();
+    expect(replayed.reviewFailure).toEqual(after.reviewFailure);
+
+    // Resumable: request-changes still forks a follow-up run into the same
+    // worktree, exactly as it would have before the failed merge.
+    const second = orchestrator.sendMessage(meta.id, 'resolve the conflict', {
+      resume: true,
+    });
+    expect(second.resumedFrom).toBe(meta.id);
+    expect(second.worktreePath).toBe(meta.worktreePath);
+    await waitFor(
+      () => orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+
+    // A review that does complete clears the failure — a discarded run must
+    // not keep advertising a merge conflict it no longer has.
+    const discarded = orchestrator.review(meta.id, 'discard');
+    expect(discarded.reviewedAt).toBeDefined();
+    expect(discarded.reviewFailure).toBeUndefined();
+    const replayedAgain = replayTranscript(transcriptPath(repo, meta.id))!.meta;
+    expect(replayedAgain.reviewFailure).toBeUndefined();
   });
 
   it("C: keeps a user's own unrelated .dispatch/config.yml edit out of the squash commit", async () => {
@@ -2923,5 +3013,81 @@ describe('Orchestrator.deleteBranch guards', () => {
     expect(() => orchestrator.deleteBranch('dispatch/nope')).toThrow(
       OrchestratorNotFoundError
     );
+  });
+});
+
+describe('Orchestrator session bookkeeping across a finish', () => {
+  it('keeps the session the executor reported when the finish carries none', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    // onSession with the handle, then a failure that reports no session —
+    // the shape of an agent dying mid-run. The finish must not erase the
+    // handle: this run is exactly the one a resume has to reattach.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        session: 'sess-reported',
+        finish: { state: 'failed', error: 'connection dropped' },
+      })
+    );
+    const task = store.create({ title: 'Reports a session, then dies' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(() => orchestrator.getRun(meta.id)?.meta.state === 'failed');
+
+    expect(orchestrator.getRun(meta.id)?.meta.sessionId).toBe('sess-reported');
+    expect(
+      orchestrator.resumeBlockReason(orchestrator.getRun(meta.id)!.meta)
+    ).toBeNull();
+    // And a finish that does report one still wins over the earlier report.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        session: 'sess-early',
+        finish: { state: 'finished', sessionId: 'sess-final' },
+      })
+    );
+    const other = store.create({ title: 'Reports twice' });
+    const otherMeta = await orchestrator.dispatch(other.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(otherMeta.id)?.meta.state === 'finished'
+    );
+    expect(orchestrator.getRun(otherMeta.id)?.meta.sessionId).toBe(
+      'sess-final'
+    );
+  });
+
+  it('notes on the Session log when a resumed run comes back on a different session', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 'sess-1' } })
+    );
+    const task = store.create({ title: 'Loses its thread' });
+    const first = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(first.id)?.meta.state === 'finished'
+    );
+
+    // An executor that ignores resumeSessionId and opens its own session —
+    // what a resume that failed to reattach looks like from the outside.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ session: 'sess-2', finish: { state: 'finished' } })
+    );
+    const second = orchestrator.sendMessage(first.id, 'carry on', {
+      resume: true,
+    });
+    await waitFor(
+      () => orchestrator.getRun(second.id)?.meta.state === 'finished'
+    );
+
+    const notice = orchestrator
+      .getRun(second.id)
+      ?.entries.find((entry) => entry.kind === 'system');
+    expect(notice?.text).toContain('sess-1');
+    expect(notice?.text).toContain('sess-2');
+    expect(notice?.text).toContain(first.id);
+    // Recorded as what the agent actually has, so a further resume continues
+    // the conversation that exists rather than the one that was lost.
+    expect(orchestrator.getRun(second.id)?.meta.sessionId).toBe('sess-2');
   });
 });

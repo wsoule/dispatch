@@ -69,6 +69,40 @@ test('hides Continue on a failed run with no session to resume', () => {
   ).toBeDefined();
 });
 
+// A failed merge leaves the run unreviewed; the reason has to be visible in the
+// run itself or the operator learns nothing from the refusal.
+test('shows why the last merge attempt failed on a still-unreviewed run', () => {
+  renderLog(
+    meta({
+      state: 'finished',
+      reviewFailure: {
+        action: 'merge',
+        reason: 'CONFLICT (content): Merge conflict in shared.txt',
+        at: '2026-08-04T00:00:00.000Z',
+      },
+    })
+  );
+  expect(screen.getByText(/merge failed: .*shared\.txt/)).toBeDefined();
+});
+
+// Stale on a reviewed run: the server clears the failure when a review lands,
+// but a client holding an older meta must not keep advertising it either.
+test('hides a recorded merge failure once the run has been reviewed', () => {
+  renderLog(
+    meta({
+      state: 'finished',
+      reviewedAt: '2026-08-04T00:01:00.000Z',
+      reviewAction: 'discard',
+      reviewFailure: {
+        action: 'merge',
+        reason: 'CONFLICT (content): Merge conflict in shared.txt',
+        at: '2026-08-04T00:00:00.000Z',
+      },
+    })
+  );
+  expect(screen.queryByText(/merge failed/)).toBeNull();
+});
+
 test('hides Continue on a run that finished normally', () => {
   renderLog(meta({ state: 'finished', sessionId: 'sess-1' }));
   expect(screen.queryByRole('button', { name: /continue/i })).toBeNull();

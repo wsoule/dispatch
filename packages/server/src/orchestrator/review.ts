@@ -14,6 +14,7 @@ import type {
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { spawnGitSync } from '../blockingGit.js';
 import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
 import type { FindingStorePort } from '../findings.js';
@@ -299,17 +300,11 @@ export function capDependencyList(
 }
 
 function git(cwd: string, args: string[]): string {
-  const result = Bun.spawnSync(['git', ...args], {
-    cwd,
-    stdout: 'pipe',
-    stderr: 'pipe',
-  });
+  const result = spawnGitSync(cwd, args);
   if (result.exitCode !== 0) {
-    throw new Error(
-      `git ${args.join(' ')} failed: ${result.stderr.toString('utf8').trim()}`
-    );
+    throw new Error(`git ${args.join(' ')} failed: ${result.stderr.trim()}`);
   }
-  return result.stdout.toString('utf8');
+  return result.stdout;
 }
 
 // The files base..head actually touched, repo-relative — the ground truth

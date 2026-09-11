@@ -27,6 +27,7 @@ import {
 } from 'node:fs';
 import { join } from 'node:path';
 
+import { spawnGitSync } from '../blockingGit.js';
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import { FindingStore } from '../findings.js';
@@ -41,6 +42,7 @@ import {
   isEpicBranch,
 } from './epicBranch.js';
 import { JjManager } from './jj.js';
+import { truncateReason } from './mergeQueue.js';
 import { collectOrientation } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
 import {
@@ -54,13 +56,16 @@ import type { CommandRunner } from './pr.js';
 import { defaultCommandRunner, deletePrHeadRef } from './pr.js';
 import {
   buildTaskPrompt,
-  renderSurveySection,
+  renderContinuationPrompt,
+  renderFreshSessionNotice,
+  renderScopeRequestsSection,
   untrustedInline,
 } from './prompt.js';
 import { prNumberFromOrigin } from './prReviewTask.js';
 import type { PendingApproval } from './registry.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
+import type { RunScopeRequest } from './scopeRequests.js';
 import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
@@ -71,6 +76,7 @@ import type {
   ExecutorEvents,
   ExecutorStartOptions,
   NormalizedEntry,
+  ReviewFailure,
   RunKind,
   RunMeta,
   RunState,
@@ -154,6 +160,16 @@ export interface OrchestratorContext {
   // pre-existing synchronous Bun.spawnSync ones. Same seam PrManager /
   // MergeQueue / GitRepo share, so a test stubs git rather than running it.
   commandRunner?: CommandRunner;
+  // Where a run's out-of-fence requests live, so resumeRun can hand a
+  // predecessor's still-open (or decided-while-dead) requests to the successor
+  // it creates — see the `carry` call there. Optional: a test that never
+  // resumes across a restart has nothing to carry.
+  scopeRequests?: ScopeRequestCarrier;
+}
+
+/** The one thing the orchestrator asks of the scope-request registry. */
+interface ScopeRequestCarrier {
+  carry(fromRunId: string, toRunId: string): RunScopeRequest[];
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -268,6 +284,40 @@ function refuseExecuteOnDerivedTask(task: TaskDoc): void {
   throw new OrchestratorClientError(
     `task ${task.meta.id} was derived from ${task.meta.derivedFrom} and cannot be executed`
   );
+}
+
+// How a reviewed run was closed out, for refusal messages: a run merged by
+// hand and picked up by the external-merge reconciler reads "merged as
+// <sha>", which tells the operator why their resume was refused far better
+// than "already reviewed" alone did. Null when the transcript predates
+// reviewAction and never recorded a merge commit — saying "merged" there
+// would be a guess.
+function describeReview(meta: RunMeta): string | null {
+  switch (meta.reviewAction) {
+    case 'merge':
+      return meta.mergeCommit !== undefined
+        ? `merged as ${meta.mergeCommit.slice(0, 8)}`
+        : 'merged';
+    case 'discard':
+      return 'discarded';
+    case 'pr':
+      return 'merged via PR';
+    default:
+      return meta.mergeCommit !== undefined
+        ? `merged as ${meta.mergeCommit.slice(0, 8)}`
+        : null;
+  }
+}
+
+function alreadyReviewedReason(meta: RunMeta): string {
+  const how = describeReview(meta);
+  return how === null
+    ? 'run has already been reviewed'
+    : `run has already been reviewed (${how})`;
+}
+
+function alreadyReviewedMessage(meta: RunMeta): string {
+  return `${alreadyReviewedReason(meta)}: ${meta.id}`;
 }
 
 /**
@@ -1116,9 +1166,7 @@ export class Orchestrator {
       // to resume into, and resuming would either fail on a missing cwd or
       // silently resurrect a run the user already closed out.
       if (meta.reviewedAt !== undefined) {
-        throw new OrchestratorConflictError(
-          `run has already been reviewed: ${runId}`
-        );
+        throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
       }
       // Same one-live-run-per-task rule dispatch() enforces: a resume forks
       // a NEW run into the task's existing worktree, so two resumes racing
@@ -1791,7 +1839,7 @@ export class Orchestrator {
       return `run is ${meta.state}, not a failed run`;
     }
     if (runKind(meta) !== 'execute') return 'run is not an execute run';
-    if (meta.reviewedAt !== undefined) return 'run has already been reviewed';
+    if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
     if (meta.prUrl !== undefined) return 'run has an open PR';
     if (meta.baseDiscarded === true) return "run's base needs a human";
     if (meta.sessionId === undefined) return 'run never started a session';
@@ -2151,9 +2199,7 @@ export class Orchestrator {
       );
     }
     if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(
-        `run has already been reviewed: ${runId}`
-      );
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
     }
     // Discarding blocked work is exactly what a human should still be able to
     // do; merging it is the thing the ruling exists to prevent.
@@ -2164,42 +2210,55 @@ export class Orchestrator {
     this.requireNoOpenPr(meta);
     const now = new Date().toISOString();
 
+    // Everything above this line is a refusal — the run was never touched.
+    // Everything below is an attempt, and an attempt that throws (a squash
+    // conflict, a worktree that will not remove) is recorded on the run
+    // before the error propagates: the run stays unreviewed and resumable,
+    // but not silently.
     let mergeCommit: string | undefined;
-    if (action === 'merge') {
-      mergeCommit = this.mergeRun(meta, now, actor);
-    } else {
-      this.persistDiffSnapshot(meta);
-      // Not while something else still needs the directory — a sibling run
-      // sitting in the merge queue is about to rebase inside it.
-      if (!this.worktreeIsNeeded(runId)) {
-        this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+    try {
+      if (action === 'merge') {
+        mergeCommit = this.mergeRun(meta, now, actor);
+      } else {
+        this.persistDiffSnapshot(meta);
+        // Not while something else still needs the directory — a sibling run
+        // sitting in the merge queue is about to rebase inside it.
+        if (!this.worktreeIsNeeded(runId)) {
+          this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
+        }
+        // Discarding a superseded predecessor must not reopen a task another
+        // run already landed: a failed run resumed into a successor on the
+        // same branch stays reviewable after that successor merges (when it
+        // predates closeSupersededPredecessors, or if the walk stopped short),
+        // and clearing it out of the queue is housekeeping, not a verdict on
+        // the landed work.
+        const taskStatus = this.ctx.store.get(meta.taskId)?.meta.status;
+        this.ctx.store.update(
+          meta.taskId,
+          {
+            ...(taskStatus === 'landed' ? {} : { status: 'ready' }),
+            appendActivity: `${now} run ${runId} discarded`,
+            activityActor: actor,
+          },
+          now
+        );
+        this.flagStackedDependents(meta);
       }
-      // Discarding a superseded predecessor must not reopen a task another
-      // run already landed: a failed run resumed into a successor on the
-      // same branch stays reviewable after that successor merges (when it
-      // predates closeSupersededPredecessors, or if the walk stopped short),
-      // and clearing it out of the queue is housekeeping, not a verdict on
-      // the landed work.
-      const taskStatus = this.ctx.store.get(meta.taskId)?.meta.status;
-      this.ctx.store.update(
-        meta.taskId,
-        {
-          ...(taskStatus === 'landed' ? {} : { status: 'ready' }),
-          appendActivity: `${now} run ${runId} discarded`,
-          activityActor: actor,
-        },
-        now
-      );
-      this.flagStackedDependents(meta);
+    } catch (err) {
+      this.recordReviewFailure(meta, action, err, now, actor);
+      throw err;
     }
 
     // Record the review marker as its own state-line append (transition()
     // to the *same* state — reviewing a run never changes its RunState,
-    // only that it's now been reviewed).
+    // only that it's now been reviewed). A review that completes also
+    // clears any earlier failed attempt: `null` is the transcript's
+    // "clear it" value (see TranscriptStateLine.reviewFailure).
     this.transition(runId, meta.state, {
       reviewedAt: now,
       reviewAction: action,
       mergeCommit,
+      ...(meta.reviewFailure !== undefined ? { reviewFailure: null } : {}),
     });
     if (action === 'merge') {
       this.closeSupersededPredecessors(runId, now, mergeCommit);
@@ -2318,9 +2377,7 @@ export class Orchestrator {
   markRunMergedViaPr(runId: string): RunMeta {
     const meta = this.requireRun(runId);
     if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(
-        `run has already been reviewed: ${runId}`
-      );
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
     }
     const now = new Date().toISOString();
     // Deliberately `diffCommittedOnly`, not the live `diff()` the review
@@ -2373,9 +2430,7 @@ export class Orchestrator {
   markRunMergedExternally(runId: string, mergeCommit?: string): RunMeta {
     const meta = this.requireRun(runId);
     if (meta.reviewedAt !== undefined) {
-      throw new OrchestratorConflictError(
-        `run has already been reviewed: ${runId}`
-      );
+      throw new OrchestratorConflictError(alreadyReviewedMessage(meta));
     }
     const now = new Date().toISOString();
     // `diffCommittedOnly` for the same reason markRunMergedViaPr uses it:
@@ -2445,6 +2500,57 @@ export class Orchestrator {
       }
     }
     return reconciled;
+  }
+
+  // Records why a merge/discard attempt threw, on the run (a same-state
+  // transcript line, so it survives a restart) and on the task's Activity —
+  // the two places an operator actually looks. A repeat of the same failure
+  // is not re-recorded: the merge queue retries an environment-blocked
+  // merge every few seconds, and a dirty checkout would otherwise write an
+  // identical Activity line on every tick. Best-effort throughout: the
+  // caller is about to rethrow the real error, and nothing here may replace
+  // it with a bookkeeping one.
+  private recordReviewFailure(
+    meta: RunMeta,
+    action: 'merge' | 'discard',
+    err: unknown,
+    now: string,
+    actor: string | undefined
+  ): void {
+    const reason = truncateReason(
+      err instanceof Error ? err.message : String(err)
+    );
+    const previous = meta.reviewFailure;
+    if (
+      previous !== undefined &&
+      previous.action === action &&
+      previous.reason === reason
+    ) {
+      return;
+    }
+    const reviewFailure: ReviewFailure = { action, reason, at: now };
+    this.registry.updateMeta(meta.id, { reviewFailure, updatedAt: now });
+    this.bestEffort(`recording failed ${action} on run ${meta.id}`, () => {
+      this.transcriptFor(meta.id).appendState(meta.state, now, {
+        reviewFailure,
+      });
+    });
+    // One Activity line, however many lines git printed: a conflict report
+    // is multi-line and a raw paste would break the markdown list.
+    const oneLine = reason.replace(/\s+/g, ' ').trim();
+    this.bestEffort(`noting failed ${action} on task ${meta.taskId}`, () => {
+      this.ctx.store.update(
+        meta.taskId,
+        {
+          appendActivity: `${now} run ${meta.id} ${action} failed: ${oneLine}`,
+          activityActor: actor,
+        },
+        now
+      );
+      this.ctx.cache.rebuild(this.ctx.store);
+    });
+    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
   // C1: squash-merges `meta.branch` into the main checkout and folds this
@@ -2552,7 +2658,7 @@ export class Orchestrator {
         // clean HEAD so a retry (after the user resolves things by hand, or
         // just discards the run) starts from a sane state instead of a
         // permanently wedged checkout.
-        Bun.spawnSync(['git', 'reset', '--merge'], { cwd: this.ctx.rootDir });
+        spawnGitSync(this.ctx.rootDir, ['reset', '--merge']);
         // git's own stderr (already folded into err.message by
         // WorktreeManager.mergeSquash) is the useful part here — a content
         // conflict is a 409 the user can act on, never an opaque 500.
@@ -2581,7 +2687,7 @@ export class Orchestrator {
     const commitArgs = hasChanges
       ? ['commit', '--amend', '--no-edit']
       : ['commit', '-m', message];
-    Bun.spawnSync(['git', ...commitArgs], { cwd: this.ctx.rootDir });
+    spawnGitSync(this.ctx.rootDir, commitArgs);
 
     this.persistDiffSnapshot(meta, preMergeDiff);
     this.worktrees.remove(meta.worktreePath, meta.branch, meta.id);
@@ -2802,7 +2908,7 @@ export class Orchestrator {
         } catch (err) {
           // Restore a clean HEAD after a real conflict, exactly as mergeRun
           // does for its squash — a wedged main checkout helps nobody.
-          Bun.spawnSync(['git', 'reset', '--merge'], { cwd: this.ctx.rootDir });
+          spawnGitSync(this.ctx.rootDir, ['reset', '--merge']);
           throw new OrchestratorConflictError((err as Error).message);
         }
       }
@@ -2830,7 +2936,7 @@ export class Orchestrator {
       const commitArgs = hasChanges
         ? ['commit', '--amend', '--no-edit']
         : ['commit', '-m', message];
-      Bun.spawnSync(['git', ...commitArgs], { cwd: this.ctx.rootDir });
+      spawnGitSync(this.ctx.rootDir, commitArgs);
       if (hasChanges) mergeCommit = this.worktrees.resolveCommit('HEAD');
     }
 
@@ -3789,13 +3895,15 @@ export class Orchestrator {
   // source file). Empty means clean. See the long comment at the call site in
   // `mergeRun()` for why `.dispatch/` itself is excluded from this check.
   private mainDirtyPathsOutsideDispatch(): string[] {
-    const result = Bun.spawnSync(
-      ['git', 'status', '--porcelain', '--', '.', `:!${DISPATCH_DIR}`],
-      { cwd: this.ctx.rootDir, stdout: 'pipe', stderr: 'pipe' }
-    );
+    const result = spawnGitSync(this.ctx.rootDir, [
+      'status',
+      '--porcelain',
+      '--',
+      '.',
+      `:!${DISPATCH_DIR}`,
+    ]);
     return (
       result.stdout
-        .toString('utf8')
         .split('\n')
         .map((line) => line.trim())
         .filter((line) => line.length > 0)
@@ -3821,12 +3929,12 @@ export class Orchestrator {
   // so a merge attempted while main is sitting on some other branch is
   // refused outright rather than landing on the wrong branch.
   private currentMainBranch(): string {
-    const result = Bun.spawnSync(['git', 'rev-parse', '--abbrev-ref', 'HEAD'], {
-      cwd: this.ctx.rootDir,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    return result.stdout.toString('utf8').trim();
+    const result = spawnGitSync(this.ctx.rootDir, [
+      'rev-parse',
+      '--abbrev-ref',
+      'HEAD',
+    ]);
+    return result.stdout.trim();
   }
 
   // Stages (but does not commit) *only* the one task file belonging to
@@ -3845,7 +3953,7 @@ export class Orchestrator {
     if (!(store instanceof TaskStore)) return;
     const file = store.taskFilePath(taskId);
     if (file === null) return;
-    Bun.spawnSync(['git', 'add', file], { cwd: this.ctx.rootDir });
+    spawnGitSync(this.ctx.rootDir, ['add', file]);
   }
 
   // The onFinish safety net (see its call site's comment): commits whatever
@@ -3862,29 +3970,20 @@ export class Orchestrator {
   // Throws on failure so `finishRun` marks the run `failed` — work that could
   // not be committed is neither reviewable nor mergeable.
   private autoCommitIfDirty(worktreePath: string, runId: string): void {
-    const status = Bun.spawnSync(['git', 'status', '--porcelain'], {
-      cwd: worktreePath,
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    if (status.stdout.toString('utf8').trim() === '') return;
-    Bun.spawnSync(['git', 'add', '-A'], { cwd: worktreePath });
-    const commit = Bun.spawnSync(
-      [
-        'git',
-        'commit',
-        '--no-verify',
-        '-m',
-        `wip(dispatch): uncommitted changes from run ${runId}`,
-      ],
-      { cwd: worktreePath, stdout: 'pipe', stderr: 'pipe' }
-    );
+    const status = spawnGitSync(worktreePath, ['status', '--porcelain']);
+    if (status.stdout.trim() === '') return;
+    spawnGitSync(worktreePath, ['add', '-A']);
+    const commit = spawnGitSync(worktreePath, [
+      'commit',
+      '--no-verify',
+      '-m',
+      `wip(dispatch): uncommitted changes from run ${runId}`,
+    ]);
     if (commit.exitCode !== 0) {
       // git splits its complaints across both streams; prefer stderr, fall
       // back to stdout so the message is never just an exit code.
-      const stderr = commit.stderr.toString('utf8').trim();
-      const detail =
-        stderr.length > 0 ? stderr : commit.stdout.toString('utf8').trim();
+      const stderr = commit.stderr.trim();
+      const detail = stderr.length > 0 ? stderr : commit.stdout.trim();
       throw new Error(
         `could not commit the changes left in ${worktreePath}: ${detail}`
       );
@@ -3906,6 +4005,9 @@ export class Orchestrator {
       reviewedAt?: string;
       reviewAction?: 'merge' | 'discard' | 'pr';
       mergeCommit?: string;
+      // `null` clears a recorded review failure (transcript convention);
+      // the registry copy simply drops the field.
+      reviewFailure?: ReviewFailure | null;
     }
   ): void {
     const meta = this.registry.get(runId);
@@ -3933,10 +4035,23 @@ export class Orchestrator {
     // cancel, an escalation — there is nothing left for the stop backstop to
     // catch. This is the one point every terminal state passes through.
     if (TERMINAL_RUN_STATES.has(state)) this.clearStopEscalation(runId);
+    // A finish that reports no session must not erase the one recordSession
+    // already stored: spreading `sessionId: undefined` over the meta did
+    // exactly that, so a run whose agent reported its handle and then died
+    // without a result read as "never started a session" — unresumable — in
+    // the live registry, while its own transcript still carried the handle
+    // (replayTranscript folds a session-less state line over the header's).
+    // `reviewFailure` is likewise only written when the finish carries it:
+    // `null` clears a prior failure, absent leaves it alone.
+    const { reviewFailure, sessionId, ...fields } = finish ?? {};
     this.registry.updateMeta(runId, {
       state,
       updatedAt: now,
-      ...finish,
+      ...fields,
+      ...(sessionId !== undefined ? { sessionId } : {}),
+      ...(reviewFailure !== undefined
+        ? { reviewFailure: reviewFailure ?? undefined }
+        : {}),
     });
     // The registry already carries the new state; a transcript that can't be
     // appended to must not also cost clients the broadcast that says so.
@@ -4060,6 +4175,24 @@ export class Orchestrator {
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.sessionId === sessionId) return;
     if (TERMINAL_RUN_STATES.has(meta.state)) return;
+    // A resumed run is born holding the session it was told to continue, so
+    // an executor reporting a DIFFERENT one has opened a conversation with
+    // none of the history this run claims. ClaudeExecutor fails the run
+    // itself before this can happen; for any executor that does not, the
+    // Session log at least says so, rather than letting the successor pass
+    // as a continuation while the agent underneath it starts from nothing.
+    if (meta.resumedFrom !== undefined && meta.sessionId !== undefined) {
+      const notice: NormalizedEntry = {
+        ts: new Date().toISOString(),
+        kind: 'system',
+        text: `This run was resumed onto session ${meta.sessionId} but the agent opened a different session (${sessionId}): the conversation from run ${meta.resumedFrom} is not in its memory.`,
+      };
+      this.bestEffort(`logging session mismatch for run ${runId}`, () => {
+        this.transcriptFor(runId).appendEntry(notice);
+      });
+      this.ctx.events.broadcast({ type: 'run.log', runId, entry: notice });
+      console.error(`dispatchd: run ${runId}: ${notice.text}`);
+    }
     this.registry.updateMeta(runId, {
       sessionId,
       updatedAt: new Date().toISOString(),
@@ -4319,8 +4452,21 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
-  // POST /api/runs/:id/resume: a fresh run in the SAME worktree/branch,
-  // always a new session, with the run's survey (if any) in its prompt.
+  // POST /api/runs/:id/resume (and the boot sweep and dispatchOrResume): a
+  // new run in the SAME worktree/branch that REATTACHES the old run's agent
+  // session, so the conversation it was in the middle of — answered design
+  // questions, granted scope, amendments — is still in the agent's memory.
+  // Its prompt is a continuation note carrying why it stopped and the run's
+  // survey (if any), not the task brief over again.
+  //
+  // A run that never reported a session has no conversation to continue, so
+  // the successor is a fresh agent with the full brief — and it is recorded
+  // as exactly that, in the prompt, the successor's transcript and the task's
+  // Activity, never as a resume. (The unattended callers never get here for
+  // such a run: resumeBlockReason() refuses it first.) The other way a resume
+  // can fail to reattach — the executor being handed a session it cannot pick
+  // up — is the executor's to catch, and it fails the run rather than start
+  // over (see ClaudeExecutor).
   //
   // `auto` marks the one caller that is not a person — reconcileOnBoot's
   // recovery sweep — so the Activity line it writes says a restart brought the
@@ -4361,11 +4507,7 @@ export class Orchestrator {
     } = this.resolveExecutorForResume(meta.executor);
     const now = new Date().toISOString();
     const newRunId = generateRunId(now);
-    const basePrompt = this.promptForTask(task);
-    const prompt =
-      meta.survey !== undefined
-        ? `${basePrompt}\n\n${renderSurveySection(meta.survey)}`
-        : basePrompt;
+    const continuing = meta.sessionId !== undefined;
     const newMeta: RunMeta = {
       id: newRunId,
       taskId: meta.taskId,
@@ -4377,6 +4519,11 @@ export class Orchestrator {
       worktreePath: meta.worktreePath,
       createdAt: now,
       updatedAt: now,
+      // Carried from birth, exactly as requestChanges does: the successor's
+      // own transcript header then holds the handle, so a crash on IT stays
+      // resumable too. Absent on a fresh start — a handle that was never
+      // actually resumed must not be reported as this run's.
+      ...(continuing ? { sessionId: meta.sessionId } : {}),
       model: meta.model,
       // See requestChanges' matching comment — a resumed run keeps whatever
       // its predecessor had already claimed.
@@ -4392,18 +4539,77 @@ export class Orchestrator {
     this.registry.create(newMeta);
     this.transcriptFor(newRunId).writeHeader(newMeta);
 
+    // A fresh start opens the successor's Session log with the reason, so a
+    // reader of that log is never left inferring from an agent that orients
+    // from scratch that it "forgot" a conversation it never had.
+    if (!continuing) {
+      const notice: NormalizedEntry = {
+        ts: now,
+        kind: 'system',
+        text: `Started a fresh session: run ${meta.id} never started a conversation, so there was none to continue.`,
+      };
+      this.bestEffort(
+        `logging fresh-session notice for run ${newRunId}`,
+        () => {
+          this.transcriptFor(newRunId).appendEntry(notice);
+        }
+      );
+      this.ctx.events.broadcast({
+        type: 'run.log',
+        runId: newRunId,
+        entry: notice,
+      });
+    }
+
+    // The predecessor's scope requests follow it into the successor: an open
+    // one is still a card in front of a human, and it has to belong to the run
+    // whose agent can act on the answer. Carried BEFORE the prompt is built so
+    // the agent is told what it was waiting on; the re-broadcast is what moves
+    // the card to the new run in an open app.
+    const carried = this.ctx.scopeRequests?.carry(meta.id, newRunId) ?? [];
+    for (const request of carried) {
+      if (request.granted !== null) continue;
+      this.ctx.events.broadcast({
+        type: 'scope.requested',
+        runId: newRunId,
+        requestId: request.id,
+      });
+    }
+    // A reattached session already holds every ruling the agent was GIVEN,
+    // but not the one its dead request_scope poll never received — so the
+    // carried section goes on both prompt shapes.
+    const prompt = [
+      continuing
+        ? renderContinuationPrompt(meta, newRunId)
+        : `${this.promptForTask(task)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
+      renderScopeRequestsSection(carried),
+    ]
+      .filter((section): section is string => section !== null)
+      .join('\n\n');
+
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
       : '';
+    const openCarried = carried.filter((r) => r.granted === null).length;
+    const carriedNote =
+      openCarried > 0
+        ? `; carried ${openCarried} undecided scope request${openCarried === 1 ? '' : 's'} (${carried
+            .filter((r) => r.granted === null)
+            .map((r) => r.id)
+            .join(', ')})`
+        : '';
     const how =
       opts.auto === true
         ? `auto-resumed after ${meta.state} (daemon restart)`
         : `resumed after ${meta.state}`;
+    const sessionNote = continuing
+      ? ', continuing its session'
+      : ` as a fresh session: run ${meta.id} never started a conversation`;
     this.ctx.store.update(
       meta.taskId,
       {
         status: 'working',
-        appendActivity: `${now} ${how} (run ${newRunId})${substitutionNote}`,
+        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}${carriedNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.
         activityActor:
@@ -4424,6 +4630,7 @@ export class Orchestrator {
         projectRoot: this.ctx.rootDir,
         runId: newRunId,
         prompt,
+        resumeSessionId: meta.sessionId,
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,

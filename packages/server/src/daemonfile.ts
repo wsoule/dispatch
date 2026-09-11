@@ -70,10 +70,19 @@ export function writeDaemonFile(info: DaemonFileInfo): void {
   }
 }
 
+// A half-written or corrupt file reads as "no daemon" rather than throwing —
+// same contract as the MCP package's own copy of this reader. A daemon killed
+// mid-write (which is how a wedged one dies) is exactly how this file gets
+// truncated, and the callers that then have to clean it up are the ones least
+// able to handle an exception.
 export function readDaemonFile(rootDir: string): DaemonFileInfo | null {
   const path = daemonFilePath(rootDir);
   if (!existsSync(path)) return null;
-  return JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  try {
+    return JSON.parse(readFileSync(path, 'utf8')) as DaemonFileInfo;
+  } catch {
+    return null;
+  }
 }
 
 // Removing on shutdown is what lets `dispatch ui` distinguish "no daemon" from

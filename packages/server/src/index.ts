@@ -29,6 +29,7 @@ import {
   rejectUnauthorized,
 } from './api.js';
 import type { ApiContext, DaemonTokens } from './api.js';
+import { spawnGitSync } from './blockingGit.js';
 import { TaskCache } from './cache.js';
 import { ConversationStore } from './conversations.js';
 import {
@@ -60,6 +61,7 @@ import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
 import { Orchestrator } from './orchestrator/orchestrator.js';
+import { scopeRequestsPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -77,6 +79,7 @@ import {
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
 import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
+import { TERMINAL_RUN_STATES } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import { WardenManager } from './orchestrator/warden.js';
 import { ClaudeWarden } from './orchestrator/wardens/claude.js';
@@ -91,8 +94,13 @@ import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { readProjectBackend, writeProjectBackend } from './storage.js';
 import { BoardSyncScheduler } from './sync/scheduler.js';
-import { defaultGitRunner, SyncWorktree } from './sync/worktree.js';
+import {
+  defaultAsyncGitRunner,
+  defaultGitRunner,
+  SyncWorktree,
+} from './sync/worktree.js';
 import { TrackedFilesCache } from './trackedFiles.js';
+import { EventLoopWatchdog } from './watchdog.js';
 import { watchSourceDirs, watchTasks } from './watcher.js';
 
 export interface ServerHandle {
@@ -203,6 +211,9 @@ export interface StartServerOptions {
   // enough never to fire, since every startServer()-based test on the database
   // backend would otherwise boot a live interval.
   receiptsSweepMs?: number;
+  // A main-thread heartbeat gap longer than this is logged as a stall, with
+  // the section the daemon was in (see EventLoopWatchdog). Defaults to 5s.
+  watchdogStallMs?: number;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -384,8 +395,8 @@ async function serveStatic(
 // reader, so this is a thin synchronous wrapper instead.
 function makeGitReader(rootDir: string): GitReader {
   return (args) => {
-    const result = Bun.spawnSync(['git', ...args], { cwd: rootDir });
-    return result.exitCode === 0 ? result.stdout.toString().trim() : null;
+    const result = spawnGitSync(rootDir, args);
+    return result.exitCode === 0 ? result.stdout.trim() : null;
   };
 }
 
@@ -513,6 +524,13 @@ export async function startServer(
     await assertRootNotServed(rootDir);
   }
 
+  // Started before anything that can block, so a boot-time stall (a migration,
+  // the run reconcile sweep) is named in the log like any other.
+  const watchdog = new EventLoopWatchdog({
+    thresholdMs: opts.watchdogStallMs,
+  });
+  watchdog.start();
+
   // Who this daemon acts as. Resolved first, before anything touches the
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
@@ -589,6 +607,7 @@ export async function startServer(
   const watcher =
     store instanceof TaskStore
       ? watchTasks(store.tasksDir, () => {
+          watchdog.mark('task watcher: cache rebuild');
           safeRebuild(store, cache);
           events.broadcast({ type: 'task.changed' });
         })
@@ -615,6 +634,7 @@ export async function startServer(
           worktree: syncWorktree,
           actor: actorContext,
           run: defaultGitRunner,
+          runAsync: defaultAsyncGitRunner,
           events,
           debounceMs: opts.boardSyncDebounceMs,
           periodicMs: opts.boardSyncPeriodicMs,
@@ -758,10 +778,18 @@ export async function startServer(
           readDigestConfig
         )
       : new RepoDigestCache(rootDir);
+  // Out-of-scope edit requests from run agents. Built ahead of the
+  // orchestrator because resumeRun hands a restarted run's requests to its
+  // successor; persisted so the card a human had not decided when dispatchd
+  // restarted comes back instead of vanishing with the process.
+  const scopeRequests = new ScopeRequestRegistry({
+    path: scopeRequestsPath(rootDir),
+  });
   const orchestrator = new Orchestrator({
     rootDir,
     store,
     cache,
+    scopeRequests,
     events,
     jj,
     ledgerStore,
@@ -793,8 +821,15 @@ export async function startServer(
   });
   // Same lifecycle for out-of-scope edit requests: a run that ends still
   // holding one open should not leave it dangling for a human to find later.
-  const scopeRequests = new ScopeRequestRegistry();
+  // A boot force-fail is deliberately NOT a terminal transition here (see
+  // reconcileOnBoot) — that is the one ending a request must outlive.
   orchestrator.onRunTerminal((meta) => {
+    scopeRequests.closeRun(meta.id);
+  });
+  // A force-failed run a human reviews instead of resuming has no successor
+  // for its request to follow; the review is where the card should go. The
+  // run's own review event is what refreshes an open app's view of it.
+  orchestrator.onRunReviewed((meta) => {
     scopeRequests.closeRun(meta.id);
   });
 
@@ -802,6 +837,22 @@ export async function startServer(
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
   orchestrator.reconcileOnBoot();
+  // The requests hydrated from the previous process: kept while their run is
+  // still live (a restart-with-nothing-in-flight reload) or is one this boot
+  // force-failed and can still resume — those re-surface to the human and
+  // follow the run into its successor. Anything else has nobody left to act
+  // on a decision, so it is withdrawn rather than shown.
+  const withdrawn = scopeRequests.reconcile((runId) => {
+    const run = orchestrator.getRun(runId);
+    if (run === null) return false;
+    if (!TERMINAL_RUN_STATES.has(run.meta.state)) return true;
+    return orchestrator.resumeBlockReason(run.meta) === null;
+  });
+  if (withdrawn.length > 0) {
+    console.log(
+      `dispatchd: withdrew ${withdrawn.length} stale scope request(s) at boot: ${withdrawn.join(', ')}`
+    );
+  }
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -915,10 +966,10 @@ export async function startServer(
   // "needs review" forever. Reconcile once at boot — catching anything merged
   // while dispatchd was down — and then on the PR poller's cadence.
   orchestrator.reconcileExternallyMergedRuns();
-  const externalMergeTimer = setInterval(
-    () => orchestrator.reconcileExternallyMergedRuns(),
-    opts.prPollIntervalMs ?? 60000
-  );
+  const externalMergeTimer = setInterval(() => {
+    watchdog.mark('reconcileExternallyMergedRuns tick');
+    orchestrator.reconcileExternallyMergedRuns();
+  }, opts.prPollIntervalMs ?? 60000);
 
   // Shares the exact same command-runner seam as PrManager (opts.prCommandRunner,
   // falling back to defaultCommandRunner) so DISPATCH_FAKE_GH=1 (or a test's
@@ -1146,6 +1197,9 @@ export async function startServer(
     async fetch(req, srv) {
       const url = new URL(req.url);
       const origin = req.headers.get('origin');
+      // Named before any handler runs: a stall inside a synchronous handler
+      // is then attributed to the request that caused it.
+      watchdog.mark(`${req.method} ${url.pathname}`);
 
       if (url.pathname === '/ws') {
         // CORS never applies to a WebSocket, so without this an untrusted page
@@ -1261,6 +1315,7 @@ export async function startServer(
     prManager,
     prWorktrees,
     async stop() {
+      watchdog.stop();
       // First, so the boot recovery sweep stops before anything it might act
       // on is torn down — it can sit in a quiet window for minutes and ends by
       // starting an agent (see Orchestrator.shutdown).

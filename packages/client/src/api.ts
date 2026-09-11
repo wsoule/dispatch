@@ -131,6 +131,10 @@ export interface RunMeta {
   // actually produced one. Mirrors RunMeta.mergeCommit in
   // packages/server/src/orchestrator/types.ts.
   mergeCommit?: string;
+  // Why the most recent merge/discard attempt threw and left the run
+  // unreviewed (a squash conflict names its files here). Cleared once a later
+  // review completes. Mirrors RunMeta.reviewFailure.
+  reviewFailure?: { action: 'merge' | 'discard'; reason: string; at: string };
   // Set once the PR review action has pushed the branch and opened a GitHub
   // PR — stays set (and `reviewedAt` stays unset) until the PR poller sees it
   // merged.
@@ -716,6 +720,7 @@ export interface RunScopeRequest {
   granted: boolean | null;
   decisionReason: string | null;
   decidedAt: string | null;
+  decidedBy: 'app' | 'api' | null;
 }
 
 // The body of `GET /api/runs/claims` — one entry per live run.
@@ -1716,8 +1721,11 @@ export interface ApiClient {
    * carries `stopRequestedAt`, and the run reaches its terminal state later.
    */
   stopRun(runId: string): Promise<RunMeta>;
-  // Agent-death recovery: dispatches a fresh run into a terminal run's same
-  // worktree, with its survey (if any) rendered into the new prompt.
+  // Agent-death recovery: starts a new run in a terminal run's same worktree
+  // that reattaches its agent session, so the conversation it was in the
+  // middle of carries over, with its survey (if any) rendered into the
+  // continuation prompt. A run that never started a session gets a fresh
+  // agent instead, and the run's Activity/transcript say so.
   resumeRun(runId: string): Promise<RunMeta>;
   fetchRunDiff(runId: string): Promise<DiffResult>;
   reviewRun(
@@ -2000,7 +2008,10 @@ export interface ApiClient {
     answer: string
   ): Promise<RunQuestion>;
   // The blocking agent->orchestrator channel (`request_scope`'s landing
-  // spot): look up one request by id, and the call that decides it.
+  // spot): the run's still-open requests (what survives a daemon restart —
+  // the only way to find one without having seen its `scope.requested`
+  // event live), one request by id, and the call that decides it.
+  listScopeRequests(runId: string): Promise<RunScopeRequest[]>;
   fetchScopeRequest(runId: string, requestId: string): Promise<RunScopeRequest>;
   decideScopeRequest(
     runId: string,
@@ -2533,6 +2544,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ answer }),
       }),
+    listScopeRequests: (runId) =>
+      request(target, `/api/runs/${runId}/scope-requests`),
     fetchScopeRequest: (runId, requestId) =>
       request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
     decideScopeRequest: (runId, requestId, granted, reason) =>
