@@ -11,13 +11,25 @@ export const LABEL_BYTES = 256;
 export const SHARED_BUFFER_BYTES = LABEL_OFFSET + LABEL_BYTES;
 
 export interface WatchdogWorkerInit {
+  type: 'start';
   buffer: SharedArrayBuffer;
   thresholdMs: number;
   checkMs: number;
+  /** Skip the stderr lines; reports are still posted back. */
+  quiet: boolean;
 }
 
-export type WatchdogReport = {
-  type: 'stall-ended';
-  stalledMs: number;
-  section: string;
-};
+// The `stop` command is sent by stop(): clear the worker's timer before the
+// thread is terminated.
+export type WatchdogCommand = WatchdogWorkerInit | { type: 'stop' };
+
+export type WatchdogReport =
+  // The worker received its init and is polling: the module resolved and
+  // the thread is up, which a compiled binary missing the worker entry
+  // never reaches.
+  | { type: 'ready' }
+  | {
+      type: 'stall-ended';
+      stalledMs: number;
+      section: string;
+    };

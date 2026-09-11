@@ -8,6 +8,13 @@ import { join } from 'node:path';
 const fallbackHome = mkdtempSync(join(tmpdir(), 'dispatch-fallback-home-'));
 process.env.DISPATCH_HOME = fallbackHome;
 
+// Every startServer() here runs on the test's own thread, so its watchdog
+// also times the test's synchronous fixture work (git init, worktree setup),
+// which under load runs past the 5s production threshold. 30s keeps a real
+// hang visible while the fixture's slow stretches stay out of the output.
+// Tests that exercise the watchdog itself pass their own threshold.
+process.env.DISPATCH_WATCHDOG_STALL_MS = '30000';
+
 // Redirecting alone would only hide the mistake: anything landing here is a
 // suite that forgot its own DISPATCH_HOME, so fail the test that wrote it.
 afterEach(() => {

@@ -1,4 +1,8 @@
-import type { WatchdogReport, WatchdogWorkerInit } from './watchdogShared.js';
+import type {
+  WatchdogCommand,
+  WatchdogReport,
+  WatchdogWorkerInit,
+} from './watchdogShared.js';
 import {
   HEARTBEAT_OFFSET,
   LABEL_BYTES,
@@ -25,7 +29,7 @@ function describeSection(section: string): string {
   return section === '' ? '(no section marked)' : section;
 }
 
-function watch(init: WatchdogWorkerInit): void {
+function watch(init: WatchdogWorkerInit): ReturnType<typeof setInterval> {
   const heartbeat = new BigInt64Array(init.buffer, HEARTBEAT_OFFSET, 1);
   const labelLength = new Int32Array(init.buffer, LABEL_LENGTH_OFFSET, 1);
   const label = new Uint8Array(init.buffer, LABEL_OFFSET, LABEL_BYTES);
@@ -48,7 +52,7 @@ function watch(init: WatchdogWorkerInit): void {
     return lastLabel;
   };
 
-  setInterval(() => {
+  return setInterval(() => {
     const now = Date.now();
     const lastBeat = Number(Atomics.load(heartbeat, 0));
     const age = now - lastBeat;
@@ -60,18 +64,22 @@ function watch(init: WatchdogWorkerInit): void {
       }
       if (now - lastReportAt >= REPEAT_MS) {
         lastReportAt = now;
-        console.error(
-          `dispatchd: event loop stalled ${formatSeconds(age)} in: ${describeSection(stalledSection)}`
-        );
+        if (!init.quiet) {
+          console.error(
+            `dispatchd: event loop stalled ${formatSeconds(age)} in: ${describeSection(stalledSection)}`
+          );
+        }
       }
       return;
     }
     if (stalledSince !== null) {
       const stalledMs = lastBeat - stalledSince;
       const section = stalledSection;
-      console.error(
-        `dispatchd: event loop recovered after ${formatSeconds(stalledMs)} (was in: ${describeSection(section)})`
-      );
+      if (!init.quiet) {
+        console.error(
+          `dispatchd: event loop recovered after ${formatSeconds(stalledMs)} (was in: ${describeSection(section)})`
+        );
+      }
       const report: WatchdogReport = {
         type: 'stall-ended',
         stalledMs,
@@ -85,6 +93,16 @@ function watch(init: WatchdogWorkerInit): void {
   }, init.checkMs);
 }
 
+let timer: ReturnType<typeof setInterval> | null = null;
+
 addEventListener('message', (event: MessageEvent) => {
-  watch(event.data as WatchdogWorkerInit);
+  const command = event.data as WatchdogCommand;
+  if (command.type === 'start') {
+    timer = watch(command);
+    const ready: WatchdogReport = { type: 'ready' };
+    postMessage(ready);
+  } else if (timer !== null) {
+    clearInterval(timer);
+    timer = null;
+  }
 });

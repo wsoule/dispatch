@@ -18,7 +18,15 @@
       // .meta.url)` in watchdog.ts, never imported, so nothing static reaches
       // it. It is also a second `bun build --compile` entrypoint in
       // apps/desktop/scripts/build-sidecars.ts for the same reason.
-      "entry": ["src/index.ts", "src/watchdogWorker.ts"]
+      //
+      // test/fixtures/watchdogTeardown.ts is spawned as a subprocess by
+      // test/watchdog-teardown.test.ts (its stderr is the thing under test),
+      // so nothing imports it either.
+      "entry": [
+        "src/index.ts",
+        "src/watchdogWorker.ts",
+        "test/fixtures/watchdogTeardown.ts"
+      ]
     },
     "packages/demo": {
       // storefront-src is a template copied into the generated demo repo

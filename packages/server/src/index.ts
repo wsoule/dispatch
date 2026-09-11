@@ -219,6 +219,18 @@ export interface StartServerOptions {
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
 
+// DISPATCH_WATCHDOG_STALL_MS overrides the watchdog's 5s default for every
+// server this process starts. The test preload sets it high: an in-process
+// test server shares its thread with the test's own synchronous fixture work
+// (git init, worktree setup), which under load runs past 5s and would be
+// reported as a daemon stall. Unset or unparsable means the default.
+function watchdogStallMsFromEnv(): number | undefined {
+  const raw = process.env.DISPATCH_WATCHDOG_STALL_MS;
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 const DEFAULT_WEB_DIST_DIR = join(moduleDir, '..', '..', 'web', 'dist');
 
 /**
@@ -510,6 +522,36 @@ function migrateLegacyProjectOnBoot(
 export async function startServer(
   opts: StartServerOptions
 ): Promise<ServerHandle> {
+  // Before touching any state: a root another live daemon is serving is not
+  // ours to reconcile.
+  if ((opts.writeDaemonFile ?? true) && opts.replaceRunningDaemon !== true) {
+    await assertRootNotServed(opts.rootDir);
+  }
+
+  // Started before anything that can block, so a boot-time stall (a migration,
+  // the run reconcile sweep) is named in the log like any other. A boot that
+  // fails after this point must take the watchdog down with it: nothing else
+  // holds a handle on it, and a leaked one keeps reporting stalls for a
+  // server that never existed — in one process running many boots (the test
+  // suite), those reports are false and drown the real ones.
+  const watchdog = new EventLoopWatchdog({
+    thresholdMs: opts.watchdogStallMs ?? watchdogStallMsFromEnv(),
+  });
+  watchdog.start();
+  try {
+    return await bootServer(opts, watchdog);
+  } catch (err) {
+    watchdog.stop();
+    throw err;
+  }
+}
+
+// Everything startServer does once its watchdog is armed; `handle.stop()`
+// is what stops the watchdog on the success path.
+async function bootServer(
+  opts: StartServerOptions,
+  watchdog: EventLoopWatchdog
+): Promise<ServerHandle> {
   const { rootDir } = opts;
   const webDistDir =
     opts.webDistDir === undefined ? DEFAULT_WEB_DIST_DIR : opts.webDistDir;
@@ -518,19 +560,6 @@ export async function startServer(
   // One timestamp for both places that name this process: the daemon file
   // and GET /api/health.
   const startedAt = new Date().toISOString();
-
-  // Before touching any state: a root another live daemon is serving is not
-  // ours to reconcile.
-  if (shouldWriteDaemonFile && opts.replaceRunningDaemon !== true) {
-    await assertRootNotServed(rootDir);
-  }
-
-  // Started before anything that can block, so a boot-time stall (a migration,
-  // the run reconcile sweep) is named in the log like any other.
-  const watchdog = new EventLoopWatchdog({
-    thresholdMs: opts.watchdogStallMs,
-  });
-  watchdog.start();
 
   // Who this daemon acts as. Resolved first, before anything touches the
   // store, so a teammate is registered on the roster ahead of any task edit

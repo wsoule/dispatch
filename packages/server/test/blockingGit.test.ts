@@ -34,6 +34,7 @@ describe('spawnGitSync', () => {
       thresholdMs: 150,
       heartbeatMs: 20,
       checkMs: 20,
+      quiet: true,
       onStall: (report) => reports.push(report),
     });
     watchdog.start();

@@ -14,6 +14,10 @@ function blockEventLoop(ms: number): void {
 
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 60));
 
+// Every watchdog here is `quiet`: these tests stall the loop on purpose and
+// assert on the reports, and the worker's stderr line for each would read as
+// a real stall in the suite output.
+
 let watchdog: EventLoopWatchdog | null = null;
 
 afterEach(() => {
@@ -28,6 +32,7 @@ describe('EventLoopWatchdog', () => {
       thresholdMs: 150,
       heartbeatMs: 20,
       checkMs: 20,
+      quiet: true,
       onStall: (report) => reports.push(report),
     });
     watchdog.start();
@@ -56,6 +61,7 @@ describe('EventLoopWatchdog', () => {
       thresholdMs: 150,
       heartbeatMs: 20,
       checkMs: 20,
+      quiet: true,
       onStall: (report) => reports.push(report),
     });
     watchdog.start();
@@ -69,6 +75,7 @@ describe('EventLoopWatchdog', () => {
       thresholdMs: 150,
       heartbeatMs: 20,
       checkMs: 20,
+      quiet: true,
       onStall: (report) => reports.push(report),
     });
     watchdog.start();
@@ -94,6 +101,7 @@ describe('EventLoopWatchdog', () => {
       thresholdMs: 150,
       heartbeatMs: 20,
       checkMs: 20,
+      quiet: true,
       onStall: (report) => reports.push(report),
     });
     watchdog.start();
@@ -112,12 +120,30 @@ describe('EventLoopWatchdog', () => {
     );
   });
 
+  it('reports its lifecycle: armed once the worker answers, then stopped', async () => {
+    watchdog = new EventLoopWatchdog({
+      thresholdMs: 150,
+      heartbeatMs: 20,
+      checkMs: 20,
+      quiet: true,
+    });
+    expect(watchdog.status()).toBe('idle');
+    watchdog.start();
+    expect(watchdog.status()).toBe('starting');
+    await tick();
+    await tick();
+    expect(watchdog.status()).toBe('armed');
+    watchdog.stop();
+    expect(watchdog.status()).toBe('stopped');
+  });
+
   it('reports nothing once stopped', async () => {
     const reports: StallReport[] = [];
     watchdog = new EventLoopWatchdog({
       thresholdMs: 150,
       heartbeatMs: 20,
       checkMs: 20,
+      quiet: true,
       onStall: (report) => reports.push(report),
     });
     watchdog.start();

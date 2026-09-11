@@ -1,4 +1,8 @@
-import type { WatchdogReport, WatchdogWorkerInit } from './watchdogShared.js';
+import type {
+  WatchdogCommand,
+  WatchdogReport,
+  WatchdogWorkerInit,
+} from './watchdogShared.js';
 import {
   HEARTBEAT_OFFSET,
   LABEL_BYTES,
@@ -28,7 +32,25 @@ export interface EventLoopWatchdogOptions {
   checkMs?: number;
   /** Delivered after a stall ends. The worker logs to stderr regardless. */
   onStall?: (report: StallReport) => void;
+  /**
+   * Keeps the worker's stderr lines out of the log; `onStall` still fires.
+   * For tests that stall the loop on purpose — a real daemon never sets it.
+   */
+  quiet?: boolean;
 }
+
+/**
+ * Where a watchdog is in its life. `armed` is the only state in which a
+ * stall would be reported; `failed` means the worker never came up — in a
+ * compiled daemon, that the worker module was not a build entrypoint (see
+ * apps/desktop/scripts/build-sidecars.ts). Surfaced at GET /api/health.
+ */
+export type WatchdogStatus =
+  | 'idle'
+  | 'starting'
+  | 'armed'
+  | 'failed'
+  | 'stopped';
 
 const DEFAULT_THRESHOLD_MS = 5_000;
 const DEFAULT_HEARTBEAT_MS = 250;
@@ -75,14 +97,17 @@ export class EventLoopWatchdog {
   private readonly heartbeatMs: number;
   private readonly checkMs: number;
   private readonly onStall: ((report: StallReport) => void) | undefined;
+  private readonly quiet: boolean;
   private worker: Worker | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private lifecycle: WatchdogStatus = 'idle';
 
   constructor(opts: EventLoopWatchdogOptions = {}) {
     this.thresholdMs = opts.thresholdMs ?? DEFAULT_THRESHOLD_MS;
     this.heartbeatMs = opts.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
     this.checkMs = opts.checkMs ?? DEFAULT_CHECK_MS;
     this.onStall = opts.onStall;
+    this.quiet = opts.quiet ?? false;
   }
 
   start(): void {
@@ -95,8 +120,13 @@ export class EventLoopWatchdog {
     const worker = new Worker(workerUrl());
     worker.unref();
     worker.addEventListener('message', (event: MessageEvent) => {
+      // A report in flight when stop() ran belongs to a watchdog that no
+      // longer exists; dropping it keeps a stopped server silent.
+      if (this.worker !== worker) return;
       const report = event.data as WatchdogReport;
-      if (report.type === 'stall-ended') {
+      if (report.type === 'ready') {
+        this.lifecycle = 'armed';
+      } else if (report.type === 'stall-ended') {
         this.onStall?.({
           stalledMs: report.stalledMs,
           section: report.section,
@@ -105,22 +135,49 @@ export class EventLoopWatchdog {
     });
     worker.addEventListener('error', (event: ErrorEvent) => {
       console.error(`dispatchd: event loop watchdog stopped: ${event.message}`);
+      // The worker is gone (a failed load is the common case: its module was
+      // not compiled into the binary). Forget it so stop() does not post to a
+      // dead thread and mark() stops writing labels nobody reads.
+      if (this.worker === worker) {
+        this.worker = null;
+        this.lifecycle = 'failed';
+      }
     });
     const init: WatchdogWorkerInit = {
+      type: 'start',
       buffer: this.buffer,
       thresholdMs: this.thresholdMs,
       checkMs: this.checkMs,
+      quiet: this.quiet,
     };
     worker.postMessage(init);
     this.worker = worker;
+    this.lifecycle = 'starting';
     setActiveWatchdog(this);
   }
 
+  status(): WatchdogStatus {
+    return this.lifecycle;
+  }
+
+  /**
+   * Stops the heartbeat, terminates the worker and releases the marking seam.
+   * Idempotent, and safe to call on a watchdog that never started. The worker
+   * is asked to stop its own timer before being terminated: terminate() is
+   * not instantaneous, and a worker mid-tick with a heartbeat that has just
+   * stopped is exactly the shape it would otherwise report as a stall.
+   */
   stop(): void {
     if (this.timer !== null) clearInterval(this.timer);
     this.timer = null;
-    this.worker?.terminate();
+    const worker = this.worker;
     this.worker = null;
+    if (worker !== null) {
+      const command: WatchdogCommand = { type: 'stop' };
+      worker.postMessage(command);
+      worker.terminate();
+    }
+    this.lifecycle = 'stopped';
     if (activeWatchdog === this) setActiveWatchdog(null);
   }
 
@@ -131,6 +188,7 @@ export class EventLoopWatchdog {
    * enough to identify the call site.
    */
   mark(section: string): void {
+    if (this.worker === null) return;
     const bytes = this.encoder.encode(section);
     const length = Math.min(bytes.length, LABEL_BYTES);
     // Length goes to zero first and back last, so a worker that reads
