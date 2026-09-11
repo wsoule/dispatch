@@ -73,6 +73,18 @@ describe('GET /api/health', () => {
     expect(body.models.execute.length).toBeGreaterThan(0);
   });
 
+  // A daemon with no watchdog is the incident shape this exists to catch,
+  // and `failed` here is its only visible symptom.
+  it('reports the event-loop watchdog as armed', async () => {
+    const deadline = Date.now() + 5_000;
+    let body = await json(await fetch(`${baseUrl}/api/health`));
+    while (body.watchdog === 'starting' && Date.now() < deadline) {
+      await Bun.sleep(20);
+      body = await json(await fetch(`${baseUrl}/api/health`));
+    }
+    expect(body.watchdog).toBe('armed');
+  });
+
   it('serves JSON responses with an explicit utf-8 charset', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.headers.get('content-type')).toBe(

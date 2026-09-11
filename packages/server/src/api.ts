@@ -141,6 +141,7 @@ import { redactSecretUrls } from './secretUrls.js';
 import type { SyncResult } from './sync/boardSyncer.js';
 import type { BoardSyncScheduler } from './sync/scheduler.js';
 import type { TrackedFilesCache } from './trackedFiles.js';
+import type { WatchdogStatus } from './watchdog.js';
 
 // Everything a request handler needs, bundled so `handleApi` stays a pure
 // function of (request, context) instead of reaching for module-level state —
@@ -230,6 +231,10 @@ export interface ApiContext {
   // probe to notice when another daemon has overwritten or removed it — a
   // daemon that never claimed one has nothing to be displaced from.
   claimsDaemonFile: boolean;
+  // The event-loop watchdog's state, read per probe. `failed` is the one to
+  // watch for: a compiled daemon whose worker module was left out of the
+  // build boots fine and reports that here, and nowhere else.
+  watchdogStatus: () => WatchdogStatus;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -3944,6 +3949,7 @@ export async function handleApi(
         pid: process.pid,
         startedAt: ctx.startedAt,
         models: loadConfig(ctx.rootDir).models,
+        watchdog: ctx.watchdogStatus(),
       });
     }
 

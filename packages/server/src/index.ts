@@ -1230,6 +1230,7 @@ async function bootServer(
     storeBackend: backend,
     mergeDriverOk,
     claimsDaemonFile: shouldWriteDaemonFile,
+    watchdogStatus: () => watchdog.status(),
   };
 
   const server = Bun.serve({

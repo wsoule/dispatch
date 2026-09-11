@@ -58,6 +58,9 @@ export interface HealthPayload {
   // fact is spelled out in `problems`; this is for branching without
   // matching the string.
   identity?: 'ok' | 'displaced' | 'unregistered';
+  // The daemon's event-loop watchdog. 'failed' means it never came up — for
+  // a compiled daemon, that its worker module was left out of the build.
+  watchdog?: 'idle' | 'starting' | 'armed' | 'failed' | 'stopped';
   // Records the daemon's last cache rebuild could not read, plus the
   // identity problem above when there is one — visibility only, `ok` stays
   // true.
