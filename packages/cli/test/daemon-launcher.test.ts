@@ -3,7 +3,10 @@ import { chmodSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { resolveDaemonLauncher } from '../src/commands/daemon.js';
+import {
+  bundledExecutableName,
+  resolveDaemonLauncher,
+} from '../src/commands/daemon.js';
 
 // The three-tier precedence resolveDaemonLauncher implements — see its doc
 // comment: (a) DISPATCH_DAEMON_BIN override, (b) a compiled `dispatchd` binary
@@ -40,7 +43,7 @@ describe('resolveDaemonLauncher precedence', () => {
     const dir = makeResourcesDir(['dispatchd', 'dispatch-cli']);
     process.env.DISPATCH_DAEMON_BIN = '/custom/dispatchd';
 
-    const launcher = resolveDaemonLauncher(join(dir, 'dispatch-cli'));
+    const launcher = resolveDaemonLauncher(join(dir, 'dispatch-cli'), 'linux');
 
     expect(launcher.cmd).toBe('/custom/dispatchd');
     expect(launcher.leadingArgs).toEqual([]);
@@ -61,7 +64,7 @@ describe('resolveDaemonLauncher precedence', () => {
   it('(b) spawns a sibling compiled dispatchd directly and points at the sibling MCP', () => {
     const dir = makeResourcesDir(['dispatchd', 'dispatch-mcp', 'dispatch-cli']);
 
-    const launcher = resolveDaemonLauncher(join(dir, 'dispatch-cli'));
+    const launcher = resolveDaemonLauncher(join(dir, 'dispatch-cli'), 'linux');
 
     expect(launcher.cmd).toBe(join(dir, 'dispatchd'));
     expect(launcher.leadingArgs).toEqual([]);
@@ -71,10 +74,28 @@ describe('resolveDaemonLauncher precedence', () => {
     });
   });
 
+  it('(b) uses .exe sibling names for a bundled Windows CLI', () => {
+    const dir = makeResourcesDir([
+      'dispatchd.exe',
+      'dispatch-mcp.exe',
+      'dispatch-cli.exe',
+    ]);
+
+    const launcher = resolveDaemonLauncher(
+      join(dir, 'dispatch-cli.exe'),
+      'win32'
+    );
+
+    expect(launcher.cmd).toBe(join(dir, 'dispatchd.exe'));
+    expect(launcher.env).toEqual({
+      DISPATCH_MCP_BIN: join(dir, 'dispatch-mcp.exe'),
+    });
+  });
+
   it('(b) omits DISPATCH_MCP_BIN when no sibling MCP binary is present', () => {
     const dir = makeResourcesDir(['dispatchd', 'dispatch-cli']);
 
-    const launcher = resolveDaemonLauncher(join(dir, 'dispatch-cli'));
+    const launcher = resolveDaemonLauncher(join(dir, 'dispatch-cli'), 'linux');
 
     expect(launcher.cmd).toBe(join(dir, 'dispatchd'));
     expect(launcher.env).toEqual({});
@@ -88,7 +109,17 @@ describe('resolveDaemonLauncher precedence', () => {
 
     expect(launcher.cmd).toBe('bun');
     expect(launcher.leadingArgs).toHaveLength(1);
-    expect(launcher.leadingArgs[0]).toMatch(/packages\/server\/src\/bin\.ts$/);
+    expect(launcher.leadingArgs[0]).toMatch(
+      /packages[\\/]server[\\/]src[\\/]bin\.ts$/
+    );
     expect(launcher.usesBun).toBe(true);
+  });
+});
+
+describe('bundledExecutableName', () => {
+  it('adds .exe only on Windows', () => {
+    expect(bundledExecutableName('dispatchd', 'win32')).toBe('dispatchd.exe');
+    expect(bundledExecutableName('dispatchd', 'linux')).toBe('dispatchd');
+    expect(bundledExecutableName('dispatchd', 'darwin')).toBe('dispatchd');
   });
 });
