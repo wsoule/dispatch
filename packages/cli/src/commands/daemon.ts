@@ -105,6 +105,14 @@ export interface DaemonLauncher {
   usesBun: boolean;
 }
 
+/** The compiled sidecar filename used by a packaged CLI on this platform. */
+export function bundledExecutableName(
+  name: string,
+  platform: NodeJS.Platform = process.platform
+): string {
+  return platform === 'win32' ? `${name}.exe` : name;
+}
+
 // Classifies an explicit `DISPATCH_DAEMON_BIN` override: a `.ts`/`.js` entry
 // still runs through `bun`, anything else is treated as a compiled binary
 // spawned directly.
@@ -136,7 +144,8 @@ function launcherForOverride(binPath: string): DaemonLauncher {
 // which point it at a temp-dir layout to exercise the sibling-binary branch
 // without depending on where the test runner itself lives.
 export function resolveDaemonLauncher(
-  execPath: string = process.execPath
+  execPath: string = process.execPath,
+  platform: NodeJS.Platform = process.platform
 ): DaemonLauncher {
   const override = process.env.DISPATCH_DAEMON_BIN;
   if (override !== undefined && override !== '') {
@@ -144,10 +153,16 @@ export function resolveDaemonLauncher(
   }
 
   const execDir = dirname(execPath);
-  const siblingDaemon = join(execDir, 'dispatchd');
+  const siblingDaemon = join(
+    execDir,
+    bundledExecutableName('dispatchd', platform)
+  );
   if (existsSync(siblingDaemon)) {
     const env: Record<string, string> = {};
-    const siblingMcp = join(execDir, 'dispatch-mcp');
+    const siblingMcp = join(
+      execDir,
+      bundledExecutableName('dispatch-mcp', platform)
+    );
     if (existsSync(siblingMcp)) env.DISPATCH_MCP_BIN = siblingMcp;
     return { cmd: siblingDaemon, leadingArgs: [], env, usesBun: false };
   }

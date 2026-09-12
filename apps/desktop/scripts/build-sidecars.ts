@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
-// Compiles the two sidecar binaries the desktop app bundles as resources —
-// dispatchd (packages/server) and dispatch-mcp (packages/mcp) — into
+// Compiles the three sidecar binaries the desktop app bundles as resources —
+// dispatchd (packages/server), dispatch-mcp (packages/mcp), and dispatch-cli
+// (packages/cli) — into
 // standalone `bun build --compile` executables under src-tauri/resources/.
 //
 // When `APPLE_SIGNING_IDENTITY` is set on macOS, each binary is also
@@ -78,42 +79,55 @@ function run(label: string, cmd: string[]): void {
   }
 }
 
-for (const { entry, name, extraEntries = [] } of SIDECARS) {
-  const outfile = join(resourcesDir, name);
-  run(`compile ${name}`, [
-    'bun',
-    'build',
-    '--compile',
-    entry,
-    ...extraEntries,
-    '--outfile',
-    outfile,
-  ]);
-  chmodSync(outfile, 0o755);
+/** The filename Bun writes and Tauri bundles on a given host platform. */
+export function sidecarExecutableName(
+  name: string,
+  platform: NodeJS.Platform
+): string {
+  return platform === 'win32' ? `${name}.exe` : name;
 }
-cleanupBunBuildArtifacts(desktopDir);
 
-const identity = process.env.APPLE_SIGNING_IDENTITY;
-if (process.platform === 'darwin' && identity) {
-  for (const { name } of SIDECARS) {
-    run(`codesign ${name}`, [
-      'codesign',
-      '--force',
-      '--sign',
-      identity,
-      '--options',
-      'runtime',
-      '--entitlements',
-      entitlements,
-      '--timestamp',
-      join(resourcesDir, name),
+function main(): void {
+  for (const { entry, name, extraEntries = [] } of SIDECARS) {
+    const executableName = sidecarExecutableName(name, process.platform);
+    const outfile = join(resourcesDir, executableName);
+    run(`compile ${executableName}`, [
+      'bun',
+      'build',
+      '--compile',
+      entry,
+      ...extraEntries,
+      '--outfile',
+      outfile,
     ]);
+    if (process.platform !== 'win32') chmodSync(outfile, 0o755);
   }
-  console.log(
-    `build-sidecars: signed all ${SIDECARS.length} sidecars as "${identity}"`
-  );
-} else {
-  console.log(
-    'build-sidecars: APPLE_SIGNING_IDENTITY not set — sidecars left unsigned'
-  );
+  cleanupBunBuildArtifacts(desktopDir);
+
+  const identity = process.env.APPLE_SIGNING_IDENTITY;
+  if (process.platform === 'darwin' && identity) {
+    for (const { name } of SIDECARS) {
+      run(`codesign ${name}`, [
+        'codesign',
+        '--force',
+        '--sign',
+        identity,
+        '--options',
+        'runtime',
+        '--entitlements',
+        entitlements,
+        '--timestamp',
+        join(resourcesDir, sidecarExecutableName(name, process.platform)),
+      ]);
+    }
+    console.log(
+      `build-sidecars: signed all ${SIDECARS.length} sidecars as "${identity}"`
+    );
+  } else {
+    console.log(
+      'build-sidecars: APPLE_SIGNING_IDENTITY not set — sidecars left unsigned'
+    );
+  }
 }
+
+if (import.meta.main) main();
