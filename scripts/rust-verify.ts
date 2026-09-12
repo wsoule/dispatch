@@ -24,7 +24,10 @@ const rustDir = 'apps/desktop/src-tauri';
 // tauri-build's build script errors if a declared bundle resource is missing.
 // The sidecars are gitignored build products that cargo test never runs, so
 // empty placeholders satisfy it — the same trick ci.yml uses.
-const placeholderResources = ['dispatchd', 'dispatch-mcp', 'dispatch-cli'];
+const executableSuffix = process.platform === 'win32' ? '.exe' : '';
+const placeholderResources = ['dispatchd', 'dispatch-mcp', 'dispatch-cli'].map(
+  (name) => `${name}${executableSuffix}`
+);
 
 function git(args: string[]): {
   status: number;

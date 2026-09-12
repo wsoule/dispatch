@@ -484,6 +484,12 @@ pub async fn restart_dispatchd(
 /// entry through `bun` from this checkout (`CARGO_MANIFEST_DIR`); a packaged
 /// release runs the two standalone binaries bundled under the app's Resource
 /// dir, so the shipped app depends on neither `bun` nor the checkout.
+#[cfg(any(not(debug_assertions), test))]
+fn bundled_resource_path(name: &str, windows: bool) -> String {
+    let suffix = if windows { ".exe" } else { "" };
+    format!("resources/{name}{suffix}")
+}
+
 fn resolve_daemon_launch(
     app: &tauri::AppHandle,
 ) -> Result<sidecar::DaemonLaunch, String> {
@@ -495,16 +501,15 @@ fn resolve_daemon_launch(
     #[cfg(not(debug_assertions))]
     {
         use tauri::Manager;
+        let dispatchd_resource = bundled_resource_path("dispatchd", cfg!(windows));
         let dispatchd = app
             .path()
-            .resolve("resources/dispatchd", tauri::path::BaseDirectory::Resource)
+            .resolve(dispatchd_resource, tauri::path::BaseDirectory::Resource)
             .map_err(|e| format!("cannot locate bundled dispatchd: {e}"))?;
+        let mcp_resource = bundled_resource_path("dispatch-mcp", cfg!(windows));
         let mcp = app
             .path()
-            .resolve(
-                "resources/dispatch-mcp",
-                tauri::path::BaseDirectory::Resource,
-            )
+            .resolve(mcp_resource, tauri::path::BaseDirectory::Resource)
             .map_err(|e| format!("cannot locate bundled MCP server: {e}"))?;
         Ok(sidecar::DaemonLaunch::Bundled { dispatchd, mcp })
     }
@@ -767,6 +772,26 @@ pub async fn clone_github_repo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn bundled_resource_paths_add_exe_only_for_windows() {
+        assert_eq!(
+            bundled_resource_path("dispatchd", true),
+            "resources/dispatchd.exe"
+        );
+        assert_eq!(
+            bundled_resource_path("dispatch-mcp", true),
+            "resources/dispatch-mcp.exe"
+        );
+        assert_eq!(
+            bundled_resource_path("dispatchd", false),
+            "resources/dispatchd"
+        );
+        assert_eq!(
+            bundled_resource_path("dispatch-mcp", false),
+            "resources/dispatch-mcp"
+        );
+    }
 
     #[test]
     fn resolve_project_root_walks_up_three_levels_to_the_monorepo_root() {

@@ -73,14 +73,26 @@ tasks:
     command: 'bun scripts/build-sidecars.ts'
     deps:
       - '^:build'
+    inputs:
+      - 'scripts/build-sidecars.ts'
+      - '$RUNNER_ARCH'
+      - '/packages/cli/src/**/*'
+      - '/packages/core/src/**/*'
+      - '/packages/mcp/src/**/*'
+      - '/packages/server/src/**/*'
+      - '/pnpm-lock.yaml'
+    outputs:
+      - 'src-tauri/resources/dispatchd*'
+      - 'src-tauri/resources/dispatch-mcp*'
+      - 'src-tauri/resources/dispatch-cli*'
     options:
-      cache: false
       runInCI: 'skip'
 
   tauri-dev:
     command: 'pnpm exec tauri dev'
     deps:
       - '^:build'
+      - 'build-sidecars'
     options:
       cache: false
       persistent: true
