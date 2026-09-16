@@ -1942,19 +1942,17 @@ export class Orchestrator {
     const executorName =
       request.executor ?? request.defaults?.executor ?? DEFAULT_EXECUTOR_NAME;
     return await this.dispatch(taskId, executorName, {
-      // The project's configured `models.execute` is the last fallback, so a
-      // caller that resolves no default still lands where settings chose. It
-      // sits at the same precedence as `defaults.model` — after anything the
-      // caller NAMED — so the named-vs-defaulted distinction resume turns on
-      // is untouched (resumeHonoursRequest has already run, on the raw
-      // request). Resolving this per caller instead is what silently ran a
-      // whole 2026-09-08 fleet on the CLI's default model: only the HTTP
-      // route passed `defaults`, while the epic auto-fill and the overseer's
-      // dispatch tool passed none, and the config key looked ignored.
+      // The project's configured `models.execute` is Claude's last fallback,
+      // so a Claude caller that resolves no default still lands where settings
+      // chose. Codex has its own model namespace and must keep an omitted model
+      // omitted. An explicitly named model always wins for either executor.
+      // Resolving this here keeps non-HTTP callers on the same semantics.
       model:
         request.model ??
-        request.defaults?.model ??
-        loadConfig(this.ctx.rootDir).models.execute,
+        (executorName === DEFAULT_EXECUTOR_NAME
+          ? (request.defaults?.model ??
+            loadConfig(this.ctx.rootDir).models.execute)
+          : undefined),
       actor: request.actor,
     });
   }

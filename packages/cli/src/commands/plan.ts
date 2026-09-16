@@ -335,7 +335,7 @@ export function registerPlanCommands(program: Command, ctx: CliContext): void {
   epic
     .command('start <epicId>')
     .option('--concurrency <n>', 'max concurrent child runs')
-    .option('--executor <name>', 'claude|fake', 'claude')
+    .option('--executor <name>', 'claude|codex|fake', 'claude')
     .option('--json')
     .action(
       async (

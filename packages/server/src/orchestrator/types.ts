@@ -123,10 +123,9 @@ export interface ExecutorStartOptions {
   permissionMode: string;
   maxTurns?: number;
   maxBudgetUsd?: number;
-  // The Claude model this run should use (an SDK model id like
-  // 'claude-opus-5' or an alias like 'sonnet'), chosen at dispatch time.
-  // Optional — omitted falls back to the SDK/CLI default, so FakeExecutor
-  // fixtures and callers that don't care never need to set it.
+  // The executor-specific model this run should use, chosen at dispatch time.
+  // Optional — omitted uses that executor's default behavior, so fixtures and
+  // callers that don't care never need to set it.
   model?: string;
   // The dispatch PROJECT's root directory — distinct from `cwd`, which for a
   // real run is the run's own git worktree (a different directory than the

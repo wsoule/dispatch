@@ -375,7 +375,7 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     });
     expect(result.code).not.toBe(0);
     expect(result.stderr).toContain(
-      'invalid executor: wombat (expected claude|fake)'
+      'invalid executor: wombat (expected claude|codex|fake)'
     );
   });
 

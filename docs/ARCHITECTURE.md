@@ -191,11 +191,11 @@ daemon lost track of it. Recovery information instead of a hand inspection.
 **Run kinds:** `execute` writes code, `review` judges a diff and emits findings,
 `verify` runs checks against finished work.
 
-**Executors** are pluggable (`registerExecutor`). Production registers exactly
-one, `ClaudeExecutor`, over `@anthropic-ai/claude-agent-sdk`. `FakeExecutor` and
-`FakePlanner` exist behind the `DISPATCH_ENABLE_FAKES` gate and are what
-`apps/demo` and much of the test suite run against — the demo sandbox is a real
-daemon with a scripted agent, not a mock UI.
+**Executors** are pluggable (`registerExecutor`). Production registers
+`ClaudeExecutor` over `@anthropic-ai/claude-agent-sdk` and `CodexExecutor`.
+`FakeExecutor` and `FakePlanner` exist behind the `DISPATCH_ENABLE_FAKES` gate
+and are what `apps/demo` and much of the test suite run against — the demo
+sandbox is a real daemon with a scripted agent, not a mock UI.
 
 Notable modules:
 

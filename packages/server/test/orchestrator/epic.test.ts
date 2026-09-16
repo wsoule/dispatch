@@ -121,6 +121,12 @@ function createEpicWithChildren(
 describe('dispatch model default', () => {
   it('records the project-configured models.execute on an epic auto-fill', async () => {
     const { epics, store, orchestrator } = makeHarness();
+    orchestrator.registerExecutor(
+      'claude',
+      new FakeExecutor({
+        finish: { state: 'finished', costUsd: 0, turns: 1 },
+      })
+    );
     // After the harness, whose TaskStore.init creates `.dispatch`. The config
     // is read fresh at dispatch time, so writing it here still counts.
     writeFileSync(
@@ -129,7 +135,7 @@ describe('dispatch model default', () => {
     );
     const { epicId } = createEpicWithChildren(store, 1);
 
-    await epics.start(epicId, { executor: 'fake', concurrency: 1 });
+    await epics.start(epicId, { executor: 'claude', concurrency: 1 });
     await waitFor(() => orchestrator.list().length > 0);
 
     expect(orchestrator.list()[0]?.model).toBe('claude-sonnet-5');

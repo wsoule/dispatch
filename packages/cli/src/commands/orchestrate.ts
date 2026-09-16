@@ -220,7 +220,7 @@ export function registerOrchestrateCommands(
   run.addHelpText(
     'after',
     '\nDispatch a new run with:\n' +
-      '  dispatch run <task-id> [--executor claude|fake] [--fresh] [--watch] [--json]\n' +
+      '  dispatch run <task-id> [--executor claude|codex|fake] [--fresh] [--watch] [--json]\n' +
       '\nA task whose last run failed with its worktree intact is resumed rather\n' +
       'than started over; --fresh forces a new run. Resume a specific run with:\n' +
       '  dispatch run resume <run-id>'
@@ -228,7 +228,7 @@ export function registerOrchestrateCommands(
 
   run
     .command('dispatch <taskId>', { isDefault: true, hidden: true })
-    .option('--executor <name>', 'claude|fake', 'claude')
+    .option('--executor <name>', 'claude|codex|fake', 'claude')
     .option(
       '--fresh',
       "start a new run even when the task's last run could be resumed"

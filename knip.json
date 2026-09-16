@@ -61,11 +61,15 @@
   // deliberately optional — it degrades to a built-in scanner when absent.
   // System binaries, not anything this repo can declare.
   //
+  // The Codex executor intentionally launches the user-installed Codex CLI/App
+  // Server (`codex app-server --stdio`) directly. It is an external runtime
+  // binary, not a dependency this repo can declare.
+  //
   // noop is moon's built-in no-op command (tag-publishable.yml's `prepublish`
   // guard and the no-build passthrough builds run it), not a real binary.
   // tsdown is a real devDependency, but only in the four tsdown-tagged packages
   // (core/client/cli/mcp) — knip's moonrepo plugin is root-only and checks
   // .moon/tasks/*.yml commands against the root package.json, which never lists
   // per-package build tools.
-  "ignoreBinaries": ["pgrep", "pkill", "carto", "noop", "tsdown"]
+  "ignoreBinaries": ["pgrep", "pkill", "carto", "codex", "noop", "tsdown"]
 }

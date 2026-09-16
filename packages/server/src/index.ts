@@ -57,6 +57,7 @@ import { LinearSync } from './linear/sync.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { CodexExecutor } from './orchestrator/executors/codex.js';
 import { FixLoop, FixLoopStore } from './orchestrator/fixLoop.js';
 import { JjManager } from './orchestrator/jj.js';
 import { MergeQueue } from './orchestrator/mergeQueue.js';
@@ -153,8 +154,8 @@ export interface StartServerOptions {
   // project is deliberately moved. Tests pass it directly.
   storeBackend?: TaskStoreBackend;
   // Overrides which executors get registered on the orchestrator, in place
-  // of the production default (ClaudeExecutor as 'claude' only — Phase 7
-  // moved FakeExecutor's registration behind bin.ts's DISPATCH_ENABLE_FAKES
+  // of the production defaults (ClaudeExecutor as 'claude' and CodexExecutor
+  // as 'codex' — Phase 7 moved FakeExecutor behind bin.ts's DISPATCH_ENABLE_FAKES
   // gate rather than always registering it here). Tests that dispatch
   // through the real HTTP surface without exercising the real Agent SDK
   // (e.g. a request that omits `executor` and so defaults to 'claude') use
@@ -716,8 +717,8 @@ async function bootServer(
     // nothing in the audit trail until an unrelated task edit came along.
     if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
   });
-  // The orchestrator's own executor registry: 'claude' (Slice O2's real
-  // Agent SDK executor) is the production default per api.ts's createRun.
+  // The orchestrator's own executor registry contains the real 'claude' and
+  // 'codex' backends. API calls still default to 'claude' when omitted.
   // FakeExecutor is NOT registered by default (Phase 7) — bin.ts registers
   // it under 'fake' only when DISPATCH_ENABLE_FAKES=1, a test/e2e-only hook.
   // Tests override this default entirely via `registerExecutors` (see its
@@ -840,6 +841,7 @@ async function bootServer(
     opts.registerExecutors(orchestrator);
   } else {
     orchestrator.registerExecutor('claude', new ClaudeExecutor());
+    orchestrator.registerExecutor('codex', new CodexExecutor());
   }
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.

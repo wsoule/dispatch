@@ -1780,7 +1780,11 @@ export interface ApiClient {
   // re-dispatch cannot silently abandon work an agent had nearly finished.
   createRun(
     taskId: string,
-    opts?: { executor?: 'fake' | 'claude'; model?: string; fresh?: boolean }
+    opts?: {
+      executor?: 'fake' | 'claude' | 'codex';
+      model?: string;
+      fresh?: boolean;
+    }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   // Every in-memory conversation agent (planner chats, enrich agents, task
@@ -2176,7 +2180,7 @@ export interface ApiClient {
   // server-side to the project's `orchestrator.epicConcurrency` config.
   startEpic(
     epicId: string,
-    opts?: { concurrency?: number; executor?: 'fake' | 'claude' }
+    opts?: { concurrency?: number; executor?: 'fake' | 'claude' | 'codex' }
   ): Promise<EpicSession>;
   stopEpic(epicId: string): Promise<EpicSession>;
   fetchEpicProgress(epicId: string): Promise<EpicProgress>;

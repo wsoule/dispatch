@@ -851,4 +851,57 @@ describe('Orchestrator.dispatchOrResume', () => {
     expect(meta.resumedFrom).toBeUndefined();
     expect(meta.executor).toBe('claude');
   });
+
+  it('resolves execute models according to the selected executor', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    writeFileSync(
+      join(repo, '.dispatch/config.yml'),
+      'models:\n  execute: configured-claude-model\n'
+    );
+    const claude = new StallingExecutor();
+    const codex = new StallingExecutor();
+    orchestrator.registerExecutor('claude', claude);
+    orchestrator.registerExecutor('codex', codex);
+
+    const defaultTask = store.create({ title: 'Default Claude model' });
+    const explicitClaudeTask = store.create({ title: 'Explicit Claude model' });
+    const namedClaudeModelTask = store.create({ title: 'Named Claude model' });
+    const implicitCodexTask = store.create({ title: 'Implicit Codex model' });
+    const explicitCodexTask = store.create({ title: 'Explicit Codex model' });
+
+    const defaultClaude = await orchestrator.dispatchOrResume(
+      defaultTask.meta.id
+    );
+    const explicitClaude = await orchestrator.dispatchOrResume(
+      explicitClaudeTask.meta.id,
+      { executor: 'claude' }
+    );
+    const namedClaudeModel = await orchestrator.dispatchOrResume(
+      namedClaudeModelTask.meta.id,
+      { executor: 'claude', model: 'explicit-claude-model' }
+    );
+    const implicitCodex = await orchestrator.dispatchOrResume(
+      implicitCodexTask.meta.id,
+      { executor: 'codex' }
+    );
+    const explicitCodex = await orchestrator.dispatchOrResume(
+      explicitCodexTask.meta.id,
+      { executor: 'codex', model: 'gpt-6-astra' }
+    );
+
+    expect(defaultClaude.model).toBe('configured-claude-model');
+    expect(explicitClaude.model).toBe('configured-claude-model');
+    expect(namedClaudeModel.model).toBe('explicit-claude-model');
+    expect(implicitCodex.model).toBeUndefined();
+    expect(explicitCodex.model).toBe('gpt-6-astra');
+    expect(claude.started.map(({ model }) => model)).toEqual([
+      'configured-claude-model',
+      'configured-claude-model',
+      'explicit-claude-model',
+    ]);
+    expect(codex.started.map(({ model }) => model)).toEqual([
+      undefined,
+      'gpt-6-astra',
+    ]);
+  });
 });

@@ -12,6 +12,7 @@ import { join, resolve } from 'node:path';
 import { makeFakeGhRunner } from './fakeGh.js';
 import { resolveStoreBackend, startServer } from './index.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
+import { CodexExecutor } from './orchestrator/executors/codex.js';
 import type { FakeExecutorScript } from './orchestrator/executors/fake.js';
 import { FakeExecutor } from './orchestrator/executors/fake.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
@@ -28,8 +29,8 @@ import { FakePlanner } from './orchestrator/planners/fake.js';
 // Phase 7 fakes hook (DISPATCH_ENABLE_FAKES / DISPATCH_FAKE_APPROVAL)
 //
 // Production dispatchd (every real `dispatch serve`/`dispatch ui` and the
-// desktop app's release-build sidecar) registers ONLY the real ClaudeExecutor
-// (as 'claude') and ClaudePlanner (as 'claude') — see index.ts's own
+// desktop app's release-build sidecar) registers the real ClaudeExecutor and
+// CodexExecutor, ClaudePlanner, and ClaudeOverseer — see index.ts's own
 // defaults. Setting `DISPATCH_ENABLE_FAKES=1` in this process's environment
 // additionally registers a FakeExecutor, FakePlanner, and FakeOverseer, all
 // under the name 'fake', alongside the real ones — never replacing 'claude'.
@@ -417,12 +418,13 @@ const handle = await startServer({
   // whatever daemon predates the project's tracker; `--replace` is the
   // explicit operator override.
   replaceRunningDaemon: args.includes('--init') || args.includes('--replace'),
-  // `undefined` here defers to index.ts's own production default (register
-  // only the real 'claude' backend) — see this file's module doc comment for
+  // `undefined` here defers to index.ts's own production defaults (register
+  // the real 'claude' and 'codex' backends) — see the module comment for
   // when/why these are populated instead.
   registerExecutors: enableFakes
     ? (orchestrator) => {
         orchestrator.registerExecutor('claude', new ClaudeExecutor());
+        orchestrator.registerExecutor('codex', new CodexExecutor());
         orchestrator.registerExecutor(
           'fake',
           new FakeExecutor(buildDefaultFakeScript())
