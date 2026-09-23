@@ -504,7 +504,10 @@ export class Orchestrator {
 
   // Requires a run in a live (running/awaiting-approval) state with a real
   // ExecutorRun handle — the shared liveness gate for deliverToRun/notifyRun.
-  // Self-heals a zombie the same way inject()/approve()/sendMessage() do.
+  // Same zombie check as inject()/approve()/sendMessage() above: a run whose
+  // state says live but whose ExecutorRun is missing has its executor dead
+  // out from under it, and healZombieRun marks it failed and throws instead
+  // of returning here.
   private requireLiveRun(runId: string): {
     meta: RunMeta;
     executorRun: ExecutorRun;
@@ -513,13 +516,9 @@ export class Orchestrator {
     if (meta.state !== 'running' && meta.state !== 'awaiting-approval') {
       throw new OrchestratorConflictError(`run is not live: ${runId}`);
     }
-    let executorRun = this.registry.getExecutorRun(runId);
+    const executorRun = this.registry.getExecutorRun(runId);
     if (executorRun === undefined) {
       this.healZombieRun(meta);
-      executorRun = this.registry.getExecutorRun(runId);
-    }
-    if (executorRun === undefined) {
-      throw new OrchestratorConflictError(`run is not live: ${runId}`);
     }
     return { meta, executorRun };
   }
