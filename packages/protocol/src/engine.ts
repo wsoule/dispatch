@@ -1,11 +1,16 @@
-import { parseAddress, SYSTEM_ADDRESS } from './address.js';
+import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
-import { validateSendInput } from './envelope.js';
-import type { Message, SendInput } from './envelope.js';
+import { gateOf, validateSendInput } from './envelope.js';
+import type { JsonValue, Message, Ref, SendInput } from './envelope.js';
 import { MessagingError } from './errors.js';
 import type { MessagingHost } from './host.js';
 import { renderDigestLine, renderForAgent } from './render.js';
-import type { Delivery, DeliveryVia, MessageStore } from './store.js';
+import type {
+  Delivery,
+  DeliveryState,
+  DeliveryVia,
+  MessageStore,
+} from './store.js';
 import { createUlidFactory } from './ulid.js';
 
 export interface EngineLimits {
@@ -41,6 +46,8 @@ interface Target {
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+
+const SYSTEM_SENDER: Sender = { address: SYSTEM_ADDRESS, canDecide: true };
 
 export class DeliveryEngine {
   private readonly store: MessageStore;
@@ -187,6 +194,7 @@ export class DeliveryEngine {
       ? this.store.getMessage(input.replyTo)
       : null;
     validateSendInput(input, sender.address, sender.canDecide, replyTarget);
+    await this.checkBreaker(replyTarget, sender);
 
     let urgent = input.urgent === true;
     let downgraded = false;
@@ -241,6 +249,14 @@ export class DeliveryEngine {
 
     const settled: Delivery[] = [];
     for (const d of deliveries) settled.push(await this.dispatch(d, message));
+
+    if (message.kind === 'answer' && replyTarget !== null) {
+      this.store.transaction(() => this.markAnswered(replyTarget.id));
+      if (gateOf(replyTarget) !== null)
+        await this.host.onAnswered(replyTarget, message);
+    }
+    if (message.wake === 'request') await this.runWake(message, settled);
+
     return { message, deliveries: settled, downgraded };
   }
 
@@ -273,5 +289,289 @@ export class DeliveryEngine {
     }
     this.emit({ type: 'delivery', delivery: next });
     return next;
+  }
+
+  getMessage(id: string): Message | null {
+    return this.store.getMessage(id);
+  }
+
+  answerOf(questionId: string): Message | null {
+    return this.store.answersTo(questionId)[0] ?? null;
+  }
+
+  openBlocking(): Message[] {
+    return this.store.openBlocking();
+  }
+
+  thread(threadId: string): { messages: Message[]; deliveries: Delivery[] } {
+    const messages = this.store.thread(threadId);
+    return {
+      messages,
+      deliveries: messages.flatMap((m) =>
+        this.store.deliveries({ messageId: m.id })
+      ),
+    };
+  }
+
+  inbox(
+    recipient: Address,
+    states?: DeliveryState[]
+  ): { delivery: Delivery; message: Message }[] {
+    return this.store.deliveries({ recipient, states }).flatMap((delivery) => {
+      const message = this.store.getMessage(delivery.messageId);
+      return message === null ? [] : [{ delivery, message }];
+    });
+  }
+
+  markRead(deliveryId: string): Delivery {
+    const d = this.store.getDelivery(deliveryId);
+    if (d === null)
+      throw new MessagingError(
+        'not-found',
+        `no delivery ${deliveryId}`,
+        'deliveryId'
+      );
+    if (d.state === 'answered' || d.state === 'read') return d;
+    const next: Delivery = { ...d, state: 'read', updatedAt: this.nowIso() };
+    this.store.setDelivery(next.id, next.state, next.runId, next.updatedAt);
+    this.emit({ type: 'delivery', delivery: next });
+    return next;
+  }
+
+  // Channels hold tasks and actors, not runs: membership must outlive a run.
+  join(channel: string, member: Address): void {
+    parseAddress(`channel:${channel}`, 'channel');
+    const parsed = parseAddress(member, 'member');
+    if (parsed.kind === 'run') {
+      throw new MessagingError(
+        'invalid',
+        'channels hold tasks and actors, not runs — join as task:<id>',
+        'member'
+      );
+    }
+    this.store.transaction(() => {
+      this.store.ensureChannel(channel, this.nowIso(), false);
+      this.store.addMember(channel, member, this.nowIso());
+    });
+  }
+
+  leave(channel: string, member: Address): boolean {
+    return this.store.removeMember(channel, member);
+  }
+
+  async reply(
+    messageId: string,
+    input: {
+      body: string;
+      choice?: string;
+      refs?: Ref[];
+      data?: JsonValue;
+      session?: string;
+    },
+    sender: Sender
+  ): Promise<SendResult> {
+    const target = this.store.getMessage(messageId);
+    if (target === null)
+      throw new MessagingError(
+        'not-found',
+        `no message ${messageId}`,
+        'replyTo'
+      );
+    let to = target.from;
+    if (to.startsWith('run:') && !this.host.isLiveRun(to.slice(4))) {
+      const task = this.host.taskOfRun(to.slice(4));
+      if (task !== null) to = `task:${task}`;
+    }
+    const asking = target.kind === 'question' || target.kind === 'handoff';
+    return this.send(
+      {
+        ...input,
+        to: [to],
+        kind: asking ? 'answer' : 'message',
+        replyTo: messageId,
+      },
+      sender
+    );
+  }
+
+  // A system answer that skips validation and hooks — used when the host
+  // itself is closing out a question (e.g. the asking run ended).
+  close(questionId: string, reason: string): Message {
+    const target = this.store.getMessage(questionId);
+    if (target === null)
+      throw new MessagingError(
+        'not-found',
+        `no message ${questionId}`,
+        'replyTo'
+      );
+    if (this.answerOf(questionId) !== null)
+      throw new MessagingError(
+        'conflict',
+        `${questionId} is already answered`,
+        'replyTo'
+      );
+    const id = this.id('m');
+    const answer: Message = {
+      id,
+      thread: target.thread,
+      replyTo: questionId,
+      from: SYSTEM_ADDRESS,
+      to: [target.from],
+      kind: 'answer',
+      body: `Closed: ${reason}`,
+      refs: [],
+      data: { type: 'x-closed', reason },
+      urgent: false,
+      blocking: false,
+      wake: 'none',
+      createdAt: this.nowIso(),
+    };
+    this.store.transaction(() => {
+      this.store.insertMessage(answer);
+      this.markAnswered(questionId);
+    });
+    this.emit({ type: 'message', message: answer });
+    return answer;
+  }
+
+  private markAnswered(questionId: string): void {
+    for (const d of this.store.deliveries({ messageId: questionId })) {
+      if (d.state === 'answered') continue;
+      const next: Delivery = {
+        ...d,
+        state: 'answered',
+        updatedAt: this.nowIso(),
+      };
+      this.store.setDelivery(next.id, next.state, next.runId, next.updatedAt);
+      this.emit({ type: 'delivery', delivery: next });
+    }
+  }
+
+  // Re-binds held deliveries for a task to its newly started run and pushes
+  // or notifies them, exactly as a fresh send would.
+  async deliverHeld(runId: string, taskId: string): Promise<Delivery[]> {
+    const held = this.store.deliveries({
+      recipient: `task:${taskId}`,
+      states: ['held'],
+    });
+    const out: Delivery[] = [];
+    for (const d of held) {
+      const message = this.store.getMessage(d.messageId);
+      if (message === null) continue;
+      const bound: Delivery = {
+        ...d,
+        state: 'sending',
+        runId,
+        updatedAt: this.nowIso(),
+      };
+      this.store.setDelivery(
+        bound.id,
+        bound.state,
+        bound.runId,
+        bound.updatedAt
+      );
+      out.push(await this.dispatch(bound, message));
+    }
+    return out;
+  }
+
+  // Tells a sender something went sideways, as a system notice in its thread.
+  private async noticeTo(
+    recipient: Address,
+    about: Message,
+    body: string
+  ): Promise<void> {
+    await this.send(
+      {
+        to: [recipient],
+        kind: 'notice',
+        body,
+        refs: [{ type: 'message', id: about.id }],
+      },
+      SYSTEM_SENDER
+    );
+  }
+
+  // After a wake-requesting send, asks the host to wake each held task
+  // recipient (or gates/denies it), so the message is actually seen soon.
+  private async runWake(message: Message, settled: Delivery[]): Promise<void> {
+    for (const d of settled) {
+      if (d.state !== 'held' || !d.recipient.startsWith('task:')) continue;
+      const ruling = this.host.decide({
+        type: 'wake',
+        target: d.recipient,
+        message,
+      });
+      if (ruling === 'allow') {
+        const result = await this.host.wake(d.recipient, message);
+        if (!result.ok)
+          await this.noticeTo(
+            message.from,
+            message,
+            `Could not wake ${d.recipient}: ${result.reason}. Your message is waiting for it.`
+          );
+      } else if (ruling === 'deny') {
+        await this.noticeTo(
+          message.from,
+          message,
+          `Waking ${d.recipient} was not allowed. Your message is waiting for it.`
+        );
+      } else {
+        const first = message.body.split('\n')[0] ?? '';
+        await this.send(
+          {
+            to: [this.host.owner(d.recipient)],
+            kind: 'question',
+            blocking: true,
+            choices: ['approve', 'deny'],
+            body: `${message.from} wants to wake ${d.recipient}:\n\n> ${first}`,
+            data: { type: 'wake', target: d.recipient, message: message.id },
+            refs: [{ type: 'message', id: message.id }],
+          },
+          SYSTEM_SENDER
+        );
+      }
+    }
+  }
+
+  // Rejects an agent reply once a thread has seen too many agent turns this
+  // hour, flagging the owner once so two agents cannot loop forever.
+  private async checkBreaker(
+    replyTarget: Message | null,
+    sender: Sender
+  ): Promise<void> {
+    if (replyTarget === null || !isAgentAuthored(sender.address)) return;
+    const since = this.hourAgoIso();
+    const count = this.store.countAgentAuthored(
+      replyTarget.thread,
+      since,
+      SYSTEM_ADDRESS
+    );
+    if (count < this.limits.agentTurnsPerThreadPerHour) return;
+    const flagged = this.store.thread(replyTarget.thread).some((m) => {
+      const data = m.data as { type?: string } | undefined;
+      return (
+        m.from === SYSTEM_ADDRESS &&
+        data?.type === 'x-breaker' &&
+        m.createdAt >= since
+      );
+    });
+    if (!flagged) {
+      await this.send(
+        {
+          to: [this.host.owner(sender.address)],
+          kind: 'notice',
+          replyTo: replyTarget.id,
+          body: `Agents have sent ${count} messages in thread ${replyTarget.thread} this hour; further agent replies are paused.`,
+          data: { type: 'x-breaker', thread: replyTarget.thread },
+        },
+        SYSTEM_SENDER
+      );
+    }
+    throw new MessagingError(
+      'limited',
+      `thread ${replyTarget.thread} hit the agent turn limit; a human has been asked to step in`,
+      'replyTo'
+    );
   }
 }
