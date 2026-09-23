@@ -16,6 +16,7 @@ export {
   validateSendInput,
 } from './envelope.js';
 export type {
+  BuiltInKind,
   GateData,
   JsonValue,
   Message,
