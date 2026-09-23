@@ -2,6 +2,7 @@ import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 
 import type { Address } from './address.js';
+import { gateOf } from './envelope.js';
 import type { JsonValue, Message, Ref } from './envelope.js';
 import { DELIVERY_STATES } from './store.js';
 import type {
@@ -27,6 +28,7 @@ CREATE TABLE IF NOT EXISTS messages (
 CREATE INDEX IF NOT EXISTS messages_thread ON messages (thread, id);
 CREATE INDEX IF NOT EXISTS messages_reply ON messages (reply_to);
 CREATE INDEX IF NOT EXISTS messages_from ON messages (from_addr, created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS messages_one_answer ON messages (reply_to) WHERE kind = 'answer';
 CREATE TABLE IF NOT EXISTS recipients (
   message_id TEXT NOT NULL, position INTEGER NOT NULL, addr TEXT NOT NULL,
   PRIMARY KEY (message_id, position)
@@ -49,6 +51,9 @@ CREATE TABLE IF NOT EXISTS agents (
   addr TEXT PRIMARY KEY, display_name TEXT NOT NULL, client TEXT NOT NULL,
   token_hash TEXT NOT NULL UNIQUE, status TEXT NOT NULL, muted INTEGER NOT NULL,
   approved_by TEXT, created_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS gate_effects (
+  question_id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
 );
 `;
 
@@ -276,6 +281,10 @@ export class SqliteMessageStore implements MessageStore {
       where.push('run_id = ?');
       params.push(filter.runId);
     }
+    if (filter.recipientPrefix !== undefined) {
+      where.push("recipient LIKE ? ESCAPE '\\'");
+      params.push(`${filter.recipientPrefix.replace(/[\\%_]/g, '\\$&')}%`);
+    }
     if (filter.messageId !== undefined) {
       where.push('message_id = ?');
       params.push(filter.messageId);
@@ -295,13 +304,51 @@ export class SqliteMessageStore implements MessageStore {
     id: string,
     state: DeliveryState,
     runId: string | null,
-    at: string
-  ): void {
+    at: string,
+    expected?: DeliveryState
+  ): boolean {
+    const result =
+      expected === undefined
+        ? this.db
+            .prepare(
+              'UPDATE deliveries SET state = ?, run_id = ?, updated_at = ? WHERE id = ?'
+            )
+            .run(state, runId, at, id)
+        : this.db
+            .prepare(
+              'UPDATE deliveries SET state = ?, run_id = ?, updated_at = ? WHERE id = ? AND state = ?'
+            )
+            .run(state, runId, at, id, expected);
+    return Number(result.changes) > 0;
+  }
+
+  markGateApplied(questionId: string, at: string): void {
     this.db
       .prepare(
-        'UPDATE deliveries SET state = ?, run_id = ?, updated_at = ? WHERE id = ?'
+        'INSERT INTO gate_effects (question_id, applied_at) VALUES (?,?) ON CONFLICT (question_id) DO NOTHING'
       )
-      .run(state, runId, at, id);
+      .run(questionId, at);
+  }
+
+  // SQL narrows to answered questions carrying typed data with no recorded
+  // effect; gateOf and the x-closed check then keep real, non-closed gates.
+  unappliedAnsweredGates(): { question: Message; answer: Message }[] {
+    const rows = queryAll<{ question_id: string; answer_id: string }>(
+      this.db,
+      `SELECT q.id AS question_id, a.id AS answer_id FROM messages q
+       JOIN messages a ON a.reply_to = q.id AND a.kind = 'answer'
+       WHERE q.data_json LIKE '%"type":%'
+       AND NOT EXISTS (SELECT 1 FROM gate_effects g WHERE g.question_id = q.id)
+       ORDER BY q.id`
+    );
+    return rows.flatMap((r) => {
+      const question = this.getMessage(r.question_id);
+      const answer = this.getMessage(r.answer_id);
+      if (question === null || answer === null || gateOf(question) === null)
+        return [];
+      const data = answer.data as { type?: unknown } | undefined;
+      return data?.type === 'x-closed' ? [] : [{ question, answer }];
+    });
   }
 
   countFrom(from: Address, sinceIso: string, urgentOnly: boolean): number {

@@ -112,6 +112,106 @@ describe('SqliteMessageStore', () => {
     expect(store.deliveries({ messageId: 'm-01' })).toHaveLength(2);
   });
 
+  it('setDelivery with an expected state only moves from that state', () => {
+    store.insertMessage(msg());
+    store.insertDelivery({
+      id: 'd-1',
+      messageId: 'm-01',
+      recipient: 'task:t-000002',
+      runId: 'r-000002',
+      via: 'direct',
+      state: 'sending',
+      updatedAt: at,
+    });
+    expect(store.setDelivery('d-1', 'answered', 'r-000002', at)).toBe(true);
+    expect(store.setDelivery('d-1', 'pushed', 'r-000002', at, 'sending')).toBe(
+      false
+    );
+    expect(store.getDelivery('d-1')?.state).toBe('answered');
+    expect(store.setDelivery('d-1', 'read', 'r-000002', at, 'answered')).toBe(
+      true
+    );
+    expect(store.getDelivery('d-1')?.state).toBe('read');
+  });
+
+  it('allows only one answer per question', () => {
+    store.insertMessage(msg({ id: 'm-01', kind: 'question' }));
+    store.insertMessage(
+      msg({ id: 'm-02', thread: 'm-01', replyTo: 'm-01', kind: 'answer' })
+    );
+    expect(() =>
+      store.insertMessage(
+        msg({ id: 'm-03', thread: 'm-01', replyTo: 'm-01', kind: 'answer' })
+      )
+    ).toThrow();
+    store.insertMessage(msg({ id: 'm-04', thread: 'm-01', replyTo: 'm-01' }));
+    expect(store.thread('m-01')).toHaveLength(3);
+  });
+
+  it('lists answered gates until their effect is marked applied', () => {
+    const gateData = {
+      type: 'tool-approval',
+      requestId: 'req-1',
+      runId: 'r-000001',
+      tool: 'Bash',
+      input: {},
+    };
+    store.insertMessage(
+      msg({
+        id: 'm-01',
+        kind: 'question',
+        data: gateData,
+        from: 'agent:dispatch',
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-02',
+        thread: 'm-01',
+        replyTo: 'm-01',
+        kind: 'answer',
+        choice: 'approve',
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-03',
+        thread: 'm-03',
+        kind: 'question',
+        data: gateData,
+        from: 'agent:dispatch',
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-04',
+        thread: 'm-03',
+        replyTo: 'm-03',
+        kind: 'answer',
+        data: { type: 'x-closed', reason: 'gone' },
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-05',
+        thread: 'm-05',
+        kind: 'question',
+        data: { type: 'x-poll' },
+      })
+    );
+    store.insertMessage(
+      msg({ id: 'm-06', thread: 'm-05', replyTo: 'm-05', kind: 'answer' })
+    );
+    expect(
+      store
+        .unappliedAnsweredGates()
+        .map(({ question, answer }) => [question.id, answer.id])
+    ).toEqual([['m-01', 'm-02']]);
+    store.markGateApplied('m-01', at);
+    store.markGateApplied('m-01', at);
+    expect(store.unappliedAnsweredGates()).toEqual([]);
+  });
+
   it('counts sends for quotas', () => {
     store.insertMessage(msg({ id: 'm-01', urgent: true }));
     store.insertMessage(

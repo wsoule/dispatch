@@ -341,3 +341,80 @@ describe('held delivery and reads', () => {
     );
   });
 });
+
+describe('answer authorization', () => {
+  it('a bystander run cannot answer a question addressed to a human', async () => {
+    host.startRun('t-000002', 'r-000002');
+    const { message: q } = await engine.send(
+      { to: ['human:wyat'], kind: 'question', body: 'which?' },
+      run1
+    );
+    await expect(
+      engine.reply(
+        q.id,
+        { body: 'mine' },
+        { address: 'run:r-000002', canDecide: false }
+      )
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'replyTo' });
+    const { message: a } = await engine.reply(q.id, { body: 'b' }, human);
+    expect(engine.answerOf(q.id)?.id).toBe(a.id);
+  });
+
+  it('the run of an addressed task can answer', async () => {
+    host.startRun('t-000002', 'r-000002');
+    const { message: q } = await engine.send(
+      { to: ['task:t-000002'], kind: 'question', body: 'which?' },
+      human
+    );
+    const { message: a } = await engine.reply(
+      q.id,
+      { body: 'this one' },
+      { address: 'run:r-000002', canDecide: false }
+    );
+    expect(engine.answerOf(q.id)?.id).toBe(a.id);
+  });
+
+  it('a deciding human can answer a question sent to another human', async () => {
+    const { message: q } = await engine.send(
+      { to: ['human:wyat'], kind: 'question', body: 'which?' },
+      run1
+    );
+    const { message: a } = await engine.reply(
+      q.id,
+      { body: 'b' },
+      { address: 'human:ana', canDecide: true }
+    );
+    expect(engine.answerOf(q.id)?.id).toBe(a.id);
+  });
+});
+
+describe('gate-effect ordering', () => {
+  it('emits the answer only after onAnswered ran', async () => {
+    const { message: gate } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'Run Bash?',
+        blocking: true,
+        choices: ['approve', 'deny'],
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          runId: 'r-000001',
+          tool: 'Bash',
+          input: {},
+        },
+      },
+      system
+    );
+    engine.subscribe((e) => {
+      if (e.type === 'message' && e.message.kind === 'answer')
+        host.calls.push({ hook: 'answer-event', args: [e.message.id] });
+    });
+    await engine.reply(gate.id, { body: '', choice: 'approve' }, human);
+    const order = host.calls
+      .map((c) => c.hook)
+      .filter((h) => h === 'onAnswered' || h === 'answer-event');
+    expect(order).toEqual(['onAnswered', 'answer-event']);
+  });
+});

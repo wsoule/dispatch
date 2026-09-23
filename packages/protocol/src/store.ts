@@ -53,6 +53,8 @@ export interface DeliveryFilter {
   states?: DeliveryState[];
   runId?: string;
   messageId?: string;
+  /** Matches recipients starting with this prefix, e.g. `run:`. */
+  recipientPrefix?: string;
 }
 
 export interface MessageStore {
@@ -65,12 +67,17 @@ export interface MessageStore {
   openBlocking(): Message[];
   getDelivery(id: string): Delivery | null;
   deliveries(filter: DeliveryFilter): Delivery[];
+  /** With `expected`, updates only if the row is still in that state; returns whether it changed. */
   setDelivery(
     id: string,
     state: DeliveryState,
     runId: string | null,
-    at: string
-  ): void;
+    at: string,
+    expected?: DeliveryState
+  ): boolean;
+  markGateApplied(questionId: string, at: string): void;
+  /** Answered gate questions (closes excluded) whose host effect is not yet recorded. */
+  unappliedAnsweredGates(): { question: Message; answer: Message }[];
   countFrom(from: Address, sinceIso: string, urgentOnly: boolean): number;
   countAgentAuthored(
     threadId: string,

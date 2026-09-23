@@ -16,6 +16,8 @@ export class FakeHost implements MessagingHost {
   wakeResult: WakeResult = { ok: true, runId: 'r-00000f' };
   failPushFor = new Set<string>();
   failOnAnswered = false;
+  // When set, push() waits on it — lets a test act while a push is in flight.
+  pushBarrier: Promise<void> | null = null;
   ownerAddress: Address = 'human:wyat';
   clock = new Date('2026-09-23T10:00:00.000Z');
   calls: { hook: string; args: unknown[] }[] = [];
@@ -42,6 +44,7 @@ export class FakeHost implements MessagingHost {
   }
   async push(runId: string, rendered: string): Promise<void> {
     this.calls.push({ hook: 'push', args: [runId, rendered] });
+    if (this.pushBarrier !== null) await this.pushBarrier;
     if (this.failPushFor.has(runId)) throw new Error('run went away');
   }
   async notify(runId: string, digest: string): Promise<void> {

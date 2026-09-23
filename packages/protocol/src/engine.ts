@@ -196,17 +196,15 @@ export class DeliveryEngine {
       ? this.store.getMessage(input.replyTo)
       : null;
     validateSendInput(input, sender.address, sender.canDecide, replyTarget);
+    if (input.kind === 'answer' && replyTarget !== null)
+      this.authorizeAnswer(replyTarget, sender);
     await this.checkBreaker(replyTarget, sender);
     if (
       input.kind === 'answer' &&
       replyTarget !== null &&
       this.store.answersTo(replyTarget.id).length > 0
     ) {
-      throw new MessagingError(
-        'conflict',
-        `${replyTarget.id} is already answered`,
-        'replyTo'
-      );
+      throw alreadyAnswered(replyTarget.id);
     }
 
     let urgent = input.urgent === true;
@@ -254,32 +252,78 @@ export class DeliveryEngine {
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
     }
 
-    this.store.transaction(() => {
+    const question = message.kind === 'answer' ? replyTarget : null;
+    const answered = this.store.transaction(() => {
+      // Re-checked inside the write: the breaker await lets a second answer race in.
+      if (question !== null && this.store.answersTo(question.id).length > 0)
+        throw alreadyAnswered(question.id);
       this.store.insertMessage(message);
       for (const d of deliveries) this.store.insertDelivery(d);
+      return question === null ? [] : this.markAnswered(question.id);
     });
+    // A gate's effect lands before anyone hears of the answer.
+    if (question !== null && gateOf(question) !== null && !isClose(message))
+      await this.applyGate(question, message);
     this.emit({ type: 'message', message });
+    for (const d of answered) this.emit({ type: 'delivery', delivery: d });
 
     const settled: Delivery[] = [];
     for (const d of deliveries) settled.push(await this.dispatch(d, message));
 
-    if (message.kind === 'answer' && replyTarget !== null) {
-      this.store.transaction(() => this.markAnswered(replyTarget.id));
-      if (gateOf(replyTarget) !== null) {
-        try {
-          await this.host.onAnswered(replyTarget, message);
-        } catch (err) {
-          console.error('messaging hook failed', err);
-        }
+    if (message.wake === 'request') {
+      try {
+        await this.runWake(message, settled);
+      } catch (err) {
+        // The message is committed; a failing wake path must not fail the send.
+        console.error('messaging wake failed', err);
       }
     }
-    if (message.wake === 'request') await this.runWake(message, settled);
 
     return { message, deliveries: settled, downgraded };
   }
 
+  // Only a recipient of the question (or its task's run), a deciding human,
+  // or the system may answer it.
+  private authorizeAnswer(question: Message, sender: Sender): void {
+    if (sender.address === SYSTEM_ADDRESS) return;
+    if (sender.canDecide && sender.address.startsWith('human:')) return;
+    const senderTask = sender.address.startsWith('run:')
+      ? this.host.taskOfRun(sender.address.slice(4))
+      : null;
+    const addressed = this.store
+      .deliveries({ messageId: question.id })
+      .some(
+        (d) =>
+          d.recipient === sender.address ||
+          (senderTask !== null && d.recipient === `task:${senderTask}`)
+      );
+    if (!addressed)
+      throw new MessagingError(
+        'forbidden',
+        'only a recipient of this question can answer it',
+        'replyTo'
+      );
+  }
+
+  // Runs the host's gate hook and records the effect as applied on success;
+  // a failure is logged and left for recover() to replay.
+  private async applyGate(
+    question: Message,
+    answer: Message
+  ): Promise<boolean> {
+    try {
+      await this.host.onAnswered(question, answer);
+    } catch (err) {
+      console.error('messaging hook failed', err);
+      return false;
+    }
+    this.store.markGateApplied(question.id, this.nowIso());
+    return true;
+  }
+
   // Runs the host hook for one freshly stored delivery and records the outcome.
   // `sending` becomes pushed/notified, or held again if the run went away.
+  // A row moved off `sending` meanwhile (e.g. closed) is left as it is.
   private async dispatch(d: Delivery, message: Message): Promise<Delivery> {
     let next = d;
     if (d.state === 'sending' && d.runId !== null) {
@@ -297,7 +341,14 @@ export class DeliveryEngine {
       } catch {
         next = { ...d, state: 'held', runId: null, updatedAt: this.nowIso() };
       }
-      this.store.setDelivery(next.id, next.state, next.runId, next.updatedAt);
+      const moved = this.store.setDelivery(
+        next.id,
+        next.state,
+        next.runId,
+        next.updatedAt,
+        'sending'
+      );
+      if (!moved) return this.store.getDelivery(d.id) ?? d;
     } else if (d.state === 'notified') {
       try {
         this.host.notifyHuman(d.recipient, message);
@@ -309,11 +360,17 @@ export class DeliveryEngine {
     return next;
   }
 
-  // Finishes deliveries a crash left between commit and hook: retries those
-  // whose run is still live, returns the rest to the task's mailbox.
-  async recover(): Promise<{ retried: number; reverted: number }> {
+  // Finishes work a crash left between commit and hook: retries sending
+  // deliveries whose run is still live, returns the rest to the mailbox, and
+  // replays gate effects that never recorded as applied.
+  async recover(): Promise<{
+    retried: number;
+    reverted: number;
+    replayed: number;
+  }> {
     let retried = 0;
     let reverted = 0;
+    let replayed = 0;
     for (const d of this.store.deliveries({ states: ['sending'] })) {
       const message = this.store.getMessage(d.messageId);
       if (
@@ -324,11 +381,16 @@ export class DeliveryEngine {
         await this.dispatch(d, message);
         retried++;
       } else {
-        this.store.setDelivery(d.id, 'held', null, this.nowIso());
-        reverted++;
+        if (
+          this.store.setDelivery(d.id, 'held', null, this.nowIso(), 'sending')
+        )
+          reverted++;
       }
     }
-    return { retried, reverted };
+    for (const { question, answer } of this.store.unappliedAnsweredGates()) {
+      if (await this.applyGate(question, answer)) replayed++;
+    }
+    return { retried, reverted, replayed };
   }
 
   getMessage(id: string): Message | null {
@@ -373,7 +435,16 @@ export class DeliveryEngine {
       );
     if (d.state === 'answered' || d.state === 'read') return d;
     const next: Delivery = { ...d, state: 'read', updatedAt: this.nowIso() };
-    this.store.setDelivery(next.id, next.state, next.runId, next.updatedAt);
+    if (
+      !this.store.setDelivery(
+        next.id,
+        next.state,
+        next.runId,
+        next.updatedAt,
+        d.state
+      )
+    )
+      return this.store.getDelivery(d.id) ?? d;
     this.emit({ type: 'delivery', delivery: next });
     return next;
   }
@@ -450,12 +521,7 @@ export class DeliveryEngine {
         `${questionId} is a ${target.kind}, not a question or handoff`,
         'replyTo'
       );
-    if (this.answerOf(questionId) !== null)
-      throw new MessagingError(
-        'conflict',
-        `${questionId} is already answered`,
-        'replyTo'
-      );
+    if (this.answerOf(questionId) !== null) throw alreadyAnswered(questionId);
     const id = this.id('m');
     const answer: Message = {
       id,
@@ -472,15 +538,19 @@ export class DeliveryEngine {
       wake: 'none',
       createdAt: this.nowIso(),
     };
-    this.store.transaction(() => {
+    const answered = this.store.transaction(() => {
       this.store.insertMessage(answer);
-      this.markAnswered(questionId);
+      return this.markAnswered(questionId);
     });
     this.emit({ type: 'message', message: answer });
+    for (const d of answered) this.emit({ type: 'delivery', delivery: d });
     return answer;
   }
 
-  private markAnswered(questionId: string): void {
+  // Moves a question's deliveries to answered and returns the moved rows, so
+  // the caller can emit them once its transaction has committed.
+  private markAnswered(questionId: string): Delivery[] {
+    const moved: Delivery[] = [];
     for (const d of this.store.deliveries({ messageId: questionId })) {
       if (d.state === 'answered') continue;
       const next: Delivery = {
@@ -488,36 +558,57 @@ export class DeliveryEngine {
         state: 'answered',
         updatedAt: this.nowIso(),
       };
-      this.store.setDelivery(next.id, next.state, next.runId, next.updatedAt);
-      this.emit({ type: 'delivery', delivery: next });
+      if (
+        this.store.setDelivery(
+          next.id,
+          next.state,
+          next.runId,
+          next.updatedAt,
+          d.state
+        )
+      )
+        moved.push(next);
     }
+    return moved;
   }
 
-  // Re-binds held deliveries for a task to its newly started run and pushes
-  // or notifies them, exactly as a fresh send would.
+  // Re-binds held deliveries for a task — addressed to the task or stranded on
+  // one of its earlier runs — to its new run, and pushes or notifies them.
   async deliverHeld(runId: string, taskId: string): Promise<Delivery[]> {
-    const held = this.store.deliveries({
-      recipient: `task:${taskId}`,
-      states: ['held'],
+    const claimed = this.store.transaction(() => {
+      const held = [
+        ...this.store.deliveries({
+          recipient: `task:${taskId}`,
+          states: ['held'],
+        }),
+        ...this.store
+          .deliveries({ recipientPrefix: 'run:', states: ['held'] })
+          .filter((d) => this.host.taskOfRun(d.recipient.slice(4)) === taskId),
+      ];
+      const out: { bound: Delivery; message: Message }[] = [];
+      for (const d of held) {
+        const message = this.store.getMessage(d.messageId);
+        if (message === null) continue;
+        const bound: Delivery = {
+          ...d,
+          state: 'sending',
+          runId,
+          updatedAt: this.nowIso(),
+        };
+        const won = this.store.setDelivery(
+          bound.id,
+          bound.state,
+          bound.runId,
+          bound.updatedAt,
+          'held'
+        );
+        if (won) out.push({ bound, message });
+      }
+      return out;
     });
     const out: Delivery[] = [];
-    for (const d of held) {
-      const message = this.store.getMessage(d.messageId);
-      if (message === null) continue;
-      const bound: Delivery = {
-        ...d,
-        state: 'sending',
-        runId,
-        updatedAt: this.nowIso(),
-      };
-      this.store.setDelivery(
-        bound.id,
-        bound.state,
-        bound.runId,
-        bound.updatedAt
-      );
+    for (const { bound, message } of claimed)
       out.push(await this.dispatch(bound, message));
-    }
     return out;
   }
 
@@ -629,4 +720,17 @@ export class DeliveryEngine {
       'replyTo'
     );
   }
+}
+
+function alreadyAnswered(questionId: string): MessagingError {
+  return new MessagingError(
+    'conflict',
+    `${questionId} is already answered`,
+    'replyTo'
+  );
+}
+
+// A system close carries `x-closed` data and applies no gate effect.
+function isClose(answer: Message): boolean {
+  return (answer.data as { type?: unknown } | undefined)?.type === 'x-closed';
 }

@@ -23,6 +23,7 @@ export interface MessagingHost {
   decide(request: PolicyRequest): PolicyRuling;
   owner(target: Address): Address;
   implicitMembers(channel: string): Address[];
+  // May be called again for the same answer after a crash; handlers must be idempotent.
   onAnswered(question: Message, answer: Message): Promise<void>;
   now(): Date;
 }
