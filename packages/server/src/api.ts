@@ -144,6 +144,7 @@ import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
+import { isSelfAuthenticated } from './messaging/principal.js';
 import type { Messaging } from './messaging/service.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
@@ -4410,6 +4411,15 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
+  // Approving, revoking or (un)muting an agent client is an adjudication over
+  // that agent's roster membership — the same reason scope-request decide and
+  // agent-registration gates sit here. On the request tier, an agent holding
+  // only the shared on-disk agentToken could approve itself (or another
+  // agent) straight onto the roster.
+  { method: 'POST', segments: ['agents', '*', 'approve'], tier: 'decide' },
+  { method: 'POST', segments: ['agents', '*', 'revoke'], tier: 'decide' },
+  { method: 'POST', segments: ['agents', '*', 'mute'], tier: 'decide' },
+  { method: 'POST', segments: ['agents', '*', 'unmute'], tier: 'decide' },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
@@ -4516,6 +4526,12 @@ function requiredTier(
   ) {
     return null;
   }
+  // Messaging routes (task 6) authenticate themselves via resolvePrincipal
+  // instead of this ladder — a run token, an agent's own token, or a human
+  // token each mean something different there than "at least tier X" does
+  // everywhere else. Returning null here lets the request through to the
+  // handler, which calls resolvePrincipal before doing anything else.
+  if (isSelfAuthenticated(segments, method)) return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
       return route.tier;
