@@ -136,7 +136,14 @@ discriminated payload the daemon validates:
 
 ```ts
 type GateData =
-  | { type: 'tool-approval'; tool: string; input: JsonValue }
+  | {
+      type: 'tool-approval';
+      requestId: string;
+      runId?: string; // a task run's parked tool call…
+      conversation?: string; // …or an overseer conversation's
+      tool: string;
+      input: JsonValue;
+    }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: Address; message: string }
   | { type: 'agent-registration'; agent: string; client: string }
@@ -147,6 +154,10 @@ type GateData =
       summary: string;
     };
 ```
+
+A scope request must be exactly `kind: 'question'`, `blocking: true`,
+`choices: ['grant', 'deny']`; validation rejects any other shape with the
+correct one in the error, since agents now write it through `msg_send`.
 
 `NotificationKind` toggles map onto these: `approval` ↔ `tool-approval`,
 `scope-request` ↔ `scope`, `question` ↔ a blocking question with no gate `data`.
@@ -348,9 +359,11 @@ mirror the new routes.
 | overseer chat, its pending actions and tool approvals   | a thread between the owner and `agent:<owner>/overseer`; actions become `overseer-action` gates and its tool approvals `tool-approval` gates |
 | ledger `handoff` kind (written only by demo data today) | `handoff` messages; `handoff` leaves the writable ledger kinds                                                                               |
 
-`awaiting-approval` becomes derived: a run is awaiting when it has sent an
-unanswered blocking question to a human. `RunStatePill`, `ApprovalCard` and
-`pendingApprovals.ts` keep their rendering and change their source.
+`awaiting-approval` stays a run state — the executor parks inside `canUseTool`
+and `orchestrator.approve` checks it — but it is entered only when a
+`tool-approval` gate is sent and left only when that gate is answered or closed,
+so the state and the open gate cannot disagree. `RunStatePill`, `ApprovalCard`
+and `pendingApprovals.ts` keep their rendering and change their source.
 
 **Not replaced:** the brain-dump inbox (`.dispatch/inbox/`) and ledger
 decisions/hazards/constraints belong to memory (#2) and docs (#4); plan, enrich
