@@ -1,0 +1,196 @@
+import { describe, expect, it } from 'bun:test';
+
+import { gateOf, validateSendInput } from '../src/envelope.js';
+import type { Message, SendInput } from '../src/envelope.js';
+import { MessagingError } from '../src/errors.js';
+
+const question: Message = {
+  id: 'm-q',
+  thread: 'm-q',
+  replyTo: null,
+  from: 'run:r-000001',
+  to: ['human:wyat'],
+  kind: 'question',
+  body: 'ok?',
+  refs: [],
+  urgent: false,
+  blocking: true,
+  choices: ['yes', 'no'],
+  wake: 'none',
+  createdAt: '2026-09-23T00:00:00.000Z',
+};
+const gate: Message = {
+  ...question,
+  id: 'm-g',
+  thread: 'm-g',
+  from: 'agent:dispatch',
+  data: {
+    type: 'tool-approval',
+    requestId: 'req-1',
+    runId: 'r-000001',
+    tool: 'Bash',
+    input: { command: 'ls' },
+  },
+  choices: ['approve', 'deny'],
+};
+
+function fails(
+  input: SendInput,
+  field: string,
+  opts: {
+    sender?: string;
+    canDecide?: boolean;
+    target?: Message | null;
+    code?: string;
+  } = {}
+) {
+  try {
+    validateSendInput(
+      input,
+      opts.sender ?? 'run:r-000001',
+      opts.canDecide ?? false,
+      opts.target ?? null
+    );
+    throw new Error('expected a throw');
+  } catch (err) {
+    expect(err).toBeInstanceOf(MessagingError);
+    expect((err as MessagingError).field).toBe(field);
+    expect((err as MessagingError).code).toBe(
+      (opts.code ?? 'invalid') as never
+    );
+  }
+}
+
+const base: SendInput = { to: ['task:t-000001'], kind: 'message', body: 'hi' };
+
+describe('validateSendInput', () => {
+  it('accepts a plain message', () => {
+    expect(() =>
+      validateSendInput(base, 'run:r-000001', false, null)
+    ).not.toThrow();
+  });
+  it('rejects an empty recipient list', () => fails({ ...base, to: [] }, 'to'));
+  it('names the bad recipient index', () =>
+    fails({ ...base, to: ['task:t-000001', 'nope'] }, 'to[1]'));
+  it('rejects an unknown kind', () =>
+    fails({ ...base, kind: 'shout' as never }, 'kind'));
+  it('accepts x- kinds', () => {
+    expect(() =>
+      validateSendInput(
+        { ...base, kind: 'x-review-ping' },
+        'run:r-000001',
+        false,
+        null
+      )
+    ).not.toThrow();
+  });
+  it('rejects an empty body', () => fails({ ...base, body: '  ' }, 'body'));
+  it('rejects blocking on a message', () =>
+    fails({ ...base, blocking: true }, 'blocking'));
+  it('rejects choices on a notice', () =>
+    fails({ ...base, kind: 'notice', choices: ['a'] }, 'choices'));
+  it('rejects duplicate choices', () =>
+    fails({ ...base, kind: 'question', choices: ['a', 'a'] }, 'choices'));
+  it('rejects a bad ref type', () =>
+    fails(
+      { ...base, refs: [{ type: 'pr' as never, id: '1' }] },
+      'refs[0].type'
+    ));
+  it('rejects an answer without replyTo', () =>
+    fails({ ...base, kind: 'answer' }, 'replyTo'));
+  it('rejects a replyTo that does not exist', () =>
+    fails({ ...base, kind: 'answer', replyTo: 'm-missing' }, 'replyTo', {
+      code: 'not-found',
+    }));
+  it('rejects an answer to a non-question', () =>
+    fails({ ...base, kind: 'answer', replyTo: 'm-x' }, 'replyTo', {
+      target: {
+        ...question,
+        kind: 'notice',
+        choices: undefined,
+        blocking: false,
+      },
+    }));
+  it('rejects a choice outside the question choices', () =>
+    fails(
+      { ...base, kind: 'answer', replyTo: 'm-q', choice: 'maybe' },
+      'choice',
+      { target: question }
+    ));
+  it('allows free text to a plain question with choices', () => {
+    expect(() =>
+      validateSendInput(
+        { ...base, kind: 'answer', replyTo: 'm-q', body: 'later' },
+        'human:wyat',
+        false,
+        question
+      )
+    ).not.toThrow();
+  });
+  it('requires a choice when answering a gate', () =>
+    fails({ ...base, kind: 'answer', replyTo: 'm-g' }, 'choice', {
+      target: gate,
+      canDecide: true,
+    }));
+  it('gate replies need canDecide', () =>
+    fails(
+      { ...base, kind: 'answer', replyTo: 'm-g', choice: 'approve' },
+      'replyTo',
+      { target: gate, code: 'forbidden' }
+    ));
+  it('only runs may send scope gates', () =>
+    fails(
+      {
+        ...base,
+        kind: 'question',
+        blocking: true,
+        choices: ['grant', 'deny'],
+        data: { type: 'scope', paths: ['a'], reason: 'r' },
+      },
+      'data',
+      { sender: 'agent:wyat/claude', code: 'forbidden' }
+    ));
+  it('agents may not forge tool-approval gates', () =>
+    fails(
+      {
+        ...base,
+        kind: 'question',
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          tool: 'Bash',
+          input: {},
+        },
+      },
+      'data',
+      { code: 'forbidden' }
+    ));
+  it('requires the fixed scope-request shape', () =>
+    fails(
+      {
+        ...base,
+        kind: 'question',
+        choices: ['grant', 'deny'],
+        data: { type: 'scope', paths: ['a.ts'], reason: 'r' },
+      },
+      'data'
+    ));
+  it('rejects a malformed scope gate', () =>
+    fails(
+      {
+        ...base,
+        kind: 'question',
+        data: { type: 'scope', paths: [], reason: 'r' },
+      },
+      'data.paths'
+    ));
+});
+
+describe('gateOf', () => {
+  it('recognizes gate payloads and ignores other data', () => {
+    expect(gateOf(gate)?.type).toBe('tool-approval');
+    expect(gateOf({ data: { type: 'other' } })).toBeNull();
+    expect(gateOf({ data: [1] })).toBeNull();
+    expect(gateOf({})).toBeNull();
+  });
+});
