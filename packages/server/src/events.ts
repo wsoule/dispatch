@@ -1,3 +1,5 @@
+import type { Message } from '@dispatch/protocol';
+
 import type { LinearSyncSummary } from './linear/sync.js';
 import type { EpicPauseReason } from './orchestrator/epic.js';
 import type { FixLoopStop } from './orchestrator/fixLoop.js';
@@ -151,7 +153,11 @@ export type ServerEvent =
   | { type: 'landing.changed' }
   // Someone arrived or left — their first client connected or their last one
   // closed. Same "go refetch" contract as the rest; GET /api/presence says who.
-  | { type: 'presence.changed' };
+  | { type: 'presence.changed' }
+  // A message was stored. Carries it inline: every client renders it at once.
+  | { type: 'message.new'; message: Message }
+  // A delivery changed state (pushed, read, answered…) — refetch the thread.
+  | { type: 'delivery.changed'; deliveryId: string; messageId: string };
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.

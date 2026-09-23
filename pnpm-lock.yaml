@@ -529,6 +529,9 @@ importers:
       '@dispatch/mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@dispatch/protocol':
+        specifier: workspace:*
+        version: link:../protocol
       '@typesafe-ai/sdk':
         specifier: 'catalog:'
         version: 0.6.0

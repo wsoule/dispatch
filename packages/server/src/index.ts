@@ -76,6 +76,7 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
+import { openMessaging } from './messaging/service.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
 import { ClaudeExecutor } from './orchestrator/executors/claude.js';
@@ -1244,6 +1245,18 @@ async function bootServer(
     registerCodexIfInstalled(orchestrator);
     registerCliExecutors(orchestrator, rootDir);
   }
+  // Phase 2: dispatchd hosts the messaging-core engine. Booted right after
+  // the orchestrator exists (it mints run tokens and subscribes to
+  // onRunStarted) and before reconcileOnBoot/any dispatch, since recover()
+  // must replay crash-interrupted deliveries and gate effects before a run
+  // could possibly race it.
+  const messaging = await openMessaging({
+    rootDir,
+    orchestrator,
+    store,
+    events,
+    ownerRef: actorContext.humanRef,
+  });
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.
   const questions = new QuestionRegistry();
@@ -1712,6 +1725,7 @@ async function bootServer(
     planManager,
     overseerManager,
     epicEngine,
+    messaging,
     prManager,
     prWorktrees,
     mergeQueue,
@@ -2050,6 +2064,7 @@ async function bootServer(
       // than let it finish. A no-op on the file backend.
       boardSync?.stop();
       syncLedger?.close();
+      messaging.close();
       stores.close();
     },
   };

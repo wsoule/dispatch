@@ -144,6 +144,7 @@ import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
+import type { Messaging } from './messaging/service.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
 import { buildAgentSessions } from './orchestrator/agentSessions.js';
@@ -236,6 +237,9 @@ export interface ApiContext {
   // alongside PlanManager in index.ts against the same shared peers.
   overseerManager: OverseerManager;
   epicEngine: EpicEngine;
+  // Phase 2: dispatchd's own messaging engine host (task 4) — messaging
+  // routes (task 5) read/write through it directly.
+  messaging: Messaging;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by
   // PrManager's poll, listed here for GET /api/landing's worktree column.

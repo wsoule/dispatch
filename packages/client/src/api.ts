@@ -664,6 +664,29 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
+// Structural mirror of @dispatch/protocol's Message — kept as a plain type
+// here (rather than a dependency on that MIT package) since Task 7 is what
+// actually builds the messaging UI against it; this is just enough shape for
+// `message.new` to carry a typed payload today.
+export interface Message {
+  id: string;
+  thread: string;
+  replyTo: string | null;
+  from: string;
+  session?: string;
+  to: string[];
+  kind: string;
+  body: string;
+  refs: { type: string; id: string; at?: string }[];
+  data?: unknown;
+  urgent: boolean;
+  blocking: boolean;
+  choices?: string[];
+  choice?: string;
+  wake: 'none' | 'request';
+  createdAt: string;
+}
+
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
@@ -785,7 +808,13 @@ export type ServerEvent =
   // packages/server/src/events.ts exactly.
   | { type: 'landing.changed' }
   // Someone arrived or left; refetch GET /api/presence.
-  | { type: 'presence.changed' };
+  | { type: 'presence.changed' }
+  // A message was stored. Carries it inline: every client renders it at once.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'message.new'; message: Message }
+  // A delivery changed state (pushed, read, answered…) — refetch the thread.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'delivery.changed'; deliveryId: string; messageId: string };
 
 // Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
 // question an agent is blocked on until the human answers it.
