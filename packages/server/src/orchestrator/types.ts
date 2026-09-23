@@ -51,6 +51,13 @@ export interface NormalizedEntry {
   // another agent (`inject`, where `toUser` is absent and `fromLabel` names
   // a *different* run).
   toUser?: boolean;
+  // The messaging-core message id (`m-<ulid>`) this entry mirrors, when it
+  // was delivered via `Orchestrator.deliverToRun` rather than the legacy
+  // `inject`/`messageUser` paths.
+  messageId?: string;
+  // Set on entries delivered via `Orchestrator.notifyRun` — a non-interrupting
+  // channel digest rather than a message the agent must respond to.
+  digest?: boolean;
 }
 
 // A live handle to a running executor invocation — the orchestrator holds

@@ -324,6 +324,12 @@ export interface NormalizedEntry {
   // `agent_message` (which has no `toUser` and whose `fromLabel` names a
   // different run). See the server-side NormalizedEntry for the full note.
   toUser?: boolean;
+  // The messaging-core message id (`m-<ulid>`) this entry mirrors, when it
+  // was delivered via the orchestrator's `deliverToRun`.
+  messageId?: string;
+  // Set on entries delivered via the orchestrator's `notifyRun` — a
+  // non-interrupting channel digest rather than a message to respond to.
+  digest?: boolean;
 }
 
 // The body of `GET /api/runs/:id`.

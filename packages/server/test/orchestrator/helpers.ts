@@ -22,6 +22,14 @@ export class StallingExecutor implements Executor {
   readonly started: ExecutorStartOptions[] = [];
   // Every notify() call any started run received, in order.
   readonly notified: string[] = [];
+  // Every send() call any started run received, in order.
+  readonly sent: string[] = [];
+
+  // The options the most recent start() call was given — what a test reads
+  // to assert on a minted runToken without threading the run id through.
+  get lastStartOptions(): ExecutorStartOptions | undefined {
+    return this.started.at(-1);
+  }
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     this.started.push(opts);
@@ -29,7 +37,9 @@ export class StallingExecutor implements Executor {
     return {
       interrupt: () => Promise.resolve(),
       requestStop: () => {},
-      send: () => {},
+      send: (message: string) => {
+        this.sent.push(message);
+      },
       approve: () => {},
       notify: (text: string) => {
         this.notified.push(text);

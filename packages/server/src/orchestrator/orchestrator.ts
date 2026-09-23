@@ -83,6 +83,7 @@ import type {
   ExecutorEvents,
   ExecutorInfo,
   ExecutorProfile,
+  ExecutorRun,
   ExecutorStartOptions,
   NormalizedEntry,
   ReviewFailure,
@@ -377,6 +378,15 @@ export class Orchestrator {
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.
   private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
+  // Messaging-core (Phase 2) hooks: callbacks fired right after a run's
+  // ExecutorRun is registered in startAndRegister, so a message router can
+  // learn a run is live (and dispatchable) without polling. Removing the
+  // callback returned by onRunStarted drops it from this set.
+  private readonly runStartedListeners = new Set<(meta: RunMeta) => void>();
+  // Set once at boot via setRunTokenMinter — mints each run's messaging
+  // credential (DISPATCH_RUN_TOKEN) at start time. Null until then, so
+  // fixtures/tests that never call it dispatch runs with no runToken.
+  private mintRunToken: ((runId: string) => string) | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -446,6 +456,114 @@ export class Orchestrator {
       const idx = this.reviewedHooks.indexOf(callback);
       if (idx !== -1) this.reviewedHooks.splice(idx, 1);
     };
+  }
+
+  // Messaging-core: registers the function that mints a run's
+  // DISPATCH_RUN_TOKEN credential, called once at boot. startAndRegister
+  // applies it to every run's ExecutorStartOptions right before start().
+  setRunTokenMinter(mint: (runId: string) => string): void {
+    this.mintRunToken = mint;
+  }
+
+  // Subscribes to "a run just became live" — fired after its ExecutorRun is
+  // registered in startAndRegister, so a message router can start delivering
+  // to it. Returns an unsubscribe function, same shape as onRunTerminal.
+  onRunStarted(callback: (meta: RunMeta) => void): () => void {
+    this.runStartedListeners.add(callback);
+    return () => {
+      this.runStartedListeners.delete(callback);
+    };
+  }
+
+  // The live (running/awaiting-approval) run for a task, or null — the
+  // public messaging-core wrapper over RunRegistry.liveRunForTask, which also
+  // returns provisioning/terminal runs that aren't a valid delivery target.
+  liveRunIdForTask(taskId: string): string | null {
+    const meta = this.registry.liveRunForTask(taskId);
+    if (meta === undefined) return null;
+    return meta.state === 'running' || meta.state === 'awaiting-approval'
+      ? meta.id
+      : null;
+  }
+
+  // The task a run belongs to, or null if this orchestrator doesn't know it.
+  taskIdOfRun(runId: string): string | null {
+    return this.registry.get(runId)?.taskId ?? null;
+  }
+
+  // Whether a run can currently receive a message: registered, in a live
+  // state, and actually has an ExecutorRun handle (not a zombie).
+  isRunLive(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return false;
+    if (meta.state !== 'running' && meta.state !== 'awaiting-approval') {
+      return false;
+    }
+    return this.registry.getExecutorRun(runId) !== undefined;
+  }
+
+  // Requires a run in a live (running/awaiting-approval) state with a real
+  // ExecutorRun handle — the shared liveness gate for deliverToRun/notifyRun.
+  // Self-heals a zombie the same way inject()/approve()/sendMessage() do.
+  private requireLiveRun(runId: string): {
+    meta: RunMeta;
+    executorRun: ExecutorRun;
+  } {
+    const meta = this.requireRun(runId);
+    if (meta.state !== 'running' && meta.state !== 'awaiting-approval') {
+      throw new OrchestratorConflictError(`run is not live: ${runId}`);
+    }
+    let executorRun = this.registry.getExecutorRun(runId);
+    if (executorRun === undefined) {
+      this.healZombieRun(meta);
+      executorRun = this.registry.getExecutorRun(runId);
+    }
+    if (executorRun === undefined) {
+      throw new OrchestratorConflictError(`run is not live: ${runId}`);
+    }
+    return { meta, executorRun };
+  }
+
+  // Messaging-core delivery: appends the delivered message to the run's own
+  // transcript (identified with the sender's messageId so the app can
+  // dedupe/badge it), broadcasts it, and hands the raw text to the executor.
+  // Throws OrchestratorConflictError if the run isn't live.
+  deliverToRun(
+    runId: string,
+    text: string,
+    from: { label: string; messageId: string; human: boolean }
+  ): void {
+    const { executorRun } = this.requireLiveRun(runId);
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: from.human ? 'user' : 'agent',
+      fromLabel: from.label,
+      text,
+      messageId: from.messageId,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    executorRun.send(text);
+  }
+
+  // Messaging-core non-interrupting note: same transcript/broadcast shape as
+  // deliverToRun, but calls the executor's notify() (a channel digest the
+  // agent picks up on its own next turn) rather than send(). Throws
+  // OrchestratorConflictError if the run isn't live.
+  notifyRun(runId: string, digest: string): void {
+    const { executorRun } = this.requireLiveRun(runId);
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: 'agent',
+      fromLabel: 'dispatch',
+      text: digest,
+      digest: true,
+    };
+    this.transcriptFor(runId).appendEntry(entry);
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    executorRun.notify(digest);
   }
 
   registerExecutor(name: string, executor: Executor): void {
@@ -4004,6 +4122,9 @@ export class Orchestrator {
     opts: ExecutorStartOptions,
     executor: Executor
   ): void {
+    if (this.mintRunToken !== null) {
+      opts = { ...opts, runToken: this.mintRunToken(runId) };
+    }
     let executorRun;
     try {
       executorRun = executor.start(opts, this.makeEvents(runId));
@@ -4020,6 +4141,19 @@ export class Orchestrator {
       return;
     }
     this.registry.setExecutorRun(runId, executorRun);
+    const meta = this.registry.get(runId);
+    if (meta !== undefined) {
+      for (const listener of this.runStartedListeners) {
+        // A listener throwing must never fail the dispatch that triggered it.
+        try {
+          listener(meta);
+        } catch (err) {
+          console.error(
+            `dispatchd: onRunStarted listener failed for ${runId}: ${(err as Error).message}`
+          );
+        }
+      }
+    }
   }
 
   // I4: once PrManager.openPr has pushed a run's branch and opened a PR
