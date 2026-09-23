@@ -164,7 +164,8 @@ messages     (id PK, thread, reply_to, from_addr, session, kind, body,
               wake, created_at)
 recipients   (message_id, addr)                    -- the `to` list as sent
 deliveries   (id PK, message_id, recipient, run_id NULL,
-              state,           -- held | pushed | notified | read | answered
+              via,             -- direct | channel
+              state,           -- held | sending | pushed | notified | read | answered
               updated_at)
 channels     (name PK, created_at, auto)           -- auto = epic channel
 members      (channel, addr, joined_at)            -- addr: task/actor, never run
@@ -249,9 +250,13 @@ agent can tell them apart from its own prompt and reply by id. Digests render
 one line per message:
 `📬 #epic/e-c25f · notice from t-88: api shape changed (m-…)`.
 
-**Restart.** On daemon start, `engine.recover()` re-evaluates every non-terminal
-delivery: pushed-but-unconfirmed deliveries to runs that are gone revert to
-held.
+**Restart.** Deliveries bound for a run are committed as `sending` and move to
+`pushed`/`notified` once the hook returns. On daemon start, `engine.recover()`
+retries every `sending` delivery whose run is still live and reverts the rest to
+`held`, so a crash between commit and hook never loses a message.
+
+**Muted senders.** Deliveries from a muted agent are stored as `read`: visible
+in threads, never pushed, notified or delivered at run start.
 
 ## Identity
 
