@@ -84,8 +84,8 @@ test('re-clicking the current stop does not save', () => {
 
 test('gate rows show the effective mode consultPolicy derives from the rung', () => {
   render(<PolicySection config={configAt(3)} onSave={noSave} client={null} />);
-  // Rung 3: scope, approval and verify-retry auto-decide, merge still blocks.
-  expect(screen.getAllByText('Auto + records')).toHaveLength(3);
+  // Rung 3: scope, approval, verify-retry and wake auto-decide, merge still blocks.
+  expect(screen.getAllByText('Auto + records')).toHaveLength(4);
   expect(screen.getAllByText('Blocks')).toHaveLength(1);
 });
 
@@ -115,9 +115,9 @@ test('the irreversibility floor renders fixed rows with no control', () => {
   expect(screen.getAllByText('Always blocks')).toHaveLength(6);
   expect(screen.getByText(/Force-push/)).toBeDefined();
   expect(screen.getByText(/npm publish/)).toBeDefined();
-  // Even at the top rung the floor never gains a select: only the four
+  // Even at the top rung the floor never gains a select: only the five
   // policy gates have overrides.
-  expect(screen.getAllByRole('combobox')).toHaveLength(4);
+  expect(screen.getAllByRole('combobox')).toHaveLength(5);
 });
 
 test('receipts list only policy auto-decisions and click through to the task', async () => {

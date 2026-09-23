@@ -183,6 +183,7 @@ export interface DispatchConfig {
   carto: CartoConfig;
   repoDigest: RepoDigestConfig;
   notifications: NotificationsConfig;
+  messaging: MessagingConfig;
   /**
    * The git receipt log. `loadConfig` always populates this, so a config it
    * returns can be read without a fallback; it is optional only so callers
@@ -388,6 +389,19 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
     'fix-loop-capped': true,
     'run-stalled': true,
   },
+};
+
+/** Rate and timeout limits for the messaging system. */
+export interface MessagingConfig {
+  urgentPerHour: number;
+  agentTurnsPerThreadPerHour: number;
+  agentBlockingTimeoutSec: number;
+}
+
+export const DEFAULT_MESSAGING: MessagingConfig = {
+  urgentPerHour: 10,
+  agentTurnsPerThreadPerHour: 20,
+  agentBlockingTimeoutSec: 600,
 };
 
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */

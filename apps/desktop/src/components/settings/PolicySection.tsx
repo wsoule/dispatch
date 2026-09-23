@@ -66,6 +66,10 @@ const GATE_COPY: Record<PolicyGate, { label: string; meaning: string }> = {
     label: 'Merge',
     meaning: 'A finished green run enters the merge queue',
   },
+  wake: {
+    label: 'Wake sleeping agents for messages',
+    meaning: 'A queued message wakes a sleeping agent to deliver it',
+  },
 };
 
 // The irreversibility floor, rendered but never configurable. Display copy

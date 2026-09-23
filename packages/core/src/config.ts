@@ -13,6 +13,7 @@ import type {
   ExecutorPricing,
   FixLoopConfig,
   LinearConfig,
+  MessagingConfig,
   ModelConfig,
   NotificationKind,
   NotificationsConfig,
@@ -31,6 +32,7 @@ import {
   DEFAULT_EXECUTOR_NAME,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_PREVIEW,
@@ -127,6 +129,7 @@ const DEFAULTS: DispatchConfig = {
   carto: { ...DEFAULT_CARTO },
   repoDigest: { ...DEFAULT_REPO_DIGEST },
   notifications: cloneNotifications(DEFAULT_NOTIFICATIONS),
+  messaging: { ...DEFAULT_MESSAGING },
   receipts: { ...DEFAULT_RECEIPTS },
   policy: { ...DEFAULT_POLICY, gates: {} },
   // No `queue` here: it is the one optional block, so a DEFAULTS entry could
@@ -214,6 +217,33 @@ function parseNotificationsConfig(raw: unknown): NotificationsConfig {
       obj.webhook,
       '.dispatch/config.yml: notifications.webhook'
     );
+  }
+  return result;
+}
+
+// Validates the optional `messaging:` block. Each key is a positive integer
+// that overrides its default independently, same merge-over-defaults contract
+// as `notifications:`.
+function parseMessagingConfig(raw: unknown): MessagingConfig {
+  if (raw === undefined) return { ...DEFAULT_MESSAGING };
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: messaging must be an object'
+    );
+  }
+  const obj = raw as Record<string, unknown>;
+  const result = { ...DEFAULT_MESSAGING };
+  for (const key of Object.keys(DEFAULT_MESSAGING) as Array<
+    keyof MessagingConfig
+  >) {
+    const value = obj[key];
+    if (value === undefined) continue;
+    if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: messaging.${key} must be a positive integer`
+      );
+    }
+    result[key] = value;
   }
   return result;
 }
@@ -1225,6 +1255,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       carto: { ...DEFAULTS.carto },
       repoDigest: { ...DEFAULTS.repoDigest },
       notifications: cloneNotifications(DEFAULTS.notifications),
+      messaging: { ...DEFAULTS.messaging },
       receipts: { ...DEFAULT_RECEIPTS },
       sync: { ...DEFAULT_SYNC },
       policy: { ...DEFAULT_POLICY, gates: {} },
@@ -1321,6 +1352,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     carto: parseCarto(raw.carto),
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     notifications: parseNotificationsConfig(raw.notifications),
+    messaging: parseMessagingConfig(raw.messaging),
     receipts: parseReceiptsConfig(raw.receipts),
     sync: parseSyncConfig(raw.sync),
     policy: parsePolicyConfig(raw.policy),

@@ -10,7 +10,12 @@
 import type { TaskRisk } from './types.js';
 
 /** A human gate the policy engine can demote from blocking to recording. */
-export type PolicyGate = 'scope' | 'approval' | 'verify-retry' | 'merge';
+export type PolicyGate =
+  | 'scope'
+  | 'approval'
+  | 'verify-retry'
+  | 'merge'
+  | 'wake';
 
 /** Runtime counterpart of PolicyGate — see the note on FINDING_SEVERITIES. */
 export const POLICY_GATES: readonly PolicyGate[] = [
@@ -18,6 +23,7 @@ export const POLICY_GATES: readonly PolicyGate[] = [
   'approval',
   'verify-retry',
   'merge',
+  'wake',
 ];
 
 /**
@@ -56,11 +62,13 @@ export const MAX_POLICY_RUNG = 4;
  * - approval: a tool-call escalation the SDK classifier referred to a human.
  * - verify-retry: igniting the review→fix loop and re-running a red verify.
  * - merge: handing a green run to the merge queue.
+ * - wake: rousing a sleeping agent to deliver it a message.
  */
 export const GATE_RUNGS: Record<PolicyGate, number> = {
   scope: 2,
   approval: 3,
   'verify-retry': 3,
+  wake: 3,
   merge: 4,
 };
 

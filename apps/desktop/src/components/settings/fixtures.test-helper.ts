@@ -3,6 +3,7 @@ import {
   DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_REPO_DIGEST,
@@ -36,6 +37,7 @@ export const testConfig: DispatchConfig = {
   carto: DEFAULT_CARTO,
   repoDigest: DEFAULT_REPO_DIGEST,
   notifications: DEFAULT_NOTIFICATIONS,
+  messaging: DEFAULT_MESSAGING,
 };
 
 export const testProject = { path: '/tmp/demo', name: 'demo' };
