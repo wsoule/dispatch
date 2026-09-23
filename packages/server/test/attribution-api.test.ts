@@ -22,6 +22,7 @@ const idle: Executor = {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     } satisfies ExecutorRun;
   },
 };

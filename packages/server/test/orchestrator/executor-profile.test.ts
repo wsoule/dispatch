@@ -67,6 +67,7 @@ function finishingExecutor(finish: {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       };
     },
   };

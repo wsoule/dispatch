@@ -769,6 +769,7 @@ class ScriptedReviewer implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }

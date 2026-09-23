@@ -32,6 +32,7 @@ const noopRun: ExecutorRun = {
   requestStop: () => {},
   send: () => {},
   approve: () => {},
+  notify: () => {},
 };
 
 // Never calls onFinish, so a dispatched run sits in `running` for as long as

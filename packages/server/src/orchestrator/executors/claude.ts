@@ -1,6 +1,7 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type {
   CanUseTool,
+  HookCallback,
   McpServerConfig,
   Options,
   PermissionMode,
@@ -526,6 +527,10 @@ export class ClaudeExecutor implements Executor {
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     const pendingApprovals = new Map<string, ApprovalResolver>();
     let interrupted = false;
+    // Set right before every onFinish call; read by notify() below so a note
+    // queued after the run has already ended is silently dropped instead of
+    // sitting in pendingNotes forever.
+    let finished = false;
     // Set by requestStop(); read by canUseTool below. See STOP_DENIAL_MESSAGE.
     let stopRequested = false;
     // Tools the user said "always, for this run" about. Session-scoped by construction: this
@@ -533,6 +538,15 @@ export class ClaudeExecutor implements Executor {
     // into the next one — which is the property that makes approve-for-session safe to offer
     // at all.
     const sessionAllowed = new Set<string>();
+    // Digests waiting for the agent's next tool result (see notify below).
+    const pendingNotes: string[] = [];
+    const postToolUse: HookCallback = async () => {
+      if (pendingNotes.length === 0) return {};
+      const additionalContext = pendingNotes.splice(0).join('\n');
+      return {
+        hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext },
+      };
+    };
 
     const canUseTool: CanUseTool = async (toolName, input, callOpts) => {
       if (interrupted) {
@@ -591,6 +605,7 @@ export class ClaudeExecutor implements Executor {
       model: opts.model,
       resume: opts.resumeSessionId,
       canUseTool,
+      hooks: { PostToolUse: [{ hooks: [postToolUse] }] },
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
       // like a human running `claude` in this checkout, not like a bare SDK
@@ -622,7 +637,8 @@ export class ClaudeExecutor implements Executor {
           dispatchMcpSpec(
             opts.cwd,
             opts.projectRoot ?? opts.cwd,
-            opts.runId ?? ''
+            opts.runId ?? '',
+            opts.runToken
           )
         ),
         ...cartoMcpServers(opts.projectRoot ?? opts.cwd),
@@ -710,6 +726,7 @@ export class ClaudeExecutor implements Executor {
                 message.session_id !== opts.resumeSessionId
               ) {
                 gotResult = true;
+                finished = true;
                 events.onFinish({
                   state: 'failed',
                   error: `resume could not reattach session ${opts.resumeSessionId}: the agent opened a different session (${message.session_id}), so it has none of the conversation this run continues`,
@@ -724,6 +741,7 @@ export class ClaudeExecutor implements Executor {
           } else if (message.type === 'result') {
             gotResult = true;
             if (!interrupted) {
+              finished = true;
               events.onFinish(
                 guardZeroTurnFinish(finishFromResult(message, lastApiError), {
                   sawAssistantOutput,
@@ -735,6 +753,7 @@ export class ClaudeExecutor implements Executor {
           }
         }
         if (!gotResult && !interrupted) {
+          finished = true;
           events.onFinish({
             state: 'failed',
             error: 'agent session ended without a final result',
@@ -747,6 +766,7 @@ export class ClaudeExecutor implements Executor {
           // The missing-CLI error can also surface lazily on the first
           // iteration (rather than synchronously from query() above), so apply
           // the same install-hint rewrite here too.
+          finished = true;
           events.onFinish({
             state: 'failed',
             error:
@@ -800,6 +820,10 @@ export class ClaudeExecutor implements Executor {
           pendingApprovals.delete(requestId);
           resolve(decision);
         }
+      },
+      notify(text: string): void {
+        if (finished) return;
+        pendingNotes.push(text);
       },
     };
   }

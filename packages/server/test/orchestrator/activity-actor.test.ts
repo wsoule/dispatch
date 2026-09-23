@@ -99,6 +99,7 @@ describe('Activity attribution', () => {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       }),
     });
     const task = store.create({ title: 'Cancel me' });

@@ -70,6 +70,7 @@ const controllable: Executor = {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     } satisfies ExecutorRun;
   },
 };

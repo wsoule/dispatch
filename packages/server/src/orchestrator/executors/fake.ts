@@ -66,7 +66,10 @@ function commitAll(cwd: string, message: string): void {
 export class FakeExecutor implements Executor {
   constructor(private readonly script: FakeExecutorScript) {}
 
-  start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+  start(
+    opts: ExecutorStartOptions,
+    events: ExecutorEvents
+  ): ExecutorRun & { notified: string[] } {
     let cancelled = false;
     // A graceful stop, as a scripted executor can express one: the step already
     // in flight runs to completion (including its commit), no further step
@@ -77,6 +80,9 @@ export class FakeExecutor implements Executor {
       string,
       (decision: ApprovalDecision) => void
     >();
+    // Every notify() call this run received, in order — a test seam, since a
+    // scripted run has nothing to do with a note beyond recording it.
+    const notified: string[] = [];
 
     // I6: a scripted step throwing (a bad `write` callback, a commit that
     // fails, etc.) must never leave this run silently hung mid-script — a
@@ -185,6 +191,10 @@ export class FakeExecutor implements Executor {
           resolve(decision);
         }
       },
+      notify(text: string): void {
+        notified.push(text);
+      },
+      notified,
     };
   }
 }

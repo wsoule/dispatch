@@ -283,6 +283,7 @@ function controllableExecutor(sent: string[]): Executor {
         requestStop: () => {},
         send: (message: string) => sent.push(message),
         approve: () => {},
+        notify: () => {},
       };
     },
   };
@@ -587,6 +588,7 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });
@@ -667,6 +669,7 @@ describe('Orchestrator.sendMessage resume (request-changes)', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });
@@ -1244,6 +1247,7 @@ describe('Orchestrator.review merge closes superseded predecessors', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         };
       },
     });
@@ -2395,6 +2399,7 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       };
     }
   }

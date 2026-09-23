@@ -91,6 +91,9 @@ export interface ExecutorRun {
   requestStop(): void;
   send(message: string): void;
   approve(requestId: string, decision: ApprovalDecision): void;
+  // Non-interrupting context for the agent's next step (a channel digest).
+  // Never throws; a no-op once the run has finished.
+  notify(text: string): void;
 }
 
 // Callbacks an Executor uses to report progress back to the orchestrator.
@@ -145,6 +148,9 @@ export interface ExecutorStartOptions {
   // `projectRoot` is: FakeExecutor fixtures that never touch messaging don't
   // need to pass it; every real Orchestrator call site always does.
   runId?: string;
+  // This run's messaging credential, handed to the dispatch MCP server as
+  // DISPATCH_RUN_TOKEN.
+  runToken?: string;
 }
 
 // What the orchestrator may assume about an executor beyond `start()`: which

@@ -58,6 +58,7 @@ function controllableExecutor(sent: string[]): Executor {
         requestStop: () => {},
         send: (message: string) => sent.push(message),
         approve: () => {},
+        notify: () => {},
       };
     },
   };

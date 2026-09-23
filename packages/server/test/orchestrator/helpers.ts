@@ -20,6 +20,8 @@ import type {
  */
 export class StallingExecutor implements Executor {
   readonly started: ExecutorStartOptions[] = [];
+  // Every notify() call any started run received, in order.
+  readonly notified: string[] = [];
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     this.started.push(opts);
@@ -29,6 +31,9 @@ export class StallingExecutor implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: (text: string) => {
+        this.notified.push(text);
+      },
     };
   }
 }

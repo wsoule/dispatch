@@ -339,6 +339,26 @@ describe('CodexExecutor', () => {
     );
   });
 
+  it('notify after finish is a no-op', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.notify('turn/completed', {
+          threadId: 'thread-new',
+          turn: { id: 'turn-1', status: 'completed', error: null },
+        });
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.finishes.length === 1);
+
+    expect(() => harness.run.notify('📬 late')).not.toThrow();
+    // Give any (wrongly) fired async request a chance to land before asserting.
+    await Bun.sleep(10);
+    expect(
+      process.requests.some((request) => request.method === 'turn/steer')
+    ).toBe(false);
+  });
+
   it("switches off the user's own MCP servers for the run and says so", async () => {
     const process = scriptedProcess();
     const harness = startHarness(process, undefined, undefined, {

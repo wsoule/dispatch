@@ -61,7 +61,8 @@ function resolveMcpBin(): string {
 export function dispatchMcpSpec(
   cwd: string,
   projectRoot: string,
-  runId: string
+  runId: string,
+  runToken?: string
 ): StdioServerSpec {
   const env: Record<string, string> = {};
   for (const key of MCP_ENV_PASSTHROUGH) {
@@ -70,6 +71,7 @@ export function dispatchMcpSpec(
   }
   env.DISPATCH_PROJECT_ROOT = projectRoot;
   env.DISPATCH_RUN_ID = runId;
+  if (runToken !== undefined) env.DISPATCH_RUN_TOKEN = runToken;
   const mcpBin = process.env.DISPATCH_MCP_BIN;
   if (mcpBin !== undefined && mcpBin !== '') {
     return {

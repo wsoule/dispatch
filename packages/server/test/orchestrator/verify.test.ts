@@ -218,6 +218,7 @@ class ScriptedVerifier implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }

@@ -152,11 +152,12 @@ function buildCodexMcpServers(
   projectRoot: string,
   runId: string,
   cartoSpec: (projectRoot: string) => StdioServerSpec | null,
-  userServers: string[]
+  userServers: string[],
+  runToken?: string
 ): { config: Record<string, unknown>; disabled: string[] } {
   const carto = cartoSpec(projectRoot);
   const ours: Record<string, unknown> = {
-    dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId), {
+    dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId, runToken), {
       tools: {
         task_comment: { approval_mode: 'approve' },
         record_evidence: { approval_mode: 'approve' },
@@ -600,7 +601,8 @@ export class CodexExecutor implements Executor {
           opts.projectRoot ?? opts.cwd,
           opts.runId ?? '',
           this.cartoSpec,
-          this.userMcpServers()
+          this.userMcpServers(),
+          opts.runToken
         );
         if (disabled.length > 0) {
           events.onEntry({
@@ -693,6 +695,16 @@ export class CodexExecutor implements Executor {
       },
       send(message: string): void {
         sendSteer(message);
+      },
+      // Non-interrupting context, delivered the same way as a mid-run
+      // message (Codex has no separate "note" channel); wrapped so a steer
+      // failure after the run has moved on never throws back at the caller.
+      notify(text: string): void {
+        try {
+          sendSteer(text);
+        } catch {
+          // Best-effort: notify() must never throw.
+        }
       },
       approve(requestId: string, decision: ApprovalDecision): void {
         const approval = pendingApprovals.get(requestId);

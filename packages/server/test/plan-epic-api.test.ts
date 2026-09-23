@@ -1179,6 +1179,7 @@ describe('POST /api/runs/:id/inject', () => {
           requestStop: () => {},
           send: (message: string) => sent.push(message),
           approve: () => {},
+          notify: () => {},
         } satisfies ExecutorRun;
       },
     };
@@ -1245,6 +1246,7 @@ describe('POST /api/runs/:id/inject', () => {
           requestStop: () => {},
           send: (message: string) => sent.push(message),
           approve: () => {},
+          notify: () => {},
         } satisfies ExecutorRun;
       },
     };
@@ -1373,6 +1375,7 @@ describe('POST /api/runs/:id/message-user', () => {
           requestStop: () => {},
           send: () => {},
           approve: () => {},
+          notify: () => {},
         } satisfies ExecutorRun;
       },
     };

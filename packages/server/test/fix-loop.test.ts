@@ -75,6 +75,7 @@ class ScriptedAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 
@@ -119,6 +120,7 @@ class GatedAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 
@@ -169,6 +171,7 @@ class ConvergingAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }
@@ -190,6 +193,7 @@ class CleanAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }
@@ -216,6 +220,7 @@ class UndeclaredWriteAgent implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }

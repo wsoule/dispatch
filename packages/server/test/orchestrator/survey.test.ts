@@ -83,6 +83,7 @@ function controllableExecutor(): Executor {
         requestStop: () => {},
         send: () => {},
         approve: () => {},
+        notify: () => {},
       };
     },
   };
@@ -99,6 +100,7 @@ class CapturingExecutor implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }

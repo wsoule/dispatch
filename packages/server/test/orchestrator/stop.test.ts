@@ -240,6 +240,7 @@ class DeafExecutor implements Executor {
       requestStop: () => {},
       send: () => {},
       approve: () => {},
+      notify: () => {},
     };
   }
 }
