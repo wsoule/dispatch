@@ -77,8 +77,10 @@ channel:epic/e-c25f9c          channel:auth-refactor            many-to-many
 - **Task** — whatever run works that task now or next. Outlives any single run.
 - **Run** — exactly that session. Fails if the run is not live.
 - **Channel** — every subscribed member. Names are `[a-z0-9][a-z0-9._/-]*`.
-  `epic/<id>` channels are created automatically with an epic, and each task in
-  the epic is a member.
+  `epic/<id>` channels exist implicitly: their members are computed at send time
+  as every task whose `parent` is the epic (`host.implicitMembers`), plus any
+  explicit joins. Epics have no creation hook (they are tasks with
+  `kind: 'epic'`), so computing membership avoids a table that could drift.
 
 Roles are out of scope; a later version can model them as channels whose
 membership a role manages.
@@ -137,7 +139,13 @@ type GateData =
   | { type: 'tool-approval'; tool: string; input: JsonValue }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: Address; message: string }
-  | { type: 'agent-registration'; agent: string; client: string };
+  | { type: 'agent-registration'; agent: string; client: string }
+  | {
+      type: 'overseer-action';
+      conversation: string;
+      actionId: string;
+      summary: string;
+    };
 ```
 
 `NotificationKind` toggles map onto these: `approval` ↔ `tool-approval`,
@@ -198,14 +206,22 @@ interface MessagingHost {
   wake(target: Address, msg: Message): Promise<WakeResult>;
   decide(req: PolicyRequest): 'allow' | 'ask' | 'deny';
   owner(target: Address): string; // human to ask for a wake gate
+  implicitMembers(channel: string): Address[]; // e.g. epic children
+  onAnswered(question: Message, answer: Message): Promise<void>; // gate effects
   now(): Date;
 }
 ```
 
-**Wake.** `allow` → `host.wake` resumes the task's latest run or dispatches the
-task if ready. `deny` → stays held; the sender gets a `notice`. `ask` → the
-engine sends a blocking `question` with `GateData { type: 'wake' }` to
-`host.owner(target)`; approving it calls `host.wake`.
+`onAnswered` is how gates take effect: answering a `tool-approval` question
+calls the orchestrator's `approve`, a `scope` answer records the grant, a `wake`
+answer calls `wake`, an `agent-registration` answer approves the agent.
+
+**Wake.** `allow` → `host.wake` calls `dispatchOrResume` for the task: a new run
+resuming the task's latest session. It never pushes into a finished run — Claude
+runs end at their first `result` and Codex runs have one turn. `deny` → stays
+held; the sender gets a `notice`. `ask` → the engine sends a blocking `question`
+with `GateData { type: 'wake' }` to `host.owner(target)`; approving it calls
+`host.wake`.
 
 **Run start.** When a run starts, the host calls
 `engine.deliverHeld(runId, taskId)`: every held delivery for the task (and its
@@ -220,7 +236,12 @@ channels, as notify) is bound to the run and pushed or notified.
   flagged with a `notice` to the project owner.
 - `agentBlockingTimeoutSec: 600` for blocking messages to agents. On timeout the
   sending tool returns "no answer yet — it will arrive in your inbox" and the
-  delivery stays open. Blocking messages to humans have no timeout.
+  delivery stays open.
+- Blocking messages to humans wait up to 30 minutes in the MCP tool (the in-run
+  MCP tool timeout is 31). On expiry a plain question stays open and its answer
+  is pushed to the run later, or held for its task. An expired `scope` gate
+  closes as denied, matching today's `request_scope`. `tool-approval` gates are
+  not MCP calls — they park the executor's `canUseTool` — and have no timeout.
 
 **Rendering.** Pushed messages render as
 `[message from <sender> · <kind> · <id>]` followed by the body and refs, so an
@@ -234,10 +255,24 @@ held.
 
 ## Identity
 
-**Runs.** On dispatch the daemon mints a run token and passes it with
-`DISPATCH_RUN_ID` (`orchestrator/dispatchMcp.ts`). It is valid while the run
-lives and scoped to that run, its task and its task's channels. A run sends as
-`run:<id>`.
+**Runs.** On dispatch the daemon mints a run token and passes it as
+`DISPATCH_RUN_TOKEN` beside `DISPATCH_RUN_ID` (add it to the env allowlist in
+`orchestrator/dispatchMcp.ts`). It is valid while the run lives and scoped to
+that run, its task and its task's channels. A run sends as `run:<id>`. Today
+every run shares the daemon file's `agentToken` and names itself by an env var;
+the messaging routes accept only run tokens, registered-agent tokens and the app
+token, never the shared `agentToken`.
+
+**Gate answers need the `decide` tier.** A reply to a question carrying
+`GateData` is accepted only from a `decide`-tier caller (the app token), exactly
+as `POST /api/runs/:id/approval` and scope `decide` are today. Agents can answer
+plain questions; they can never approve their own tool calls, scope, wake-ups or
+registrations.
+
+**What identity guarantees locally.** Any process running as the same OS user
+can read the daemon file and token files, so on one machine identity gives
+attribution and consent, not a security boundary. It becomes a boundary when
+messages cross the network (#5).
 
 **External agents.** `dispatch mcp` without a run token:
 
@@ -296,17 +331,17 @@ mirror the new routes.
 
 ## Replacements
 
-| Today                                        | After                                                                   |
-| -------------------------------------------- | ----------------------------------------------------------------------- |
-| `POST /api/runs/:id/inject`, `agent_message` | Removed. Injection survives only as the daemon's internal `push` hook.  |
-| `POST /api/runs/:id/message`                 | `msg_send` from `human:<owner>` to `run:<id>`                           |
-| `message_user`                               | `message`/`notice` to a human                                           |
-| `ask_user`, `QuestionRegistry`               | blocking `question` to a human                                          |
-| tool approvals, `awaiting-approval` flag     | blocking `question`, `GateData tool-approval`, choices approve/deny     |
-| `request_scope`, `ScopeRequestRegistry`      | blocking `question`, `GateData scope`; autonomy auto-grant reads `data` |
-| `decisionFeed.ts`                            | query over open blocking questions to humans                            |
-| overseer chat                                | a thread between the owner and the overseer's actor                     |
-| ledger `handoff` entries                     | `handoff` messages                                                      |
+| Today                                                   | After                                                                                                                                        |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST /api/runs/:id/inject`, `agent_message`            | Removed. Injection survives only as the daemon's internal `push` hook.                                                                       |
+| `POST /api/runs/:id/message`                            | `msg_send` from `human:<owner>` to `run:<id>`                                                                                                |
+| `message_user`                                          | `message`/`notice` to a human                                                                                                                |
+| `ask_user`, `QuestionRegistry`                          | blocking `question` to a human                                                                                                               |
+| tool approvals, `awaiting-approval` flag                | blocking `question`, `GateData tool-approval`, choices approve/deny                                                                          |
+| `request_scope`, `ScopeRequestRegistry`                 | blocking `question`, `GateData scope`; autonomy auto-grant reads `data`                                                                      |
+| `decisionFeed.ts`                                       | query over open blocking questions to humans                                                                                                 |
+| overseer chat, its pending actions and tool approvals   | a thread between the owner and `agent:<owner>/overseer`; actions become `overseer-action` gates and its tool approvals `tool-approval` gates |
+| ledger `handoff` kind (written only by demo data today) | `handoff` messages; `handoff` leaves the writable ledger kinds                                                                               |
 
 `awaiting-approval` becomes derived: a run is awaiting when it has sent an
 unanswered blocking question to a human. `RunStatePill`, `ApprovalCard` and
@@ -322,15 +357,26 @@ bus land together — no aliases.
 
 ## Desktop UI
 
-- **Threads view** (top-level). Left rail groups **Needs you** (open blocking
-  questions and pending handoffs addressed to you), **Channels**, **Direct**.
-  The right pane shows the thread with kind badges, clickable refs and choice
-  buttons. The composer completes addresses on `@`.
-- **Task page:** a thread panel for everything to or from `task:<id>`, built
-  into the planned `TaskSpecView` rewrite rather than `TaskDetailPanel`.
-- **Run Session tab:** pushed and notified messages render inline where the
-  agent saw them.
+- **Threads view** (new `ProjectView` in `lib/appNav.ts`, on the Sidebar rail
+  after `inbox`). Left rail groups **Needs you** (open blocking questions and
+  pending handoffs addressed to you), **Channels**, **Direct**. The right pane
+  shows the thread with kind badges, clickable refs and choice buttons, built
+  from `@dispatch/ui` `ai/` pieces (`ChatMessage`, `PromptBar`, `ApprovalCard`).
+  The composer completes addresses on `@`.
+- **Task page** (`components/tasks/page/TaskPage.tsx`): a `thread` tab for
+  everything to or from `task:<id>`.
+- **Run chat** (`TaskChatTab` → `RunLogView`): pushed and notified messages
+  render inline where the agent saw them; `QuestionCard`, `ApprovalCard` and
+  `ScopeRequestCard` render from open gate questions instead of the old
+  registries. `InboxView` does the same.
 - **Settings → Agents:** roster with status, mute and revoke.
+
+The desktop's data layer (`hooks/useDispatchProject.ts`) swaps its question,
+approval, scope-request and decision state for one query over open blocking
+questions to humans, refreshed by `message.new`/`delivery.changed`. The views
+that receive `openQuestions`/`pendingApprovals` (`controlRoom`, `inboxQueue`,
+`taskAttention`, `notificationEdges`, `OverviewView`) keep their inputs, derived
+from that query.
 
 ## Failure handling
 
