@@ -206,4 +206,49 @@ describe('DeliveryEngine.send', () => {
       engine.send({ to: [], kind: 'message', body: 'x' }, run1)
     ).rejects.toBeInstanceOf(MessagingError);
   });
+
+  it('skips a not-live run reached only via a channel, delivering to other live members', async () => {
+    store.ensureChannel('auth', '2026-09-23T00:00:00.000Z', false);
+    store.addMember('auth', 'run:r-0000dd', '2026-09-23T00:00:00.000Z');
+    store.addMember('auth', 'task:t-000002', '2026-09-23T00:00:00.000Z');
+    host.startRun('t-000002', 'r-000002');
+    const { deliveries } = await engine.send(
+      { to: ['channel:auth'], kind: 'notice', body: 'x' },
+      run1
+    );
+    expect(deliveries).toHaveLength(1);
+    expect(deliveries[0]).toMatchObject({ recipient: 'task:t-000002' });
+  });
+
+  it('reverts a failed notify on a channel delivery to held', async () => {
+    host.startRun('t-000002', 'r-000002');
+    host.implicit.set('epic/e-000001', ['task:t-000002']);
+    host.failPushFor.add('r-000002');
+    const { deliveries } = await engine.send(
+      { to: ['channel:epic/e-000001'], kind: 'notice', body: 'x' },
+      run1
+    );
+    expect(store.getDelivery(deliveries[0].id)).toMatchObject({
+      state: 'held',
+      runId: null,
+    });
+  });
+
+  it('isolates a throwing listener so send still resolves and delivers', async () => {
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      engine.subscribe(() => {
+        throw new Error('boom');
+      });
+      host.startRun('t-000002', 'r-000002');
+      const { deliveries } = await engine.send(
+        { to: ['task:t-000002'], kind: 'message', body: 'x' },
+        run1
+      );
+      expect(deliveries[0].state).toBe('pushed');
+    } finally {
+      console.error = originalError;
+    }
+  });
 });

@@ -66,8 +66,16 @@ export class DeliveryEngine {
     return () => this.listeners.delete(listener);
   }
 
+  // Runs every subscriber for one event, in isolation: a throwing listener
+  // must never fail (or half-run) the send that produced the event.
   private emit(e: EngineEvent): void {
-    for (const l of this.listeners) l(e);
+    for (const l of this.listeners) {
+      try {
+        l(e);
+      } catch (err) {
+        console.error('messaging listener failed', err);
+      }
+    }
   }
 
   private id(prefix: 'm' | 'd'): string {
@@ -135,8 +143,10 @@ export class DeliveryEngine {
   }
 
   // Picks each delivery's initial state and run, before anything is stored.
-  // Push vs notify is decided later, in dispatch().
-  private plan(target: Target, muted: boolean, field: string): Delivery {
+  // Push vs notify is decided later, in dispatch(). Returns null to mean "no
+  // delivery for this target" — a not-live run reached only via a channel is
+  // dropped silently, since the channel send as a whole must still succeed.
+  private plan(target: Target, muted: boolean, field: string): Delivery | null {
     const base = {
       id: this.id('d'),
       messageId: '',
@@ -159,12 +169,14 @@ export class DeliveryEngine {
           : { ...base, runId: run, state: 'sending' };
       }
       case 'run':
-        if (!this.host.isLiveRun(parsed.id))
+        if (!this.host.isLiveRun(parsed.id)) {
+          if (target.via === 'channel') return null;
           throw new MessagingError(
             'invalid',
             `run ${parsed.id} is not live`,
             field
           );
+        }
         return { ...base, runId: parsed.id, state: 'sending' };
     }
   }
@@ -214,13 +226,12 @@ export class DeliveryEngine {
     if (input.choice !== undefined) message.choice = input.choice;
 
     const targets = this.resolveTargets(message.to, sender.address);
-    const deliveries = targets.map((t) => {
+    const deliveries: Delivery[] = [];
+    for (const t of targets) {
       const index = message.to.indexOf(t.recipient);
-      return {
-        ...this.plan(t, muted, index >= 0 ? `to[${index}]` : 'to'),
-        messageId: id,
-      };
-    });
+      const planned = this.plan(t, muted, index >= 0 ? `to[${index}]` : 'to');
+      if (planned !== null) deliveries.push({ ...planned, messageId: id });
+    }
 
     this.store.transaction(() => {
       this.store.insertMessage(message);
