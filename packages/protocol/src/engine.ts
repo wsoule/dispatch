@@ -309,6 +309,28 @@ export class DeliveryEngine {
     return next;
   }
 
+  // Finishes deliveries a crash left between commit and hook: retries those
+  // whose run is still live, returns the rest to the task's mailbox.
+  async recover(): Promise<{ retried: number; reverted: number }> {
+    let retried = 0;
+    let reverted = 0;
+    for (const d of this.store.deliveries({ states: ['sending'] })) {
+      const message = this.store.getMessage(d.messageId);
+      if (
+        d.runId !== null &&
+        message !== null &&
+        this.host.isLiveRun(d.runId)
+      ) {
+        await this.dispatch(d, message);
+        retried++;
+      } else {
+        this.store.setDelivery(d.id, 'held', null, this.nowIso());
+        reverted++;
+      }
+    }
+    return { retried, reverted };
+  }
+
   getMessage(id: string): Message | null {
     return this.store.getMessage(id);
   }
