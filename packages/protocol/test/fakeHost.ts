@@ -15,6 +15,7 @@ export class FakeHost implements MessagingHost {
   ruling: PolicyRuling = 'deny';
   wakeResult: WakeResult = { ok: true, runId: 'r-00000f' };
   failPushFor = new Set<string>();
+  failOnAnswered = false;
   ownerAddress: Address = 'human:wyat';
   clock = new Date('2026-09-23T10:00:00.000Z');
   calls: { hook: string; args: unknown[] }[] = [];
@@ -69,6 +70,7 @@ export class FakeHost implements MessagingHost {
       hook: 'onAnswered',
       args: [question.id, answer.choice ?? null],
     });
+    if (this.failOnAnswered) throw new Error('onAnswered blew up');
   }
   now(): Date {
     return this.clock;

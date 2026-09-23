@@ -146,6 +146,154 @@ describe('answers', () => {
       thread: m.thread,
     });
   });
+
+  it('a second answer is a conflict', async () => {
+    const { message: q } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'which?',
+        blocking: true,
+        choices: ['a', 'b'],
+      },
+      run1
+    );
+    await engine.reply(q.id, { body: '', choice: 'a' }, human);
+    await expect(
+      engine.reply(q.id, { body: '', choice: 'b' }, human)
+    ).rejects.toMatchObject({ code: 'conflict' });
+  });
+
+  it('reply after close is a conflict', async () => {
+    const { message: gate } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'scope?',
+        blocking: true,
+        choices: ['grant', 'deny'],
+        data: { type: 'scope', paths: ['a.ts'], reason: 'need it' },
+      },
+      run1
+    );
+    engine.close(gate.id, 'no longer needed');
+    await expect(
+      engine.reply(gate.id, { body: '', choice: 'grant' }, human)
+    ).rejects.toMatchObject({ code: 'conflict' });
+    expect(host.hooks('onAnswered')).toEqual([]);
+  });
+
+  it('a throwing onAnswered does not fail the reply', async () => {
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      host.failOnAnswered = true;
+      const { message: gate } = await engine.send(
+        {
+          to: ['human:wyat'],
+          kind: 'question',
+          body: 'Run Bash?',
+          blocking: true,
+          choices: ['approve', 'deny'],
+          data: {
+            type: 'tool-approval',
+            requestId: 'req-1',
+            runId: 'r-000001',
+            tool: 'Bash',
+            input: {},
+          },
+        },
+        system
+      );
+      const { message: a } = await engine.reply(
+        gate.id,
+        { body: '', choice: 'approve' },
+        human
+      );
+      expect(a.kind).toBe('answer');
+      expect(engine.answerOf(gate.id)?.id).toBe(a.id);
+    } finally {
+      console.error = originalError;
+    }
+  });
+
+  it('reply to a system gate stores the answer with no deliveries', async () => {
+    const { message: gate } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'Run Bash?',
+        blocking: true,
+        choices: ['approve', 'deny'],
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          runId: 'r-000001',
+          tool: 'Bash',
+          input: {},
+        },
+      },
+      system
+    );
+    const result = await engine.reply(
+      gate.id,
+      { body: '', choice: 'approve' },
+      human
+    );
+    expect(result.deliveries).toEqual([]);
+  });
+});
+
+describe('close', () => {
+  it('throws not-found for an unknown id', () => {
+    expect(() => engine.close('m-doesnotexist', 'reason')).toThrow(
+      expect.objectContaining({ code: 'not-found' })
+    );
+  });
+
+  it('throws conflict when the question is already answered', async () => {
+    const { message: q } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'which?',
+        blocking: true,
+        choices: ['a', 'b'],
+      },
+      run1
+    );
+    await engine.reply(q.id, { body: '', choice: 'a' }, human);
+    expect(() => engine.close(q.id, 'too late')).toThrow(
+      expect.objectContaining({ code: 'conflict' })
+    );
+  });
+
+  it('throws invalid for a message that is not a question or handoff', async () => {
+    const { message: m } = await engine.send(
+      { to: ['human:wyat'], kind: 'notice', body: 'fyi' },
+      run1
+    );
+    expect(() => engine.close(m.id, 'n/a')).toThrow(
+      expect.objectContaining({ code: 'invalid', field: 'replyTo' })
+    );
+  });
+
+  it('marks the question deliveries answered', async () => {
+    const { message: q } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'which?',
+        blocking: true,
+        choices: ['a', 'b'],
+      },
+      run1
+    );
+    engine.close(q.id, 'done');
+    expect(store.deliveries({ messageId: q.id }).map((d) => d.state)).toEqual([
+      'answered',
+    ]);
+  });
 });
 
 describe('held delivery and reads', () => {

@@ -3,7 +3,7 @@ import type { Address } from './address.js';
 import { gateOf, validateSendInput } from './envelope.js';
 import type { JsonValue, Message, Ref, SendInput } from './envelope.js';
 import { MessagingError } from './errors.js';
-import type { MessagingHost } from './host.js';
+import type { MessagingHost, WakeResult } from './host.js';
 import { renderDigestLine, renderForAgent } from './render.js';
 import type {
   Delivery,
@@ -123,8 +123,10 @@ export class DeliveryEngine {
     const isSelf = (addr: Address) =>
       addr === sender || (senderTask !== null && addr === `task:${senderTask}`);
     const byRecipient = new Map<Address, Target>();
+    // The system address (agent:dispatch) is a valid `to` — e.g. an answer
+    // replying to one of its gates — but it has no run/inbox to deliver to.
     const add = (recipient: Address, via: DeliveryVia) => {
-      if (isSelf(recipient)) return;
+      if (isSelf(recipient) || recipient === SYSTEM_ADDRESS) return;
       const existing = byRecipient.get(recipient);
       if (
         existing === undefined ||
@@ -195,6 +197,17 @@ export class DeliveryEngine {
       : null;
     validateSendInput(input, sender.address, sender.canDecide, replyTarget);
     await this.checkBreaker(replyTarget, sender);
+    if (
+      input.kind === 'answer' &&
+      replyTarget !== null &&
+      this.store.answersTo(replyTarget.id).length > 0
+    ) {
+      throw new MessagingError(
+        'conflict',
+        `${replyTarget.id} is already answered`,
+        'replyTo'
+      );
+    }
 
     let urgent = input.urgent === true;
     let downgraded = false;
@@ -252,8 +265,13 @@ export class DeliveryEngine {
 
     if (message.kind === 'answer' && replyTarget !== null) {
       this.store.transaction(() => this.markAnswered(replyTarget.id));
-      if (gateOf(replyTarget) !== null)
-        await this.host.onAnswered(replyTarget, message);
+      if (gateOf(replyTarget) !== null) {
+        try {
+          await this.host.onAnswered(replyTarget, message);
+        } catch (err) {
+          console.error('messaging hook failed', err);
+        }
+      }
     }
     if (message.wake === 'request') await this.runWake(message, settled);
 
@@ -404,6 +422,12 @@ export class DeliveryEngine {
         `no message ${questionId}`,
         'replyTo'
       );
+    if (target.kind !== 'question' && target.kind !== 'handoff')
+      throw new MessagingError(
+        'invalid',
+        `${questionId} is a ${target.kind}, not a question or handoff`,
+        'replyTo'
+      );
     if (this.answerOf(questionId) !== null)
       throw new MessagingError(
         'conflict',
@@ -503,7 +527,16 @@ export class DeliveryEngine {
         message,
       });
       if (ruling === 'allow') {
-        const result = await this.host.wake(d.recipient, message);
+        let result: WakeResult;
+        try {
+          result = await this.host.wake(d.recipient, message);
+        } catch (err) {
+          console.error('messaging hook failed', err);
+          result = {
+            ok: false,
+            reason: err instanceof Error ? err.message : String(err),
+          };
+        }
         if (!result.ok)
           await this.noticeTo(
             message.from,
