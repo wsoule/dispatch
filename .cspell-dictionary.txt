@@ -478,6 +478,8 @@ tybys
 typer
 typesafe
 uall
+ulid
+ulids
 unanalysable
 unanalyzable
 unanalyzed

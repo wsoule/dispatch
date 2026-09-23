@@ -6,6 +6,9 @@
       "path": "packages/core/tsconfig.json"
     },
     {
+      "path": "packages/protocol/tsconfig.json"
+    },
+    {
       "path": "packages/cli/tsconfig.json"
     },
     {

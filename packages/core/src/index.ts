@@ -92,6 +92,9 @@ export {
   DISPATCH_DB_VERSION,
   dispatchDbPath,
   openDispatchDb,
+  openSqliteDb,
+  queryAll,
+  queryOne,
   sqliteDriver,
   SqliteRowError,
 } from './sqliteDb.js';
