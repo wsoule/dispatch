@@ -10,10 +10,11 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 # tsconfig and no test files to run against.
 #
 # NO BUILD TASK ON PURPOSE. A `noop` build here does not make consumers
-# cache-correct: moon 2.3.3 does not fold a dependency task's hash into its
-# dependents', so tokens:build re-runs while desktop:build and site:build stay
-# cached and ship the previous palette (measured). The staleness is fixed the
-# only way that works — each consumer lists
+# cache-correct: as measured against the moon version pinned when this was
+# written, moon did not fold a dependency task's hash into its dependents',
+# so tokens:build re-ran while desktop:build and site:build stayed cached and
+# shipped the previous palette. The staleness is fixed the only way that
+# works regardless of moon version — each consumer lists
 # `/packages/tokens/tokens.css` in its own build inputs. If you add a second
 # file here, add it there too.
 layer: 'library'
