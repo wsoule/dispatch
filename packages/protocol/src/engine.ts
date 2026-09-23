@@ -268,7 +268,8 @@ export class DeliveryEngine {
     for (const d of answered) this.emit({ type: 'delivery', delivery: d });
 
     const settled: Delivery[] = [];
-    for (const d of deliveries) settled.push(await this.dispatch(d, message));
+    for (const d of deliveries)
+      settled.push((await this.dispatch(d, message)).delivery);
 
     if (message.wake === 'request') {
       try {
@@ -282,21 +283,27 @@ export class DeliveryEngine {
     return { message, deliveries: settled, downgraded };
   }
 
-  // Only a recipient of the question (or its task's run), a deciding human,
-  // or the system may answer it.
+  // Only a recipient of the question (or its task's run, or a successor run
+  // on the same task), a deciding human, or the system may answer it.
   private authorizeAnswer(question: Message, sender: Sender): void {
     if (sender.address === SYSTEM_ADDRESS) return;
     if (sender.canDecide && sender.address.startsWith('human:')) return;
-    const senderTask = sender.address.startsWith('run:')
-      ? this.host.taskOfRun(sender.address.slice(4))
+    const senderRunId = sender.address.startsWith('run:')
+      ? sender.address.slice(4)
       : null;
-    const addressed = this.store
-      .deliveries({ messageId: question.id })
-      .some(
-        (d) =>
-          d.recipient === sender.address ||
-          (senderTask !== null && d.recipient === `task:${senderTask}`)
-      );
+    const senderTask =
+      senderRunId !== null ? this.host.taskOfRun(senderRunId) : null;
+    const addressed = this.store.deliveries({ messageId: question.id }).some(
+      (d) =>
+        d.recipient === sender.address ||
+        (senderTask !== null && d.recipient === `task:${senderTask}`) ||
+        // The question was pushed/redelivered directly to this run.
+        (senderRunId !== null && d.runId === senderRunId) ||
+        // A successor run on the same task as a run the question addressed.
+        (senderTask !== null &&
+          d.recipient.startsWith('run:') &&
+          this.host.taskOfRun(d.recipient.slice(4)) === senderTask)
+    );
     if (!addressed)
       throw new MessagingError(
         'forbidden',
@@ -306,7 +313,8 @@ export class DeliveryEngine {
   }
 
   // Runs the host's gate hook and records the effect as applied on success;
-  // a failure is logged and left for recover() to replay.
+  // a failure at either step is logged and left for recover() to replay
+  // (onAnswered is idempotent, so a second call is safe).
   private async applyGate(
     question: Message,
     answer: Message
@@ -317,14 +325,23 @@ export class DeliveryEngine {
       console.error('messaging hook failed', err);
       return false;
     }
-    this.store.markGateApplied(question.id, this.nowIso());
+    try {
+      this.store.markGateApplied(question.id, this.nowIso());
+    } catch (err) {
+      console.error('messaging hook failed', err);
+      return false;
+    }
     return true;
   }
 
   // Runs the host hook for one freshly stored delivery and records the outcome.
   // `sending` becomes pushed/notified, or held again if the run went away.
-  // A row moved off `sending` meanwhile (e.g. closed) is left as it is.
-  private async dispatch(d: Delivery, message: Message): Promise<Delivery> {
+  // A row moved off `sending` meanwhile (e.g. closed) is left as it is; `won`
+  // tells the caller whether this call's sending->* CAS is what moved it.
+  private async dispatch(
+    d: Delivery,
+    message: Message
+  ): Promise<{ delivery: Delivery; won: boolean }> {
     let next = d;
     if (d.state === 'sending' && d.runId !== null) {
       const push = d.via === 'direct' || message.urgent;
@@ -348,7 +365,8 @@ export class DeliveryEngine {
         next.updatedAt,
         'sending'
       );
-      if (!moved) return this.store.getDelivery(d.id) ?? d;
+      if (!moved)
+        return { delivery: this.store.getDelivery(d.id) ?? d, won: false };
     } else if (d.state === 'notified') {
       try {
         this.host.notifyHuman(d.recipient, message);
@@ -357,7 +375,7 @@ export class DeliveryEngine {
       }
     }
     this.emit({ type: 'delivery', delivery: next });
-    return next;
+    return { delivery: next, won: true };
   }
 
   // Finishes work a crash left between commit and hook: retries sending
@@ -378,8 +396,8 @@ export class DeliveryEngine {
         message !== null &&
         this.host.isLiveRun(d.runId)
       ) {
-        await this.dispatch(d, message);
-        retried++;
+        const { won } = await this.dispatch(d, message);
+        if (won) retried++;
       } else {
         if (
           this.store.setDelivery(d.id, 'held', null, this.nowIso(), 'sending')
@@ -608,7 +626,7 @@ export class DeliveryEngine {
     });
     const out: Delivery[] = [];
     for (const { bound, message } of claimed)
-      out.push(await this.dispatch(bound, message));
+      out.push((await this.dispatch(bound, message)).delivery);
     return out;
   }
 

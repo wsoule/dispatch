@@ -217,6 +217,52 @@ describe('answers', () => {
     }
   });
 
+  it('a throwing markGateApplied does not fail the reply', async () => {
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      let thrown = false;
+      const originalMarkGateApplied = store.markGateApplied.bind(store);
+      store.markGateApplied = (questionId, at) => {
+        if (!thrown) {
+          thrown = true;
+          throw new Error('disk full');
+        }
+        originalMarkGateApplied(questionId, at);
+      };
+      const { message: gate } = await engine.send(
+        {
+          to: ['human:wyat'],
+          kind: 'question',
+          body: 'Run Bash?',
+          blocking: true,
+          choices: ['approve', 'deny'],
+          data: {
+            type: 'tool-approval',
+            requestId: 'req-1',
+            runId: 'r-000001',
+            tool: 'Bash',
+            input: {},
+          },
+        },
+        system
+      );
+      const { message: a } = await engine.reply(
+        gate.id,
+        { body: '', choice: 'approve' },
+        human
+      );
+      // send() still committed and emitted the answer despite the store failure.
+      expect(a.kind).toBe('answer');
+      expect(engine.answerOf(gate.id)?.id).toBe(a.id);
+      expect(host.hooks('onAnswered')).toEqual([[gate.id, 'approve']]);
+      // Not recorded as applied, so recover() replays it.
+      expect(await engine.recover()).toMatchObject({ replayed: 1 });
+    } finally {
+      console.error = originalError;
+    }
+  });
+
   it('reply to a system gate stores the answer with no deliveries', async () => {
     const { message: gate } = await engine.send(
       {
@@ -385,6 +431,57 @@ describe('answer authorization', () => {
       { address: 'human:ana', canDecide: true }
     );
     expect(engine.answerOf(q.id)?.id).toBe(a.id);
+  });
+
+  it('a run the question was redelivered to (after a failed push) can answer', async () => {
+    host.startRun('t-000003', 'r-000003');
+    host.failPushFor.add('r-000003');
+    const { message: q, deliveries } = await engine.send(
+      { to: ['run:r-000003'], kind: 'question', body: 'which?' },
+      human
+    );
+    expect(deliveries[0]).toMatchObject({ state: 'held', runId: null });
+    host.endRun('t-000003');
+    host.startRun('t-000003', 'r-000004');
+    await engine.deliverHeld('r-000004', 't-000003');
+    const { message: a } = await engine.reply(
+      q.id,
+      { body: 'mine' },
+      { address: 'run:r-000004', canDecide: false }
+    );
+    expect(engine.answerOf(q.id)?.id).toBe(a.id);
+  });
+
+  it('a successor run of the same task can answer a question its predecessor was ending', async () => {
+    host.startRun('t-000003', 'r-000003');
+    const { message: q } = await engine.send(
+      { to: ['run:r-000003'], kind: 'question', body: 'which?' },
+      human
+    );
+    host.endRun('t-000003');
+    host.startRun('t-000003', 'r-000005');
+    const { message: a } = await engine.reply(
+      q.id,
+      { body: 'mine' },
+      { address: 'run:r-000005', canDecide: false }
+    );
+    expect(engine.answerOf(q.id)?.id).toBe(a.id);
+  });
+
+  it('a run of a different task still gets forbidden', async () => {
+    host.startRun('t-000003', 'r-000003');
+    const { message: q } = await engine.send(
+      { to: ['run:r-000003'], kind: 'question', body: 'which?' },
+      human
+    );
+    host.startRun('t-000009', 'r-000009');
+    await expect(
+      engine.reply(
+        q.id,
+        { body: 'not mine' },
+        { address: 'run:r-000009', canDecide: false }
+      )
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'replyTo' });
   });
 });
 

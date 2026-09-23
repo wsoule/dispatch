@@ -83,6 +83,25 @@ describe('recover', () => {
       replayed: 0,
     });
   });
+
+  it('does not count a row another path moves off sending first', async () => {
+    host.startRun('t-000002', 'r-000002');
+    seedSending('d-4', 'r-000002');
+    const engine = new DeliveryEngine({ store, host });
+    let release!: () => void;
+    host.pushBarrier = new Promise((resolve) => (release = resolve));
+    const recovering = engine.recover();
+    await Promise.resolve();
+    // Another path (e.g. a concurrent close) wins the sending->held CAS first.
+    expect(store.setDelivery('d-4', 'held', null, at, 'sending')).toBe(true);
+    release();
+    expect(await recovering).toEqual({
+      retried: 0,
+      reverted: 0,
+      replayed: 0,
+    });
+    expect(store.getDelivery('d-4')?.state).toBe('held');
+  });
 });
 
 describe('recover gate replay', () => {
