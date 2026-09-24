@@ -122,12 +122,10 @@ async function registerAndApprove(
   return registered;
 }
 
-// packages/mcp/src/identity.ts keeps its own copy of this exact function
-// (it cannot import the FSL server), so its own name-fixture tests
-// (identity.test.ts's `agentName` suite) run the same inputs — this pins
-// both implementations to agreeing on the same fixtures.
+// @dispatch/mcp's identity.ts keeps a copy of this function; its `agentName`
+// tests run these same fixtures so the two cannot drift apart.
 describe('normalizeAgentName', () => {
-  it('lowercases, replaces invalid characters with -, and trims a leading one', () => {
+  it('lowercases and replaces invalid characters with -', () => {
     expect(normalizeAgentName('Claude Code.Wyats-MacBook-Pro')).toBe(
       'claude-code.wyats-macbook-pro'
     );
@@ -139,6 +137,19 @@ describe('normalizeAgentName', () => {
 
   it('is a no-op on an already-normalized name', () => {
     expect(normalizeAgentName('agent.host')).toBe('agent.host');
+  });
+
+  it('trims leading characters a handle cannot start with', () => {
+    expect(normalizeAgentName('  -Bot')).toBe('bot');
+  });
+
+  it('caps the name at 40 characters', () => {
+    expect(normalizeAgentName('x'.repeat(50))).toBe('x'.repeat(40));
+    expect(
+      normalizeAgentName(
+        'A Very Long Client Name For Testing.Wyats-MacBook-Pro'
+      )
+    ).toBe('a-very-long-client-name-for-testing.wyat');
   });
 });
 

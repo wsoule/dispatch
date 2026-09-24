@@ -139,6 +139,29 @@ describe('agentName', () => {
   it('falls back to "agent" when no client name is known', () => {
     expect(agentName({}, undefined, 'host.local')).toBe('agent.host');
   });
+
+  it('trims leading characters a handle cannot start with', () => {
+    expect(
+      agentName({ DISPATCH_AGENT_NAME: '  -Bot' }, 'Claude Code', 'host.local')
+    ).toBe('bot');
+  });
+
+  it('caps the name at 40 characters', () => {
+    expect(
+      agentName(
+        { DISPATCH_AGENT_NAME: 'x'.repeat(50) },
+        'Claude Code',
+        'host.local'
+      )
+    ).toBe('x'.repeat(40));
+    expect(
+      agentName(
+        {},
+        'A Very Long Client Name For Testing',
+        'Wyats-MacBook-Pro.local'
+      )
+    ).toBe('a-very-long-client-name-for-testing.wyat');
+  });
 });
 
 describe('messagingCredential (run context)', () => {
