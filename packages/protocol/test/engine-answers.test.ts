@@ -527,10 +527,8 @@ describe('answer authorization', () => {
   });
 });
 
-// authorizeReply used to run only for kind 'answer' — a stranger could reply
-// (any other kind) into a thread it was never part of, and then read the
-// whole thread through it. These mirror 'answer authorization' above but for
-// a plain message, proving the same participant rule now covers every kind.
+// The participant rule from 'answer authorization' above, applied to plain
+// messages: a non-participant cannot reply into (and so read) any thread.
 describe('reply authorization (every kind, not just answers)', () => {
   it('a run on an unrelated task cannot reply into a message thread', async () => {
     const { message: m } = await engine.send(

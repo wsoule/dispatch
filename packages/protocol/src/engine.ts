@@ -73,8 +73,8 @@ export class DeliveryEngine {
     return () => this.listeners.delete(listener);
   }
 
-  /** How many listeners are subscribed right now — lets a caller (a
-   *  long-poll route) verify its own cleanup actually unsubscribed. */
+  /** How many listeners are subscribed right now, so a test can check that a
+   *  subscriber's cleanup unsubscribed it. */
   get listenerCount(): number {
     return this.listeners.size;
   }
@@ -157,11 +157,8 @@ export class DeliveryEngine {
     return [...byRecipient.values()];
   }
 
-  // Picks each delivery's initial state and run, before anything is stored.
-  // Push vs notify is decided later, in dispatch(). Returns null to mean "no
-  // delivery for this target" — a not-live run reached only via a channel is
-  // dropped silently, since the channel send as a whole must still succeed.
-  // A reply to a run's own message is held for it even after the run ended.
+  // A target's initial delivery state and run; null drops a not-live run that
+  // only a channel reached. A reply to an ended run's message is held for it.
   private plan(
     target: Target,
     muted: boolean,
@@ -333,9 +330,8 @@ export class DeliveryEngine {
       );
   }
 
-  // Runs the host's gate hook and records the effect as applied on success;
-  // a failure at either step is logged and left for recover() to replay
-  // (onAnswered is idempotent, so a second call is safe).
+  // Runs the gate hook and marks it applied; a failure at either step is left
+  // for recover() to replay, which is safe because onAnswered is idempotent.
   private async applyGate(
     question: Message,
     answer: Message
@@ -355,10 +351,8 @@ export class DeliveryEngine {
     return true;
   }
 
-  // Runs the host hook for one freshly stored delivery and records the outcome.
-  // `sending` becomes pushed/notified, or held again if the run went away.
-  // A row moved off `sending` meanwhile (e.g. closed) is left as it is; `won`
-  // tells the caller whether this call's sending->* CAS is what moved it.
+  // Pushes or notifies one stored delivery (held again if its run went away);
+  // `won` is false when something else moved the row off `sending` first.
   private async dispatch(
     d: Delivery,
     message: Message
