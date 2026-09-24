@@ -738,10 +738,38 @@ export function normalizeAgentName(raw: string): string {
   return lowered.replace(/^[^a-z0-9]+/, '').slice(0, 40);
 }
 
-// POST /api/agents/register — request tier (the shared agentToken). Mints a
-// token for a new or previously-revoked address and raises the
-// agent-registration gate; pending/approved 409s, since the MCP keeps its
-// token file and a lost token needs a human revoke.
+// Control, format and line-break characters: stripped from a registration's
+// name and client so neither can break or disguise the gate text a human reads.
+const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
+
+// A required registration field with its unprintable characters removed, or
+// the 400 explaining why it is missing or too long.
+function registrationField(
+  value: unknown,
+  field: 'name' | 'client'
+): { ok: true; value: string } | { ok: false; response: Response } {
+  const required = `invalid ${field}: ${field} is required`;
+  if (typeof value !== 'string') {
+    return { ok: false, response: errorResponse(400, required) };
+  }
+  if (value.length > MAX_REGISTRATION_FIELD_LENGTH) {
+    return {
+      ok: false,
+      response: errorResponse(
+        400,
+        `invalid ${field}: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
+      ),
+    };
+  }
+  const printable = value.replace(UNPRINTABLE, '').trim();
+  if (printable === '') {
+    return { ok: false, response: errorResponse(400, required) };
+  }
+  return { ok: true, value: printable };
+}
+
+// POST /api/agents/register — request tier. Registers agent:<caller's handle>/<name>
+// pending the owner's approval; a pending or approved name 409s until revoked.
 export async function registerAgent(
   req: Request,
   ctx: ApiContext
@@ -749,32 +777,19 @@ export async function registerAgent(
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { name?: unknown; client?: unknown };
-  if (typeof body.name !== 'string' || body.name.trim() === '') {
-    return errorResponse(400, 'invalid name: name is required');
-  }
-  if (body.name.length > MAX_REGISTRATION_FIELD_LENGTH) {
-    return errorResponse(
-      400,
-      `invalid name: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
-    );
-  }
-  if (typeof body.client !== 'string' || body.client.trim() === '') {
-    return errorResponse(400, 'invalid client: client is required');
-  }
-  if (body.client.length > MAX_REGISTRATION_FIELD_LENGTH) {
-    return errorResponse(
-      400,
-      `invalid client: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
-    );
-  }
-  const name = normalizeAgentName(body.name);
+  const displayName = registrationField(body.name, 'name');
+  if (!displayName.ok) return displayName.response;
+  const client = registrationField(body.client, 'client');
+  if (!client.ok) return client.response;
+  const name = normalizeAgentName(displayName.value);
   if (!HANDLE_PATTERN.test(name)) {
     return errorResponse(
       400,
-      `invalid name: ${body.name} has no valid characters once normalized`
+      `invalid name: ${displayName.value} has no valid characters once normalized`
     );
   }
-  const address = `agent:${ctx.actorContext.member.handle}/${name}`;
+  const requester = humanActor(ctx);
+  const address = `agent:${requester.slice('human:'.length)}/${name}`;
   const existing = ctx.messaging.store.getAgent(address);
   if (
     existing !== null &&
@@ -789,8 +804,8 @@ export async function registerAgent(
   const token = randomBytes(32).toString('hex');
   const record: AgentRecord = {
     address,
-    displayName: body.name,
-    client: body.client,
+    displayName: displayName.value,
+    client: client.value,
     tokenHash: createHash('sha256').update(token).digest('hex'),
     status: 'pending',
     muted: false,
@@ -806,19 +821,19 @@ export async function registerAgent(
         kind: 'question',
         blocking: true,
         choices: ['approve', 'deny'],
-        body: `New agent ${address} (${body.client}) wants to join this project.`,
+        body: `New agent ${address} (${client.value}) wants to join this project, requested by ${requester}.`,
         data: {
           type: 'agent-registration',
           agent: address,
-          client: body.client,
+          client: client.value,
+          requestedBy: requester,
         },
       },
       { address: SYSTEM_ADDRESS, canDecide: true }
     );
   } catch (err) {
-    // The agent row exists but nobody can approve it without the gate —
-    // revoke it so a fresh register call can recreate it, instead of the
-    // pending/approved 409 above blocking every retry forever.
+    // Without its gate nobody can approve the row, so revoke it: a retry can
+    // then re-register instead of hitting the 409 above forever.
     ctx.messaging.store.putAgent({ ...record, status: 'revoked' });
     return errorResponse(
       500,
