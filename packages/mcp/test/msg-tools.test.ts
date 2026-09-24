@@ -17,14 +17,8 @@ import { createDispatchMcpServer } from '../src/index.js';
 import type { MessageBlockingTiming } from '../src/index.js';
 import { withBearer } from '../src/messaging.js';
 
-// humanTotalWaitMs and defaultAgentTotalWaitMs are deliberately different
-// (not just both "small") so a test that checks the agent-recipient fallback
-// path can tell it apart from an accidental human-budget mix-up: if the two
-// numbers were equal, a bug that used the wrong one would still pass.
-// requestTimeoutMs is generous (well above what a local loopback fetch ever
-// needs) so a slow CI host never trips it and turns a same-process 4xx into
-// a spurious retry; the polls in these tests are paced by retryDelayMs, not
-// by requestTimeoutMs, so this doesn't slow anything down.
+// Polls are paced by retryDelayMs; requestTimeoutMs stays generous so a slow
+// host never turns a same-process 4xx into a spurious retry.
 const FAST_TIMING: MessageBlockingTiming = {
   humanTotalWaitMs: 500,
   defaultAgentTotalWaitMs: 200,
@@ -92,7 +86,7 @@ class FakeDaemon {
     choice: 'yes',
   };
   answerPolls = 0;
-  /** Holds each answer poll open this long, to test client-side cancellation. */
+  /** Holds each answer poll open this long before replying. */
   answerPollDelayMs = 0;
 
   replyStatus = 201;
@@ -692,18 +686,18 @@ describe('msg_send (blocking)', () => {
     expect(daemon.answerPolls).toBe(1);
   });
 
-  it("uses the project's configured agentBlockingTimeoutSec for a non-human recipient, not the fallback default", async () => {
+  it("waits the project's configured agentBlockingTimeoutSec, in seconds, for a non-human recipient", async () => {
     daemon = new FakeDaemon();
     daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
-    // Tiny configured timeout (well under the fallback default below) proves
-    // the config value actually won, rather than the tool having ignored it.
-    daemon.configBody = { messaging: { agentBlockingTimeoutSec: 0.05 } };
+    daemon.configBody = { messaging: { agentBlockingTimeoutSec: 1 } };
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root, {
       ...FAST_TIMING,
+      humanTotalWaitMs: 60_000,
       defaultAgentTotalWaitMs: 60_000,
     });
 
+    const start = Date.now();
     const result = (await client.callTool(
       {
         name: 'msg_send',
@@ -717,9 +711,13 @@ describe('msg_send (blocking)', () => {
       undefined,
       { timeout: 10_000 }
     )) as ToolCallResult;
+    const elapsedMs = Date.now() - start;
 
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.answer).toBeNull();
+    // Read as milliseconds, 1 would give up at once; ignored, 60s would time out.
+    expect(elapsedMs).toBeGreaterThanOrEqual(1000);
+    expect(elapsedMs).toBeLessThan(5000);
   });
 
   it('falls back to defaultAgentTotalWaitMs (not the human budget) when GET /api/config is unreachable', async () => {
@@ -727,7 +725,11 @@ describe('msg_send (blocking)', () => {
     daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
     daemon.configStatus = 500;
     writeFakeDaemonFile(daemon.start());
-    const client = await connectClient(root);
+    const client = await connectClient(root, {
+      ...FAST_TIMING,
+      humanTotalWaitMs: 5000,
+      defaultAgentTotalWaitMs: 200,
+    });
 
     const start = Date.now();
     const result = (await client.callTool({
@@ -743,20 +745,18 @@ describe('msg_send (blocking)', () => {
 
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.answer).toBeNull();
-    // Close to defaultAgentTotalWaitMs (200ms), well under humanTotalWaitMs
-    // (500ms) — proves the agent fallback was used, not the human one.
-    expect(elapsedMs).toBeLessThan(400);
+    expect(elapsedMs).toBeGreaterThanOrEqual(200);
+    expect(elapsedMs).toBeLessThan(2000);
   });
 
-  it('stops polling promptly when the client cancels a blocking send', async () => {
+  it('stops polling once the client cancels a blocking send', async () => {
     daemon = new FakeDaemon();
     daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
-    daemon.answerPollDelayMs = 5000;
+    daemon.answerPollDelayMs = 20;
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root, {
       ...FAST_TIMING,
       humanTotalWaitMs: 60_000,
-      requestTimeoutMs: 30_000,
     });
 
     await expect(
@@ -775,10 +775,12 @@ describe('msg_send (blocking)', () => {
       )
     ).rejects.toThrow();
 
+    // Let the cancellation reach the server, then expect no further polls.
+    await Bun.sleep(100);
     const pollsAtCancel = daemon.answerPolls;
-    await Bun.sleep(200);
-    // No further poll should have started after cancellation propagated.
-    expect(daemon.answerPolls).toBeLessThanOrEqual(pollsAtCancel);
+    expect(pollsAtCancel).toBeGreaterThan(1);
+    await Bun.sleep(300);
+    expect(daemon.answerPolls).toBe(pollsAtCancel);
   });
 });
 
