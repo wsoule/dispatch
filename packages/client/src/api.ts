@@ -770,7 +770,13 @@ export type GateData =
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: string; message: string }
-  | { type: 'agent-registration'; agent: string; client: string }
+  | {
+      type: 'agent-registration';
+      agent: string;
+      client: string;
+      // The human who asked; the agent registers under their handle.
+      requestedBy?: string;
+    }
   | {
       type: 'overseer-action';
       conversation: string;

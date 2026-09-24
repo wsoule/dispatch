@@ -3,6 +3,7 @@ import type {
   AgentRecord,
   Delivery,
   DeliveryState,
+  GateData,
   JsonValue,
   Message,
   MessageKind,
@@ -838,7 +839,7 @@ export async function registerAgent(
           agent: address,
           client: client.value,
           requestedBy: requester,
-        },
+        } satisfies GateData,
       },
       { address: SYSTEM_ADDRESS, canDecide: true }
     );

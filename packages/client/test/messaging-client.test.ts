@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { createApiClient } from '../src/api';
-import type { ApiClient } from '../src/api';
+import type { ApiClient, GateData } from '../src/api';
 
 // Captures the (url, init) a stubbed `fetch` was called with. Mirrors
 // api.test.ts's helper — kept local since neither helper is exported.
@@ -346,6 +346,25 @@ describe('openDecisions', () => {
     try {
       await createApiClient(BASE).openDecisions();
       expect(stub.calls[0].url).toBe(`${BASE}/api/decisions/open`);
+    } finally {
+      stub.restore();
+    }
+  });
+
+  it('types who asked for an agent registration', async () => {
+    const gate: GateData = {
+      type: 'agent-registration',
+      agent: 'agent:ada/claude-code.laptop',
+      client: 'claude',
+      requestedBy: 'human:ada',
+    };
+    const stub = stubFetch({ items: [{ id: 'm-1', data: gate }] });
+    try {
+      const { items } = await createApiClient(BASE).openDecisions();
+      const data = items[0]?.data as GateData;
+      expect(data.type === 'agent-registration' ? data.requestedBy : null).toBe(
+        'human:ada'
+      );
     } finally {
       stub.restore();
     }

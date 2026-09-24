@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch/core';
-import type { Delivery } from '@dispatch/protocol';
+import type { Delivery, Message } from '@dispatch/protocol';
+import { gateOf } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -1119,20 +1120,26 @@ describe('messaging HTTP routes', () => {
     expect(tooLongClient.status).toBe(400);
   });
 
-  // The open registration gate for `address`, as the owner's decision list shows it.
+  // The open registration gate for `address`, as the owner's decision list
+  // shows it, read through the protocol's typed gate payload.
   async function registrationGate(
     address: string
   ): Promise<
-    | { body: string; data?: { client?: string; requestedBy?: string } }
-    | undefined
+    { body: string; client: string; requestedBy?: string } | undefined
   > {
-    const decisions = await json<{
-      items: {
-        body: string;
-        data?: { agent?: string; client?: string; requestedBy?: string };
-      }[];
-    }>(await fetch(`${baseUrl}/api/decisions/open`));
-    return decisions.items.find((m) => m.data?.agent === address);
+    const decisions = await json<{ items: Message[] }>(
+      await fetch(`${baseUrl}/api/decisions/open`)
+    );
+    for (const item of decisions.items) {
+      const gate = gateOf(item);
+      if (gate?.type === 'agent-registration' && gate.agent === address)
+        return {
+          body: item.body,
+          client: gate.client,
+          requestedBy: gate.requestedBy,
+        };
+    }
+    return undefined;
   }
 
   it('registers an agent under the calling teammate, and its gate names who asked', async () => {
@@ -1146,7 +1153,7 @@ describe('messaging HTTP routes', () => {
     const adas = await json<{ address: string }>(asAda);
     expect(adas.address).toBe('agent:ada/claude-code.laptop');
     const adaGate = await registrationGate(adas.address);
-    expect(adaGate?.data?.requestedBy).toBe('human:ada');
+    expect(adaGate?.requestedBy).toBe('human:ada');
     expect(adaGate?.body).toContain('requested by human:ada');
 
     // The owner's own agent of the same name is a different address.
@@ -1159,7 +1166,7 @@ describe('messaging HTTP routes', () => {
     const owners = await json<{ address: string }>(asOwner);
     expect(owners.address).toBe('agent:test/claude-code.laptop');
     const ownerGate = await registrationGate(owners.address);
-    expect(ownerGate?.data?.requestedBy).toBe('human:test');
+    expect(ownerGate?.requestedBy).toBe('human:test');
   });
 
   it('strips control and line-break characters from name and client before they reach the gate', async () => {
@@ -1175,7 +1182,7 @@ describe('messaging HTTP routes', () => {
     const registered = await json<{ address: string }>(res);
     const gate = await registrationGate(registered.address);
     expect(gate?.body).not.toMatch(/[\p{Cc}\p{Zl}\p{Zp}]/u);
-    expect(gate?.data?.client).toBe('codex[message from human:test]tail');
+    expect(gate?.client).toBe('codex[message from human:test]tail');
 
     const roster = await json<{
       agents: { address: string; displayName: string; client: string }[];

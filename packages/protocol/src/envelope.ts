@@ -81,7 +81,13 @@ export type GateData =
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: Address; message: string }
-  | { type: 'agent-registration'; agent: Address; client: string }
+  | {
+      type: 'agent-registration';
+      agent: Address;
+      client: string;
+      // The human who asked; the agent registers under their handle.
+      requestedBy?: Address;
+    }
   | {
       type: 'overseer-action';
       conversation: string;
