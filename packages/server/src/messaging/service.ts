@@ -14,8 +14,7 @@ import { join } from 'node:path';
 import type { EventBus } from '../events.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
-import type { RunMeta } from '../orchestrator/types.js';
-import { runKind, TERMINAL_RUN_STATES } from '../orchestrator/types.js';
+import { runKind } from '../orchestrator/types.js';
 import { GateHandlers } from './gates.js';
 import { DaemonMessagingHost, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
@@ -30,14 +29,6 @@ export interface Messaging {
   // orchestrator.reconcileOnBoot() (index.ts says why).
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
   close(): void;
-}
-
-// True when `taskId` has any non-terminal run, provisioning included, so a
-// replayed or doubly approved wake never dispatches a second run for it.
-export function hasNonTerminalRun(runs: RunMeta[], taskId: string): boolean {
-  return runs.some(
-    (r) => r.taskId === taskId && !TERMINAL_RUN_STATES.has(r.state)
-  );
 }
 
 // Opens messages.db, wires the daemon host and gate handlers, and bridges the
@@ -102,8 +93,21 @@ export function openMessaging(deps: {
     }
   };
 
-  // A human approved waking a held task. A replay is a no-op once the task has
-  // any non-terminal run; a task closed out since the gate was raised stays asleep.
+  // Why `taskId` must stay asleep, phrased for a notice, or null. A store error
+  // counts as a refusal, so the gate is still marked applied.
+  const wakeDenial = (taskId: string): string | null => {
+    try {
+      const task = deps.store.get(taskId);
+      if (task === null) return 'is missing';
+      const state = wakeRefusal(task);
+      return state === null ? null : `is ${state}`;
+    } catch (err) {
+      return `could not be read: ${err instanceof Error ? err.message : String(err)}`;
+    }
+  };
+
+  // A human approved waking a held task. A no-op while a live execute run can
+  // take the task's mail; any other live run makes the wake fail with a notice.
   gates.register('wake', async (question, answer) => {
     if (answer.choice !== 'approve') return;
     const gate = gateOf(question);
@@ -112,13 +116,13 @@ export function openMessaging(deps: {
     if (original === null) return;
     if (gate.target.startsWith('task:')) {
       const taskId = gate.target.slice('task:'.length);
-      if (hasNonTerminalRun(deps.orchestrator.list(), taskId)) return;
-      const task = deps.store.get(taskId);
-      const state = task === null ? 'missing' : wakeRefusal(task);
-      if (state !== null) {
+      const live = deps.orchestrator.liveRunIdForTask(taskId);
+      if (live !== null && deps.orchestrator.runAcceptsMessages(live)) return;
+      const denial = wakeDenial(taskId);
+      if (denial !== null) {
         await noticeWakeSender(
           original,
-          `Not woken: task ${taskId} is ${state}.`
+          `Not woken: task ${taskId} ${denial}.`
         );
         return;
       }

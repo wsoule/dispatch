@@ -504,6 +504,18 @@ export class Orchestrator {
     return this.registry.getExecutorRun(runId) !== undefined;
   }
 
+  // Whether a live run can take a message now: not stopping, on an executor
+  // that accepts mid-run messages (what requireDeliverableRun enforces).
+  runAcceptsMessages(runId: string): boolean {
+    const meta = this.registry.get(runId);
+    return (
+      meta !== undefined &&
+      this.isRunLive(runId) &&
+      !this.stoppingRuns.has(runId) &&
+      this.executorProfile(meta.executor).acceptsMessages
+    );
+  }
+
   // A live run with an ExecutorRun (a zombie is failed, which throws) that can
   // take a message now; any throw makes the engine hold the message.
   private requireDeliverableRun(runId: string): {

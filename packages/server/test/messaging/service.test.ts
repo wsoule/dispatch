@@ -1,3 +1,4 @@
+import type { TaskStorePort } from '@dispatch/core';
 import { TaskStore } from '@dispatch/core';
 import type { Delivery, Message } from '@dispatch/protocol';
 import {
@@ -16,16 +17,15 @@ import { EventBus } from '../../src/events.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { createRunTokens } from '../../src/messaging/runTokens.js';
-import {
-  hasNonTerminalRun,
-  openMessaging,
-} from '../../src/messaging/service.js';
+import type { Messaging } from '../../src/messaging/service.js';
+import { openMessaging } from '../../src/messaging/service.js';
 import {
   BOOT_FORCE_FAIL_ERROR,
   Orchestrator,
 } from '../../src/orchestrator/orchestrator.js';
 import { runsDir } from '../../src/orchestrator/paths.js';
-import type { RunMeta } from '../../src/orchestrator/types.js';
+import type { ExecutorProfile } from '../../src/orchestrator/types.js';
+import { DEFAULT_EXECUTOR_PROFILE } from '../../src/orchestrator/types.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 
 // Waits for `check` to become true, polling rather than sleeping a fixed
@@ -65,23 +65,6 @@ function stubDelivery(overrides: Partial<Delivery> = {}): Delivery {
     runId: 'r-000001',
     via: 'direct',
     state: 'sending',
-    updatedAt: '2026-09-23T10:00:00.000Z',
-    ...overrides,
-  };
-}
-
-// A minimal-but-complete RunMeta for hasNonTerminalRun's pure-function tests.
-function stubRun(overrides: Partial<RunMeta> = {}): RunMeta {
-  return {
-    id: 'r-000001',
-    taskId: 't-000001',
-    taskTitle: 'stub',
-    executor: 'claude',
-    state: 'running',
-    branch: 'dispatch/t-000001-stub',
-    baseBranch: 'main',
-    worktreePath: '/tmp/nonexistent',
-    createdAt: '2026-09-23T10:00:00.000Z',
     updatedAt: '2026-09-23T10:00:00.000Z',
     ...overrides,
   };
@@ -160,25 +143,58 @@ function makeOrchestrator(): { orchestrator: Orchestrator; store: TaskStore } {
   return { orchestrator, store };
 }
 
-describe('hasNonTerminalRun', () => {
-  it('counts a provisioning run as non-terminal (not only running/awaiting-approval)', () => {
-    const runs = [stubRun({ taskId: 't-1', state: 'provisioning' })];
-    expect(hasNonTerminalRun(runs, 't-1')).toBe(true);
+// openMessaging over this test's root, recovered and ready to send.
+async function openRecovered(
+  orchestrator: Orchestrator,
+  store: TaskStorePort
+): Promise<Messaging> {
+  const messaging = openMessaging({
+    rootDir: root,
+    orchestrator,
+    store,
+    events: new EventBus(),
+    ownerRef: 'human:wyat',
+    dbPath: join(root, 'messages.db'),
   });
+  await messaging.recover();
+  return messaging;
+}
 
-  it('is false when every run for the task is terminal', () => {
-    const runs = [
-      stubRun({ taskId: 't-1', state: 'finished' }),
-      stubRun({ id: 'r-2', taskId: 't-1', state: 'failed' }),
-    ];
-    expect(hasNonTerminalRun(runs, 't-1')).toBe(false);
-  });
+// Sends `taskId` a wake-requesting message from human:asker, approves the wake
+// gate it raises, and returns the bodies of the notices human:asker received.
+async function approveWake(
+  messaging: Messaging,
+  taskId: string
+): Promise<string[]> {
+  await messaging.engine.send(
+    {
+      to: [`task:${taskId}`],
+      kind: 'message',
+      body: 'wake up',
+      wake: 'request',
+    },
+    { address: 'human:asker', canDecide: true }
+  );
+  const [question] = messaging.engine.openBlocking();
+  expect(question?.data).toMatchObject({ type: 'wake' });
+  await messaging.engine.reply(
+    question.id,
+    { body: 'approved', choice: 'approve' },
+    { address: 'human:wyat', canDecide: true }
+  );
+  return messaging.engine
+    .inbox('human:asker')
+    .filter((i) => i.message.kind === 'notice')
+    .map((i) => i.message.body);
+}
 
-  it('ignores runs belonging to a different task', () => {
-    const runs = [stubRun({ taskId: 't-2', state: 'running' })];
-    expect(hasNonTerminalRun(runs, 't-1')).toBe(false);
-  });
-});
+// A stalling executor whose runs cannot take mid-run messages, like the CLI's.
+class NoMessagesExecutor extends StallingExecutor {
+  readonly profile: ExecutorProfile = {
+    ...DEFAULT_EXECUTOR_PROFILE,
+    acceptsMessages: false,
+  };
+}
 
 describe('openMessaging', () => {
   it('boot recovers before serving', async () => {
@@ -451,7 +467,7 @@ describe('wake gate handler', () => {
     messaging.close();
   });
 
-  it('is a no-op replay when the task already has a live run', async () => {
+  it('is a silent no-op replay while a live execute run can take the message', async () => {
     const { orchestrator, store } = makeOrchestrator();
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
@@ -525,40 +541,92 @@ describe('wake gate handler', () => {
     messaging.close();
   });
 
-  it('is a no-op replay while the task has a provisioning run', async () => {
-    const store = TaskStore.init(root);
-    const task = store.create({ title: 'Coming up' });
-    const wakes: string[] = [];
-    const orchestrator = {
-      setRunTokenMinter: () => {},
-      onRunStarted: () => () => {},
-      list: () => [stubRun({ taskId: task.meta.id, state: 'provisioning' })],
-      liveRunIdForTask: () => null,
-      isRunLive: () => false,
-      taskIdOfRun: () => null,
-      deliverToRun: () => {},
-      notifyRun: () => {},
-      dispatchOrResume: (taskId: string) => {
-        wakes.push(taskId);
-        return Promise.resolve(stubRun({ id: 'r-000009', taskId }));
-      },
-    } as unknown as Orchestrator;
-    const messaging = openMessaging({
-      rootDir: root,
-      orchestrator,
-      store,
-      events: new EventBus(),
-      ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+  it('notices the sender instead of waking while a review run is live', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const task = store.create({ title: 'Under review' });
+    const messaging = await openRecovered(orchestrator, store);
+    const review = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      head: 'main',
+      buildPrompt: () => 'review this',
     });
-    const { question, answer } = seedApprovedWake(messaging, {
+
+    const notices = await approveWake(messaging, task.meta.id);
+
+    expect(notices).toEqual([
+      `Could not wake task:${task.meta.id}: task already has a live run: ${review.id}. Your message is waiting for it.`,
+    ]);
+    expect(executor.started).toHaveLength(1);
+    expect(messaging.store.unappliedAnsweredGates()).toEqual([]);
+    await orchestrator.cancel(review.id);
+    messaging.close();
+  });
+
+  it('notices the sender instead of waking while the live execute run cannot take messages', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const executor = new NoMessagesExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const task = store.create({ title: 'CLI-style run' });
+    const messaging = await openRecovered(orchestrator, store);
+    const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
+
+    const notices = await approveWake(messaging, task.meta.id);
+
+    expect(notices).toEqual([
+      `Could not wake task:${task.meta.id}: task already has a live run: ${run.id}. Your message is waiting for it.`,
+    ]);
+    expect(executor.started).toHaveLength(1);
+    await orchestrator.cancel(run.id);
+    messaging.close();
+  });
+
+  it('notices the sender instead of waking while the live execute run is stopping', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const task = store.create({ title: 'Winding down' });
+    const messaging = await openRecovered(orchestrator, store);
+    const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    orchestrator.requestStop(run.id);
+
+    const notices = await approveWake(messaging, task.meta.id);
+
+    expect(notices).toEqual([
+      `Could not wake task:${task.meta.id}: task already has a live run: ${run.id}. Your message is waiting for it.`,
+    ]);
+    expect(executor.started).toHaveLength(1);
+    await orchestrator.cancel(run.id);
+    messaging.close();
+  });
+
+  it('treats a task lookup that throws as a deny, notices the sender and marks the gate applied', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const task = store.create({ title: 'Unreadable' });
+    const messaging = await openRecovered(orchestrator, store);
+    store.get = () => {
+      throw new Error('task file unreadable');
+    };
+    seedApprovedWake(messaging, {
       from: 'human:asker',
       target: `task:${task.meta.id}`,
     });
 
-    await messaging.gates.handle(question, answer);
+    expect((await messaging.recover()).replayed).toBe(1);
 
-    expect(wakes).toEqual([]);
+    expect(messaging.store.unappliedAnsweredGates()).toEqual([]);
+    expect(executor.started).toHaveLength(0);
+    const notices = messaging.engine
+      .inbox('human:asker')
+      .filter((i) => i.message.kind === 'notice')
+      .map((i) => i.message.body);
+    expect(notices).toEqual([
+      `Not woken: task ${task.meta.id} could not be read: task file unreadable.`,
+    ]);
     messaging.close();
   });
 
