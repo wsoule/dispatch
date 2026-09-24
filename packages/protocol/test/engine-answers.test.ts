@@ -595,6 +595,85 @@ describe('reply authorization (every kind, not just answers)', () => {
   });
 });
 
+describe('replies from non-participants', () => {
+  const stranger = { address: 'run:r-000009', canDecide: false };
+  const forbidden = {
+    code: 'forbidden',
+    field: 'replyTo',
+    message: 'only a participant can reply in this thread',
+  };
+  beforeEach(() => host.startRun('t-000009', 'r-000009'));
+
+  it('are refused before the target kind is checked', async () => {
+    const { message: notice } = await engine.send(
+      { to: ['human:wyat'], kind: 'notice', body: 'fyi' },
+      run1
+    );
+    await expect(
+      engine.send(
+        { to: ['run:r-000001'], kind: 'answer', body: 'x', replyTo: notice.id },
+        stranger
+      )
+    ).rejects.toMatchObject(forbidden);
+  });
+
+  it('are refused before the target choices are checked', async () => {
+    const { message: q } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'which?',
+        choices: ['a', 'b'],
+      },
+      run1
+    );
+    await expect(
+      engine.send(
+        {
+          to: ['run:r-000001'],
+          kind: 'answer',
+          body: 'x',
+          choice: 'zzz',
+          replyTo: q.id,
+        },
+        stranger
+      )
+    ).rejects.toMatchObject(forbidden);
+  });
+
+  it('are refused before the target is checked for a gate', async () => {
+    const { message: gate } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'Run Bash?',
+        blocking: true,
+        choices: ['approve', 'deny'],
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          runId: 'r-000001',
+          tool: 'Bash',
+          input: {},
+        },
+      },
+      system
+    );
+    await expect(
+      engine.send(
+        {
+          to: [SYSTEM_ADDRESS],
+          kind: 'answer',
+          body: '',
+          choice: 'approve',
+          replyTo: gate.id,
+        },
+        stranger
+      )
+    ).rejects.toMatchObject(forbidden);
+  });
+});
+
 describe('gate-effect ordering', () => {
   it('emits the answer only after onAnswered ran', async () => {
     const { message: gate } = await engine.send(

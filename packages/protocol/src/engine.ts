@@ -201,8 +201,9 @@ export class DeliveryEngine {
     const replyTarget = input.replyTo
       ? this.store.getMessage(input.replyTo)
       : null;
-    validateSendInput(input, sender.address, sender.canDecide, replyTarget);
+    // Participation first: a non-participant must learn nothing about the target.
     if (replyTarget !== null) this.authorizeReply(replyTarget, sender);
+    validateSendInput(input, sender.address, sender.canDecide, replyTarget);
     await this.checkBreaker(replyTarget, sender);
     if (
       input.kind === 'answer' &&
