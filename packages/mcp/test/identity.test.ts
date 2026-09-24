@@ -45,6 +45,11 @@ class FakeDaemon {
         const url = new URL(req.url);
         if (url.pathname === '/api/health') return Response.json({ ok: true });
         if (url.pathname === '/api/agents/register' && req.method === 'POST') {
+          if (
+            req.headers.get('authorization') !== 'Bearer shared-agent-token'
+          ) {
+            return Response.json({ error: 'unauthorized' }, { status: 401 });
+          }
           const body = (await req.json()) as { name: string; client: string };
           this.registerCalls.push(body);
           this.onRegisterRequest?.();

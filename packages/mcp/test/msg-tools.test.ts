@@ -53,6 +53,8 @@ interface ToolCallResult {
   content: { type: string; text?: string }[];
 }
 
+const SHARED_AGENT_TOKEN = 'shared-agent-token';
+
 const DEFAULT_SEND_BODY = {
   message: {
     id: 'm-1',
@@ -121,7 +123,45 @@ class FakeDaemon {
   };
   registerCalls: { name: string; client: string }[] = [];
 
+  /** Bearer tokens messaging routes accept; a successful register adds its own. */
+  messagingTokens = new Set<string>(['rt-secret']);
+  revokedTokens = new Set<string>();
+  /** Every bearer a route turned away, in arrival order. */
+  rejectedTokens: string[] = [];
+
   private server: ReturnType<typeof Bun.serve> | undefined;
+
+  // Register and config take only the shared agentToken; every other route is
+  // a messaging route and takes only a run or approved agent token.
+  private authFailure(req: Request, url: URL): Response | null {
+    const token = (req.headers.get('authorization') ?? '').replace(
+      /^Bearer /,
+      ''
+    );
+    const sharedOnly =
+      url.pathname === '/api/config' || url.pathname === '/api/agents/register';
+    if (
+      sharedOnly
+        ? token === SHARED_AGENT_TOKEN
+        : this.messagingTokens.has(token)
+    ) {
+      return null;
+    }
+    this.rejectedTokens.push(token);
+    if (!sharedOnly && this.revokedTokens.has(token)) {
+      return Response.json(
+        {
+          error: "this agent's access was revoked",
+          code: 'auth_agent_revoked',
+        },
+        { status: 401 }
+      );
+    }
+    return Response.json(
+      { error: 'unknown token', code: 'auth_invalid_token' },
+      { status: 401 }
+    );
+  }
 
   start(): number {
     this.server = Bun.serve({
@@ -130,6 +170,8 @@ class FakeDaemon {
       fetch: async (req) => {
         const url = new URL(req.url);
         if (url.pathname === '/api/health') return Response.json({ ok: true });
+        const denied = this.authFailure(req, url);
+        if (denied !== null) return denied;
 
         if (url.pathname === '/api/messages' && req.method === 'POST') {
           const body = (await req.json()) as Record<string, unknown>;
@@ -214,6 +256,10 @@ class FakeDaemon {
         if (url.pathname === '/api/agents/register' && req.method === 'POST') {
           const body = (await req.json()) as { name: string; client: string };
           this.registerCalls.push(body);
+          const minted = (this.registerBody as { token?: unknown }).token;
+          if (this.registerStatus === 201 && typeof minted === 'string') {
+            this.messagingTokens.add(minted);
+          }
           return Response.json(this.registerBody, {
             status: this.registerStatus,
           });
@@ -270,7 +316,7 @@ function writeFakeDaemonFile(port: number): void {
       pid: process.pid,
       rootDir: root,
       startedAt: new Date().toISOString(),
-      agentToken: 'shared-agent-token',
+      agentToken: SHARED_AGENT_TOKEN,
     })
   );
 }
@@ -406,13 +452,6 @@ describe('msg_send (self-heal on an unknown cached agent token)', () => {
       'agent:wyat/old'
     );
     daemon = new FakeDaemon();
-    daemon.sendResponses = [
-      {
-        status: 401,
-        body: { error: 'unknown token', code: 'auth_invalid_token' },
-      },
-      { status: 201, body: DEFAULT_SEND_BODY },
-    ];
     daemon.registerBody = { address: 'agent:wyat/new', token: 'fresh-token' };
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
@@ -423,11 +462,9 @@ describe('msg_send (self-heal on an unknown cached agent token)', () => {
     })) as ToolCallResult;
 
     expect(result.isError).toBeUndefined();
-    expect(daemon.sendCalls.length).toBe(2);
+    expect(daemon.rejectedTokens).toEqual(['stale-token']);
+    expect(daemon.sendCalls.length).toBe(1);
     expect(daemon.sendCalls[0]?.headers.authorization).toBe(
-      'Bearer stale-token'
-    );
-    expect(daemon.sendCalls[1]?.headers.authorization).toBe(
       'Bearer fresh-token'
     );
     expect(daemon.registerCalls.length).toBe(1);
@@ -446,15 +483,7 @@ describe('msg_send (revoked agent)', () => {
       'agent:wyat/old'
     );
     daemon = new FakeDaemon();
-    daemon.sendResponses = [
-      {
-        status: 401,
-        body: {
-          error: "this agent's access was revoked",
-          code: 'auth_agent_revoked',
-        },
-      },
-    ];
+    daemon.revokedTokens.add('revoked-token');
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
 
@@ -468,7 +497,7 @@ describe('msg_send (revoked agent)', () => {
       `This agent's access to ${root} was revoked. To ask for approval again, delete ${tokenPath} and retry.`
     );
     expect(daemon.registerCalls.length).toBe(0);
-    expect(daemon.sendCalls.length).toBe(1);
+    expect(daemon.rejectedTokens).toEqual(['revoked-token']);
   });
 });
 
@@ -845,6 +874,7 @@ describe('messaging tools (agent identity, no run token)', () => {
   it('uses a cached self-registered agent token instead of the shared agentToken', async () => {
     writeCachedAgentToken('test-client', 'agent-token-value', 'agent:wyat/x');
     daemon = new FakeDaemon();
+    daemon.messagingTokens.add('agent-token-value');
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
 
