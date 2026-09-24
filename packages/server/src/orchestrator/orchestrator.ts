@@ -507,7 +507,7 @@ export class Orchestrator {
   // The gate for deliverToRun/notifyRun: a live run with a real ExecutorRun
   // (a zombie is healed to failed, which throws) that can take a message now.
   // A throw here makes the messaging engine hold the message for a later run.
-  private requireMessageableRun(runId: string): {
+  private requireDeliverableRun(runId: string): {
     meta: RunMeta;
     executorRun: ExecutorRun;
   } {
@@ -537,7 +537,7 @@ export class Orchestrator {
     text: string,
     from: { label: string; messageId: string; human: boolean }
   ): void {
-    const { executorRun } = this.requireMessageableRun(runId);
+    const { executorRun } = this.requireDeliverableRun(runId);
     const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
       kind: 'message',
@@ -554,7 +554,7 @@ export class Orchestrator {
   // deliverToRun for a non-interrupting channel digest: logged the same way,
   // handed to the executor's notify() for the agent's next step.
   notifyRun(runId: string, digest: string): void {
-    const { executorRun } = this.requireMessageableRun(runId);
+    const { executorRun } = this.requireDeliverableRun(runId);
     const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
       kind: 'message',
