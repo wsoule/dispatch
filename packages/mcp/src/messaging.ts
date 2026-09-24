@@ -392,11 +392,14 @@ async function msgReply(
 
 interface InboxReadArgs {
   state?: string[];
+  limit?: number;
   markRead?: boolean;
 }
 
-// GET /api/mailbox, marking held/notified items read unless `markRead:
-// false`; `marked` lists what succeeded, `markReadErrors` what didn't.
+const DEFAULT_INBOX_LIMIT = 50;
+
+// GET /api/mailbox, trimmed here to the newest `limit` items (the route has no
+// limit); marks the returned held/notified items read unless `markRead: false`.
 async function inboxRead(
   rootDir: string,
   server: McpServer,
@@ -413,11 +416,17 @@ async function inboxRead(
   const body = (await fetched.res.json()) as {
     items: { delivery: { id: string; state: string } }[];
   };
+  // Delivery ids are ULID-based, so a descending id sort is newest first.
+  const items = body.items
+    .toSorted((a, b) =>
+      a.delivery.id < b.delivery.id ? 1 : a.delivery.id > b.delivery.id ? -1 : 0
+    )
+    .slice(0, args.limit ?? DEFAULT_INBOX_LIMIT);
 
   const marked: string[] = [];
   const markReadErrors: { id: string; error: string }[] = [];
   if (args.markRead !== false) {
-    const toMark = body.items.filter(
+    const toMark = items.filter(
       (item) =>
         item.delivery.state === 'held' || item.delivery.state === 'notified'
     );
@@ -445,7 +454,7 @@ async function inboxRead(
       })
     );
   }
-  const result: Record<string, unknown> = { ...body, marked };
+  const result: Record<string, unknown> = { ...body, items, marked };
   if (markReadErrors.length > 0) result.markReadErrors = markReadErrors;
   return toolResult(result);
 }
@@ -614,7 +623,8 @@ export function registerMessagingTools(
     {
       title: 'Read your mailbox',
       description:
-        'List your own mailbox (or filter by delivery `state`). Marks every ' +
+        'List your own mailbox, newest first: at most `limit` items (50 by ' +
+        'default), optionally filtered by delivery `state`. Marks every ' +
         'returned held/notified item read unless `markRead: false` is passed.',
       inputSchema: {
         state: z
@@ -629,6 +639,7 @@ export function registerMessagingTools(
             ])
           )
           .optional(),
+        limit: z.number().int().min(1).optional(),
         markRead: z.boolean().optional(),
       },
       outputSchema: {
@@ -640,7 +651,8 @@ export function registerMessagingTools(
       },
       annotations: { readOnlyHint: false },
     },
-    ({ state, markRead }) => inboxRead(rootDir, server, { state, markRead })
+    ({ state, limit, markRead }) =>
+      inboxRead(rootDir, server, { state, limit, markRead })
   );
 
   server.registerTool(

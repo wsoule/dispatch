@@ -871,6 +871,58 @@ describe('inbox_read', () => {
     expect(result.structuredContent?.marked).toEqual([]);
   });
 
+  it('returns at most 50 items by default, newest first, and marks only those read', async () => {
+    daemon = new FakeDaemon();
+    // The daemon lists oldest first; ids sort in time order.
+    const ids = Array.from(
+      { length: 60 },
+      (_, i) => `d-${String(i).padStart(3, '0')}`
+    );
+    daemon.mailboxBody = {
+      items: ids.map((id) => ({
+        delivery: { id, state: 'held' },
+        message: { id: `m-${id}` },
+      })),
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'inbox_read',
+      arguments: {},
+    })) as ToolCallResult;
+
+    const items = result.structuredContent!.items as {
+      delivery: { id: string };
+    }[];
+    const newest50 = ids.slice(10).reverse();
+    expect(items.map((item) => item.delivery.id)).toEqual(newest50);
+    expect(daemon.markReadCalls.sort()).toEqual([...newest50].sort());
+  });
+
+  it('honors an explicit limit', async () => {
+    daemon = new FakeDaemon();
+    daemon.mailboxBody = {
+      items: ['d-001', 'd-002', 'd-003'].map((id) => ({
+        delivery: { id, state: 'notified' },
+        message: { id: `m-${id}` },
+      })),
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'inbox_read',
+      arguments: { limit: 2 },
+    })) as ToolCallResult;
+
+    const items = result.structuredContent!.items as {
+      delivery: { id: string };
+    }[];
+    expect(items.map((item) => item.delivery.id)).toEqual(['d-003', 'd-002']);
+    expect(daemon.markReadCalls.sort()).toEqual(['d-002', 'd-003']);
+  });
+
   it('forwards a state filter as a comma-joined query param', async () => {
     daemon = new FakeDaemon();
     writeFakeDaemonFile(daemon.start());
