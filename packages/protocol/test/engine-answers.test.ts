@@ -73,6 +73,55 @@ describe('answers', () => {
     });
   });
 
+  it("reply reaches the live successor of the asking run's task", async () => {
+    const { message: q } = await engine.send(
+      { to: ['human:wyat'], kind: 'question', body: 'which?', blocking: true },
+      run1
+    );
+    host.endRun('t-000001');
+    host.startRun('t-000001', 'r-000002');
+    const { message: a, deliveries } = await engine.reply(
+      q.id,
+      { body: 'b' },
+      human
+    );
+    expect(a.to).toEqual(['task:t-000001']);
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        recipient: 'task:t-000001',
+        runId: 'r-000002',
+        state: 'pushed',
+      }),
+    ]);
+  });
+
+  it('a send replying to an ended run reaches its task, not the dead run', async () => {
+    const { message: m } = await engine.send(
+      { to: ['human:wyat'], kind: 'message', body: 'started' },
+      run1
+    );
+    host.endRun('t-000001');
+    host.startRun('t-000001', 'r-000002');
+    const { message: r, deliveries } = await engine.send(
+      {
+        to: ['run:r-000001', 'task:t-000001'],
+        kind: 'message',
+        body: 'noted',
+        replyTo: m.id,
+      },
+      human
+    );
+    expect(r.to).toEqual(['task:t-000001']);
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        recipient: 'task:t-000001',
+        runId: 'r-000002',
+        state: 'pushed',
+      }),
+    ]);
+    expect(host.hooks('push').at(-1)![0]).toBe('r-000002');
+  });
+
   it('reply holds the answer on an ended run that stands for no task', async () => {
     host.auxRuns.add('r-0000a1');
     const reviewer = { address: 'run:r-0000a1', canDecide: false };

@@ -158,7 +158,7 @@ export class DeliveryEngine {
   }
 
   // A target's initial delivery state and run; null drops a not-live run that
-  // only a channel reached. A reply to an ended run's message is held for it.
+  // only a channel reached. A reply to an ended run with no task is held on it.
   private plan(
     target: Target,
     muted: boolean,
@@ -239,7 +239,7 @@ export class DeliveryEngine {
       thread: replyTarget?.thread ?? id,
       replyTo: input.replyTo ?? null,
       from: sender.address,
-      to: [...input.to],
+      to: this.replyRecipients(input.to, replyTarget),
       kind: input.kind,
       body: input.body,
       refs: input.refs ?? [],
@@ -296,6 +296,17 @@ export class DeliveryEngine {
     }
 
     return { message, deliveries: settled, downgraded };
+  }
+
+  // A reply's recipients, with the target's sender rewritten by
+  // deliverableAddress so an ended run's task (and live successor) hears it.
+  private replyRecipients(to: Address[], target: Message | null): Address[] {
+    if (target === null) return [...to];
+    return [
+      ...new Set(
+        to.map((a) => (a === target.from ? this.deliverableAddress(a) : a))
+      ),
+    ];
   }
 
   // Only participants may reply: the target's sender or recipients, where a run
@@ -535,7 +546,7 @@ export class DeliveryEngine {
     return this.send(
       {
         ...input,
-        to: [this.deliverableAddress(target.from)],
+        to: [target.from],
         kind: asking ? 'answer' : 'message',
         replyTo: messageId,
       },
