@@ -349,7 +349,7 @@ export class DeliveryEngine {
     try {
       this.store.markGateApplied(question.id, this.nowIso());
     } catch (err) {
-      console.error('messaging hook failed', err);
+      console.error('messaging markGateApplied failed', err);
       return false;
     }
     return true;

@@ -259,7 +259,8 @@ describe('answers', () => {
 
   it('a throwing markGateApplied does not fail the reply', async () => {
     const originalError = console.error;
-    console.error = () => {};
+    const logged: unknown[] = [];
+    console.error = (label: unknown) => logged.push(label);
     try {
       let thrown = false;
       const originalMarkGateApplied = store.markGateApplied.bind(store);
@@ -296,6 +297,7 @@ describe('answers', () => {
       expect(a.kind).toBe('answer');
       expect(engine.answerOf(gate.id)?.id).toBe(a.id);
       expect(host.hooks('onAnswered')).toEqual([[gate.id, 'approve']]);
+      expect(logged).toEqual(['messaging markGateApplied failed']);
       // Not recorded as applied, so recover() replays it.
       expect(await engine.recover()).toMatchObject({ replayed: 1 });
     } finally {
