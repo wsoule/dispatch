@@ -45,7 +45,7 @@ export function resolvePrincipal(
       ok: false,
       status: 403,
       error:
-        "the shared agent token cannot send messages — use this run's DISPATCH_RUN_TOKEN, or register with POST /api/agents/register",
+        'the shared agent token cannot send messages — a run reads its own token from DISPATCH_RUN_TOKEN_FILE; any other agent registers with POST /api/agents/register',
       code: 'auth_agent_token_forbidden',
     };
   }

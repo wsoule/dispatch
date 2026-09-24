@@ -136,14 +136,14 @@ describe('resolvePrincipal', () => {
     });
   });
 
-  it('the shared agentToken is refused with the register hint (403)', () => {
+  it('the shared agentToken is refused, naming the run token file and registration (403)', () => {
     const { ctx, tokens } = makeHarness();
     const result = resolvePrincipal(ctx, tokens.agentToken);
     expect(result).toEqual({
       ok: false,
       status: 403,
       error:
-        "the shared agent token cannot send messages — use this run's DISPATCH_RUN_TOKEN, or register with POST /api/agents/register",
+        'the shared agent token cannot send messages — a run reads its own token from DISPATCH_RUN_TOKEN_FILE; any other agent registers with POST /api/agents/register',
       code: 'auth_agent_token_forbidden',
     });
   });
