@@ -405,8 +405,8 @@ export class Orchestrator {
     ReturnType<typeof setTimeout>
   >();
   private readonly stopEscalationMs: number;
-  // Runs whose cancel has already interrupted (or is interrupting) the
-  // executor; they refuse messages until the terminal transition clears them.
+  // Runs being cancelled or asked to stop; they refuse messages until the
+  // terminal transition clears them, so new mail waits for the next run.
   private readonly stoppingRuns = new Set<string>();
   // In-flight boot auto-resume attempts, keyed by run — see
   // autoResumeSettled(), which is how a test waits one out instead of sleeping.
@@ -519,7 +519,7 @@ export class Orchestrator {
       this.healZombieRun(meta);
     }
     if (this.stoppingRuns.has(runId)) {
-      throw new OrchestratorConflictError(`run is being cancelled: ${runId}`);
+      throw new OrchestratorConflictError(`run is stopping: ${runId}`);
     }
     if (!this.executorProfile(meta.executor).acceptsMessages) {
       throw new OrchestratorConflictError(
@@ -1646,6 +1646,7 @@ export class Orchestrator {
     // any non-terminal run it replays — so no caller can ever observe a
     // provisioning run whose executor simply has not been built yet.
     if (executorRun === undefined) this.healZombieRun(meta);
+    this.stoppingRuns.add(runId);
 
     if (meta.stopRequestedAt !== undefined) {
       executorRun.requestStop();

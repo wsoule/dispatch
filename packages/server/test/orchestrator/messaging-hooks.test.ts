@@ -449,4 +449,38 @@ describe('Orchestrator messaging hooks', () => {
     await orchestrator.cancel(nextRun.id);
     messaging.close();
   });
+
+  it('re-holds a push that arrives after a graceful stop request', async () => {
+    const { orchestrator, store, events } = makeOrchestrator(repo);
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('stall', executor);
+    const messaging = await openTestMessaging(orchestrator, store, events);
+    const task = store.create({ title: 'Task' });
+
+    const run = await orchestrator.dispatch(task.meta.id, 'stall');
+    orchestrator.requestStop(run.id);
+    expect(() =>
+      orchestrator.deliverToRun(run.id, 'x', {
+        label: 'human:wyat',
+        messageId: 'm-x',
+        human: true,
+      })
+    ).toThrow(OrchestratorConflictError);
+    expect(() => orchestrator.notifyRun(run.id, 'x')).toThrow(
+      OrchestratorConflictError
+    );
+
+    const sent = await messaging.engine.send(
+      { to: [`task:${task.meta.id}`], kind: 'message', body: 'after stop' },
+      { address: 'human:wyat', canDecide: true }
+    );
+    expect(messaging.store.getDelivery(sent.deliveries[0].id)).toMatchObject({
+      state: 'held',
+      runId: null,
+    });
+    expect(executor.sent).toEqual([]);
+
+    await orchestrator.cancel(run.id);
+    messaging.close();
+  });
 });
