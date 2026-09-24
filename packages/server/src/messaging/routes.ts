@@ -423,9 +423,8 @@ export async function replyToMessage(
 // the real 30s, and restore it afterward.
 export const answerLongPoll = { waitMs: 30_000 };
 
-// GET /api/messages/:id/answer — participants only. `?wait=1` long-polls up
-// to answerLongPoll.waitMs for an answer; without it, checks once and
-// returns right away.
+// GET /api/messages/:id/answer — participants may check once; `?wait=1`
+// long-polls up to answerLongPoll.waitMs, and only for the asker or a deciding human.
 export function waitForAnswer(
   req: Request,
   ctx: ApiContext,
@@ -442,6 +441,12 @@ export function waitForAnswer(
       errorResponse(403, `cannot read the answer to ${id}`)
     );
   }
+  const wait = url.searchParams.get('wait') === '1';
+  if (wait && !canActAs(ctx, principal, question.from)) {
+    return Promise.resolve(
+      errorResponse(403, `only the asker can wait for the answer to ${id}`)
+    );
+  }
   if (question.kind !== 'question' && question.kind !== 'handoff') {
     return Promise.resolve(
       errorResponse(
@@ -454,7 +459,7 @@ export function waitForAnswer(
   const existing = ctx.messaging.engine.answerOf(id);
   if (existing !== null)
     return Promise.resolve(jsonResponse({ answer: existing }));
-  if (url.searchParams.get('wait') !== '1' || req.signal.aborted) {
+  if (!wait || req.signal.aborted) {
     return Promise.resolve(jsonResponse({ answer: null }));
   }
 

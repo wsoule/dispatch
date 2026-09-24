@@ -180,16 +180,12 @@ describe('messaging HTTP routes', () => {
     const sent = await json<{ message: { id: string } }>(sendRes);
     const questionId = sent.message.id;
 
-    // Start the long-poll before the answer exists, so this exercises the
-    // subscribe-and-wait path rather than the immediate-answer shortcut.
+    // Either the subscription or the answered-already shortcut may return it;
+    // the direct unit tests below pin the subscription path on its own.
     const answerPromise = fetch(
       `${baseUrl}/api/messages/${questionId}/answer?wait=1`,
       { headers: authHeaders(runToken!) }
     );
-    // Give the server a moment to actually reach the subscribe() call before
-    // the reply below fires its event — otherwise this could resolve via the
-    // immediate-answer shortcut instead of the subscribe path under test.
-    await new Promise((resolve) => setTimeout(resolve, 50));
 
     const replyRes = await fetch(
       `${baseUrl}/api/messages/${questionId}/reply`,
@@ -209,8 +205,8 @@ describe('messaging HTTP routes', () => {
     expect(body.answer?.replyTo).toBe(questionId);
     expect(body.answer?.choice).toBe('yes');
 
-    // R2-2: the run also receives the answer as a pushed message, not only
-    // through the long-poll response.
+    // The run also receives the answer as a pushed message, not only through
+    // the long-poll response.
     await waitFor(() => executor.sent.some((s) => s.includes('go ahead')));
   });
 
@@ -742,6 +738,35 @@ describe('messaging HTTP routes', () => {
 
     const asHuman = await fetch(`${baseUrl}/api/decisions/open`);
     expect(asHuman.status).toBe(200);
+  });
+
+  it('only the asker (or a deciding human) may long-poll for an answer', async () => {
+    await liveRun('Asks an agent');
+    const runToken = executor.lastRunToken!;
+    const agent = await registerAndApprove('asked-agent');
+    const sent = await json<{ message: { id: string } }>(
+      await fetch(`${baseUrl}/api/messages`, {
+        method: 'POST',
+        headers: authHeaders(runToken),
+        body: JSON.stringify({
+          to: [agent.address],
+          kind: 'question',
+          body: 'Which file?',
+        }),
+      })
+    );
+    const answerUrl = `${baseUrl}/api/messages/${sent.message.id}/answer`;
+
+    const peek = await fetch(answerUrl, { headers: authHeaders(agent.token) });
+    expect(peek.status).toBe(200);
+
+    const wait = await fetch(`${answerUrl}?wait=1`, {
+      headers: authHeaders(agent.token),
+    });
+    expect(wait.status).toBe(403);
+    expect((await json<{ error: string }>(wait)).error).toBe(
+      `only the asker can wait for the answer to ${sent.message.id}`
+    );
   });
 
   it('register -> pending 403 -> approve via app token -> send works', async () => {
@@ -1281,6 +1306,53 @@ describe('messaging routes — direct unit coverage', () => {
       const res = await promise;
       expect(res.status).toBe(200);
       expect((await json<{ answer: unknown }>(res)).answer).toBeNull();
+      expect(messaging.engine.listenerCount).toBe(baseline);
+    } finally {
+      answerLongPoll.waitMs = original;
+    }
+  });
+
+  it('keeps waiting through a plain reply and resolves on the answer', async () => {
+    const questionId = await askQuestion();
+    const baseline = messaging.engine.listenerCount;
+    const original = answerLongPoll.waitMs;
+    answerLongPoll.waitMs = 5000;
+    try {
+      const req = new Request(
+        `http://x/api/messages/${questionId}/answer?wait=1`
+      );
+      let settled = false;
+      const promise = waitForAnswer(
+        req,
+        ctxFor(),
+        questionId,
+        new URL(req.url)
+      ).then((res) => {
+        settled = true;
+        return res;
+      });
+      expect(messaging.engine.listenerCount).toBe(baseline + 1);
+
+      await messaging.engine.send(
+        {
+          to: ['human:test'],
+          kind: 'message',
+          body: 'still thinking',
+          replyTo: questionId,
+        },
+        { address: 'human:test', canDecide: true }
+      );
+      expect(messaging.engine.listenerCount).toBe(baseline + 1);
+      expect(settled).toBe(false);
+
+      const answer = await messaging.engine.reply(
+        questionId,
+        { body: 'b it is', choice: 'b' },
+        { address: 'human:test', canDecide: true }
+      );
+      const res = await promise;
+      const body = await json<{ answer: { id: string } | null }>(res);
+      expect(body.answer?.id).toBe(answer.message.id);
       expect(messaging.engine.listenerCount).toBe(baseline);
     } finally {
       answerLongPoll.waitMs = original;
