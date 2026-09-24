@@ -397,6 +397,9 @@ interface InboxReadArgs {
 }
 
 const DEFAULT_INBOX_LIMIT = 50;
+// Asked for when no `state` is given, so read items never crowd unread ones
+// out of the limit.
+const UNREAD_DELIVERY_STATES = ['held', 'notified', 'pushed'];
 
 // GET /api/mailbox, trimmed here to the newest `limit` items (the route has no
 // limit); marks the returned held/notified items read unless `markRead: false`.
@@ -405,12 +408,16 @@ async function inboxRead(
   server: McpServer,
   args: InboxReadArgs
 ): Promise<ToolOutcome> {
-  const query = new URLSearchParams();
-  if (args.state !== undefined && args.state.length > 0) {
-    query.set('state', args.state.join(','));
-  }
-  const qs = query.size > 0 ? `?${query.toString()}` : '';
-  const fetched = await messagingFetch(rootDir, server, `/api/mailbox${qs}`);
+  const states =
+    args.state !== undefined && args.state.length > 0
+      ? args.state
+      : UNREAD_DELIVERY_STATES;
+  const query = new URLSearchParams({ state: states.join(',') });
+  const fetched = await messagingFetch(
+    rootDir,
+    server,
+    `/api/mailbox?${query.toString()}`
+  );
   if (!fetched.ok) return fetchFailed(fetched, 'inbox_read');
   if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
   const body = (await fetched.res.json()) as {
@@ -624,7 +631,8 @@ export function registerMessagingTools(
       title: 'Read your mailbox',
       description:
         'List your own mailbox, newest first: at most `limit` items (50 by ' +
-        'default), optionally filtered by delivery `state`. Marks every ' +
+        'default) in the given delivery `state`s — only unread ones ' +
+        '(held, notified, pushed) when `state` is omitted. Marks every ' +
         'returned held/notified item read unless `markRead: false` is passed.',
       inputSchema: {
         state: z

@@ -206,8 +206,17 @@ class FakeDaemon {
         }
 
         if (url.pathname === '/api/mailbox' && req.method === 'GET') {
-          this.mailboxStateSeen = url.searchParams.get('state');
-          return Response.json(this.mailboxBody);
+          const state = url.searchParams.get('state');
+          this.mailboxStateSeen = state;
+          if (state === null) return Response.json(this.mailboxBody);
+          // Filters by delivery state the way the real route does.
+          const wanted = new Set(state.split(','));
+          const { items } = this.mailboxBody as {
+            items: { delivery: { state: string } }[];
+          };
+          return Response.json({
+            items: items.filter((item) => wanted.has(item.delivery.state)),
+          });
         }
 
         const read = /^\/api\/deliveries\/([^/]+)\/read$/.exec(url.pathname);
@@ -840,7 +849,9 @@ describe('inbox_read', () => {
 
     const result = (await client.callTool({
       name: 'inbox_read',
-      arguments: {},
+      arguments: {
+        state: ['held', 'notified', 'pushed', 'read', 'answered'],
+      },
     })) as ToolCallResult;
 
     expect(result.isError).toBeUndefined();
@@ -920,6 +931,45 @@ describe('inbox_read', () => {
     }[];
     expect(items.map((item) => item.delivery.id)).toEqual(['d-003', 'd-002']);
     expect(daemon.markReadCalls.sort()).toEqual(['d-002', 'd-003']);
+  });
+
+  it('asks only for unread (held, notified, pushed) deliveries when no state is given', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    await client.callTool({ name: 'inbox_read', arguments: {} });
+    expect(daemon.mailboxStateSeen).toBe('held,notified,pushed');
+  });
+
+  it('keeps an older unread item that newer read items would push past the limit', async () => {
+    daemon = new FakeDaemon();
+    const readIds = Array.from(
+      { length: 60 },
+      (_, i) => `d-${String(i + 1).padStart(3, '0')}`
+    );
+    daemon.mailboxBody = {
+      items: [
+        { delivery: { id: 'd-000', state: 'held' }, message: { id: 'm-old' } },
+        ...readIds.map((id) => ({
+          delivery: { id, state: 'read' },
+          message: { id: `m-${id}` },
+        })),
+      ],
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'inbox_read',
+      arguments: {},
+    })) as ToolCallResult;
+
+    const items = result.structuredContent!.items as {
+      delivery: { id: string };
+    }[];
+    expect(items.map((item) => item.delivery.id)).toEqual(['d-000']);
+    expect(daemon.markReadCalls).toEqual(['d-000']);
   });
 
   it('forwards a state filter as a comma-joined query param', async () => {
