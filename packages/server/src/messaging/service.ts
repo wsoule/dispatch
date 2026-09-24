@@ -15,7 +15,7 @@ import type { EventBus } from '../events.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
 import type { RunMeta } from '../orchestrator/types.js';
-import { TERMINAL_RUN_STATES } from '../orchestrator/types.js';
+import { runKind, TERMINAL_RUN_STATES } from '../orchestrator/types.js';
 import { GateHandlers } from './gates.js';
 import { DaemonMessagingHost, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
@@ -179,8 +179,10 @@ export function openMessaging(deps: {
         })
   );
 
-  // A run coming up may have held mail waiting on its task.
+  // Held task mail waits for the task's next execute run; a review or verify
+  // run only gets mail addressed to its own run.
   const unsubscribeRunStarted = deps.orchestrator.onRunStarted((meta) => {
+    if (runKind(meta) !== 'execute') return;
     engine
       .deliverHeld(meta.id, meta.taskId)
       .catch((err) => console.error('messaging: deliverHeld failed', err));

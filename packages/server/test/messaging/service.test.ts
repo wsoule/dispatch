@@ -275,6 +275,53 @@ describe('openMessaging', () => {
     messaging.close();
   });
 
+  it('keeps task mail away from a review run and hands it to the next execute run', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const task = store.create({ title: 'Under review' });
+    const messaging = openMessaging({
+      rootDir: root,
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(root, 'messages.db'),
+    });
+    await messaging.recover();
+    const human = { address: 'human:wyat', canDecide: true };
+
+    const before = await messaging.engine.send(
+      { to: [`task:${task.meta.id}`], kind: 'message', body: 'held early' },
+      human
+    );
+    const review = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      head: 'main',
+      buildPrompt: () => 'review this',
+    });
+    const during = await messaging.engine.send(
+      { to: [`task:${task.meta.id}`], kind: 'message', body: 'held late' },
+      human
+    );
+    expect(during.deliveries[0]?.state).toBe('held');
+    expect(messaging.store.getDelivery(before.deliveries[0].id)?.state).toBe(
+      'held'
+    );
+    await orchestrator.cancel(review.id);
+    expect(executor.sent).toEqual([]);
+
+    const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    await waitFor(
+      () =>
+        executor.sent.some((s) => s.includes('held early')) &&
+        executor.sent.some((s) => s.includes('held late'))
+    );
+    await orchestrator.cancel(run.id);
+    messaging.close();
+  });
+
   it('opens with default limits when config.yml is malformed', async () => {
     const { orchestrator, store } = makeOrchestrator();
     writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');

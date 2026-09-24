@@ -477,20 +477,23 @@ export class Orchestrator {
     };
   }
 
-  // The live (running/awaiting-approval) run for a task, or null — the
-  // public messaging-core wrapper over RunRegistry.liveRunForTask, which also
-  // returns provisioning/terminal runs that aren't a valid delivery target.
+  // The task's running/awaiting-approval execute run, which is where task mail
+  // goes; null while it has none, or only a provisioning or review/verify run.
   liveRunIdForTask(taskId: string): string | null {
     const meta = this.registry.liveRunForTask(taskId);
-    if (meta === undefined) return null;
+    if (meta === undefined || runKind(meta) !== 'execute') return null;
     return meta.state === 'running' || meta.state === 'awaiting-approval'
       ? meta.id
       : null;
   }
 
-  // The task a run belongs to, or null if this orchestrator doesn't know it.
+  // The task an execute run works, for messaging's run-to-task mapping; null
+  // for an unknown run or a review/verify run, which only answers as itself.
   taskIdOfRun(runId: string): string | null {
-    return this.registry.get(runId)?.taskId ?? null;
+    const meta = this.registry.get(runId);
+    return meta !== undefined && runKind(meta) === 'execute'
+      ? meta.taskId
+      : null;
   }
 
   // Whether a run can currently receive a message: registered, in a live

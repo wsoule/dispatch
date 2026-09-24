@@ -1262,6 +1262,50 @@ describe('messaging routes — direct unit coverage', () => {
     } as unknown as ApiContext;
   }
 
+  it('a review run cannot act for its task; the next execute run can', async () => {
+    const task = store.create({ title: 'Reviewed task' });
+    const taskAddress = `task:${task.meta.id}`;
+    const human = { address: 'human:test', canDecide: true };
+    const sent = await messaging.engine.send(
+      { to: [taskAddress], kind: 'message', body: 'for the implementer' },
+      human
+    );
+    const question = await messaging.engine.send(
+      { to: [taskAddress], kind: 'question', body: 'Which approach?' },
+      human
+    );
+    const deliveryId = sent.deliveries[0].id;
+    const taskMailbox = new URL(
+      `http://x/api/mailbox?address=${encodeURIComponent(taskAddress)}`
+    );
+
+    const review = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      head: 'main',
+      buildPrompt: () => 'review this',
+    });
+    expect(getMailbox(ctxForRun(review.id), taskMailbox).status).toBe(403);
+    const own = await json<{ items: unknown[] }>(
+      getMailbox(ctxForRun(review.id), new URL('http://x/api/mailbox'))
+    );
+    expect(own.items).toEqual([]);
+    expect(markDeliveryRead(ctxForRun(review.id), deliveryId).status).toBe(403);
+    await expect(
+      messaging.engine.reply(
+        question.message.id,
+        { body: 'mine' },
+        { address: `run:${review.id}`, canDecide: false }
+      )
+    ).rejects.toThrow('only a participant');
+    await orchestrator.cancel(review.id);
+
+    const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    expect(getMailbox(ctxForRun(run.id), taskMailbox).status).toBe(200);
+    expect(markDeliveryRead(ctxForRun(run.id), deliveryId).status).toBe(200);
+    await orchestrator.cancel(run.id);
+  });
+
   it("a successor run on the same task can poll its predecessor's question for an answer", async () => {
     const task = store.create({ title: 'Successor task' });
     const run1 = await orchestrator.dispatch(task.meta.id, 'claude', {});
