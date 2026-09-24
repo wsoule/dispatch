@@ -221,9 +221,14 @@ function parseNotificationsConfig(raw: unknown): NotificationsConfig {
   return result;
 }
 
-// Validates the optional `messaging:` block. Each key is a positive integer
-// that overrides its default independently, same merge-over-defaults contract
-// as `notifications:`.
+// A run's MCP tool call is cut off after 31 minutes, so a blocking agent wait
+// must give up first and leave the answer to arrive in the inbox.
+const MESSAGING_MAXIMUMS: Partial<Record<keyof MessagingConfig, number>> = {
+  agentBlockingTimeoutSec: 1800,
+};
+
+// Validates the optional `messaging:` block: each key is a positive integer
+// (some capped) overriding its own default, the way `notifications:` merges.
 function parseMessagingConfig(raw: unknown): MessagingConfig {
   if (raw === undefined) return { ...DEFAULT_MESSAGING };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -241,6 +246,12 @@ function parseMessagingConfig(raw: unknown): MessagingConfig {
     if (typeof value !== 'number' || !Number.isInteger(value) || value <= 0) {
       throw new ConfigError(
         `invalid .dispatch/config.yml: messaging.${key} must be a positive integer`
+      );
+    }
+    const max = MESSAGING_MAXIMUMS[key];
+    if (max !== undefined && value > max) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: messaging.${key} must be at most ${max}`
       );
     }
     result[key] = value;

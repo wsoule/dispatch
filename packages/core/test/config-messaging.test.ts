@@ -28,6 +28,15 @@ describe('messaging config', () => {
       loadConfig(rootWith('messaging:\n  urgentPerHour: 0\n'))
     ).toThrow(/messaging.urgentPerHour/);
   });
+  it('caps agentBlockingTimeoutSec at 1800 seconds', () => {
+    expect(
+      loadConfig(rootWith('messaging:\n  agentBlockingTimeoutSec: 1800\n'))
+        .messaging.agentBlockingTimeoutSec
+    ).toBe(1800);
+    expect(() =>
+      loadConfig(rootWith('messaging:\n  agentBlockingTimeoutSec: 1801\n'))
+    ).toThrow('messaging.agentBlockingTimeoutSec must be at most 1800');
+  });
 });
 
 describe('wake gate', () => {
