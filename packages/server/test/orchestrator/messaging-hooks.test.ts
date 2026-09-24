@@ -7,13 +7,15 @@ import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { TaskCache } from '../../src/cache.js';
 import type { ServerEvent } from '../../src/events.js';
@@ -25,6 +27,7 @@ import type { CliSpawner } from '../../src/orchestrator/executors/cli.js';
 import { CliExecutor } from '../../src/orchestrator/executors/cli.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { runTokenPath } from '../../src/orchestrator/paths.js';
+import type { RunRegistry } from '../../src/orchestrator/registry.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -79,6 +82,14 @@ async function openTestMessaging(
   });
   await messaging.recover();
   return messaging;
+}
+
+// Re-registers a run's meta without its ExecutorRun: the zombie a daemon
+// restart leaves behind (live state, nothing running it).
+function dropExecutorRun(orchestrator: Orchestrator, runId: string): void {
+  const registry = (orchestrator as unknown as { registry: RunRegistry })
+    .registry;
+  registry.create({ ...orchestrator.getRun(runId)!.meta });
 }
 
 async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
@@ -268,6 +279,57 @@ describe('Orchestrator messaging hooks', () => {
     expect(rebooted.orchestrator.getRun(meta.id)?.meta.state).toBe('failed');
     expect(existsSync(file)).toBe(false);
   });
+
+  it('replaces a leftover run token file with a fresh 0600 one', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('stall', executor);
+    // Minting runs just before the file is written, so it can plant a stale,
+    // world-readable file at the run's token path first.
+    orchestrator.setRunTokenMinter((id) => {
+      const path = runTokenPath(repo, id);
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(path, 'stale', { mode: 0o644 });
+      return `${id}.tok`;
+    });
+    const task = store.create({ title: 'Task' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'stall');
+
+    const file = runTokenPath(repo, meta.id);
+    expect(orchestrator.getRun(meta.id)?.meta.state).toBe('running');
+    expect(executor.lastRunToken).toBe(`${meta.id}.tok`);
+    expect(readFileSync(file, 'utf8')).toBe(`${meta.id}.tok`);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+    await orchestrator.cancel(meta.id);
+  });
+
+  for (const deliver of ['deliverToRun', 'notifyRun'] as const) {
+    it(`${deliver} fails a zombie run and throws`, async () => {
+      const { orchestrator, store } = makeOrchestrator(repo);
+      const executor = new StallingExecutor();
+      orchestrator.registerExecutor('stall', executor);
+      const task = store.create({ title: 'Task' });
+      const meta = await orchestrator.dispatch(task.meta.id, 'stall');
+      dropExecutorRun(orchestrator, meta.id);
+      expect(orchestrator.getRun(meta.id)?.meta.state).toBe('running');
+
+      expect(() =>
+        deliver === 'deliverToRun'
+          ? orchestrator.deliverToRun(meta.id, 'x', {
+              label: 'human:wyat',
+              messageId: 'm-x',
+              human: true,
+            })
+          : orchestrator.notifyRun(meta.id, 'x')
+      ).toThrow(/executor is no longer alive/);
+
+      expect(orchestrator.getRun(meta.id)?.meta.state).toBe('failed');
+      expect(orchestrator.isRunLive(meta.id)).toBe(false);
+      expect(executor.sent).toEqual([]);
+      expect(executor.notified).toEqual([]);
+    });
+  }
 
   it('deliverToRun sends and logs; notifyRun notes and logs', async () => {
     const { orchestrator, store, events } = makeOrchestrator(repo);
