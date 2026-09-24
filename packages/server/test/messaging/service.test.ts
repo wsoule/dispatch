@@ -402,8 +402,6 @@ describe('openMessaging', () => {
       { address: 'human:wyat', canDecide: true }
     );
     expect(sent.message.body).toBe('still up');
-    // Only the boot read falls back; a live read still reports the typo.
-    expect(() => messaging.config()).toThrow('invalid .dispatch/config.yml');
     messaging.close();
   });
 });
@@ -472,9 +470,8 @@ describe('wake gate handler', () => {
     const meta = await orchestrator.dispatch(task.meta.id, 'claude', {});
     expect(executor.started).toHaveLength(1);
 
-    // Hand-built as if replayed by recover(): a wake question answered
-    // 'approve' for a task that, by the time this replays, already has a
-    // live run.
+    // Hand-built as if recover() replayed it: an approved wake for a task that
+    // already has a live run by the time it replays.
     const original = stubMessage({
       id: 'm-original000000000000000001',
       thread: 'm-original000000000000000001',
@@ -912,10 +909,8 @@ describe('agent-registration gate handler', () => {
 });
 
 describe('boot ordering', () => {
-  // Controller ruling R2-1 / fix round 2: recover() must run AFTER
-  // reconcileOnBoot() populates the registry, or a replayed wake's freshly
-  // dispatched run gets mistaken for an orphan of the previous process and
-  // force-failed by reconcileOnBoot() itself.
+  // recover() must run after reconcileOnBoot(), or a replayed wake's run is
+  // force-failed as an orphan of the previous process.
   it('a wake approved before a crash dispatches cleanly on the next boot, without being force-failed', async () => {
     const store = TaskStore.init(root);
     const task = store.create({ title: 'Wake me on reboot' });

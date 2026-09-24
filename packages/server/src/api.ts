@@ -377,9 +377,8 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
-  /** Who a self-authenticating messaging route's caller is (run, agent, or
-   *  human), resolved by handleApi via resolvePrincipal. Handlers read this,
-   *  never `caller`. */
+  /** The messaging caller (run, agent or human) handleApi resolved; messaging
+   *  handlers read this, never `caller`. */
   principal?: Principal;
 }
 
@@ -4438,11 +4437,8 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // Installing a license key changes who may sign in to this machine's
   // daemon at all — the owner's call, like the rest of the operator tier.
   { method: 'PUT', segments: ['license'], tier: 'operator' },
-  // Approving, revoking or (un)muting an agent client is an adjudication over
-  // that agent's roster membership — the same reason scope-request decide and
-  // agent-registration gates sit here. On the request tier, an agent holding
-  // only the shared on-disk agentToken could approve itself (or another
-  // agent) straight onto the roster.
+  // Approving, revoking or (un)muting an agent is an adjudication: on the
+  // request tier the shared agentToken could approve itself onto the roster.
   { method: 'POST', segments: ['agents', '*', 'approve'], tier: 'decide' },
   { method: 'POST', segments: ['agents', '*', 'revoke'], tier: 'decide' },
   { method: 'POST', segments: ['agents', '*', 'mute'], tier: 'decide' },
@@ -4549,13 +4545,8 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['decisions', 'open'] },
 ];
 
-/**
- * Whether `/api/<segments>` is one of the messaging routes above, which take
- * no daemon-tier token at all — only a principal resolvePrincipal can name.
- * Consulted from two places: requiredTier below (so the normal gate lets the
- * request through) and handleApi itself (so it can fail closed — see the
- * comment at that call site for why both are needed).
- */
+/** Whether `/api/<segments>` is a messaging route that authenticates by
+ *  principal, not tier: requiredTier skips it and handleApi resolves it. */
 export function isSelfAuthenticated(
   segments: readonly string[],
   method: string
@@ -5621,9 +5612,8 @@ export async function handleApi(
       }
     }
 
-    // Messaging: dispatchd's agent-communication bus. Most routes read
-    // ctx.principal; agents/roster, agents/register and approve/revoke/
-    // mute/unmute use the tier ladder instead (see SELF_AUTHENTICATED_ROUTES).
+    // Messaging routes read ctx.principal; the agent roster, register and
+    // approve/revoke/mute/unmute routes use the tier ladder instead.
     if (segments[0] === 'messages') {
       if (segments.length === 1 && method === 'POST') {
         return await sendMessage(req, ctx);

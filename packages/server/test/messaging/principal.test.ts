@@ -28,9 +28,8 @@ function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-// A minimal AgentRecord for seeding `messaging.store` directly — the fields
-// resolvePrincipal doesn't read (displayName, client, createdAt) are filled
-// with placeholders.
+// A minimal AgentRecord for seeding `messaging.store`; fields resolvePrincipal
+// never reads hold placeholders.
 function stubAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     address: 'agent:codex/reviewer',
@@ -45,12 +44,8 @@ function stubAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   };
 }
 
-// A teammate credential source backing exactly one token with a chosen
-// TokenLookup outcome — standing in for the real team module (Elastic
-// License 2.0, out of scope for this package's tests). Taking the outcome
-// directly (rather than just a tier) lets tests drive the 'expired' and
-// 'refused' branches resolvePrincipal now handles via registry.lookup, not
-// only 'valid'.
+// A teammate credential source whose one token returns a chosen TokenLookup,
+// so tests reach the 'expired' and 'refused' branches, not only 'valid'.
 function teammateSource(token: string, result: TokenLookup): CredentialSource {
   const digest = sha256(token);
   return {
@@ -77,9 +72,8 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-// Real Orchestrator + real openMessaging, wired the same way service.test.ts
-// does — cheaper than a full startServer and gives resolvePrincipal's three
-// collaborators (tokens, orchestrator, messaging) without an HTTP round trip.
+// A real Orchestrator and openMessaging, as service.test.ts wires them: what
+// resolvePrincipal needs, without a full startServer.
 function makeHarness(teammates: CredentialSource | null = null): {
   ctx: ApiContext;
   tokens: DaemonTokens;
@@ -113,9 +107,8 @@ function makeHarness(teammates: CredentialSource | null = null): {
     ownerRef: 'human:wyat',
     dbPath: join(root, 'messages.db'),
   });
-  // resolvePrincipal only reads ctx.tokens, ctx.orchestrator and
-  // ctx.messaging — a narrow, cast subset stands in for the full ApiContext
-  // the real handleApi builds, per the task-5 controller ruling.
+  // resolvePrincipal reads only tokens, orchestrator and messaging, so a cast
+  // subset stands in for the full ApiContext.
   const ctx = { tokens, orchestrator, messaging } as unknown as ApiContext;
   return { ctx, tokens, orchestrator, messaging, executor, store };
 }
@@ -367,9 +360,8 @@ describe('isSelfAuthenticated', () => {
     ['POST', 'agents/agent%3Acodex%2Freviewer/revoke'],
     ['POST', 'agents/agent%3Acodex%2Freviewer/mute'],
     ['POST', 'agents/agent%3Acodex%2Freviewer/unmute'],
-    // The capture inbox — a pre-existing, unrelated route this table must
-    // never collide with again (see the fail-closed HTTP test below for the
-    // regression: it must 401 with no token, not serve 200).
+    // The capture inbox is not a messaging route: it must 401 without a
+    // token (see the fail-closed HTTP test below).
     ['GET', 'inbox'],
     // Wrong method for an otherwise self-authenticated path.
     ['DELETE', 'messages/m-1'],
@@ -420,9 +412,8 @@ function startTestServer(): Promise<ServerHandle> {
   });
 }
 
-// Every self-authenticated route must 401 with no token: handleApi's
-// fail-closed resolvePrincipal call runs before dispatch, so a handler can
-// never see an unauthenticated request regardless of what it does itself.
+// Every self-authenticated route 401s with no token: handleApi resolves the
+// principal before dispatch, whatever the handler itself does.
 describe('handleApi fails closed for self-authenticated routes', () => {
   let handle: ServerHandle;
   let baseUrl: string;
@@ -460,9 +451,8 @@ describe('handleApi fails closed for self-authenticated routes', () => {
   });
 });
 
-// An agent's approve/revoke/mute/unmute needs the `decide` tier, same as the
-// other adjudications in ELEVATED_ROUTES — the tier gate runs in handleApi
-// before routing, independently of whatever the handler itself does.
+// An agent's approve/revoke/mute/unmute needs the `decide` tier, enforced in
+// handleApi before routing like the other ELEVATED_ROUTES adjudications.
 describe('ELEVATED_ROUTES: agent decide-tier routes', () => {
   let handle: ServerHandle;
   let baseUrl: string;

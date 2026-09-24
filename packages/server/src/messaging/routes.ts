@@ -27,9 +27,8 @@ import { implicitEpicMembers } from './host.js';
 import type { Principal } from './principal.js';
 import type { Messaging } from './service.js';
 
-// Every handler that calls this is reached only via a self-authenticated
-// route (api.ts resolves ctx.principal before dispatch) — this just narrows
-// the type instead of scattering `!` assertions.
+// Narrows ctx.principal (api.ts resolves it before every self-authenticated
+// route) instead of scattering `!` assertions.
 function requirePrincipal(ctx: ApiContext): Principal {
   if (ctx.principal === undefined) {
     throw new Error('messaging route reached with no resolved principal');
@@ -77,9 +76,8 @@ function canActAs(
   );
 }
 
-// Whether `principal` may read `message`: it (or its task) sent it, or it (or
-// its task) is a recipient of one of its deliveries — or it's a deciding
-// human, which canActAs already grants for any address.
+// Whether `principal` may read `message`: it or its task sent or received it
+// (canActAs already lets a deciding human act for any address).
 function isParticipant(
   ctx: ApiContext,
   principal: Principal,
@@ -310,8 +308,7 @@ function parseReplyInput(raw: unknown):
   return { ok: true, value };
 }
 
-// In-flight/completed sends keyed by idempotency key, per Messaging instance
-// (never shared across daemons). Caches the promise, not just its result, so
+// Sends by idempotency key, per Messaging instance. The promise is cached so
 // a concurrent retry awaits the first send instead of racing a second one.
 const idempotencyCaches = new WeakMap<
   Messaging,
@@ -330,11 +327,8 @@ function idempotencyCacheFor(
   return cache;
 }
 
-// Records a send's promise under its idempotency key, evicting the oldest
-// entry once the cache would exceed its bound — Map preserves insertion
-// order, so the first key is always the oldest. A failed send removes its
-// own entry once settled (unless something newer already replaced it), so a
-// retry after a failure actually retries instead of replaying the error.
+// Caches a send's promise, evicting the oldest key (Map keeps insertion order)
+// past the bound. A failed send drops its entry so a retry really retries.
 function rememberIdempotent(
   cache: Map<string, Promise<SendResult>>,
   key: string,
@@ -350,11 +344,8 @@ function rememberIdempotent(
   });
 }
 
-// POST /api/messages — sends on behalf of whoever resolvePrincipal named.
-// `Idempotency-Key` lets a client retry a send that timed out in flight
-// without risking a duplicate message: a repeat with the same key (from the
-// same principal), even a concurrent one, awaits the first attempt's promise
-// and replays its result with 200, not 201.
+// POST /api/messages as the resolved principal. The same principal repeating
+// an `Idempotency-Key` gets the first attempt's result with 200, not 201.
 export async function sendMessage(
   req: Request,
   ctx: ApiContext
@@ -419,9 +410,8 @@ export async function replyToMessage(
   return jsonResponse(result, 201);
 }
 
-// How long GET /api/messages/:id/answer?wait=1 parks before giving up.
-// Mutable (not a plain constant) so a test can shrink it instead of taking
-// the real 30s, and restore it afterward.
+// How long GET /api/messages/:id/answer?wait=1 parks before giving up;
+// mutable so a test can shrink it.
 export const answerLongPoll = { waitMs: 30_000 };
 
 // GET /api/messages/:id/answer — participants may check once; `?wait=1`
@@ -489,9 +479,8 @@ export function waitForAnswer(
   });
 }
 
-// GET /api/threads/:id — allowed for a participant of any message in the
-// thread, or a deciding human (who can read any thread, including an empty
-// or unknown one, where there is no message to check participation against).
+// GET /api/threads/:id — for a participant of any message in the thread, or a
+// deciding human, who can read any thread, even an empty or unknown one.
 export function getThreadById(ctx: ApiContext, threadId: string): Response {
   const principal = requirePrincipal(ctx);
   const thread = ctx.messaging.engine.thread(threadId);
@@ -508,10 +497,8 @@ export function getThreadById(ctx: ApiContext, threadId: string): Response {
 const DEFAULT_RECENT_THREADS = 50;
 const MAX_RECENT_THREADS = 200;
 
-// GET /api/threads?limit=N — the most recently active threads, for the
-// desktop Threads view's channel/direct coverage beyond a single mailbox.
-// Restricted to deciding humans: it surfaces every thread project-wide,
-// including ones the caller was never addressed in.
+// GET /api/threads?limit=N — the most recently active threads project-wide,
+// so only a deciding human may list them.
 export function listRecentThreads(ctx: ApiContext, url: URL): Response {
   const principal = requirePrincipal(ctx);
   if (principal.kind !== 'human' || !principal.canDecide) {
@@ -526,11 +513,8 @@ export function listRecentThreads(ctx: ApiContext, url: URL): Response {
   return jsonResponse({ threads: ctx.messaging.store.recentThreads(limit) });
 }
 
-// "My own mailbox" (no `?address=`) for a run: its own address, its task,
-// and every delivery deliverHeld has bound to it by runId regardless of the
-// delivery's `recipient` — deliverHeld rebinds a held delivery to a
-// successor run without touching that field, so a recipient-only query would
-// miss mail a predecessor run was originally addressed by name.
+// A run's own mailbox: its address, its task, and deliveries bound to it by
+// runId, since deliverHeld rebinds held mail without changing `recipient`.
 function ownMailboxItems(
   ctx: ApiContext,
   principal: Principal,
@@ -560,9 +544,8 @@ function ownMailboxItems(
   });
 }
 
-// GET /api/mailbox?address=&state=a,b — `address` defaults to the caller's
-// own; reading anyone else's needs canActAs's say-so. Results are sorted by
-// delivery id (time order) even when several sources are merged.
+// GET /api/mailbox?address=&state=a,b — the caller's own by default; another
+// address needs canActAs. Sorted by delivery id (time order).
 export function getMailbox(ctx: ApiContext, url: URL): Response {
   const principal = requirePrincipal(ctx);
   const explicitAddress = url.searchParams.get('address');
@@ -616,11 +599,8 @@ interface ChannelSummary {
   members: string[];
 }
 
-// GET /api/channels — every channel anyone has joined, plus one implicit
-// `epic/<id>` channel per epic task (members: explicit ∪ implicit), so an
-// epic's channel is listed even if nobody has ever posted to it. Tasks are
-// listed once, grouped by parent in memory, rather than one store query per
-// epic.
+// GET /api/channels — every joined channel plus each epic's implicit
+// `epic/<id>` channel, built from one task listing grouped by parent.
 export function listChannels(ctx: ApiContext): Response {
   const explicitChannels = ctx.messaging.store.channels();
   const explicitByName = new Map(explicitChannels.map((c) => [c.name, c]));
@@ -659,9 +639,8 @@ function selfActingAddress(ctx: ApiContext, principal: Principal): string {
   return taskAddressOfRun(ctx, principal) ?? principal.address;
 }
 
-// POST /api/channels/:name/members — `member` defaults to the caller (a run
-// defaults to its task); adding anyone else needs canActAs's say-so, same as
-// removing them.
+// POST /api/channels/:name/members — `member` defaults to the caller (a run's
+// task); adding anyone else needs canActAs, as removing them does.
 export async function joinChannel(
   req: Request,
   ctx: ApiContext,
@@ -720,9 +699,7 @@ export function leaveChannel(
 
 type AgentSummary = Omit<AgentRecord, 'tokenHash'>;
 
-// Never hand a token hash back over the wire — it authenticates the agent
-// exactly like the raw token would if it leaked, so every agent-facing route
-// strips it before responding.
+// Token hashes never leave the daemon: every agent-facing route strips them.
 function stripTokenHash(agent: AgentRecord): AgentSummary {
   return {
     address: agent.address,
@@ -746,11 +723,8 @@ export function listAgentRoster(ctx: ApiContext): Response {
 const HANDLE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
 const MAX_REGISTRATION_FIELD_LENGTH = 100;
 
-// Normalizes a client-supplied display name into the handle grammar
-// addresses use: lowercase, invalid characters become '-', leading
-// non-alphanumerics are trimmed (a handle must start with [a-z0-9]), capped
-// at 40 characters. Exported so a test can pin @dispatch/mcp's own duplicate
-// (identity.ts) to the same fixtures — see identity.test.ts.
+// A display name in the handle grammar: lowercased, invalid characters to '-',
+// leading non-alphanumerics trimmed, at most 40 characters. MCP keeps a copy.
 export function normalizeAgentName(raw: string): string {
   const lowered = raw.toLowerCase().replace(/[^a-z0-9._-]/g, '-');
   return lowered.replace(/^[^a-z0-9]+/, '').slice(0, 40);
@@ -880,9 +854,8 @@ function openRegistrationGateFor(
   return null;
 }
 
-// Shared body for approve/revoke: answers the open registration gate through
-// the engine when there is one (keeping the gate handler the single writer
-// of status/approvedBy); writes the agent row directly otherwise.
+// Approve/revoke: answers the open registration gate if there is one, so its
+// handler stays the one writer of status; else writes the agent row directly.
 async function decideAgent(
   ctx: ApiContext,
   address: string,
@@ -949,10 +922,8 @@ export function unmuteAgent(ctx: ApiContext, address: string): Response {
   return updateAgent(ctx, address, (agent) => ({ ...agent, muted: false }));
 }
 
-// GET /api/decisions/open — open blocking questions addressed to a human,
-// for the notification surfaces that only care about what needs a person.
-// Deciding humans only: the list itself (who's waiting on what) is exactly
-// what a non-deciding principal must not see.
+// GET /api/decisions/open — open blocking questions addressed to a human.
+// Deciding humans only: who is waiting on what is not for anyone else.
 export function listOpenDecisions(ctx: ApiContext): Response {
   const principal = requirePrincipal(ctx);
   if (principal.kind !== 'human' || !principal.canDecide) {

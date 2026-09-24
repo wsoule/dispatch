@@ -36,9 +36,8 @@ export interface DaemonHostDeps {
   now?: () => Date;
 }
 
-// Every task parented to `epicId`, as `task:<id>` addresses — an epic
-// channel's implicit members. `childrenOf` is injected so a bulk caller can
-// resolve every epic from one task listing instead of one query per channel.
+// An epic channel's implicit members: every task parented to its epic, as
+// `task:<id>`. `childrenOf` lets a bulk caller reuse one task listing.
 export function implicitEpicMembers(
   childrenOf: (epicId: string) => { meta: { id: string } }[],
   channel: string
@@ -57,10 +56,8 @@ export function wakeRefusal(task: TaskDoc): string | null {
   return null;
 }
 
-// dispatchd's MessagingHost: everything the protocol engine needs from the
-// product, wired to the orchestrator (live runs, wake/dispatch), the task
-// store (policy lookups, epic channel membership) and the gate router
-// (answered gate effects).
+// dispatchd's MessagingHost: live runs and wakes from the orchestrator, policy
+// and epic membership from the task store, gate effects from GateHandlers.
 export class DaemonMessagingHost implements MessagingHost {
   constructor(private readonly deps: DaemonHostDeps) {}
 
@@ -76,9 +73,8 @@ export class DaemonMessagingHost implements MessagingHost {
     return this.deps.orchestrator.taskIdOfRun(runId);
   }
 
-  // Delivers into the run's own conversation. deliverToRun throws when the
-  // run isn't actually live; the engine catches that and holds the message
-  // instead of losing it.
+  // Delivers into the run's conversation; deliverToRun throws for a run that
+  // cannot take it, and the engine then holds the message.
   async push(runId: string, rendered: string, message: Message): Promise<void> {
     this.deps.orchestrator.deliverToRun(runId, rendered, {
       label: message.from,
@@ -95,9 +91,8 @@ export class DaemonMessagingHost implements MessagingHost {
     this.deps.onHumanMessage(actor, message);
   }
 
-  // Wakes a sleeping task by dispatching (or resuming) it as the system
-  // actor. A throw from the orchestrator (e.g. the task already has a live
-  // run) becomes a WakeResult failure rather than an unhandled rejection.
+  // Dispatches or resumes a sleeping task as the system actor; an orchestrator
+  // throw (a live run already, say) becomes a failed WakeResult.
   async wake(target: Address, _message: Message): Promise<WakeResult> {
     if (!target.startsWith('task:'))
       return { ok: false, reason: `cannot wake ${target}` };
@@ -134,9 +129,8 @@ export class DaemonMessagingHost implements MessagingHost {
     return this.deps.ownerRef;
   }
 
-  // Only `epic/<id>` channels have implicit members — every task parented to
-  // that epic — so a message to the epic's channel reaches its children
-  // without anyone maintaining membership by hand.
+  // Only `epic/<id>` channels have implicit members: the epic's child tasks,
+  // with no membership kept by hand.
   implicitMembers(channel: string): Address[] {
     return implicitEpicMembers(
       (epicId) => this.deps.store.list({ parent: epicId }),

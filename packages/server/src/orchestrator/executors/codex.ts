@@ -700,15 +700,10 @@ export class CodexExecutor implements Executor {
       send(message: string): void {
         sendSteer(message);
       },
-      // Non-interrupting context, delivered the same way as a mid-run
-      // message (Codex has no separate "note" channel); wrapped so a steer
-      // failure after the run has moved on never throws back at the caller.
+      // Codex has no separate note channel, so a note is a steer; as with
+      // send(), a rejected steer fails the run.
       notify(text: string): void {
-        try {
-          sendSteer(text);
-        } catch {
-          // Best-effort: notify() must never throw.
-        }
+        sendSteer(text);
       },
       approve(requestId: string, decision: ApprovalDecision): void {
         const approval = pendingApprovals.get(requestId);

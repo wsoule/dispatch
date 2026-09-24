@@ -260,9 +260,7 @@ export class CliExecutor implements Executor {
         });
       },
       approve: () => {},
-      // A one-shot CLI agent has no channel to deliver a note through either —
-      // same reasoning as send() above, but silent since a note is
-      // best-effort by contract.
+      // No channel for a note either; silent, since a note is best-effort.
       notify: () => {},
     };
   }

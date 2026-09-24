@@ -26,33 +26,22 @@ export interface Messaging {
   store: SqliteMessageStore;
   runTokens: RunTokens;
   gates: GateHandlers;
-  config: () => MessagingConfig;
-  // Replays crash-interrupted deliveries and gate effects. The caller (see
-  // index.ts) must run this AFTER orchestrator.reconcileOnBoot() — recover()
-  // may replay a wake, which dispatches a run, and reconcileOnBoot() force-
-  // fails anything non-terminal it finds that its own registry didn't already
-  // know about; running recover() first would hand it the very run it just
-  // started.
+  // Replays crash-interrupted deliveries and gate effects; must run after
+  // orchestrator.reconcileOnBoot() (index.ts says why).
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
   close(): void;
 }
 
-// True when `taskId` already has a run moving toward or already live —
-// including one still `provisioning`, not only `running`/`awaiting-approval`
-// — so a replayed wake (recover() after a crash, or two approvals racing)
-// never dispatches a second run for the same task. Exported for direct
-// testing of the boundary (provisioning counts, terminal states don't).
+// True when `taskId` has any non-terminal run, provisioning included, so a
+// replayed or doubly approved wake never dispatches a second run for it.
 export function hasNonTerminalRun(runs: RunMeta[], taskId: string): boolean {
   return runs.some(
     (r) => r.taskId === taskId && !TERMINAL_RUN_STATES.has(r.state)
   );
 }
 
-// Boots dispatchd's messaging engine: opens messages.db, wires the daemon
-// host and gate handlers, and bridges engine events onto the server's
-// EventBus. Callers must call the returned handle's recover() themselves,
-// after orchestrator.reconcileOnBoot() (see the Messaging.recover() doc) and
-// before serving HTTP or letting anything else dispatch.
+// Opens messages.db, wires the daemon host and gate handlers, and bridges the
+// engine's events to the EventBus. The caller runs recover() (see index.ts).
 export function openMessaging(deps: {
   rootDir: string;
   orchestrator: Orchestrator;
@@ -77,22 +66,16 @@ export function openMessaging(deps: {
     ownerRef: deps.ownerRef,
     gates,
     onHumanMessage: () => {
-      // message.new already reaches the desktop over the EventBus; Phase 3
-      // adds the notification-kind mapping for a human's OS notification.
+      // message.new already reaches the desktop over the EventBus; no OS
+      // notification is raised for a human's message yet.
     },
   });
 
-  // `config()` re-reads .dispatch/config.yml on every call — routes that
-  // surface live limits see an edit immediately. The DeliveryEngine below
-  // only calls it once, at construction, so ITS rate limits are fixed for
-  // this boot; a changed messaging.* value takes effect on the next restart.
-  const config = (): MessagingConfig => loadConfig(deps.rootDir).messaging;
-
-  // Boot must survive a malformed config.yml (same as carto's read in
-  // index.ts); live config() calls still surface the real error.
+  // Read once, so a messaging.* edit applies on the next restart. A malformed
+  // config.yml falls back to the default limits rather than failing boot.
   let limits: MessagingConfig;
   try {
-    limits = config();
+    limits = loadConfig(deps.rootDir).messaging;
   } catch (err) {
     console.error(
       `dispatchd: could not read messaging config, using default limits: ${(err as Error).message}`
@@ -149,10 +132,8 @@ export function openMessaging(deps: {
     }
   });
 
-  // A deciding human approved/denied an agent client's registration.
-  // Idempotent: setting a status the agent already has is a no-op, so a
-  // replayed answer after a crash never double-applies. `approvedBy` is only
-  // ever set on approval — a denial's answerer isn't the agent's approver.
+  // A deciding human approved or denied an agent's registration. A replay is a
+  // no-op, and only an approval records who approved it.
   gates.register('agent-registration', async (question, answer) => {
     const gate = gateOf(question);
     if (gate === null || gate.type !== 'agent-registration') return;
@@ -193,7 +174,6 @@ export function openMessaging(deps: {
     store,
     runTokens,
     gates,
-    config,
     recover: () => engine.recover(),
     close() {
       unsubscribeRunStarted();

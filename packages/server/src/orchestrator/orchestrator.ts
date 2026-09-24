@@ -379,10 +379,8 @@ export class Orchestrator {
   // just onRunTerminal above — to know when a blocked sibling has actually
   // become dispatchable, since that only happens once a review action runs.
   private readonly reviewedHooks: Array<(meta: RunMeta) => void> = [];
-  // Messaging-core (Phase 2) hooks: callbacks fired right after a run's
-  // ExecutorRun is registered in startAndRegister, so a message router can
-  // learn a run is live (and dispatchable) without polling. Removing the
-  // callback returned by onRunStarted drops it from this set.
+  // onRunStarted's callbacks, fired once a run's ExecutorRun is registered so
+  // messaging learns a run is live without polling.
   private readonly runStartedListeners = new Set<(meta: RunMeta) => void>();
   // Mints each run's messaging token at start (see setRunTokenMinter); null
   // leaves runs without one, as in fixtures that never set it.
@@ -467,9 +465,8 @@ export class Orchestrator {
     this.mintRunToken = mint;
   }
 
-  // Subscribes to "a run just became live" — fired after its ExecutorRun is
-  // registered in startAndRegister, so a message router can start delivering
-  // to it. Returns an unsubscribe function, same shape as onRunTerminal.
+  // Subscribes to "a run just became live" (its ExecutorRun is registered), so
+  // messaging can start delivering to it. Returns an unsubscribe function.
   onRunStarted(callback: (meta: RunMeta) => void): () => void {
     this.runStartedListeners.add(callback);
     return () => {
@@ -507,9 +504,8 @@ export class Orchestrator {
     return this.registry.getExecutorRun(runId) !== undefined;
   }
 
-  // The gate for deliverToRun/notifyRun: a live run with a real ExecutorRun
-  // (a zombie is healed to failed, which throws) that can take a message now.
-  // A throw here makes the messaging engine hold the message for a later run.
+  // A live run with an ExecutorRun (a zombie is failed, which throws) that can
+  // take a message now; any throw makes the engine hold the message.
   private requireDeliverableRun(runId: string): {
     meta: RunMeta;
     executorRun: ExecutorRun;

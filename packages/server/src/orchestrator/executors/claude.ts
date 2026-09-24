@@ -527,9 +527,8 @@ export class ClaudeExecutor implements Executor {
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     const pendingApprovals = new Map<string, ApprovalResolver>();
     let interrupted = false;
-    // Set right before every onFinish call; read by notify() below so a note
-    // queued after the run has already ended is silently dropped instead of
-    // sitting in pendingNotes forever.
+    // Set before every onFinish call, so notify() drops a note that arrives
+    // after the run ended instead of leaving it in pendingNotes forever.
     let finished = false;
     // Set by requestStop(); read by canUseTool below. See STOP_DENIAL_MESSAGE.
     let stopRequested = false;

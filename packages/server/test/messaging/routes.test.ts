@@ -52,9 +52,8 @@ async function waitFor(
   throw new Error('waitFor timed out');
 }
 
-// A run that starts and immediately reports a session, then never finishes —
-// enough state for questions/messages to key off, matching the operator
-// handle 'test' initGitRepo's git identity resolves to (test@example.com).
+// Runs use a StallingExecutor (a session, never a finish); the operator is
+// human:test, from initGitRepo's git identity (test@example.com).
 let fakeHome: string;
 let root: string;
 let handle: ServerHandle;
@@ -102,9 +101,8 @@ async function liveRun(
   return { runId: meta.id, taskId: task.meta.id };
 }
 
-// Registers a fresh agent (via the shared agentToken) and approves it via the
-// route, in one call — most authz tests just need a second, already-approved
-// identity and don't care about the pending state in between.
+// Registers a fresh agent with the shared agentToken and approves it through
+// the route: a second, already-approved identity for authz tests.
 async function registerAndApprove(
   name: string
 ): Promise<{ address: string; token: string }> {
@@ -1041,9 +1039,8 @@ describe('messaging HTTP routes', () => {
 
   it('approving again once the gate already closed falls back to writing the agent row directly', async () => {
     const a = await registerAndApprove('fallback-approve');
-    // The registration gate is already answered by registerAndApprove's own
-    // approve call — a second approve must not try to re-answer it (which
-    // would 409); it goes through the direct-write fallback instead.
+    // registerAndApprove already answered the gate, so this approve writes the
+    // agent row directly instead of re-answering it (which would 409).
     const res = await fetch(
       `${baseUrl}/api/agents/${encodeURIComponent(a.address)}/approve`,
       { method: 'POST', headers: { 'content-type': 'application/json' } }
@@ -1393,10 +1390,8 @@ describe('messaging thread rate limit', () => {
   });
 });
 
-// Direct, non-HTTP coverage for waitForAnswer's long-poll internals and
-// registerAgent's failure path — both need to observe things (the engine's
-// live listener count, a forced send failure) that a black-box HTTP test
-// against startServer() has no way to reach.
+// Calls waitForAnswer and registerAgent directly, to observe the engine's
+// listener count and force a send failure, which HTTP tests cannot reach.
 describe('messaging routes — direct unit coverage', () => {
   let unitRoot: string;
   let unitFakeHome: string;
@@ -1749,10 +1744,8 @@ describe('messaging routes — direct unit coverage', () => {
     await orchestrator.cancel(run1.id);
     const run2 = await orchestrator.dispatch(task.meta.id, 'claude', {});
 
-    // A message once addressed straight to run1, left `held` (recipient
-    // never changes on the failed-push fallback) — arranged directly in the
-    // store since forcing a genuine push failure would need a race this test
-    // shouldn't depend on.
+    // A delivery held for run1 (a failed push keeps its recipient), arranged
+    // in the store rather than by racing a real push failure.
     const sent = await messaging.engine.send(
       { to: ['human:test'], kind: 'message', body: 'orphaned' },
       { address: 'human:test', canDecide: true }

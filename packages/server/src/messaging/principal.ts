@@ -4,19 +4,16 @@ import type { ApiContext } from '../api.js';
 import { expiredTokenMessage, sha256 } from '../identity.js';
 import { tierAllows } from '../tiers.js';
 
-// Who is speaking to a self-authenticating messaging route: a human on the
-// team, a live run acting on its own task, or a registered agent client.
-// `canDecide` is what a gate reply checks — only a human at the `decide` tier
-// or above may resolve a gate question (see resolvePrincipal below).
+// Who is calling a messaging route: a team human, a live run or a registered
+// agent. Only `canDecide` (a human at decide tier or above) may answer a gate.
 export interface Principal {
   address: string;
   canDecide: boolean;
   kind: 'human' | 'run' | 'agent';
 }
 
-// `code` mirrors the daemon-tier ladder's own auth codes (auth_missing_token,
-// auth_token_expired, seat_limit, …) so a client can branch on messaging auth
-// failures the same way it already does on every other route.
+// `code` reuses the tier ladder's auth codes (auth_missing_token, seat_limit,
+// …) so a client branches on messaging auth failures as on any other route.
 export type PrincipalResult =
   | { ok: true; principal: Principal }
   | { ok: false; status: 401 | 403; error: string; code: string };
@@ -27,23 +24,8 @@ function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }
 
-/**
- * Figures out who is calling a self-authenticating messaging route (POST
- * /api/messages and friends — see isSelfAuthenticated in api.ts), given the
- * bearer token it presented. Unlike the rest of the API, these routes never
- * accept the daemon's shared agentToken: every other route treats it as "the
- * operator, at request tier", but a message needs a real sender, and any
- * agent process holding that one on-disk token would otherwise be able to
- * speak as the operator. Checked first, ahead of the registry, so that
- * specific token gets its own explanatory error instead of "unknown token".
- *
- * The remaining three credential kinds are tried in turn: a human's daemon or
- * team token (the registry — `lookup`, not `resolve`, so an expired or
- * seat-refused teammate token keeps its specific error instead of collapsing
- * to "unknown token"), a run's own minted token (proves it is that run,
- * nothing more), and finally a registered agent client's token (looked up by
- * hash, since only the hash is stored).
- */
+/** Resolves a messaging caller's token to a teammate, run or agent. The shared
+ *  agentToken is refused, or any agent could send as the owner. */
 export function resolvePrincipal(
   ctx: ApiContext,
   presented: string | null
@@ -56,9 +38,8 @@ export function resolvePrincipal(
       code: 'auth_missing_token',
     };
   }
-  // Constant-time comparison on the sha256 digest, never the raw strings —
-  // same defence identity.ts's own token comparisons use, so a caller can't
-  // learn anything about the real agentToken from response timing.
+  // Constant-time compare of sha256 digests, so response timing reveals
+  // nothing about the real agentToken.
   if (timingSafeEqual(sha256(presented), sha256(ctx.tokens.agentToken))) {
     return {
       ok: false,
@@ -68,6 +49,7 @@ export function resolvePrincipal(
       code: 'auth_agent_token_forbidden',
     };
   }
+  // lookup, not resolve: an expired or seat-refused token keeps its own error.
   const lookup = ctx.tokens.registry.lookup(presented);
   if (lookup.kind === 'valid') {
     return {

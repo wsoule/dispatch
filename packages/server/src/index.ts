@@ -1245,12 +1245,8 @@ async function bootServer(
     registerCodexIfInstalled(orchestrator);
     registerCliExecutors(orchestrator, rootDir);
   }
-  // Phase 2: dispatchd hosts the messaging-core engine. Opened right after
-  // the orchestrator exists (it mints run tokens and subscribes to
-  // onRunStarted), but its recover() runs only AFTER reconcileOnBoot() below
-  // — see Messaging.recover()'s doc for why the order matters: a replayed
-  // wake dispatches a run, and reconcileOnBoot() force-fails any run its own
-  // registry doesn't already know about.
+  // Messaging opens once the orchestrator exists (it mints run tokens and
+  // hears onRunStarted); its recover() waits for reconcileOnBoot() below.
   const messaging = openMessaging({
     rootDir,
     orchestrator,
@@ -1306,11 +1302,8 @@ async function bootServer(
   // crash is marked failed, and worktree directories with no matching
   // transcript at all are pruned.
   orchestrator.reconcileOnBoot();
-  // Now that reconcileOnBoot has hydrated the registry with every run on
-  // disk, it's safe to replay crash-interrupted deliveries and gate effects
-  // — a replayed wake's freshly-dispatched run won't read as an orphan of a
-  // previous process. Still runs well before HTTP serves or the auto-resume
-  // sweep reconcileOnBoot just scheduled actually fires.
+  // Only after reconcileOnBoot: run earlier, a replayed wake's new run would be
+  // force-failed as an orphan. Still before HTTP serves or auto-resume fires.
   await messaging.recover();
   // The requests hydrated from the previous process: kept while their run is
   // still live (a restart-with-nothing-in-flight reload) or is one this boot
