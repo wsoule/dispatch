@@ -1,8 +1,8 @@
 # Messaging core
 
-Status: **design approved 2026-09-23; protocol, daemon host and MCP tools
-built.** First of six sub-projects that turn Dispatch from a task tracker into
-an agent communication platform.
+Status: **design approved 2026-09-23; protocol, daemon host and MCP tools built;
+replacements and desktop UI not yet.** First of six sub-projects that turn
+Dispatch from a task tracker into an agent communication platform.
 
 ## Why
 
@@ -292,10 +292,11 @@ are dispatched, then recorded in `gate_effects`. Handlers must be idempotent:
 
 **Wake.** Only held `task:` recipients of a `wake: 'request'` message are woken.
 `host.decide` denies anything but a task that exists and is not an epic, landed
-or dropped. A wake a human sender requests is then always `allow` (it replaces
-`/message {resume: true}`); any other consults the autonomy ladder's `wake`
-gate, which stops blocking at rung 3 and is capped by the task's risk: `auto` →
-`allow`, otherwise `ask`.
+or dropped. Any other wake, whoever sent it, consults the autonomy ladder's
+`wake` gate, which stops blocking at rung 3 and is capped by the task's risk:
+`auto` → `allow`, otherwise `ask`. So at rungs 1–2 a human's wake also raises a
+gate to the owner. Always allowing a human sender's wake, which would retire
+`/message {resume: true}`, is not built yet.
 
 - `allow` → `host.wake` calls `dispatchOrResume` for the task as
   `agent:dispatch`: a new run resuming the task's latest session. It never
