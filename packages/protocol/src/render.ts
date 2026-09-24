@@ -1,4 +1,5 @@
 import type { Message } from './envelope.js';
+import { LINE_BREAK } from './lines.js';
 
 const DIGEST_WIDTH = 80;
 
@@ -8,10 +9,11 @@ function refText(m: Message): string | null {
 }
 
 // The text a pushed message becomes inside an agent's session: a labelled
-// header the agent can tell apart from its own prompt, then the payload.
+// header, then the body quoted line by line so it can never pass for a header.
 export function renderForAgent(m: Message): string {
   const tags = [m.kind, ...(m.urgent ? ['urgent'] : []), m.id].join(' · ');
-  const lines = [`[message from ${m.from} · ${tags}]`, m.body];
+  const body = m.body.split(LINE_BREAK).map((line) => `│ ${line}`);
+  const lines = [`[message from ${m.from} · ${tags}]`, ...body];
   if (m.replyTo !== null) lines.push(`(in reply to ${m.replyTo})`);
   if (m.choices !== undefined) lines.push(`choices: ${m.choices.join(' | ')}`);
   if (m.choice !== undefined) lines.push(`choice: ${m.choice}`);
@@ -29,7 +31,7 @@ export function renderDigestLine(m: Message): string {
   const channel = m.to.find((a) => a.startsWith('channel:'));
   const where =
     channel === undefined ? '' : ` #${channel.slice('channel:'.length)} ·`;
-  const first = m.body.split('\n')[0] ?? '';
+  const first = m.body.split(LINE_BREAK)[0] ?? '';
   const text =
     first.length > DIGEST_WIDTH
       ? `${first.slice(0, DIGEST_WIDTH - 1)}…`

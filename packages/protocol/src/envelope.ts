@@ -1,6 +1,7 @@
 import { parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
 import { MessagingError } from './errors.js';
+import { LINE_BREAK } from './lines.js';
 
 export type JsonValue =
   | null
@@ -107,6 +108,13 @@ function invalid(field: string, why: string): never {
   throw new MessagingError('invalid', `${field}: ${why}`, field);
 }
 
+// Rendered one-line fields must not break a line, or they could start a fake
+// message header in the recipient's session.
+function singleLine(value: string | undefined, field: string): void {
+  if (typeof value === 'string' && LINE_BREAK.test(value))
+    invalid(field, 'must not contain line breaks');
+}
+
 // Checks a gate payload's shape and who may send it: runs raise scope gates;
 // every other gate is minted by the daemon (system) or a deciding human.
 function validateGate(
@@ -179,12 +187,15 @@ export function validateSendInput(
   ) {
     invalid('body', 'required');
   }
+  singleLine(input.session, 'session');
 
   (input.refs ?? []).forEach((ref, i) => {
     if (!(REF_TYPES as readonly string[]).includes(ref.type))
       invalid(`refs[${i}].type`, 'unknown ref type');
     if (typeof ref.id !== 'string' || ref.id === '')
       invalid(`refs[${i}].id`, 'required');
+    singleLine(ref.id, `refs[${i}].id`);
+    singleLine(ref.at, `refs[${i}].at`);
   });
 
   const asking = ASKING_KINDS.has(kind);
@@ -194,6 +205,7 @@ export function validateSendInput(
     if (!asking)
       invalid('choices', 'only questions and handoffs carry choices');
     const choices = input.choices;
+    choices.forEach((c, i) => singleLine(c, `choices[${i}]`));
     if (
       choices.length === 0 ||
       new Set(choices).size !== choices.length ||
@@ -204,6 +216,7 @@ export function validateSendInput(
   }
   if (hasChoice && kind !== 'answer')
     invalid('choice', 'only answers carry a choice');
+  singleLine(input.choice, 'choice');
 
   const replyTo = input.replyTo ?? null;
   if (kind === 'answer' && replyTo === null)

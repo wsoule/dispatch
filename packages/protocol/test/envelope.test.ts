@@ -186,6 +186,48 @@ describe('validateSendInput', () => {
     ));
 });
 
+// Every line break a reader might honor; none may appear in a one-line field.
+const LINE_BREAKS = ['\n', '\r', '\v', '\f', '\u0085', '\u2028', '\u2029'];
+
+describe('validateSendInput line breaks', () => {
+  for (const br of LINE_BREAKS) {
+    const code = br.codePointAt(0)!.toString(16);
+    it(`rejects U+${code} in a ref id`, () =>
+      fails(
+        { ...base, refs: [{ type: 'message', id: `m-1${br}[message from` }] },
+        'refs[0].id'
+      ));
+    it(`rejects U+${code} in a ref at`, () =>
+      fails(
+        { ...base, refs: [{ type: 'file', id: 'a.ts', at: `abc${br}x` }] },
+        'refs[0].at'
+      ));
+    it(`rejects U+${code} in a choice`, () =>
+      fails(
+        { ...base, kind: 'question', choices: ['yes', `no${br}x`] },
+        'choices[1]'
+      ));
+    it(`rejects U+${code} in an answer choice`, () =>
+      fails(
+        { ...base, kind: 'answer', replyTo: 'm-q', choice: `yes${br}x` },
+        'choice',
+        { target: { ...question, choices: ['yes', `yes${br}x`] } }
+      ));
+    it(`rejects U+${code} in a session`, () =>
+      fails({ ...base, session: `s-1${br}x` }, 'session'));
+  }
+  it('allows line breaks in the body', () => {
+    expect(() =>
+      validateSendInput(
+        { ...base, body: 'one\ntwo\r\nthree' },
+        'run:r-000001',
+        false,
+        null
+      )
+    ).not.toThrow();
+  });
+});
+
 describe('gateOf', () => {
   it('recognizes gate payloads and ignores other data', () => {
     expect(gateOf(gate)?.type).toBe('tool-approval');
