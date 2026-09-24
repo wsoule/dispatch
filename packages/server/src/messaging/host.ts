@@ -47,6 +47,17 @@ export function implicitEpicMembers(
   return childrenOf(match[1]).map((task) => `task:${task.meta.id}`);
 }
 
+// Runs a synchronous step as a Promise-returning hook, so anything it throws
+// reaches the caller as a rejection rather than a synchronous throw.
+export function settle(call: () => void): Promise<void> {
+  try {
+    call();
+    return Promise.resolve();
+  } catch (err) {
+    return Promise.reject(err);
+  }
+}
+
 // Why `task` can never be woken ('an epic', 'landed', 'dropped'), or null when
 // a wake may dispatch it. Checked when a wake gate is raised and again when it runs.
 export function wakeRefusal(task: TaskDoc): string | null {
@@ -73,18 +84,20 @@ export class DaemonMessagingHost implements MessagingHost {
     return this.deps.orchestrator.taskIdOfRun(runId);
   }
 
-  // Delivers into the run's conversation; deliverToRun throws for a run that
-  // cannot take it, and the engine then holds the message.
-  async push(runId: string, rendered: string, message: Message): Promise<void> {
-    this.deps.orchestrator.deliverToRun(runId, rendered, {
-      label: message.from,
-      messageId: message.id,
-      human: message.from.startsWith('human:'),
-    });
+  // Delivers into the run's conversation; a run that cannot take it rejects,
+  // and the engine then holds the message.
+  push(runId: string, rendered: string, message: Message): Promise<void> {
+    return settle(() =>
+      this.deps.orchestrator.deliverToRun(runId, rendered, {
+        label: message.from,
+        messageId: message.id,
+        human: message.from.startsWith('human:'),
+      })
+    );
   }
 
-  async notify(runId: string, digest: string): Promise<void> {
-    this.deps.orchestrator.notifyRun(runId, digest);
+  notify(runId: string, digest: string): Promise<void> {
+    return settle(() => this.deps.orchestrator.notifyRun(runId, digest));
   }
 
   notifyHuman(actor: Address, message: Message): void {

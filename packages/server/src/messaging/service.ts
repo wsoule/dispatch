@@ -16,7 +16,7 @@ import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
 import { runKind } from '../orchestrator/types.js';
 import { GateHandlers } from './gates.js';
-import { DaemonMessagingHost, wakeRefusal } from './host.js';
+import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 
@@ -138,19 +138,25 @@ export function openMessaging(deps: {
 
   // A deciding human approved or denied an agent's registration. A replay is a
   // no-op, and only an approval records who approved it.
-  gates.register('agent-registration', async (question, answer) => {
-    const gate = gateOf(question);
-    if (gate === null || gate.type !== 'agent-registration') return;
-    const agent = store.getAgent(gate.agent);
-    if (agent === null) return;
-    if (answer.choice === 'approve') {
-      if (agent.status === 'approved') return;
-      store.putAgent({ ...agent, status: 'approved', approvedBy: answer.from });
-    } else {
-      if (agent.status === 'revoked') return;
-      store.putAgent({ ...agent, status: 'revoked', approvedBy: null });
-    }
-  });
+  gates.register('agent-registration', (question, answer) =>
+    settle(() => {
+      const gate = gateOf(question);
+      if (gate === null || gate.type !== 'agent-registration') return;
+      const agent = store.getAgent(gate.agent);
+      if (agent === null) return;
+      if (answer.choice === 'approve') {
+        if (agent.status === 'approved') return;
+        store.putAgent({
+          ...agent,
+          status: 'approved',
+          approvedBy: answer.from,
+        });
+      } else {
+        if (agent.status === 'revoked') return;
+        store.putAgent({ ...agent, status: 'revoked', approvedBy: null });
+      }
+    })
+  );
 
   // Bridging must be live before recover() runs, so a notice recover()
   // produces while replaying (e.g. a wake failure) still reaches the bus.

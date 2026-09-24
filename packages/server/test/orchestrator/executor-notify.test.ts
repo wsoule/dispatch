@@ -8,9 +8,7 @@ function capturingQuery() {
   const fn = ((args: { options: Record<string, unknown> }) => {
     captured.options = args.options;
     return {
-      async *[Symbol.asyncIterator]() {
-        await new Promise(() => {});
-      },
+      [Symbol.asyncIterator]: () => ({ next: () => new Promise(() => {}) }),
       interrupt: async () => {},
     };
   }) as never;

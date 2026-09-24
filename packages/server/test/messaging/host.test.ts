@@ -104,6 +104,26 @@ describe('DaemonMessagingHost.push', () => {
       ],
     ]);
   });
+
+  it('turns a refused push or notify into a rejection, never a synchronous throw', async () => {
+    const refused = new Error('run is stopping: r-000001');
+    const { host } = makeHost({
+      deliverToRun: () => {
+        throw refused;
+      },
+      notifyRun: () => {
+        throw refused;
+      },
+    });
+    let pushed: Promise<void> | undefined;
+    let notified: Promise<void> | undefined;
+    expect(() => {
+      pushed = host.push('r-000001', 'rendered text', stubMessage());
+      notified = host.notify('r-000001', 'digest');
+    }).not.toThrow();
+    await expect(pushed).rejects.toBe(refused);
+    await expect(notified).rejects.toBe(refused);
+  });
 });
 
 describe('DaemonMessagingHost.decide', () => {

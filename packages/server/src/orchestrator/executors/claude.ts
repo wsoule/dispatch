@@ -539,12 +539,12 @@ export class ClaudeExecutor implements Executor {
     const sessionAllowed = new Set<string>();
     // Digests waiting for the agent's next tool result (see notify below).
     const pendingNotes: string[] = [];
-    const postToolUse: HookCallback = async () => {
-      if (pendingNotes.length === 0) return {};
+    const postToolUse: HookCallback = () => {
+      if (pendingNotes.length === 0) return Promise.resolve({});
       const additionalContext = pendingNotes.splice(0).join('\n');
-      return {
+      return Promise.resolve({
         hookSpecificOutput: { hookEventName: 'PostToolUse', additionalContext },
-      };
+      });
     };
 
     const canUseTool: CanUseTool = async (toolName, input, callOpts) => {
