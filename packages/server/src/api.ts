@@ -144,7 +144,8 @@ import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
-import { isSelfAuthenticated } from './messaging/principal.js';
+import type { Principal } from './messaging/principal.js';
+import { resolvePrincipal } from './messaging/principal.js';
 import type { Messaging } from './messaging/service.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
@@ -354,6 +355,13 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
+  /** Who a self-authenticating messaging route's request came from — a run,
+   *  an agent client, or a human — set per request by handleApi after
+   *  resolvePrincipal accepts the presented token (messaging/principal.ts).
+   *  Messaging handlers (task 6) must read THIS, never `caller`: `caller` is
+   *  the daemon-tier identity every other route uses, and a run's or agent's
+   *  token never resolves one. */
+  principal?: Principal;
 }
 
 // Mirrors the CLI's own enum check (packages/cli/src/commands/task.ts
@@ -4501,6 +4509,54 @@ function matchesRoute(
   );
 }
 
+// Every messaging route that authenticates itself via resolvePrincipal
+// (messaging/principal.ts) rather than this file's request/decide/operator
+// ladder — task 6 implements the handlers. Kept beside ELEVATED_ROUTES
+// because the two are the same kind of table (method + `*`-wildcarded
+// segments, matched with matchesRoute above) with opposite meanings: an entry
+// here means "skip the tier gate, the handler authenticates instead", not
+// "needs more than the request tier".
+//
+// `GET /api/mailbox` (not `/api/inbox`, which already exists as the capture
+// inbox — a review caught the two colliding, which had left the capture
+// inbox reachable with no token at all) and `GET /api/agents/roster` (not
+// the bare `GET /api/agents`, the existing conversation-agent list) are
+// named to avoid that collision; `POST /api/agents/register` and the agent
+// approve/revoke/mute/unmute routes are deliberately absent — see their
+// entries in ELEVATED_ROUTES and requiredTier's own comment above them.
+const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
+  method: string;
+  segments: readonly string[];
+}> = [
+  { method: 'POST', segments: ['messages'] },
+  { method: 'GET', segments: ['messages', '*'] },
+  { method: 'POST', segments: ['messages', '*', 'reply'] },
+  { method: 'GET', segments: ['messages', '*', 'answer'] },
+  { method: 'GET', segments: ['threads', '*'] },
+  { method: 'GET', segments: ['mailbox'] },
+  { method: 'POST', segments: ['deliveries', '*', 'read'] },
+  { method: 'GET', segments: ['channels'] },
+  { method: 'POST', segments: ['channels', '*', 'members'] },
+  { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
+  { method: 'GET', segments: ['decisions', 'open'] },
+];
+
+/**
+ * Whether `/api/<segments>` is one of the messaging routes above, which take
+ * no daemon-tier token at all — only a principal resolvePrincipal can name.
+ * Consulted from two places: requiredTier below (so the normal gate lets the
+ * request through) and handleApi itself (so it can fail closed — see the
+ * comment at that call site for why both are needed).
+ */
+export function isSelfAuthenticated(
+  segments: readonly string[],
+  method: string
+): boolean {
+  return SELF_AUTHENTICATED_ROUTES.some(
+    (route) => route.method === method && matchesRoute(route.segments, segments)
+  );
+}
+
 /**
  * The tier a request to `/api/<segments>` must present, or null when open.
  * `GET /api/health` is the only open route, because the CLI, MCP and the
@@ -4529,8 +4585,10 @@ function requiredTier(
   // Messaging routes (task 6) authenticate themselves via resolvePrincipal
   // instead of this ladder — a run token, an agent's own token, or a human
   // token each mean something different there than "at least tier X" does
-  // everywhere else. Returning null here lets the request through to the
-  // handler, which calls resolvePrincipal before doing anything else.
+  // everywhere else. Returning null here just opens THIS gate; handleApi
+  // calls resolvePrincipal itself right after the Origin check (see its own
+  // comment) so a self-authenticated route can never reach a handler — or
+  // this file's 404 catch-all — with no principal at all.
   if (isSelfAuthenticated(segments, method)) return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
@@ -4647,6 +4705,33 @@ export async function handleApi(
   if (untrusted !== null) return untrusted;
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
+
+  // Self-authenticating messaging routes (isSelfAuthenticated, just above)
+  // get NO check from the request/decide/operator ladder below — requiredTier
+  // returns null for them — since a run's or agent's token doesn't carry a
+  // daemon tier at all. Resolved and enforced right here, unconditionally,
+  // for every matching route, rather than leaving each handler to remember to
+  // call resolvePrincipal itself: a route added to that table with no handler
+  // yet (or a handler that forgets) must still refuse an unauthenticated
+  // request rather than silently serving it — which is exactly how `GET
+  // /api/inbox` (a pre-existing, unrelated route) briefly ended up open with
+  // no token at all, before this check existed. `principal` (set below, once
+  // resolved) is a different identity from `caller` just below it —
+  // messaging handlers (task 6) must read `ctx.principal`, never
+  // `ctx.caller`.
+  let principal: Principal | undefined;
+  if (isSelfAuthenticated(segments, method)) {
+    const principalResult = resolvePrincipal(daemonCtx, presented);
+    if (!principalResult.ok) {
+      return authErrorResponse(
+        principalResult.status,
+        principalResult.error,
+        principalResult.code
+      );
+    }
+    principal = principalResult.principal;
+  }
+
   const tier = requiredTier(method, segments);
   if (tier !== null) {
     const unauthorized = rejectUnauthorized(
@@ -4662,8 +4747,9 @@ export async function handleApi(
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
   const caller = daemonCtx.tokens.registry.resolve(presented);
-  const ctx: ApiContext =
-    caller === null ? daemonCtx : { ...daemonCtx, caller };
+  let ctx: ApiContext = daemonCtx;
+  if (caller !== null) ctx = { ...ctx, caller };
+  if (principal !== undefined) ctx = { ...ctx, principal };
 
   try {
     if (segments[0] === 'health' && segments.length === 1 && method === 'GET') {

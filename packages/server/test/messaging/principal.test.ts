@@ -7,17 +7,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { ApiContext, DaemonTokens } from '../../src/api.js';
-import { mintDaemonTokens } from '../../src/api.js';
+import { isSelfAuthenticated, mintDaemonTokens } from '../../src/api.js';
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import type { CredentialSource, TokenLookup } from '../../src/identity.js';
 import { sha256, TokenRegistry } from '../../src/identity.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
-import {
-  isSelfAuthenticated,
-  resolvePrincipal,
-} from '../../src/messaging/principal.js';
+import { resolvePrincipal } from '../../src/messaging/principal.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
@@ -48,21 +45,17 @@ function stubAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   };
 }
 
-// A teammate credential source backing exactly one token, standing in for
-// the real team module (Elastic License 2.0, out of scope for this package's
-// tests) — CredentialSource is a plain interface built for this kind of
-// substitution.
-function teammateSource(
-  token: string,
-  tier: 'request' | 'decide'
-): CredentialSource {
+// A teammate credential source backing exactly one token with a chosen
+// TokenLookup outcome — standing in for the real team module (Elastic
+// License 2.0, out of scope for this package's tests). Taking the outcome
+// directly (rather than just a tier) lets tests drive the 'expired' and
+// 'refused' branches resolvePrincipal now handles via registry.lookup, not
+// only 'valid'.
+function teammateSource(token: string, result: TokenLookup): CredentialSource {
   const digest = sha256(token);
   return {
-    lookup(presentedDigest: Buffer): TokenLookup {
-      return presentedDigest.equals(digest)
-        ? { kind: 'valid', identity: { handle: 'ada', ref: 'human:ada', tier } }
-        : { kind: 'unknown' };
-    },
+    lookup: (presentedDigest: Buffer): TokenLookup =>
+      presentedDigest.equals(digest) ? result : { kind: 'unknown' },
     list: () => [],
   };
 }
@@ -128,16 +121,26 @@ function makeHarness(teammates: CredentialSource | null = null): {
 }
 
 describe('resolvePrincipal', () => {
-  it('refuses no credential as unknown token (401)', () => {
+  it('refuses no credential as unknown token (401, auth_missing_token)', () => {
     const { ctx } = makeHarness();
     const result = resolvePrincipal(ctx, null);
-    expect(result).toEqual({ ok: false, status: 401, error: 'unknown token' });
+    expect(result).toEqual({
+      ok: false,
+      status: 401,
+      error: 'unknown token',
+      code: 'auth_missing_token',
+    });
   });
 
-  it('refuses a garbage token as unknown token (401)', () => {
+  it('refuses a garbage token as unknown token (401, auth_invalid_token)', () => {
     const { ctx } = makeHarness();
     const result = resolvePrincipal(ctx, 'not-a-real-token');
-    expect(result).toEqual({ ok: false, status: 401, error: 'unknown token' });
+    expect(result).toEqual({
+      ok: false,
+      status: 401,
+      error: 'unknown token',
+      code: 'auth_invalid_token',
+    });
   });
 
   it('the shared agentToken is refused with the register hint (403)', () => {
@@ -148,6 +151,7 @@ describe('resolvePrincipal', () => {
       status: 403,
       error:
         "the shared agent token cannot send messages — use this run's DISPATCH_RUN_TOKEN, or register with POST /api/agents/register",
+      code: 'auth_agent_token_forbidden',
     });
   });
 
@@ -161,11 +165,65 @@ describe('resolvePrincipal', () => {
   });
 
   it('a human token below decide tier resolves with canDecide false', () => {
-    const { ctx } = makeHarness(teammateSource('teammate-token', 'request'));
+    const { ctx } = makeHarness(
+      teammateSource('teammate-token', {
+        kind: 'valid',
+        identity: { handle: 'ada', ref: 'human:ada', tier: 'request' },
+      })
+    );
     const result = resolvePrincipal(ctx, 'teammate-token');
     expect(result).toEqual({
       ok: true,
       principal: { address: 'human:ada', canDecide: false, kind: 'human' },
+    });
+  });
+
+  it('a decide-tier teammate token resolves with canDecide true', () => {
+    const { ctx } = makeHarness(
+      teammateSource('decide-token', {
+        kind: 'valid',
+        identity: { handle: 'ada', ref: 'human:ada', tier: 'decide' },
+      })
+    );
+    const result = resolvePrincipal(ctx, 'decide-token');
+    expect(result).toEqual({
+      ok: true,
+      principal: { address: 'human:ada', canDecide: true, kind: 'human' },
+    });
+  });
+
+  it('an expired teammate token is refused with the expiry code (401)', () => {
+    const { ctx } = makeHarness(
+      teammateSource('expired-token', {
+        kind: 'expired',
+        handle: 'ada',
+        expiredAt: '2026-01-01T00:00:00.000Z',
+      })
+    );
+    const result = resolvePrincipal(ctx, 'expired-token');
+    expect(result).toEqual({
+      ok: false,
+      status: 401,
+      error:
+        'this token for ada expired on 2026-01-01T00:00:00.000Z. Ask whoever runs the daemon to invite you again (`dispatch team invite ada`).',
+      code: 'auth_token_expired',
+    });
+  });
+
+  it('a seat-refused teammate token is refused with the seat_limit code (403)', () => {
+    const { ctx } = makeHarness(
+      teammateSource('refused-token', {
+        kind: 'refused',
+        handle: 'ada',
+        reason: 'the license covers 3 teammates; ada would be a 4th',
+      })
+    );
+    const result = resolvePrincipal(ctx, 'refused-token');
+    expect(result).toEqual({
+      ok: false,
+      status: 403,
+      error: 'the license covers 3 teammates; ada would be a 4th',
+      code: 'seat_limit',
     });
   });
 
@@ -199,6 +257,7 @@ describe('resolvePrincipal', () => {
       ok: false,
       status: 401,
       error: 'run token for a finished run',
+      code: 'auth_run_token_ended',
     });
   });
 
@@ -210,6 +269,7 @@ describe('resolvePrincipal', () => {
       ok: false,
       status: 401,
       error: 'run token for a finished run',
+      code: 'auth_run_token_ended',
     });
   });
 
@@ -248,6 +308,7 @@ describe('resolvePrincipal', () => {
       ok: false,
       status: 403,
       error: 'awaiting approval in Dispatch',
+      code: 'auth_agent_pending',
     });
   });
 
@@ -268,25 +329,32 @@ describe('resolvePrincipal', () => {
       ok: false,
       status: 401,
       error: "this agent's access was revoked",
+      code: 'auth_agent_revoked',
     });
   });
 });
 
-describe('isSelfAuthenticated', () => {
-  const selfAuthenticated: Array<[string, string]> = [
-    ['POST', 'messages'],
-    ['GET', 'messages/m-1'],
-    ['POST', 'messages/m-1/reply'],
-    ['GET', 'messages/m-1/answer'],
-    ['GET', 'threads/m-1'],
-    ['GET', 'inbox'],
-    ['POST', 'deliveries/d-1/read'],
-    ['GET', 'channels'],
-    ['POST', 'channels/general/members'],
-    ['DELETE', 'channels/general/members/human%3Awyat'],
-    ['GET', 'decisions/open'],
-  ];
+// The exact self-authenticated route table (api.ts's SELF_AUTHENTICATED_ROUTES),
+// each with a concrete dummy id/name/addr filled in — shared between the pure
+// isSelfAuthenticated table test below and the fail-closed HTTP test further
+// down, so the two can never silently drift apart. `GET /api/mailbox` (not
+// `/api/inbox` — see the collision this replaced) and the delivery/channel
+// routes' ids are meaningless placeholders; nothing resolves them.
+const selfAuthenticated: Array<[string, string]> = [
+  ['POST', 'messages'],
+  ['GET', 'messages/m-1'],
+  ['POST', 'messages/m-1/reply'],
+  ['GET', 'messages/m-1/answer'],
+  ['GET', 'threads/m-1'],
+  ['GET', 'mailbox'],
+  ['POST', 'deliveries/d-1/read'],
+  ['GET', 'channels'],
+  ['POST', 'channels/general/members'],
+  ['DELETE', 'channels/general/members/human%3Awyat'],
+  ['GET', 'decisions/open'],
+];
 
+describe('isSelfAuthenticated', () => {
   for (const [method, path] of selfAuthenticated) {
     it(`${method} /api/${path} is self-authenticated`, () => {
       expect(isSelfAuthenticated(path.split('/'), method)).toBe(true);
@@ -296,10 +364,15 @@ describe('isSelfAuthenticated', () => {
   const notSelfAuthenticated: Array<[string, string]> = [
     ['POST', 'agents/register'],
     ['GET', 'agents'],
+    ['GET', 'agents/roster'],
     ['POST', 'agents/agent%3Acodex%2Freviewer/approve'],
     ['POST', 'agents/agent%3Acodex%2Freviewer/revoke'],
     ['POST', 'agents/agent%3Acodex%2Freviewer/mute'],
     ['POST', 'agents/agent%3Acodex%2Freviewer/unmute'],
+    // The capture inbox — a pre-existing, unrelated route this table must
+    // never collide with again (see the fail-closed HTTP test below for the
+    // regression: it must 401 with no token, not serve 200).
+    ['GET', 'inbox'],
     // Wrong method for an otherwise self-authenticated path.
     ['DELETE', 'messages/m-1'],
     // A bare GET /api/messages (no id) is not in the table.
@@ -335,6 +408,68 @@ function authHeaders(token: string | null): Record<string, string> {
   return headers;
 }
 
+// A real in-process daemon for the two HTTP-level describes below — neither
+// touches messaging state, so one shared setup covers both.
+function startTestServer(): Promise<ServerHandle> {
+  return startServer({
+    rootDir: root,
+    port: 0,
+    webDistDir: null,
+    writeDaemonFile: false,
+    registerExecutors: (orchestrator) => {
+      orchestrator.registerExecutor('claude', controllable);
+    },
+  });
+}
+
+// The regression this whole fix round exists for: a self-authenticated route
+// gets NO check at all from the request/decide/operator ladder, so
+// resolvePrincipal's fail-closed call in handleApi is the ONLY thing standing
+// between an unauthenticated request and a 200 — exactly what `GET
+// /api/inbox` briefly suffered when it was (wrongly) listed as this
+// messaging system's mailbox route. Every self-authenticated route pattern is
+// exercised here with no handler behind it yet (task 6), so a 401 here can
+// only be coming from the fail-closed check itself, never a handler's own
+// validation.
+describe('handleApi fails closed for self-authenticated routes', () => {
+  let handle: ServerHandle;
+  let baseUrl: string;
+
+  beforeEach(async () => {
+    TaskStore.init(root);
+    handle = await startTestServer();
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+  });
+
+  afterEach(async () => {
+    await handle.stop();
+  });
+
+  for (const [method, path] of selfAuthenticated) {
+    it(`${method} /api/${path} with no token is 401, never a 2xx or 404`, async () => {
+      const res = await rawFetch(`${baseUrl}/api/${path}`, { method });
+      expect(res.status).toBe(401);
+    });
+
+    it(`${method} /api/${path} with a garbage token is 401, never a 2xx`, async () => {
+      const res = await rawFetch(`${baseUrl}/api/${path}`, {
+        method,
+        headers: authHeaders('not-a-real-token'),
+      });
+      expect(res.status).toBe(401);
+    });
+  }
+
+  // The specific collision this fix round found: the capture inbox
+  // (GET /api/inbox, a pre-existing and unrelated route — ctx.inboxStore.list())
+  // must still require its normal request-tier token now that `inbox` is off
+  // the self-authenticated table.
+  it('GET /api/inbox with no token is 401 (the capture inbox, unaffected by messaging)', async () => {
+    const res = await rawFetch(`${baseUrl}/api/inbox`);
+    expect(res.status).toBe(401);
+  });
+});
+
 // HTTP-level regression coverage for the ELEVATED_ROUTES entries this task
 // added: an agent's approve/revoke/mute/unmute needs the `decide` tier, same
 // as the other adjudications in that table, even though task 6 hasn't added
@@ -348,15 +483,7 @@ describe('ELEVATED_ROUTES: agent decide-tier routes', () => {
 
   beforeEach(async () => {
     TaskStore.init(root);
-    handle = await startServer({
-      rootDir: root,
-      port: 0,
-      webDistDir: null,
-      writeDaemonFile: false,
-      registerExecutors: (orchestrator) => {
-        orchestrator.registerExecutor('claude', controllable);
-      },
-    });
+    handle = await startTestServer();
     baseUrl = `http://127.0.0.1:${handle.port}`;
     agentToken = handle.tokens.agentToken;
     appToken = handle.tokens.appToken;

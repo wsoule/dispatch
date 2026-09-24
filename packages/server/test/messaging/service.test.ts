@@ -266,7 +266,7 @@ describe('wake gate handler', () => {
     expect(question).toBeDefined();
 
     await messaging.engine.reply(
-      question!.id,
+      question.id,
       { body: 'approved', choice: 'approve' },
       { address: 'human:wyat', canDecide: true }
     );
@@ -275,7 +275,7 @@ describe('wake gate handler', () => {
     expect(orchestrator.list().some((r) => r.taskId === task.meta.id)).toBe(
       true
     );
-    await orchestrator.cancel(orchestrator.list()[0]!.id);
+    await orchestrator.cancel(orchestrator.list()[0].id);
     messaging.close();
   });
 
@@ -369,7 +369,7 @@ describe('wake gate handler', () => {
     );
     const [question] = messaging.engine.openBlocking();
     await messaging.engine.reply(
-      question!.id,
+      question.id,
       { body: 'approved', choice: 'approve' },
       { address: 'human:wyat', canDecide: true }
     );

@@ -1,6 +1,7 @@
-import { createHash } from 'node:crypto';
+import { createHash, timingSafeEqual } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
+import { sha256 } from '../identity.js';
 import { tierAllows } from '../tiers.js';
 
 // Who is speaking to a self-authenticating messaging route: a human on the
@@ -13,9 +14,12 @@ export interface Principal {
   kind: 'human' | 'run' | 'agent';
 }
 
+// `code` mirrors the daemon-tier ladder's own auth codes (auth_missing_token,
+// auth_token_expired, seat_limit, …) so a client can branch on messaging auth
+// failures the same way it already does on every other route.
 export type PrincipalResult =
   | { ok: true; principal: Principal }
-  | { ok: false; status: 401 | 403; error: string };
+  | { ok: false; status: 401 | 403; error: string; code: string };
 
 // The hex digest `agentByTokenHash` looks agents up by — sha256 of the raw
 // token, matching how an agent's token is hashed at registration (task 6).
@@ -25,7 +29,7 @@ function tokenHash(token: string): string {
 
 /**
  * Figures out who is calling a self-authenticating messaging route (POST
- * /api/messages and friends — see isSelfAuthenticated below), given the
+ * /api/messages and friends — see isSelfAuthenticated in api.ts), given the
  * bearer token it presented. Unlike the rest of the API, these routes never
  * accept the daemon's shared agentToken: every other route treats it as "the
  * operator, at request tier", but a message needs a real sender, and any
@@ -34,7 +38,9 @@ function tokenHash(token: string): string {
  * specific token gets its own explanatory error instead of "unknown token".
  *
  * The remaining three credential kinds are tried in turn: a human's daemon or
- * team token (the registry), a run's own minted token (proves it is that run,
+ * team token (the registry — `lookup`, not `resolve`, so an expired or
+ * seat-refused teammate token keeps its specific error instead of collapsing
+ * to "unknown token"), a run's own minted token (proves it is that run,
  * nothing more), and finally a registered agent client's token (looked up by
  * hash, since only the hash is stored).
  */
@@ -43,31 +49,56 @@ export function resolvePrincipal(
   presented: string | null
 ): PrincipalResult {
   if (presented === null || presented === '') {
-    return { ok: false, status: 401, error: 'unknown token' };
+    return {
+      ok: false,
+      status: 401,
+      error: 'unknown token',
+      code: 'auth_missing_token',
+    };
   }
-  if (presented === ctx.tokens.agentToken) {
+  // Constant-time comparison on the sha256 digest, never the raw strings —
+  // same defence identity.ts's own token comparisons use, so a caller can't
+  // learn anything about the real agentToken from response timing.
+  if (timingSafeEqual(sha256(presented), sha256(ctx.tokens.agentToken))) {
     return {
       ok: false,
       status: 403,
       error:
         "the shared agent token cannot send messages — use this run's DISPATCH_RUN_TOKEN, or register with POST /api/agents/register",
+      code: 'auth_agent_token_forbidden',
     };
   }
-  const identity = ctx.tokens.registry.resolve(presented);
-  if (identity !== null) {
+  const lookup = ctx.tokens.registry.lookup(presented);
+  if (lookup.kind === 'valid') {
     return {
       ok: true,
       principal: {
-        address: identity.ref,
-        canDecide: tierAllows(identity.tier, 'decide'),
+        address: lookup.identity.ref,
+        canDecide: tierAllows(lookup.identity.tier, 'decide'),
         kind: 'human',
       },
     };
   }
+  if (lookup.kind === 'expired') {
+    return {
+      ok: false,
+      status: 401,
+      error: `this token for ${lookup.handle} expired on ${lookup.expiredAt}. Ask whoever runs the daemon to invite you again (\`dispatch team invite ${lookup.handle}\`).`,
+      code: 'auth_token_expired',
+    };
+  }
+  if (lookup.kind === 'refused') {
+    return { ok: false, status: 403, error: lookup.reason, code: 'seat_limit' };
+  }
   const runId = ctx.messaging.runTokens.verify(presented);
   if (runId !== null) {
     if (!ctx.orchestrator.isRunLive(runId)) {
-      return { ok: false, status: 401, error: 'run token for a finished run' };
+      return {
+        ok: false,
+        status: 401,
+        error: 'run token for a finished run',
+        code: 'auth_run_token_ended',
+      };
     }
     return {
       ok: true,
@@ -87,54 +118,24 @@ export function resolvePrincipal(
       };
     }
     if (agent.status === 'pending') {
-      return { ok: false, status: 403, error: 'awaiting approval in Dispatch' };
+      return {
+        ok: false,
+        status: 403,
+        error: 'awaiting approval in Dispatch',
+        code: 'auth_agent_pending',
+      };
     }
     return {
       ok: false,
       status: 401,
       error: "this agent's access was revoked",
+      code: 'auth_agent_revoked',
     };
   }
-  return { ok: false, status: 401, error: 'unknown token' };
-}
-
-// Every messaging route that authenticates itself via resolvePrincipal rather
-// than the daemon's request/decide/operator ladder (Task 6 implements the
-// handlers; requiredTier in api.ts consults this to skip its own tier gate).
-// `*` matches exactly one path segment — see matchesRoute's twin in api.ts.
-const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
-  method: string;
-  segments: readonly string[];
-}> = [
-  { method: 'POST', segments: ['messages'] },
-  { method: 'GET', segments: ['messages', '*'] },
-  { method: 'POST', segments: ['messages', '*', 'reply'] },
-  { method: 'GET', segments: ['messages', '*', 'answer'] },
-  { method: 'GET', segments: ['threads', '*'] },
-  { method: 'GET', segments: ['inbox'] },
-  { method: 'POST', segments: ['deliveries', '*', 'read'] },
-  { method: 'GET', segments: ['channels'] },
-  { method: 'POST', segments: ['channels', '*', 'members'] },
-  { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
-  { method: 'GET', segments: ['decisions', 'open'] },
-];
-
-/**
- * Whether `/api/<segments>` is one of the messaging routes above, which take
- * no daemon-tier token at all — only a principal resolvePrincipal can name.
- * `POST /api/agents/register` and `GET /api/agents` stay off this list on
- * purpose (they use the normal request tier), and so do the agent
- * approve/revoke/mute/unmute routes (they need the `decide` tier instead —
- * see ELEVATED_ROUTES in api.ts).
- */
-export function isSelfAuthenticated(
-  segments: readonly string[],
-  method: string
-): boolean {
-  return SELF_AUTHENTICATED_ROUTES.some(
-    (route) =>
-      route.method === method &&
-      route.segments.length === segments.length &&
-      route.segments.every((part, i) => part === '*' || part === segments[i])
-  );
+  return {
+    ok: false,
+    status: 401,
+    error: 'unknown token',
+    code: 'auth_invalid_token',
+  };
 }

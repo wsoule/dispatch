@@ -61,9 +61,9 @@ function makeHost(
     notifyRun: (runId, digest) => {
       calls.notifyRun.push([runId, digest]);
     },
-    dispatchOrResume: async (taskId, request) => {
+    dispatchOrResume: (taskId, request) => {
       calls.dispatchOrResume.push([taskId, request]);
-      throw new Error('not implemented in this stub');
+      return Promise.reject(new Error('not implemented in this stub'));
     },
     ...orchestratorOverrides,
   };
@@ -188,9 +188,8 @@ describe('DaemonMessagingHost.implicitMembers', () => {
 describe('DaemonMessagingHost.wake', () => {
   it('returns { ok: false, reason } when dispatchOrResume throws', async () => {
     const { host } = makeHost({
-      dispatchOrResume: async () => {
-        throw new Error('task already has a live run: r-000001');
-      },
+      dispatchOrResume: () =>
+        Promise.reject(new Error('task already has a live run: r-000001')),
     });
     const result = await host.wake('task:t-abc123', stubMessage());
     expect(result).toEqual({
@@ -201,7 +200,7 @@ describe('DaemonMessagingHost.wake', () => {
 
   it('returns { ok: true, runId } on success', async () => {
     const { host } = makeHost({
-      dispatchOrResume: async () => ({ id: 'r-000009' }) as RunMeta,
+      dispatchOrResume: () => Promise.resolve({ id: 'r-000009' } as RunMeta),
     });
     const result = await host.wake('task:t-abc123', stubMessage());
     expect(result).toEqual({ ok: true, runId: 'r-000009' });
