@@ -1,6 +1,7 @@
 ABCDEFGHJKMNPQRSTVWXYZ
 acceptedits
 ACMR
+acodex
 addext
 affordances
 analysability
@@ -20,6 +21,7 @@ autodetection
 AUTOINCREMENT
 automations
 autostash
+awyat
 backgrounded
 backgrounding
 badgrant
@@ -75,6 +77,7 @@ conv
 cooldown
 couldn
 coverable
+cpushed
 CRDT
 CRDT's
 cutover
@@ -154,6 +157,7 @@ forkable
 forksha
 formatly
 forwardable
+freviewer
 frontmatter
 fullwidth
 gelato
@@ -522,6 +526,7 @@ unkeyed
 unlayered
 unlisten
 unlistened
+unmutes
 unobservably
 unpadded
 unparented
@@ -587,6 +592,7 @@ worktree's
 worktrees
 wrappy
 wsoule
+wyats
 wyatsoule
 xxxstarxxx
 Yegge

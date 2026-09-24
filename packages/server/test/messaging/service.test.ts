@@ -398,8 +398,8 @@ describe('agent-registration gate handler', () => {
 
   function registrationQuestion(): Message {
     return stubMessage({
-      id: 'm-regquestion0000000000000001',
-      thread: 'm-regquestion0000000000000001',
+      id: 'm-question0000000000000000001',
+      thread: 'm-question0000000000000000001',
       from: SYSTEM_ADDRESS,
       to: ['human:wyat'],
       kind: 'question',
@@ -428,7 +428,7 @@ describe('agent-registration gate handler', () => {
     seedPendingAgent(messaging);
     const question = registrationQuestion();
     const answer = stubMessage({
-      id: 'm-reganswer00000000000000001',
+      id: 'm-answer0000000000000000001',
       thread: question.thread,
       replyTo: question.id,
       from: 'human:wyat',
@@ -460,7 +460,7 @@ describe('agent-registration gate handler', () => {
     seedPendingAgent(messaging);
     const question = registrationQuestion();
     const answer = stubMessage({
-      id: 'm-reganswer00000000000000002',
+      id: 'm-answer0000000000000000002',
       thread: question.thread,
       replyTo: question.id,
       from: 'human:wyat',
@@ -492,7 +492,7 @@ describe('agent-registration gate handler', () => {
     seedPendingAgent(messaging);
     const question = registrationQuestion();
     const firstAnswer = stubMessage({
-      id: 'm-reganswer00000000000000003',
+      id: 'm-answer0000000000000000003',
       thread: question.thread,
       replyTo: question.id,
       from: 'human:alice',
@@ -509,7 +509,7 @@ describe('agent-registration gate handler', () => {
     // decision must not overwrite who actually approved it.
     const secondAnswer = stubMessage({
       ...firstAnswer,
-      id: 'm-reganswer00000000000000004',
+      id: 'm-answer0000000000000000004',
       from: 'human:bob',
     });
     await messaging.gates.handle(question, secondAnswer);
@@ -533,15 +533,15 @@ describe('boot ordering', () => {
     const seedDb = openMessagesDb(dbPath);
     const seedStore = new SqliteMessageStore(seedDb);
     const original = stubMessage({
-      id: 'm-bootorig00000000000000001',
-      thread: 'm-bootorig00000000000000001',
+      id: 'm-original0000000000000001',
+      thread: 'm-original0000000000000001',
       from: 'human:asker',
       to: [`task:${task.meta.id}`],
       wake: 'request',
     });
     const question = stubMessage({
-      id: 'm-bootq0000000000000000001',
-      thread: 'm-bootq0000000000000000001',
+      id: 'm-question0000000000000001',
+      thread: 'm-question0000000000000001',
       from: SYSTEM_ADDRESS,
       to: ['human:wyat'],
       kind: 'question',
@@ -554,7 +554,7 @@ describe('boot ordering', () => {
       },
     });
     const answer = stubMessage({
-      id: 'm-boota0000000000000000001',
+      id: 'm-answer00000000000000001',
       thread: question.thread,
       replyTo: question.id,
       from: 'human:wyat',

@@ -263,7 +263,7 @@ describe('resolvePrincipal', () => {
 
   it('a run token for an id the orchestrator never registered is refused (401)', () => {
     const { ctx, messaging } = makeHarness();
-    const token = messaging.runTokens.mint('r-neverexisted');
+    const token = messaging.runTokens.mint('r-unregistered');
     const result = resolvePrincipal(ctx, token);
     expect(result).toEqual({
       ok: false,
