@@ -37,9 +37,8 @@ function sentJson(call: { init?: RequestInit }): unknown {
 
 const BASE = 'http://example.test';
 
-// These bindings must hit the exact routes packages/server/src/messaging/
-// routes.ts registers, with the request shape its handlers parse and every
-// address/channel-name path segment percent-encoded.
+// Each binding must hit the route the server's messaging/routes.ts registers,
+// with the body it parses and every address or channel segment percent-encoded.
 describe('sendMessage', () => {
   it('POSTs /api/messages with the SendInput body', async () => {
     const stub = stubFetch();

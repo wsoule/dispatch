@@ -664,9 +664,8 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// A pointer to another object a message references (a task, run, file,
-// commit, or another message) — structural mirror of @dispatch/protocol's
-// Ref.
+// A task, run, file, commit or message a message points at; mirrors
+// @dispatch/protocol's Ref.
 export interface Ref {
   type: string;
   id: string;
@@ -674,10 +673,8 @@ export interface Ref {
   at?: string;
 }
 
-// Structural mirror of @dispatch/protocol's Message — kept as a plain type
-// here (rather than a dependency on that MIT package) since Task 7 is what
-// actually builds the messaging UI against it; this is just enough shape for
-// `message.new` to carry a typed payload today.
+// Structural mirror of @dispatch/protocol's Message, so the client needs no
+// runtime dependency on the protocol package.
 export interface Message {
   id: string;
   thread: string;
@@ -707,9 +704,8 @@ export type DeliveryState =
 
 export type DeliveryVia = 'direct' | 'channel';
 
-// One recipient's copy of a sent message, tracked separately so per-recipient
-// read state doesn't require rewriting the message itself — structural
-// mirror of @dispatch/protocol's Delivery.
+// One recipient's copy of a message, carrying that recipient's read state;
+// mirrors @dispatch/protocol's Delivery.
 export interface Delivery {
   id: string;
   messageId: string;
@@ -756,9 +752,8 @@ export interface SendResult {
   downgraded: boolean;
 }
 
-// The gate payloads dispatchd raises through `Message.data` — structural
-// mirror of @dispatch/protocol's GateData. Not validated client-side; exported
-// so a consumer can narrow `Message.data` after checking its `type`.
+// Gate payloads dispatchd puts in `Message.data` (mirrors the protocol's
+// GateData). Unvalidated here: narrow on `type` before reading the rest.
 export type GateData =
   | {
       type: 'tool-approval';
@@ -813,9 +808,8 @@ export interface ThreadSummary {
   count: number;
 }
 
-// GET /api/threads/:id's body: every message in the thread plus their
-// deliveries, so a client can render the conversation and per-recipient
-// state from one fetch.
+// GET /api/threads/:id's body: every message in the thread and their
+// deliveries, enough to render the conversation from one fetch.
 export interface ThreadDetail {
   messages: Message[];
   deliveries: Delivery[];
@@ -2982,12 +2976,9 @@ export interface ApiClient {
   // `GET /api/impact?subject=<kind>&id=<id>`.
   getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
 
-  // Agent-communication bus (dispatchd's messaging engine) —
-  // packages/server/src/messaging/routes.ts is the source of truth for these
-  // request/response shapes.
-  /** Sends a message. `opts.idempotencyKey` lets a client safely retry a send
-   *  that may have timed out in flight: a repeat with the same key replays
-   *  the first attempt's result (200) instead of sending twice (201). */
+  // Messaging; the server's messaging/routes.ts defines these shapes.
+  /** Sends a message. A retry with the same `opts.idempotencyKey` replays the
+   *  first attempt's result (200) instead of sending twice (201). */
   sendMessage(
     input: SendInput,
     opts?: { idempotencyKey?: string }
@@ -3789,9 +3780,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     markDeliveryRead: (id) =>
       request(target, `/api/deliveries/${id}/read`, { method: 'POST' }),
     listChannels: () => request(target, '/api/channels'),
-    // Bypasses request() the same way removeFromMergeQueue does below: the
-    // server answers with 204 No Content, and request() always tries to
-    // parse a JSON body on success, which throws on an empty one.
+    // Uses send(), not request(): the server answers 204 with no JSON body,
+    // which request() would fail to parse.
     joinChannel: async (name, member) => {
       await send(target, `/api/channels/${encodeURIComponent(name)}/members`, {
         method: 'POST',
