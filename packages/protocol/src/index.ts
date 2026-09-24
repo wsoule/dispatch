@@ -48,5 +48,6 @@ export type {
   DeliveryState,
   DeliveryVia,
   MessageStore,
+  ThreadSummary,
 } from './store.js';
 export { createUlidFactory } from './ulid.js';

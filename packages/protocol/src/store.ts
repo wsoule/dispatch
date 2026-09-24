@@ -48,6 +48,15 @@ export interface ChannelRecord {
   auto: boolean;
 }
 
+/** One thread's most recent state: its opening message, its latest message
+ *  (the same one when a thread has only one message), and how many it holds. */
+export interface ThreadSummary {
+  thread: string;
+  root: Message;
+  last: Message;
+  count: number;
+}
+
 export interface DeliveryFilter {
   recipient?: Address;
   states?: DeliveryState[];

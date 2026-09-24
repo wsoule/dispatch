@@ -282,6 +282,38 @@ describe('SqliteMessageStore', () => {
     expect(store.agents()).toHaveLength(1);
   });
 
+  it('lists recent threads by their last message, with root and count', () => {
+    store.insertMessage(msg({ id: 'm-01', thread: 'm-01' }));
+    store.insertMessage(
+      msg({ id: 'm-02', thread: 'm-01', replyTo: 'm-01', from: 'human:wyat' })
+    );
+    store.insertMessage(msg({ id: 'm-03', thread: 'm-03' }));
+
+    const threads = store.recentThreads(10);
+    expect(threads).toEqual([
+      {
+        thread: 'm-03',
+        root: store.getMessage('m-03')!,
+        last: store.getMessage('m-03')!,
+        count: 1,
+      },
+      {
+        thread: 'm-01',
+        root: store.getMessage('m-01')!,
+        last: store.getMessage('m-02')!,
+        count: 2,
+      },
+    ]);
+  });
+
+  it('caps recentThreads at the given limit, newest thread first', () => {
+    store.insertMessage(msg({ id: 'm-01', thread: 'm-01' }));
+    store.insertMessage(msg({ id: 'm-02', thread: 'm-02' }));
+    store.insertMessage(msg({ id: 'm-03', thread: 'm-03' }));
+
+    expect(store.recentThreads(1).map((t) => t.thread)).toEqual(['m-03']);
+  });
+
   it('refuses a messages.db written by a newer schema', () => {
     const dir = mkdtempSync(join(tmpdir(), 'msgdb-'));
     try {

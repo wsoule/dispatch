@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
-import { sha256 } from '../identity.js';
+import { expiredTokenMessage, sha256 } from '../identity.js';
 import { tierAllows } from '../tiers.js';
 
 // Who is speaking to a self-authenticating messaging route: a human on the
@@ -83,7 +83,7 @@ export function resolvePrincipal(
     return {
       ok: false,
       status: 401,
-      error: `this token for ${lookup.handle} expired on ${lookup.expiredAt}. Ask whoever runs the daemon to invite you again (\`dispatch team invite ${lookup.handle}\`).`,
+      error: expiredTokenMessage(lookup.handle, lookup.expiredAt),
       code: 'auth_token_expired',
     };
   }

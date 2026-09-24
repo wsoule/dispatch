@@ -23,6 +23,7 @@ import type {
   VerifyConfig,
 } from '@dispatch/core';
 import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
+import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
@@ -119,6 +120,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
+import { expiredTokenMessage } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
@@ -146,6 +148,26 @@ import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import type { Principal } from './messaging/principal.js';
 import { resolvePrincipal } from './messaging/principal.js';
+import {
+  approveAgent,
+  getMailbox,
+  getMessageById,
+  getThreadById,
+  joinChannel,
+  leaveChannel,
+  listAgentRoster,
+  listChannels,
+  listOpenDecisions,
+  listRecentThreads,
+  markDeliveryRead,
+  muteAgent,
+  registerAgent,
+  replyToMessage,
+  revokeAgent,
+  sendMessage,
+  unmuteAgent,
+  waitForAnswer,
+} from './messaging/routes.js';
 import type { Messaging } from './messaging/service.js';
 import type { Note, NoteKind } from './notes.js';
 import { NOTE_KINDS, type NoteStore } from './notes.js';
@@ -355,12 +377,9 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
-  /** Who a self-authenticating messaging route's request came from — a run,
-   *  an agent client, or a human — set per request by handleApi after
-   *  resolvePrincipal accepts the presented token (messaging/principal.ts).
-   *  Messaging handlers (task 6) must read THIS, never `caller`: `caller` is
-   *  the daemon-tier identity every other route uses, and a run's or agent's
-   *  token never resolves one. */
+  /** Who a self-authenticating messaging route's caller is (run, agent, or
+   *  human), resolved by handleApi via resolvePrincipal. Handlers read this,
+   *  never `caller`. */
   principal?: Principal;
 }
 
@@ -4509,21 +4528,13 @@ function matchesRoute(
   );
 }
 
-// Every messaging route that authenticates itself via resolvePrincipal
-// (messaging/principal.ts) rather than this file's request/decide/operator
-// ladder — task 6 implements the handlers. Kept beside ELEVATED_ROUTES
-// because the two are the same kind of table (method + `*`-wildcarded
-// segments, matched with matchesRoute above) with opposite meanings: an entry
-// here means "skip the tier gate, the handler authenticates instead", not
-// "needs more than the request tier".
-//
-// `GET /api/mailbox` (not `/api/inbox`, which already exists as the capture
-// inbox — a review caught the two colliding, which had left the capture
-// inbox reachable with no token at all) and `GET /api/agents/roster` (not
-// the bare `GET /api/agents`, the existing conversation-agent list) are
-// named to avoid that collision; `POST /api/agents/register` and the agent
-// approve/revoke/mute/unmute routes are deliberately absent — see their
-// entries in ELEVATED_ROUTES and requiredTier's own comment above them.
+// Messaging routes that authenticate via resolvePrincipal instead of this
+// file's request/decide/operator ladder — an entry here means "skip the tier
+// gate", the opposite of an ELEVATED_ROUTES entry. `mailbox`/`agents/roster`
+// are named to avoid colliding with the pre-existing capture inbox and
+// conversation-agent list; `agents/register` is absent because it stays on
+// the default request tier (no ELEVATED_ROUTES entry), while
+// approve/revoke/mute/unmute are absent because they're decide-tier there.
 const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   method: string;
   segments: readonly string[];
@@ -4532,6 +4543,7 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['messages', '*'] },
   { method: 'POST', segments: ['messages', '*', 'reply'] },
   { method: 'GET', segments: ['messages', '*', 'answer'] },
+  { method: 'GET', segments: ['threads'] },
   { method: 'GET', segments: ['threads', '*'] },
   { method: 'GET', segments: ['mailbox'] },
   { method: 'POST', segments: ['deliveries', '*', 'read'] },
@@ -4667,7 +4679,7 @@ export function rejectUnauthorized(
   if (found.kind === 'expired') {
     return authErrorResponse(
       401,
-      `this token for ${found.handle} expired on ${found.expiredAt}. Ask whoever runs the daemon to invite you again (\`dispatch team invite ${found.handle}\`).`,
+      expiredTokenMessage(found.handle, found.expiredAt),
       'auth_token_expired'
     );
   }
@@ -4706,19 +4718,11 @@ export async function handleApi(
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
 
-  // Self-authenticating messaging routes (isSelfAuthenticated, just above)
-  // get NO check from the request/decide/operator ladder below — requiredTier
-  // returns null for them — since a run's or agent's token doesn't carry a
-  // daemon tier at all. Resolved and enforced right here, unconditionally,
-  // for every matching route, rather than leaving each handler to remember to
-  // call resolvePrincipal itself: a route added to that table with no handler
-  // yet (or a handler that forgets) must still refuse an unauthenticated
-  // request rather than silently serving it — which is exactly how `GET
-  // /api/inbox` (a pre-existing, unrelated route) briefly ended up open with
-  // no token at all, before this check existed. `principal` (set below, once
-  // resolved) is a different identity from `caller` just below it —
-  // messaging handlers (task 6) must read `ctx.principal`, never
-  // `ctx.caller`.
+  // Self-authenticating routes get no check from the tier ladder below, so
+  // the principal is resolved and enforced here for every match — a route
+  // added to the table with no handler yet must still refuse an
+  // unauthenticated request rather than silently serving it. `principal` is a
+  // separate identity from `caller`; messaging handlers read `ctx.principal`.
   let principal: Principal | undefined;
   if (isSelfAuthenticated(segments, method)) {
     const principalResult = resolvePrincipal(daemonCtx, presented);
@@ -5629,6 +5633,117 @@ export async function handleApi(
       }
     }
 
+    // Messaging (task 6): dispatchd's own agent-communication bus. Every
+    // route here reads ctx.principal (SELF_AUTHENTICATED_ROUTES above) except
+    // GET /api/agents/roster and POST /api/agents/register, which use the
+    // normal request-tier ladder, and approve/revoke/mute/unmute, which are
+    // decide-tier in ELEVATED_ROUTES.
+    if (segments[0] === 'messages') {
+      if (segments.length === 1 && method === 'POST') {
+        return await sendMessage(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        return getMessageById(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'reply' &&
+        method === 'POST'
+      ) {
+        return await replyToMessage(req, ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'answer' &&
+        method === 'GET'
+      ) {
+        return await waitForAnswer(req, ctx, segments[1]);
+      }
+    }
+
+    if (segments[0] === 'threads') {
+      if (segments.length === 1 && method === 'GET') {
+        return listRecentThreads(ctx, url);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        return getThreadById(ctx, segments[1]);
+      }
+    }
+
+    if (
+      segments[0] === 'mailbox' &&
+      segments.length === 1 &&
+      method === 'GET'
+    ) {
+      return getMailbox(ctx, url);
+    }
+
+    if (
+      segments[0] === 'deliveries' &&
+      segments.length === 3 &&
+      segments[2] === 'read' &&
+      method === 'POST'
+    ) {
+      return markDeliveryRead(ctx, segments[1]);
+    }
+
+    if (segments[0] === 'channels') {
+      if (segments.length === 1 && method === 'GET') {
+        return listChannels(ctx);
+      }
+      if (
+        segments.length === 3 &&
+        segments[2] === 'members' &&
+        method === 'POST'
+      ) {
+        return await joinChannel(req, ctx, decodeURIComponent(segments[1]));
+      }
+      if (
+        segments.length === 4 &&
+        segments[2] === 'members' &&
+        method === 'DELETE'
+      ) {
+        return leaveChannel(
+          ctx,
+          decodeURIComponent(segments[1]),
+          decodeURIComponent(segments[3])
+        );
+      }
+    }
+
+    if (segments[0] === 'agents') {
+      if (
+        segments.length === 2 &&
+        segments[1] === 'roster' &&
+        method === 'GET'
+      ) {
+        return listAgentRoster(ctx);
+      }
+      if (
+        segments.length === 2 &&
+        segments[1] === 'register' &&
+        method === 'POST'
+      ) {
+        return await registerAgent(req, ctx);
+      }
+      if (segments.length === 3 && method === 'POST') {
+        const address = decodeURIComponent(segments[1]);
+        if (segments[2] === 'approve') return approveAgent(ctx, address);
+        if (segments[2] === 'revoke') return revokeAgent(ctx, address);
+        if (segments[2] === 'mute') return muteAgent(ctx, address);
+        if (segments[2] === 'unmute') return unmuteAgent(ctx, address);
+      }
+    }
+
+    if (
+      segments[0] === 'decisions' &&
+      segments.length === 2 &&
+      segments[1] === 'open' &&
+      method === 'GET'
+    ) {
+      return listOpenDecisions(ctx);
+    }
+
     // GET /api/questions — every open question across every run, for the
     // app's "an agent is waiting on you" surfaces.
     if (segments[0] === 'questions' && segments.length === 1) {
@@ -6315,6 +6430,21 @@ export async function handleApi(
     }
     if (err instanceof OrchestratorClientError) {
       return errorResponse(400, err.message);
+    }
+    // Every messaging route (task 6) lets @dispatch/protocol's business
+    // rules throw MessagingError rather than pre-validating them itself;
+    // `code` names the HTTP status the same way the other typed errors above do.
+    if (err instanceof MessagingError) {
+      const status: Record<MessagingError['code'], number> = {
+        invalid: 400,
+        forbidden: 403,
+        'not-found': 404,
+        conflict: 409,
+        limited: 429,
+      };
+      const body: { error: string; field?: string } = { error: err.message };
+      if (err.field !== undefined) body.field = err.field;
+      return jsonResponse(body, status[err.code]);
     }
     throw err;
   }

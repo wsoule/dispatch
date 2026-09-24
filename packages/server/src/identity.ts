@@ -78,6 +78,15 @@ export function humanRef(handle: string): string {
   return `human:${handle}`;
 }
 
+/** Shared by rejectUnauthorized (api.ts) and resolvePrincipal
+ *  (messaging/principal.ts) for the same 401 on an expired teammate token. */
+export function expiredTokenMessage(handle: string, expiredAt: string): string {
+  return (
+    `this token for ${handle} expired on ${expiredAt}. Ask whoever runs the ` +
+    `daemon to invite you again (\`dispatch team invite ${handle}\`).`
+  );
+}
+
 /**
  * Every credential this daemon accepts, and who each one speaks for.
  *

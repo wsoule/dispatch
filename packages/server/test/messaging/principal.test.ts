@@ -345,6 +345,7 @@ const selfAuthenticated: Array<[string, string]> = [
   ['GET', 'messages/m-1'],
   ['POST', 'messages/m-1/reply'],
   ['GET', 'messages/m-1/answer'],
+  ['GET', 'threads'],
   ['GET', 'threads/m-1'],
   ['GET', 'mailbox'],
   ['POST', 'deliveries/d-1/read'],
@@ -422,15 +423,9 @@ function startTestServer(): Promise<ServerHandle> {
   });
 }
 
-// The regression this whole fix round exists for: a self-authenticated route
-// gets NO check at all from the request/decide/operator ladder, so
-// resolvePrincipal's fail-closed call in handleApi is the ONLY thing standing
-// between an unauthenticated request and a 200 — exactly what `GET
-// /api/inbox` briefly suffered when it was (wrongly) listed as this
-// messaging system's mailbox route. Every self-authenticated route pattern is
-// exercised here with no handler behind it yet (task 6), so a 401 here can
-// only be coming from the fail-closed check itself, never a handler's own
-// validation.
+// Every self-authenticated route must 401 with no token: handleApi's
+// fail-closed resolvePrincipal call runs before dispatch, so a handler can
+// never see an unauthenticated request regardless of what it does itself.
 describe('handleApi fails closed for self-authenticated routes', () => {
   let handle: ServerHandle;
   let baseUrl: string;
@@ -472,9 +467,8 @@ describe('handleApi fails closed for self-authenticated routes', () => {
 
 // HTTP-level regression coverage for the ELEVATED_ROUTES entries this task
 // added: an agent's approve/revoke/mute/unmute needs the `decide` tier, same
-// as the other adjudications in that table, even though task 6 hasn't added
-// their handlers yet — the tier gate runs in handleApi before routing, so it
-// rejects (or lets through) a request whether or not a handler exists.
+// as the other adjudications in that table — the tier gate runs in handleApi
+// before routing, independently of whatever the handler itself does.
 describe('ELEVATED_ROUTES: agent decide-tier routes', () => {
   let handle: ServerHandle;
   let baseUrl: string;
@@ -511,7 +505,7 @@ describe('ELEVATED_ROUTES: agent decide-tier routes', () => {
       expect(body.code).toBe('auth_insufficient_tier');
     });
 
-    it(`${method} /api/${path} clears the tier gate with the app token (no handler yet, so 404 not 401/403)`, async () => {
+    it(`${method} /api/${path} clears the tier gate with the app token (404: no agent registered at that address)`, async () => {
       const res = await rawFetch(`${baseUrl}/api/${path}`, {
         method,
         headers: authHeaders(appToken),

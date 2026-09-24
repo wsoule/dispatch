@@ -14,6 +14,7 @@ import type {
   DeliveryState,
   DeliveryVia,
   MessageStore,
+  ThreadSummary,
 } from './store.js';
 
 export const MESSAGES_DB_VERSION = 1;
@@ -485,5 +486,30 @@ export class SqliteMessageStore implements MessageStore {
       this.db,
       'SELECT * FROM agents ORDER BY addr'
     ).map((r) => this.toAgent(r));
+  }
+
+  // The most recently active threads, newest last-message first — what the
+  // desktop Threads view lists before drilling into any one thread. Message
+  // ids are lowercase ulids (time-sortable as strings), so MIN/MAX(id) per
+  // thread group cheaply give the root and last message without a self-join.
+  recentThreads(limit: number): ThreadSummary[] {
+    const rows = queryAll<{
+      thread: string;
+      root_id: string;
+      last_id: string;
+      count: number;
+    }>(
+      this.db,
+      `SELECT thread, MIN(id) AS root_id, MAX(id) AS last_id, COUNT(*) AS count
+       FROM messages GROUP BY thread ORDER BY last_id DESC LIMIT ?`,
+      [limit]
+    );
+    return rows.flatMap((r) => {
+      const root = this.getMessage(r.root_id);
+      const last = this.getMessage(r.last_id);
+      return root === null || last === null
+        ? []
+        : [{ thread: r.thread, root, last, count: Number(r.count) }];
+    });
   }
 }
