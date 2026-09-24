@@ -684,10 +684,8 @@ export async function joinChannel(
   return new Response(null, { status: 204 });
 }
 
-// DELETE /api/channels/:name/members/:addr, or DELETE
-// /api/channels/:name/members with no address — the latter removes the
-// caller's own self-acting address, the same default `joinChannel` uses.
-// Removing an address that was never a member is a 404, not a silent no-op.
+// DELETE /api/channels/:name/members[/:addr] — no address means the caller's
+// self-acting address; a non-member, or an epic's child in its channel, is a 404.
 export function leaveChannel(
   ctx: ApiContext,
   name: string,
@@ -699,10 +697,18 @@ export function leaveChannel(
     return errorResponse(403, `cannot remove ${member} from a channel`);
   }
   const removed = ctx.messaging.engine.leave(name, member);
-  if (!removed) {
-    return errorResponse(404, `${member} is not a member of ${name}`);
+  if (removed) return new Response(null, { status: 204 });
+  const implicit = implicitEpicMembers(
+    (epicId) => ctx.store.list({ parent: epicId }),
+    name
+  );
+  if (implicit.includes(member)) {
+    return errorResponse(
+      404,
+      `${member} cannot leave ${name}: an epic's children are members by parentage`
+    );
   }
-  return new Response(null, { status: 204 });
+  return errorResponse(404, `${member} is not a member of ${name}`);
 }
 
 type AgentSummary = Omit<AgentRecord, 'tokenHash'>;

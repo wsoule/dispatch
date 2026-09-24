@@ -347,6 +347,7 @@ const selfAuthenticated: Array<[string, string]> = [
   ['POST', 'deliveries/d-1/read'],
   ['GET', 'channels'],
   ['POST', 'channels/general/members'],
+  ['DELETE', 'channels/general/members'],
   ['DELETE', 'channels/general/members/human%3Awyat'],
   ['GET', 'decisions/open'],
 ];

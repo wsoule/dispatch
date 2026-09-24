@@ -351,6 +351,32 @@ describe('messaging HTTP routes', () => {
     expect(body.error).toContain('not a member');
   });
 
+  it('leaving an epic channel as one of its children is a 404 that says why', async () => {
+    const epic = await json<{ meta: { id: string } }>(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'An epic', kind: 'epic' }),
+      })
+    );
+    const child = await json<{ meta: { id: string } }>(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'A child', parent: epic.meta.id }),
+      })
+    );
+
+    const res = await fetch(
+      `${baseUrl}/api/channels/${encodeURIComponent(`epic/${epic.meta.id}`)}/members/${encodeURIComponent(`task:${child.meta.id}`)}`,
+      { method: 'DELETE', headers: { 'content-type': 'application/json' } }
+    );
+    expect(res.status).toBe(404);
+    const body = await json<{ error: string }>(res);
+    expect(body.error).toContain('members by parentage');
+    expect(body.error).toContain('cannot leave');
+  });
+
   it('self-leaving a channel you never joined is also a 404', async () => {
     await liveRun('Never joined this channel');
     const runToken = executor.lastRunToken;
