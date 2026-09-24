@@ -334,12 +334,8 @@ describe('resolvePrincipal', () => {
   });
 });
 
-// The exact self-authenticated route table (api.ts's SELF_AUTHENTICATED_ROUTES),
-// each with a concrete dummy id/name/addr filled in — shared between the pure
-// isSelfAuthenticated table test below and the fail-closed HTTP test further
-// down, so the two can never silently drift apart. `GET /api/mailbox` (not
-// `/api/inbox` — see the collision this replaced) and the delivery/channel
-// routes' ids are meaningless placeholders; nothing resolves them.
+// The self-authenticated route table, each with a placeholder id/name/addr —
+// shared with the fail-closed HTTP test below so the two can't drift apart.
 const selfAuthenticated: Array<[string, string]> = [
   ['POST', 'messages'],
   ['GET', 'messages/m-1'],
@@ -455,10 +451,8 @@ describe('handleApi fails closed for self-authenticated routes', () => {
     });
   }
 
-  // The specific collision this fix round found: the capture inbox
-  // (GET /api/inbox, a pre-existing and unrelated route — ctx.inboxStore.list())
-  // must still require its normal request-tier token now that `inbox` is off
-  // the self-authenticated table.
+  // The capture inbox (GET /api/inbox, unrelated to messaging) must still
+  // require its normal request-tier token.
   it('GET /api/inbox with no token is 401 (the capture inbox, unaffected by messaging)', async () => {
     const res = await rawFetch(`${baseUrl}/api/inbox`);
     expect(res.status).toBe(401);

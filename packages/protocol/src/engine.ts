@@ -73,6 +73,12 @@ export class DeliveryEngine {
     return () => this.listeners.delete(listener);
   }
 
+  /** How many listeners are subscribed right now — lets a caller (a
+   *  long-poll route) verify its own cleanup actually unsubscribed. */
+  get listenerCount(): number {
+    return this.listeners.size;
+  }
+
   // Runs every subscriber for one event, in isolation: a throwing listener
   // must never fail (or half-run) the send that produced the event.
   private emit(e: EngineEvent): void {

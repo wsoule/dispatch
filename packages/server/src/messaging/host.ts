@@ -35,6 +35,21 @@ export interface DaemonHostDeps {
   now?: () => Date;
 }
 
+// Every task parented to `epicId`, as `task:<id>` addresses — an epic
+// channel's implicit members. `childrenOf` is injected rather than a task
+// store directly: the host resolves one epic per call (its own
+// `implicitMembers`), while a bulk caller (GET /api/channels) resolves every
+// epic from one task listing instead of one query per channel; both call
+// this same rule so they can never drift apart.
+export function implicitEpicMembers(
+  childrenOf: (epicId: string) => { meta: { id: string } }[],
+  channel: string
+): Address[] {
+  const match = /^epic\/(.+)$/.exec(channel);
+  if (match === null) return [];
+  return childrenOf(match[1]).map((task) => `task:${task.meta.id}`);
+}
+
 // dispatchd's MessagingHost: everything the protocol engine needs from the
 // product, wired to the orchestrator (live runs, wake/dispatch), the task
 // store (policy lookups, epic channel membership) and the gate router
@@ -124,11 +139,10 @@ export class DaemonMessagingHost implements MessagingHost {
   // that epic — so a message to the epic's channel reaches its children
   // without anyone maintaining membership by hand.
   implicitMembers(channel: string): Address[] {
-    const match = /^epic\/(.+)$/.exec(channel);
-    if (match === null) return [];
-    return this.deps.store
-      .list({ parent: match[1] })
-      .map((task) => `task:${task.meta.id}`);
+    return implicitEpicMembers(
+      (epicId) => this.deps.store.list({ parent: epicId }),
+      channel
+    );
   }
 
   async onAnswered(question: Message, answer: Message): Promise<void> {

@@ -488,10 +488,9 @@ export class SqliteMessageStore implements MessageStore {
     ).map((r) => this.toAgent(r));
   }
 
-  // The most recently active threads, newest last-message first — what the
-  // desktop Threads view lists before drilling into any one thread. Message
-  // ids are lowercase ulids (time-sortable as strings), so MIN/MAX(id) per
-  // thread group cheaply give the root and last message without a self-join.
+  // Most recently active threads, newest first. Message ids are time-
+  // sortable ulids, so MIN/MAX(id) per thread group gives root/last with no
+  // self-join.
   recentThreads(limit: number): ThreadSummary[] {
     const rows = queryAll<{
       thread: string;

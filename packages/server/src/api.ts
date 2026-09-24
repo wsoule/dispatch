@@ -4528,13 +4528,8 @@ function matchesRoute(
   );
 }
 
-// Messaging routes that authenticate via resolvePrincipal instead of this
-// file's request/decide/operator ladder — an entry here means "skip the tier
-// gate", the opposite of an ELEVATED_ROUTES entry. `mailbox`/`agents/roster`
-// are named to avoid colliding with the pre-existing capture inbox and
-// conversation-agent list; `agents/register` is absent because it stays on
-// the default request tier (no ELEVATED_ROUTES entry), while
-// approve/revoke/mute/unmute are absent because they're decide-tier there.
+// Routes that authenticate via resolvePrincipal instead of the request/
+// decide/operator ladder below; an entry here skips the tier check.
 const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   method: string;
   segments: readonly string[];
@@ -4594,13 +4589,8 @@ function requiredTier(
   ) {
     return null;
   }
-  // Messaging routes (task 6) authenticate themselves via resolvePrincipal
-  // instead of this ladder — a run token, an agent's own token, or a human
-  // token each mean something different there than "at least tier X" does
-  // everywhere else. Returning null here just opens THIS gate; handleApi
-  // calls resolvePrincipal itself right after the Origin check (see its own
-  // comment) so a self-authenticated route can never reach a handler — or
-  // this file's 404 catch-all — with no principal at all.
+  // Self-authenticating routes check via resolvePrincipal in handleApi, not
+  // this ladder — returning null here just opens the gate for them.
   if (isSelfAuthenticated(segments, method)) return null;
   for (const route of ELEVATED_ROUTES) {
     if (route.method === method && matchesRoute(route.segments, segments)) {
@@ -4718,11 +4708,8 @@ export async function handleApi(
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
 
-  // Self-authenticating routes get no check from the tier ladder below, so
-  // the principal is resolved and enforced here for every match — a route
-  // added to the table with no handler yet must still refuse an
-  // unauthenticated request rather than silently serving it. `principal` is a
-  // separate identity from `caller`; messaging handlers read `ctx.principal`.
+  // Resolves and enforces the principal here, before dispatch, so every
+  // self-authenticated route fails closed even with no handler behind it.
   let principal: Principal | undefined;
   if (isSelfAuthenticated(segments, method)) {
     const principalResult = resolvePrincipal(daemonCtx, presented);
@@ -5633,11 +5620,9 @@ export async function handleApi(
       }
     }
 
-    // Messaging (task 6): dispatchd's own agent-communication bus. Every
-    // route here reads ctx.principal (SELF_AUTHENTICATED_ROUTES above) except
-    // GET /api/agents/roster and POST /api/agents/register, which use the
-    // normal request-tier ladder, and approve/revoke/mute/unmute, which are
-    // decide-tier in ELEVATED_ROUTES.
+    // Messaging: dispatchd's agent-communication bus. Most routes read
+    // ctx.principal; agents/roster, agents/register and approve/revoke/
+    // mute/unmute use the tier ladder instead (see SELF_AUTHENTICATED_ROUTES).
     if (segments[0] === 'messages') {
       if (segments.length === 1 && method === 'POST') {
         return await sendMessage(req, ctx);
@@ -5657,7 +5642,7 @@ export async function handleApi(
         segments[2] === 'answer' &&
         method === 'GET'
       ) {
-        return await waitForAnswer(req, ctx, segments[1]);
+        return await waitForAnswer(req, ctx, segments[1], url);
       }
     }
 
@@ -5728,8 +5713,8 @@ export async function handleApi(
       }
       if (segments.length === 3 && method === 'POST') {
         const address = decodeURIComponent(segments[1]);
-        if (segments[2] === 'approve') return approveAgent(ctx, address);
-        if (segments[2] === 'revoke') return revokeAgent(ctx, address);
+        if (segments[2] === 'approve') return await approveAgent(ctx, address);
+        if (segments[2] === 'revoke') return await revokeAgent(ctx, address);
         if (segments[2] === 'mute') return muteAgent(ctx, address);
         if (segments[2] === 'unmute') return unmuteAgent(ctx, address);
       }
@@ -6431,9 +6416,8 @@ export async function handleApi(
     if (err instanceof OrchestratorClientError) {
       return errorResponse(400, err.message);
     }
-    // Every messaging route (task 6) lets @dispatch/protocol's business
-    // rules throw MessagingError rather than pre-validating them itself;
-    // `code` names the HTTP status the same way the other typed errors above do.
+    // Messaging routes let @dispatch/protocol's MessagingError surface
+    // rather than pre-validating; `code` maps to the same statuses below.
     if (err instanceof MessagingError) {
       const status: Record<MessagingError['code'], number> = {
         invalid: 400,

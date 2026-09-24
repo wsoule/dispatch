@@ -4,8 +4,19 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ApiContext } from '../../src/api.js';
+import { TaskCache } from '../../src/cache.js';
+import { EventBus } from '../../src/events.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import {
+  answerLongPoll,
+  registerAgent,
+  waitForAnswer,
+} from '../../src/messaging/routes.js';
+import type { Messaging } from '../../src/messaging/service.js';
+import { openMessaging } from '../../src/messaging/service.js';
+import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 import { useTestAuth } from '../testAuth.js';
 
@@ -85,6 +96,26 @@ async function liveRun(
   return { runId: meta.id, taskId: task.meta.id };
 }
 
+// Registers a fresh agent (via the shared agentToken) and approves it via the
+// route, in one call — most authz tests just need a second, already-approved
+// identity and don't care about the pending state in between.
+async function registerAndApprove(
+  name: string
+): Promise<{ address: string; token: string }> {
+  const registered = await json<{ address: string; token: string }>(
+    await fetch(`${baseUrl}/api/agents/register`, {
+      method: 'POST',
+      headers: authHeaders(handle.tokens.agentToken),
+      body: JSON.stringify({ name, client: 'codex' }),
+    })
+  );
+  await fetch(
+    `${baseUrl}/api/agents/${encodeURIComponent(registered.address)}/approve`,
+    { method: 'POST', headers: { 'content-type': 'application/json' } }
+  );
+  return registered;
+}
+
 describe('messaging HTTP routes', () => {
   beforeEach(async () => {
     fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
@@ -131,6 +162,10 @@ describe('messaging HTTP routes', () => {
       `${baseUrl}/api/messages/${questionId}/answer?wait=1`,
       { headers: authHeaders(runToken!) }
     );
+    // Give the server a moment to actually reach the subscribe() call before
+    // the reply below fires its event — otherwise this could resolve via the
+    // immediate-answer shortcut instead of the subscribe path under test.
+    await new Promise((resolve) => setTimeout(resolve, 50));
 
     const replyRes = await fetch(
       `${baseUrl}/api/messages/${questionId}/reply`,
@@ -229,7 +264,40 @@ describe('messaging HTTP routes', () => {
     expect(epicChannel?.members).toEqual([`task:${child.meta.id}`]);
   });
 
-  it("a run's own mailbox merges its run address and its task's", async () => {
+  it('channel join/leave enforce canActAs on the member being added or removed', async () => {
+    const a = await registerAndApprove('joiner-a');
+    const { taskId } = await liveRun('Some other task');
+
+    // An agent may not add a task on someone else's behalf.
+    const addOther = await fetch(`${baseUrl}/api/channels/general/members`, {
+      method: 'POST',
+      headers: authHeaders(a.token),
+      body: JSON.stringify({ member: `task:${taskId}` }),
+    });
+    expect(addOther.status).toBe(403);
+
+    // An agent may not remove the owner from a channel.
+    const removeOwner = await fetch(
+      `${baseUrl}/api/channels/general/members/${encodeURIComponent('human:test')}`,
+      { method: 'DELETE', headers: authHeaders(a.token) }
+    );
+    expect(removeOwner.status).toBe(403);
+
+    // A deciding human may add or remove anyone.
+    const addByHuman = await fetch(`${baseUrl}/api/channels/general/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ member: a.address }),
+    });
+    expect(addByHuman.status).toBe(204);
+    const removeByHuman = await fetch(
+      `${baseUrl}/api/channels/general/members/${encodeURIComponent(a.address)}`,
+      { method: 'DELETE', headers: { 'content-type': 'application/json' } }
+    );
+    expect(removeByHuman.status).toBe(204);
+  });
+
+  it("a run's own mailbox merges its run address and its task's, sorted by delivery id", async () => {
     const { runId, taskId } = await liveRun('Check my own mail');
     const runToken = executor.lastStartOptions?.runToken;
 
@@ -255,44 +323,318 @@ describe('messaging HTTP routes', () => {
     });
 
     const mailbox = await json<{
-      items: { message: { body: string } }[];
+      items: { delivery: { id: string }; message: { body: string } }[];
     }>(
       await fetch(`${baseUrl}/api/mailbox`, { headers: authHeaders(runToken!) })
     );
     const bodies = mailbox.items.map((i) => i.message.body);
     expect(bodies).toContain('to the task');
     expect(bodies).toContain('to the run');
+    const ids = mailbox.items.map((i) => i.delivery.id);
+    expect(ids).toEqual([...ids].sort((a, b) => a.localeCompare(b)));
+  });
+
+  it('a run can read its task mailbox by explicit address', async () => {
+    const { taskId } = await liveRun('Explicit mailbox');
+    const runToken = executor.lastStartOptions?.runToken;
+    await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`task:${taskId}`],
+        kind: 'message',
+        body: 'for the task explicitly',
+      }),
+    });
+
+    const res = await fetch(
+      `${baseUrl}/api/mailbox?address=${encodeURIComponent(`task:${taskId}`)}`,
+      { headers: authHeaders(runToken!) }
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{ items: { message: { body: string } }[] }>(res);
+    expect(body.items.map((i) => i.message.body)).toContain(
+      'for the task explicitly'
+    );
+  });
+
+  it("a deciding human can read any address's mailbox", async () => {
+    const a = await registerAndApprove('human-reads-me');
+    const res = await fetch(
+      `${baseUrl}/api/mailbox?address=${encodeURIComponent(a.address)}`
+    );
+    expect(res.status).toBe(200);
   });
 
   it("reading another agent's mailbox is forbidden (403)", async () => {
-    const a = await json<{ address: string; token: string }>(
-      await fetch(`${baseUrl}/api/agents/register`, {
-        method: 'POST',
-        headers: authHeaders(handle.tokens.agentToken),
-        body: JSON.stringify({ name: 'reviewer-a', client: 'codex' }),
-      })
-    );
-    await fetch(
-      `${baseUrl}/api/agents/${encodeURIComponent(a.address)}/approve`,
-      { method: 'POST', headers: { 'content-type': 'application/json' } }
-    );
-    const b = await json<{ address: string; token: string }>(
-      await fetch(`${baseUrl}/api/agents/register`, {
-        method: 'POST',
-        headers: authHeaders(handle.tokens.agentToken),
-        body: JSON.stringify({ name: 'reviewer-b', client: 'codex' }),
-      })
-    );
-    await fetch(
-      `${baseUrl}/api/agents/${encodeURIComponent(b.address)}/approve`,
-      { method: 'POST', headers: { 'content-type': 'application/json' } }
-    );
+    const a = await registerAndApprove('reviewer-a');
+    const b = await registerAndApprove('reviewer-b');
 
     const res = await fetch(
       `${baseUrl}/api/mailbox?address=${encodeURIComponent(a.address)}`,
       { headers: authHeaders(b.token) }
     );
     expect(res.status).toBe(403);
+  });
+
+  it('POST /api/deliveries/:id/read 404s an unknown delivery', async () => {
+    const res = await fetch(`${baseUrl}/api/deliveries/d-nope/read`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    });
+    expect(res.status).toBe(404);
+  });
+
+  it('POST /api/deliveries/:id/read enforces canActAs on the delivery recipient', async () => {
+    const a = await registerAndApprove('delivery-a');
+    const b = await registerAndApprove('delivery-b');
+
+    const sendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ to: [a.address], kind: 'message', body: 'for a' }),
+    });
+    const sent = await json<{ deliveries: { id: string }[] }>(sendRes);
+    const deliveryId = sent.deliveries[0].id;
+
+    const forbidden = await fetch(
+      `${baseUrl}/api/deliveries/${deliveryId}/read`,
+      { method: 'POST', headers: authHeaders(b.token) }
+    );
+    expect(forbidden.status).toBe(403);
+
+    const asRecipient = await fetch(
+      `${baseUrl}/api/deliveries/${deliveryId}/read`,
+      { method: 'POST', headers: authHeaders(a.token) }
+    );
+    expect(asRecipient.status).toBe(200);
+    const asRecipientBody = await json<{ state: string }>(asRecipient);
+    expect(asRecipientBody.state).toBe('read');
+
+    const { taskId } = await liveRun('Delivery via task');
+    const runToken = executor.lastStartOptions?.runToken;
+    const taskSendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`task:${taskId}`],
+        kind: 'message',
+        body: 'for the task',
+      }),
+    });
+    const taskSent = await json<{ deliveries: { id: string }[] }>(taskSendRes);
+    const asRun = await fetch(
+      `${baseUrl}/api/deliveries/${taskSent.deliveries[0].id}/read`,
+      { method: 'POST', headers: authHeaders(runToken!) }
+    );
+    expect(asRun.status).toBe(200);
+
+    const asHuman = await fetch(
+      `${baseUrl}/api/deliveries/${deliveryId}/read`,
+      { method: 'POST', headers: { 'content-type': 'application/json' } }
+    );
+    expect(asHuman.status).toBe(200);
+  });
+
+  it('GET /api/messages/:id is for a participant or a deciding human', async () => {
+    const a = await registerAndApprove('reader-a');
+    const b = await registerAndApprove('reader-b');
+
+    const sendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(a.token),
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'message',
+        body: 'hi from a',
+      }),
+    });
+    const sent = await json<{ message: { id: string } }>(sendRes);
+
+    const asStranger = await fetch(
+      `${baseUrl}/api/messages/${sent.message.id}`,
+      {
+        headers: authHeaders(b.token),
+      }
+    );
+    expect(asStranger.status).toBe(403);
+
+    const asSender = await fetch(`${baseUrl}/api/messages/${sent.message.id}`, {
+      headers: authHeaders(a.token),
+    });
+    expect(asSender.status).toBe(200);
+
+    const asHuman = await fetch(`${baseUrl}/api/messages/${sent.message.id}`);
+    expect(asHuman.status).toBe(200);
+  });
+
+  it('GET /api/threads/:id is for a participant of any message in it, or a deciding human', async () => {
+    const a = await registerAndApprove('thread-a');
+    const b = await registerAndApprove('thread-b');
+
+    const sendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(a.token),
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'message',
+        body: 'thread starter',
+      }),
+    });
+    const sent = await json<{ message: { id: string; thread: string } }>(
+      sendRes
+    );
+
+    const asStranger = await fetch(
+      `${baseUrl}/api/threads/${sent.message.thread}`,
+      {
+        headers: authHeaders(b.token),
+      }
+    );
+    expect(asStranger.status).toBe(403);
+
+    const asParticipant = await fetch(
+      `${baseUrl}/api/threads/${sent.message.thread}`,
+      { headers: authHeaders(a.token) }
+    );
+    expect(asParticipant.status).toBe(200);
+
+    const asHuman = await fetch(
+      `${baseUrl}/api/threads/${sent.message.thread}`
+    );
+    expect(asHuman.status).toBe(200);
+  });
+
+  it('GET /api/messages/:id/answer is for a participant of the question', async () => {
+    await liveRun('Answer authz run');
+    const runToken = executor.lastStartOptions?.runToken;
+    const a = await registerAndApprove('answer-stranger');
+
+    const sendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(runToken!),
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        choices: ['yes', 'no'],
+        body: 'Proceed?',
+      }),
+    });
+    const sent = await json<{ message: { id: string } }>(sendRes);
+
+    const asStranger = await fetch(
+      `${baseUrl}/api/messages/${sent.message.id}/answer`,
+      { headers: authHeaders(a.token) }
+    );
+    expect(asStranger.status).toBe(403);
+
+    const asAsker = await fetch(
+      `${baseUrl}/api/messages/${sent.message.id}/answer`,
+      { headers: authHeaders(runToken!) }
+    );
+    expect(asAsker.status).toBe(200);
+  });
+
+  it('GET /api/messages/:id/answer 400s a target that is not a question or handoff', async () => {
+    const sendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'message',
+        body: 'not a question',
+      }),
+    });
+    const sent = await json<{ message: { id: string } }>(sendRes);
+    const res = await fetch(
+      `${baseUrl}/api/messages/${sent.message.id}/answer`
+    );
+    expect(res.status).toBe(400);
+  });
+
+  it('GET /api/messages/:id/answer returns immediately without ?wait=1', async () => {
+    await liveRun('No wait run');
+    const runToken = executor.lastStartOptions?.runToken;
+    const sendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(runToken!),
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        choices: ['yes', 'no'],
+        body: 'Proceed?',
+      }),
+    });
+    const sent = await json<{ message: { id: string } }>(sendRes);
+    const start = Date.now();
+    const res = await fetch(
+      `${baseUrl}/api/messages/${sent.message.id}/answer`,
+      { headers: authHeaders(runToken!) }
+    );
+    expect(Date.now() - start).toBeLessThan(1000);
+    expect(res.status).toBe(200);
+    const body = await json<{ answer: unknown }>(res);
+    expect(body.answer).toBeNull();
+  });
+
+  it('GET /api/threads is for deciding humans only, and returns a threads array', async () => {
+    const a = await registerAndApprove('threads-agent');
+    const asAgent = await fetch(`${baseUrl}/api/threads`, {
+      headers: authHeaders(a.token),
+    });
+    expect(asAgent.status).toBe(403);
+
+    await liveRun('Threads run');
+    const runToken = executor.lastStartOptions?.runToken;
+    const asRun = await fetch(`${baseUrl}/api/threads`, {
+      headers: authHeaders(runToken!),
+    });
+    expect(asRun.status).toBe(403);
+
+    await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [a.address],
+        kind: 'message',
+        body: 'seed a thread',
+      }),
+    });
+    const asHuman = await fetch(`${baseUrl}/api/threads`);
+    expect(asHuman.status).toBe(200);
+    const body = await json<{
+      threads: {
+        thread: string;
+        root: unknown;
+        last: unknown;
+        count: number;
+      }[];
+    }>(asHuman);
+    expect(Array.isArray(body.threads)).toBe(true);
+    expect(body.threads.length).toBeGreaterThan(0);
+    expect(body.threads[0]).toHaveProperty('root');
+    expect(body.threads[0]).toHaveProperty('last');
+    expect(body.threads[0]).toHaveProperty('count');
+  });
+
+  it('GET /api/decisions/open is for deciding humans only', async () => {
+    const a = await registerAndApprove('decisions-agent');
+    const asAgent = await fetch(`${baseUrl}/api/decisions/open`, {
+      headers: authHeaders(a.token),
+    });
+    expect(asAgent.status).toBe(403);
+
+    await liveRun('Decisions run');
+    const runToken = executor.lastStartOptions?.runToken;
+    const asRun = await fetch(`${baseUrl}/api/decisions/open`, {
+      headers: authHeaders(runToken!),
+    });
+    expect(asRun.status).toBe(403);
+
+    const asHuman = await fetch(`${baseUrl}/api/decisions/open`);
+    expect(asHuman.status).toBe(200);
   });
 
   it('register -> pending 403 -> approve via app token -> send works', async () => {
@@ -341,33 +683,107 @@ describe('messaging HTTP routes', () => {
     expect(afterApproval.status).toBe(201);
   });
 
-  it('an agent token cannot answer a gate question (403, needs a deciding human)', async () => {
-    const registered = await json<{ address: string; token: string }>(
+  it('approving via the route answers the open registration gate (it is no longer open; a later deny 409s)', async () => {
+    const registered = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
         method: 'POST',
         headers: authHeaders(handle.tokens.agentToken),
-        body: JSON.stringify({ name: 'gate tester', client: 'codex' }),
+        body: JSON.stringify({ name: 'gate managed', client: 'codex' }),
       })
     );
+
+    const before = await json<{ items: { data?: { agent?: string } }[] }>(
+      await fetch(`${baseUrl}/api/decisions/open`)
+    );
+    const gate = before.items.find((m) => m.data?.agent === registered.address);
+    expect(gate).toBeDefined();
+
     await fetch(
       `${baseUrl}/api/agents/${encodeURIComponent(registered.address)}/approve`,
       { method: 'POST', headers: { 'content-type': 'application/json' } }
     );
 
+    const after = await json<{ items: { data?: { agent?: string } }[] }>(
+      await fetch(`${baseUrl}/api/decisions/open`)
+    );
+    expect(
+      after.items.find((m) => m.data?.agent === registered.address)
+    ).toBeUndefined();
+
+    const gateId = (gate as { id?: string }).id;
+    const laterDeny = await fetch(`${baseUrl}/api/messages/${gateId}/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: '', choice: 'deny' }),
+    });
+    expect(laterDeny.status).toBe(409);
+  });
+
+  it("an approved agent cannot answer another agent's registration gate (403, needs a deciding human)", async () => {
+    const pending = await json<{ address: string }>(
+      await fetch(`${baseUrl}/api/agents/register`, {
+        method: 'POST',
+        headers: authHeaders(handle.tokens.agentToken),
+        body: JSON.stringify({ name: 'gate target', client: 'codex' }),
+      })
+    );
+    const approved = await registerAndApprove('gate replier');
+
     const decisions = await json<{
       items: { id: string; data?: { agent?: string } }[];
     }>(await fetch(`${baseUrl}/api/decisions/open`));
-    const gate = decisions.items.find(
-      (m) => m.data?.agent === registered.address
-    );
+    const gate = decisions.items.find((m) => m.data?.agent === pending.address);
     expect(gate).toBeDefined();
 
     const replyRes = await fetch(`${baseUrl}/api/messages/${gate!.id}/reply`, {
       method: 'POST',
-      headers: authHeaders(registered.token),
+      headers: authHeaders(approved.token),
       body: JSON.stringify({ body: 'approve me', choice: 'approve' }),
     });
     expect(replyRes.status).toBe(403);
+    const body = await json<{ error: string }>(replyRes);
+    expect(body.error).toContain('decide tier');
+  });
+
+  it('a request-tier teammate token cannot answer a gate question either (403, decide tier)', async () => {
+    const pending = await json<{ address: string }>(
+      await fetch(`${baseUrl}/api/agents/register`, {
+        method: 'POST',
+        headers: authHeaders(handle.tokens.agentToken),
+        body: JSON.stringify({ name: 'gate target 2', client: 'codex' }),
+      })
+    );
+    const decisions = await json<{
+      items: { id: string; data?: { agent?: string } }[];
+    }>(await fetch(`${baseUrl}/api/decisions/open`));
+    const gate = decisions.items.find((m) => m.data?.agent === pending.address);
+    expect(gate).toBeDefined();
+
+    const teammateToken = handle.team.teammates.issue('ada', 'request');
+    const replyRes = await fetch(`${baseUrl}/api/messages/${gate!.id}/reply`, {
+      method: 'POST',
+      headers: authHeaders(teammateToken),
+      body: JSON.stringify({ body: 'approve me', choice: 'approve' }),
+    });
+    expect(replyRes.status).toBe(403);
+    const body = await json<{ error: string }>(replyRes);
+    expect(body.error).toContain('decide tier');
+  });
+
+  it('registration caps name and client at 100 characters', async () => {
+    const tooLongName = await fetch(`${baseUrl}/api/agents/register`, {
+      method: 'POST',
+      headers: authHeaders(handle.tokens.agentToken),
+      body: JSON.stringify({ name: 'a'.repeat(101), client: 'codex' }),
+    });
+    expect(tooLongName.status).toBe(400);
+
+    const tooLongClient = await fetch(`${baseUrl}/api/agents/register`, {
+      method: 'POST',
+      headers: authHeaders(handle.tokens.agentToken),
+      body: JSON.stringify({ name: 'ok-name', client: 'b'.repeat(101) }),
+    });
+    expect(tooLongClient.status).toBe(400);
   });
 
   it('a retried send with the same Idempotency-Key returns the same message id', async () => {
@@ -397,6 +813,28 @@ describe('messaging HTTP routes', () => {
     expect(second.status).toBe(200);
     const secondBody = await json<{ message: { id: string } }>(second);
     expect(secondBody.message.id).toBe(firstBody.message.id);
+  });
+
+  it('two concurrent sends with the same Idempotency-Key produce exactly one message', async () => {
+    const headers = {
+      'content-type': 'application/json',
+      'idempotency-key': 'concurrent-1',
+    };
+    const body = JSON.stringify({
+      to: ['human:test'],
+      kind: 'message',
+      body: 'concurrent',
+    });
+    const [first, second] = await Promise.all([
+      fetch(`${baseUrl}/api/messages`, { method: 'POST', headers, body }),
+      fetch(`${baseUrl}/api/messages`, { method: 'POST', headers, body }),
+    ]);
+    expect([first.status, second.status].sort((a, b) => a - b)).toEqual([
+      200, 201,
+    ]);
+    const firstBody = await json<{ message: { id: string } }>(first);
+    const secondBody = await json<{ message: { id: string } }>(second);
+    expect(firstBody.message.id).toBe(secondBody.message.id);
   });
 });
 
@@ -454,5 +892,165 @@ describe('messaging thread rate limit', () => {
     expect(second.status).toBe(429);
     const secondBody = await json<{ error: string; field?: string }>(second);
     expect(secondBody.field).toBe('replyTo');
+  });
+});
+
+// Direct, non-HTTP coverage for waitForAnswer's long-poll internals and
+// registerAgent's failure path — both need to observe things (the engine's
+// live listener count, a forced send failure) that a black-box HTTP test
+// against startServer() has no way to reach.
+describe('messaging routes — direct unit coverage', () => {
+  let unitRoot: string;
+  let unitFakeHome: string;
+  let messaging: Messaging;
+
+  beforeEach(() => {
+    unitFakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
+    process.env.DISPATCH_HOME = unitFakeHome;
+    unitRoot = initGitRepo('dispatch-routes-unit-');
+    const store = TaskStore.init(unitRoot);
+    const cache = new TaskCache();
+    cache.rebuild(store);
+    const events = new EventBus();
+    const orchestrator = new Orchestrator({
+      rootDir: unitRoot,
+      store,
+      cache,
+      events,
+    });
+    messaging = openMessaging({
+      rootDir: unitRoot,
+      orchestrator,
+      store,
+      events,
+      ownerRef: 'human:test',
+      dbPath: join(unitRoot, 'messages.db'),
+    });
+  });
+
+  afterEach(() => {
+    messaging.close();
+    if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = originalDispatchHome;
+    rmSync(unitFakeHome, { recursive: true, force: true });
+    rmSync(unitRoot, { recursive: true, force: true });
+  });
+
+  // A deciding human sees any question as a participant, so these tests can
+  // focus purely on the wait/timeout/abort mechanics.
+  function ctxFor(): ApiContext {
+    return {
+      principal: { address: 'human:test', canDecide: true, kind: 'human' },
+      messaging,
+    } as unknown as ApiContext;
+  }
+
+  async function askQuestion(): Promise<string> {
+    const sent = await messaging.engine.send(
+      {
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        choices: ['a', 'b'],
+        body: 'q',
+      },
+      { address: 'human:test', canDecide: true }
+    );
+    return sent.message.id;
+  }
+
+  it('times out after answerLongPoll.waitMs and unsubscribes', async () => {
+    const questionId = await askQuestion();
+    // openMessaging keeps its own permanent bridge listener subscribed, so
+    // "cleaned up" means back to this baseline, not literally zero.
+    const baseline = messaging.engine.listenerCount;
+    const original = answerLongPoll.waitMs;
+    answerLongPoll.waitMs = 30;
+    try {
+      const req = new Request(
+        `http://x/api/messages/${questionId}/answer?wait=1`
+      );
+      const res = await waitForAnswer(
+        req,
+        ctxFor(),
+        questionId,
+        new URL(req.url)
+      );
+      expect(res.status).toBe(200);
+      expect((await json<{ answer: unknown }>(res)).answer).toBeNull();
+      expect(messaging.engine.listenerCount).toBe(baseline);
+    } finally {
+      answerLongPoll.waitMs = original;
+    }
+  });
+
+  it('cleans up its subscription when the request aborts mid-wait', async () => {
+    const questionId = await askQuestion();
+    const baseline = messaging.engine.listenerCount;
+    const original = answerLongPoll.waitMs;
+    answerLongPoll.waitMs = 5000;
+    try {
+      const controller = new AbortController();
+      const req = new Request(
+        `http://x/api/messages/${questionId}/answer?wait=1`,
+        { signal: controller.signal }
+      );
+      const promise = waitForAnswer(
+        req,
+        ctxFor(),
+        questionId,
+        new URL(req.url)
+      );
+      expect(messaging.engine.listenerCount).toBe(baseline + 1);
+      controller.abort();
+      const res = await promise;
+      expect(res.status).toBe(200);
+      expect((await json<{ answer: unknown }>(res)).answer).toBeNull();
+      expect(messaging.engine.listenerCount).toBe(baseline);
+    } finally {
+      answerLongPoll.waitMs = original;
+    }
+  });
+
+  it('returns immediately when the request is already aborted, without subscribing', async () => {
+    const questionId = await askQuestion();
+    const baseline = messaging.engine.listenerCount;
+    const controller = new AbortController();
+    controller.abort();
+    const req = new Request(
+      `http://x/api/messages/${questionId}/answer?wait=1`,
+      { signal: controller.signal }
+    );
+    const res = await waitForAnswer(
+      req,
+      ctxFor(),
+      questionId,
+      new URL(req.url)
+    );
+    expect(res.status).toBe(200);
+    expect((await json<{ answer: unknown }>(res)).answer).toBeNull();
+    // Never subscribed at all — still at baseline, not baseline+1-then-back.
+    expect(messaging.engine.listenerCount).toBe(baseline);
+  });
+
+  it('reverts the agent to revoked and 500s if the registration gate fails to send', async () => {
+    const failingCtx = {
+      actorContext: { member: { handle: 'test' }, humanRef: 'human:test' },
+      messaging: {
+        store: messaging.store,
+        engine: { send: () => Promise.reject(new Error('boom')) },
+      },
+    } as unknown as ApiContext;
+
+    const req = new Request('http://x/api/agents/register', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'flaky', client: 'codex' }),
+    });
+    const res = await registerAgent(req, failingCtx);
+    expect(res.status).toBe(500);
+
+    const agent = messaging.store.getAgent('agent:test/flaky');
+    expect(agent?.status).toBe('revoked');
   });
 });

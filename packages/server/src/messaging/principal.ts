@@ -22,7 +22,7 @@ export type PrincipalResult =
   | { ok: false; status: 401 | 403; error: string; code: string };
 
 // The hex digest `agentByTokenHash` looks agents up by — sha256 of the raw
-// token, matching how an agent's token is hashed at registration (task 6).
+// token, matching how an agent's token is hashed at registration.
 function tokenHash(token: string): string {
   return createHash('sha256').update(token).digest('hex');
 }

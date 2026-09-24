@@ -1,3 +1,4 @@
+import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
   DeliveryState,
@@ -8,7 +9,7 @@ import type {
   SendInput,
   SendResult,
 } from '@dispatch/protocol';
-import { DELIVERY_STATES, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { DELIVERY_STATES, gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
@@ -20,13 +21,13 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
+import { implicitEpicMembers } from './host.js';
 import type { Principal } from './principal.js';
 import type { Messaging } from './service.js';
 
-// Every handler below is reached only through a route this file's caller
-// (api.ts) has already classified as self-authenticated or elevated, so
-// ctx.principal (self-authenticated) is always set by the time it's read.
-// This just narrows the type instead of scattering `!` assertions.
+// Every handler that calls this is reached only via a self-authenticated
+// route (api.ts resolves ctx.principal before dispatch) — this just narrows
+// the type instead of scattering `!` assertions.
 function requirePrincipal(ctx: ApiContext): Principal {
   if (ctx.principal === undefined) {
     throw new Error('messaging route reached with no resolved principal');
@@ -36,6 +37,48 @@ function requirePrincipal(ctx: ApiContext): Principal {
 
 function invalidField(field: string, message: string): Response {
   return jsonResponse({ error: message, field }, 400);
+}
+
+// The task address a run principal is currently working, or null for any
+// other principal kind (or a run whose task no longer resolves).
+function taskAddressOfRun(
+  ctx: ApiContext,
+  principal: Principal
+): string | null {
+  if (principal.kind !== 'run') return null;
+  const taskId = ctx.orchestrator.taskIdOfRun(
+    principal.address.slice('run:'.length)
+  );
+  return taskId === null ? null : `task:${taskId}`;
+}
+
+// Whether `principal` may act as `address`: itself, its own task (a run
+// stands in for the task it's working, which outlives the run), or any
+// address at all for a deciding human. The single object-level authorization
+// rule every messaging route enforces before touching someone else's mail,
+// deliveries or channel membership.
+function canActAs(
+  ctx: ApiContext,
+  principal: Principal,
+  address: string
+): boolean {
+  if (address === principal.address) return true;
+  if (principal.kind === 'human' && principal.canDecide) return true;
+  return address === taskAddressOfRun(ctx, principal);
+}
+
+// Whether `principal` may read `message`: it (or its task) sent it, or it (or
+// its task) is a recipient of one of its deliveries — or it's a deciding
+// human, which canActAs already grants for any address.
+function isParticipant(
+  ctx: ApiContext,
+  principal: Principal,
+  message: Message
+): boolean {
+  if (canActAs(ctx, principal, message.from)) return true;
+  return ctx.messaging.store
+    .deliveries({ messageId: message.id })
+    .some((d) => canActAs(ctx, principal, d.recipient));
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -50,6 +93,20 @@ function isRefShape(value: unknown): value is Ref {
     typeof r.id === 'string' &&
     (r.at === undefined || typeof r.at === 'string')
   );
+}
+
+// Shared optional-field shape guards between parseSendInput and
+// parseReplyInput, so the two don't repeat the same rule twice each. Type
+// predicates (not just a boolean) so the `if (!isValid…(x))` at each call
+// site still narrows `x` for the assignment that follows it.
+function isValidOptionalRefs(value: unknown): value is Ref[] | undefined {
+  return (
+    value === undefined || (Array.isArray(value) && value.every(isRefShape))
+  );
+}
+
+function isValidOptionalString(value: unknown): value is string | undefined {
+  return value === undefined || typeof value === 'string';
 }
 
 interface RawSendBody {
@@ -67,11 +124,8 @@ interface RawSendBody {
   session?: unknown;
 }
 
-// Narrows an unknown JSON body into a well-typed SendInput. This only checks
-// shape (so the object is safe to hand to DeliveryEngine.send) — the deep
-// business rules (address grammar, gate ownership, choice membership, …)
-// live in @dispatch/protocol's validateSendInput and surface as a
-// MessagingError, mapped centrally in api.ts's outer catch.
+// Narrows an unknown JSON body into a well-typed SendInput (shape only —
+// deep validation happens in @dispatch/protocol's validateSendInput).
 function parseSendInput(
   raw: unknown
 ): { ok: true; value: SendInput } | { ok: false; response: Response } {
@@ -94,10 +148,7 @@ function parseSendInput(
       response: invalidField('body', 'invalid body: expected a string'),
     };
   }
-  if (
-    body.refs !== undefined &&
-    (!Array.isArray(body.refs) || !body.refs.every(isRefShape))
-  ) {
+  if (!isValidOptionalRefs(body.refs)) {
     return {
       ok: false,
       response: invalidField(
@@ -130,7 +181,7 @@ function parseSendInput(
       ),
     };
   }
-  if (body.choice !== undefined && typeof body.choice !== 'string') {
+  if (!isValidOptionalString(body.choice)) {
     return {
       ok: false,
       response: invalidField('choice', 'invalid choice: expected a string'),
@@ -162,7 +213,7 @@ function parseSendInput(
       ),
     };
   }
-  if (body.session !== undefined && typeof body.session !== 'string') {
+  if (!isValidOptionalString(body.session)) {
     return {
       ok: false,
       response: invalidField('session', 'invalid session: expected a string'),
@@ -215,16 +266,13 @@ function parseReplyInput(raw: unknown):
       response: invalidField('body', 'invalid body: expected a string'),
     };
   }
-  if (body.choice !== undefined && typeof body.choice !== 'string') {
+  if (!isValidOptionalString(body.choice)) {
     return {
       ok: false,
       response: invalidField('choice', 'invalid choice: expected a string'),
     };
   }
-  if (
-    body.refs !== undefined &&
-    (!Array.isArray(body.refs) || !body.refs.every(isRefShape))
-  ) {
+  if (!isValidOptionalRefs(body.refs)) {
     return {
       ok: false,
       response: invalidField(
@@ -233,12 +281,13 @@ function parseReplyInput(raw: unknown):
       ),
     };
   }
-  if (body.session !== undefined && typeof body.session !== 'string') {
+  if (!isValidOptionalString(body.session)) {
     return {
       ok: false,
       response: invalidField('session', 'invalid session: expected a string'),
     };
   }
+
   const value: {
     body: string;
     choice?: string;
@@ -253,13 +302,21 @@ function parseReplyInput(raw: unknown):
   return { ok: true, value };
 }
 
-// Bounded per-daemon idempotency cache for POST /api/messages, keyed off the
-// Messaging instance rather than a module-level map so two daemons booted in
-// the same process (as tests do, one per test) never share cached sends.
-const idempotencyCaches = new WeakMap<Messaging, Map<string, SendResult>>();
+// In-flight/completed sends keyed by idempotency key, per Messaging instance
+// (a WeakMap, not a module-level Map, so two daemons booted in the same
+// process — as tests do — never share cached sends). Caching the PROMISE
+// itself, not just its resolved value, is what makes a concurrent retry with
+// the same key await the first send instead of racing a second one: the
+// cache is populated synchronously, before either send is awaited.
+const idempotencyCaches = new WeakMap<
+  Messaging,
+  Map<string, Promise<SendResult>>
+>();
 const MAX_IDEMPOTENCY_KEYS = 500;
 
-function idempotencyCacheFor(messaging: Messaging): Map<string, SendResult> {
+function idempotencyCacheFor(
+  messaging: Messaging
+): Map<string, Promise<SendResult>> {
   let cache = idempotencyCaches.get(messaging);
   if (cache === undefined) {
     cache = new Map();
@@ -268,15 +325,15 @@ function idempotencyCacheFor(messaging: Messaging): Map<string, SendResult> {
   return cache;
 }
 
-// Records a send result under its idempotency key, evicting the oldest entry
-// once the cache would exceed its bound — Map preserves insertion order, so
-// the first key is always the oldest.
+// Records a send's promise under its idempotency key, evicting the oldest
+// entry once the cache would exceed its bound — Map preserves insertion
+// order, so the first key is always the oldest.
 function rememberIdempotent(
-  cache: Map<string, SendResult>,
+  cache: Map<string, Promise<SendResult>>,
   key: string,
-  result: SendResult
+  promise: Promise<SendResult>
 ): void {
-  cache.set(key, result);
+  cache.set(key, promise);
   if (cache.size > MAX_IDEMPOTENCY_KEYS) {
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
@@ -286,7 +343,8 @@ function rememberIdempotent(
 // POST /api/messages — sends on behalf of whoever resolvePrincipal named.
 // `Idempotency-Key` lets a client retry a send that timed out in flight
 // without risking a duplicate message: a repeat with the same key (from the
-// same principal) replays the first attempt's result with 200, not 201.
+// same principal), even a concurrent one, awaits the first attempt's promise
+// and replays its result with 200, not 201.
 export async function sendMessage(
   req: Request,
   ctx: ApiContext
@@ -298,25 +356,37 @@ export async function sendMessage(
   if (!parsedInput.ok) return parsedInput.response;
 
   const idemKey = req.headers.get('idempotency-key');
-  const cache = idempotencyCacheFor(ctx.messaging);
-  const cacheKey = idemKey === null ? null : `${principal.address}:${idemKey}`;
-  if (cacheKey !== null) {
-    const cached = cache.get(cacheKey);
-    if (cached !== undefined) return jsonResponse(cached, 200);
+  if (idemKey === null) {
+    const result = await ctx.messaging.engine.send(parsedInput.value, {
+      address: principal.address,
+      canDecide: principal.canDecide,
+    });
+    return jsonResponse(result, 201);
   }
 
-  const result = await ctx.messaging.engine.send(parsedInput.value, {
+  const cache = idempotencyCacheFor(ctx.messaging);
+  const cacheKey = `${principal.address}:${idemKey}`;
+  const existing = cache.get(cacheKey);
+  if (existing !== undefined) return jsonResponse(await existing, 200);
+
+  // No `await` between the cache miss above and this set: nothing yields the
+  // event loop in between, so a concurrent request can never also miss.
+  const sendPromise = ctx.messaging.engine.send(parsedInput.value, {
     address: principal.address,
     canDecide: principal.canDecide,
   });
-  if (cacheKey !== null) rememberIdempotent(cache, cacheKey, result);
-  return jsonResponse(result, 201);
+  rememberIdempotent(cache, cacheKey, sendPromise);
+  return jsonResponse(await sendPromise, 201);
 }
 
 // GET /api/messages/:id
 export function getMessageById(ctx: ApiContext, id: string): Response {
+  const principal = requirePrincipal(ctx);
   const message = ctx.messaging.engine.getMessage(id);
   if (message === null) return errorResponse(404, `no message ${id}`);
+  if (!isParticipant(ctx, principal, message)) {
+    return errorResponse(403, `cannot read message ${id}`);
+  }
   return jsonResponse(message);
 }
 
@@ -339,23 +409,48 @@ export async function replyToMessage(
   return jsonResponse(result, 201);
 }
 
-const ANSWER_WAIT_MS = 30_000;
+// How long GET /api/messages/:id/answer?wait=1 parks before giving up.
+// Mutable (not a plain constant) so a test can shrink it instead of taking
+// the real 30s, and restore it afterward.
+export const answerLongPoll = { waitMs: 30_000 };
 
-// GET /api/messages/:id/answer — long-polls up to 30s for `id`'s answer.
-// Resolves immediately if one already landed; otherwise parks on the engine's
-// event stream and wakes on the matching answer, the timeout, or the client
-// disconnecting (req.signal), whichever comes first.
+// GET /api/messages/:id/answer — `?wait=1` long-polls up to answerLongPoll
+// .waitMs for `id`'s answer; without it, checks once and returns right away.
+// Only a participant of the question (or a deciding human) may read its
+// answer. Resolves immediately if one already landed; otherwise parks on the
+// engine's event stream and wakes on the matching answer, the timeout, or
+// the client disconnecting (req.signal), whichever comes first.
 export function waitForAnswer(
   req: Request,
   ctx: ApiContext,
-  id: string
+  id: string,
+  url: URL
 ): Promise<Response> {
-  if (ctx.messaging.engine.getMessage(id) === null) {
+  const principal = requirePrincipal(ctx);
+  const question = ctx.messaging.engine.getMessage(id);
+  if (question === null) {
     return Promise.resolve(errorResponse(404, `no message ${id}`));
   }
+  if (question.kind !== 'question' && question.kind !== 'handoff') {
+    return Promise.resolve(
+      errorResponse(
+        400,
+        `${id} is a ${question.kind}, not a question or handoff`
+      )
+    );
+  }
+  if (!isParticipant(ctx, principal, question)) {
+    return Promise.resolve(
+      errorResponse(403, `cannot read the answer to ${id}`)
+    );
+  }
+
   const existing = ctx.messaging.engine.answerOf(id);
   if (existing !== null)
     return Promise.resolve(jsonResponse({ answer: existing }));
+  if (url.searchParams.get('wait') !== '1' || req.signal.aborted) {
+    return Promise.resolve(jsonResponse({ answer: null }));
+  }
 
   return new Promise<Response>((resolve) => {
     let settled = false;
@@ -376,15 +471,26 @@ export function waitForAnswer(
         finish(e.message);
       }
     });
-    const timer = setTimeout(() => finish(null), ANSWER_WAIT_MS);
+    const timer = setTimeout(() => finish(null), answerLongPoll.waitMs);
     const onAbort = (): void => finish(null);
     req.signal.addEventListener('abort', onAbort);
   });
 }
 
-// GET /api/threads/:id
+// GET /api/threads/:id — allowed for a participant of any message in the
+// thread, or a deciding human (who can read any thread, including an empty
+// or unknown one, where there is no message to check participation against).
 export function getThreadById(ctx: ApiContext, threadId: string): Response {
-  return jsonResponse(ctx.messaging.engine.thread(threadId));
+  const principal = requirePrincipal(ctx);
+  const thread = ctx.messaging.engine.thread(threadId);
+  const decidingHuman = principal.kind === 'human' && principal.canDecide;
+  if (
+    !decidingHuman &&
+    !thread.messages.some((m) => isParticipant(ctx, principal, m))
+  ) {
+    return errorResponse(403, `cannot read thread ${threadId}`);
+  }
+  return jsonResponse(thread);
 }
 
 const DEFAULT_RECENT_THREADS = 50;
@@ -408,50 +514,23 @@ export function listRecentThreads(ctx: ApiContext, url: URL): Response {
   return jsonResponse({ threads: ctx.messaging.store.recentThreads(limit) });
 }
 
-// Whether `principal` may read `address`'s mailbox: its own address (or, for
-// a run, its task's address — a run's mail outlives the run itself), or any
-// address at all for a deciding human.
-function mailboxAddressAllowed(
-  ctx: ApiContext,
-  principal: Principal,
-  address: string
-): boolean {
-  if (principal.kind === 'human' && principal.canDecide) return true;
-  if (address === principal.address) return true;
-  if (principal.kind === 'run') {
-    const taskId = ctx.orchestrator.taskIdOfRun(
-      principal.address.slice('run:'.length)
-    );
-    if (taskId !== null && address === `task:${taskId}`) return true;
-  }
-  return false;
-}
-
-// The address(es) "my own mailbox" (no `?address=`) actually means for
-// `principal`. For a run this is itself AND its task: a question answer is
-// addressed straight to `run:<id>`, but most mail addressed to the work
-// targets the task, which outlives any one run — a run checking its own
-// mail needs both to see the full picture.
+// "My own mailbox" (no `?address=`): itself, plus its task for a run — most
+// mail targets the task, but a direct answer can still address the run.
 function ownMailboxAddresses(ctx: ApiContext, principal: Principal): string[] {
-  if (principal.kind !== 'run') return [principal.address];
-  const taskId = ctx.orchestrator.taskIdOfRun(
-    principal.address.slice('run:'.length)
-  );
-  return taskId === null
+  const taskAddress = taskAddressOfRun(ctx, principal);
+  return taskAddress === null
     ? [principal.address]
-    : [principal.address, `task:${taskId}`];
+    : [principal.address, taskAddress];
 }
 
 // GET /api/mailbox?address=&state=a,b — `address` defaults to the caller's
 // own (both addresses of it, for a run); reading anyone else's needs
-// mailboxAddressAllowed's say-so.
+// canActAs's say-so. Results are sorted by delivery id (time order) even
+// when two addresses' inboxes are merged.
 export function getMailbox(ctx: ApiContext, url: URL): Response {
   const principal = requirePrincipal(ctx);
   const explicitAddress = url.searchParams.get('address');
-  if (
-    explicitAddress !== null &&
-    !mailboxAddressAllowed(ctx, principal, explicitAddress)
-  ) {
+  if (explicitAddress !== null && !canActAs(ctx, principal, explicitAddress)) {
     return errorResponse(403, `cannot read the mailbox for ${explicitAddress}`);
   }
   const addresses =
@@ -481,11 +560,19 @@ export function getMailbox(ctx: ApiContext, url: URL): Response {
   const items = addresses.flatMap((addr) =>
     ctx.messaging.engine.inbox(addr, states)
   );
+  items.sort((a, b) => a.delivery.id.localeCompare(b.delivery.id));
   return jsonResponse({ items });
 }
 
-// POST /api/deliveries/:id/read
+// POST /api/deliveries/:id/read — only the delivery's own recipient (or its
+// task's run, or a deciding human) may mark it read.
 export function markDeliveryRead(ctx: ApiContext, id: string): Response {
+  const principal = requirePrincipal(ctx);
+  const delivery = ctx.messaging.store.getDelivery(id);
+  if (delivery === null) return errorResponse(404, `no delivery ${id}`);
+  if (!canActAs(ctx, principal, delivery.recipient)) {
+    return errorResponse(403, `cannot mark ${id} read`);
+  }
   return jsonResponse(ctx.messaging.engine.markRead(id));
 }
 
@@ -495,40 +582,52 @@ interface ChannelSummary {
   members: string[];
 }
 
-// Mirrors DaemonMessagingHost.implicitMembers (host.ts): every task parented
-// to an epic is an implicit member of that epic's channel. Duplicated rather
-// than called through Messaging because the daemon host instance itself
-// isn't part of the Messaging interface routes get — only the task store is.
-function implicitEpicMembers(ctx: ApiContext, channel: string): string[] {
-  const match = /^epic\/(.+)$/.exec(channel);
-  if (match === null) return [];
-  return ctx.store
-    .list({ parent: match[1] })
-    .map((task) => `task:${task.meta.id}`);
-}
-
 // GET /api/channels — every channel anyone has joined, plus one implicit
 // `epic/<id>` channel per epic task (members: explicit ∪ implicit), so an
-// epic's channel is listed even if nobody has ever posted to it.
+// epic's channel is listed even if nobody has ever posted to it. Tasks are
+// listed once, grouped by parent in memory, rather than one store query per
+// epic.
 export function listChannels(ctx: ApiContext): Response {
   const explicitChannels = ctx.messaging.store.channels();
-  const names = new Set(explicitChannels.map((c) => c.name));
-  for (const epic of ctx.store.list({ kind: 'epic' }))
-    names.add(`epic/${epic.meta.id}`);
+  const explicitByName = new Map(explicitChannels.map((c) => [c.name, c]));
+
+  const childrenByParent = new Map<string, TaskDoc[]>();
+  const epicIds: string[] = [];
+  for (const task of ctx.store.list()) {
+    if (task.meta.kind === 'epic') epicIds.push(task.meta.id);
+    if (task.meta.parent !== null) {
+      const siblings = childrenByParent.get(task.meta.parent);
+      if (siblings === undefined)
+        childrenByParent.set(task.meta.parent, [task]);
+      else siblings.push(task);
+    }
+  }
+  const childrenOf = (epicId: string): TaskDoc[] =>
+    childrenByParent.get(epicId) ?? [];
+
+  const names = new Set(explicitByName.keys());
+  for (const id of epicIds) names.add(`epic/${id}`);
 
   const channels: ChannelSummary[] = [...names].sort().map((name) => {
-    const record = explicitChannels.find((c) => c.name === name);
+    const record = explicitByName.get(name);
     const members = new Set([
       ...ctx.messaging.store.members(name),
-      ...implicitEpicMembers(ctx, name),
+      ...implicitEpicMembers(childrenOf, name),
     ]);
     return { name, auto: record?.auto ?? true, members: [...members] };
   });
   return jsonResponse({ channels });
 }
 
-// POST /api/channels/:name/members — `member` defaults to the caller, except
-// a run defaults to its task (membership must outlive the run that joined).
+// The address `principal` acts as by default (no explicit `member`/`addr`):
+// itself, or for a run, its task.
+function selfActingAddress(ctx: ApiContext, principal: Principal): string {
+  return taskAddressOfRun(ctx, principal) ?? principal.address;
+}
+
+// POST /api/channels/:name/members — `member` defaults to the caller (a run
+// defaults to its task); adding anyone else needs canActAs's say-so, same as
+// removing them.
 export async function joinChannel(
   req: Request,
   ctx: ApiContext,
@@ -541,13 +640,12 @@ export async function joinChannel(
   if (body.member !== undefined && typeof body.member !== 'string') {
     return invalidField('member', 'invalid member: expected a string address');
   }
-  let member =
-    typeof body.member === 'string' ? body.member : principal.address;
-  if (body.member === undefined && principal.kind === 'run') {
-    const taskId = ctx.orchestrator.taskIdOfRun(
-      principal.address.slice('run:'.length)
-    );
-    if (taskId !== null) member = `task:${taskId}`;
+  const member =
+    typeof body.member === 'string'
+      ? body.member
+      : selfActingAddress(ctx, principal);
+  if (!canActAs(ctx, principal, member)) {
+    return errorResponse(403, `cannot add ${member} to a channel`);
   }
   ctx.messaging.engine.join(name, member);
   return new Response(null, { status: 204 });
@@ -559,6 +657,10 @@ export function leaveChannel(
   name: string,
   addr: string
 ): Response {
+  const principal = requirePrincipal(ctx);
+  if (!canActAs(ctx, principal, addr)) {
+    return errorResponse(403, `cannot remove ${addr} from a channel`);
+  }
   ctx.messaging.engine.leave(name, addr);
   return new Response(null, { status: 204 });
 }
@@ -589,6 +691,7 @@ export function listAgentRoster(ctx: ApiContext): Response {
 }
 
 const HANDLE_PATTERN = /^[a-z0-9][a-z0-9._-]*$/;
+const MAX_REGISTRATION_FIELD_LENGTH = 100;
 
 // Normalizes a client-supplied display name into the handle grammar
 // addresses use: lowercase, invalid characters become '-', leading
@@ -599,11 +702,10 @@ function normalizeAgentName(raw: string): string {
   return lowered.replace(/^[^a-z0-9]+/, '').slice(0, 40);
 }
 
-// POST /api/agents/register — request tier, reached with the shared
-// agentToken (an unregistered client has nothing else). Mints a fresh token
-// for a new or previously-revoked address and raises the agent-registration
-// gate to the project owner; an address still pending or approved 409s,
-// since the MCP keeps its token file and a lost token needs a human revoke.
+// POST /api/agents/register — request tier (the shared agentToken). Mints a
+// token for a new or previously-revoked address and raises the
+// agent-registration gate; pending/approved 409s, since the MCP keeps its
+// token file and a lost token needs a human revoke.
 export async function registerAgent(
   req: Request,
   ctx: ApiContext
@@ -614,8 +716,20 @@ export async function registerAgent(
   if (typeof body.name !== 'string' || body.name.trim() === '') {
     return errorResponse(400, 'invalid name: name is required');
   }
+  if (body.name.length > MAX_REGISTRATION_FIELD_LENGTH) {
+    return errorResponse(
+      400,
+      `invalid name: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
+    );
+  }
   if (typeof body.client !== 'string' || body.client.trim() === '') {
     return errorResponse(400, 'invalid client: client is required');
+  }
+  if (body.client.length > MAX_REGISTRATION_FIELD_LENGTH) {
+    return errorResponse(
+      400,
+      `invalid client: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
+    );
   }
   const name = normalizeAgentName(body.name);
   if (!HANDLE_PATTERN.test(name)) {
@@ -649,23 +763,103 @@ export async function registerAgent(
   };
   ctx.messaging.store.putAgent(record);
 
-  await ctx.messaging.engine.send(
-    {
-      to: [ctx.actorContext.humanRef],
-      kind: 'question',
-      blocking: true,
-      choices: ['approve', 'deny'],
-      body: `New agent ${address} (${body.client}) wants to join this project.`,
-      data: { type: 'agent-registration', agent: address, client: body.client },
-    },
-    { address: SYSTEM_ADDRESS, canDecide: true }
-  );
+  try {
+    await ctx.messaging.engine.send(
+      {
+        to: [ctx.actorContext.humanRef],
+        kind: 'question',
+        blocking: true,
+        choices: ['approve', 'deny'],
+        body: `New agent ${address} (${body.client}) wants to join this project.`,
+        data: {
+          type: 'agent-registration',
+          agent: address,
+          client: body.client,
+        },
+      },
+      { address: SYSTEM_ADDRESS, canDecide: true }
+    );
+  } catch (err) {
+    // The agent row exists but nobody can approve it without the gate —
+    // revoke it so a fresh register call can recreate it, instead of the
+    // pending/approved 409 above blocking every retry forever.
+    ctx.messaging.store.putAgent({ ...record, status: 'revoked' });
+    return errorResponse(
+      500,
+      `registration gate failed to send: ${(err as Error).message}`
+    );
+  }
 
   return jsonResponse({ address, token, status: record.status }, 201);
 }
 
-// Shared body for the four decide-tier agent-roster actions below: look up
-// the agent, apply the mutation, persist, and hand back the sanitized record.
+// The open (unanswered) agent-registration gate for `address`, if any.
+function openRegistrationGateFor(
+  ctx: ApiContext,
+  address: string
+): Message | null {
+  for (const question of ctx.messaging.engine.openBlocking()) {
+    const gate = gateOf(question);
+    if (
+      gate !== null &&
+      gate.type === 'agent-registration' &&
+      gate.agent === address
+    ) {
+      return question;
+    }
+  }
+  return null;
+}
+
+// Shared body for approve/revoke: when the agent's registration gate is
+// still open, answer it through the engine so the gate handler (service.ts)
+// is the single writer of status/approvedBy; only once no gate is open (the
+// agent was created some other way, or its gate already resolved) does this
+// write the agent row directly.
+async function decideAgent(
+  ctx: ApiContext,
+  address: string,
+  choice: 'approve' | 'deny',
+  directStatus: 'approved' | 'revoked'
+): Promise<Response> {
+  const agent = ctx.messaging.store.getAgent(address);
+  if (agent === null) return errorResponse(404, `no agent ${address}`);
+  const gate = openRegistrationGateFor(ctx, address);
+  if (gate !== null) {
+    await ctx.messaging.engine.reply(
+      gate.id,
+      { body: '', choice },
+      { address: humanActor(ctx), canDecide: true }
+    );
+  } else {
+    ctx.messaging.store.putAgent({
+      ...agent,
+      status: directStatus,
+      approvedBy: directStatus === 'approved' ? humanActor(ctx) : null,
+    });
+  }
+  const updated = ctx.messaging.store.getAgent(address) ?? agent;
+  return jsonResponse(stripTokenHash(updated));
+}
+
+// POST /api/agents/:addr/approve
+export function approveAgent(
+  ctx: ApiContext,
+  address: string
+): Promise<Response> {
+  return decideAgent(ctx, address, 'approve', 'approved');
+}
+
+// POST /api/agents/:addr/revoke
+export function revokeAgent(
+  ctx: ApiContext,
+  address: string
+): Promise<Response> {
+  return decideAgent(ctx, address, 'deny', 'revoked');
+}
+
+// Shared body for mute/unmute: these never touch a gate (there is no
+// mute/unmute question), so they always write the agent row directly.
 function updateAgent(
   ctx: ApiContext,
   address: string,
@@ -676,24 +870,6 @@ function updateAgent(
   const updated = mutate(agent);
   ctx.messaging.store.putAgent(updated);
   return jsonResponse(stripTokenHash(updated));
-}
-
-// POST /api/agents/:addr/approve
-export function approveAgent(ctx: ApiContext, address: string): Response {
-  return updateAgent(ctx, address, (agent) => ({
-    ...agent,
-    status: 'approved',
-    approvedBy: humanActor(ctx),
-  }));
-}
-
-// POST /api/agents/:addr/revoke
-export function revokeAgent(ctx: ApiContext, address: string): Response {
-  return updateAgent(ctx, address, (agent) => ({
-    ...agent,
-    status: 'revoked',
-    approvedBy: null,
-  }));
 }
 
 // POST /api/agents/:addr/mute
@@ -708,7 +884,13 @@ export function unmuteAgent(ctx: ApiContext, address: string): Response {
 
 // GET /api/decisions/open — open blocking questions addressed to a human,
 // for the notification surfaces that only care about what needs a person.
+// Deciding humans only: the list itself (who's waiting on what) is exactly
+// what a non-deciding principal must not see.
 export function listOpenDecisions(ctx: ApiContext): Response {
+  const principal = requirePrincipal(ctx);
+  if (principal.kind !== 'human' || !principal.canDecide) {
+    return errorResponse(403, 'listing open decisions needs a deciding human');
+  }
   const items = ctx.messaging.engine
     .openBlocking()
     .filter((m) => m.to.some((addr) => addr.startsWith('human:')));
