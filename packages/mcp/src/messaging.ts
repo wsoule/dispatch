@@ -122,18 +122,15 @@ async function messagingFetch(
       };
     }
     if (code === 'auth_invalid_token') {
-      forgetAgentToken(projRoot, name);
+      forgetAgentToken(projRoot, name, credential.token);
       const fresh = await messagingCredential(projRoot, clientName);
-      if (!('error' in fresh)) {
-        try {
-          res = await attempt(fresh.token);
-        } catch (err) {
-          return {
-            ok: false,
-            transient: true,
-            message: (err as Error).message,
-          };
-        }
+      if ('error' in fresh) {
+        return { ok: false, transient: false, result: toolError(fresh.error) };
+      }
+      try {
+        res = await attempt(fresh.token);
+      } catch (err) {
+        return { ok: false, transient: true, message: (err as Error).message };
       }
     }
   }

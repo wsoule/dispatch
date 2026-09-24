@@ -15,6 +15,7 @@ import { daemonFilePath } from '../src/daemon.js';
 import {
   agentName,
   agentTokenFilePath,
+  forgetAgentToken,
   messagingCredential,
 } from '../src/identity.js';
 
@@ -332,5 +333,23 @@ describe('messagingCredential (self-registration)', () => {
     ]);
     expect(daemon.registerCalls.length).toBe(1);
     expect(a).toEqual(b);
+  });
+});
+
+describe('forgetAgentToken', () => {
+  it('deletes the cache file only while it still holds the rejected token', () => {
+    const name = agentName(process.env, 'Claude Code', hostname());
+    const path = agentTokenFilePath(root, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ token: 'fresh-token', address: 'agent:wyat/x' })
+    );
+
+    forgetAgentToken(root, name, 'stale-token');
+    expect(existsSync(path)).toBe(true);
+
+    forgetAgentToken(root, name, 'fresh-token');
+    expect(existsSync(path)).toBe(false);
   });
 });

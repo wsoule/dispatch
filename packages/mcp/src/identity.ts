@@ -85,11 +85,17 @@ function writeStoredToken(path: string, value: StoredAgentToken): void {
   writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
 }
 
-// Self-heal step: drops a cached token so the next messagingCredential call
-// registers a fresh one (used when the daemon reports it unknown, not revoked).
-export function forgetAgentToken(rootDir: string, name: string): void {
+// Self-heal step: drops the cached token the daemon just called unknown, but
+// keeps a newer one a parallel heal has already written in its place.
+export function forgetAgentToken(
+  rootDir: string,
+  name: string,
+  rejectedToken: string
+): void {
+  const path = agentTokenFilePath(rootDir, name);
+  if (readStoredToken(path)?.token !== rejectedToken) return;
   try {
-    rmSync(agentTokenFilePath(rootDir, name), { force: true });
+    rmSync(path, { force: true });
   } catch {
     // Already gone — nothing to clean up.
   }

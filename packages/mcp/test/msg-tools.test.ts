@@ -128,6 +128,8 @@ class FakeDaemon {
   revokedTokens = new Set<string>();
   /** Every bearer a route turned away, in arrival order. */
   rejectedTokens: string[] = [];
+  /** Runs as a token is turned away, before the 401 goes out. */
+  onReject: ((token: string) => void) | null = null;
 
   private server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -148,6 +150,7 @@ class FakeDaemon {
       return null;
     }
     this.rejectedTokens.push(token);
+    this.onReject?.(token);
     if (!sharedOnly && this.revokedTokens.has(token)) {
       return Response.json(
         {
@@ -472,6 +475,101 @@ describe('msg_send (self-heal on an unknown cached agent token)', () => {
       token: 'fresh-token',
       address: 'agent:wyat/new',
     });
+  });
+
+  it('keeps a fresh token a parallel heal cached, instead of deleting it and registering again', async () => {
+    const tokenPath = writeCachedAgentToken(
+      'test-client',
+      'stale-token',
+      'agent:wyat/old'
+    );
+    daemon = new FakeDaemon();
+    daemon.messagingTokens.add('parallel-token');
+    daemon.onReject = () => {
+      writeFileSync(
+        tokenPath,
+        JSON.stringify({ token: 'parallel-token', address: 'agent:wyat/x' })
+      );
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(daemon.registerCalls).toEqual([]);
+    expect(daemon.sendCalls[0]?.headers.authorization).toBe(
+      'Bearer parallel-token'
+    );
+    expect(JSON.parse(readFileSync(tokenPath, 'utf8'))).toEqual({
+      token: 'parallel-token',
+      address: 'agent:wyat/x',
+    });
+  });
+
+  it("returns the re-registration's own error when the heal cannot register", async () => {
+    const tokenPath = writeCachedAgentToken(
+      'test-client',
+      'stale-token',
+      'agent:wyat/old'
+    );
+    daemon = new FakeDaemon();
+    daemon.registerStatus = 409;
+    daemon.registerBody = { error: 'already registered (pending)' };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+
+    const name = agentName(process.env, 'test-client', hostname());
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(
+      `${name} is already registered; revoke it in Dispatch → Settings → Agents, then delete ${tokenPath}`
+    );
+  });
+});
+
+describe('msg_send (network error)', () => {
+  it('retries a send whose response was lost with the same Idempotency-Key', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+    const realFetch = globalThis.fetch;
+    let dropped = false;
+    globalThis.fetch = (async (input, init) => {
+      const res = await realFetch(input, init);
+      const isSend =
+        String(input).endsWith('/api/messages') && init?.method === 'POST';
+      if (isSend && !dropped) {
+        dropped = true;
+        throw new TypeError('socket hang up');
+      }
+      return res;
+    }) as typeof fetch;
+
+    let result: ToolCallResult;
+    try {
+      result = (await client.callTool({
+        name: 'msg_send',
+        arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+      })) as ToolCallResult;
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    expect(result.isError).toBeUndefined();
+    expect(daemon.sendCalls.length).toBe(2);
+    const [first, second] = daemon.sendCalls;
+    expect(first?.headers['idempotency-key']).toBeTruthy();
+    expect(second?.headers['idempotency-key']).toBe(
+      first?.headers['idempotency-key']
+    );
   });
 });
 
