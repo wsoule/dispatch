@@ -15,6 +15,7 @@ import { daemonFilePath } from '../src/daemon.js';
 import { agentName, agentTokenFilePath } from '../src/identity.js';
 import { createDispatchMcpServer } from '../src/index.js';
 import type { MessageBlockingTiming } from '../src/index.js';
+import { withBearer } from '../src/messaging.js';
 
 // humanTotalWaitMs and defaultAgentTotalWaitMs are deliberately different
 // (not just both "small") so a test that checks the agent-recipient fallback
@@ -72,8 +73,8 @@ const DEFAULT_SEND_BODY = {
 // to drive each tool's request shaping, response handling, and the
 // identity-401 self-heal/revoked paths deterministically.
 class FakeDaemon {
-  // Each POST /api/messages consumes the next entry (the last entry repeats
-  // once exhausted), so a test can script "401 unknown token, then success".
+  // Each authorized POST /api/messages consumes the next entry; the last one
+  // repeats once exhausted.
   sendResponses: { status: number; body: unknown }[] = [
     { status: 201, body: DEFAULT_SEND_BODY },
   ];
@@ -380,6 +381,18 @@ describe('msg_send (fake daemon, run identity)', () => {
     });
   });
 
+  it('sends no session: a run is its own session', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    });
+    expect(daemon.sendCalls[0]?.body).not.toHaveProperty('session');
+  });
+
   it('rejects a kind that is neither a built-in nor a valid x-slug', async () => {
     daemon = new FakeDaemon();
     writeFakeDaemonFile(daemon.start());
@@ -544,8 +557,13 @@ describe('msg_send (network error)', () => {
     let dropped = false;
     globalThis.fetch = (async (input, init) => {
       const res = await realFetch(input, init);
-      const isSend =
-        String(input).endsWith('/api/messages') && init?.method === 'POST';
+      const url =
+        typeof input === 'string'
+          ? input
+          : input instanceof URL
+            ? input.href
+            : input.url;
+      const isSend = url.endsWith('/api/messages') && init?.method === 'POST';
       if (isSend && !dropped) {
         dropped = true;
         throw new TypeError('socket hang up');
@@ -969,6 +987,58 @@ describe('channel tools', () => {
 });
 
 describe('messaging tools (agent identity, no run token)', () => {
+  // Caches an approved agent identity and starts a daemon that accepts it.
+  function startAgentDaemon(): FakeDaemon {
+    writeCachedAgentToken('test-client', 'agent-token-value', 'agent:wyat/x');
+    const fake = new FakeDaemon();
+    fake.messagingTokens.add('agent-token-value');
+    writeFakeDaemonFile(fake.start());
+    return fake;
+  }
+
+  it('says a blocking answer is also in the mailbox, not pushed to a session', async () => {
+    daemon = startAgentDaemon();
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'which db?',
+        blocking: true,
+      },
+    })) as ToolCallResult;
+
+    expect(result.structuredContent?.answer).toEqual(daemon.answerValue);
+    expect(result.structuredContent?.note).toBe(
+      'this answer is also in your mailbox (inbox_read) — no need to act on it twice'
+    );
+  });
+
+  it("names this MCP process's session on every send and reply", async () => {
+    daemon = startAgentDaemon();
+    const client = await connectClient(root);
+    const send = { to: ['human:wyat'], kind: 'message', body: 'hi' };
+
+    await client.callTool({ name: 'msg_send', arguments: send });
+    await client.callTool({ name: 'msg_send', arguments: send });
+    await client.callTool({
+      name: 'msg_reply',
+      arguments: { messageId: 'm-9', body: 'ok' },
+    });
+    const session = daemon.sendCalls[0]?.body.session;
+    expect(typeof session).toBe('string');
+    expect(session).not.toBe('');
+    expect(daemon.sendCalls[1]?.body.session).toBe(session);
+    expect(daemon.replyCalls[0]?.body.session).toBe(session);
+
+    const otherProcess = await connectClient(root);
+    await otherProcess.callTool({ name: 'msg_send', arguments: send });
+    expect(daemon.sendCalls[2]?.body.session).toBeString();
+    expect(daemon.sendCalls[2]?.body.session).not.toBe(session);
+  });
+
   it('uses a cached self-registered agent token instead of the shared agentToken', async () => {
     writeCachedAgentToken('test-client', 'agent-token-value', 'agent:wyat/x');
     daemon = new FakeDaemon();
@@ -985,5 +1055,29 @@ describe('messaging tools (agent identity, no run token)', () => {
     expect(daemon.sendCalls[0]?.headers.authorization).toBe(
       'Bearer agent-token-value'
     );
+  });
+});
+
+describe('withBearer', () => {
+  it('keeps headers passed as an object, a tuple list or a Headers instance', () => {
+    const variants: NonNullable<RequestInit['headers']>[] = [
+      { 'content-type': 'application/json', 'idempotency-key': 'k1' },
+      [
+        ['content-type', 'application/json'],
+        ['idempotency-key', 'k1'],
+      ],
+      new Headers({
+        'content-type': 'application/json',
+        'idempotency-key': 'k1',
+      }),
+    ];
+    for (const headers of variants) {
+      const merged = new Headers(withBearer({ headers }, 't').headers);
+      expect(Object.fromEntries(merged.entries())).toEqual({
+        authorization: 'Bearer t',
+        'content-type': 'application/json',
+        'idempotency-key': 'k1',
+      });
+    }
   });
 });

@@ -15,6 +15,7 @@ import {
   forgetAgentToken,
   messagingCredential,
 } from './identity.js';
+import type { MessagingCredential } from './identity.js';
 import type { MessageBlockingTiming } from './toolKit.js';
 import {
   DEFAULT_MESSAGE_BLOCKING_TIMING,
@@ -54,7 +55,7 @@ async function messagingErrorText(res: Response): Promise<string> {
 // A messaging request's result, or why it failed: `transient` (a network
 // hiccup) is safe to retry/ride out; non-transient (no daemon, revoked) is not.
 type MessagingFetchOutcome =
-  | { ok: true; res: Response }
+  | { ok: true; res: Response; kind: MessagingCredential['kind'] }
   | { ok: false; transient: true; message: string }
   | { ok: false; transient: false; result: ToolOutcome };
 
@@ -70,13 +71,25 @@ async function authErrorCode(res: Response): Promise<string | undefined> {
   return body.code;
 }
 
+// Adds the bearer however the caller passed its headers (object, tuple list
+// or Headers instance); an object spread would drop the latter two's entries.
+export function withBearer(init: RequestInit, token: string): RequestInit {
+  const headers = new Headers(init.headers);
+  headers.set('authorization', `Bearer ${token}`);
+  return { ...init, headers };
+}
+
+// A request built for the credential it goes out with, so a body can carry
+// fields (like `session`) that only one kind of caller sends.
+type RequestFor = (credential: MessagingCredential) => RequestInit;
+
 // One request to a messaging route. A 401 for an unknown (not revoked)
 // agent token self-heals: drops the stale cache, re-registers, retries once.
 async function messagingFetch(
   rootDir: string,
   server: McpServer,
   path: string,
-  init: RequestInit = {}
+  init: RequestInit | RequestFor = {}
 ): Promise<MessagingFetchOutcome> {
   const projRoot = projectRoot(rootDir);
   const daemon = readDaemonFile(projRoot);
@@ -94,15 +107,14 @@ async function messagingFetch(
   }
 
   const url = `http://127.0.0.1:${daemon.port}${path}`;
-  const attempt = (token: string): Promise<Response> =>
-    fetch(url, {
-      ...init,
-      headers: { ...init.headers, authorization: `Bearer ${token}` },
-    });
+  const requestFor: RequestFor = typeof init === 'function' ? init : () => init;
+  const attempt = (cred: MessagingCredential): Promise<Response> =>
+    fetch(url, withBearer(requestFor(cred), cred.token));
 
   let res: Response;
+  let kind = credential.kind;
   try {
-    res = await attempt(credential.token);
+    res = await attempt(credential);
   } catch (err) {
     return { ok: false, transient: true, message: (err as Error).message };
   }
@@ -127,14 +139,15 @@ async function messagingFetch(
       if ('error' in fresh) {
         return { ok: false, transient: false, result: toolError(fresh.error) };
       }
+      kind = fresh.kind;
       try {
-        res = await attempt(fresh.token);
+        res = await attempt(fresh);
       } catch (err) {
         return { ok: false, transient: true, message: (err as Error).message };
       }
     }
   }
-  return { ok: true, res };
+  return { ok: true, res, kind };
 }
 
 // Turns a failed MessagingFetchOutcome into the tool's error result.
@@ -259,30 +272,50 @@ interface MsgSendArgs {
   wake?: 'none' | 'request';
 }
 
-// POST /api/messages, then (when `blocking`) long-polls for its answer —
-// also pushed to the asking run's own session, so a found answer notes that.
+// An external agent's sessions share one mailbox, so its sends and replies
+// name this MCP process's session; a run is a single session and names none.
+function withSession<T extends object>(
+  body: T,
+  credential: MessagingCredential,
+  session: string
+): T | (T & { session: string }) {
+  return credential.kind === 'agent' ? { ...body, session } : body;
+}
+
+// Where else a blocking answer lands: a run's session gets it pushed, while an
+// external agent's copy waits in its mailbox.
+function answerCopyNote(kind: MessagingCredential['kind']): string {
+  return kind === 'run'
+    ? 'this answer was also delivered to your session as a pushed message ' +
+        '— no need to act on it twice'
+    : 'this answer is also in your mailbox (inbox_read) — no need to act on ' +
+        'it twice';
+}
+
+// POST /api/messages, then (when `blocking`) long-polls for its answer.
 async function msgSend(
   rootDir: string,
   server: McpServer,
   args: MsgSendArgs,
+  session: string,
   timing: MessageBlockingTiming,
   signal?: AbortSignal
 ): Promise<ToolOutcome> {
   // Same key on both attempts: a dropped connection doesn't say whether the
   // send landed, so the retry replays the server's cached first result.
   const idempotencyKey = randomUUID();
-  const sendInit = (): RequestInit => ({
+  const sendInit = (credential: MessagingCredential): RequestInit => ({
     method: 'POST',
     headers: {
       'content-type': 'application/json',
       'idempotency-key': idempotencyKey,
     },
-    body: JSON.stringify(args),
+    body: JSON.stringify(withSession(args, credential, session)),
     signal: requestDeadline(),
   });
-  let sent = await messagingFetch(rootDir, server, '/api/messages', sendInit());
+  let sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
   if (!sent.ok && sent.transient) {
-    sent = await messagingFetch(rootDir, server, '/api/messages', sendInit());
+    sent = await messagingFetch(rootDir, server, '/api/messages', sendInit);
   }
   if (!sent.ok) return fetchFailed(sent, 'msg_send');
   if (!sent.res.ok) return toolError(await messagingErrorText(sent.res));
@@ -317,9 +350,7 @@ async function msgSend(
   return toolResult({
     message: result.message,
     answer: outcome.value,
-    note:
-      'this answer was also delivered to your session as a pushed message ' +
-      '— no need to act on it twice',
+    note: answerCopyNote(sent.kind),
   });
 }
 
@@ -334,18 +365,25 @@ interface MsgReplyArgs {
 async function msgReply(
   rootDir: string,
   server: McpServer,
-  args: MsgReplyArgs
+  args: MsgReplyArgs,
+  session: string
 ): Promise<ToolOutcome> {
   const fetched = await messagingFetch(
     rootDir,
     server,
     `/api/messages/${encodeURIComponent(args.messageId)}/reply`,
-    {
+    (credential) => ({
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ body: args.body, choice: args.choice }),
+      body: JSON.stringify(
+        withSession(
+          { body: args.body, choice: args.choice },
+          credential,
+          session
+        )
+      ),
       signal: requestDeadline(),
-    }
+    })
   );
   if (!fetched.ok) return fetchFailed(fetched, 'msg_reply');
   if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
@@ -503,6 +541,9 @@ export function registerMessagingTools(
   opts: { blockingTiming?: MessageBlockingTiming } = {}
 ): void {
   const timing = opts.blockingTiming ?? DEFAULT_MESSAGE_BLOCKING_TIMING;
+  // Generated once as the server starts: every send and reply this process
+  // makes as an external agent carries it.
+  const session = randomUUID();
 
   server.registerTool(
     'msg_send',
@@ -517,8 +558,9 @@ export function registerMessagingTools(
         "agent recipient gets this project's configured " +
         'agentBlockingTimeoutSec (10 minutes by default). If nobody answers ' +
         'in time this returns `answer: null` — the question stays open in ' +
-        'your inbox. Any answer this call DOES receive is also pushed to ' +
-        'your own session as it arrives; do not act on it twice.',
+        'your inbox. Inside a dispatch run, any answer this call DOES ' +
+        'receive is also pushed to your session; outside one it also waits ' +
+        'in your inbox. Do not act on it twice.',
       inputSchema: {
         to: z.array(z.string()).min(1),
         kind: MESSAGE_KIND_SCHEMA,
@@ -539,7 +581,8 @@ export function registerMessagingTools(
       },
       annotations: { readOnlyHint: false },
     },
-    (args, extra) => msgSend(rootDir, server, args, timing, extra.signal)
+    (args, extra) =>
+      msgSend(rootDir, server, args, session, timing, extra.signal)
   );
 
   server.registerTool(
@@ -563,7 +606,7 @@ export function registerMessagingTools(
       annotations: { readOnlyHint: false },
     },
     ({ messageId, body, choice }) =>
-      msgReply(rootDir, server, { messageId, body, choice })
+      msgReply(rootDir, server, { messageId, body, choice }, session)
   );
 
   server.registerTool(
