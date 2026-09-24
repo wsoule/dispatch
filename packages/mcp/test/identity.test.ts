@@ -32,9 +32,8 @@ class FakeDaemon {
   /** Delays the register response, to widen the window for a concurrent
    *  call's in-flight dedup to actually observe this one still pending. */
   registerDelayMs = 0;
-  /** Runs synchronously as each register request arrives, before the
-   *  response is built — used to simulate a parallel process finishing its
-   *  own registration while this one is in flight. */
+  /** Runs as each register request arrives, before the response: lets a test
+   *  finish a parallel process's registration while this one is in flight. */
   onRegisterRequest: (() => void) | null = null;
   private server: ReturnType<typeof Bun.serve> | undefined;
 

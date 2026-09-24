@@ -1,12 +1,8 @@
-// Shared primitives every tool module in this package builds on: the tool
-// result/error shape, the run-worktree/project-root split, a poll loop's
-// abort signal, and the timing knobs each long-polling tool family takes.
-// A leaf module (no imports from tools.ts or messaging.ts) so those two can
-// both depend on it without an import cycle between them.
+// Primitives shared by tools.ts and messaging.ts; it imports neither, so the
+// two can both depend on it without an import cycle.
 
-// Index signature matches the SDK's CallToolResult shape (an open record
-// with a few known fields) so this satisfies ToolCallback's return type
-// without pulling in the SDK's own (deeply generic) result type here.
+// The index signature makes this satisfy the SDK's open CallToolResult shape
+// without importing its deeply generic result type.
 export interface ToolOutcome {
   [key: string]: unknown;
   content: { type: 'text'; text: string }[];
@@ -27,9 +23,8 @@ export function toolError(message: string): ToolOutcome {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
-// Inside a dispatch run, `rootDir` is the run's git worktree, but daemon
-// discovery and any write meant to outlive the run must target the PROJECT
-// root instead — the executor records that override when the two differ.
+// Inside a run `rootDir` is its worktree; daemon discovery and writes that
+// outlive the run use the executor's DISPATCH_PROJECT_ROOT instead.
 export function projectRoot(rootDir: string): string {
   const override = process.env.DISPATCH_PROJECT_ROOT;
   return override !== undefined && override !== '' ? override : rootDir;
@@ -99,9 +94,8 @@ export interface MessageBlockingTiming {
   errorDelayMs: number;
 }
 
-// humanTotalWaitMs/requestTimeoutMs/retryDelayMs/errorDelayMs match
-// DEFAULT_QUESTION_TIMING; defaultAgentTotalWaitMs matches core's
-// DEFAULT_MESSAGING.agentBlockingTimeoutSec (600s).
+// Human and polling numbers match DEFAULT_QUESTION_TIMING; the agent fallback
+// matches core's DEFAULT_MESSAGING.agentBlockingTimeoutSec (600s).
 export const DEFAULT_MESSAGE_BLOCKING_TIMING: MessageBlockingTiming = {
   humanTotalWaitMs: 30 * 60_000,
   defaultAgentTotalWaitMs: 600_000,

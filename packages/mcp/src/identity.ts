@@ -226,9 +226,8 @@ function runCredential(): MessagingCredential | { error: string } | null {
   };
 }
 
-/** The credential a messaging tool call presents: a live run's own token, or
- *  a self-registered per-project agent identity. `rootDir` must already be
- *  the daemon-discovery project root (see toolKit.ts's `projectRoot`). */
+/** A run's own token, else this project's self-registered agent identity.
+ *  `rootDir` must already be the project root (toolKit.ts's `projectRoot`). */
 export async function messagingCredential(
   rootDir: string,
   clientName: string | undefined

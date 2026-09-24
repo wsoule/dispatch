@@ -61,11 +61,8 @@ const DEFAULT_SEND_BODY = {
   downgraded: false,
 };
 
-// A minimal stand-in for dispatchd's messaging surface
-// (packages/server/src/messaging/routes.ts) — enough of every route
-// msg_send/msg_reply/inbox_read/thread_read/channel_*/agents/register proxy
-// to drive each tool's request shaping, response handling, and the
-// identity-401 self-heal/revoked paths deterministically.
+// A stand-in for dispatchd's messaging routes, enough to drive each tool's
+// requests and responses and the 401 self-heal and revoked paths.
 class FakeDaemon {
   // Each authorized POST /api/messages consumes the next entry; the last one
   // repeats once exhausted.
@@ -970,10 +967,8 @@ describe('channel tools', () => {
       arguments: { name: 'epic/t-abc123' },
     })) as ToolCallResult;
     expect(result.isError).toBeUndefined();
-    // Channel names may contain '/' (an epic's implicit epic/<id> channel),
-    // so the tool encodeURIComponents the whole name — same as the client
-    // package's own joinChannel — and the server decodeURIComponents it
-    // back to one segment rather than splitting on the encoded slash.
+    // An epic channel's name holds a '/', so the whole name is encoded as one
+    // path segment, as the client package's joinChannel does.
     expect(daemon.joinCalls).toEqual([
       { name: encodeURIComponent('epic/t-abc123'), body: {} },
     ]);
