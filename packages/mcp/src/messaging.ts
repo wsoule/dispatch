@@ -1,62 +1,32 @@
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
+import { hostname } from 'node:os';
 import { z } from 'zod';
 
-import type { DaemonFileInfo } from './daemon.js';
 import {
   daemonAuth,
   isDaemonHealthy,
   readDaemonFile,
   requestDeadline,
 } from './daemon.js';
-import { messagingCredential } from './identity.js';
-import type { ToolOutcome } from './tools.js';
-import { projectRoot, toolError, toolResult } from './tools.js';
+import {
+  agentName,
+  agentTokenFilePath,
+  forgetAgentToken,
+  messagingCredential,
+} from './identity.js';
+import type { MessageBlockingTiming } from './toolKit.js';
+import {
+  DEFAULT_MESSAGE_BLOCKING_TIMING,
+  pollSignal,
+  projectRoot,
+  toolError,
+  toolResult,
+} from './toolKit.js';
+import type { ToolOutcome } from './toolKit.js';
 
-// ---------------------------------------------------------------------------
-// Messaging tools — the agent-communication bus's tool-calling surface (spec
-// §5–§8): msg_send, msg_reply, inbox_read, thread_read, channel_join,
-// channel_leave, channel_list. Every one of these proxies a route under
-// packages/server/src/messaging/routes.ts, which is the source of truth for
-// every request/response shape reproduced (loosely, as plain records) below
-// — this package cannot depend on @dispatch/server (FSL) or @dispatch/
-// protocol (a runtime dependency the rest of this MIT package deliberately
-// avoids; see packages/client/src/api.ts's own structural mirrors for the
-// same reasoning).
-//
-// Unlike every other tool in tools.ts, these authenticate with the calling
-// run's own DISPATCH_RUN_TOKEN or a self-registered agent token (see
-// identity.ts) rather than the daemon's shared agentToken — the messaging
-// routes reject that shared token outright, because a message needs a real,
-// individually attributable sender.
-// ---------------------------------------------------------------------------
-
-/** How long `msg_send` waits for a blocking answer, and how hard it polls. */
-export interface MessageBlockingTiming {
-  /** Total budget when any recipient is a human. */
-  humanTotalWaitMs: number;
-  /** Total budget when no recipient is a human and `GET /api/config` could
-   *  not be read — the project's own `messaging.agentBlockingTimeoutSec`
-   *  wins whenever it is available. */
-  defaultAgentTotalWaitMs: number;
-  /** Per-request timeout; longer than the daemon's own 30s long-poll window. */
-  requestTimeoutMs: number;
-  /** Pause after a clean unanswered poll, and after a failed one. */
-  retryDelayMs: number;
-  errorDelayMs: number;
-}
-
-// Same numbers as tools.ts's DEFAULT_QUESTION_TIMING for the human case (not
-// imported, to avoid a needless import cycle with tools.ts — see the module
-// comment above) and core's DEFAULT_MESSAGING.agentBlockingTimeoutSec for the
-// agent fallback.
-export const DEFAULT_MESSAGE_BLOCKING_TIMING: MessageBlockingTiming = {
-  humanTotalWaitMs: 30 * 60_000,
-  defaultAgentTotalWaitMs: 600_000,
-  requestTimeoutMs: 45_000,
-  retryDelayMs: 250,
-  errorDelayMs: 2000,
-};
+// Messaging tools (spec §5–§8), each proxying a route under
+// packages/server/src/messaging/routes.ts, authenticated via identity.ts.
 
 const refShape = {
   type: z.string(),
@@ -64,23 +34,12 @@ const refShape = {
   at: z.string().optional(),
 };
 
-// A loosely-typed passthrough record — every messaging response is relayed
-// to the caller close to verbatim, so there is no value in re-declaring
-// @dispatch/protocol's Message/Delivery shapes field-for-field here.
+// Every messaging response is relayed close to verbatim — no value in
+// re-declaring @dispatch/protocol's shapes field by field here.
 const record = z.record(z.string(), z.unknown());
 
-// One poll's abort signal: its own timeout, plus the client's cancellation
-// when there is one — same construction as tools.ts's own pollSignal, kept
-// local to avoid a second import-cycle edge back into tools.ts.
-function pollSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
-}
-
-// Renders a messaging route's error body ({error, field?}) as one line —
-// `field` rides along in brackets so an agent can see exactly which input
-// was rejected without parsing JSON out of a tool-error string. A gate like
-// "awaiting approval in Dispatch" carries no field and passes through as-is.
+// Renders a messaging route's {error, field?} body as one line, so an agent
+// sees which input was rejected without parsing JSON out of an error string.
 async function messagingErrorText(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as {
     error?: string;
@@ -92,48 +51,113 @@ async function messagingErrorText(res: Response): Promise<string> {
     : message;
 }
 
-// Resolves the daemon and the caller's messaging credential together, since
-// every messaging tool needs both before it can make its one real request.
-async function messagingContext(
+// A messaging request's result, or why it failed: `transient` (a network
+// hiccup) is safe to retry/ride out; non-transient (no daemon, revoked) is not.
+type MessagingFetchOutcome =
+  | { ok: true; res: Response }
+  | { ok: false; transient: true; message: string }
+  | { ok: false; transient: false; result: ToolOutcome };
+
+// The auth `code` a messaging route's 401 body carries, when it parses
+// (see packages/server/src/messaging/principal.ts's resolvePrincipal).
+async function authErrorCode(res: Response): Promise<string | undefined> {
+  const body = (await res
+    .clone()
+    .json()
+    .catch(() => ({}))) as {
+    code?: string;
+  };
+  return body.code;
+}
+
+// One request to a messaging route. A 401 for an unknown (not revoked)
+// agent token self-heals: drops the stale cache, re-registers, retries once.
+async function messagingFetch(
   rootDir: string,
-  server: McpServer
-): Promise<
-  | { ok: true; daemon: DaemonFileInfo; auth: Record<string, string> }
-  | { ok: false; result: ToolOutcome }
-> {
+  server: McpServer,
+  path: string,
+  init: RequestInit = {}
+): Promise<MessagingFetchOutcome> {
   const projRoot = projectRoot(rootDir);
   const daemon = readDaemonFile(projRoot);
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
     return {
       ok: false,
+      transient: false,
       result: toolError('dispatchd not running — no one to message'),
     };
   }
-  // The MCP client's own name (e.g. "Claude Code") is only known once
-  // `initialize` has completed, which has already happened by the time any
-  // tool handler runs — so this is read here, at call time, not cached at
-  // registration.
   const clientName = server.server.getClientVersion()?.name;
   const credential = await messagingCredential(projRoot, clientName);
-  if ('error' in credential)
-    return { ok: false, result: toolError(credential.error) };
-  return {
-    ok: true,
-    daemon,
-    auth: { authorization: `Bearer ${credential.token}` },
-  };
+  if ('error' in credential) {
+    return { ok: false, transient: false, result: toolError(credential.error) };
+  }
+
+  const url = `http://127.0.0.1:${daemon.port}${path}`;
+  const attempt = (token: string): Promise<Response> =>
+    fetch(url, {
+      ...init,
+      headers: { ...init.headers, authorization: `Bearer ${token}` },
+    });
+
+  let res: Response;
+  try {
+    res = await attempt(credential.token);
+  } catch (err) {
+    return { ok: false, transient: true, message: (err as Error).message };
+  }
+
+  if (res.status === 401 && credential.kind === 'agent') {
+    const code = await authErrorCode(res);
+    const name = agentName(process.env, clientName, hostname());
+    if (code === 'auth_agent_revoked') {
+      const filePath = agentTokenFilePath(projRoot, name);
+      return {
+        ok: false,
+        transient: false,
+        result: toolError(
+          `This agent's access to ${projRoot} was revoked. To ask for ` +
+            `approval again, delete ${filePath} and retry.`
+        ),
+      };
+    }
+    if (code === 'auth_invalid_token') {
+      forgetAgentToken(projRoot, name);
+      const fresh = await messagingCredential(projRoot, clientName);
+      if (!('error' in fresh)) {
+        try {
+          res = await attempt(fresh.token);
+        } catch (err) {
+          return {
+            ok: false,
+            transient: true,
+            message: (err as Error).message,
+          };
+        }
+      }
+    }
+  }
+  return { ok: true, res };
 }
 
-// This project's configured agent-to-agent blocking timeout
-// (`messaging.agentBlockingTimeoutSec`, in GET /api/config), or `fallbackMs`
-// when the daemon can't be reached, answers with something unreadable, or
-// simply doesn't carry the field (an older config). Read with the daemon's
-// shared request-tier token — GET /api/config is not a messaging route and
-// stays on the same auth every other proxy tool in tools.ts already uses.
+// Turns a failed MessagingFetchOutcome into the tool's error result.
+function fetchFailed(
+  outcome: Extract<MessagingFetchOutcome, { ok: false }>,
+  toolName: string
+): ToolOutcome {
+  return outcome.transient
+    ? toolError(`${toolName} failed: ${outcome.message}`)
+    : outcome.result;
+}
+
+// This project's `messaging.agentBlockingTimeoutSec` (GET /api/config, not a
+// messaging route — stays on the shared request-tier token), or `fallbackMs`.
 async function agentBlockingTimeoutMs(
-  daemon: DaemonFileInfo,
+  rootDir: string,
   fallbackMs: number
 ): Promise<number> {
+  const daemon = readDaemonFile(projectRoot(rootDir));
+  if (daemon === null) return fallbackMs;
   try {
     const res = await fetch(`http://127.0.0.1:${daemon.port}/api/config`, {
       headers: daemonAuth(daemon),
@@ -150,44 +174,80 @@ async function agentBlockingTimeoutMs(
   }
 }
 
-// Long-polls `GET /api/messages/:id/answer?wait=1` until an answer lands or
-// `totalWaitMs` elapses — the daemon's own long-poll window (30s) is shorter
-// than `requestTimeoutMs`, so a clean "no answer yet" response is the normal
-// case this loop just repeats, not a failure.
+// Resolves after `ms`, or immediately (returning true) if `signal` aborts
+// first — keeps a poll loop's backoff cancellable.
+function abortableSleep(ms: number, signal?: AbortSignal): Promise<boolean> {
+  if (signal?.aborted === true) return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve(false);
+    }, ms);
+    const onAbort = (): void => {
+      clearTimeout(timer);
+      resolve(true);
+    };
+    signal?.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+// A 4xx that retrying cannot fix — anything except 408 (request timeout) and
+// 429 (rate limited), which are transient by nature.
+function isPermanentClientError(status: number): boolean {
+  return status >= 400 && status < 500 && status !== 408 && status !== 429;
+}
+
+type PollOutcome =
+  | { kind: 'answer'; value: Record<string, unknown> }
+  | { kind: 'timeout' }
+  | { kind: 'error'; result: ToolOutcome };
+
+// Long-polls GET /api/messages/:id/answer?wait=1 until an answer, timeout, or
+// non-retryable error; each poll is capped to what's left of the budget.
 async function pollForAnswer(
-  daemon: DaemonFileInfo,
-  auth: Record<string, string>,
+  rootDir: string,
+  server: McpServer,
   messageId: string,
   totalWaitMs: number,
   timing: MessageBlockingTiming,
   signal?: AbortSignal
-): Promise<Record<string, unknown> | null> {
+): Promise<PollOutcome> {
   const deadline = Date.now() + totalWaitMs;
   while (Date.now() < deadline && signal?.aborted !== true) {
-    let polled: { answer: Record<string, unknown> | null } | null = null;
-    try {
-      const res = await fetch(
-        `http://127.0.0.1:${daemon.port}/api/messages/${encodeURIComponent(messageId)}/answer?wait=1`,
-        { headers: auth, signal: pollSignal(timing.requestTimeoutMs, signal) }
-      );
-      if (res.ok) {
-        polled = (await res.json()) as {
-          answer: Record<string, unknown> | null;
-        };
+    const remainingMs = Math.max(deadline - Date.now(), 0);
+    const outcome = await messagingFetch(
+      rootDir,
+      server,
+      `/api/messages/${encodeURIComponent(messageId)}/answer?wait=1`,
+      {
+        signal: pollSignal(
+          Math.min(timing.requestTimeoutMs, remainingMs),
+          signal
+        ),
       }
-    } catch {
-      // A dropped or timed-out poll says nothing about the answer; ask again.
-    }
-    if (polled?.answer != null) return polled.answer;
-    if (signal !== undefined && signal.aborted) break;
-    await new Promise((resolve) =>
-      setTimeout(
-        resolve,
-        polled !== null ? timing.retryDelayMs : timing.errorDelayMs
-      )
     );
+    if (!outcome.ok) {
+      if (!outcome.transient) return { kind: 'error', result: outcome.result };
+      if (await abortableSleep(timing.errorDelayMs, signal)) break;
+      continue;
+    }
+    if (outcome.res.ok) {
+      const body = (await outcome.res.json().catch(() => ({}))) as {
+        answer?: Record<string, unknown> | null;
+      };
+      if (body.answer != null) return { kind: 'answer', value: body.answer };
+      if (await abortableSleep(timing.retryDelayMs, signal)) break;
+      continue;
+    }
+    if (isPermanentClientError(outcome.res.status)) {
+      return {
+        kind: 'error',
+        result: toolError(await messagingErrorText(outcome.res)),
+      };
+    }
+    if (await abortableSleep(timing.errorDelayMs, signal)) break;
   }
-  return null;
+  return { kind: 'timeout' };
 }
 
 interface MsgSendArgs {
@@ -202,10 +262,8 @@ interface MsgSendArgs {
   wake?: 'none' | 'request';
 }
 
-// POST /api/messages, then (when `blocking`) long-polls for its answer.
-// dispatchd also pushes that same answer straight into the asking run's own
-// session as soon as it lands (ruling R2-2), so a non-null result here
-// carries a note saying so — the calling agent must not act on it twice.
+// POST /api/messages, then (when `blocking`) long-polls for its answer —
+// also pushed to the asking run's own session, so a found answer notes that.
 async function msgSend(
   rootDir: string,
   server: McpServer,
@@ -213,30 +271,25 @@ async function msgSend(
   timing: MessageBlockingTiming,
   signal?: AbortSignal
 ): Promise<ToolOutcome> {
-  const ctx = await messagingContext(rootDir, server);
-  if (!ctx.ok) return ctx.result;
-
-  let sendRes: Response;
-  try {
-    sendRes = await fetch(`http://127.0.0.1:${ctx.daemon.port}/api/messages`, {
-      method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        // A random key per call, not a hash of the body: this is here so a
-        // dropped-connection RETRY of the exact same tool call can be told
-        // apart from two genuinely separate sends, not to deduplicate
-        // identical-looking messages the agent means to send twice.
-        'idempotency-key': randomUUID(),
-        ...ctx.auth,
-      },
-      body: JSON.stringify(args),
-      signal: requestDeadline(),
-    });
-  } catch (err) {
-    return toolError(`msg_send failed: ${(err as Error).message}`);
+  // Same key on both attempts: a dropped connection doesn't say whether the
+  // send landed, so the retry replays the server's cached first result.
+  const idempotencyKey = randomUUID();
+  const sendInit = (): RequestInit => ({
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      'idempotency-key': idempotencyKey,
+    },
+    body: JSON.stringify(args),
+    signal: requestDeadline(),
+  });
+  let sent = await messagingFetch(rootDir, server, '/api/messages', sendInit());
+  if (!sent.ok && sent.transient) {
+    sent = await messagingFetch(rootDir, server, '/api/messages', sendInit());
   }
-  if (!sendRes.ok) return toolError(await messagingErrorText(sendRes));
-  const result = (await sendRes.json()) as {
+  if (!sent.ok) return fetchFailed(sent, 'msg_send');
+  if (!sent.res.ok) return toolError(await messagingErrorText(sent.res));
+  const result = (await sent.res.json()) as {
     message: Record<string, unknown>;
     deliveries: unknown[];
     downgraded: boolean;
@@ -247,30 +300,30 @@ async function msgSend(
   const isHuman = args.to.some((addr) => addr.startsWith('human:'));
   const totalWaitMs = isHuman
     ? timing.humanTotalWaitMs
-    : await agentBlockingTimeoutMs(ctx.daemon, timing.defaultAgentTotalWaitMs);
-  const answer = await pollForAnswer(
-    ctx.daemon,
-    ctx.auth,
+    : await agentBlockingTimeoutMs(rootDir, timing.defaultAgentTotalWaitMs);
+  const outcome = await pollForAnswer(
+    rootDir,
+    server,
     result.message.id as string,
     totalWaitMs,
     timing,
     signal
   );
-  return toolResult(
-    answer === null
-      ? {
-          message: result.message,
-          answer: null,
-          note: 'no answer yet — it will arrive in your inbox',
-        }
-      : {
-          message: result.message,
-          answer,
-          note:
-            'this answer was also delivered to your session as a pushed ' +
-            'message — no need to act on it twice',
-        }
-  );
+  if (outcome.kind === 'error') return outcome.result;
+  if (outcome.kind === 'timeout') {
+    return toolResult({
+      message: result.message,
+      answer: null,
+      note: 'no answer yet — it will arrive in your inbox',
+    });
+  }
+  return toolResult({
+    message: result.message,
+    answer: outcome.value,
+    note:
+      'this answer was also delivered to your session as a pushed message ' +
+      '— no need to act on it twice',
+  });
 }
 
 interface MsgReplyArgs {
@@ -286,24 +339,20 @@ async function msgReply(
   server: McpServer,
   args: MsgReplyArgs
 ): Promise<ToolOutcome> {
-  const ctx = await messagingContext(rootDir, server);
-  if (!ctx.ok) return ctx.result;
-  let res: Response;
-  try {
-    res = await fetch(
-      `http://127.0.0.1:${ctx.daemon.port}/api/messages/${encodeURIComponent(args.messageId)}/reply`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...ctx.auth },
-        body: JSON.stringify({ body: args.body, choice: args.choice }),
-        signal: requestDeadline(),
-      }
-    );
-  } catch (err) {
-    return toolError(`msg_reply failed: ${(err as Error).message}`);
-  }
-  if (!res.ok) return toolError(await messagingErrorText(res));
-  return toolResult((await res.json()) as Record<string, unknown>);
+  const fetched = await messagingFetch(
+    rootDir,
+    server,
+    `/api/messages/${encodeURIComponent(args.messageId)}/reply`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: args.body, choice: args.choice }),
+      signal: requestDeadline(),
+    }
+  );
+  if (!fetched.ok) return fetchFailed(fetched, 'msg_reply');
+  if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
+  return toolResult((await fetched.res.json()) as Record<string, unknown>);
 }
 
 interface InboxReadArgs {
@@ -311,51 +360,59 @@ interface InboxReadArgs {
   markRead?: boolean;
 }
 
-// GET /api/mailbox, then marks every returned held/notified item read
-// (POST /api/deliveries/:id/read) unless the caller passed `markRead: false`
-// — `pushed`, `read` and `answered` items are left alone, since marking them
-// again would be a no-op at best and a stale-state race at worst.
+// GET /api/mailbox, marking held/notified items read unless `markRead:
+// false`; `marked` lists what succeeded, `markReadErrors` what didn't.
 async function inboxRead(
   rootDir: string,
   server: McpServer,
   args: InboxReadArgs
 ): Promise<ToolOutcome> {
-  const ctx = await messagingContext(rootDir, server);
-  if (!ctx.ok) return ctx.result;
   const query = new URLSearchParams();
   if (args.state !== undefined && args.state.length > 0) {
     query.set('state', args.state.join(','));
   }
   const qs = query.size > 0 ? `?${query.toString()}` : '';
-  let res: Response;
-  try {
-    res = await fetch(`http://127.0.0.1:${ctx.daemon.port}/api/mailbox${qs}`, {
-      headers: ctx.auth,
-      signal: requestDeadline(),
-    });
-  } catch (err) {
-    return toolError(`inbox_read failed: ${(err as Error).message}`);
-  }
-  if (!res.ok) return toolError(await messagingErrorText(res));
-  const body = (await res.json()) as {
+  const fetched = await messagingFetch(rootDir, server, `/api/mailbox${qs}`);
+  if (!fetched.ok) return fetchFailed(fetched, 'inbox_read');
+  if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
+  const body = (await fetched.res.json()) as {
     items: { delivery: { id: string; state: string } }[];
   };
 
+  const marked: string[] = [];
+  const markReadErrors: { id: string; error: string }[] = [];
   if (args.markRead !== false) {
     const toMark = body.items.filter(
       (item) =>
         item.delivery.state === 'held' || item.delivery.state === 'notified'
     );
     await Promise.all(
-      toMark.map((item) =>
-        fetch(
-          `http://127.0.0.1:${ctx.daemon.port}/api/deliveries/${encodeURIComponent(item.delivery.id)}/read`,
-          { method: 'POST', headers: ctx.auth, signal: requestDeadline() }
-        ).catch(() => null)
-      )
+      toMark.map(async (item) => {
+        const outcome = await messagingFetch(
+          rootDir,
+          server,
+          `/api/deliveries/${encodeURIComponent(item.delivery.id)}/read`,
+          { method: 'POST' }
+        );
+        if (!outcome.ok) {
+          markReadErrors.push({
+            id: item.delivery.id,
+            error: outcome.transient ? outcome.message : 'mark-read failed',
+          });
+        } else if (!outcome.res.ok) {
+          markReadErrors.push({
+            id: item.delivery.id,
+            error: await messagingErrorText(outcome.res),
+          });
+        } else {
+          marked.push(item.delivery.id);
+        }
+      })
     );
   }
-  return toolResult(body);
+  const result: Record<string, unknown> = { ...body, marked };
+  if (markReadErrors.length > 0) result.markReadErrors = markReadErrors;
+  return toolResult(result);
 }
 
 // GET /api/threads/:id
@@ -364,19 +421,14 @@ async function threadRead(
   server: McpServer,
   args: { threadId: string }
 ): Promise<ToolOutcome> {
-  const ctx = await messagingContext(rootDir, server);
-  if (!ctx.ok) return ctx.result;
-  let res: Response;
-  try {
-    res = await fetch(
-      `http://127.0.0.1:${ctx.daemon.port}/api/threads/${encodeURIComponent(args.threadId)}`,
-      { headers: ctx.auth, signal: requestDeadline() }
-    );
-  } catch (err) {
-    return toolError(`thread_read failed: ${(err as Error).message}`);
-  }
-  if (!res.ok) return toolError(await messagingErrorText(res));
-  return toolResult((await res.json()) as Record<string, unknown>);
+  const fetched = await messagingFetch(
+    rootDir,
+    server,
+    `/api/threads/${encodeURIComponent(args.threadId)}`
+  );
+  if (!fetched.ok) return fetchFailed(fetched, 'thread_read');
+  if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
+  return toolResult((await fetched.res.json()) as Record<string, unknown>);
 }
 
 // POST /api/channels/:name/members — `member` omitted lets the server apply
@@ -386,48 +438,41 @@ async function channelJoin(
   server: McpServer,
   args: { name: string; member?: string }
 ): Promise<ToolOutcome> {
-  const ctx = await messagingContext(rootDir, server);
-  if (!ctx.ok) return ctx.result;
-  let res: Response;
-  try {
-    res = await fetch(
-      `http://127.0.0.1:${ctx.daemon.port}/api/channels/${encodeURIComponent(args.name)}/members`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', ...ctx.auth },
-        body: JSON.stringify(
-          args.member !== undefined ? { member: args.member } : {}
-        ),
-        signal: requestDeadline(),
-      }
-    );
-  } catch (err) {
-    return toolError(`channel_join failed: ${(err as Error).message}`);
-  }
-  if (!res.ok) return toolError(await messagingErrorText(res));
+  const fetched = await messagingFetch(
+    rootDir,
+    server,
+    `/api/channels/${encodeURIComponent(args.name)}/members`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(
+        args.member !== undefined ? { member: args.member } : {}
+      ),
+      signal: requestDeadline(),
+    }
+  );
+  if (!fetched.ok) return fetchFailed(fetched, 'channel_join');
+  if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
   return toolResult({ ok: true });
 }
 
-// DELETE /api/channels/:name/members/:addr — unlike joining, the server has
-// no "myself" default for leaving (see routes.ts's leaveChannel), so `member`
-// is required here rather than silently guessed at.
+// DELETE /api/channels/:name/members[/:addr] — `member` omitted removes the
+// caller's own self-acting address, the same default join uses.
 async function channelLeave(
   rootDir: string,
   server: McpServer,
-  args: { name: string; member: string }
+  args: { name: string; member?: string }
 ): Promise<ToolOutcome> {
-  const ctx = await messagingContext(rootDir, server);
-  if (!ctx.ok) return ctx.result;
-  let res: Response;
-  try {
-    res = await fetch(
-      `http://127.0.0.1:${ctx.daemon.port}/api/channels/${encodeURIComponent(args.name)}/members/${encodeURIComponent(args.member)}`,
-      { method: 'DELETE', headers: ctx.auth, signal: requestDeadline() }
-    );
-  } catch (err) {
-    return toolError(`channel_leave failed: ${(err as Error).message}`);
-  }
-  if (!res.ok) return toolError(await messagingErrorText(res));
+  const path =
+    args.member !== undefined
+      ? `/api/channels/${encodeURIComponent(args.name)}/members/${encodeURIComponent(args.member)}`
+      : `/api/channels/${encodeURIComponent(args.name)}/members`;
+  const fetched = await messagingFetch(rootDir, server, path, {
+    method: 'DELETE',
+    signal: requestDeadline(),
+  });
+  if (!fetched.ok) return fetchFailed(fetched, 'channel_leave');
+  if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
   return toolResult({ ok: true });
 }
 
@@ -436,19 +481,10 @@ async function channelList(
   rootDir: string,
   server: McpServer
 ): Promise<ToolOutcome> {
-  const ctx = await messagingContext(rootDir, server);
-  if (!ctx.ok) return ctx.result;
-  let res: Response;
-  try {
-    res = await fetch(`http://127.0.0.1:${ctx.daemon.port}/api/channels`, {
-      headers: ctx.auth,
-      signal: requestDeadline(),
-    });
-  } catch (err) {
-    return toolError(`channel_list failed: ${(err as Error).message}`);
-  }
-  if (!res.ok) return toolError(await messagingErrorText(res));
-  return toolResult((await res.json()) as Record<string, unknown>);
+  const fetched = await messagingFetch(rootDir, server, '/api/channels');
+  if (!fetched.ok) return fetchFailed(fetched, 'channel_list');
+  if (!fetched.res.ok) return toolError(await messagingErrorText(fetched.res));
+  return toolResult((await fetched.res.json()) as Record<string, unknown>);
 }
 
 const ADDRESS_GRAMMAR =
@@ -457,10 +493,13 @@ const ADDRESS_GRAMMAR =
   '`run:<id>` (one specific live run), `channel:<name>` (everyone in it), or ' +
   '`agent:<owner>/<name>` (a specific registered agent client).';
 
-// Registers the seven messaging tools (spec §5–§8) against a fixed root
-// directory and MCP server. Kept separate from registerDispatchTools so the
-// task_*/run_list/ask_user family and the messaging family can be read (and
-// tested) independently, even though both register onto the same server.
+const MESSAGE_KIND_SCHEMA = z.union([
+  z.enum(['message', 'question', 'answer', 'handoff', 'notice']),
+  z.string().regex(/^x-[a-z0-9][a-z0-9-]*$/),
+]);
+
+// Registers the seven messaging tools against a fixed root and server; kept
+// separate from registerDispatchTools so the two families stay independent.
 export function registerMessagingTools(
   server: McpServer,
   rootDir: string,
@@ -485,7 +524,7 @@ export function registerMessagingTools(
         'your own session as it arrives; do not act on it twice.',
       inputSchema: {
         to: z.array(z.string()).min(1),
-        kind: z.string(),
+        kind: MESSAGE_KIND_SCHEMA,
         body: z.string(),
         refs: z.array(z.object(refShape)).optional(),
         data: z.unknown().optional(),
@@ -552,7 +591,13 @@ export function registerMessagingTools(
           .optional(),
         markRead: z.boolean().optional(),
       },
-      outputSchema: { items: z.array(record) },
+      outputSchema: {
+        items: z.array(record),
+        marked: z.array(z.string()),
+        markReadErrors: z
+          .array(z.object({ id: z.string(), error: z.string() }))
+          .optional(),
+      },
       annotations: { readOnlyHint: false },
     },
     ({ state, markRead }) => inboxRead(rootDir, server, { state, markRead })
@@ -590,9 +635,11 @@ export function registerMessagingTools(
     {
       title: 'Leave a channel',
       description:
-        'Remove `member` (a full address, e.g. your own `agent:<owner>/' +
-        '<name>` or `run:<id>`) from a channel by its bare name.',
-      inputSchema: { name: z.string(), member: z.string() },
+        'Leave a channel by its bare name. Omit `member` to leave as ' +
+        'yourself (a run leaves as its task, same default `channel_join` ' +
+        'uses); pass a full address (e.g. `agent:<owner>/<name>` or ' +
+        '`run:<id>`) to remove someone else you may act for.',
+      inputSchema: { name: z.string(), member: z.string().optional() },
       outputSchema: { ok: z.boolean() },
       annotations: { readOnlyHint: false },
     },

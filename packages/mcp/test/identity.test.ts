@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -11,7 +12,11 @@ import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { daemonFilePath } from '../src/daemon.js';
-import { agentName, messagingCredential } from '../src/identity.js';
+import {
+  agentName,
+  agentTokenFilePath,
+  messagingCredential,
+} from '../src/identity.js';
 
 // A minimal stand-in for dispatchd's registration route — just enough to
 // drive messagingCredential's self-registration path deterministically.
@@ -23,6 +28,13 @@ class FakeDaemon {
     status: 'pending',
   };
   registerCalls: { name: string; client: string }[] = [];
+  /** Delays the register response, to widen the window for a concurrent
+   *  call's in-flight dedup to actually observe this one still pending. */
+  registerDelayMs = 0;
+  /** Runs synchronously as each register request arrives, before the
+   *  response is built — used to simulate a parallel process finishing its
+   *  own registration while this one is in flight. */
+  onRegisterRequest: (() => void) | null = null;
   private server: ReturnType<typeof Bun.serve> | undefined;
 
   start(): number {
@@ -35,6 +47,10 @@ class FakeDaemon {
         if (url.pathname === '/api/agents/register' && req.method === 'POST') {
           const body = (await req.json()) as { name: string; client: string };
           this.registerCalls.push(body);
+          this.onRegisterRequest?.();
+          if (this.registerDelayMs > 0) {
+            await new Promise((r) => setTimeout(r, this.registerDelayMs));
+          }
           return Response.json(this.registerBody, {
             status: this.registerStatus,
           });
@@ -80,23 +96,19 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function writeFakeDaemonFile(port: number): void {
-  const path = daemonFilePath(root);
+function writeFakeDaemonFile(forRoot: string, port: number): void {
+  const path = daemonFilePath(forRoot);
   mkdirSync(dirname(path), { recursive: true });
   writeFileSync(
     path,
     JSON.stringify({
       port,
       pid: process.pid,
-      rootDir: root,
+      rootDir: forRoot,
       startedAt: new Date().toISOString(),
       agentToken: 'shared-agent-token',
     })
   );
-}
-
-function tokenFilePath(name: string): string {
-  return join(fakeHome, '.dispatch', 'agents', `${name}.token`);
 }
 
 describe('agentName', () => {
@@ -135,18 +147,64 @@ describe('messagingCredential (run context)', () => {
 });
 
 describe('messagingCredential (cached agent token)', () => {
-  it('reads an already-registered agent token straight from disk, no daemon needed', async () => {
+  it('reads an already-registered agent token and address straight from disk, no daemon needed', async () => {
     const name = agentName(process.env, 'Claude Code', hostname());
-    const path = tokenFilePath(name);
+    const path = agentTokenFilePath(root, name);
     mkdirSync(dirname(path), { recursive: true });
-    writeFileSync(path, 'cached-token-value\n');
+    writeFileSync(
+      path,
+      JSON.stringify({ token: 'cached-token-value', address: 'agent:wyat/x' })
+    );
 
     const result = await messagingCredential(root, 'Claude Code');
     expect(result).toEqual({
       token: 'cached-token-value',
+      address: 'agent:wyat/x',
       kind: 'agent',
-      address: null,
     });
+  });
+
+  it('treats a corrupt cache file as absent rather than throwing', async () => {
+    const name = agentName(process.env, 'Claude Code', hostname());
+    const path = agentTokenFilePath(root, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, 'not json');
+
+    const result = await messagingCredential(root, 'Claude Code');
+    expect(result).toEqual({
+      error: expect.stringContaining('dispatchd not running'),
+    });
+  });
+});
+
+describe('messagingCredential (per-project caching)', () => {
+  it('registers and caches a separate token file per project root', async () => {
+    const rootB = mkdtempSync(join(tmpdir(), 'dispatch-mcp-identity-root-b-'));
+    try {
+      daemon = new FakeDaemon();
+      const port = daemon.start();
+      writeFakeDaemonFile(root, port);
+      writeFakeDaemonFile(rootB, port);
+
+      const credA = await messagingCredential(root, 'Claude Code');
+      const credB = await messagingCredential(rootB, 'Claude Code');
+
+      expect(daemon.registerCalls.length).toBe(2);
+      const name = agentName(process.env, 'Claude Code', hostname());
+      const pathA = agentTokenFilePath(root, name);
+      const pathB = agentTokenFilePath(rootB, name);
+      expect(pathA).not.toBe(pathB);
+      expect(existsSync(pathA)).toBe(true);
+      expect(existsSync(pathB)).toBe(true);
+      expect(credA).toEqual({
+        token: 'freshly-minted-token',
+        address: 'agent:wyat/claude-code.some-host',
+        kind: 'agent',
+      });
+      expect(credB).toEqual(credA);
+    } finally {
+      rmSync(rootB, { recursive: true, force: true });
+    }
   });
 });
 
@@ -158,38 +216,79 @@ describe('messagingCredential (self-registration)', () => {
     });
   });
 
-  it('registers a fresh agent identity and writes its token to disk at 0600', async () => {
+  it('registers a fresh agent identity and writes its token+address to disk at 0600', async () => {
     daemon = new FakeDaemon();
-    writeFakeDaemonFile(daemon.start());
+    writeFakeDaemonFile(root, daemon.start());
 
     const result = await messagingCredential(root, 'Claude Code');
     expect(result).toEqual({
       token: 'freshly-minted-token',
+      address: 'agent:wyat/claude-code.some-host',
       kind: 'agent',
-      address: null,
     });
 
     const name = agentName(process.env, 'Claude Code', hostname());
     expect(daemon.registerCalls).toEqual([{ name, client: 'Claude Code' }]);
 
-    const path = tokenFilePath(name);
-    expect(readFileSync(path, 'utf8')).toBe('freshly-minted-token');
+    const path = agentTokenFilePath(root, name);
+    expect(JSON.parse(readFileSync(path, 'utf8'))).toEqual({
+      token: 'freshly-minted-token',
+      address: 'agent:wyat/claude-code.some-host',
+    });
     // 0600 — owner read/write only, since this is a bearer credential.
     expect(statSync(path).mode & 0o777).toBe(0o600);
+    // 0700 on the per-project directory it lives in, for the same reason.
+    expect(statSync(dirname(path)).mode & 0o777).toBe(0o700);
   });
 
-  it('surfaces the guidance text verbatim on a 409 (already registered)', async () => {
+  it('surfaces accurate 409 guidance: revoke, then delete the cache file', async () => {
     daemon = new FakeDaemon();
     daemon.registerStatus = 409;
     daemon.registerBody = {
       error: 'agent:wyat/claude-code.some-host is already registered (pending)',
     };
-    writeFakeDaemonFile(daemon.start());
+    writeFakeDaemonFile(root, daemon.start());
 
     const result = await messagingCredential(root, 'Claude Code');
     const name = agentName(process.env, 'Claude Code', hostname());
+    const path = agentTokenFilePath(root, name);
     expect(result).toEqual({
-      error: `an agent named ${name} is already registered; revoke it in Dispatch → Settings → Agents to re-register`,
+      error: `${name} is already registered; revoke it in Dispatch → Settings → Agents, then delete ${path}`,
     });
+  });
+
+  it('re-checks the cache on a 409 instead of failing when a parallel registration just landed', async () => {
+    daemon = new FakeDaemon();
+    daemon.registerStatus = 409;
+    const name = agentName(process.env, 'Claude Code', hostname());
+    const path = agentTokenFilePath(root, name);
+    daemon.onRegisterRequest = () => {
+      mkdirSync(dirname(path), { recursive: true });
+      writeFileSync(
+        path,
+        JSON.stringify({ token: 'raced-in-token', address: 'agent:wyat/raced' })
+      );
+    };
+    writeFakeDaemonFile(root, daemon.start());
+
+    const result = await messagingCredential(root, 'Claude Code');
+    expect(result).toEqual({
+      token: 'raced-in-token',
+      address: 'agent:wyat/raced',
+      kind: 'agent',
+    });
+  });
+
+  it('memoizes concurrent registrations for the same project+name into one request', async () => {
+    daemon = new FakeDaemon();
+    daemon.registerDelayMs = 50;
+    writeFakeDaemonFile(root, daemon.start());
+
+    const [a, b] = await Promise.all([
+      messagingCredential(root, 'Claude Code'),
+      messagingCredential(root, 'Claude Code'),
+    ]);
+    expect(daemon.registerCalls.length).toBe(1);
+    expect(a).toEqual(b);
   });
 });

@@ -3,9 +3,12 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 
 import type { DaemonStarter } from './daemon.js';
 import { setDaemonStarter } from './daemon.js';
-import type { MessageBlockingTiming } from './messaging.js';
 import { ONBOARDING_MARKDOWN } from './onboarding.js';
-import type { QuestionTiming, ScopeTiming } from './tools.js';
+import type {
+  MessageBlockingTiming,
+  QuestionTiming,
+  ScopeTiming,
+} from './toolKit.js';
 import { registerDispatchTools } from './tools.js';
 
 export const MCP_SERVER_NAME = 'dispatch';

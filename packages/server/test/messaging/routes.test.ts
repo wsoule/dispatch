@@ -14,6 +14,7 @@ import {
   answerLongPoll,
   getMailbox,
   markDeliveryRead,
+  normalizeAgentName,
   registerAgent,
   waitForAnswer,
 } from '../../src/messaging/routes.js';
@@ -118,6 +119,26 @@ async function registerAndApprove(
   );
   return registered;
 }
+
+// packages/mcp/src/identity.ts keeps its own copy of this exact function
+// (it cannot import the FSL server), so its own name-fixture tests
+// (identity.test.ts's `agentName` suite) run the same inputs — this pins
+// both implementations to agreeing on the same fixtures.
+describe('normalizeAgentName', () => {
+  it('lowercases, replaces invalid characters with -, and trims a leading one', () => {
+    expect(normalizeAgentName('Claude Code.Wyats-MacBook-Pro')).toBe(
+      'claude-code.wyats-macbook-pro'
+    );
+  });
+
+  it('normalizes an explicit override the same way', () => {
+    expect(normalizeAgentName('My Custom Bot')).toBe('my-custom-bot');
+  });
+
+  it('is a no-op on an already-normalized name', () => {
+    expect(normalizeAgentName('agent.host')).toBe('agent.host');
+  });
+});
 
 describe('messaging HTTP routes', () => {
   beforeEach(async () => {
@@ -298,6 +319,51 @@ describe('messaging HTTP routes', () => {
       { method: 'DELETE', headers: { 'content-type': 'application/json' } }
     );
     expect(removeByHuman.status).toBe(204);
+  });
+
+  it('DELETE .../members with no address removes the caller as its self-acting address (a run leaves as its task)', async () => {
+    const { taskId } = await liveRun('Leave a channel as my task');
+    const runToken = executor.lastStartOptions?.runToken;
+
+    const joinRes = await fetch(`${baseUrl}/api/channels/general/members`, {
+      method: 'POST',
+      headers: authHeaders(runToken!),
+      body: JSON.stringify({}),
+    });
+    expect(joinRes.status).toBe(204);
+
+    const leaveRes = await fetch(`${baseUrl}/api/channels/general/members`, {
+      method: 'DELETE',
+      headers: authHeaders(runToken!),
+    });
+    expect(leaveRes.status).toBe(204);
+
+    const channels = await json<{
+      channels: { name: string; members: string[] }[];
+    }>(await fetch(`${baseUrl}/api/channels`));
+    const general = channels.channels.find((c) => c.name === 'general');
+    expect(general?.members).not.toContain(`task:${taskId}`);
+  });
+
+  it('removing an address that was never a member is a 404, not a silent no-op', async () => {
+    const notAMember = await fetch(
+      `${baseUrl}/api/channels/general/members/${encodeURIComponent('human:nobody')}`,
+      { method: 'DELETE', headers: { 'content-type': 'application/json' } }
+    );
+    expect(notAMember.status).toBe(404);
+    const body = await json<{ error: string }>(notAMember);
+    expect(body.error).toContain('not a member');
+  });
+
+  it('self-leaving a channel you never joined is also a 404', async () => {
+    await liveRun('Never joined this channel');
+    const runToken = executor.lastStartOptions?.runToken;
+
+    const notAMember = await fetch(
+      `${baseUrl}/api/channels/never-joined/members`,
+      { method: 'DELETE', headers: authHeaders(runToken!) }
+    );
+    expect(notAMember.status).toBe(404);
   });
 
   it("a run's own mailbox merges its run address and its task's, sorted by delivery id", async () => {

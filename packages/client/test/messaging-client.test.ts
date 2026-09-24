@@ -262,6 +262,19 @@ describe('leaveChannel', () => {
       stub.restore();
     }
   });
+
+  it('DELETEs /api/channels/:name/members with no address when member is omitted', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient(BASE).leaveChannel('epic/e-abc123');
+      expect(stub.calls[0].url).toBe(
+        `${BASE}/api/channels/epic%2Fe-abc123/members`
+      );
+      expect(stub.calls[0].init?.method).toBe('DELETE');
+    } finally {
+      stub.restore();
+    }
+  });
 });
 
 describe('listAgentRoster', () => {

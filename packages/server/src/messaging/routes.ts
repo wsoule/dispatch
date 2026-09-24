@@ -679,17 +679,24 @@ export async function joinChannel(
   return new Response(null, { status: 204 });
 }
 
-// DELETE /api/channels/:name/members/:addr
+// DELETE /api/channels/:name/members/:addr, or DELETE
+// /api/channels/:name/members with no address — the latter removes the
+// caller's own self-acting address, the same default `joinChannel` uses.
+// Removing an address that was never a member is a 404, not a silent no-op.
 export function leaveChannel(
   ctx: ApiContext,
   name: string,
-  addr: string
+  addr: string | undefined
 ): Response {
   const principal = requirePrincipal(ctx);
-  if (!canActAs(ctx, principal, addr)) {
-    return errorResponse(403, `cannot remove ${addr} from a channel`);
+  const member = addr ?? selfActingAddress(ctx, principal);
+  if (!canActAs(ctx, principal, member)) {
+    return errorResponse(403, `cannot remove ${member} from a channel`);
   }
-  ctx.messaging.engine.leave(name, addr);
+  const removed = ctx.messaging.engine.leave(name, member);
+  if (!removed) {
+    return errorResponse(404, `${member} is not a member of ${name}`);
+  }
   return new Response(null, { status: 204 });
 }
 
@@ -724,8 +731,9 @@ const MAX_REGISTRATION_FIELD_LENGTH = 100;
 // Normalizes a client-supplied display name into the handle grammar
 // addresses use: lowercase, invalid characters become '-', leading
 // non-alphanumerics are trimmed (a handle must start with [a-z0-9]), capped
-// at 40 characters.
-function normalizeAgentName(raw: string): string {
+// at 40 characters. Exported so a test can pin @dispatch/mcp's own duplicate
+// (identity.ts) to the same fixtures — see identity.test.ts.
+export function normalizeAgentName(raw: string): string {
   const lowered = raw.toLowerCase().replace(/[^a-z0-9._-]/g, '-');
   return lowered.replace(/^[^a-z0-9]+/, '').slice(0, 40);
 }

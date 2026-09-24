@@ -1,4 +1,12 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -10,23 +18,8 @@ import {
   requestDeadline,
 } from './daemon.js';
 
-// ---------------------------------------------------------------------------
-// Messaging identity — who an MCP tool call speaks as when it sends a
-// message, replies, reads its mailbox, or joins a channel.
-//
-// The messaging routes (packages/server/src/messaging/principal.ts)
-// deliberately reject the shared on-disk agentToken every other tool in this
-// package presents: a message needs a real, individually-identifiable and
-// revocable sender, not "the operator". So this module resolves a second,
-// narrower credential:
-//  - Inside a live dispatch run, that run's own DISPATCH_RUN_TOKEN — the run
-//    speaks as itself (`run:<id>`).
-//  - Outside a run (a human's own `dispatch mcp`, or an external agent
-//    client like a second Claude Code session talking to this project), a
-//    per-client agent identity, self-registered with dispatchd on first use
-//    and cached to a token file so registration happens at most once per
-//    client per machine.
-// ---------------------------------------------------------------------------
+// Messaging identity: who an MCP tool call speaks as — a live run speaks as
+// itself; everything else self-registers a per-project cached agent identity.
 
 export interface MessagingCredential {
   token: string;
@@ -34,46 +27,90 @@ export interface MessagingCredential {
   kind: 'run' | 'agent';
 }
 
-// Same `$DISPATCH_HOME`/homedir() fallback as daemon.ts's own (private)
-// daemonHome() — duplicated rather than shared because daemon.ts doesn't
-// export it, and this is the only other place that needs it.
 function dispatchHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();
 }
 
-// Where this machine caches a self-registered agent's token, one file per
-// normalized name.
-function agentTokenPath(name: string): string {
-  return join(dispatchHome(), '.dispatch', 'agents', `${name}.token`);
+// Keys a project's cached tokens by its realpath, so the same project
+// reached via a symlink or a relative path shares one cache directory.
+function projectKey(rootDir: string): string {
+  let real: string;
+  try {
+    real = realpathSync(rootDir);
+  } catch {
+    real = rootDir;
+  }
+  return createHash('sha256').update(real).digest('hex').slice(0, 12);
 }
 
-// Duplicates packages/server/src/messaging/routes.ts's normalizeAgentName
-// exactly, rather than importing it: @dispatch/mcp is MIT and must not
-// depend on the FSL server package. Keeping the two in sync means the name
-// this process picks for itself is already the name the server will
-// normalize it to, so the registered address is predictable instead of
-// silently different from what was asked for.
+function agentsDir(rootDir: string): string {
+  return join(dispatchHome(), '.dispatch', 'agents', projectKey(rootDir));
+}
+
+/** Where `rootDir` caches `name`'s registration — exported so a tool error
+ *  can point a human at the exact file to delete. */
+export function agentTokenFilePath(rootDir: string, name: string): string {
+  return join(agentsDir(rootDir), `${name}.json`);
+}
+
+interface StoredAgentToken {
+  token: string;
+  address: string;
+}
+
+// A corrupt or missing cache file both read as "no cache" — the same
+// resilience readDaemonFile gives a truncated daemon file.
+function readStoredToken(path: string): StoredAgentToken | null {
+  if (!existsSync(path)) return null;
+  try {
+    const parsed = JSON.parse(readFileSync(path, 'utf8')) as {
+      token?: unknown;
+      address?: unknown;
+    };
+    if (
+      typeof parsed.token === 'string' &&
+      typeof parsed.address === 'string'
+    ) {
+      return { token: parsed.token, address: parsed.address };
+    }
+  } catch {
+    // Fall through to null below.
+  }
+  return null;
+}
+
+function writeStoredToken(path: string, value: StoredAgentToken): void {
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
+  writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
+}
+
+// Self-heal step: drops a cached token so the next messagingCredential call
+// registers a fresh one (used when the daemon reports it unknown, not revoked).
+export function forgetAgentToken(rootDir: string, name: string): void {
+  try {
+    rmSync(agentTokenFilePath(rootDir, name), { force: true });
+  } catch {
+    // Already gone — nothing to clean up.
+  }
+}
+
+// Mirrors packages/server/src/messaging/routes.ts's normalizeAgentName
+// exactly (not imported — MIT must not depend on the FSL server).
 function normalizeAgentName(raw: string): string {
   const lowered = raw.toLowerCase().replace(/[^a-z0-9._-]/g, '-');
   return lowered.replace(/^[^a-z0-9]+/, '').slice(0, 40);
 }
 
-// The first label of a hostname ("Wyats-MacBook-Pro" out of
-// "Wyats-MacBook-Pro.local") — short enough to read comfortably in an
-// address, and stable across networks that append different domain suffixes
-// to the same machine.
+// The first label of a hostname: "Wyats-MacBook-Pro" out of
+// "Wyats-MacBook-Pro.local".
 function shortHost(host: string): string {
   const dot = host.indexOf('.');
   return dot === -1 ? host : host.slice(0, dot);
 }
 
-// The name this MCP client registers itself under: an explicit
-// DISPATCH_AGENT_NAME override always wins; otherwise "<mcp client
-// name>.<short hostname>" (e.g. a Claude Code session on
-// "Wyats-MacBook-Pro.local" becomes "claude-code.wyats-macbook-pro") —
-// distinct enough to tell two clients on the same machine apart, and stable
-// across that client's own restarts so it keeps re-using one registration.
+/** DISPATCH_AGENT_NAME wins; otherwise "<mcp client>.<short hostname>",
+ *  normalized like the server's own registration handler. */
 export function agentName(
   env: NodeJS.ProcessEnv,
   clientName: string | undefined,
@@ -88,13 +125,35 @@ export function agentName(
   return normalizeAgentName(`${client}.${shortHost(host)}`);
 }
 
-// Registers a brand-new agent identity with dispatchd's shared request-tier
-// token, writes the minted token to disk (mode 0600 — it is a bearer
-// credential from here on), and returns it. A 409 means this exact name is
-// already registered (approved or still pending) under a token this process
-// has lost — only a human revoking it can clear that, so the guidance text
-// is written to be relayed to the calling agent verbatim.
+// Dedupes concurrent registrations for the same (project, name) pair so two
+// tool calls racing past an empty cache register exactly once between them.
+const inFlightRegistrations = new Map<
+  string,
+  Promise<MessagingCredential | { error: string }>
+>();
+
 async function registerAgent(
+  rootDir: string,
+  daemon: DaemonFileInfo,
+  name: string,
+  clientName: string | undefined
+): Promise<MessagingCredential | { error: string }> {
+  const key = `${rootDir}\u0000${name}`;
+  const existing = inFlightRegistrations.get(key);
+  if (existing !== undefined) return existing;
+  const promise = doRegisterAgent(rootDir, daemon, name, clientName);
+  inFlightRegistrations.set(key, promise);
+  try {
+    return await promise;
+  } finally {
+    inFlightRegistrations.delete(key);
+  }
+}
+
+// The one real POST /api/agents/register (registerAgent wraps it with the
+// in-flight dedup). A 409 re-checks the cache first — a parallel writer.
+async function doRegisterAgent(
+  rootDir: string,
   daemon: DaemonFileInfo,
   name: string,
   clientName: string | undefined
@@ -116,9 +175,16 @@ async function registerAgent(
   } catch (err) {
     return { error: `agent registration failed: ${(err as Error).message}` };
   }
+  const path = agentTokenFilePath(rootDir, name);
   if (res.status === 409) {
+    const cached = readStoredToken(path);
+    if (cached !== null) {
+      return { token: cached.token, address: cached.address, kind: 'agent' };
+    }
     return {
-      error: `an agent named ${name} is already registered; revoke it in Dispatch → Settings → Agents to re-register`,
+      error:
+        `${name} is already registered; revoke it in Dispatch → Settings → ` +
+        `Agents, then delete ${path}`,
     };
   }
   if (!res.ok) {
@@ -128,18 +194,13 @@ async function registerAgent(
     };
   }
   const created = (await res.json()) as { address: string; token: string };
-  const path = agentTokenPath(name);
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, created.token, { mode: 0o600 });
-  return { token: created.token, kind: 'agent', address: null };
+  writeStoredToken(path, { token: created.token, address: created.address });
+  return { token: created.token, address: created.address, kind: 'agent' };
 }
 
-// The credential a messaging tool call presents to dispatchd: this run's own
-// token when called from inside a live dispatch run, otherwise a
-// self-registered agent identity — cached to disk after the first
-// registration so a given client only ever registers once per machine.
-// `rootDir` is expected to already be the daemon-discovery root (the
-// project root, not a run's worktree — see tools.ts's `projectRoot`).
+/** The credential a messaging tool call presents: a live run's own token, or
+ *  a self-registered per-project agent identity. `rootDir` must already be
+ *  the daemon-discovery project root (see toolKit.ts's `projectRoot`). */
 export async function messagingCredential(
   rootDir: string,
   clientName: string | undefined
@@ -155,13 +216,9 @@ export async function messagingCredential(
   }
 
   const name = agentName(process.env, clientName, hostname());
-  const tokenPath = agentTokenPath(name);
-  if (existsSync(tokenPath)) {
-    return {
-      token: readFileSync(tokenPath, 'utf8').trim(),
-      kind: 'agent',
-      address: null,
-    };
+  const cached = readStoredToken(agentTokenFilePath(rootDir, name));
+  if (cached !== null) {
+    return { token: cached.token, address: cached.address, kind: 'agent' };
   }
 
   const daemon = readDaemonFile(rootDir);
@@ -171,5 +228,5 @@ export async function messagingCredential(
         'dispatchd not running — cannot register this agent identity. Start it with: dispatch serve',
     };
   }
-  return registerAgent(daemon, name, clientName);
+  return registerAgent(rootDir, daemon, name, clientName);
 }

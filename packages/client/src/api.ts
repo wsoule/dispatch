@@ -3009,7 +3009,9 @@ export interface ApiClient {
   listChannels(): Promise<{ channels: ChannelSummary[] }>;
   /** `member` defaults to the caller (a run defaults to its task). */
   joinChannel(name: string, member?: string): Promise<void>;
-  leaveChannel(name: string, member: string): Promise<void>;
+  /** `member` defaults to the caller (a run defaults to its task), same as
+   *  `joinChannel`. */
+  leaveChannel(name: string, member?: string): Promise<void>;
   listAgentRoster(): Promise<{ agents: AgentSummary[] }>;
   approveAgent(address: string): Promise<AgentSummary>;
   revokeAgent(address: string): Promise<AgentSummary>;
@@ -3791,11 +3793,11 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       });
     },
     leaveChannel: async (name, member) => {
-      await send(
-        target,
-        `/api/channels/${encodeURIComponent(name)}/members/${encodeURIComponent(member)}`,
-        { method: 'DELETE' }
-      );
+      const path =
+        member !== undefined
+          ? `/api/channels/${encodeURIComponent(name)}/members/${encodeURIComponent(member)}`
+          : `/api/channels/${encodeURIComponent(name)}/members`;
+      await send(target, path, { method: 'DELETE' });
     },
     listAgentRoster: () => request(target, '/api/agents/roster'),
     approveAgent: (address) =>

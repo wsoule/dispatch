@@ -1,21 +1,33 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { hostname, tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { daemonFilePath } from '../src/daemon.js';
-import { agentName } from '../src/identity.js';
+import { agentName, agentTokenFilePath } from '../src/identity.js';
 import { createDispatchMcpServer } from '../src/index.js';
 import type { MessageBlockingTiming } from '../src/index.js';
 
-// Milliseconds everywhere instead of the production minutes/agentBlockingTimeoutSec
-// seconds, so the blocking-poll loop's real exit conditions run in test time.
+// humanTotalWaitMs and defaultAgentTotalWaitMs are deliberately different
+// (not just both "small") so a test that checks the agent-recipient fallback
+// path can tell it apart from an accidental human-budget mix-up: if the two
+// numbers were equal, a bug that used the wrong one would still pass.
+// requestTimeoutMs is generous (well above what a local loopback fetch ever
+// needs) so a slow CI host never trips it and turns a same-process 4xx into
+// a spurious retry; the polls in these tests are paced by retryDelayMs, not
+// by requestTimeoutMs, so this doesn't slow anything down.
 const FAST_TIMING: MessageBlockingTiming = {
-  humanTotalWaitMs: 300,
-  defaultAgentTotalWaitMs: 300,
-  requestTimeoutMs: 150,
+  humanTotalWaitMs: 500,
+  defaultAgentTotalWaitMs: 200,
+  requestTimeoutMs: 3000,
   retryDelayMs: 10,
   errorDelayMs: 10,
 };
@@ -41,22 +53,28 @@ interface ToolCallResult {
   content: { type: string; text?: string }[];
 }
 
+const DEFAULT_SEND_BODY = {
+  message: {
+    id: 'm-1',
+    thread: 't-1',
+    from: 'run:r-self1',
+    to: ['human:wyat'],
+  },
+  deliveries: [{ id: 'd-1', messageId: 'm-1', recipient: 'human:wyat' }],
+  downgraded: false,
+};
+
 // A minimal stand-in for dispatchd's messaging surface
 // (packages/server/src/messaging/routes.ts) — enough of every route
-// msg_send/msg_reply/inbox_read/thread_read/channel_* proxy to drive each
-// tool's request shaping and response handling deterministically.
+// msg_send/msg_reply/inbox_read/thread_read/channel_*/agents/register proxy
+// to drive each tool's request shaping, response handling, and the
+// identity-401 self-heal/revoked paths deterministically.
 class FakeDaemon {
-  sendStatus = 201;
-  sendBody: unknown = {
-    message: {
-      id: 'm-1',
-      thread: 't-1',
-      from: 'run:r-self1',
-      to: ['human:wyat'],
-    },
-    deliveries: [{ id: 'd-1', messageId: 'm-1', recipient: 'human:wyat' }],
-    downgraded: false,
-  };
+  // Each POST /api/messages consumes the next entry (the last entry repeats
+  // once exhausted), so a test can script "401 unknown token, then success".
+  sendResponses: { status: number; body: unknown }[] = [
+    { status: 201, body: DEFAULT_SEND_BODY },
+  ];
   sendCalls: {
     headers: Record<string, string>;
     body: Record<string, unknown>;
@@ -71,6 +89,8 @@ class FakeDaemon {
     choice: 'yes',
   };
   answerPolls = 0;
+  /** Holds each answer poll open this long, to test client-side cancellation. */
+  answerPollDelayMs = 0;
 
   replyStatus = 201;
   replyBody: unknown = {
@@ -81,6 +101,7 @@ class FakeDaemon {
   replyCalls: { id: string; body: Record<string, unknown> }[] = [];
 
   mailboxBody: unknown = { items: [] };
+  mailboxStateSeen: string | null = null;
   markReadCalls: string[] = [];
 
   threadBody: unknown = { messages: [], deliveries: [] };
@@ -88,11 +109,17 @@ class FakeDaemon {
   channelsBody: unknown = { channels: [] };
   joinCalls: { name: string; body: Record<string, unknown> }[] = [];
   leaveCalls: { name: string; addr: string }[] = [];
+  selfLeaveCalls: string[] = [];
 
   configStatus = 200;
   configBody: unknown = { messaging: { agentBlockingTimeoutSec: 600 } };
 
-  lastAuth: string | null = null;
+  registerStatus = 201;
+  registerBody: unknown = {
+    address: 'agent:wyat/x',
+    token: 'agent-token-value-2',
+  };
+  registerCalls: { name: string; client: string }[] = [];
 
   private server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -102,7 +129,6 @@ class FakeDaemon {
       hostname: '127.0.0.1',
       fetch: async (req) => {
         const url = new URL(req.url);
-        this.lastAuth = req.headers.get('authorization');
         if (url.pathname === '/api/health') return Response.json({ ok: true });
 
         if (url.pathname === '/api/messages' && req.method === 'POST') {
@@ -111,12 +137,20 @@ class FakeDaemon {
             headers: Object.fromEntries(req.headers.entries()),
             body,
           });
-          return Response.json(this.sendBody, { status: this.sendStatus });
+          const idx = Math.min(
+            this.sendCalls.length - 1,
+            this.sendResponses.length - 1
+          );
+          const resp = this.sendResponses[idx];
+          return Response.json(resp.body, { status: resp.status });
         }
 
         const answer = /^\/api\/messages\/([^/]+)\/answer$/.exec(url.pathname);
         if (answer !== null && req.method === 'GET') {
           this.answerPolls += 1;
+          if (this.answerPollDelayMs > 0) {
+            await new Promise((r) => setTimeout(r, this.answerPollDelayMs));
+          }
           if (this.answerStatus !== 200) {
             return Response.json(
               { error: 'no' },
@@ -135,6 +169,7 @@ class FakeDaemon {
         }
 
         if (url.pathname === '/api/mailbox' && req.method === 'GET') {
+          this.mailboxStateSeen = url.searchParams.get('state');
           return Response.json(this.mailboxBody);
         }
 
@@ -159,6 +194,10 @@ class FakeDaemon {
           this.joinCalls.push({ name: join[1], body });
           return new Response(null, { status: 204 });
         }
+        if (join !== null && req.method === 'DELETE') {
+          this.selfLeaveCalls.push(join[1]);
+          return new Response(null, { status: 204 });
+        }
 
         const leave = /^\/api\/channels\/([^/]+)\/members\/([^/]+)$/.exec(
           url.pathname
@@ -170,6 +209,14 @@ class FakeDaemon {
 
         if (url.pathname === '/api/config' && req.method === 'GET') {
           return Response.json(this.configBody, { status: this.configStatus });
+        }
+
+        if (url.pathname === '/api/agents/register' && req.method === 'POST') {
+          const body = (await req.json()) as { name: string; client: string };
+          this.registerCalls.push(body);
+          return Response.json(this.registerBody, {
+            status: this.registerStatus,
+          });
         }
 
         return Response.json({ error: 'not found' }, { status: 404 });
@@ -226,6 +273,22 @@ function writeFakeDaemonFile(port: number): void {
   );
 }
 
+// Pre-caches an agent identity for this root/client so a test can exercise
+// the agent-credential path (self-heal, revoked) without a live run token.
+function writeCachedAgentToken(
+  clientName: string,
+  token: string,
+  address: string
+): string {
+  delete process.env.DISPATCH_RUN_TOKEN;
+  delete process.env.DISPATCH_RUN_ID;
+  const name = agentName(process.env, clientName, hostname());
+  const path = agentTokenFilePath(root, name);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, JSON.stringify({ token, address }));
+  return path;
+}
+
 describe('msg_send (no daemon running)', () => {
   it('errors with a "not running" message rather than a protocol failure', async () => {
     const client = await connectClient(root);
@@ -266,13 +329,43 @@ describe('msg_send (fake daemon, run identity)', () => {
     });
   });
 
+  it('rejects a kind that is neither a built-in nor a valid x-slug', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'not-a-kind', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(daemon.sendCalls.length).toBe(0);
+  });
+
+  it('accepts a custom x-slug kind', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'x-custom', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(daemon.sendCalls[0]?.body.kind).toBe('x-custom');
+  });
+
   it('surfaces the server error text, including the offending field', async () => {
     daemon = new FakeDaemon();
-    daemon.sendStatus = 400;
-    daemon.sendBody = {
-      error: 'invalid to: expected a list of addresses',
-      field: 'to',
-    };
+    daemon.sendResponses = [
+      {
+        status: 400,
+        body: {
+          error: 'invalid to: expected a list of addresses',
+          field: 'to',
+        },
+      },
+    ];
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
 
@@ -288,8 +381,9 @@ describe('msg_send (fake daemon, run identity)', () => {
 
   it('passes an "awaiting approval" 403 through verbatim', async () => {
     daemon = new FakeDaemon();
-    daemon.sendStatus = 403;
-    daemon.sendBody = { error: 'awaiting approval in Dispatch' };
+    daemon.sendResponses = [
+      { status: 403, body: { error: 'awaiting approval in Dispatch' } },
+    ];
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
 
@@ -299,6 +393,80 @@ describe('msg_send (fake daemon, run identity)', () => {
     })) as ToolCallResult;
     expect(result.isError).toBe(true);
     expect(result.content[0]?.text).toBe('awaiting approval in Dispatch');
+  });
+});
+
+describe('msg_send (self-heal on an unknown cached agent token)', () => {
+  it('drops the stale token, re-registers once, and retries the send once', async () => {
+    const tokenPath = writeCachedAgentToken(
+      'test-client',
+      'stale-token',
+      'agent:wyat/old'
+    );
+    daemon = new FakeDaemon();
+    daemon.sendResponses = [
+      {
+        status: 401,
+        body: { error: 'unknown token', code: 'auth_invalid_token' },
+      },
+      { status: 201, body: DEFAULT_SEND_BODY },
+    ];
+    daemon.registerBody = { address: 'agent:wyat/new', token: 'fresh-token' };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(daemon.sendCalls.length).toBe(2);
+    expect(daemon.sendCalls[0]?.headers.authorization).toBe(
+      'Bearer stale-token'
+    );
+    expect(daemon.sendCalls[1]?.headers.authorization).toBe(
+      'Bearer fresh-token'
+    );
+    expect(daemon.registerCalls.length).toBe(1);
+    expect(JSON.parse(readFileSync(tokenPath, 'utf8'))).toEqual({
+      token: 'fresh-token',
+      address: 'agent:wyat/new',
+    });
+  });
+});
+
+describe('msg_send (revoked agent)', () => {
+  it('reports a clear revoked error and does not re-register', async () => {
+    const tokenPath = writeCachedAgentToken(
+      'test-client',
+      'revoked-token',
+      'agent:wyat/old'
+    );
+    daemon = new FakeDaemon();
+    daemon.sendResponses = [
+      {
+        status: 401,
+        body: {
+          error: "this agent's access was revoked",
+          code: 'auth_agent_revoked',
+        },
+      },
+    ];
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(
+      `This agent's access to ${root} was revoked. To ask for approval again, delete ${tokenPath} and retry.`
+    );
+    expect(daemon.registerCalls.length).toBe(0);
+    expect(daemon.sendCalls.length).toBe(1);
   });
 });
 
@@ -357,6 +525,26 @@ describe('msg_send (blocking)', () => {
     expect(daemon.answerPolls).toBeGreaterThan(1);
   });
 
+  it('stops polling immediately on a non-retryable 4xx instead of riding out the budget', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerStatus = 403;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'which db?',
+        blocking: true,
+      },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBe(true);
+    expect(daemon.answerPolls).toBe(1);
+  });
+
   it("uses the project's configured agentBlockingTimeoutSec for a non-human recipient, not the fallback default", async () => {
     daemon = new FakeDaemon();
     daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
@@ -369,7 +557,6 @@ describe('msg_send (blocking)', () => {
       defaultAgentTotalWaitMs: 60_000,
     });
 
-    const start = Date.now();
     const result = (await client.callTool(
       {
         name: 'msg_send',
@@ -383,37 +570,68 @@ describe('msg_send (blocking)', () => {
       undefined,
       { timeout: 10_000 }
     )) as ToolCallResult;
-    const elapsedMs = Date.now() - start;
 
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.answer).toBeNull();
-    // 50ms configured budget, not the 60s fallback default.
-    expect(elapsedMs).toBeLessThan(5_000);
   });
 
-  it('falls back to defaultAgentTotalWaitMs when GET /api/config is unreachable', async () => {
+  it('falls back to defaultAgentTotalWaitMs (not the human budget) when GET /api/config is unreachable', async () => {
     daemon = new FakeDaemon();
     daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
     daemon.configStatus = 500;
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
 
-    const result = (await client.callTool(
-      {
-        name: 'msg_send',
-        arguments: {
-          to: ['agent:wyat/bot'],
-          kind: 'question',
-          body: 'which db?',
-          blocking: true,
-        },
+    const start = Date.now();
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: {
+        to: ['agent:wyat/bot'],
+        kind: 'question',
+        body: 'which db?',
+        blocking: true,
       },
-      undefined,
-      { timeout: 10_000 }
-    )) as ToolCallResult;
+    })) as ToolCallResult;
+    const elapsedMs = Date.now() - start;
 
     expect(result.isError).toBeUndefined();
     expect(result.structuredContent?.answer).toBeNull();
+    // Close to defaultAgentTotalWaitMs (200ms), well under humanTotalWaitMs
+    // (500ms) — proves the agent fallback was used, not the human one.
+    expect(elapsedMs).toBeLessThan(400);
+  });
+
+  it('stops polling promptly when the client cancels a blocking send', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    daemon.answerPollDelayMs = 5000;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root, {
+      ...FAST_TIMING,
+      humanTotalWaitMs: 60_000,
+      requestTimeoutMs: 30_000,
+    });
+
+    await expect(
+      client.callTool(
+        {
+          name: 'msg_send',
+          arguments: {
+            to: ['human:wyat'],
+            kind: 'question',
+            body: 'which db?',
+            blocking: true,
+          },
+        },
+        undefined,
+        { timeout: 300 }
+      )
+    ).rejects.toThrow();
+
+    const pollsAtCancel = daemon.answerPolls;
+    await Bun.sleep(200);
+    // No further poll should have started after cancellation propagated.
+    expect(daemon.answerPolls).toBeLessThanOrEqual(pollsAtCancel);
   });
 });
 
@@ -451,7 +669,7 @@ describe('msg_reply', () => {
 });
 
 describe('inbox_read', () => {
-  it('marks held and notified deliveries read but leaves pushed/read/answered alone', async () => {
+  it('marks held and notified deliveries read but leaves pushed/read/answered alone, reporting exactly what it marked', async () => {
     daemon = new FakeDaemon();
     daemon.mailboxBody = {
       items: [
@@ -481,6 +699,10 @@ describe('inbox_read', () => {
 
     expect(result.isError).toBeUndefined();
     expect((result.structuredContent!.items as unknown[]).length).toBe(5);
+    expect((result.structuredContent!.marked as string[]).sort()).toEqual([
+      'd-held',
+      'd-notified',
+    ]);
     expect(daemon.markReadCalls.sort()).toEqual(['d-held', 'd-notified']);
   });
 
@@ -494,11 +716,12 @@ describe('inbox_read', () => {
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);
 
-    await client.callTool({
+    const result = (await client.callTool({
       name: 'inbox_read',
       arguments: { markRead: false },
-    });
+    })) as ToolCallResult;
     expect(daemon.markReadCalls).toEqual([]);
+    expect(result.structuredContent?.marked).toEqual([]);
   });
 
   it('forwards a state filter as a comma-joined query param', async () => {
@@ -510,8 +733,7 @@ describe('inbox_read', () => {
       name: 'inbox_read',
       arguments: { state: ['held', 'notified'] },
     });
-    // No direct request log for GET /api/mailbox in FakeDaemon beyond its
-    // body — this just proves the call succeeds with a state array input.
+    expect(daemon.mailboxStateSeen).toBe('held,notified');
   });
 });
 
@@ -549,8 +771,8 @@ describe('channel tools', () => {
     expect(result.isError).toBeUndefined();
     // Channel names may contain '/' (an epic's implicit epic/<id> channel),
     // so the tool encodeURIComponents the whole name — same as the client
-    // package's own joinChannel — and the server decodeURIComponents it back
-    // to one segment rather than splitting on the encoded slash.
+    // package's own joinChannel — and the server decodeURIComponents it
+    // back to one segment rather than splitting on the encoded slash.
     expect(daemon.joinCalls).toEqual([
       { name: encodeURIComponent('epic/t-abc123'), body: {} },
     ]);
@@ -585,6 +807,20 @@ describe('channel tools', () => {
     ]);
   });
 
+  it('channel_leave with no member hits the self-leave route (no address segment)', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'channel_leave',
+      arguments: { name: 'general' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(daemon.selfLeaveCalls).toEqual(['general']);
+    expect(daemon.leaveCalls).toEqual([]);
+  });
+
   it('channel_list returns the roster', async () => {
     daemon = new FakeDaemon();
     daemon.channelsBody = {
@@ -605,13 +841,7 @@ describe('channel tools', () => {
 
 describe('messaging tools (agent identity, no run token)', () => {
   it('uses a cached self-registered agent token instead of the shared agentToken', async () => {
-    delete process.env.DISPATCH_RUN_TOKEN;
-    delete process.env.DISPATCH_RUN_ID;
-    const name = agentName(process.env, 'test-client', hostname());
-    const tokenPath = join(fakeHome, '.dispatch', 'agents', `${name}.token`);
-    mkdirSync(dirname(tokenPath), { recursive: true });
-    writeFileSync(tokenPath, 'agent-token-value');
-
+    writeCachedAgentToken('test-client', 'agent-token-value', 'agent:wyat/x');
     daemon = new FakeDaemon();
     writeFakeDaemonFile(daemon.start());
     const client = await connectClient(root);

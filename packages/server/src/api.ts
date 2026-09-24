@@ -4544,6 +4544,7 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['deliveries', '*', 'read'] },
   { method: 'GET', segments: ['channels'] },
   { method: 'POST', segments: ['channels', '*', 'members'] },
+  { method: 'DELETE', segments: ['channels', '*', 'members'] },
   { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
   { method: 'GET', segments: ['decisions', 'open'] },
 ];
@@ -5684,14 +5685,14 @@ export async function handleApi(
         return await joinChannel(req, ctx, decodeURIComponent(segments[1]));
       }
       if (
-        segments.length === 4 &&
+        (segments.length === 3 || segments.length === 4) &&
         segments[2] === 'members' &&
         method === 'DELETE'
       ) {
         return leaveChannel(
           ctx,
           decodeURIComponent(segments[1]),
-          decodeURIComponent(segments[3])
+          segments.length === 4 ? decodeURIComponent(segments[3]) : undefined
         );
       }
     }

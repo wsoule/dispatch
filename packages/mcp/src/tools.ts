@@ -30,8 +30,21 @@ import {
   requestDeadline,
   startDaemon,
 } from './daemon.js';
-import type { MessageBlockingTiming } from './messaging.js';
 import { registerMessagingTools } from './messaging.js';
+import type {
+  MessageBlockingTiming,
+  QuestionTiming,
+  ScopeTiming,
+  ToolOutcome,
+} from './toolKit.js';
+import {
+  DEFAULT_QUESTION_TIMING,
+  DEFAULT_SCOPE_TIMING,
+  pollSignal,
+  projectRoot,
+  toolError,
+  toolResult,
+} from './toolKit.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
 // (and core's ConfigError) via wrap() and turns it into an MCP tool-error
@@ -40,31 +53,6 @@ import { registerMessagingTools } from './messaging.js';
 // see the message and self-correct, per the MCP spec's tool error-handling
 // guidance.
 class ToolError extends Error {}
-
-// Bug fix (fix/executor-mcp-wiring): when this server is launched by a
-// dispatch run's own ClaudeExecutor (see packages/server/src/orchestrator/
-// executors/claude.ts), `rootDir` is the run's git WORKTREE — a different
-// directory than the dispatch PROJECT it was cut from — so task_list/
-// task_get/task_save/task_next keep reading and writing the exact task files
-// the run's own repo checkout sees. Two things must NOT resolve against that
-// worktree, though:
-//  - daemon discovery (run_list, agent_message): dispatchd's daemon file is
-//    keyed by a hash of the PROJECT root (see daemon.ts), not the worktree —
-//    a worktree path hashes to a different, nonexistent file, so these tools
-//    would always report "dispatchd not running" for a project whose daemon
-//    is, in fact, running.
-//  - task_comment's write: a comment appended to the worktree's copy of a
-//    task file lives on the run's own branch and is discarded the moment
-//    that branch is squash-merged or the worktree is torn down — comments
-//    need to land in the PROJECT's .dispatch/tasks, the one copy that
-//    outlives any single run.
-// The executor sets DISPATCH_PROJECT_ROOT to the project root whenever it
-// differs from the worktree `--root` it passes; every other tool in this
-// file keeps resolving against the raw `rootDir` argument.
-export function projectRoot(rootDir: string): string {
-  const override = process.env.DISPATCH_PROJECT_ROOT;
-  return override !== undefined && override !== '' ? override : rootDir;
-}
 
 // Same "not initialized" gate as the CLI's requireStore() (packages/cli/src/
 // commands/task.ts) — same message, so a client rendering either surface
@@ -171,29 +159,6 @@ function toSummary(doc: TaskDoc) {
     created,
     updated,
   };
-}
-
-// Index signature matches the SDK's CallToolResult shape (an open record
-// with a few known fields) so this satisfies ToolCallback's return type
-// without pulling in the SDK's own (deeply generic) result type here.
-export interface ToolOutcome {
-  [key: string]: unknown;
-  content: { type: 'text'; text: string }[];
-  structuredContent?: Record<string, unknown>;
-  isError?: boolean;
-}
-
-export function toolResult(
-  structuredContent: Record<string, unknown>
-): ToolOutcome {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
-    structuredContent,
-  };
-}
-
-export function toolError(message: string): ToolOutcome {
-  return { content: [{ type: 'text', text: message }], isError: true };
 }
 
 // Turns listSafe()'s per-file parse failures into the same doctor-pointing
@@ -911,26 +876,6 @@ async function messageUser(
   }
 }
 
-/** How long `ask_user` waits, and how hard it polls while waiting. */
-export interface QuestionTiming {
-  /** Total budget across every poll before giving up on an answer. */
-  totalWaitMs: number;
-  /** Per-request timeout; longer than the daemon's own 30s poll window. */
-  requestTimeoutMs: number;
-  /** Pause after a clean unanswered poll, and after a failed one. */
-  retryDelayMs: number;
-  errorDelayMs: number;
-}
-
-// The MCP client aborts a tool call at its own tool timeout, so the executor
-// sets that ceiling above `totalWaitMs` for this server — see claude.ts.
-export const DEFAULT_QUESTION_TIMING: QuestionTiming = {
-  totalWaitMs: 30 * 60_000,
-  requestTimeoutMs: 45_000,
-  retryDelayMs: 250,
-  errorDelayMs: 2000,
-};
-
 interface QuestionRecord {
   id: string;
   answer: string | null;
@@ -939,13 +884,6 @@ interface QuestionRecord {
 const UNANSWERED_NOTE =
   'No one answered in time. Proceed on your best judgement, and state the ' +
   'assumption you made in your final summary and in a task_comment.';
-
-// One poll's abort signal: its own timeout, plus the client's cancellation
-// when there is one, so a cancelled tool call doesn't sit out the full poll.
-function pollSignal(timeoutMs: number, signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(timeoutMs);
-  return signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
-}
 
 // Best-effort DELETE of a question this tool has stopped waiting on, so the
 // app stops offering an answer box nothing is listening to.
@@ -1052,26 +990,6 @@ async function askUser(
     structuredContent: { answer: '' },
   };
 }
-
-/** How long `request_scope` waits, and how hard it polls while waiting. */
-export interface ScopeTiming {
-  /** Total budget across every poll before self-denying. */
-  totalWaitMs: number;
-  /** Per-request timeout; longer than the daemon's own 30s poll window. */
-  requestTimeoutMs: number;
-  /** Pause after a clean undecided poll, and after a failed one. */
-  retryDelayMs: number;
-  errorDelayMs: number;
-}
-
-// Same numbers as DEFAULT_QUESTION_TIMING, and the same reasoning: the
-// executor's MCP client timeout sits above totalWaitMs (see claude.ts).
-export const DEFAULT_SCOPE_TIMING: ScopeTiming = {
-  totalWaitMs: 30 * 60_000,
-  requestTimeoutMs: 45_000,
-  retryDelayMs: 250,
-  errorDelayMs: 2000,
-};
 
 interface ScopeRequestRecord {
   id: string;
