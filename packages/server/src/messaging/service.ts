@@ -1,5 +1,6 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch/core';
 import { DEFAULT_MESSAGING, loadConfig } from '@dispatch/core';
+import type { Message } from '@dispatch/protocol';
 import {
   DeliveryEngine,
   gateOf,
@@ -16,7 +17,7 @@ import { runsDir } from '../orchestrator/paths.js';
 import type { RunMeta } from '../orchestrator/types.js';
 import { TERMINAL_RUN_STATES } from '../orchestrator/types.js';
 import { GateHandlers } from './gates.js';
-import { DaemonMessagingHost } from './host.js';
+import { DaemonMessagingHost, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 
@@ -100,10 +101,26 @@ export function openMessaging(deps: {
   }
   const engine = new DeliveryEngine({ store, host, limits });
 
-  // A human approved/denied waking a held task. Idempotent for recover()'s
-  // replay: if the task already has any non-terminal run (this wake already
-  // landed, a provisioning run is coming up, or something else started one),
-  // there is nothing left to do.
+  // Tells the sender of `about` why its wake did not happen, through its task
+  // if its run has ended. Never throws: the gate's effect is already decided.
+  const noticeWakeSender = async (about: Message, body: string) => {
+    try {
+      await engine.send(
+        {
+          to: [engine.deliverableAddress(about.from)],
+          kind: 'notice',
+          body,
+          refs: [{ type: 'message', id: about.id }],
+        },
+        { address: SYSTEM_ADDRESS, canDecide: true }
+      );
+    } catch (err) {
+      console.error('messaging: wake notice failed', err);
+    }
+  };
+
+  // A human approved waking a held task. A replay is a no-op once the task has
+  // any non-terminal run; a task closed out since the gate was raised stays asleep.
   gates.register('wake', async (question, answer) => {
     if (answer.choice !== 'approve') return;
     const gate = gateOf(question);
@@ -113,17 +130,21 @@ export function openMessaging(deps: {
     if (gate.target.startsWith('task:')) {
       const taskId = gate.target.slice('task:'.length);
       if (hasNonTerminalRun(deps.orchestrator.list(), taskId)) return;
+      const task = deps.store.get(taskId);
+      const state = task === null ? 'missing' : wakeRefusal(task);
+      if (state !== null) {
+        await noticeWakeSender(
+          original,
+          `Not woken: task ${taskId} is ${state}.`
+        );
+        return;
+      }
     }
     const result = await host.wake(gate.target, original);
     if (!result.ok) {
-      await engine.send(
-        {
-          to: [original.from],
-          kind: 'notice',
-          body: `Could not wake ${gate.target}: ${result.reason}. Your message is waiting for it.`,
-          refs: [{ type: 'message', id: original.id }],
-        },
-        { address: SYSTEM_ADDRESS, canDecide: true }
+      await noticeWakeSender(
+        original,
+        `Could not wake ${gate.target}: ${result.reason}. Your message is waiting for it.`
       );
     }
   });

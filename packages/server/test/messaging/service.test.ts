@@ -87,6 +87,48 @@ function stubRun(overrides: Partial<RunMeta> = {}): RunMeta {
   };
 }
 
+let seededWakes = 0;
+
+// Stores a wake gate for `target`, raised by a message from `from`, and an
+// 'approve' answer to it, as recover() would find them after a crash.
+function seedApprovedWake(
+  messaging: ReturnType<typeof openMessaging>,
+  opts: { from: string; target: string }
+): { question: Message; answer: Message } {
+  seededWakes += 1;
+  const n = String(seededWakes).padStart(6, '0');
+  const original = stubMessage({
+    id: `m-original${n}`,
+    thread: `m-original${n}`,
+    from: opts.from,
+    to: [opts.target],
+    wake: 'request',
+  });
+  const question = stubMessage({
+    id: `m-question${n}`,
+    thread: `m-question${n}`,
+    from: SYSTEM_ADDRESS,
+    to: ['human:wyat'],
+    kind: 'question',
+    blocking: true,
+    choices: ['approve', 'deny'],
+    data: { type: 'wake', target: opts.target, message: original.id },
+  });
+  const answer = stubMessage({
+    id: `m-answer${n}`,
+    thread: question.thread,
+    replyTo: question.id,
+    from: 'human:wyat',
+    to: [SYSTEM_ADDRESS],
+    kind: 'answer',
+    choice: 'approve',
+  });
+  messaging.store.insertMessage(original);
+  messaging.store.insertMessage(question);
+  messaging.store.insertMessage(answer);
+  return { question, answer };
+}
+
 let root: string;
 let fakeHome: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
@@ -356,11 +398,228 @@ describe('wake gate handler', () => {
     messaging.store.insertMessage(original);
     messaging.store.insertMessage(question);
     messaging.store.insertMessage(answer);
+    const wakes: string[] = [];
+    const dispatchOrResume = orchestrator.dispatchOrResume.bind(orchestrator);
+    orchestrator.dispatchOrResume = (taskId, request) => {
+      wakes.push(taskId);
+      return dispatchOrResume(taskId, request);
+    };
 
     await messaging.gates.handle(question, answer);
 
     expect(executor.started).toHaveLength(1);
+    expect(wakes).toEqual([]);
+    expect(
+      messaging.engine
+        .inbox('human:asker')
+        .filter((i) => i.message.kind === 'notice')
+    ).toEqual([]);
     await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it('is a no-op replay while the task has a provisioning run', async () => {
+    const store = TaskStore.init(root);
+    const task = store.create({ title: 'Coming up' });
+    const wakes: string[] = [];
+    const orchestrator = {
+      setRunTokenMinter: () => {},
+      onRunStarted: () => () => {},
+      list: () => [stubRun({ taskId: task.meta.id, state: 'provisioning' })],
+      liveRunIdForTask: () => null,
+      isRunLive: () => false,
+      taskIdOfRun: () => null,
+      deliverToRun: () => {},
+      notifyRun: () => {},
+      dispatchOrResume: (taskId: string) => {
+        wakes.push(taskId);
+        return Promise.resolve(stubRun({ id: 'r-000009', taskId }));
+      },
+    } as unknown as Orchestrator;
+    const messaging = openMessaging({
+      rootDir: root,
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(root, 'messages.db'),
+    });
+    const { question, answer } = seedApprovedWake(messaging, {
+      from: 'human:asker',
+      target: `task:${task.meta.id}`,
+    });
+
+    await messaging.gates.handle(question, answer);
+
+    expect(wakes).toEqual([]);
+    messaging.close();
+  });
+
+  it('tells a sender whose run has ended through its task, and never replays the wake', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    // Only 'stalling' is registered, so waking onto the default executor fails.
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('stalling', executor);
+    const asking = store.create({ title: 'Asking task' });
+    const sleeping = store.create({ title: 'Sleeping task' });
+    const messaging = openMessaging({
+      rootDir: root,
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(root, 'messages.db'),
+    });
+    await messaging.recover();
+
+    const run = await orchestrator.dispatch(asking.meta.id, 'stalling', {});
+    await messaging.engine.send(
+      {
+        to: [`task:${sleeping.meta.id}`],
+        kind: 'message',
+        body: 'wake up',
+        wake: 'request',
+      },
+      { address: `run:${run.id}`, canDecide: false }
+    );
+    const [question] = messaging.engine.openBlocking();
+    await orchestrator.cancel(run.id);
+    await messaging.engine.reply(
+      question.id,
+      { body: 'approved', choice: 'approve' },
+      { address: 'human:wyat', canDecide: true }
+    );
+
+    const notice = messaging.engine
+      .inbox(`task:${asking.meta.id}`)
+      .find((i) => i.message.kind === 'notice');
+    expect(notice?.message.body).toContain(
+      `Could not wake task:${sleeping.meta.id}`
+    );
+    expect(notice?.delivery.state).toBe('held');
+    expect(messaging.store.unappliedAnsweredGates()).toEqual([]);
+
+    orchestrator.registerExecutor('claude', executor);
+    expect((await messaging.recover()).replayed).toBe(0);
+    expect(
+      orchestrator.list().filter((r) => r.taskId === sleeping.meta.id)
+    ).toEqual([]);
+    messaging.close();
+  });
+
+  it('marks the wake applied even when its failure notice cannot be delivered', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const sleeping = store.create({ title: 'Sleeping task' });
+    const messaging = openMessaging({
+      rootDir: root,
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(root, 'messages.db'),
+    });
+    await messaging.recover();
+
+    // A run this daemon has no record of: its notice has nowhere to go.
+    await messaging.engine.send(
+      {
+        to: [`task:${sleeping.meta.id}`],
+        kind: 'message',
+        body: 'wake up',
+        wake: 'request',
+      },
+      { address: 'run:r-0000ff', canDecide: false }
+    );
+    const [question] = messaging.engine.openBlocking();
+    await messaging.engine.reply(
+      question.id,
+      { body: 'approved', choice: 'approve' },
+      { address: 'human:wyat', canDecide: true }
+    );
+
+    expect(messaging.store.unappliedAnsweredGates()).toEqual([]);
+    expect((await messaging.recover()).replayed).toBe(0);
+    messaging.close();
+  });
+
+  for (const status of ['dropped', 'landed'] as const) {
+    it(`does not wake a task that became ${status} before the approval`, async () => {
+      const { orchestrator, store } = makeOrchestrator();
+      const executor = new StallingExecutor();
+      orchestrator.registerExecutor('claude', executor);
+      const task = store.create({ title: 'Closed out later' });
+      const messaging = openMessaging({
+        rootDir: root,
+        orchestrator,
+        store,
+        events: new EventBus(),
+        ownerRef: 'human:wyat',
+        dbPath: join(root, 'messages.db'),
+      });
+      await messaging.recover();
+
+      await messaging.engine.send(
+        {
+          to: [`task:${task.meta.id}`],
+          kind: 'message',
+          body: 'wake up',
+          wake: 'request',
+        },
+        { address: 'human:asker', canDecide: true }
+      );
+      const [question] = messaging.engine.openBlocking();
+      store.update(task.meta.id, { status });
+      await messaging.engine.reply(
+        question.id,
+        { body: 'approved', choice: 'approve' },
+        { address: 'human:wyat', canDecide: true }
+      );
+
+      expect(executor.started).toHaveLength(0);
+      expect(store.get(task.meta.id)?.meta.status).toBe(status);
+      const notices = messaging.engine
+        .inbox('human:asker')
+        .filter((i) => i.message.kind === 'notice')
+        .map((i) => i.message.body);
+      expect(notices).toEqual([
+        `Not woken: task ${task.meta.id} is ${status}.`,
+      ]);
+      messaging.close();
+    });
+  }
+
+  it('does not wake an epic or a missing task on replay', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const epic = store.create({ title: 'An epic', kind: 'epic' });
+    const messaging = openMessaging({
+      rootDir: root,
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(root, 'messages.db'),
+    });
+    await messaging.recover();
+
+    for (const target of [`task:${epic.meta.id}`, 'task:t-000000']) {
+      const { question, answer } = seedApprovedWake(messaging, {
+        from: 'human:asker',
+        target,
+      });
+      await messaging.gates.handle(question, answer);
+    }
+
+    expect(executor.started).toHaveLength(0);
+    const notices = messaging.engine
+      .inbox('human:asker')
+      .filter((i) => i.message.kind === 'notice')
+      .map((i) => i.message.body);
+    expect(notices).toEqual([
+      `Not woken: task ${epic.meta.id} is an epic.`,
+      'Not woken: task t-000000 is missing.',
+    ]);
     messaging.close();
   });
 

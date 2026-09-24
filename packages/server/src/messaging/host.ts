@@ -1,5 +1,6 @@
 import type {
   PolicyRuling as CorePolicyRuling,
+  TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
 import type {
@@ -45,6 +46,15 @@ export function implicitEpicMembers(
   const match = /^epic\/(.+)$/.exec(channel);
   if (match === null) return [];
   return childrenOf(match[1]).map((task) => `task:${task.meta.id}`);
+}
+
+// Why `task` can never be woken ('an epic', 'landed', 'dropped'), or null when
+// a wake may dispatch it. Checked when a wake gate is raised and again when it runs.
+export function wakeRefusal(task: TaskDoc): string | null {
+  if (task.meta.kind === 'epic') return 'an epic';
+  if (task.meta.status === 'landed' || task.meta.status === 'dropped')
+    return task.meta.status;
+  return null;
 }
 
 // dispatchd's MessagingHost: everything the protocol engine needs from the
@@ -105,21 +115,13 @@ export class DaemonMessagingHost implements MessagingHost {
     }
   }
 
-  // Denies waking anything but a live, dispatchable task (no epic, not
-  // landed/dropped); otherwise defers to the project's autonomy policy for
-  // the 'wake' gate, capped by the task's declared risk.
+  // Denies waking anything but a dispatchable task; otherwise defers to the
+  // project's 'wake' policy, capped by the task's declared risk.
   decide(request: PolicyRequest): PolicyRuling {
     const target = request.target;
     if (!target.startsWith('task:')) return 'deny';
     const task = this.deps.store.get(target.slice('task:'.length));
-    if (
-      task === null ||
-      task.meta.kind === 'epic' ||
-      task.meta.status === 'landed' ||
-      task.meta.status === 'dropped'
-    ) {
-      return 'deny';
-    }
+    if (task === null || wakeRefusal(task) !== null) return 'deny';
     const ruling: CorePolicyRuling = consultProjectPolicy(
       this.deps.rootDir,
       'wake',
