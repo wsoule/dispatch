@@ -35,11 +35,6 @@ export class StallingExecutor implements Executor {
   // removed when the run ends).
   readonly runTokens: (string | undefined)[] = [];
 
-  // The options the most recent start() call was given.
-  get lastStartOptions(): ExecutorStartOptions | undefined {
-    return this.started.at(-1);
-  }
-
   // The most recent start's run token, for tests that call the API as that run.
   get lastRunToken(): string | undefined {
     return this.runTokens.at(-1);
