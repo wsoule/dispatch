@@ -104,6 +104,9 @@ const MAX_DATA_BYTES = 64 * 1024;
 const MAX_RECIPIENTS = 50;
 const MAX_REFS = 50;
 const MAX_CHOICES = 20;
+// Caps on one-line fields, in UTF-8 bytes.
+const MAX_REF_BYTES = 512;
+const MAX_LABEL_BYTES = 200;
 
 /** The gate payload a message carries, or null when `data` is not a gate. */
 export function gateOf(message: { data?: JsonValue }): GateData | null {
@@ -129,11 +132,17 @@ function overBytes(text: string, max: number): boolean {
   return new TextEncoder().encode(text).byteLength > max;
 }
 
-// Rendered one-line fields must not break a line, or they could start a fake
-// message header in the recipient's session.
-function singleLine(value: string | undefined, field: string): void {
-  if (typeof value === 'string' && LINE_BREAK.test(value))
-    invalid(field, 'must not contain line breaks');
+// Rendered one-line fields must stay short and unbroken, or they could flood
+// or start a fake message header in the recipient's session.
+function singleLine(
+  value: string | undefined,
+  field: string,
+  maxBytes: number
+): void {
+  if (typeof value !== 'string') return;
+  if (LINE_BREAK.test(value)) invalid(field, 'must not contain line breaks');
+  if (overBytes(value, maxBytes))
+    invalid(field, `at most ${maxBytes} bytes (UTF-8)`);
 }
 
 // Checks a gate payload's shape and who may send it: runs raise scope gates;
@@ -217,7 +226,7 @@ export function validateSendInput(
     overBytes(JSON.stringify(input.data), MAX_DATA_BYTES)
   )
     invalid('data', `at most ${MAX_DATA_BYTES} bytes as JSON`);
-  singleLine(input.session, 'session');
+  singleLine(input.session, 'session', MAX_LABEL_BYTES);
 
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
@@ -226,8 +235,8 @@ export function validateSendInput(
       invalid(`refs[${i}].type`, 'unknown ref type');
     if (typeof ref.id !== 'string' || ref.id === '')
       invalid(`refs[${i}].id`, 'required');
-    singleLine(ref.id, `refs[${i}].id`);
-    singleLine(ref.at, `refs[${i}].at`);
+    singleLine(ref.id, `refs[${i}].id`, MAX_REF_BYTES);
+    singleLine(ref.at, `refs[${i}].at`, MAX_REF_BYTES);
   });
 
   const asking = ASKING_KINDS.has(kind);
@@ -239,7 +248,7 @@ export function validateSendInput(
     const choices = input.choices;
     if (choices.length > MAX_CHOICES)
       invalid('choices', `at most ${MAX_CHOICES} choices`);
-    choices.forEach((c, i) => singleLine(c, `choices[${i}]`));
+    choices.forEach((c, i) => singleLine(c, `choices[${i}]`, MAX_LABEL_BYTES));
     if (
       choices.length === 0 ||
       new Set(choices).size !== choices.length ||
@@ -250,7 +259,7 @@ export function validateSendInput(
   }
   if (hasChoice && kind !== 'answer')
     invalid('choice', 'only answers carry a choice');
-  singleLine(input.choice, 'choice');
+  singleLine(input.choice, 'choice', MAX_LABEL_BYTES);
 
   const replyTo = input.replyTo ?? null;
   if (kind === 'answer' && replyTo === null)

@@ -265,6 +265,65 @@ describe('validateSendInput size limits', () => {
     ok({ ...base, kind: 'question', choices: choices(20) });
     fails({ ...base, kind: 'question', choices: choices(21) }, 'choices');
   });
+  it('caps each ref id at 512 UTF-8 bytes, naming the ref', () => {
+    const refs = (id: string) =>
+      Array.from({ length: 4 }, (_, i) => ({
+        type: 'file' as const,
+        id: i === 3 ? id : 'a.ts',
+      }));
+    ok({ ...base, refs: refs('a'.repeat(512)) });
+    fails({ ...base, refs: refs('a'.repeat(513)) }, 'refs[3].id');
+    ok({ ...base, refs: refs('é'.repeat(256)) });
+    fails({ ...base, refs: refs('é'.repeat(257)) }, 'refs[3].id');
+  });
+  it('caps a ref at at 512 UTF-8 bytes, naming the ref', () => {
+    const refs = (at: string) => [
+      { type: 'task' as const, id: 't-000001' },
+      { type: 'file' as const, id: 'a.ts', at },
+    ];
+    ok({ ...base, refs: refs('a'.repeat(512)) });
+    fails({ ...base, refs: refs('a'.repeat(513)) }, 'refs[1].at');
+    fails({ ...base, refs: refs('é'.repeat(257)) }, 'refs[1].at');
+  });
+  it('caps each choice at 200 UTF-8 bytes, naming the entry', () => {
+    ok({ ...base, kind: 'question', choices: ['yes', 'a'.repeat(200)] });
+    fails(
+      { ...base, kind: 'question', choices: ['yes', 'a'.repeat(201)] },
+      'choices[1]'
+    );
+    fails(
+      { ...base, kind: 'question', choices: ['yes', 'é'.repeat(101)] },
+      'choices[1]'
+    );
+  });
+  it('caps an answer choice at 200 UTF-8 bytes', () => {
+    const answer = (choice: string): SendInput => ({
+      ...base,
+      kind: 'answer',
+      replyTo: 'm-q',
+      choice,
+    });
+    const target = (choice: string) => ({
+      ...question,
+      choices: ['yes', choice],
+    });
+    expect(() =>
+      validateSendInput(
+        answer('a'.repeat(200)),
+        'human:wyat',
+        false,
+        target('a'.repeat(200))
+      )
+    ).not.toThrow();
+    fails(answer('a'.repeat(201)), 'choice', {
+      target: target('a'.repeat(201)),
+    });
+  });
+  it('caps a session at 200 UTF-8 bytes', () => {
+    ok({ ...base, session: 's'.repeat(200) });
+    fails({ ...base, session: 's'.repeat(201) }, 'session');
+    fails({ ...base, session: 'é'.repeat(101) }, 'session');
+  });
 });
 
 describe('gateOf', () => {
