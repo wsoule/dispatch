@@ -73,7 +73,7 @@ function startTestServer(): Promise<ServerHandle> {
 }
 
 // Dispatches a task and waits for its run to actually be `running`, so the
-// run's mint token (executor.lastStartOptions.runToken) is settled.
+// run's minted token (executor.lastRunToken) is settled.
 async function liveRun(
   title: string
 ): Promise<{ runId: string; taskId: string }> {
@@ -162,7 +162,7 @@ describe('messaging HTTP routes', () => {
 
   it("a run asks a human a question; the human answers; the run's long-poll returns it", async () => {
     await liveRun('Ask something');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
     expect(runToken).toBeDefined();
 
     const sendRes = await fetch(`${baseUrl}/api/messages`, {
@@ -250,7 +250,7 @@ describe('messaging HTTP routes', () => {
 
   it('a run joins a channel as its task; the channel list shows epic children implicitly', async () => {
     const { taskId } = await liveRun('Join a channel');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
 
     const joinRes = await fetch(`${baseUrl}/api/channels/general/members`, {
       method: 'POST',
@@ -323,7 +323,7 @@ describe('messaging HTTP routes', () => {
 
   it('DELETE .../members with no address removes the caller as its self-acting address (a run leaves as its task)', async () => {
     const { taskId } = await liveRun('Leave a channel as my task');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
 
     const joinRes = await fetch(`${baseUrl}/api/channels/general/members`, {
       method: 'POST',
@@ -357,7 +357,7 @@ describe('messaging HTTP routes', () => {
 
   it('self-leaving a channel you never joined is also a 404', async () => {
     await liveRun('Never joined this channel');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
 
     const notAMember = await fetch(
       `${baseUrl}/api/channels/never-joined/members`,
@@ -368,7 +368,7 @@ describe('messaging HTTP routes', () => {
 
   it("a run's own mailbox merges its run address and its task's, sorted by delivery id", async () => {
     const { runId, taskId } = await liveRun('Check my own mail');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
 
     // Addressed straight to the task (most mail, since it outlives any run).
     await fetch(`${baseUrl}/api/messages`, {
@@ -405,7 +405,7 @@ describe('messaging HTTP routes', () => {
 
   it('a run can read its task mailbox by explicit address', async () => {
     const { taskId } = await liveRun('Explicit mailbox');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
     await fetch(`${baseUrl}/api/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -481,7 +481,7 @@ describe('messaging HTTP routes', () => {
     expect(asRecipientBody.state).toBe('read');
 
     const { taskId } = await liveRun('Delivery via task');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
     const taskSendRes = await fetch(`${baseUrl}/api/messages`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -614,7 +614,7 @@ describe('messaging HTTP routes', () => {
 
   it('GET /api/messages/:id/answer is for a participant of the question', async () => {
     await liveRun('Answer authz run');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
     const a = await registerAndApprove('answer-stranger');
 
     const sendRes = await fetch(`${baseUrl}/api/messages`, {
@@ -662,7 +662,7 @@ describe('messaging HTTP routes', () => {
 
   it('GET /api/messages/:id/answer returns immediately without ?wait=1', async () => {
     await liveRun('No wait run');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
     const sendRes = await fetch(`${baseUrl}/api/messages`, {
       method: 'POST',
       headers: authHeaders(runToken!),
@@ -694,7 +694,7 @@ describe('messaging HTTP routes', () => {
     expect(asAgent.status).toBe(403);
 
     await liveRun('Threads run');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
     const asRun = await fetch(`${baseUrl}/api/threads`, {
       headers: authHeaders(runToken!),
     });
@@ -734,7 +734,7 @@ describe('messaging HTTP routes', () => {
     expect(asAgent.status).toBe(403);
 
     await liveRun('Decisions run');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
     const asRun = await fetch(`${baseUrl}/api/decisions/open`, {
       headers: authHeaders(runToken!),
     });
@@ -1064,7 +1064,7 @@ describe('messaging thread rate limit', () => {
 
   it('too many agent turns in one thread maps to 429', async () => {
     await liveRun('Chatty run');
-    const runToken = executor.lastStartOptions?.runToken;
+    const runToken = executor.lastRunToken;
 
     const first = await fetch(`${baseUrl}/api/messages`, {
       method: 'POST',

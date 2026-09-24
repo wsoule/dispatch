@@ -36,6 +36,12 @@ export function transcriptPath(rootDir: string, runId: string): string {
   return join(runsDir(rootDir), `${runId}.jsonl`);
 }
 
+// A live run's messaging token (mode 0600), read by its dispatch MCP server
+// through DISPATCH_RUN_TOKEN_FILE and removed when the run ends.
+export function runTokenPath(rootDir: string, runId: string): string {
+  return join(runsDir(rootDir), `${runId}.token`);
+}
+
 // Where a run's diff snapshot (see Orchestrator.persistDiffSnapshot) lives —
 // written right before the run's worktree is removed on every review path
 // (local merge, discard, PR merge) so GET .../diff still has something to

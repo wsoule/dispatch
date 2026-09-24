@@ -55,6 +55,7 @@ import type { RepoOrientation } from './orientation.js';
 import {
   diffSnapshotPath,
   runsDir,
+  runTokenPath,
   transcriptPath,
   worktreePath,
   worktreesDir,
@@ -383,9 +384,8 @@ export class Orchestrator {
   // learn a run is live (and dispatchable) without polling. Removing the
   // callback returned by onRunStarted drops it from this set.
   private readonly runStartedListeners = new Set<(meta: RunMeta) => void>();
-  // Set once at boot via setRunTokenMinter — mints each run's messaging
-  // credential (DISPATCH_RUN_TOKEN) at start time. Null until then, so
-  // fixtures/tests that never call it dispatch runs with no runToken.
+  // Mints each run's messaging token at start (see setRunTokenMinter); null
+  // leaves runs without one, as in fixtures that never set it.
   private mintRunToken: ((runId: string) => string) | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
@@ -461,9 +461,8 @@ export class Orchestrator {
     };
   }
 
-  // Messaging-core: registers the function that mints a run's
-  // DISPATCH_RUN_TOKEN credential, called once at boot. startAndRegister
-  // applies it to every run's ExecutorStartOptions right before start().
+  // Called once at boot. startAndRegister writes each minted token to the run's
+  // token file (runTokenPath) and passes the executor only that path.
   setRunTokenMinter(mint: (runId: string) => string): void {
     this.mintRunToken = mint;
   }
@@ -3934,6 +3933,7 @@ export class Orchestrator {
               error: BOOT_FORCE_FAIL_ERROR,
             };
             crashedRunIds.push(meta.id);
+            this.removeRunToken(meta.id);
           }
           this.registry.create(meta);
           bootRuns.push(meta);
@@ -4129,11 +4129,12 @@ export class Orchestrator {
     opts: ExecutorStartOptions,
     executor: Executor
   ): void {
-    if (this.mintRunToken !== null) {
-      opts = { ...opts, runToken: this.mintRunToken(runId) };
-    }
     let executorRun;
     try {
+      if (this.mintRunToken !== null) {
+        const token = this.mintRunToken(runId);
+        opts = { ...opts, runTokenFile: this.writeRunToken(runId, token) };
+      }
       executorRun = executor.start(opts, this.makeEvents(runId));
     } catch (err) {
       const raw = (err as Error).message;
@@ -4161,6 +4162,23 @@ export class Orchestrator {
         }
       }
     }
+  }
+
+  // Writes a run's token to a fresh owner-only file and returns its path; a
+  // leftover file is replaced so its mode can never be wider than 0600.
+  private writeRunToken(runId: string, token: string): string {
+    const path = runTokenPath(this.ctx.rootDir, runId);
+    mkdirSync(runsDir(this.ctx.rootDir), { recursive: true });
+    rmSync(path, { force: true });
+    writeFileSync(path, token, { mode: 0o600, flag: 'wx' });
+    return path;
+  }
+
+  // A run's token file outlives nothing: removed once the run is terminal.
+  private removeRunToken(runId: string): void {
+    this.bestEffort(`removing run token file for run ${runId}`, () => {
+      rmSync(runTokenPath(this.ctx.rootDir, runId), { force: true });
+    });
   }
 
   // I4: once PrManager.openPr has pushed a run's branch and opened a PR
@@ -4339,6 +4357,7 @@ export class Orchestrator {
     if (TERMINAL_RUN_STATES.has(state)) {
       this.clearStopEscalation(runId);
       this.stoppingRuns.delete(runId);
+      this.removeRunToken(runId);
     }
     // A finish that reports no session must not erase the one recordSession
     // already stored: spreading `sessionId: undefined` over the meta did

@@ -638,7 +638,7 @@ export class ClaudeExecutor implements Executor {
             opts.cwd,
             opts.projectRoot ?? opts.cwd,
             opts.runId ?? '',
-            opts.runToken
+            opts.runTokenFile
           )
         ),
         ...cartoMcpServers(opts.projectRoot ?? opts.cwd),

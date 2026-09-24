@@ -155,9 +155,9 @@ export interface ExecutorStartOptions {
   // `projectRoot` is: FakeExecutor fixtures that never touch messaging don't
   // need to pass it; every real Orchestrator call site always does.
   runId?: string;
-  // This run's messaging credential, handed to the dispatch MCP server as
-  // DISPATCH_RUN_TOKEN.
-  runToken?: string;
+  // The 0600 file holding this run's messaging token. Only the path travels to
+  // the dispatch MCP server, since backends put MCP env on a process's argv.
+  runTokenFile?: string;
 }
 
 // What the orchestrator may assume about an executor beyond `start()`: which

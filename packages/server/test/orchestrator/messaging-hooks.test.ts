@@ -1,6 +1,17 @@
+import type {
+  McpStdioServerConfig,
+  Options,
+  Query,
+} from '@anthropic-ai/claude-agent-sdk';
 import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,11 +20,14 @@ import type { ServerEvent } from '../../src/events.js';
 import { EventBus } from '../../src/events.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
+import { ClaudeExecutor } from '../../src/orchestrator/executors/claude.js';
 import type { CliSpawner } from '../../src/orchestrator/executors/cli.js';
 import { CliExecutor } from '../../src/orchestrator/executors/cli.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import { runTokenPath } from '../../src/orchestrator/paths.js';
 import type {
   Executor,
+  ExecutorEvents,
   ExecutorRun,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
@@ -132,6 +146,49 @@ class SlowInterruptExecutor implements Executor {
   }
 }
 
+// An Agent SDK session that produces nothing until it is interrupted, so the
+// run it backs stays live.
+function hangingQuery(): Query {
+  let end: () => void = () => {};
+  const ended = new Promise<IteratorResult<never, undefined>>((resolve) => {
+    end = () => resolve({ done: true, value: undefined });
+  });
+  const session = {
+    next: () => ended,
+    return: () => {
+      end();
+      return ended;
+    },
+    [Symbol.asyncIterator]: () => session,
+    interrupt: () => {
+      end();
+      return Promise.resolve();
+    },
+    close: () => end(),
+  };
+  return session as unknown as Query;
+}
+
+// A run that finishes only when the test calls finish().
+class FinishOnDemandExecutor implements Executor {
+  private events: ExecutorEvents | undefined;
+
+  finish(): void {
+    this.events?.onFinish({ state: 'finished' });
+  }
+
+  start(_opts: unknown, events: ExecutorEvents): ExecutorRun {
+    this.events = events;
+    return {
+      interrupt: () => Promise.resolve(),
+      requestStop: () => {},
+      send: () => {},
+      approve: () => {},
+      notify: () => {},
+    };
+  }
+}
+
 describe('Orchestrator messaging hooks', () => {
   it('mints a run token at start and fires onRunStarted', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
@@ -146,10 +203,70 @@ describe('Orchestrator messaging hooks', () => {
     const meta = await orchestrator.dispatch(task.meta.id, 'stall');
 
     expect(started).toEqual([meta.id]);
-    expect(executor.lastStartOptions?.runToken).toBe(`${meta.id}.tok`);
+    expect(executor.lastRunToken).toBe(`${meta.id}.tok`);
     expect(orchestrator.liveRunIdForTask(task.meta.id)).toBe(meta.id);
     expect(orchestrator.taskIdOfRun(meta.id)).toBe(task.meta.id);
     expect(orchestrator.isRunLive(meta.id)).toBe(true);
+  });
+
+  it('gives the MCP a 0600 run token file, never the token, and removes it when the run ends', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    let captured: Options | undefined;
+    orchestrator.registerExecutor(
+      'claude',
+      new ClaudeExecutor((args: { options?: Options }) => {
+        captured = args.options;
+        return hangingQuery();
+      })
+    );
+    orchestrator.setRunTokenMinter((id) => `${id}.SECRET-RUN-TOKEN`);
+    const task = store.create({ title: 'Task' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'claude');
+    const token = `${meta.id}.SECRET-RUN-TOKEN`;
+
+    expect(JSON.stringify(captured)).not.toContain(token);
+    expect(Object.values(process.env)).not.toContain(token);
+    const dispatch = captured?.mcpServers?.dispatch as McpStdioServerConfig;
+    const file = dispatch.env?.DISPATCH_RUN_TOKEN_FILE;
+    expect(file).toBe(runTokenPath(repo, meta.id));
+    expect(readFileSync(file!, 'utf8')).toBe(token);
+    expect(statSync(file!).mode & 0o777).toBe(0o600);
+
+    await orchestrator.cancel(meta.id);
+    expect(existsSync(file!)).toBe(false);
+  });
+
+  it('removes the run token file when the run finishes on its own', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    const executor = new FinishOnDemandExecutor();
+    orchestrator.registerExecutor('finisher', executor);
+    orchestrator.setRunTokenMinter((id) => `${id}.tok`);
+    const task = store.create({ title: 'Task' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'finisher');
+    const file = runTokenPath(repo, meta.id);
+    expect(existsSync(file)).toBe(true);
+
+    executor.finish();
+    expect(orchestrator.getRun(meta.id)?.meta.state).toBe('finished');
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it('removes a crashed run token file at boot', async () => {
+    const first = makeOrchestrator(repo);
+    first.orchestrator.registerExecutor('stall', new StallingExecutor());
+    first.orchestrator.setRunTokenMinter((id) => `${id}.tok`);
+    const task = first.store.create({ title: 'Task' });
+    const meta = await first.orchestrator.dispatch(task.meta.id, 'stall');
+    const file = runTokenPath(repo, meta.id);
+    expect(existsSync(file)).toBe(true);
+
+    const rebooted = makeOrchestrator(repo);
+    rebooted.orchestrator.reconcileOnBoot();
+
+    expect(rebooted.orchestrator.getRun(meta.id)?.meta.state).toBe('failed');
+    expect(existsSync(file)).toBe(false);
   });
 
   it('deliverToRun sends and logs; notifyRun notes and logs', async () => {

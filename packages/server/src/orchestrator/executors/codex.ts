@@ -153,18 +153,21 @@ function buildCodexMcpServers(
   runId: string,
   cartoSpec: (projectRoot: string) => StdioServerSpec | null,
   userServers: string[],
-  runToken?: string
+  runTokenFile?: string
 ): { config: Record<string, unknown>; disabled: string[] } {
   const carto = cartoSpec(projectRoot);
   const ours: Record<string, unknown> = {
-    dispatch: toCodexMcp(dispatchMcpSpec(cwd, projectRoot, runId, runToken), {
-      tools: {
-        task_comment: { approval_mode: 'approve' },
-        record_evidence: { approval_mode: 'approve' },
-        record_mutation: { approval_mode: 'approve' },
-        ask_user: { approval_mode: 'approve' },
-      },
-    }),
+    dispatch: toCodexMcp(
+      dispatchMcpSpec(cwd, projectRoot, runId, runTokenFile),
+      {
+        tools: {
+          task_comment: { approval_mode: 'approve' },
+          record_evidence: { approval_mode: 'approve' },
+          record_mutation: { approval_mode: 'approve' },
+          ask_user: { approval_mode: 'approve' },
+        },
+      }
+    ),
     ...(carto === null ? {} : { carto: toCodexMcp(carto) }),
   };
   // A person's own servers (a Stripe or PostHog connector, say) have no
@@ -603,7 +606,7 @@ export class CodexExecutor implements Executor {
           opts.runId ?? '',
           this.cartoSpec,
           this.userMcpServers(),
-          opts.runToken
+          opts.runTokenFile
         );
         if (disabled.length > 0) {
           events.onEntry({

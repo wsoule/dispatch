@@ -168,6 +168,7 @@ function startHarness(
       cwd: 'C:\\worktree',
       projectRoot: 'C:\\project',
       runId: 'r-codex',
+      runTokenFile: 'C:\\runs\\r-codex.token',
       prompt: 'make the change',
       permissionMode: 'auto',
       resumeSessionId,
@@ -359,6 +360,25 @@ describe('CodexExecutor', () => {
       expectedTurnId: 'turn-1',
       input: [{ type: 'text', text: '📬 digest', text_elements: [] }],
     });
+    await harness.run.interrupt();
+  });
+
+  it('gives the dispatch MCP server no run token, only its file', async () => {
+    const process = scriptedProcess();
+    const harness = startHarness(process);
+    await waitFor(() =>
+      process.requests.some((request) => request.method === 'thread/start')
+    );
+    const start = process.requests.find(
+      (request) => request.method === 'thread/start'
+    );
+    const config = start?.params?.config as {
+      mcp_servers: { dispatch: { env: Record<string, string> } };
+    };
+    expect(config.mcp_servers.dispatch.env.DISPATCH_RUN_TOKEN_FILE).toBe(
+      'C:\\runs\\r-codex.token'
+    );
+    expect(config.mcp_servers.dispatch.env.DISPATCH_RUN_TOKEN).toBeUndefined();
     await harness.run.interrupt();
   });
 
@@ -720,6 +740,7 @@ describe('CodexExecutor', () => {
               env: expect.objectContaining({
                 DISPATCH_PROJECT_ROOT: 'C:\\project',
                 DISPATCH_RUN_ID: 'r-codex',
+                DISPATCH_RUN_TOKEN_FILE: 'C:\\runs\\r-codex.token',
               }),
               required: true,
               tool_timeout_sec: 1860,
@@ -786,6 +807,7 @@ describe('CodexExecutor', () => {
           env: expect.objectContaining({
             DISPATCH_PROJECT_ROOT: 'C:\\project',
             DISPATCH_RUN_ID: 'r-codex',
+            DISPATCH_RUN_TOKEN_FILE: 'C:\\runs\\r-codex.token',
           }),
           required: true,
           tool_timeout_sec: 1860,

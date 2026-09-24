@@ -262,6 +262,36 @@ describe('ClaudeExecutor dispatch MCP server wiring', () => {
       | undefined;
     expect(dispatch?.env?.DISPATCH_RUN_ID).toBe('r-abc123');
   });
+
+  it('hands the MCP server the run token file path, not a token', () => {
+    let captured: Options | undefined;
+    const fakeQueryFn = (args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    };
+    const executor = new ClaudeExecutor(fakeQueryFn);
+
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        projectRoot: '/tmp/dispatch-project-y',
+        runId: 'r-abc123',
+        runTokenFile: '/tmp/dispatch-runs/r-abc123.token',
+        prompt: 'do the thing',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      noopEvents
+    );
+
+    const dispatch = captured?.mcpServers?.dispatch as
+      | McpStdioServerConfig
+      | undefined;
+    expect(dispatch?.env?.DISPATCH_RUN_TOKEN_FILE).toBe(
+      '/tmp/dispatch-runs/r-abc123.token'
+    );
+    expect(dispatch?.env?.DISPATCH_RUN_TOKEN).toBeUndefined();
+  });
 });
 
 // Dispatched agents must behave like a human running `claude` in the

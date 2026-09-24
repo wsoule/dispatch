@@ -1,4 +1,10 @@
-import { mkdtempSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  mkdtempSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
@@ -25,14 +31,27 @@ export class StallingExecutor implements Executor {
   // Every send() call any started run received, in order.
   readonly sent: string[] = [];
 
-  // The options the most recent start() call was given — what a test reads
-  // to assert on a minted runToken without threading the run id through.
+  // Each start's run token, read from its token file at start (the file is
+  // removed when the run ends).
+  readonly runTokens: (string | undefined)[] = [];
+
+  // The options the most recent start() call was given.
   get lastStartOptions(): ExecutorStartOptions | undefined {
     return this.started.at(-1);
   }
 
+  // The most recent start's run token, for tests that call the API as that run.
+  get lastRunToken(): string | undefined {
+    return this.runTokens.at(-1);
+  }
+
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
     this.started.push(opts);
+    this.runTokens.push(
+      opts.runTokenFile === undefined
+        ? undefined
+        : readFileSync(opts.runTokenFile, 'utf8')
+    );
     events.onSession?.(`session-${this.started.length}`);
     return {
       interrupt: () => Promise.resolve(),
