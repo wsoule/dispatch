@@ -159,6 +159,22 @@ describe('DaemonMessagingHost.decide', () => {
       })
     ).toBe('allow');
   });
+
+  it("still asks at rung 3 for a critical task, whose risk caps the rung below wake's", () => {
+    const task = store.create({ title: 'Risky work', risk: 'critical' });
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'policy:\n  rung: 3\n'
+    );
+    const { host } = makeHost();
+    expect(
+      host.decide({
+        type: 'wake',
+        target: `task:${task.meta.id}`,
+        message: stubMessage(),
+      })
+    ).toBe('ask');
+  });
 });
 
 describe('DaemonMessagingHost.implicitMembers', () => {

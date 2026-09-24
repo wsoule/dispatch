@@ -766,6 +766,124 @@ describe('messaging HTTP routes', () => {
     expect(asHuman.status).toBe(200);
   });
 
+  it("a run cannot read, mark read or move another task's mail", async () => {
+    const a = await liveRun('Task A');
+    await liveRun('Task B');
+    const bToken = executor.lastRunToken!;
+    const taskA = `task:${a.taskId}`;
+    const sent = await json<{
+      message: { id: string; thread: string };
+      deliveries: { id: string }[];
+    }>(
+      await fetch(`${baseUrl}/api/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ to: [taskA], kind: 'message', body: 'for A' }),
+      })
+    );
+    const deliveryId = sent.deliveries[0].id;
+    const addA = await fetch(`${baseUrl}/api/channels/general/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ member: taskA }),
+    });
+    expect(addA.status).toBe(204);
+
+    const refusals: [Promise<Response>, string][] = [
+      [
+        fetch(`${baseUrl}/api/mailbox?address=${encodeURIComponent(taskA)}`, {
+          headers: authHeaders(bToken),
+        }),
+        `cannot read the mailbox for ${taskA}`,
+      ],
+      [
+        fetch(`${baseUrl}/api/deliveries/${deliveryId}/read`, {
+          method: 'POST',
+          headers: authHeaders(bToken),
+        }),
+        `cannot mark ${deliveryId} read`,
+      ],
+      [
+        fetch(`${baseUrl}/api/channels/other/members`, {
+          method: 'POST',
+          headers: authHeaders(bToken),
+          body: JSON.stringify({ member: taskA }),
+        }),
+        `cannot add ${taskA} to a channel`,
+      ],
+      [
+        fetch(
+          `${baseUrl}/api/channels/general/members/${encodeURIComponent(taskA)}`,
+          { method: 'DELETE', headers: authHeaders(bToken) }
+        ),
+        `cannot remove ${taskA} from a channel`,
+      ],
+      [
+        fetch(`${baseUrl}/api/messages/${sent.message.id}`, {
+          headers: authHeaders(bToken),
+        }),
+        `cannot read message ${sent.message.id}`,
+      ],
+      [
+        fetch(`${baseUrl}/api/threads/${sent.message.thread}`, {
+          headers: authHeaders(bToken),
+        }),
+        `cannot read thread ${sent.message.thread}`,
+      ],
+    ];
+    for (const [pending, error] of refusals) {
+      const res = await pending;
+      expect(res.status).toBe(403);
+      expect((await json<{ error: string }>(res)).error).toBe(error);
+    }
+  });
+
+  it('a request-tier teammate cannot list threads or decisions, or read mail it is not part of', async () => {
+    const adaToken = handle.team.teammates.issue('ada', 'request');
+    const agent = await registerAndApprove('private-agent');
+    const sent = await json<{ message: { id: string; thread: string } }>(
+      await fetch(`${baseUrl}/api/messages`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          to: [agent.address],
+          kind: 'message',
+          body: 'between the owner and the agent',
+        }),
+      })
+    );
+
+    const refusals: [string, string][] = [
+      ['threads', 'listing recent threads needs a deciding human'],
+      ['decisions/open', 'listing open decisions needs a deciding human'],
+      [
+        `threads/${sent.message.thread}`,
+        `cannot read thread ${sent.message.thread}`,
+      ],
+      [`messages/${sent.message.id}`, `cannot read message ${sent.message.id}`],
+      [
+        `mailbox?address=${encodeURIComponent(agent.address)}`,
+        `cannot read the mailbox for ${agent.address}`,
+      ],
+      [
+        `mailbox?address=${encodeURIComponent('human:test')}`,
+        'cannot read the mailbox for human:test',
+      ],
+    ];
+    for (const [path, error] of refusals) {
+      const res = await fetch(`${baseUrl}/api/${path}`, {
+        headers: authHeaders(adaToken),
+      });
+      expect(res.status).toBe(403);
+      expect((await json<{ error: string }>(res)).error).toBe(error);
+    }
+
+    const own = await fetch(`${baseUrl}/api/mailbox`, {
+      headers: authHeaders(adaToken),
+    });
+    expect(own.status).toBe(200);
+  });
+
   it('only the asker (or a deciding human) may long-poll for an answer', async () => {
     await liveRun('Asks an agent');
     const runToken = executor.lastRunToken!;
@@ -1125,6 +1243,44 @@ describe('messaging HTTP routes', () => {
     const firstBody = await json<{ message: { id: string } }>(first);
     const secondBody = await json<{ message: { id: string } }>(second);
     expect(firstBody.message.id).toBe(secondBody.message.id);
+  });
+
+  it('scopes an Idempotency-Key to its sender: two principals reusing one key send two messages', async () => {
+    const agent = await registerAndApprove('idempotent-agent');
+    const key = { 'idempotency-key': 'shared-key' };
+
+    const asHuman = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', ...key },
+      body: JSON.stringify({
+        to: [agent.address],
+        kind: 'message',
+        body: 'from the human',
+      }),
+    });
+    const asAgent = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { ...authHeaders(agent.token), ...key },
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'message',
+        body: 'from the agent',
+      }),
+    });
+    expect(asHuman.status).toBe(201);
+    expect(asAgent.status).toBe(201);
+    type Sent = { message: { id: string; from: string; body: string } };
+    const human = await json<Sent>(asHuman);
+    const agentSent = await json<Sent>(asAgent);
+    expect(agentSent.message.id).not.toBe(human.message.id);
+    expect(human.message).toMatchObject({
+      from: 'human:test',
+      body: 'from the human',
+    });
+    expect(agentSent.message).toMatchObject({
+      from: agent.address,
+      body: 'from the agent',
+    });
   });
 
   it('a failed send does not poison its Idempotency-Key — a retry re-executes', async () => {
