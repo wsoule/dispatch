@@ -339,6 +339,29 @@ describe('CodexExecutor', () => {
     );
   });
 
+  it('notify steers the live turn with the digest', async () => {
+    const process = scriptedProcess();
+    const harness = startHarness(process);
+    await waitFor(() =>
+      process.requests.some((request) => request.method === 'turn/start')
+    );
+
+    harness.run.notify('📬 digest');
+
+    await waitFor(() =>
+      process.requests.some((request) => request.method === 'turn/steer')
+    );
+    const steer = process.requests.find(
+      (request) => request.method === 'turn/steer'
+    );
+    expect(steer?.params).toEqual({
+      threadId: 'thread-new',
+      expectedTurnId: 'turn-1',
+      input: [{ type: 'text', text: '📬 digest', text_elements: [] }],
+    });
+    await harness.run.interrupt();
+  });
+
   it('notify after finish is a no-op', async () => {
     const process = scriptedProcess({
       afterTurn(fake) {
