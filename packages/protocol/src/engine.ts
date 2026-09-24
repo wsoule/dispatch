@@ -4,7 +4,7 @@ import { gateOf, validateSendInput } from './envelope.js';
 import type { JsonValue, Message, Ref, SendInput } from './envelope.js';
 import { MessagingError } from './errors.js';
 import type { MessagingHost, WakeResult } from './host.js';
-import { renderDigestLine, renderForAgent } from './render.js';
+import { firstLine, renderDigestLine, renderForAgent } from './render.js';
 import type {
   Delivery,
   DeliveryState,
@@ -702,14 +702,13 @@ export class DeliveryEngine {
           `Waking ${d.recipient} was not allowed. Your message is waiting for it.`
         );
       } else {
-        const first = message.body.split('\n')[0] ?? '';
         await this.send(
           {
             to: [this.host.owner(d.recipient)],
             kind: 'question',
             blocking: true,
             choices: ['approve', 'deny'],
-            body: `${message.from} wants to wake ${d.recipient}:\n\n> ${first}`,
+            body: `${message.from} wants to wake ${d.recipient}:\n\n> ${firstLine(message.body)}`,
             data: { type: 'wake', target: d.recipient, message: message.id },
             refs: [{ type: 'message', id: message.id }],
           },

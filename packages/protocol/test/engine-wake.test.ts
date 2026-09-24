@@ -97,6 +97,38 @@ describe('wake', () => {
     expect(gate.body).not.toContain('more');
   });
 
+  it('the wake gate quotes the first line up to any line break', async () => {
+    host.ruling = 'ask';
+    await engine.send(
+      {
+        to: ['task:t-000003'],
+        kind: 'message',
+        body: 'please look more',
+        wake: 'request',
+      },
+      run1
+    );
+    const [gate] = engine.openBlocking();
+    expect(gate.body).toEndWith('> please look');
+  });
+
+  it('a first line as large as the body cap still raises the wake gate', async () => {
+    host.ruling = 'ask';
+    const { message } = await engine.send(
+      {
+        to: ['task:t-000003'],
+        kind: 'message',
+        body: 'x'.repeat(64 * 1024),
+        wake: 'request',
+      },
+      run1
+    );
+    const [gate] = engine.openBlocking();
+    expect(gateOf(gate)).toMatchObject({ type: 'wake', message: message.id });
+    const quoted = gate.body.slice(gate.body.indexOf('> ') + 2);
+    expect(quoted).toBe(`${'x'.repeat(79)}…`);
+  });
+
   it('does not wake live recipients or when not requested', async () => {
     host.ruling = 'allow';
     host.startRun('t-000003', 'r-000003');

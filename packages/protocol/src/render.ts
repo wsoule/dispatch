@@ -26,15 +26,18 @@ export function renderForAgent(m: Message): string {
   return lines.join('\n');
 }
 
+// A body's first line, cut to the digest width, for one-line summaries.
+export function firstLine(body: string): string {
+  const first = body.split(LINE_BREAK, 1)[0] ?? '';
+  return first.length > DIGEST_WIDTH
+    ? `${first.slice(0, DIGEST_WIDTH - 1)}…`
+    : first;
+}
+
 // One line for a pulled (channel) message: where, who, the first line, the id.
 export function renderDigestLine(m: Message): string {
   const channel = m.to.find((a) => a.startsWith('channel:'));
   const where =
     channel === undefined ? '' : ` #${channel.slice('channel:'.length)} ·`;
-  const first = m.body.split(LINE_BREAK)[0] ?? '';
-  const text =
-    first.length > DIGEST_WIDTH
-      ? `${first.slice(0, DIGEST_WIDTH - 1)}…`
-      : first;
-  return `📬${where} ${m.kind} from ${m.from}: ${text} (${m.id})`;
+  return `📬${where} ${m.kind} from ${m.from}: ${firstLine(m.body)} (${m.id})`;
 }
