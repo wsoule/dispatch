@@ -72,6 +72,7 @@ let daemon: FakeDaemon | undefined;
 const originalEnv = {
   DISPATCH_HOME: process.env.DISPATCH_HOME,
   DISPATCH_RUN_TOKEN: process.env.DISPATCH_RUN_TOKEN,
+  DISPATCH_RUN_TOKEN_FILE: process.env.DISPATCH_RUN_TOKEN_FILE,
   DISPATCH_RUN_ID: process.env.DISPATCH_RUN_ID,
   DISPATCH_AGENT_NAME: process.env.DISPATCH_AGENT_NAME,
 };
@@ -81,6 +82,7 @@ beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), 'dispatch-mcp-identity-root-'));
   process.env.DISPATCH_HOME = fakeHome;
   delete process.env.DISPATCH_RUN_TOKEN;
+  delete process.env.DISPATCH_RUN_TOKEN_FILE;
   delete process.env.DISPATCH_RUN_ID;
   delete process.env.DISPATCH_AGENT_NAME;
 });
@@ -134,8 +136,10 @@ describe('agentName', () => {
 });
 
 describe('messagingCredential (run context)', () => {
-  it('uses DISPATCH_RUN_TOKEN and derives the run address from DISPATCH_RUN_ID', async () => {
-    process.env.DISPATCH_RUN_TOKEN = 'rt-abc123';
+  it('reads the token from the file DISPATCH_RUN_TOKEN_FILE names and derives the run address from DISPATCH_RUN_ID', async () => {
+    const file = join(fakeHome, 'r-self1.token');
+    writeFileSync(file, 'rt-abc123\n', { mode: 0o600 });
+    process.env.DISPATCH_RUN_TOKEN_FILE = file;
     process.env.DISPATCH_RUN_ID = 'r-self1';
     const result = await messagingCredential(root, 'Claude Code');
     expect(result).toEqual({
@@ -143,6 +147,39 @@ describe('messagingCredential (run context)', () => {
       kind: 'run',
       address: 'run:r-self1',
     });
+  });
+
+  it('never reads a token from DISPATCH_RUN_TOKEN in env', async () => {
+    process.env.DISPATCH_RUN_TOKEN = 'rt-from-env';
+    process.env.DISPATCH_RUN_ID = 'r-self1';
+    const name = agentName(process.env, 'Claude Code', hostname());
+    const path = agentTokenFilePath(root, name);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(
+      path,
+      JSON.stringify({ token: 'cached-agent-token', address: 'agent:wyat/x' })
+    );
+
+    const result = await messagingCredential(root, 'Claude Code');
+    expect(result).toEqual({
+      token: 'cached-agent-token',
+      address: 'agent:wyat/x',
+      kind: 'agent',
+    });
+  });
+
+  it('errors instead of self-registering when the run token file is unreadable', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(root, daemon.start());
+    const file = join(fakeHome, 'gone.token');
+    process.env.DISPATCH_RUN_TOKEN_FILE = file;
+    process.env.DISPATCH_RUN_ID = 'r-self1';
+
+    const result = await messagingCredential(root, 'Claude Code');
+    expect(result).toEqual({
+      error: expect.stringContaining(`cannot read this run's token (${file})`),
+    });
+    expect(daemon.registerCalls).toEqual([]);
   });
 });
 

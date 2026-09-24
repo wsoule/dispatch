@@ -198,6 +198,28 @@ async function doRegisterAgent(
   return { token: created.token, address: created.address, kind: 'agent' };
 }
 
+// A dispatched run's token, read from the 0600 file DISPATCH_RUN_TOKEN_FILE
+// names; null outside a run. An unreadable file errors rather than registering.
+function runCredential(): MessagingCredential | { error: string } | null {
+  const file = process.env.DISPATCH_RUN_TOKEN_FILE;
+  if (file === undefined || file === '') return null;
+  let token: string;
+  try {
+    token = readFileSync(file, 'utf8').trim();
+  } catch (err) {
+    return {
+      error: `cannot read this run's token (${file}): ${(err as Error).message}`,
+    };
+  }
+  if (token === '') return { error: `cannot read this run's token (${file})` };
+  const runId = process.env.DISPATCH_RUN_ID;
+  return {
+    token,
+    kind: 'run',
+    address: runId !== undefined && runId !== '' ? `run:${runId}` : null,
+  };
+}
+
 /** The credential a messaging tool call presents: a live run's own token, or
  *  a self-registered per-project agent identity. `rootDir` must already be
  *  the daemon-discovery project root (see toolKit.ts's `projectRoot`). */
@@ -205,15 +227,8 @@ export async function messagingCredential(
   rootDir: string,
   clientName: string | undefined
 ): Promise<MessagingCredential | { error: string }> {
-  const runToken = process.env.DISPATCH_RUN_TOKEN;
-  if (runToken !== undefined && runToken !== '') {
-    const runId = process.env.DISPATCH_RUN_ID;
-    return {
-      token: runToken,
-      kind: 'run',
-      address: runId !== undefined && runId !== '' ? `run:${runId}` : null,
-    };
-  }
+  const run = runCredential();
+  if (run !== null) return run;
 
   const name = agentName(process.env, clientName, hostname());
   const cached = readStoredToken(agentTokenFilePath(rootDir, name));

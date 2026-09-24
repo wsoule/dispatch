@@ -235,7 +235,7 @@ let root: string;
 let daemon: FakeDaemon | undefined;
 const originalEnv = {
   DISPATCH_HOME: process.env.DISPATCH_HOME,
-  DISPATCH_RUN_TOKEN: process.env.DISPATCH_RUN_TOKEN,
+  DISPATCH_RUN_TOKEN_FILE: process.env.DISPATCH_RUN_TOKEN_FILE,
   DISPATCH_RUN_ID: process.env.DISPATCH_RUN_ID,
 };
 
@@ -243,7 +243,9 @@ beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-mcp-msg-home-'));
   root = mkdtempSync(join(tmpdir(), 'dispatch-mcp-msg-root-'));
   process.env.DISPATCH_HOME = fakeHome;
-  process.env.DISPATCH_RUN_TOKEN = 'rt-secret';
+  const tokenFile = join(fakeHome, 'r-self1.token');
+  writeFileSync(tokenFile, 'rt-secret', { mode: 0o600 });
+  process.env.DISPATCH_RUN_TOKEN_FILE = tokenFile;
   process.env.DISPATCH_RUN_ID = 'r-self1';
 });
 
@@ -280,7 +282,7 @@ function writeCachedAgentToken(
   token: string,
   address: string
 ): string {
-  delete process.env.DISPATCH_RUN_TOKEN;
+  delete process.env.DISPATCH_RUN_TOKEN_FILE;
   delete process.env.DISPATCH_RUN_ID;
   const name = agentName(process.env, clientName, hostname());
   const path = agentTokenFilePath(root, name);
