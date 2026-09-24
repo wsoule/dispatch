@@ -55,9 +55,9 @@ describe('wake', () => {
 
   it('a failed-wake notice for a sender run that ended goes to its task', async () => {
     host.ruling = 'allow';
-    host.wake = async () => {
+    host.wake = () => {
       host.endRun('t-000001');
-      return { ok: false, reason: 'task is blocked' };
+      return Promise.resolve({ ok: false, reason: 'task is blocked' });
     };
     await wakeSend();
     const [notice] = engine
