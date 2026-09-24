@@ -565,6 +565,22 @@ describe('reply authorization (every kind, not just answers)', () => {
     expect(r.replyTo).toBe(m.id);
   });
 
+  it("a later run of the same task can reply into its predecessor's message", async () => {
+    host.startRun('t-000003', 'r-000003');
+    const { message: m } = await engine.send(
+      { to: ['human:wyat'], kind: 'message', body: 'started the migration' },
+      { address: 'run:r-000003', canDecide: false }
+    );
+    host.endRun('t-000003');
+    host.startRun('t-000003', 'r-000005');
+    const { message: r } = await engine.reply(
+      m.id,
+      { body: 'migration finished' },
+      { address: 'run:r-000005', canDecide: false }
+    );
+    expect(r.replyTo).toBe(m.id);
+  });
+
   it('a deciding human can reply into any thread', async () => {
     const { message: m } = await engine.send(
       { to: ['human:wyat'], kind: 'message', body: 'hello' },

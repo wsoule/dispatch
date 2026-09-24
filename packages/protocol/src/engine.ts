@@ -288,31 +288,30 @@ export class DeliveryEngine {
     return { message, deliveries: settled, downgraded };
   }
 
-  // Only a participant of `target`'s thread may reply into it: its sender, a
-  // recipient of one of its deliveries (own address; a run for its task; a
-  // run for another run:X on the same task; a run for a delivery already
-  // bound to it by runId — a successor run inherits its predecessor's
-  // deliveries), a deciding human, or the system.
+  // Only participants may reply: the target's sender or recipients, where a run
+  // also stands for its task, that task's other runs and deliveries bound to it.
   private authorizeReply(target: Message, sender: Sender): void {
     if (sender.address === SYSTEM_ADDRESS) return;
     if (sender.canDecide && sender.address.startsWith('human:')) return;
-    if (sender.address === target.from) return;
     const senderRunId = sender.address.startsWith('run:')
       ? sender.address.slice(4)
       : null;
     const senderTask =
       senderRunId !== null ? this.host.taskOfRun(senderRunId) : null;
-    const addressed = this.store.deliveries({ messageId: target.id }).some(
-      (d) =>
-        d.recipient === sender.address ||
-        (senderTask !== null && d.recipient === `task:${senderTask}`) ||
-        // The message was pushed/redelivered directly to this run.
-        (senderRunId !== null && d.runId === senderRunId) ||
-        // A successor run on the same task as a run the message addressed.
-        (senderTask !== null &&
-          d.recipient.startsWith('run:') &&
-          this.host.taskOfRun(d.recipient.slice(4)) === senderTask)
-    );
+    const actsFor = (address: Address) =>
+      address === sender.address ||
+      (senderTask !== null &&
+        (address === `task:${senderTask}` ||
+          (address.startsWith('run:') &&
+            this.host.taskOfRun(address.slice(4)) === senderTask)));
+    if (actsFor(target.from)) return;
+    const addressed = this.store
+      .deliveries({ messageId: target.id })
+      .some(
+        (d) =>
+          actsFor(d.recipient) ||
+          (senderRunId !== null && d.runId === senderRunId)
+      );
     if (!addressed)
       throw new MessagingError(
         'forbidden',
