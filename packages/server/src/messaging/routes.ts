@@ -668,6 +668,12 @@ export async function joinChannel(
   name: string
 ): Promise<Response> {
   const principal = requirePrincipal(ctx);
+  // A review or verify run acts only as itself, and channels never hold runs.
+  if (principal.kind === 'run' && taskIdOfRunPrincipal(ctx, principal) === null)
+    return errorResponse(
+      403,
+      `${principal.address} cannot join channels: they hold tasks and actors, and only an execute run acts as its task`
+    );
   const parsedBody = await readJsonBodyOptional(req);
   if (!parsedBody.ok) return parsedBody.response;
   const body = parsedBody.value as { member?: unknown };

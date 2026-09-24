@@ -14,6 +14,7 @@ import { startServer } from '../../src/index.js';
 import {
   answerLongPoll,
   getMailbox,
+  joinChannel,
   markDeliveryRead,
   normalizeAgentName,
   registerAgent,
@@ -1640,6 +1641,37 @@ describe('messaging routes — direct unit coverage', () => {
     expect(getMailbox(ctxForRun(run.id), taskMailbox).status).toBe(200);
     expect(markDeliveryRead(ctxForRun(run.id), deliveryId).status).toBe(200);
     await orchestrator.cancel(run.id);
+  });
+
+  it('tells a review run it cannot join a channel, with or without a member', async () => {
+    const task = store.create({ title: 'Reviewed task' });
+    const review = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      head: 'main',
+      buildPrompt: () => 'review this',
+    });
+    const join = (body?: object) =>
+      joinChannel(
+        new Request('http://x/api/channels/general/members', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: body === undefined ? undefined : JSON.stringify(body),
+        }),
+        ctxForRun(review.id),
+        'general'
+      );
+    for (const res of [
+      await join(),
+      await join({ member: `run:${review.id}` }),
+    ]) {
+      expect(res.status).toBe(403);
+      expect((await json<{ error: string }>(res)).error).toBe(
+        `run:${review.id} cannot join channels: they hold tasks and actors, and only an execute run acts as its task`
+      );
+    }
+    expect(messaging.store.members('general')).toEqual([]);
+    await orchestrator.cancel(review.id);
   });
 
   it("a successor run on the same task can poll its predecessor's question for an answer", async () => {
