@@ -541,8 +541,8 @@ export class Orchestrator {
     return { meta, executorRun };
   }
 
-  // Logs a delivered message (with its messageId, for the app to dedupe) to the
-  // run's transcript and the bus, then hands it to the executor.
+  // Logs a delivered message, tagged with its messageId, to the run's transcript
+  // and the bus, then hands it to the executor.
   deliverToRun(
     runId: string,
     text: string,
