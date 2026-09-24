@@ -30,6 +30,8 @@ import {
   requestDeadline,
   startDaemon,
 } from './daemon.js';
+import type { MessageBlockingTiming } from './messaging.js';
+import { registerMessagingTools } from './messaging.js';
 
 // Thrown by validation/lookup helpers below. Every tool handler catches this
 // (and core's ConfigError) via wrap() and turns it into an MCP tool-error
@@ -59,7 +61,7 @@ class ToolError extends Error {}
 // The executor sets DISPATCH_PROJECT_ROOT to the project root whenever it
 // differs from the worktree `--root` it passes; every other tool in this
 // file keeps resolving against the raw `rootDir` argument.
-function projectRoot(rootDir: string): string {
+export function projectRoot(rootDir: string): string {
   const override = process.env.DISPATCH_PROJECT_ROOT;
   return override !== undefined && override !== '' ? override : rootDir;
 }
@@ -174,21 +176,23 @@ function toSummary(doc: TaskDoc) {
 // Index signature matches the SDK's CallToolResult shape (an open record
 // with a few known fields) so this satisfies ToolCallback's return type
 // without pulling in the SDK's own (deeply generic) result type here.
-interface ToolOutcome {
+export interface ToolOutcome {
   [key: string]: unknown;
   content: { type: 'text'; text: string }[];
   structuredContent?: Record<string, unknown>;
   isError?: boolean;
 }
 
-function toolResult(structuredContent: Record<string, unknown>): ToolOutcome {
+export function toolResult(
+  structuredContent: Record<string, unknown>
+): ToolOutcome {
   return {
     content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
     structuredContent,
   };
 }
 
-function toolError(message: string): ToolOutcome {
+export function toolError(message: string): ToolOutcome {
   return { content: [{ type: 'text', text: message }], isError: true };
 }
 
@@ -1472,10 +1476,17 @@ async function recordMutation(
 export function registerDispatchTools(
   server: McpServer,
   rootDir: string,
-  opts: { questionTiming?: QuestionTiming; scopeTiming?: ScopeTiming } = {}
+  opts: {
+    questionTiming?: QuestionTiming;
+    scopeTiming?: ScopeTiming;
+    blockingTiming?: MessageBlockingTiming;
+  } = {}
 ): void {
   const questionTiming = opts.questionTiming ?? DEFAULT_QUESTION_TIMING;
   const scopeTiming = opts.scopeTiming ?? DEFAULT_SCOPE_TIMING;
+  registerMessagingTools(server, rootDir, {
+    blockingTiming: opts.blockingTiming,
+  });
   server.registerTool(
     'task_list',
     {

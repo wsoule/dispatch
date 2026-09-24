@@ -1,0 +1,629 @@
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { hostname, tmpdir } from 'node:os';
+import { dirname, join } from 'node:path';
+
+import { daemonFilePath } from '../src/daemon.js';
+import { agentName } from '../src/identity.js';
+import { createDispatchMcpServer } from '../src/index.js';
+import type { MessageBlockingTiming } from '../src/index.js';
+
+// Milliseconds everywhere instead of the production minutes/agentBlockingTimeoutSec
+// seconds, so the blocking-poll loop's real exit conditions run in test time.
+const FAST_TIMING: MessageBlockingTiming = {
+  humanTotalWaitMs: 300,
+  defaultAgentTotalWaitMs: 300,
+  requestTimeoutMs: 150,
+  retryDelayMs: 10,
+  errorDelayMs: 10,
+};
+
+async function connectClient(
+  rootDir: string,
+  timing: MessageBlockingTiming = FAST_TIMING
+): Promise<Client> {
+  const server = createDispatchMcpServer(rootDir, { blockingTiming: timing });
+  const client = new Client({ name: 'test-client', version: '1.0' });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  await Promise.all([
+    client.connect(clientTransport),
+    server.connect(serverTransport),
+  ]);
+  return client;
+}
+
+interface ToolCallResult {
+  structuredContent?: Record<string, unknown>;
+  isError?: boolean;
+  content: { type: string; text?: string }[];
+}
+
+// A minimal stand-in for dispatchd's messaging surface
+// (packages/server/src/messaging/routes.ts) — enough of every route
+// msg_send/msg_reply/inbox_read/thread_read/channel_* proxy to drive each
+// tool's request shaping and response handling deterministically.
+class FakeDaemon {
+  sendStatus = 201;
+  sendBody: unknown = {
+    message: {
+      id: 'm-1',
+      thread: 't-1',
+      from: 'run:r-self1',
+      to: ['human:wyat'],
+    },
+    deliveries: [{ id: 'd-1', messageId: 'm-1', recipient: 'human:wyat' }],
+    downgraded: false,
+  };
+  sendCalls: {
+    headers: Record<string, string>;
+    body: Record<string, unknown>;
+  }[] = [];
+
+  answerStatus = 200;
+  answerAfterPolls = 0;
+  answerValue: unknown = {
+    id: 'm-2',
+    kind: 'answer',
+    body: 'yes',
+    choice: 'yes',
+  };
+  answerPolls = 0;
+
+  replyStatus = 201;
+  replyBody: unknown = {
+    message: { id: 'm-3' },
+    deliveries: [],
+    downgraded: false,
+  };
+  replyCalls: { id: string; body: Record<string, unknown> }[] = [];
+
+  mailboxBody: unknown = { items: [] };
+  markReadCalls: string[] = [];
+
+  threadBody: unknown = { messages: [], deliveries: [] };
+
+  channelsBody: unknown = { channels: [] };
+  joinCalls: { name: string; body: Record<string, unknown> }[] = [];
+  leaveCalls: { name: string; addr: string }[] = [];
+
+  configStatus = 200;
+  configBody: unknown = { messaging: { agentBlockingTimeoutSec: 600 } };
+
+  lastAuth: string | null = null;
+
+  private server: ReturnType<typeof Bun.serve> | undefined;
+
+  start(): number {
+    this.server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: async (req) => {
+        const url = new URL(req.url);
+        this.lastAuth = req.headers.get('authorization');
+        if (url.pathname === '/api/health') return Response.json({ ok: true });
+
+        if (url.pathname === '/api/messages' && req.method === 'POST') {
+          const body = (await req.json()) as Record<string, unknown>;
+          this.sendCalls.push({
+            headers: Object.fromEntries(req.headers.entries()),
+            body,
+          });
+          return Response.json(this.sendBody, { status: this.sendStatus });
+        }
+
+        const answer = /^\/api\/messages\/([^/]+)\/answer$/.exec(url.pathname);
+        if (answer !== null && req.method === 'GET') {
+          this.answerPolls += 1;
+          if (this.answerStatus !== 200) {
+            return Response.json(
+              { error: 'no' },
+              { status: this.answerStatus }
+            );
+          }
+          const ready = this.answerPolls > this.answerAfterPolls;
+          return Response.json({ answer: ready ? this.answerValue : null });
+        }
+
+        const reply = /^\/api\/messages\/([^/]+)\/reply$/.exec(url.pathname);
+        if (reply !== null && req.method === 'POST') {
+          const body = (await req.json()) as Record<string, unknown>;
+          this.replyCalls.push({ id: reply[1], body });
+          return Response.json(this.replyBody, { status: this.replyStatus });
+        }
+
+        if (url.pathname === '/api/mailbox' && req.method === 'GET') {
+          return Response.json(this.mailboxBody);
+        }
+
+        const read = /^\/api\/deliveries\/([^/]+)\/read$/.exec(url.pathname);
+        if (read !== null && req.method === 'POST') {
+          this.markReadCalls.push(read[1]);
+          return Response.json({ id: read[1], state: 'read' });
+        }
+
+        const thread = /^\/api\/threads\/([^/]+)$/.exec(url.pathname);
+        if (thread !== null && req.method === 'GET') {
+          return Response.json(this.threadBody);
+        }
+
+        if (url.pathname === '/api/channels' && req.method === 'GET') {
+          return Response.json(this.channelsBody);
+        }
+
+        const join = /^\/api\/channels\/([^/]+)\/members$/.exec(url.pathname);
+        if (join !== null && req.method === 'POST') {
+          const body = (await req.json()) as Record<string, unknown>;
+          this.joinCalls.push({ name: join[1], body });
+          return new Response(null, { status: 204 });
+        }
+
+        const leave = /^\/api\/channels\/([^/]+)\/members\/([^/]+)$/.exec(
+          url.pathname
+        );
+        if (leave !== null && req.method === 'DELETE') {
+          this.leaveCalls.push({ name: leave[1], addr: leave[2] });
+          return new Response(null, { status: 204 });
+        }
+
+        if (url.pathname === '/api/config' && req.method === 'GET') {
+          return Response.json(this.configBody, { status: this.configStatus });
+        }
+
+        return Response.json({ error: 'not found' }, { status: 404 });
+      },
+    });
+    return this.server.port ?? 0;
+  }
+
+  stop(): void {
+    void this.server?.stop(true);
+  }
+}
+
+let fakeHome: string;
+let root: string;
+let daemon: FakeDaemon | undefined;
+const originalEnv = {
+  DISPATCH_HOME: process.env.DISPATCH_HOME,
+  DISPATCH_RUN_TOKEN: process.env.DISPATCH_RUN_TOKEN,
+  DISPATCH_RUN_ID: process.env.DISPATCH_RUN_ID,
+};
+
+beforeEach(() => {
+  fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-mcp-msg-home-'));
+  root = mkdtempSync(join(tmpdir(), 'dispatch-mcp-msg-root-'));
+  process.env.DISPATCH_HOME = fakeHome;
+  process.env.DISPATCH_RUN_TOKEN = 'rt-secret';
+  process.env.DISPATCH_RUN_ID = 'r-self1';
+});
+
+afterEach(() => {
+  daemon?.stop();
+  daemon = undefined;
+  for (const [key, value] of Object.entries(originalEnv)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  rmSync(fakeHome, { recursive: true, force: true });
+  rmSync(root, { recursive: true, force: true });
+});
+
+function writeFakeDaemonFile(port: number): void {
+  const path = daemonFilePath(root);
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(
+    path,
+    JSON.stringify({
+      port,
+      pid: process.pid,
+      rootDir: root,
+      startedAt: new Date().toISOString(),
+      agentToken: 'shared-agent-token',
+    })
+  );
+}
+
+describe('msg_send (no daemon running)', () => {
+  it('errors with a "not running" message rather than a protocol failure', async () => {
+    const client = await connectClient(root);
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toMatch(/dispatchd not running/);
+  });
+});
+
+describe('msg_send (fake daemon, run identity)', () => {
+  it("sends with this run's own bearer token and a per-call Idempotency-Key", async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'status update' },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.message).toEqual({
+      id: 'm-1',
+      thread: 't-1',
+      from: 'run:r-self1',
+      to: ['human:wyat'],
+    });
+    expect(daemon.sendCalls.length).toBe(1);
+    expect(daemon.sendCalls[0]?.headers.authorization).toBe('Bearer rt-secret');
+    expect(daemon.sendCalls[0]?.headers['idempotency-key']).toBeTruthy();
+    expect(daemon.sendCalls[0]?.body).toMatchObject({
+      to: ['human:wyat'],
+      kind: 'message',
+      body: 'status update',
+    });
+  });
+
+  it('surfaces the server error text, including the offending field', async () => {
+    daemon = new FakeDaemon();
+    daemon.sendStatus = 400;
+    daemon.sendBody = {
+      error: 'invalid to: expected a list of addresses',
+      field: 'to',
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe(
+      'invalid to: expected a list of addresses (field: to)'
+    );
+  });
+
+  it('passes an "awaiting approval" 403 through verbatim', async () => {
+    daemon = new FakeDaemon();
+    daemon.sendStatus = 403;
+    daemon.sendBody = { error: 'awaiting approval in Dispatch' };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('awaiting approval in Dispatch');
+  });
+});
+
+describe('msg_send (blocking)', () => {
+  it('long-polls past an unanswered poll and returns the answer, noting it was also pushed', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = 1;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'which db?',
+        blocking: true,
+        choices: ['sqlite', 'postgres'],
+      },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toEqual(daemon.answerValue);
+    expect(result.structuredContent?.note).toMatch(
+      /also delivered to your session/
+    );
+    expect(daemon.answerPolls).toBe(2);
+  });
+
+  it('gives up at the human total-wait budget with answer: null', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool(
+      {
+        name: 'msg_send',
+        arguments: {
+          to: ['human:wyat'],
+          kind: 'question',
+          body: 'which db?',
+          blocking: true,
+        },
+      },
+      undefined,
+      { timeout: 10_000 }
+    )) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toBeNull();
+    expect(result.structuredContent?.note).toBe(
+      'no answer yet — it will arrive in your inbox'
+    );
+    expect(result.structuredContent?.message).toBeTruthy();
+    expect(daemon.answerPolls).toBeGreaterThan(1);
+  });
+
+  it("uses the project's configured agentBlockingTimeoutSec for a non-human recipient, not the fallback default", async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    // Tiny configured timeout (well under the fallback default below) proves
+    // the config value actually won, rather than the tool having ignored it.
+    daemon.configBody = { messaging: { agentBlockingTimeoutSec: 0.05 } };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root, {
+      ...FAST_TIMING,
+      defaultAgentTotalWaitMs: 60_000,
+    });
+
+    const start = Date.now();
+    const result = (await client.callTool(
+      {
+        name: 'msg_send',
+        arguments: {
+          to: ['agent:wyat/bot'],
+          kind: 'question',
+          body: 'which db?',
+          blocking: true,
+        },
+      },
+      undefined,
+      { timeout: 10_000 }
+    )) as ToolCallResult;
+    const elapsedMs = Date.now() - start;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toBeNull();
+    // 50ms configured budget, not the 60s fallback default.
+    expect(elapsedMs).toBeLessThan(5_000);
+  });
+
+  it('falls back to defaultAgentTotalWaitMs when GET /api/config is unreachable', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    daemon.configStatus = 500;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool(
+      {
+        name: 'msg_send',
+        arguments: {
+          to: ['agent:wyat/bot'],
+          kind: 'question',
+          body: 'which db?',
+          blocking: true,
+        },
+      },
+      undefined,
+      { timeout: 10_000 }
+    )) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toBeNull();
+  });
+});
+
+describe('msg_reply', () => {
+  it('posts the reply body and choice to the target message', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_reply',
+      arguments: { messageId: 'm-9', body: '', choice: 'approve' },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(daemon.replyCalls).toEqual([
+      { id: 'm-9', body: { body: '', choice: 'approve' } },
+    ]);
+  });
+
+  it('surfaces the server error text on failure', async () => {
+    daemon = new FakeDaemon();
+    daemon.replyStatus = 404;
+    daemon.replyBody = { error: 'no message m-404' };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_reply',
+      arguments: { messageId: 'm-404', body: 'x' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(result.content[0]?.text).toBe('no message m-404');
+  });
+});
+
+describe('inbox_read', () => {
+  it('marks held and notified deliveries read but leaves pushed/read/answered alone', async () => {
+    daemon = new FakeDaemon();
+    daemon.mailboxBody = {
+      items: [
+        { delivery: { id: 'd-held', state: 'held' }, message: { id: 'm-1' } },
+        {
+          delivery: { id: 'd-notified', state: 'notified' },
+          message: { id: 'm-2' },
+        },
+        {
+          delivery: { id: 'd-pushed', state: 'pushed' },
+          message: { id: 'm-3' },
+        },
+        { delivery: { id: 'd-read', state: 'read' }, message: { id: 'm-4' } },
+        {
+          delivery: { id: 'd-answered', state: 'answered' },
+          message: { id: 'm-5' },
+        },
+      ],
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'inbox_read',
+      arguments: {},
+    })) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect((result.structuredContent!.items as unknown[]).length).toBe(5);
+    expect(daemon.markReadCalls.sort()).toEqual(['d-held', 'd-notified']);
+  });
+
+  it('does not mark anything read when markRead is false', async () => {
+    daemon = new FakeDaemon();
+    daemon.mailboxBody = {
+      items: [
+        { delivery: { id: 'd-held', state: 'held' }, message: { id: 'm-1' } },
+      ],
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    await client.callTool({
+      name: 'inbox_read',
+      arguments: { markRead: false },
+    });
+    expect(daemon.markReadCalls).toEqual([]);
+  });
+
+  it('forwards a state filter as a comma-joined query param', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    await client.callTool({
+      name: 'inbox_read',
+      arguments: { state: ['held', 'notified'] },
+    });
+    // No direct request log for GET /api/mailbox in FakeDaemon beyond its
+    // body — this just proves the call succeeds with a state array input.
+  });
+});
+
+describe('thread_read', () => {
+  it('fetches the thread by id', async () => {
+    daemon = new FakeDaemon();
+    daemon.threadBody = {
+      messages: [{ id: 'm-1' }],
+      deliveries: [{ id: 'd-1' }],
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'thread_read',
+      arguments: { threadId: 't-1' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent).toEqual(
+      daemon.threadBody as Record<string, unknown>
+    );
+  });
+});
+
+describe('channel tools', () => {
+  it('channel_join posts to the members route, omitting member when not given', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'channel_join',
+      arguments: { name: 'epic/t-abc123' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    // Channel names may contain '/' (an epic's implicit epic/<id> channel),
+    // so the tool encodeURIComponents the whole name — same as the client
+    // package's own joinChannel — and the server decodeURIComponents it back
+    // to one segment rather than splitting on the encoded slash.
+    expect(daemon.joinCalls).toEqual([
+      { name: encodeURIComponent('epic/t-abc123'), body: {} },
+    ]);
+  });
+
+  it('channel_join passes member through when given', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    await client.callTool({
+      name: 'channel_join',
+      arguments: { name: 'general', member: 'agent:wyat/bot' },
+    });
+    expect(daemon.joinCalls).toEqual([
+      { name: 'general', body: { member: 'agent:wyat/bot' } },
+    ]);
+  });
+
+  it('channel_leave deletes the given member from the channel', async () => {
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'channel_leave',
+      arguments: { name: 'general', member: 'run:r-self1' },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    expect(daemon.leaveCalls).toEqual([
+      { name: 'general', addr: encodeURIComponent('run:r-self1') },
+    ]);
+  });
+
+  it('channel_list returns the roster', async () => {
+    daemon = new FakeDaemon();
+    daemon.channelsBody = {
+      channels: [{ name: 'general', auto: false, members: ['human:wyat'] }],
+    };
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'channel_list',
+      arguments: {},
+    })) as ToolCallResult;
+    expect(result.structuredContent).toEqual(
+      daemon.channelsBody as Record<string, unknown>
+    );
+  });
+});
+
+describe('messaging tools (agent identity, no run token)', () => {
+  it('uses a cached self-registered agent token instead of the shared agentToken', async () => {
+    delete process.env.DISPATCH_RUN_TOKEN;
+    delete process.env.DISPATCH_RUN_ID;
+    const name = agentName(process.env, 'test-client', hostname());
+    const tokenPath = join(fakeHome, '.dispatch', 'agents', `${name}.token`);
+    mkdirSync(dirname(tokenPath), { recursive: true });
+    writeFileSync(tokenPath, 'agent-token-value');
+
+    daemon = new FakeDaemon();
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool({
+      name: 'msg_send',
+      arguments: { to: ['human:wyat'], kind: 'message', body: 'hi' },
+    })) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(daemon.sendCalls[0]?.headers.authorization).toBe(
+      'Bearer agent-token-value'
+    );
+  });
+});

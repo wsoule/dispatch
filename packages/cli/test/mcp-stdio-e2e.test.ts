@@ -127,8 +127,14 @@ describe('dispatch mcp (CLI entrypoint) stdio e2e', () => {
       expect(names).toEqual([
         'agent_message',
         'ask_user',
+        'channel_join',
+        'channel_leave',
+        'channel_list',
         'dispatch_note',
+        'inbox_read',
         'message_user',
+        'msg_reply',
+        'msg_send',
         'record_decision',
         'record_evidence',
         'record_mutation',
@@ -139,6 +145,7 @@ describe('dispatch mcp (CLI entrypoint) stdio e2e', () => {
         'task_list',
         'task_next',
         'task_save',
+        'thread_read',
       ]);
 
       const call = await send('tools/call', {
