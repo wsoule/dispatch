@@ -407,6 +407,9 @@ export class Orchestrator {
     ReturnType<typeof setTimeout>
   >();
   private readonly stopEscalationMs: number;
+  // Runs whose cancel has already interrupted (or is interrupting) the
+  // executor; they refuse messages until the terminal transition clears them.
+  private readonly stoppingRuns = new Set<string>();
   // In-flight boot auto-resume attempts, keyed by run — see
   // autoResumeSettled(), which is how a test waits one out instead of sleeping.
   private readonly scheduledAutoResumes = new Map<string, Promise<void>>();
@@ -502,13 +505,10 @@ export class Orchestrator {
     return this.registry.getExecutorRun(runId) !== undefined;
   }
 
-  // Requires a run in a live (running/awaiting-approval) state with a real
-  // ExecutorRun handle — the shared liveness gate for deliverToRun/notifyRun.
-  // Same zombie check as inject()/approve()/sendMessage() above: a run whose
-  // state says live but whose ExecutorRun is missing has its executor dead
-  // out from under it, and healZombieRun marks it failed and throws instead
-  // of returning here.
-  private requireLiveRun(runId: string): {
+  // The gate for deliverToRun/notifyRun: a live run with a real ExecutorRun
+  // (a zombie is healed to failed, which throws) that can take a message now.
+  // A throw here makes the messaging engine hold the message for a later run.
+  private requireMessageableRun(runId: string): {
     meta: RunMeta;
     executorRun: ExecutorRun;
   } {
@@ -520,19 +520,25 @@ export class Orchestrator {
     if (executorRun === undefined) {
       this.healZombieRun(meta);
     }
+    if (this.stoppingRuns.has(runId)) {
+      throw new OrchestratorConflictError(`run is being cancelled: ${runId}`);
+    }
+    if (!this.executorProfile(meta.executor).acceptsMessages) {
+      throw new OrchestratorConflictError(
+        `executor ${meta.executor} cannot take a mid-run message: ${runId}`
+      );
+    }
     return { meta, executorRun };
   }
 
-  // Messaging-core delivery: appends the delivered message to the run's own
-  // transcript (identified with the sender's messageId so the app can
-  // dedupe/badge it), broadcasts it, and hands the raw text to the executor.
-  // Throws OrchestratorConflictError if the run isn't live.
+  // Logs a delivered message (with its messageId, for the app to dedupe) to the
+  // run's transcript and the bus, then hands it to the executor.
   deliverToRun(
     runId: string,
     text: string,
     from: { label: string; messageId: string; human: boolean }
   ): void {
-    const { executorRun } = this.requireLiveRun(runId);
+    const { executorRun } = this.requireMessageableRun(runId);
     const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
       kind: 'message',
@@ -546,12 +552,10 @@ export class Orchestrator {
     executorRun.send(text);
   }
 
-  // Messaging-core non-interrupting note: same transcript/broadcast shape as
-  // deliverToRun, but calls the executor's notify() (a channel digest the
-  // agent picks up on its own next turn) rather than send(). Throws
-  // OrchestratorConflictError if the run isn't live.
+  // deliverToRun for a non-interrupting channel digest: logged the same way,
+  // handed to the executor's notify() for the agent's next step.
   notifyRun(runId: string, digest: string): void {
-    const { executorRun } = this.requireLiveRun(runId);
+    const { executorRun } = this.requireMessageableRun(runId);
     const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
       kind: 'message',
@@ -1750,7 +1754,11 @@ export class Orchestrator {
     // Before transition() below makes the run terminal, so it isn't a no-op.
     this.forceClaimsRefresh(runId);
     const executorRun = this.registry.getExecutorRun(runId);
-    if (executorRun !== undefined) await executorRun.interrupt();
+    if (executorRun !== undefined) {
+      // Set before the await: an interrupting executor drops what it is sent.
+      this.stoppingRuns.add(runId);
+      await executorRun.interrupt();
+    }
     this.transition(runId, 'cancelled');
 
     // M2: record the cancellation as a durable Activity line, same as every
@@ -4328,7 +4336,10 @@ export class Orchestrator {
     // Whatever ended this run — winding down after a stop, its own finish, a
     // cancel, an escalation — there is nothing left for the stop backstop to
     // catch. This is the one point every terminal state passes through.
-    if (TERMINAL_RUN_STATES.has(state)) this.clearStopEscalation(runId);
+    if (TERMINAL_RUN_STATES.has(state)) {
+      this.clearStopEscalation(runId);
+      this.stoppingRuns.delete(runId);
+    }
     // A finish that reports no session must not erase the one recordSession
     // already stored: spreading `sessionId: undefined` over the meta did
     // exactly that, so a run whose agent reported its handle and then died

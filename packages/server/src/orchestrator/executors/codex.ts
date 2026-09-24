@@ -349,6 +349,7 @@ export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: false,
   reportsTurns: true,
   enforcesCaps: false,
+  acceptsMessages: true,
   permissionRefusal: (mode) =>
     codexPermission(mode) === null
       ? `Codex has no mapping for permissionMode "${mode}"`

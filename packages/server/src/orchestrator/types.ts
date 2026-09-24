@@ -170,6 +170,8 @@ export interface ExecutorProfile {
   reportsTurns: boolean;
   /** Whether the executor itself honours maxTurns/maxBudgetUsd. */
   enforcesCaps: boolean;
+  /** Whether a live run can take a mid-run message or note (send/notify). */
+  acceptsMessages: boolean;
   /** Why this executor cannot run under `permissionMode`, or null when it can. */
   permissionRefusal(permissionMode: string): string | null;
 }
@@ -186,6 +188,7 @@ export const DEFAULT_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsCost: true,
   reportsTurns: true,
   enforcesCaps: true,
+  acceptsMessages: true,
   permissionRefusal: () => null,
 };
 
