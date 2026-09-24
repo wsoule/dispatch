@@ -92,6 +92,13 @@ export type GateData =
 const X_KIND = /^x-[a-z0-9][a-z0-9-]*$/;
 const ASKING_KINDS: ReadonlySet<string> = new Set(['question', 'handoff']);
 
+// Caps on one send, so no message can flood a recipient's session or the store.
+const MAX_BODY_BYTES = 64 * 1024;
+const MAX_DATA_BYTES = 64 * 1024;
+const MAX_RECIPIENTS = 50;
+const MAX_REFS = 50;
+const MAX_CHOICES = 20;
+
 /** The gate payload a message carries, or null when `data` is not a gate. */
 export function gateOf(message: { data?: JsonValue }): GateData | null {
   const data = message.data;
@@ -106,6 +113,14 @@ export function gateOf(message: { data?: JsonValue }): GateData | null {
 
 function invalid(field: string, why: string): never {
   throw new MessagingError('invalid', `${field}: ${why}`, field);
+}
+
+// True when `text` is over `max` UTF-8 bytes. A UTF-16 code unit encodes to
+// 1–3 bytes, so only lengths between max/3 and max need the encoder.
+function overBytes(text: string, max: number): boolean {
+  if (text.length > max) return true;
+  if (text.length * 3 <= max) return false;
+  return new TextEncoder().encode(text).byteLength > max;
 }
 
 // Rendered one-line fields must not break a line, or they could start a fake
@@ -171,6 +186,8 @@ export function validateSendInput(
 ): void {
   if (!Array.isArray(input.to) || input.to.length === 0)
     invalid('to', 'at least one recipient');
+  if (input.to.length > MAX_RECIPIENTS)
+    invalid('to', `at most ${MAX_RECIPIENTS} recipients`);
   input.to.forEach((addr, i) => parseAddress(addr, `to[${i}]`));
 
   const kind = input.kind;
@@ -187,9 +204,18 @@ export function validateSendInput(
   ) {
     invalid('body', 'required');
   }
+  if (overBytes(input.body, MAX_BODY_BYTES))
+    invalid('body', `at most ${MAX_BODY_BYTES} bytes (UTF-8)`);
+  if (
+    input.data !== undefined &&
+    overBytes(JSON.stringify(input.data), MAX_DATA_BYTES)
+  )
+    invalid('data', `at most ${MAX_DATA_BYTES} bytes as JSON`);
   singleLine(input.session, 'session');
 
-  (input.refs ?? []).forEach((ref, i) => {
+  const refs = input.refs ?? [];
+  if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
+  refs.forEach((ref, i) => {
     if (!(REF_TYPES as readonly string[]).includes(ref.type))
       invalid(`refs[${i}].type`, 'unknown ref type');
     if (typeof ref.id !== 'string' || ref.id === '')
@@ -205,6 +231,8 @@ export function validateSendInput(
     if (!asking)
       invalid('choices', 'only questions and handoffs carry choices');
     const choices = input.choices;
+    if (choices.length > MAX_CHOICES)
+      invalid('choices', `at most ${MAX_CHOICES} choices`);
     choices.forEach((c, i) => singleLine(c, `choices[${i}]`));
     if (
       choices.length === 0 ||

@@ -228,6 +228,45 @@ describe('validateSendInput line breaks', () => {
   });
 });
 
+describe('validateSendInput size limits', () => {
+  const ok = (input: SendInput) =>
+    expect(() =>
+      validateSendInput(input, 'run:r-000001', false, null)
+    ).not.toThrow();
+  const KIB_64 = 64 * 1024;
+
+  it('accepts a body of exactly 64 KiB', () =>
+    ok({ ...base, body: 'a'.repeat(KIB_64) }));
+  it('rejects a body over 64 KiB', () =>
+    fails({ ...base, body: 'a'.repeat(KIB_64 + 1) }, 'body'));
+  it('counts body size in UTF-8 bytes, not characters', () => {
+    ok({ ...base, body: 'é'.repeat(KIB_64 / 2) });
+    fails({ ...base, body: 'é'.repeat(KIB_64 / 2 + 1) }, 'body');
+  });
+  it('rejects data whose JSON is over 64 KiB', () => {
+    // {"blob":"…"} adds 11 bytes around the string.
+    ok({ ...base, data: { blob: 'x'.repeat(KIB_64 - 11) } });
+    fails({ ...base, data: { blob: 'x'.repeat(KIB_64 - 10) } }, 'data');
+  });
+  it('rejects more than 50 refs', () => {
+    const ref = { type: 'task' as const, id: 't-000001' };
+    ok({ ...base, refs: Array.from({ length: 50 }, () => ref) });
+    fails({ ...base, refs: Array.from({ length: 51 }, () => ref) }, 'refs');
+  });
+  it('rejects more than 50 recipients', () => {
+    ok({ ...base, to: Array.from({ length: 50 }, () => 'human:wyat') });
+    fails(
+      { ...base, to: Array.from({ length: 51 }, () => 'human:wyat') },
+      'to'
+    );
+  });
+  it('rejects more than 20 choices', () => {
+    const choices = (n: number) => Array.from({ length: n }, (_, i) => `c${i}`);
+    ok({ ...base, kind: 'question', choices: choices(20) });
+    fails({ ...base, kind: 'question', choices: choices(21) }, 'choices');
+  });
+});
+
 describe('gateOf', () => {
   it('recognizes gate payloads and ignores other data', () => {
     expect(gateOf(gate)?.type).toBe('tool-approval');
