@@ -485,6 +485,92 @@ describe('answer authorization', () => {
   });
 });
 
+// authorizeReply used to run only for kind 'answer' — a stranger could reply
+// (any other kind) into a thread it was never part of, and then read the
+// whole thread through it. These mirror 'answer authorization' above but for
+// a plain message, proving the same participant rule now covers every kind.
+describe('reply authorization (every kind, not just answers)', () => {
+  it('a run on an unrelated task cannot reply into a message thread', async () => {
+    const { message: m } = await engine.send(
+      { to: ['human:wyat'], kind: 'message', body: 'hello' },
+      run1
+    );
+    host.startRun('t-999999', 'r-999999');
+    await expect(
+      engine.reply(
+        m.id,
+        { body: 'butting in' },
+        { address: 'run:r-999999', canDecide: false }
+      )
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'replyTo' });
+  });
+
+  it('the original sender can reply into their own thread', async () => {
+    const { message: m } = await engine.send(
+      { to: ['human:wyat'], kind: 'message', body: 'hello' },
+      run1
+    );
+    const { message: r } = await engine.reply(
+      m.id,
+      { body: 'following up' },
+      run1
+    );
+    expect(r.replyTo).toBe(m.id);
+  });
+
+  it('a recipient can reply', async () => {
+    const { message: m } = await engine.send(
+      { to: ['human:wyat'], kind: 'message', body: 'hello' },
+      run1
+    );
+    const { message: r } = await engine.reply(m.id, { body: 'got it' }, human);
+    expect(r.replyTo).toBe(m.id);
+  });
+
+  it("the addressed task's run can reply", async () => {
+    host.startRun('t-000002', 'r-000002');
+    const { message: m } = await engine.send(
+      { to: ['task:t-000002'], kind: 'message', body: 'hello' },
+      human
+    );
+    const { message: r } = await engine.reply(
+      m.id,
+      { body: 'on it' },
+      { address: 'run:r-000002', canDecide: false }
+    );
+    expect(r.replyTo).toBe(m.id);
+  });
+
+  it('a successor run of the same task can reply', async () => {
+    host.startRun('t-000003', 'r-000003');
+    const { message: m } = await engine.send(
+      { to: ['run:r-000003'], kind: 'message', body: 'hello' },
+      human
+    );
+    host.endRun('t-000003');
+    host.startRun('t-000003', 'r-000005');
+    const { message: r } = await engine.reply(
+      m.id,
+      { body: 'taking over' },
+      { address: 'run:r-000005', canDecide: false }
+    );
+    expect(r.replyTo).toBe(m.id);
+  });
+
+  it('a deciding human can reply into any thread', async () => {
+    const { message: m } = await engine.send(
+      { to: ['human:wyat'], kind: 'message', body: 'hello' },
+      run1
+    );
+    const { message: r } = await engine.reply(
+      m.id,
+      { body: 'stepping in' },
+      { address: 'human:ana', canDecide: true }
+    );
+    expect(r.replyTo).toBe(m.id);
+  });
+});
+
 describe('gate-effect ordering', () => {
   it('emits the answer only after onAnswered ran', async () => {
     const { message: gate } = await engine.send(

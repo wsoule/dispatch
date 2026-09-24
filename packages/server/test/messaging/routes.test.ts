@@ -1,4 +1,5 @@
 import { TaskStore } from '@dispatch/core';
+import type { Delivery } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -11,6 +12,8 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import {
   answerLongPoll,
+  getMailbox,
+  markDeliveryRead,
   registerAgent,
   waitForAnswer,
 } from '../../src/messaging/routes.js';
@@ -505,6 +508,44 @@ describe('messaging HTTP routes', () => {
     expect(asHuman.status).toBe(200);
   });
 
+  it('a stranger cannot reply into a thread it was never part of, nor read it afterward', async () => {
+    const a = await registerAndApprove('reply-authz-a');
+    const b = await registerAndApprove('reply-authz-b');
+
+    const sendRes = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: authHeaders(a.token),
+      body: JSON.stringify({
+        to: ['human:test'],
+        kind: 'message',
+        body: 'a private conversation',
+      }),
+    });
+    const sent = await json<{ message: { id: string; thread: string } }>(
+      sendRes
+    );
+
+    // The engine itself rejects the reply — a stranger must never get to
+    // insert a message into a thread it wasn't addressed by or sender of.
+    const replyRes = await fetch(
+      `${baseUrl}/api/messages/${sent.message.id}/reply`,
+      {
+        method: 'POST',
+        headers: authHeaders(b.token),
+        body: JSON.stringify({ body: 'butting in' }),
+      }
+    );
+    expect(replyRes.status).toBe(403);
+    const replyBody = await json<{ error: string; field?: string }>(replyRes);
+    expect(replyBody.field).toBe('replyTo');
+
+    const threadRes = await fetch(
+      `${baseUrl}/api/threads/${sent.message.thread}`,
+      { headers: authHeaders(b.token) }
+    );
+    expect(threadRes.status).toBe(403);
+  });
+
   it('GET /api/messages/:id/answer is for a participant of the question', async () => {
     await liveRun('Answer authz run');
     const runToken = executor.lastStartOptions?.runToken;
@@ -719,6 +760,63 @@ describe('messaging HTTP routes', () => {
     expect(laterDeny.status).toBe(409);
   });
 
+  it('revoking via the route answers the open gate with deny (agent becomes revoked, gate closes)', async () => {
+    const registered = await json<{ address: string }>(
+      await fetch(`${baseUrl}/api/agents/register`, {
+        method: 'POST',
+        headers: authHeaders(handle.tokens.agentToken),
+        body: JSON.stringify({ name: 'gate denied', client: 'codex' }),
+      })
+    );
+    const before = await json<{ items: { data?: { agent?: string } }[] }>(
+      await fetch(`${baseUrl}/api/decisions/open`)
+    );
+    expect(
+      before.items.find((m) => m.data?.agent === registered.address)
+    ).toBeDefined();
+
+    const revokeRes = await fetch(
+      `${baseUrl}/api/agents/${encodeURIComponent(registered.address)}/revoke`,
+      { method: 'POST', headers: { 'content-type': 'application/json' } }
+    );
+    expect(revokeRes.status).toBe(200);
+    const revoked = await json<{ status: string }>(revokeRes);
+    expect(revoked.status).toBe('revoked');
+
+    const after = await json<{ items: { data?: { agent?: string } }[] }>(
+      await fetch(`${baseUrl}/api/decisions/open`)
+    );
+    expect(
+      after.items.find((m) => m.data?.agent === registered.address)
+    ).toBeUndefined();
+  });
+
+  it('approving again once the gate already closed falls back to writing the agent row directly', async () => {
+    const a = await registerAndApprove('fallback-approve');
+    // The registration gate is already answered by registerAndApprove's own
+    // approve call — a second approve must not try to re-answer it (which
+    // would 409); it goes through the direct-write fallback instead.
+    const res = await fetch(
+      `${baseUrl}/api/agents/${encodeURIComponent(a.address)}/approve`,
+      { method: 'POST', headers: { 'content-type': 'application/json' } }
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{ status: string }>(res);
+    expect(body.status).toBe('approved');
+  });
+
+  it('revoking an agent whose gate already closed falls back to writing the agent row directly', async () => {
+    const a = await registerAndApprove('fallback-revoke');
+    const res = await fetch(
+      `${baseUrl}/api/agents/${encodeURIComponent(a.address)}/revoke`,
+      { method: 'POST', headers: { 'content-type': 'application/json' } }
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{ status: string; approvedBy: string | null }>(res);
+    expect(body.status).toBe('revoked');
+    expect(body.approvedBy).toBeNull();
+  });
+
   it("an approved agent cannot answer another agent's registration gate (403, needs a deciding human)", async () => {
     const pending = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
@@ -836,6 +934,39 @@ describe('messaging HTTP routes', () => {
     const secondBody = await json<{ message: { id: string } }>(second);
     expect(firstBody.message.id).toBe(secondBody.message.id);
   });
+
+  it('a failed send does not poison its Idempotency-Key — a retry re-executes', async () => {
+    const headers = {
+      'content-type': 'application/json',
+      'idempotency-key': 'retry-after-failure',
+    };
+    const body = JSON.stringify({
+      to: ['channel:does-not-exist-yet'],
+      kind: 'message',
+      body: 'hello',
+    });
+
+    const failed = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(failed.status).toBe(404);
+
+    // The channel now exists, so a genuine retry (not a replay) can succeed.
+    await fetch(`${baseUrl}/api/channels/does-not-exist-yet/members`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+
+    const retried = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(retried.status).toBe(201);
+  });
 });
 
 describe('messaging thread rate limit', () => {
@@ -903,21 +1034,24 @@ describe('messaging routes — direct unit coverage', () => {
   let unitRoot: string;
   let unitFakeHome: string;
   let messaging: Messaging;
+  let orchestrator: Orchestrator;
+  let store: ReturnType<typeof TaskStore.init>;
 
   beforeEach(() => {
     unitFakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
     process.env.DISPATCH_HOME = unitFakeHome;
     unitRoot = initGitRepo('dispatch-routes-unit-');
-    const store = TaskStore.init(unitRoot);
+    store = TaskStore.init(unitRoot);
     const cache = new TaskCache();
     cache.rebuild(store);
     const events = new EventBus();
-    const orchestrator = new Orchestrator({
+    orchestrator = new Orchestrator({
       rootDir: unitRoot,
       store,
       cache,
       events,
     });
+    orchestrator.registerExecutor('claude', new StallingExecutor());
     messaging = openMessaging({
       rootDir: unitRoot,
       orchestrator,
@@ -1052,5 +1186,122 @@ describe('messaging routes — direct unit coverage', () => {
 
     const agent = messaging.store.getAgent('agent:test/flaky');
     expect(agent?.status).toBe('revoked');
+  });
+
+  function ctxForRun(runId: string): ApiContext {
+    return {
+      principal: { address: `run:${runId}`, canDecide: false, kind: 'run' },
+      messaging,
+      orchestrator,
+    } as unknown as ApiContext;
+  }
+
+  it("a successor run on the same task can poll its predecessor's question for an answer", async () => {
+    const task = store.create({ title: 'Successor task' });
+    const run1 = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    const question = await messaging.engine.send(
+      {
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        choices: ['a', 'b'],
+        body: 'q',
+      },
+      { address: `run:${run1.id}`, canDecide: false }
+    );
+
+    await orchestrator.cancel(run1.id);
+    const run2 = await orchestrator.dispatch(task.meta.id, 'claude', {});
+
+    const req = new Request(
+      `http://x/api/messages/${question.message.id}/answer`
+    );
+    const res = await waitForAnswer(
+      req,
+      ctxForRun(run2.id),
+      question.message.id,
+      new URL(req.url)
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it("a run of a different task still gets forbidden from a predecessor's question", async () => {
+    const task = store.create({ title: 'Successor task 2' });
+    const run1 = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    const question = await messaging.engine.send(
+      {
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        choices: ['a', 'b'],
+        body: 'q',
+      },
+      { address: `run:${run1.id}`, canDecide: false }
+    );
+
+    const otherTask = store.create({ title: 'Unrelated task' });
+    const run3 = await orchestrator.dispatch(otherTask.meta.id, 'claude', {});
+
+    const req = new Request(
+      `http://x/api/messages/${question.message.id}/answer`
+    );
+    const res = await waitForAnswer(
+      req,
+      ctxForRun(run3.id),
+      question.message.id,
+      new URL(req.url)
+    );
+    expect(res.status).toBe(403);
+  });
+
+  it('a successor run can markRead a delivery deliverHeld rebound to it, and sees it in its default mailbox', async () => {
+    const task = store.create({ title: 'Rebound delivery task' });
+    const run1 = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    await orchestrator.cancel(run1.id);
+    const run2 = await orchestrator.dispatch(task.meta.id, 'claude', {});
+
+    // A message once addressed straight to run1, left `held` (recipient
+    // never changes on the failed-push fallback) — arranged directly in the
+    // store since forcing a genuine push failure would need a race this test
+    // shouldn't depend on.
+    const sent = await messaging.engine.send(
+      { to: ['human:test'], kind: 'message', body: 'orphaned' },
+      { address: 'human:test', canDecide: true }
+    );
+    const heldDelivery: Delivery = {
+      id: 'd-test-held-1',
+      messageId: sent.message.id,
+      recipient: `run:${run1.id}`,
+      runId: null,
+      via: 'direct',
+      state: 'held',
+      updatedAt: new Date().toISOString(),
+    };
+    messaging.store.insertDelivery(heldDelivery);
+
+    await messaging.engine.deliverHeld(run2.id, task.meta.id);
+    const rebound = messaging.store.getDelivery(heldDelivery.id);
+    expect(rebound?.runId).toBe(run2.id);
+    expect(rebound?.recipient).toBe(`run:${run1.id}`);
+
+    const mailboxRes = getMailbox(
+      ctxForRun(run2.id),
+      new URL('http://x/api/mailbox')
+    );
+    expect(mailboxRes.status).toBe(200);
+    const mailboxBody = await json<{
+      items: { delivery: { id: string } }[];
+    }>(mailboxRes);
+    expect(mailboxBody.items.map((i) => i.delivery.id)).toContain(
+      heldDelivery.id
+    );
+
+    const readRes = markDeliveryRead(ctxForRun(run2.id), heldDelivery.id);
+    expect(readRes.status).toBe(200);
+
+    const otherTask = store.create({ title: 'Unrelated task 2' });
+    const run3 = await orchestrator.dispatch(otherTask.meta.id, 'claude', {});
+    const forbidden = markDeliveryRead(ctxForRun(run3.id), heldDelivery.id);
+    expect(forbidden.status).toBe(403);
   });
 });

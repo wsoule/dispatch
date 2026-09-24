@@ -1,6 +1,7 @@
 import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
+  Delivery,
   DeliveryState,
   JsonValue,
   Message,
@@ -39,24 +40,26 @@ function invalidField(field: string, message: string): Response {
   return jsonResponse({ error: message, field }, 400);
 }
 
-// The task address a run principal is currently working, or null for any
-// other principal kind (or a run whose task no longer resolves).
-function taskAddressOfRun(
+// The task id a run principal is currently working, or null for any other
+// principal kind (or a run whose task no longer resolves).
+function taskIdOfRunPrincipal(
   ctx: ApiContext,
   principal: Principal
 ): string | null {
   if (principal.kind !== 'run') return null;
-  const taskId = ctx.orchestrator.taskIdOfRun(
-    principal.address.slice('run:'.length)
-  );
+  return ctx.orchestrator.taskIdOfRun(principal.address.slice('run:'.length));
+}
+
+function taskAddressOfRun(
+  ctx: ApiContext,
+  principal: Principal
+): string | null {
+  const taskId = taskIdOfRunPrincipal(ctx, principal);
   return taskId === null ? null : `task:${taskId}`;
 }
 
-// Whether `principal` may act as `address`: itself, its own task (a run
-// stands in for the task it's working, which outlives the run), or any
-// address at all for a deciding human. The single object-level authorization
-// rule every messaging route enforces before touching someone else's mail,
-// deliveries or channel membership.
+// The one object-level authorization rule every route enforces: self, a
+// deciding human acting for anyone, or (for a run) its task or a sibling run.
 function canActAs(
   ctx: ApiContext,
   principal: Principal,
@@ -64,7 +67,13 @@ function canActAs(
 ): boolean {
   if (address === principal.address) return true;
   if (principal.kind === 'human' && principal.canDecide) return true;
-  return address === taskAddressOfRun(ctx, principal);
+  const myTaskId = taskIdOfRunPrincipal(ctx, principal);
+  if (myTaskId === null) return false;
+  if (address === `task:${myTaskId}`) return true;
+  return (
+    address.startsWith('run:') &&
+    ctx.orchestrator.taskIdOfRun(address.slice('run:'.length)) === myTaskId
+  );
 }
 
 // Whether `principal` may read `message`: it (or its task) sent it, or it (or
@@ -95,10 +104,8 @@ function isRefShape(value: unknown): value is Ref {
   );
 }
 
-// Shared optional-field shape guards between parseSendInput and
-// parseReplyInput, so the two don't repeat the same rule twice each. Type
-// predicates (not just a boolean) so the `if (!isValid…(x))` at each call
-// site still narrows `x` for the assignment that follows it.
+// Shared shape guards for parseSendInput/parseReplyInput — type predicates,
+// not just booleans, so `if (!isValid…(x))` still narrows `x` afterward.
 function isValidOptionalRefs(value: unknown): value is Ref[] | undefined {
   return (
     value === undefined || (Array.isArray(value) && value.every(isRefShape))
@@ -303,11 +310,8 @@ function parseReplyInput(raw: unknown):
 }
 
 // In-flight/completed sends keyed by idempotency key, per Messaging instance
-// (a WeakMap, not a module-level Map, so two daemons booted in the same
-// process — as tests do — never share cached sends). Caching the PROMISE
-// itself, not just its resolved value, is what makes a concurrent retry with
-// the same key await the first send instead of racing a second one: the
-// cache is populated synchronously, before either send is awaited.
+// (never shared across daemons). Caches the promise, not just its result, so
+// a concurrent retry awaits the first send instead of racing a second one.
 const idempotencyCaches = new WeakMap<
   Messaging,
   Map<string, Promise<SendResult>>
@@ -327,7 +331,9 @@ function idempotencyCacheFor(
 
 // Records a send's promise under its idempotency key, evicting the oldest
 // entry once the cache would exceed its bound — Map preserves insertion
-// order, so the first key is always the oldest.
+// order, so the first key is always the oldest. A failed send removes its
+// own entry once settled (unless something newer already replaced it), so a
+// retry after a failure actually retries instead of replaying the error.
 function rememberIdempotent(
   cache: Map<string, Promise<SendResult>>,
   key: string,
@@ -338,6 +344,9 @@ function rememberIdempotent(
     const oldest = cache.keys().next().value;
     if (oldest !== undefined) cache.delete(oldest);
   }
+  promise.catch(() => {
+    if (cache.get(key) === promise) cache.delete(key);
+  });
 }
 
 // POST /api/messages — sends on behalf of whoever resolvePrincipal named.
@@ -414,12 +423,9 @@ export async function replyToMessage(
 // the real 30s, and restore it afterward.
 export const answerLongPoll = { waitMs: 30_000 };
 
-// GET /api/messages/:id/answer — `?wait=1` long-polls up to answerLongPoll
-// .waitMs for `id`'s answer; without it, checks once and returns right away.
-// Only a participant of the question (or a deciding human) may read its
-// answer. Resolves immediately if one already landed; otherwise parks on the
-// engine's event stream and wakes on the matching answer, the timeout, or
-// the client disconnecting (req.signal), whichever comes first.
+// GET /api/messages/:id/answer — participants only. `?wait=1` long-polls up
+// to answerLongPoll.waitMs for an answer; without it, checks once and
+// returns right away.
 export function waitForAnswer(
   req: Request,
   ctx: ApiContext,
@@ -431,17 +437,17 @@ export function waitForAnswer(
   if (question === null) {
     return Promise.resolve(errorResponse(404, `no message ${id}`));
   }
+  if (!isParticipant(ctx, principal, question)) {
+    return Promise.resolve(
+      errorResponse(403, `cannot read the answer to ${id}`)
+    );
+  }
   if (question.kind !== 'question' && question.kind !== 'handoff') {
     return Promise.resolve(
       errorResponse(
         400,
         `${id} is a ${question.kind}, not a question or handoff`
       )
-    );
-  }
-  if (!isParticipant(ctx, principal, question)) {
-    return Promise.resolve(
-      errorResponse(403, `cannot read the answer to ${id}`)
     );
   }
 
@@ -514,29 +520,49 @@ export function listRecentThreads(ctx: ApiContext, url: URL): Response {
   return jsonResponse({ threads: ctx.messaging.store.recentThreads(limit) });
 }
 
-// "My own mailbox" (no `?address=`): itself, plus its task for a run — most
-// mail targets the task, but a direct answer can still address the run.
-function ownMailboxAddresses(ctx: ApiContext, principal: Principal): string[] {
+// "My own mailbox" (no `?address=`) for a run: its own address, its task,
+// and every delivery deliverHeld has bound to it by runId regardless of the
+// delivery's `recipient` — deliverHeld rebinds a held delivery to a
+// successor run without touching that field, so a recipient-only query would
+// miss mail a predecessor run was originally addressed by name.
+function ownMailboxItems(
+  ctx: ApiContext,
+  principal: Principal,
+  states: DeliveryState[] | undefined
+): { delivery: Delivery; message: Message }[] {
+  const addresses = [principal.address];
   const taskAddress = taskAddressOfRun(ctx, principal);
-  return taskAddress === null
-    ? [principal.address]
-    : [principal.address, taskAddress];
+  if (taskAddress !== null) addresses.push(taskAddress);
+  const items = addresses.flatMap((addr) =>
+    ctx.messaging.engine.inbox(addr, states)
+  );
+
+  if (principal.kind === 'run') {
+    const runId = principal.address.slice('run:'.length);
+    const filter = states === undefined ? { runId } : { runId, states };
+    for (const delivery of ctx.messaging.store.deliveries(filter)) {
+      const message = ctx.messaging.store.getMessage(delivery.messageId);
+      if (message !== null) items.push({ delivery, message });
+    }
+  }
+
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    if (seen.has(item.delivery.id)) return false;
+    seen.add(item.delivery.id);
+    return true;
+  });
 }
 
 // GET /api/mailbox?address=&state=a,b — `address` defaults to the caller's
-// own (both addresses of it, for a run); reading anyone else's needs
-// canActAs's say-so. Results are sorted by delivery id (time order) even
-// when two addresses' inboxes are merged.
+// own; reading anyone else's needs canActAs's say-so. Results are sorted by
+// delivery id (time order) even when several sources are merged.
 export function getMailbox(ctx: ApiContext, url: URL): Response {
   const principal = requirePrincipal(ctx);
   const explicitAddress = url.searchParams.get('address');
   if (explicitAddress !== null && !canActAs(ctx, principal, explicitAddress)) {
     return errorResponse(403, `cannot read the mailbox for ${explicitAddress}`);
   }
-  const addresses =
-    explicitAddress === null
-      ? ownMailboxAddresses(ctx, principal)
-      : [explicitAddress];
 
   const rawState = url.searchParams.get('state');
   let states: DeliveryState[] | undefined;
@@ -557,9 +583,11 @@ export function getMailbox(ctx: ApiContext, url: URL): Response {
     }
     states = candidates as DeliveryState[];
   }
-  const items = addresses.flatMap((addr) =>
-    ctx.messaging.engine.inbox(addr, states)
-  );
+
+  const items =
+    explicitAddress === null
+      ? ownMailboxItems(ctx, principal, states)
+      : ctx.messaging.engine.inbox(explicitAddress, states);
   items.sort((a, b) => a.delivery.id.localeCompare(b.delivery.id));
   return jsonResponse({ items });
 }
@@ -811,11 +839,9 @@ function openRegistrationGateFor(
   return null;
 }
 
-// Shared body for approve/revoke: when the agent's registration gate is
-// still open, answer it through the engine so the gate handler (service.ts)
-// is the single writer of status/approvedBy; only once no gate is open (the
-// agent was created some other way, or its gate already resolved) does this
-// write the agent row directly.
+// Shared body for approve/revoke: answers the open registration gate through
+// the engine when there is one (keeping the gate handler the single writer
+// of status/approvedBy); writes the agent row directly otherwise.
 async function decideAgent(
   ctx: ApiContext,
   address: string,

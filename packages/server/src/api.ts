@@ -261,8 +261,8 @@ export interface ApiContext {
   // alongside PlanManager in index.ts against the same shared peers.
   overseerManager: OverseerManager;
   epicEngine: EpicEngine;
-  // Phase 2: dispatchd's own messaging engine host (task 4) — messaging
-  // routes (task 5) read/write through it directly.
+  // dispatchd's own messaging engine host — messaging routes read/write
+  // through it directly.
   messaging: Messaging;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by

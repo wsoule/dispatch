@@ -459,9 +459,8 @@ describe('handleApi fails closed for self-authenticated routes', () => {
   });
 });
 
-// HTTP-level regression coverage for the ELEVATED_ROUTES entries this task
-// added: an agent's approve/revoke/mute/unmute needs the `decide` tier, same
-// as the other adjudications in that table — the tier gate runs in handleApi
+// An agent's approve/revoke/mute/unmute needs the `decide` tier, same as the
+// other adjudications in ELEVATED_ROUTES — the tier gate runs in handleApi
 // before routing, independently of whatever the handler itself does.
 describe('ELEVATED_ROUTES: agent decide-tier routes', () => {
   let handle: ServerHandle;

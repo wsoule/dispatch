@@ -36,11 +36,8 @@ export interface DaemonHostDeps {
 }
 
 // Every task parented to `epicId`, as `task:<id>` addresses — an epic
-// channel's implicit members. `childrenOf` is injected rather than a task
-// store directly: the host resolves one epic per call (its own
-// `implicitMembers`), while a bulk caller (GET /api/channels) resolves every
-// epic from one task listing instead of one query per channel; both call
-// this same rule so they can never drift apart.
+// channel's implicit members. `childrenOf` is injected so a bulk caller can
+// resolve every epic from one task listing instead of one query per channel.
 export function implicitEpicMembers(
   childrenOf: (epicId: string) => { meta: { id: string } }[],
   channel: string

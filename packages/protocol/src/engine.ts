@@ -202,8 +202,7 @@ export class DeliveryEngine {
       ? this.store.getMessage(input.replyTo)
       : null;
     validateSendInput(input, sender.address, sender.canDecide, replyTarget);
-    if (input.kind === 'answer' && replyTarget !== null)
-      this.authorizeAnswer(replyTarget, sender);
+    if (replyTarget !== null) this.authorizeReply(replyTarget, sender);
     await this.checkBreaker(replyTarget, sender);
     if (
       input.kind === 'answer' &&
@@ -289,23 +288,27 @@ export class DeliveryEngine {
     return { message, deliveries: settled, downgraded };
   }
 
-  // Only a recipient of the question (or its task's run, or a successor run
-  // on the same task), a deciding human, or the system may answer it.
-  private authorizeAnswer(question: Message, sender: Sender): void {
+  // Only a participant of `target`'s thread may reply into it: its sender, a
+  // recipient of one of its deliveries (own address; a run for its task; a
+  // run for another run:X on the same task; a run for a delivery already
+  // bound to it by runId — a successor run inherits its predecessor's
+  // deliveries), a deciding human, or the system.
+  private authorizeReply(target: Message, sender: Sender): void {
     if (sender.address === SYSTEM_ADDRESS) return;
     if (sender.canDecide && sender.address.startsWith('human:')) return;
+    if (sender.address === target.from) return;
     const senderRunId = sender.address.startsWith('run:')
       ? sender.address.slice(4)
       : null;
     const senderTask =
       senderRunId !== null ? this.host.taskOfRun(senderRunId) : null;
-    const addressed = this.store.deliveries({ messageId: question.id }).some(
+    const addressed = this.store.deliveries({ messageId: target.id }).some(
       (d) =>
         d.recipient === sender.address ||
         (senderTask !== null && d.recipient === `task:${senderTask}`) ||
-        // The question was pushed/redelivered directly to this run.
+        // The message was pushed/redelivered directly to this run.
         (senderRunId !== null && d.runId === senderRunId) ||
-        // A successor run on the same task as a run the question addressed.
+        // A successor run on the same task as a run the message addressed.
         (senderTask !== null &&
           d.recipient.startsWith('run:') &&
           this.host.taskOfRun(d.recipient.slice(4)) === senderTask)
@@ -313,7 +316,7 @@ export class DeliveryEngine {
     if (!addressed)
       throw new MessagingError(
         'forbidden',
-        'only a recipient of this question can answer it',
+        'only a participant can reply in this thread',
         'replyTo'
       );
   }
