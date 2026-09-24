@@ -674,12 +674,24 @@ pub struct GithubRepo {
     pub description: String,
 }
 
+/// Builds a `gh` invocation whose `PATH` includes the standard tool-install
+/// directories (`/opt/homebrew/bin`, `/usr/local/bin`, ...). A macOS app launched
+/// from Finder/Spotlight inherits a minimal `PATH` that omits them, so a
+/// Homebrew-installed `gh` would otherwise be reported as missing. On Unix,
+/// `Command` resolves the program against the child's `PATH` when it is set,
+/// so this fixes both the lookup and any tools `gh` itself shells out to.
+fn gh_command() -> Command {
+    let mut cmd = Command::new("gh");
+    cmd.env("PATH", sidecar::enriched_child_path());
+    cmd
+}
+
 /// Verifies the GitHub CLI is installed and authenticated, turning both failure
 /// modes into a clear, actionable error string rather than a cryptic downstream
 /// clone/list failure. Runs `gh auth status`, which exits non-zero when `gh` is
 /// present but unauthenticated.
 fn ensure_gh_authenticated() -> Result<(), String> {
-    let output = Command::new("gh")
+    let output = gh_command()
         .arg("auth")
         .arg("status")
         .output()
@@ -704,7 +716,7 @@ fn ensure_gh_authenticated() -> Result<(), String> {
 pub async fn list_github_repos() -> Result<Vec<GithubRepo>, String> {
     tauri::async_runtime::spawn_blocking(|| {
         ensure_gh_authenticated()?;
-        let output = Command::new("gh")
+        let output = gh_command()
             .args([
                 "repo",
                 "list",
@@ -751,7 +763,7 @@ pub async fn clone_github_repo(
                 target.display()
             ));
         }
-        let output = Command::new("gh")
+        let output = gh_command()
             .arg("repo")
             .arg("clone")
             .arg(&name_with_owner)
@@ -773,6 +785,24 @@ pub async fn clone_github_repo(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Finder-launched app has no Homebrew dirs on PATH; every `gh` shellout
+    /// must carry them explicitly or the Clone-from-GitHub dialog reports `gh`
+    /// as missing even when it is installed.
+    #[test]
+    fn gh_command_carries_homebrew_dirs_on_path() {
+        let cmd = gh_command();
+        let path = cmd
+            .get_envs()
+            .find(|(k, _)| *k == "PATH")
+            .and_then(|(_, v)| v)
+            .expect("gh_command must set PATH")
+            .to_string_lossy()
+            .to_string();
+        let parts: Vec<&str> = path.split(':').collect();
+        assert!(parts.contains(&"/opt/homebrew/bin"), "PATH was {path}");
+        assert!(parts.contains(&"/usr/local/bin"), "PATH was {path}");
+    }
 
     #[test]
     fn bundled_resource_paths_add_exe_only_for_windows() {
