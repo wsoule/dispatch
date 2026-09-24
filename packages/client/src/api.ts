@@ -664,6 +664,16 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
+// A pointer to another object a message references (a task, run, file,
+// commit, or another message) — structural mirror of @dispatch/protocol's
+// Ref.
+export interface Ref {
+  type: string;
+  id: string;
+  /** Commit sha for `file` refs. */
+  at?: string;
+}
+
 // Structural mirror of @dispatch/protocol's Message — kept as a plain type
 // here (rather than a dependency on that MIT package) since Task 7 is what
 // actually builds the messaging UI against it; this is just enough shape for
@@ -677,7 +687,7 @@ export interface Message {
   to: string[];
   kind: string;
   body: string;
-  refs: { type: string; id: string; at?: string }[];
+  refs: Ref[];
   data?: unknown;
   urgent: boolean;
   blocking: boolean;
@@ -685,6 +695,131 @@ export interface Message {
   choice?: string;
   wake: 'none' | 'request';
   createdAt: string;
+}
+
+export type DeliveryState =
+  | 'held'
+  | 'sending'
+  | 'pushed'
+  | 'notified'
+  | 'read'
+  | 'answered';
+
+export type DeliveryVia = 'direct' | 'channel';
+
+// One recipient's copy of a sent message, tracked separately so per-recipient
+// read state doesn't require rewriting the message itself — structural
+// mirror of @dispatch/protocol's Delivery.
+export interface Delivery {
+  id: string;
+  messageId: string;
+  recipient: string;
+  runId: string | null;
+  via: DeliveryVia;
+  state: DeliveryState;
+  updatedAt: string;
+}
+
+// Body of POST /api/messages — structural mirror of @dispatch/protocol's
+// SendInput.
+export interface SendInput {
+  to: string[];
+  kind: string;
+  body: string;
+  refs?: Ref[];
+  data?: unknown;
+  urgent?: boolean;
+  blocking?: boolean;
+  choices?: string[];
+  choice?: string;
+  replyTo?: string | null;
+  wake?: 'none' | 'request';
+  session?: string;
+}
+
+// Body of POST /api/messages/:id/reply — the server fills in `to`/`kind`/
+// `replyTo` from the target message, so only these survive from SendInput.
+export interface ReplyInput {
+  body: string;
+  choice?: string;
+  refs?: Ref[];
+  data?: unknown;
+  session?: string;
+}
+
+// Response of both a send and a reply — structural mirror of
+// @dispatch/protocol's SendResult.
+export interface SendResult {
+  message: Message;
+  deliveries: Delivery[];
+  /** True when `urgent` was dropped because the sender hit its quota. */
+  downgraded: boolean;
+}
+
+// The gate payloads dispatchd raises through `Message.data` — structural
+// mirror of @dispatch/protocol's GateData. Not validated client-side; exported
+// so a consumer can narrow `Message.data` after checking its `type`.
+export type GateData =
+  | {
+      type: 'tool-approval';
+      requestId: string;
+      runId?: string;
+      conversation?: string;
+      tool: string;
+      input: unknown;
+    }
+  | { type: 'scope'; paths: string[]; reason: string }
+  | { type: 'wake'; target: string; message: string }
+  | { type: 'agent-registration'; agent: string; client: string }
+  | {
+      type: 'overseer-action';
+      conversation: string;
+      actionId: string;
+      summary: string;
+    };
+
+export type AgentStatus = 'pending' | 'approved' | 'revoked';
+
+// An agent roster entry with its token hash stripped — structural mirror of
+// the server's own AgentSummary (Omit<AgentRecord, 'tokenHash'>).
+export interface AgentSummary {
+  address: string;
+  displayName: string;
+  client: string;
+  status: AgentStatus;
+  muted: boolean;
+  approvedBy: string | null;
+  createdAt: string;
+}
+
+// One entry of GET /api/channels.
+export interface ChannelSummary {
+  name: string;
+  auto: boolean;
+  members: string[];
+}
+
+// One thread's most recent state, as GET /api/threads?limit=N lists them.
+export interface ThreadSummary {
+  thread: string;
+  root: Message;
+  last: Message;
+  count: number;
+}
+
+// GET /api/threads/:id's body: every message in the thread plus their
+// deliveries, so a client can render the conversation and per-recipient
+// state from one fetch.
+export interface ThreadDetail {
+  messages: Message[];
+  deliveries: Delivery[];
+}
+
+// One row of GET /api/mailbox: a delivery paired with the message it
+// delivers, so a mailbox view never needs a second fetch per row.
+export interface MailboxItem {
+  delivery: Delivery;
+  message: Message;
 }
 
 export type ServerEvent =
@@ -2840,6 +2975,49 @@ export interface ApiClient {
   // The blast radius of a file, a run's diff, or a task's declared writes —
   // `GET /api/impact?subject=<kind>&id=<id>`.
   getImpact(subject: ImpactSubjectKind, id: string): Promise<ImpactResponse>;
+
+  // Agent-communication bus (dispatchd's messaging engine) —
+  // packages/server/src/messaging/routes.ts is the source of truth for these
+  // request/response shapes.
+  /** Sends a message. `opts.idempotencyKey` lets a client safely retry a send
+   *  that may have timed out in flight: a repeat with the same key replays
+   *  the first attempt's result (200) instead of sending twice (201). */
+  sendMessage(
+    input: SendInput,
+    opts?: { idempotencyKey?: string }
+  ): Promise<SendResult>;
+  getMessage(id: string): Promise<Message>;
+  /** An answer if the target is a question or handoff, a plain message
+   *  otherwise — the server decides which. */
+  replyToMessage(id: string, input: ReplyInput): Promise<SendResult>;
+  /** `wait: true` long-polls up to the server's timeout for an answer;
+   *  omitted, it checks once and returns immediately. */
+  waitForAnswer(
+    id: string,
+    opts?: { wait?: boolean }
+  ): Promise<{ answer: Message | null }>;
+  getThread(id: string): Promise<ThreadDetail>;
+  /** The most recently active threads project-wide (deciding humans only). */
+  listRecentThreads(limit?: number): Promise<{ threads: ThreadSummary[] }>;
+  /** `address` defaults to the caller's own mailbox; `states` filters by
+   *  delivery state. */
+  getMailbox(
+    address?: string,
+    states?: DeliveryState[]
+  ): Promise<{ items: MailboxItem[] }>;
+  markDeliveryRead(id: string): Promise<Delivery>;
+  listChannels(): Promise<{ channels: ChannelSummary[] }>;
+  /** `member` defaults to the caller (a run defaults to its task). */
+  joinChannel(name: string, member?: string): Promise<void>;
+  leaveChannel(name: string, member: string): Promise<void>;
+  listAgentRoster(): Promise<{ agents: AgentSummary[] }>;
+  approveAgent(address: string): Promise<AgentSummary>;
+  revokeAgent(address: string): Promise<AgentSummary>;
+  /** `muted: true` mutes, `false` unmutes. */
+  muteAgent(address: string, muted: boolean): Promise<AgentSummary>;
+  /** Open blocking questions addressed to a human (deciding humans only). */
+  openDecisions(): Promise<{ items: Message[] }>;
+
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
   fetchWorkspaceTree(
@@ -3555,6 +3733,86 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         target,
         `/api/impact?${new URLSearchParams({ subject, id }).toString()}`
       ),
+    // Agent-communication bus — packages/server/src/messaging/routes.ts is
+    // the source of truth for these request/response shapes.
+    sendMessage: (input, opts) => {
+      const headers: Record<string, string> = {
+        'content-type': 'application/json',
+      };
+      if (opts?.idempotencyKey !== undefined) {
+        headers['Idempotency-Key'] = opts.idempotencyKey;
+      }
+      return request(target, '/api/messages', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(input),
+      });
+    },
+    getMessage: (id) => request(target, `/api/messages/${id}`),
+    replyToMessage: (id, input) =>
+      request(target, `/api/messages/${id}/reply`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    waitForAnswer: (id, opts = {}) =>
+      request(
+        target,
+        `/api/messages/${id}/answer${opts.wait === true ? '?wait=1' : ''}`
+      ),
+    getThread: (id) => request(target, `/api/threads/${id}`),
+    listRecentThreads: (limit) =>
+      request(
+        target,
+        `/api/threads${
+          limit !== undefined
+            ? `?${new URLSearchParams({ limit: String(limit) }).toString()}`
+            : ''
+        }`
+      ),
+    getMailbox: (address, states) => {
+      const params = new URLSearchParams();
+      if (address !== undefined) params.set('address', address);
+      if (states !== undefined && states.length > 0) {
+        params.set('state', states.join(','));
+      }
+      const qs = params.size > 0 ? `?${params.toString()}` : '';
+      return request(target, `/api/mailbox${qs}`);
+    },
+    markDeliveryRead: (id) =>
+      request(target, `/api/deliveries/${id}/read`, { method: 'POST' }),
+    listChannels: () => request(target, '/api/channels'),
+    // Bypasses request() the same way removeFromMergeQueue does below: the
+    // server answers with 204 No Content, and request() always tries to
+    // parse a JSON body on success, which throws on an empty one.
+    joinChannel: async (name, member) => {
+      await send(target, `/api/channels/${encodeURIComponent(name)}/members`, {
+        method: 'POST',
+        ...jsonBody(member !== undefined ? { member } : {}),
+      });
+    },
+    leaveChannel: async (name, member) => {
+      await send(
+        target,
+        `/api/channels/${encodeURIComponent(name)}/members/${encodeURIComponent(member)}`,
+        { method: 'DELETE' }
+      );
+    },
+    listAgentRoster: () => request(target, '/api/agents/roster'),
+    approveAgent: (address) =>
+      request(target, `/api/agents/${encodeURIComponent(address)}/approve`, {
+        method: 'POST',
+      }),
+    revokeAgent: (address) =>
+      request(target, `/api/agents/${encodeURIComponent(address)}/revoke`, {
+        method: 'POST',
+      }),
+    muteAgent: (address, muted) =>
+      request(
+        target,
+        `/api/agents/${encodeURIComponent(address)}/${muted ? 'mute' : 'unmute'}`,
+        { method: 'POST' }
+      ),
+    openDecisions: () => request(target, '/api/decisions/open'),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>
