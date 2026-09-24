@@ -883,7 +883,7 @@ describe('messaging HTTP routes', () => {
     expect(body.approvedBy).toBeNull();
   });
 
-  it("an approved agent cannot answer another agent's registration gate (403, needs a deciding human)", async () => {
+  it("an approved agent cannot answer another agent's registration gate (403, not a participant)", async () => {
     const pending = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
         method: 'POST',
@@ -906,10 +906,10 @@ describe('messaging HTTP routes', () => {
     });
     expect(replyRes.status).toBe(403);
     const body = await json<{ error: string }>(replyRes);
-    expect(body.error).toContain('decide tier');
+    expect(body.error).toContain('only a participant');
   });
 
-  it('a request-tier teammate token cannot answer a gate question either (403, decide tier)', async () => {
+  it('a request-tier teammate token cannot answer a gate question either (403, not a participant)', async () => {
     const pending = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
         method: 'POST',
@@ -931,7 +931,7 @@ describe('messaging HTTP routes', () => {
     });
     expect(replyRes.status).toBe(403);
     const body = await json<{ error: string }>(replyRes);
-    expect(body.error).toContain('decide tier');
+    expect(body.error).toContain('only a participant');
   });
 
   it('registration caps name and client at 100 characters', async () => {
