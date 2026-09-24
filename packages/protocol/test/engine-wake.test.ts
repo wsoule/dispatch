@@ -53,6 +53,20 @@ describe('wake', () => {
     ]);
   });
 
+  it('a failed-wake notice for a sender run that ended goes to its task', async () => {
+    host.ruling = 'allow';
+    host.wake = async () => {
+      host.endRun('t-000001');
+      return { ok: false, reason: 'task is blocked' };
+    };
+    await wakeSend();
+    const [notice] = engine
+      .inbox('task:t-000001')
+      .filter((e) => e.message.from === SYSTEM_ADDRESS);
+    expect(notice.message.body).toContain('task is blocked');
+    expect(notice.delivery.state).toBe('held');
+  });
+
   it('deny keeps the message held and tells the sender', async () => {
     host.ruling = 'deny';
     const { deliveries } = await wakeSend();

@@ -497,6 +497,16 @@ export class DeliveryEngine {
     return this.store.removeMember(channel, member);
   }
 
+  // Where a reply or system notice for `address` should go: a run that is no
+  // longer live is reached through its task; every other address is as given.
+  deliverableAddress(address: Address): Address {
+    if (!address.startsWith('run:')) return address;
+    const runId = address.slice('run:'.length);
+    if (this.host.isLiveRun(runId)) return address;
+    const task = this.host.taskOfRun(runId);
+    return task === null ? address : `task:${task}`;
+  }
+
   async reply(
     messageId: string,
     input: {
@@ -515,16 +525,11 @@ export class DeliveryEngine {
         `no message ${messageId}`,
         'replyTo'
       );
-    let to = target.from;
-    if (to.startsWith('run:') && !this.host.isLiveRun(to.slice(4))) {
-      const task = this.host.taskOfRun(to.slice(4));
-      if (task !== null) to = `task:${task}`;
-    }
     const asking = target.kind === 'question' || target.kind === 'handoff';
     return this.send(
       {
         ...input,
-        to: [to],
+        to: [this.deliverableAddress(target.from)],
         kind: asking ? 'answer' : 'message',
         replyTo: messageId,
       },
@@ -639,7 +644,8 @@ export class DeliveryEngine {
     return out;
   }
 
-  // Tells a sender something went sideways, as a system notice in its thread.
+  // Tells a sender something went sideways, as a system notice in its thread;
+  // a sender run that has ended hears it through its task.
   private async noticeTo(
     recipient: Address,
     about: Message,
@@ -647,7 +653,7 @@ export class DeliveryEngine {
   ): Promise<void> {
     await this.send(
       {
-        to: [recipient],
+        to: [this.deliverableAddress(recipient)],
         kind: 'notice',
         body,
         refs: [{ type: 'message', id: about.id }],

@@ -73,6 +73,14 @@ describe('answers', () => {
     });
   });
 
+  it('deliverableAddress sends a run that ended to its task', () => {
+    expect(engine.deliverableAddress('run:r-000001')).toBe('run:r-000001');
+    host.endRun('t-000001');
+    expect(engine.deliverableAddress('run:r-000001')).toBe('task:t-000001');
+    expect(engine.deliverableAddress('run:r-0000ff')).toBe('run:r-0000ff');
+    expect(engine.deliverableAddress('human:wyat')).toBe('human:wyat');
+  });
+
   it('gate replies need canDecide and call onAnswered', async () => {
     const { message: gate } = await engine.send(
       {
