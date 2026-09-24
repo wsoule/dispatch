@@ -6,7 +6,7 @@ import {
   SYSTEM_ADDRESS,
 } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -230,6 +230,28 @@ describe('openMessaging', () => {
     // Cancel the still-live stalling run before the temp worktree/root this
     // test cleans up in afterEach is removed out from under it.
     await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it('opens with default limits when config.yml is malformed', async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');
+    const messaging = openMessaging({
+      rootDir: root,
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(root, 'messages.db'),
+    });
+    await messaging.recover();
+    const sent = await messaging.engine.send(
+      { to: ['human:ada'], kind: 'message', body: 'still up' },
+      { address: 'human:wyat', canDecide: true }
+    );
+    expect(sent.message.body).toBe('still up');
+    // Only the boot read falls back; a live read still reports the typo.
+    expect(() => messaging.config()).toThrow('invalid .dispatch/config.yml');
     messaging.close();
   });
 });

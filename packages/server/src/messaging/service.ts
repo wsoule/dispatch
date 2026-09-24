@@ -1,5 +1,5 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch/core';
-import { loadConfig } from '@dispatch/core';
+import { DEFAULT_MESSAGING, loadConfig } from '@dispatch/core';
 import {
   DeliveryEngine,
   gateOf,
@@ -87,7 +87,18 @@ export function openMessaging(deps: {
   // this boot; a changed messaging.* value takes effect on the next restart.
   const config = (): MessagingConfig => loadConfig(deps.rootDir).messaging;
 
-  const engine = new DeliveryEngine({ store, host, limits: config() });
+  // Boot must survive a malformed config.yml (same as carto's read in
+  // index.ts); live config() calls still surface the real error.
+  let limits: MessagingConfig;
+  try {
+    limits = config();
+  } catch (err) {
+    console.error(
+      `dispatchd: could not read messaging config, using default limits: ${(err as Error).message}`
+    );
+    limits = { ...DEFAULT_MESSAGING };
+  }
+  const engine = new DeliveryEngine({ store, host, limits });
 
   // A human approved/denied waking a held task. Idempotent for recover()'s
   // replay: if the task already has any non-terminal run (this wake already
