@@ -161,7 +161,13 @@ export class DeliveryEngine {
   // Push vs notify is decided later, in dispatch(). Returns null to mean "no
   // delivery for this target" — a not-live run reached only via a channel is
   // dropped silently, since the channel send as a whole must still succeed.
-  private plan(target: Target, muted: boolean, field: string): Delivery | null {
+  // A reply to a run's own message is held for it even after the run ended.
+  private plan(
+    target: Target,
+    muted: boolean,
+    field: string,
+    repliesToIt: boolean
+  ): Delivery | null {
     const base = {
       id: this.id('d'),
       messageId: '',
@@ -186,6 +192,7 @@ export class DeliveryEngine {
       case 'run':
         if (!this.host.isLiveRun(parsed.id)) {
           if (target.via === 'channel') return null;
+          if (repliesToIt) return { ...base, runId: null, state: 'held' };
           throw new MessagingError(
             'invalid',
             `run ${parsed.id} is not live`,
@@ -254,7 +261,12 @@ export class DeliveryEngine {
     const deliveries: Delivery[] = [];
     for (const t of targets) {
       const index = message.to.indexOf(t.recipient);
-      const planned = this.plan(t, muted, index >= 0 ? `to[${index}]` : 'to');
+      const planned = this.plan(
+        t,
+        muted,
+        index >= 0 ? `to[${index}]` : 'to',
+        t.recipient === replyTarget?.from
+      );
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
     }
 

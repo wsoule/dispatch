@@ -322,6 +322,69 @@ describe('openMessaging', () => {
     messaging.close();
   });
 
+  it("answers a review run's question after it ended, keeping the answer off the task", async () => {
+    const { orchestrator, store } = makeOrchestrator();
+    const executor = new StallingExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const task = store.create({ title: 'Under review' });
+    const messaging = openMessaging({
+      rootDir: root,
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(root, 'messages.db'),
+    });
+    await messaging.recover();
+    const human = { address: 'human:wyat', canDecide: true };
+
+    const review = await orchestrator.dispatchAuxRun({
+      taskId: task.meta.id,
+      kind: 'review',
+      head: 'main',
+      buildPrompt: () => 'review this',
+    });
+    const question = await messaging.engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'Is the migration safe?',
+        blocking: true,
+      },
+      { address: `run:${review.id}`, canDecide: false }
+    );
+    await orchestrator.cancel(review.id);
+
+    const answer = await messaging.engine.reply(
+      question.message.id,
+      { body: 'reviewer answer' },
+      human
+    );
+    expect(answer.message.to).toEqual([`run:${review.id}`]);
+    expect(answer.deliveries).toEqual([
+      expect.objectContaining({ runId: null, state: 'held' }),
+    ]);
+    expect(messaging.engine.openBlocking()).toEqual([]);
+
+    // deliverHeld claims every held row it will move at once, so once the
+    // task's own mail leaves `held`, the reviewer's answer was passed over.
+    const forTask = await messaging.engine.send(
+      { to: [`task:${task.meta.id}`], kind: 'message', body: 'implementer' },
+      human
+    );
+    const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    await waitFor(
+      () =>
+        messaging.store.getDelivery(forTask.deliveries[0].id)?.state !== 'held'
+    );
+    expect(messaging.store.getDelivery(answer.deliveries[0].id)).toMatchObject({
+      runId: null,
+      state: 'held',
+    });
+    await orchestrator.cancel(run.id);
+    messaging.close();
+  });
+
   it('opens with default limits when config.yml is malformed', async () => {
     const { orchestrator, store } = makeOrchestrator();
     writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');

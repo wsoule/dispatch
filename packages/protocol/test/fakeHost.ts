@@ -11,6 +11,7 @@ import type {
 export class FakeHost implements MessagingHost {
   liveRuns = new Map<string, string>(); // taskId -> runId
   runTasks = new Map<string, string>(); // runId -> taskId (live or dead)
+  auxRuns = new Set<string>(); // live runs that stand for no task, like a review
   implicit = new Map<string, Address[]>();
   ruling: PolicyRuling = 'deny';
   wakeResult: WakeResult = { ok: true, runId: 'r-00000f' };
@@ -37,7 +38,9 @@ export class FakeHost implements MessagingHost {
     return this.liveRuns.get(taskId) ?? null;
   }
   isLiveRun(runId: string): boolean {
-    return [...this.liveRuns.values()].includes(runId);
+    return (
+      this.auxRuns.has(runId) || [...this.liveRuns.values()].includes(runId)
+    );
   }
   taskOfRun(runId: string): string | null {
     return this.runTasks.get(runId) ?? null;

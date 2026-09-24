@@ -73,6 +73,38 @@ describe('answers', () => {
     });
   });
 
+  it('reply holds the answer on an ended run that stands for no task', async () => {
+    host.auxRuns.add('r-0000a1');
+    const reviewer = { address: 'run:r-0000a1', canDecide: false };
+    const { message: q } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        body: 'ship it?',
+        blocking: true,
+      },
+      reviewer
+    );
+    host.auxRuns.delete('r-0000a1');
+    const { message: a, deliveries } = await engine.reply(
+      q.id,
+      { body: 'yes' },
+      human
+    );
+    expect(a.to).toEqual(['run:r-0000a1']);
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        recipient: 'run:r-0000a1',
+        runId: null,
+        state: 'held',
+      }),
+    ]);
+    expect(engine.openBlocking()).toEqual([]);
+    await expect(
+      engine.send({ to: ['run:r-0000a1'], kind: 'message', body: 'x' }, human)
+    ).rejects.toMatchObject({ code: 'invalid', field: 'to[0]' });
+  });
+
   it('deliverableAddress sends a run that ended to its task', () => {
     expect(engine.deliverableAddress('run:r-000001')).toBe('run:r-000001');
     host.endRun('t-000001');
