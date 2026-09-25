@@ -4,6 +4,7 @@ import type {
   EpicProgressChild,
   EpicSession,
   EpicSpend,
+  Message,
   NormalizedEntry,
   PlanProposal,
   PlanRecord,
@@ -63,24 +64,45 @@ function formatAgentEntry(entry: NormalizedEntry): string | null {
 }
 
 // Who a `kind: 'message'` entry is from, for the `[message …]` prefix.
-// `toUser` marks this run's own message_user call, addressed to the human.
+// `toUser` marks a message this run sent to a human.
 function messageSender(entry: NormalizedEntry): string {
   if (entry.toUser === true) return 'to you';
   if (entry.from === 'user') return 'from user';
   return `from ${entry.fromLabel ?? 'another agent'}`;
 }
 
-// Renders an `approval.requested` WS event prominently, with the exact command to copy
+// The run tool call a gate asks about, as `dispatch approve` addresses it.
+export interface ToolApproval {
+  runId: string;
+  requestId: string;
+  tool: string;
+}
+
+// Reads a run's tool-approval gate off a message; null for anything else,
+// including an overseer conversation's approval, which has no run.
+export function toolApprovalOf(message: Message): ToolApproval | null {
+  const data = message.data;
+  if (typeof data !== 'object' || data === null) return null;
+  const gate = data as Record<string, unknown>;
+  if (
+    gate.type !== 'tool-approval' ||
+    typeof gate.runId !== 'string' ||
+    typeof gate.requestId !== 'string' ||
+    typeof gate.tool !== 'string'
+  ) {
+    return null;
+  }
+  return { runId: gate.runId, requestId: gate.requestId, tool: gate.tool };
+}
+
+// Renders a tool-approval gate prominently, with the exact commands to copy
 // rather than making the user reconstruct the run/request ids.
-export function formatApprovalRequest(
-  runId: string,
-  requestId: string,
-  toolName: string
-): string {
+export function formatApprovalRequest(approval: ToolApproval): string {
+  const { runId, requestId, tool } = approval;
   return [
     '',
     '=== approval requested ===',
-    `tool:    ${toolName}`,
+    `tool:    ${tool}`,
     `approve: dispatch approve ${runId} ${requestId}`,
     `deny:    dispatch approve ${runId} ${requestId} --deny`,
     'token:   needs the daemon app token (--token or DISPATCH_APP_TOKEN)',

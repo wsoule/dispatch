@@ -5,14 +5,12 @@ import { requireInitialized } from './task.js';
 const NO_DAEMON_MESSAGE =
   'no dispatchd is running for this project — start one with: dispatch serve';
 
-// Deciding anything — a scope request, a run's tool approval — needs the app
-// token, which the daemon prints once on stdout and never writes down. A
-// daemon started in the background by any other `dispatch` command sends that
-// line to /dev/null, so its app token is gone for the life of the process —
-// hence the second sentence.
+// Messaging (answering a gate, sending a run a message) refuses the agent token,
+// and a daemon auto-started in the background printed its app token to /dev/null.
 function noAppTokenMessage(command: string): string {
   return (
-    `${command} needs the daemon app token: pass --token, or set ` +
+    `${command} needs the daemon app token, since messaging refuses the ` +
+    'agent token in the daemon file: pass --token, or set ' +
     'DISPATCH_APP_TOKEN, taking the value from the DISPATCH_APP_TOKEN line ' +
     '`dispatch serve` prints at startup. A daemon that another dispatch ' +
     'command auto-started in the background printed that line to /dev/null and ' +

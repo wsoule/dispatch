@@ -2,6 +2,7 @@ import { describe, expect, it } from 'bun:test';
 
 import type {
   ApiClient,
+  Message,
   RunDetail,
   RunMeta,
   ServerEvent,
@@ -84,8 +85,6 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     resumeRun: () => Promise.reject(new Error('not used')),
     listRuns: () => Promise.reject(new Error('not used')),
     getRun,
-    approveRun: () => Promise.reject(new Error('not used')),
-    sendRunMessage: () => Promise.reject(new Error('not used')),
     cancelRun: () => Promise.reject(new Error('not used')),
     getRunDiff: () => Promise.reject(new Error('not used')),
     reviewRun: () => Promise.reject(new Error('not used')),
@@ -99,8 +98,11 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     fetchExecutors: () => Promise.resolve({ executors: [], default: 'claude' }),
     stopEpic: () => Promise.reject(new Error('not used')),
     getEpicProgress: () => Promise.reject(new Error('not used')),
-    getScopeRequest: () => Promise.reject(new Error('not used')),
-    decideScopeRequest: () => Promise.reject(new Error('not used')),
+    openDecisions: () => Promise.reject(new Error('not used')),
+    getMessage: () => Promise.reject(new Error('not used')),
+    getAnswer: () => Promise.reject(new Error('not used')),
+    replyToMessage: () => Promise.reject(new Error('not used')),
+    sendMessage: () => Promise.reject(new Error('not used')),
     fanoutTask: () => Promise.reject(new Error('not used')),
     launchBrowser: () => Promise.reject(new Error('not used')),
     listBrowsers: () => Promise.reject(new Error('not used')),
@@ -126,7 +128,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
 }
 
 describe('createRunWatcher', () => {
-  it('renders run.log/approval.requested events once the run id is set', () => {
+  it('renders run.log events once the run id is set', () => {
     const lines: string[] = [];
     const created: FakeSocket[] = [];
     const client = makeClient(() =>
@@ -159,6 +161,71 @@ describe('createRunWatcher', () => {
     });
 
     expect(lines).toContain('[assistant] hi');
+    watcher.dispose();
+  });
+
+  it("renders the approval banner for this run's tool-approval gate only", () => {
+    const lines: string[] = [];
+    const created: FakeSocket[] = [];
+    const client = makeClient(() =>
+      Promise.resolve({
+        meta: makeRunMeta({ state: 'awaiting-approval' }),
+        entries: [],
+        evidence: [],
+        mutations: [],
+      })
+    );
+    const watcher = createRunWatcher(
+      { cwd: '/tmp', log: (l) => lines.push(l) },
+      client,
+      'http://127.0.0.1:1',
+      {},
+      {
+        createSocket: () => {
+          const s = new FakeSocket();
+          created.push(s);
+          return s;
+        },
+      }
+    );
+    const gate: Message = {
+      id: 'm-gate01',
+      thread: 'm-gate01',
+      replyTo: null,
+      from: 'agent:dispatch',
+      to: ['human:wyat'],
+      kind: 'question',
+      body: 'Checkout wants to run run_shell',
+      refs: [],
+      urgent: false,
+      blocking: true,
+      choices: ['approve', 'approve-session', 'deny'],
+      wake: 'none',
+      createdAt: '2026-09-25T10:00:00Z',
+      data: {
+        type: 'tool-approval',
+        requestId: 'fake-approval-1',
+        runId: 'r-1',
+        tool: 'run_shell',
+        input: {},
+      },
+    };
+
+    watcher.setRunId('r-1');
+    created[0].emitMessage({
+      type: 'message.new',
+      message: {
+        ...gate,
+        id: 'm-other',
+        data: { ...(gate.data as object), runId: 'r-2' },
+      },
+    });
+    expect(lines.join('\n')).not.toContain('approval requested');
+
+    created[0].emitMessage({ type: 'message.new', message: gate });
+    const banner = lines.join('\n');
+    expect(banner).toContain('=== approval requested ===');
+    expect(banner).toContain('approve: dispatch approve r-1 fake-approval-1');
     watcher.dispose();
   });
 

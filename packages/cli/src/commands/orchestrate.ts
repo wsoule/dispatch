@@ -1,6 +1,6 @@
 import type { Command } from 'commander';
 
-import type { ApiClient, RunMeta, ServerEvent } from '../apiClient.js';
+import type { ApiClient, Message, RunMeta, ServerEvent } from '../apiClient.js';
 import { createApiClient, DaemonUnreachableError } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import {
@@ -9,6 +9,8 @@ import {
   formatDiffFiles,
   formatEntry,
   formatRunsTable,
+  type ToolApproval,
+  toolApprovalOf,
 } from '../orchestrateFormat.js';
 import { singleFlight } from '../singleFlight.js';
 import type { ConnectEventsOptions } from '../watch.js';
@@ -47,7 +49,7 @@ function validateReviewAction(value: string): ReviewAction {
   return value as ReviewAction;
 }
 
-// Streams a single run's `run.log`/`approval.requested` events live and
+// Streams a single run's `run.log` events and tool-approval gates live and
 // resolves once it reaches a terminal state, with the matching exit code
 // (see exitCodeForRunState). `setRunId` is separate from construction
 // because the two call sites need it at different points: `run watch
@@ -157,10 +159,9 @@ export function createRunWatcher(
     if (event.type === 'run.log' && event.runId === runId) {
       const line = formatEntry(event.entry, opts);
       if (line !== null) ctx.log(line);
-    } else if (event.type === 'approval.requested' && event.runId === runId) {
-      ctx.log(
-        formatApprovalRequest(event.runId, event.requestId, event.toolName)
-      );
+    } else if (event.type === 'message.new') {
+      const approval = toolApprovalOf(event.message);
+      if (approval?.runId === runId) ctx.log(formatApprovalRequest(approval));
     } else if (event.type === 'run.changed') {
       // No payload on `run.changed` says WHICH run changed — cheapest
       // correct response is to refetch this one and check whether it just
@@ -208,6 +209,48 @@ function describeDispatch(meta: RunMeta, taskId: string): string {
   return meta.resumedFrom !== undefined
     ? `resumed ${meta.resumedFrom} as ${meta.id} (${meta.executor}) for ${taskId}`
     : `dispatched ${meta.id} (${meta.executor}) for ${taskId}`;
+}
+
+// The open gate a run's parked tool call waits on, pinned to `requestId` when
+// one is given; null when the run is parked on nothing open.
+function findRunGate(
+  items: Message[],
+  runId: string,
+  requestId?: string
+): { gate: Message; approval: ToolApproval } | null {
+  for (const gate of items) {
+    const approval = toolApprovalOf(gate);
+    if (
+      approval?.runId === runId &&
+      (requestId === undefined || approval.requestId === requestId)
+    ) {
+      return { gate, approval };
+    }
+  }
+  return null;
+}
+
+// The `run show` line for a parked run. An app token names the gate's tool and
+// request id; without one, or when it cannot read the gates, the line omits them.
+async function describeParkedApproval(
+  baseUrl: string,
+  runId: string,
+  token?: string
+): Promise<string> {
+  const answer = `answer with: dispatch approve ${runId} [--deny] (needs the app token: --token or DISPATCH_APP_TOKEN)`;
+  if (token !== undefined) {
+    try {
+      const { items } = await createApiClient(baseUrl, token).openDecisions();
+      const found = findRunGate(items, runId);
+      if (found !== null) {
+        const { tool, requestId } = found.approval;
+        return `awaiting approval: ${tool} (${requestId}) — ${answer}`;
+      }
+    } catch (err) {
+      if (!(err instanceof CliError)) throw err;
+    }
+  }
+  return `awaiting approval — ${answer}`;
 }
 
 export function registerOrchestrateCommands(
@@ -352,8 +395,12 @@ export function registerOrchestrateCommands(
   run
     .command('show <runId>')
     .option('--json')
-    .action(async (runId: string, opts: { json?: boolean }) => {
-      const { client } = await daemonFor(ctx);
+    .option(
+      '--token <token>',
+      'the daemon app token (or DISPATCH_APP_TOKEN), to name a parked approval'
+    )
+    .action(async (runId: string, opts: { json?: boolean; token?: string }) => {
+      const { baseUrl, client } = await daemonFor(ctx);
       const detail = await client.getRun(runId);
       if (opts.json === true) {
         ctx.log(JSON.stringify(detail, null, 2));
@@ -363,9 +410,14 @@ export function registerOrchestrateCommands(
       ctx.log(
         `${meta.id}  task=${meta.taskId}  state=${meta.state}  executor=${meta.executor}  branch=${meta.branch}`
       );
-      if (meta.pendingApproval !== undefined) {
+      if (meta.state === 'awaiting-approval') {
+        const appToken = (opts.token ?? process.env.DISPATCH_APP_TOKEN)?.trim();
         ctx.log(
-          `awaiting approval: ${meta.pendingApproval.toolName} (${meta.pendingApproval.requestId}) — answer with: dispatch approve ${meta.id} [--deny] (needs the app token: --token or DISPATCH_APP_TOKEN)`
+          await describeParkedApproval(
+            baseUrl,
+            meta.id,
+            appToken === '' ? undefined : appToken
+          )
         );
       }
       const last20 = detail.entries.slice(-20);
@@ -419,54 +471,93 @@ export function registerOrchestrateCommands(
       'Approve or deny a run awaiting an approval decision (needs the daemon app token)'
     )
     .option('--deny', 'deny the request instead of approving it')
+    .option('--session', 'also approve this tool for the rest of the run')
+    .option('--reason <text>', 'why the request is denied (with --deny)')
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(
       async (
         runId: string,
         requestId: string | undefined,
-        opts: { deny?: boolean; token?: string }
+        opts: {
+          deny?: boolean;
+          session?: boolean;
+          reason?: string;
+          token?: string;
+        }
       ) => {
-        // Approving is an adjudication, so the daemon only takes it on the
-        // decide tier: a client of its own on the app token, exactly like
-        // `scope decide`, and never a daemon this command started itself.
+        // Approving answers a gate, which the daemon takes only from a human:
+        // a client on the app token, never a daemon this command started.
         const appToken = resolveAppToken(opts.token, 'dispatch approve');
         const { baseUrl } = await attachToRunningDaemon(ctx);
         const client = createApiClient(baseUrl, appToken);
-        const allow = opts.deny !== true;
-        // `run --watch` prints the id live, but a caller who was not watching
-        // has no way to learn it — the run read carries the request the run
-        // is parked on, so the id is only needed to pin a specific one.
-        const resolvedId =
-          requestId ??
-          (await client.getRun(runId)).meta.pendingApproval?.requestId;
-        if (resolvedId === undefined) {
+        const { items } = await client.openDecisions();
+        const found = findRunGate(items, runId, requestId);
+        if (found === null) {
           throw new CliError(`${runId} is not awaiting an approval`);
         }
-        await client.approveRun(runId, resolvedId, allow);
-        ctx.log(`${runId} ${allow ? 'approved' : 'denied'} (${resolvedId})`);
+        const deny = opts.deny === true;
+        await client.replyToMessage(found.gate.id, {
+          body: deny ? (opts.reason ?? '') : '',
+          choice: deny
+            ? 'deny'
+            : opts.session === true
+              ? 'approve-session'
+              : 'approve',
+        });
+        ctx.log(
+          `${runId} ${deny ? 'denied' : 'approved'} (${found.approval.requestId})`
+        );
       }
     );
 
   program
     .command('message <runId> <text...>')
     .description(
-      'Send a message to a live run, or request changes on a finished one'
+      'Send a message to a live run, or request changes on a finished one (needs the daemon app token)'
     )
     .option(
       '--resume',
-      'request changes on a finished run (resumes its session)'
+      "request changes on a finished run (wakes the run's task)"
     )
+    .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(
-      async (runId: string, text: string[], opts: { resume?: boolean }) => {
-        const { client } = await daemonFor(ctx);
-        const meta = await client.sendRunMessage(runId, text.join(' '), {
-          resume: opts.resume,
+      async (
+        runId: string,
+        text: string[],
+        opts: { resume?: boolean; token?: string }
+      ) => {
+        // Messages go out as a human, so they need the app token too.
+        const appToken = resolveAppToken(opts.token, 'dispatch message');
+        const { baseUrl } = await attachToRunningDaemon(ctx);
+        const client = createApiClient(baseUrl, appToken);
+        const body = text.join(' ');
+        if (opts.resume !== true) {
+          await client.sendMessage({
+            to: [`run:${runId}`],
+            kind: 'message',
+            body,
+          });
+          ctx.log(`sent message to ${runId}`);
+          return;
+        }
+        // A wake-requesting send to the task starts (or continues) its run
+        // before it returns, so the run it woke is live by now.
+        const { taskId } = (await client.getRun(runId)).meta;
+        await client.sendMessage({
+          to: [`task:${taskId}`],
+          kind: 'message',
+          body,
+          wake: 'request',
         });
-        ctx.log(
-          opts.resume === true
-            ? `requested changes on ${runId} — new run ${meta.id}`
-            : `sent message to ${runId}`
+        const live = (await client.listRuns()).find(
+          (r) => r.taskId === taskId && exitCodeForRunState(r.state) === null
         );
+        if (live === undefined) {
+          throw new CliError(
+            `${taskId} did not wake; your message is waiting for its next run`
+          );
+        }
+        ctx.log(`requested changes on ${runId} — new run ${live.id}`);
       }
     );
 

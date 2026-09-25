@@ -528,8 +528,8 @@ export async function ensureDaemon(
   // recovered — deliberately, since `dispatch` runs inside agent shells whose
   // stdout the agent reads, and relaying that line there would hand the
   // decide-tier credential to the very caller the tier split excludes. Use
-  // `dispatch serve` when you need an app token; `dispatch scope decide` says
-  // so when it has none.
+  // `dispatch serve` when you need an app token; `dispatch approve`, `message`
+  // and `scope` say so when they have none.
   //
   // On the bun-script
   // path no `env` override is passed, so the child inherits this process's

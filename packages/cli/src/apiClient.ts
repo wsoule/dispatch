@@ -62,10 +62,6 @@ export interface RunMeta {
   survey?: unknown;
   kind?: 'execute' | 'review' | 'verify';
   claims?: string[];
-  // The approval the run is parked on while `state` is 'awaiting-approval' —
-  // the daemon decorates run reads with it so `dispatch approve` can find the
-  // request id without having watched the run live.
-  pendingApproval?: { requestId: string; toolName: string; input?: unknown };
   // How many sub-agents the run's agent fanned out into and where they
   // stand — mirrors RunMeta.subagents server-side.
   subagents?: {
@@ -103,8 +99,8 @@ export interface NormalizedEntry {
     type?: string;
     summary?: string;
   };
-  // `kind: 'message'` only: this run's human (`user`), another run's
-  // agent_message (`fromLabel`), or this run's own message_user (`toUser`).
+  // `kind: 'message'` only: this run's human (`user`), another agent
+  // (`fromLabel`), or a message this run sent to a human (`toUser`).
   from?: 'user' | 'agent';
   fromLabel?: string;
   toUser?: boolean;
@@ -290,27 +286,42 @@ export type ServerEvent =
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
-  | {
-      type: 'approval.requested';
-      runId: string;
-      requestId: string;
-      toolName: string;
-    }
+  | { type: 'message.new'; message: Message }
   | { type: 'plan.changed'; planId: string }
   | { type: 'epic.changed'; epicId: string }
   | { type: 'epic.paused'; epicId: string; reason: EpicPauseReason };
 
-// Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
-// an out-of-fence edit an agent asked for, blocked until someone decides it.
-interface ScopeRequest {
+// Mirrors Message in packages/protocol/src/envelope.ts. A gate is a blocking
+// question whose `data.type` names what answering it decides.
+export interface Message {
   id: string;
-  runId: string;
-  paths: string[];
-  reason: string;
-  requestedAt: string;
-  granted: boolean | null;
-  decisionReason: string | null;
-  decidedAt: string | null;
+  thread: string;
+  replyTo: string | null;
+  from: string;
+  session?: string;
+  to: string[];
+  kind: string;
+  body: string;
+  refs: { type: string; id: string; at?: string }[];
+  data?: unknown;
+  urgent: boolean;
+  blocking: boolean;
+  choices?: string[];
+  choice?: string;
+  wake: 'none' | 'request';
+  createdAt: string;
+}
+
+// Mirrors SendResult in packages/protocol/src/engine.ts.
+interface SendResult {
+  message: Message;
+  deliveries: {
+    id: string;
+    recipient: string;
+    runId: string | null;
+    state: string;
+  }[];
+  downgraded: boolean;
 }
 
 /** Where a request goes and which daemon token it presents. */
@@ -598,12 +609,6 @@ export interface ApiClient {
   resumeRun(runId: string): Promise<RunMeta>;
   listRuns(): Promise<RunMeta[]>;
   getRun(id: string): Promise<RunDetail>;
-  approveRun(runId: string, requestId: string, allow: boolean): Promise<void>;
-  sendRunMessage(
-    runId: string,
-    text: string,
-    opts?: { resume?: boolean }
-  ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
   getRunDiff(runId: string): Promise<DiffResult>;
   /** Findings raised against one task. `dispatch share` folds them into a
@@ -633,14 +638,23 @@ export interface ApiClient {
   fetchExecutors(): Promise<ExecutorsResponse>;
   stopEpic(epicId: string): Promise<EpicSession>;
   getEpicProgress(epicId: string): Promise<EpicProgress>;
-  getScopeRequest(runId: string, requestId: string): Promise<ScopeRequest>;
-  // Decide-tier: only a client built on the app token can call this.
-  decideScopeRequest(
-    runId: string,
-    requestId: string,
-    granted: boolean,
-    reason: string
-  ): Promise<ScopeRequest>;
+  // The messaging routes refuse the daemon file's agent token: build the
+  // client on a human's token (the app token) to call these.
+  /** Open blocking questions and gates addressed to a human. */
+  openDecisions(): Promise<{ items: Message[] }>;
+  getMessage(id: string): Promise<Message>;
+  /** The answer to a question, or null while it is open. */
+  getAnswer(id: string): Promise<{ answer: Message | null }>;
+  replyToMessage(
+    id: string,
+    input: { body: string; choice?: string }
+  ): Promise<SendResult>;
+  sendMessage(input: {
+    to: string[];
+    kind: string;
+    body: string;
+    wake?: 'none' | 'request';
+  }): Promise<SendResult>;
   /** Decide-tier: build the client on the app token. */
   issueTeamToken(input: {
     email?: string;
@@ -718,9 +732,8 @@ interface TeamTokenHolder {
   expired: boolean;
 }
 
-// `token` is the credential every call presents — the agent token from the
-// daemon file for ordinary commands, and only for `dispatch scope decide` an
-// app token the user supplied explicitly.
+// `token` is the credential every call presents: the agent token from the
+// daemon file, or an app token the user supplied for gates and messages.
 export function createApiClient(baseUrl: string, token: string): ApiClient {
   const target: ApiTarget = { baseUrl, token };
   return {
@@ -736,14 +749,6 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/runs/${runId}/resume`, { method: 'POST' }),
     listRuns: () => request(target, '/api/runs'),
     getRun: (id) => request(target, `/api/runs/${id}`),
-    approveRun: (runId, requestId, allow) =>
-      request(target, `/api/runs/${runId}/approval`, {
-        ...jsonBody({ requestId, allow }),
-      }),
-    sendRunMessage: (runId, text, opts = {}) =>
-      request(target, `/api/runs/${runId}/message`, {
-        ...jsonBody({ text, resume: opts.resume }),
-      }),
     cancelRun: (runId) =>
       request(target, `/api/runs/${runId}/cancel`, { ...jsonBody({}) }),
     getRunDiff: (runId) => request(target, `/api/runs/${runId}/diff`),
@@ -833,14 +838,18 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/browser/${encodeURIComponent(id)}/pick`),
     getEpicProgress: (epicId) =>
       request(target, `/api/epics/${epicId}/progress`),
-    getScopeRequest: (runId, requestId) =>
-      request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
-    decideScopeRequest: (runId, requestId, granted, reason) =>
+    openDecisions: () => request(target, '/api/decisions/open'),
+    getMessage: (id) =>
+      request(target, `/api/messages/${encodeURIComponent(id)}`),
+    getAnswer: (id) =>
+      request(target, `/api/messages/${encodeURIComponent(id)}/answer`),
+    replyToMessage: (id, input) =>
       request(
         target,
-        `/api/runs/${runId}/scope-requests/${requestId}/decide`,
-        jsonBody({ granted, reason })
+        `/api/messages/${encodeURIComponent(id)}/reply`,
+        jsonBody(input)
       ),
+    sendMessage: (input) => request(target, '/api/messages', jsonBody(input)),
     issueTeamToken: (input) =>
       request(target, '/api/team/tokens', jsonBody(input)),
     listTeamTokens: () => request(target, '/api/team/tokens'),

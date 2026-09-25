@@ -7,9 +7,8 @@ import { join } from 'node:path';
 import { buildStorefrontRunScript } from '../src/script.js';
 import { parseDaemonStdout } from '../src/stdoutContract.js';
 
-// Two shapes below aren't obvious from the route names: GET /api/runs/:id
-// nests `state` under `.meta.state`, and the approval route is singular —
-// `POST /api/runs/:id/approval`, with `requestId` in the body.
+// GET /api/runs/:id nests `state` under `.meta.state`. A parked approval is a
+// tool-approval gate: find it in decisions/open and answer it with a reply.
 
 interface TaskDoc {
   meta: { id: string; status: string; blockedBy: string[] };
@@ -28,8 +27,7 @@ describe('demo daemon', () => {
   test('serves a seeded session and plays a fake run to finished', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'demo-daemon-'));
     const paths = seedSession(dir);
-    // GET /api/runs/:id never returns `pendingApproval` (only the live WS
-    // event does), so the test reads the approval's requestId from the script.
+    // The gate must carry the request id the script's approval step raised.
     const script = buildStorefrontRunScript();
     const approvalStep = (script.steps ?? []).find(
       (s) => s.approval !== undefined
@@ -107,15 +105,33 @@ describe('demo daemon', () => {
         state = run.meta.state;
         if (state === 'awaiting-approval' && !approved) {
           approved = true;
-          // The approval is an adjudication: since v0.30.0 the daemon holds
-          // it to the app token, so an agent cannot approve its own parked
-          // call. Everything else here is the agent's own read/dispatch path.
-          const res = await fetch(`${base}/api/runs/${runId}/approval`, {
-            method: 'POST',
-            headers: { ...auth, authorization: `Bearer ${appToken}` },
-            body: JSON.stringify({ requestId: approvalRequestId, allow: true }),
+          // Gates are read and answered with the app token only, so an agent
+          // cannot approve its own parked call.
+          const open = await fetch(`${base}/api/decisions/open`, {
+            headers: { authorization: `Bearer ${appToken}` },
           });
-          expect(res.status).toBeLessThan(300);
+          const { items } = (await open.json()) as {
+            items: {
+              id: string;
+              data?: { type?: string; runId?: string; requestId?: string };
+            }[];
+          };
+          const gate = items.find(
+            (m) => m.data?.type === 'tool-approval' && m.data.runId === runId
+          );
+          expect(gate?.data?.requestId).toBe(approvalRequestId);
+          const reply = await fetch(
+            `${base}/api/messages/${gate?.id ?? 'missing'}/reply`,
+            {
+              method: 'POST',
+              headers: {
+                authorization: `Bearer ${appToken}`,
+                'content-type': 'application/json',
+              },
+              body: JSON.stringify({ body: '', choice: 'approve' }),
+            }
+          );
+          expect(reply.status).toBe(201);
         }
       }
       expect(state).toBe('finished');
