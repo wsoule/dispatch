@@ -91,7 +91,8 @@ export function closeRunGates(
   return closed;
 }
 
-// Boot: runs the previous daemon left behind are gone, so their gates close.
+// Boot: runs the previous daemon left behind are gone, and so is every overseer
+// conversation (they live in memory), so their gates close.
 export function closeOrphanedGates(
   engine: DeliveryEngine,
   runs: {
@@ -99,9 +100,18 @@ export function closeOrphanedGates(
     taskIdOfRun(runId: string): string | null;
   }
 ): number {
+  let closed = 0;
   const dead = new Set<string>();
   for (const question of engine.openBlocking()) {
     const gate = gateOf(question);
+    const conversation =
+      gate?.type === 'overseer-action' || gate?.type === 'tool-approval'
+        ? gate.conversation
+        : undefined;
+    if (conversation !== undefined) {
+      if (closeGate(engine, question.id, 'the daemon restarted')) closed++;
+      continue;
+    }
     const runId =
       gate?.type === 'tool-approval'
         ? gate.runId
@@ -110,7 +120,6 @@ export function closeOrphanedGates(
           : undefined;
     if (runId !== undefined && !runs.isRunLive(runId)) dead.add(runId);
   }
-  let closed = 0;
   for (const id of dead) {
     closed += closeRunGates(
       engine,

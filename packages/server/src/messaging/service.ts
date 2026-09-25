@@ -16,8 +16,15 @@ import type { LedgerStorePort } from '../ledger.js';
 import { LedgerStore } from '../ledger.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
-import type { ApprovalGateRequest } from '../orchestrator/types.js';
-import { runKind, TERMINAL_RUN_STATES } from '../orchestrator/types.js';
+import type {
+  ApprovalDecision,
+  ApprovalGateRequest,
+} from '../orchestrator/types.js';
+import {
+  OrchestratorNotFoundError,
+  runKind,
+  TERMINAL_RUN_STATES,
+} from '../orchestrator/types.js';
 import {
   closeGate,
   closeRunGates,
@@ -40,11 +47,30 @@ import {
   toolApprovalDecision,
 } from './toolApproval.js';
 
+// What overseer gate answers apply to: the OverseerManager, once it exists.
+interface OverseerGateTarget {
+  confirmAction(
+    conversationId: string,
+    actionId: string,
+    approve: boolean,
+    actor: string
+  ): Promise<unknown>;
+  decideApproval(
+    conversationId: string,
+    requestId: string,
+    decision: ApprovalDecision
+  ): unknown;
+  list(): { id: string }[];
+}
+
 export interface Messaging {
   engine: DeliveryEngine;
   store: SqliteMessageStore;
   runTokens: RunTokens;
   gates: GateHandlers;
+  // Lets overseer-action and overseer tool-approval answers apply; until then
+  // they are logged and the answerer told.
+  bindOverseer(target: OverseerGateTarget): void;
   // Replays crash-interrupted deliveries and gate effects; must run after
   // orchestrator.reconcileOnBoot() (index.ts says why).
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
@@ -296,16 +322,72 @@ export function openMessaging(deps: {
     },
   });
 
-  // A human (or policy) answered a parked tool call; a stale run is logged and
-  // the answerer told, not retried.
+  let overseer: OverseerGateTarget | null = null;
+
+  // Applies an answer to an overseer conversation. One the daemon no longer has
+  // (it restarted) is logged and the answerer told; an action or call already
+  // settled on a live conversation makes a replay a silent no-op.
+  const applyToConversation = async (
+    question: Message,
+    answer: Message,
+    conversation: string,
+    apply: (target: OverseerGateTarget) => unknown
+  ): Promise<void> => {
+    const gone = async () => {
+      console.error(
+        `messaging: overseer conversation ${conversation} is gone; answer ${answer.id} not applied`
+      );
+      await noticeAnswerer(
+        question,
+        answer,
+        `Not applied: overseer conversation ${conversation} is gone (the daemon restarted).`
+      );
+    };
+    const target = overseer;
+    if (target === null) return gone();
+    try {
+      await apply(target);
+    } catch (err) {
+      if (err instanceof OrchestratorNotFoundError) {
+        if (!target.list().some((r) => r.id === conversation)) await gone();
+        return;
+      }
+      // A failed apply re-raises its gate with the error, which is the notice.
+      console.error(`messaging: overseer gate ${question.id} failed`, err);
+    }
+  };
+
+  // A human confirmed or cancelled an action the overseer queued.
+  gates.register('overseer-action', async (question, answer) => {
+    const gate = gateOf(question);
+    if (gate === null || gate.type !== 'overseer-action') return;
+    await applyToConversation(question, answer, gate.conversation, (target) =>
+      target.confirmAction(
+        gate.conversation,
+        gate.actionId,
+        answer.choice === 'confirm',
+        answer.from
+      )
+    );
+  });
+
+  // A human (or policy) answered a parked tool call: a run's, or an overseer
+  // conversation's. A stale run is logged and the answerer told, not retried.
   gates.register('tool-approval', async (question, answer) => {
     const gate = gateOf(question);
-    if (
-      gate === null ||
-      gate.type !== 'tool-approval' ||
-      gate.runId === undefined
-    )
+    if (gate === null || gate.type !== 'tool-approval') return;
+    const { conversation, requestId } = gate;
+    if (conversation !== undefined) {
+      await applyToConversation(question, answer, conversation, (target) =>
+        target.decideApproval(
+          conversation,
+          requestId,
+          toolApprovalDecision(answer)
+        )
+      );
       return;
+    }
+    if (gate.runId === undefined) return;
     try {
       deps.orchestrator.approve(
         gate.runId,
@@ -414,8 +496,12 @@ export function openMessaging(deps: {
     store,
     runTokens,
     gates,
+    bindOverseer(target) {
+      overseer = target;
+    },
     recover: () => engine.recover(),
     close() {
+      overseer = null;
       clearInterval(expiry);
       uninstallScopePolicy();
       unsubscribeRunStarted();

@@ -397,16 +397,9 @@ describe('token storage', () => {
   });
 });
 
-// The overseer's confirm endpoint is the human gate on the model's queued
-// mutating actions — the one route where an agent token passing would let
-// the model approve its own mutations. The tier check runs before the
-// handler, so no live conversation is needed: the agent token must 403
-// before the 404 a missing conversation would produce, and the app token
-// must reach that 404.
-// A run's approval gate is the third adjudication route. Same proof as the
-// overseer confirm below: the tier check runs before the handler, so the agent
-// token must 403 before the 404 a run that does not exist would produce, and
-// the app token must reach that 404.
+// A run's approval route is an adjudication: the tier check runs before the
+// handler, so the agent token 403s before any lookup and the app token
+// reaches the handler.
 describe('run approval tier', () => {
   const approvalPath = '/api/runs/r-000000/approval';
   const body = JSON.stringify({ requestId: 'req-1', allow: true });
@@ -429,55 +422,6 @@ describe('run approval tier', () => {
     });
     expect(res.status).not.toBe(403);
     expect(res.status).not.toBe(401);
-  });
-});
-
-// Allowing a built-in tool call the overseer is parked on is the same gate
-// as the confirm below, for the same reason: the model must not be able to
-// wave its own Bash call through with the agent token.
-describe('overseer approval tier', () => {
-  const approvalPath = '/api/overseer/wc-000000/approvals/req-000000';
-
-  it('403s a decision made with the agent token', async () => {
-    const res = await rawFetch(`${baseUrl}${approvalPath}`, {
-      method: 'POST',
-      headers: { ...auth(agentToken), 'content-type': 'application/json' },
-      body: JSON.stringify({ allow: true }),
-    });
-    expect(res.status).toBe(403);
-    expect((await json<AuthError>(res)).code).toBe('auth_insufficient_tier');
-  });
-
-  it('lets the app token through to the handler', async () => {
-    const res = await rawFetch(`${baseUrl}${approvalPath}`, {
-      method: 'POST',
-      headers: { ...auth(appToken), 'content-type': 'application/json' },
-      body: JSON.stringify({ allow: true }),
-    });
-    expect(res.status).toBe(404);
-  });
-});
-
-describe('overseer confirm tier', () => {
-  const confirmPath = '/api/overseer/wc-000000/actions/wa-000000/confirm';
-
-  it('403s a confirm made with the agent token', async () => {
-    const res = await rawFetch(`${baseUrl}${confirmPath}`, {
-      method: 'POST',
-      headers: { ...auth(agentToken), 'content-type': 'application/json' },
-      body: JSON.stringify({ approve: true }),
-    });
-    expect(res.status).toBe(403);
-    expect((await json<AuthError>(res)).code).toBe('auth_insufficient_tier');
-  });
-
-  it('lets the app token through to the handler', async () => {
-    const res = await rawFetch(`${baseUrl}${confirmPath}`, {
-      method: 'POST',
-      headers: { ...auth(appToken), 'content-type': 'application/json' },
-      body: JSON.stringify({ approve: true }),
-    });
-    expect(res.status).toBe(404);
   });
 });
 

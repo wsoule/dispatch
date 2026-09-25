@@ -1,4 +1,5 @@
 import { TaskStore } from '@dispatch/core';
+import type { Message } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -283,10 +284,35 @@ describe('POST /api/overseer/:id/message', () => {
   });
 });
 
-describe('POST /api/overseer/:id/actions/:actionId/confirm', () => {
+// The open gates a deciding human is asked, as the desktop reads them.
+async function openGates(): Promise<Message[]> {
+  return (
+    (await json(await fetch(`${baseUrl}/api/decisions/open`))) as {
+      items: Message[];
+    }
+  ).items;
+}
+
+// Answers a gate as the app token's human, the way the desktop does.
+async function answerGate(id: string, choice: string): Promise<Response> {
+  return fetch(`${baseUrl}/api/messages/${id}/reply`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ body: '', choice }),
+  });
+}
+
+function gateType(message: Message): string | undefined {
+  return (message.data as { type?: string } | undefined)?.type;
+}
+
+describe('overseer action gates', () => {
   // Creates the task before the daemon boots (it reads task files at startup)
   // and scripts a single turn that queues dispatching it.
-  async function startWithQueuedDispatch(): Promise<OverseerRecord> {
+  async function startWithQueuedDispatch(): Promise<{
+    ready: OverseerRecord;
+    gate: Message;
+  }> {
     const doc = store.create({ title: 'Widget task' });
     const script: FakeOverseerScript = {
       ok: true,
@@ -297,22 +323,15 @@ describe('POST /api/overseer/:id/actions/:actionId/confirm', () => {
     const { record } = await startConversation(`dispatch ${doc.meta.id}`);
     const ready = await settled(record.id);
     expect(ready.pendingActions).toHaveLength(1);
-    return ready;
-  }
-
-  async function confirm(
-    conversationId: string,
-    actionId: string,
-    approve: unknown
-  ): Promise<Response> {
-    return fetch(
-      `${baseUrl}/api/overseer/${conversationId}/actions/${actionId}/confirm`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ approve }),
-      }
+    const gate = (await openGates()).find(
+      (m) => gateType(m) === 'overseer-action'
     );
+    if (gate === undefined) throw new Error('no overseer-action gate');
+    expect(gate.data).toMatchObject({
+      conversation: ready.id,
+      actionId: ready.pendingActions[0].id,
+    });
+    return { ready, gate };
   }
 
   async function listRuns(): Promise<{ taskId: string }[]> {
@@ -321,67 +340,59 @@ describe('POST /api/overseer/:id/actions/:actionId/confirm', () => {
     }[];
   }
 
-  it('approve applies the action and dispatches the run', async () => {
-    const ready = await startWithQueuedDispatch();
-    const action = ready.pendingActions[0];
+  it('confirm applies the action and dispatches the run', async () => {
+    const { ready, gate } = await startWithQueuedDispatch();
 
-    const res = await confirm(ready.id, action.id, true);
-    expect(res.status).toBe(200);
-    const confirmed = (await json(res)) as OverseerRecord;
+    expect((await answerGate(gate.id, 'confirm')).status).toBe(201);
+
+    const confirmed = await getRecord(ready.id);
     expect(confirmed.pendingActions).toHaveLength(0);
     expect(confirmed.messages.at(-1)).toEqual(
       expect.objectContaining({
         role: 'action',
-        actionId: action.id,
+        actionId: ready.pendingActions[0].id,
         outcome: 'applied',
       })
     );
-    const runs = await listRuns();
-    expect(runs).toHaveLength(1);
+    expect(await listRuns()).toHaveLength(1);
+    expect(await openGates()).toEqual([]);
   });
 
-  it('deny records the refusal and dispatches nothing', async () => {
-    const ready = await startWithQueuedDispatch();
-    const action = ready.pendingActions[0];
+  it('cancel records the refusal and dispatches nothing', async () => {
+    const { ready, gate } = await startWithQueuedDispatch();
 
-    const res = await confirm(ready.id, action.id, false);
-    expect(res.status).toBe(200);
-    const denied = (await json(res)) as OverseerRecord;
+    expect((await answerGate(gate.id, 'cancel')).status).toBe(201);
+
+    const denied = await getRecord(ready.id);
     expect(denied.pendingActions).toHaveLength(0);
     expect(denied.messages.at(-1)).toEqual(
       expect.objectContaining({
         role: 'action',
-        actionId: action.id,
+        actionId: ready.pendingActions[0].id,
         outcome: 'denied',
       })
     );
     expect(await listRuns()).toHaveLength(0);
   });
 
-  it('404s an unknown action id and an unknown conversation', async () => {
-    const ready = await startWithQueuedDispatch();
-
-    const unknownAction = await confirm(ready.id, 'wa-000000', true);
-    expect(unknownAction.status).toBe(404);
-
-    const unknownConversation = await confirm(
-      'wc-000000',
-      ready.pendingActions[0].id,
-      true
-    );
-    expect(unknownConversation.status).toBe(404);
-  });
-
-  it('400s a non-boolean approve', async () => {
-    const ready = await startWithQueuedDispatch();
-    const res = await confirm(ready.id, ready.pendingActions[0].id, 'yes');
-    expect(res.status).toBe(400);
+  it('refuses an answer from the shared agent token', async () => {
+    const { gate } = await startWithQueuedDispatch();
+    const res = await fetch(`${baseUrl}/api/messages/${gate.id}/reply`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ body: '', choice: 'confirm' }),
+    });
+    expect(res.status).toBe(403);
+    expect(await listRuns()).toHaveLength(0);
   });
 });
 
 // A backend standing in for a full Claude Code session that wants to run one
 // built-in tool: it asks the daemon through `authorizeTool` and replies with
-// what it was told, so the route's effect is readable off the transcript.
+// what it was told, so the gate's effect is readable off the transcript.
 class GatedOverseer implements OverseerBackend {
   decided: ApprovalDecision | undefined;
 
@@ -416,39 +427,29 @@ class GatedOverseer implements OverseerBackend {
   }
 }
 
-async function decide(
-  conversationId: string,
-  requestId: string,
-  body: unknown
-): Promise<Response> {
-  return fetch(
-    `${baseUrl}/api/overseer/${conversationId}/approvals/${requestId}`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify(body),
-    }
-  );
-}
+describe('overseer tool-approval gates', () => {
+  // Opens a conversation against the gated backend and returns the record and
+  // its gate once the built-in call is parked.
+  async function startParked(): Promise<{
+    backend: GatedOverseer;
+    record: OverseerRecord;
+    gate: Message;
+  }> {
+    const backend = new GatedOverseer();
+    await startWithOverseer(backend);
+    const { record } = await startConversation('is the tree clean?');
+    await waitFor(async () =>
+      (await openGates()).some((m) => gateType(m) === 'tool-approval')
+    );
+    const gate = (await openGates()).find(
+      (m) => gateType(m) === 'tool-approval'
+    );
+    if (gate === undefined) throw new Error('no tool-approval gate');
+    return { backend, record: await getRecord(record.id), gate };
+  }
 
-// Opens a conversation against the gated backend and returns the record once
-// its built-in call is parked.
-async function startParked(): Promise<{
-  backend: GatedOverseer;
-  record: OverseerRecord;
-}> {
-  const backend = new GatedOverseer();
-  await startWithOverseer(backend);
-  const { record } = await startConversation('is the tree clean?');
-  await waitFor(
-    async () => (await getRecord(record.id)).pendingApprovals.length > 0
-  );
-  return { backend, record: await getRecord(record.id) };
-}
-
-describe('POST /api/overseer/:id/approvals/:requestId', () => {
-  it('parks the built-in call on the running record until decided', async () => {
-    const { record } = await startParked();
+  it('parks the built-in call on the running record and asks through a gate', async () => {
+    const { record, gate } = await startParked();
     expect(record.state).toBe('running');
     expect(record.pendingApprovals).toEqual([
       expect.objectContaining({
@@ -457,44 +458,40 @@ describe('POST /api/overseer/:id/approvals/:requestId', () => {
         summary: 'Bash: git status',
       }),
     ]);
-    expect(record.messages.at(-1)).toEqual(
-      expect.objectContaining({
-        role: 'approval',
-        requestId: 'req-1',
-        outcome: 'pending',
-      })
-    );
+    expect(gate.data).toEqual({
+      type: 'tool-approval',
+      requestId: 'req-1',
+      conversation: record.id,
+      tool: 'Bash',
+      input: { command: 'git status' },
+    });
+    expect(gate.choices).toEqual(['approve', 'approve-session', 'deny']);
+    await answerGate(gate.id, 'deny');
+    await settled(record.id);
   });
 
-  it('allow runs the call and the turn settles on its result', async () => {
-    const { backend, record } = await startParked();
+  it('approve-session runs the call and the turn settles on its result', async () => {
+    const { backend, record, gate } = await startParked();
 
-    const res = await decide(record.id, 'req-1', {
-      allow: true,
-      scope: 'session',
-    });
-    expect(res.status).toBe(200);
-    const decided = (await json(res)) as OverseerRecord;
-    expect(decided.pendingApprovals).toEqual([]);
-    expect(decided.messages.at(-1)).toEqual(
-      expect.objectContaining({ role: 'approval', outcome: 'allowed' })
-    );
+    expect((await answerGate(gate.id, 'approve-session')).status).toBe(201);
 
     const ready = await settled(record.id);
     expect(backend.decided).toEqual({ allow: true, scope: 'session' });
+    expect(ready.pendingApprovals).toEqual([]);
     expect(ready.messages.at(-1)).toEqual(
       expect.objectContaining({ role: 'assistant', text: 'clean tree' })
     );
   });
 
   it('deny hands the reason to the session and nothing runs', async () => {
-    const { backend, record } = await startParked();
+    const { backend, record, gate } = await startParked();
 
-    const res = await decide(record.id, 'req-1', {
-      allow: false,
-      reason: 'not now',
+    const res = await fetch(`${baseUrl}/api/messages/${gate.id}/reply`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'not now', choice: 'deny' }),
     });
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(201);
 
     const ready = await settled(record.id);
     expect(backend.decided).toEqual({ allow: false, reason: 'not now' });
@@ -507,27 +504,77 @@ describe('POST /api/overseer/:id/approvals/:requestId', () => {
       expect.objectContaining({ role: 'assistant', text: 'could not look' })
     );
   });
+});
 
-  it('404s an unknown request and an unknown conversation, 400s a bad body', async () => {
-    const { record } = await startParked();
+describe('overseer lines on the bus', () => {
+  interface ThreadSummary {
+    thread: string;
+    root: Message;
+    count: number;
+  }
 
-    expect((await decide(record.id, 'req-9', { allow: true })).status).toBe(
-      404
-    );
-    expect((await decide('wc-000000', 'req-1', { allow: true })).status).toBe(
-      404
-    );
-    expect((await decide(record.id, 'req-1', { allow: 'yes' })).status).toBe(
-      400
-    );
-    expect(
-      (await decide(record.id, 'req-1', { allow: true, scope: 'forever' }))
-        .status
-    ).toBe(400);
-    // Still parked: none of those touched it.
-    expect((await getRecord(record.id)).pendingApprovals).toHaveLength(1);
-    await decide(record.id, 'req-1', { allow: false });
+  async function threads(): Promise<ThreadSummary[]> {
+    return (
+      (await json(await fetch(`${baseUrl}/api/threads`))) as {
+        threads: ThreadSummary[];
+      }
+    ).threads;
+  }
+
+  it('a turn from the app token is a thread opened by the owner', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const { ref } = (await json(await fetch(`${baseUrl}/api/whoami`))) as {
+      ref: string;
+    };
+
+    const { record } = await startConversation('what is running?');
     await settled(record.id);
+    await waitFor(async () =>
+      (await getRecord(record.id)).messages.every(
+        (m) => m.messageId !== undefined
+      )
+    );
+    const { thread } = await getRecord(record.id);
+
+    const opened = (await threads()).find((t) => t.thread === thread);
+    expect(opened?.root).toMatchObject({
+      from: ref,
+      body: 'what is running?',
+    });
+    // The overseer's reply lands in the same thread, from its own agent.
+    const { messages } = (await json(
+      await fetch(`${baseUrl}/api/threads/${thread}`)
+    )) as { messages: Message[] };
+    expect(messages.map((m) => [m.from, m.to, m.body])).toEqual([
+      [
+        ref,
+        [`agent:${ref.slice('human:'.length)}/overseer`],
+        'what is running?',
+      ],
+      [`agent:${ref.slice('human:'.length)}/overseer`, [ref], 'all quiet'],
+    ]);
+  });
+
+  it('a turn from the shared agent token runs but opens no thread', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+
+    const res = await fetch(`${baseUrl}/api/overseer`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ prompt: 'what is running?' }),
+    });
+    expect(res.status).toBe(202);
+    const record = (await json(res)) as OverseerRecord;
+    const ready = await settled(record.id);
+
+    expect(ready.messages.at(-1)).toEqual(
+      expect.objectContaining({ role: 'assistant', text: 'all quiet' })
+    );
+    expect(ready.thread).toBeUndefined();
+    expect(await threads()).toEqual([]);
   });
 });
 

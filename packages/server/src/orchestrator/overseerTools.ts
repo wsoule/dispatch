@@ -50,8 +50,8 @@ export class OverseerToolError extends Error {}
  * test without booting an HTTP server.
  *
  * There is deliberately no `events` here: every mutation below goes through
- * Orchestrator or MergeQueue, both of which broadcast their own events, so a
- * bus on this context would only be a second, easily-desynced way to do it.
+ * Orchestrator, MergeQueue or the message bus, each of which broadcasts its own
+ * events, so an event bus here would only be a second way to do it.
  */
 export interface OverseerToolContext {
   store: TaskStorePort;
@@ -61,6 +61,16 @@ export interface OverseerToolContext {
   /** Open blocking questions addressed to a human (see openHumanDecisions). */
   openGates: () => Message[];
   ledgerStore: LedgerStorePort;
+  /** The message bus, for the tools that answer a run's tool-approval gate or
+   *  message a run, as the human who confirmed the action (`actor`). */
+  messaging: {
+    answerRunApproval(
+      runId: string,
+      answer: { choice: 'approve' | 'approve-session' | 'deny'; body: string },
+      actor: string
+    ): Promise<void>;
+    sendAsHuman(to: string, text: string, actor: string): Promise<void>;
+  };
   /**
    * Executor `dispatch_task` uses when the overseer doesn't name one. Matches
    * api.ts's own fallback rather than being configurable per call site, so
@@ -94,14 +104,19 @@ export interface OverseerStatusTool<Input = unknown, Output = unknown> {
  *
  * `describe` runs at call time: it validates that the target exists and
  * returns the sentence a human reads before confirming. `apply` runs only from
- * OverseerToolRegistry.applyAction, after that confirmation.
+ * OverseerToolRegistry.applyAction, after that confirmation; `meta.actor` is
+ * the human who confirmed it.
  */
 export interface OverseerMutatingTool<Input = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<Input>;
   describe(ctx: OverseerToolContext, input: Input): string;
-  apply(ctx: OverseerToolContext, input: Input): Promise<void> | void;
+  apply(
+    ctx: OverseerToolContext,
+    input: Input,
+    meta: { actor: string }
+  ): Promise<void> | void;
 }
 
 /** A mutating tool call awaiting (or past) human confirmation. */
@@ -453,11 +468,10 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     return `Dispatch ${doc.meta.id} "${safeTitle(doc.meta.title)}" with the ${executorFor(ctx, input.executor)} executor${model}`;
   },
   async apply(ctx, input) {
-    // `actor` is deliberately omitted here and in message_run: the
-    // orchestrator's default credits the daemon's human, and a human
-    // confirming the action in the chat UI is precisely who caused it. The
-    // explicit 'none' actor is for callers with no human behind them at all
-    // (EpicEngine's auto-fill), which the overseer never is.
+    // `actor` is deliberately omitted here: the orchestrator's default credits
+    // the daemon's human, and a human confirming the action is precisely who
+    // caused it. The explicit 'none' actor is for callers with no human behind
+    // them at all (EpicEngine's auto-fill), which the overseer never is.
     // dispatchOrResume, not dispatch: a task whose last run a daemon restart
     // left recoverable is picked back up rather than started over. `executor`
     // and `model` carry what the overseer's caller actually NAMED — the daemon's
@@ -471,12 +485,8 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   },
 };
 
-// Both approve_run and deny_run resolve the requestId from the run itself
-// rather than making the overseer carry one: the requestId it saw in a
-// pending_approvals result may already be stale by confirmation time, and
-// answering the wrong request is worse than refusing. Resolved twice on
-// purpose — once in `describe` so the summary can name the tool being
-// approved, once in `apply` so a request that rotated in between is caught.
+// approve_run and deny_run answer the gate the run is parked on when the human
+// confirms, not a requestId the overseer saw earlier, which may be stale by then.
 function requireApproval(ctx: OverseerToolContext, runId: string) {
   const meta = requireRun(ctx, runId);
   const pending = ctx.orchestrator.pendingApprovalFor(runId);
@@ -507,12 +517,16 @@ const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
       input.scope === 'session' ? ' for the rest of the session' : '';
     return `Approve ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${scope}`;
   },
-  apply(ctx, input) {
-    const { pending } = requireApproval(ctx, input.runId);
-    ctx.orchestrator.approve(input.runId, pending.requestId, {
-      allow: true,
-      scope: input.scope ?? 'once',
-    });
+  async apply(ctx, input, meta) {
+    requireApproval(ctx, input.runId);
+    await ctx.messaging.answerRunApproval(
+      input.runId,
+      {
+        choice: input.scope === 'session' ? 'approve-session' : 'approve',
+        body: '',
+      },
+      meta.actor
+    );
   },
 };
 
@@ -536,12 +550,13 @@ const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
       input.reason === undefined ? '' : `: ${safeTitle(input.reason)}`;
     return `Deny ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${why}`;
   },
-  apply(ctx, input) {
-    const { pending } = requireApproval(ctx, input.runId);
-    ctx.orchestrator.approve(input.runId, pending.requestId, {
-      allow: false,
-      reason: input.reason,
-    });
+  async apply(ctx, input, meta) {
+    requireApproval(ctx, input.runId);
+    await ctx.messaging.answerRunApproval(
+      input.runId,
+      { choice: 'deny', body: input.reason ?? '' },
+      meta.actor
+    );
   },
 };
 
@@ -611,8 +626,12 @@ const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {
     }
     return `Message run ${meta.id} ("${safeTitle(meta.taskTitle)}"): ${safeTitle(input.text)}`;
   },
-  apply(ctx, input) {
-    ctx.orchestrator.sendMessage(input.runId, input.text);
+  async apply(ctx, input, meta) {
+    await ctx.messaging.sendAsHuman(
+      `run:${input.runId}`,
+      input.text,
+      meta.actor
+    );
   },
 };
 
@@ -737,14 +756,17 @@ export class OverseerToolRegistry {
   }
 
   /**
-   * Performs a confirmed action's real effect. The one path in this module
-   * that mutates anything.
+   * Performs a confirmed action's real effect, as `meta.actor`, the human who
+   * confirmed it. The one path in this module that mutates anything.
    *
    * An action can only be applied once: a second call finds it no longer
    * `pending` and refuses, so a double-confirm (two clicks, a retried request)
    * can't dispatch two runs or cancel a run twice.
    */
-  async applyAction(id: string): Promise<OverseerAction> {
+  async applyAction(
+    id: string,
+    meta: { actor: string }
+  ): Promise<OverseerAction> {
     const action = this.requirePending(id, 'apply');
     const tool = this.mutatingByName.get(action.tool);
     // Only reachable if the tool list changed under a still-pending action.
@@ -757,7 +779,7 @@ export class OverseerToolRegistry {
     // double-click this guard exists to stop.
     action.status = 'applied';
     try {
-      await tool.apply(this.ctx, action.input);
+      await tool.apply(this.ctx, action.input, meta);
     } catch (err) {
       // Back to `pending` because the effect did not happen: leaving it
       // `applied` would lie, and `denied` would discard an action the human

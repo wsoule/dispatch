@@ -158,6 +158,40 @@ export function findToolApprovalGate(
   );
 }
 
+/** The open gate for one action an overseer conversation queued. */
+export function findOverseerActionGate(
+  gates: readonly Message[],
+  conversationId: string,
+  actionId: string
+): Message | null {
+  return (
+    gates.find((message) => {
+      const gate = gateOf(message);
+      return (
+        gate?.type === 'overseer-action' &&
+        gate.conversation === conversationId &&
+        gate.actionId === actionId
+      );
+    }) ?? null
+  );
+}
+
+/** The open tool-approval gate for one call an overseer conversation parked. */
+export function findOverseerApprovalGate(
+  gates: readonly Message[],
+  conversationId: string,
+  requestId: string
+): Message | null {
+  return (
+    gates.find((message) => {
+      const gate = toolApprovalOf(message);
+      return (
+        gate?.conversation === conversationId && gate.requestId === requestId
+      );
+    }) ?? null
+  );
+}
+
 /** The gate answer an approval card's decision stands for. */
 export function approvalReply(
   allow: boolean,

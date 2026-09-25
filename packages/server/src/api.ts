@@ -30,6 +30,7 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
+import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
@@ -3634,8 +3635,13 @@ async function confirmPlan(
 // follows createRun's `executor` contract: optional, defaults to 'claude', and
 // a name outside what's registered is a 400 naming every valid option.
 // `model` is optional the same way: the composer's pick for this
-// conversation, over the configured `overseer` role's model.
-async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
+// conversation, over the configured `overseer` role's model. `speaker` is the
+// human whose lines the bus carries (see overseerSpeaker).
+async function startOverseer(
+  req: Request,
+  ctx: ApiContext,
+  speaker: Sender | null
+): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as {
@@ -3668,19 +3674,21 @@ async function startOverseer(req: Request, ctx: ApiContext): Promise<Response> {
     body.prompt,
     backendName,
     model.model,
-    effort.effort
+    effort.effort,
+    speaker
   );
   return jsonResponse(record, 202);
 }
 
 // POST /api/overseer/:id/message — mirrors sendPlanMessage: 202 with the record
 // already flipped back to `running`; the reply lands via `overseer.changed`.
-// 404s an unknown conversation and 409s one mid-turn (both raised by
-// sendMessage and mapped by handleApi's outer catch).
+// 404s an unknown conversation and 409s one mid-turn or a revoked overseer
+// (raised by sendMessage and mapped by handleApi's outer catch).
 async function sendOverseerMessage(
   req: Request,
   ctx: ApiContext,
-  conversationId: string
+  conversationId: string,
+  speaker: Sender | null
 ): Promise<Response> {
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;
@@ -3688,74 +3696,26 @@ async function sendOverseerMessage(
   if (typeof body.text !== 'string' || body.text.trim() === '') {
     return errorResponse(400, 'invalid text: text is required');
   }
-  const record = ctx.overseerManager.sendMessage(conversationId, body.text);
+  const record = ctx.overseerManager.sendMessage(
+    conversationId,
+    body.text,
+    speaker
+  );
   return jsonResponse(record, 202);
 }
 
-// POST /api/overseer/:id/actions/:actionId/confirm { approve } — decides one
-// queued mutating action. Approving runs the real effect before responding,
-// so the returned record already reflects the outcome; denying never runs it
-// at all. 404s an unknown conversation or an action that isn't pending on
-// that conversation, and a failed effect surfaces through the same typed
-// orchestrator errors as acting on the target directly would.
-async function confirmOverseerAction(
-  req: Request,
+// Who speaks on an overseer route: a human principal, whose lines the bus
+// carries. Any other credential, the shared agent token above all, is null.
+function overseerSpeaker(
   ctx: ApiContext,
-  conversationId: string,
-  actionId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { approve?: unknown };
-  if (typeof body.approve !== 'boolean') {
-    return errorResponse(400, 'invalid approve: expected a boolean');
-  }
-  const record = await ctx.overseerManager.confirmAction(
-    conversationId,
-    actionId,
-    body.approve
-  );
-  return jsonResponse(record);
-}
-
-// POST /api/overseer/:id/approvals/:requestId { allow, scope?, reason? } —
-// decides one built-in tool call the overseer's running turn is parked on.
-// Same body as a run's POST /api/runs/:id/approval: allowing runs the call
-// at once (`scope: 'session'` also pre-approves the tool for the rest of the
-// conversation), denying hands `reason` to the model. 404s an unknown
-// conversation or a request that isn't parked on it.
-async function decideOverseerApproval(
-  req: Request,
-  ctx: ApiContext,
-  conversationId: string,
-  requestId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as {
-    allow?: unknown;
-    scope?: unknown;
-    reason?: unknown;
+  presented: string | null
+): Sender | null {
+  const result = resolvePrincipal(ctx, presented);
+  if (!result.ok || result.principal.kind !== 'human') return null;
+  return {
+    address: result.principal.address,
+    canDecide: result.principal.canDecide,
   };
-  if (typeof body.allow !== 'boolean') {
-    return errorResponse(400, 'invalid allow: expected a boolean');
-  }
-  if (
-    body.scope !== undefined &&
-    body.scope !== 'once' &&
-    body.scope !== 'session'
-  ) {
-    return errorResponse(400, "invalid scope: expected 'once' or 'session'");
-  }
-  if (body.reason !== undefined && typeof body.reason !== 'string') {
-    return errorResponse(400, 'invalid reason: expected a string');
-  }
-  const record = ctx.overseerManager.decideApproval(conversationId, requestId, {
-    allow: body.allow,
-    ...(body.scope !== undefined ? { scope: body.scope } : {}),
-    ...(body.reason !== undefined ? { reason: body.reason } : {}),
-  });
-  return jsonResponse(record);
 }
 
 // The optional session body POST /api/epics/:id/dispatch and /resume share.
@@ -4490,23 +4450,7 @@ const ELEVATED_ROUTES: ReadonlyArray<{
     segments: ['runs', '*', 'scope-requests', '*', 'decide'],
     tier: 'decide',
   },
-  // Confirming an assistant's queued mutating action is the human gate the
-  // whole assistant design hangs on — an agent token approving it would let
-  // the model approve its own mutations.
-  {
-    method: 'POST',
-    segments: ['overseer', '*', 'actions', '*', 'confirm'],
-    tier: 'decide',
-  },
-  // Allowing a built-in tool call the assistant is parked on is the same gate
-  // for the same reason: the model must not be able to wave its own Bash call
-  // through with the agent token.
-  {
-    method: 'POST',
-    segments: ['overseer', '*', 'approvals', '*'],
-    tier: 'decide',
-  },
-  // A run's tool-approval gate is an adjudication like the two above: with it
+  // A run's tool-approval gate is an adjudication like the one above: with it
   // on the request tier, any agent holding the on-disk agent token could wave
   // its own parked tool call through.
   { method: 'POST', segments: ['runs', '*', 'approval'], tier: 'decide' },
@@ -6375,7 +6319,11 @@ export async function handleApi(
 
     if (segments[0] === 'overseer') {
       if (segments.length === 1 && method === 'POST') {
-        return await startOverseer(req, ctx);
+        return await startOverseer(
+          req,
+          ctx,
+          overseerSpeaker(daemonCtx, presented)
+        );
       }
       if (segments.length === 2 && method === 'GET') {
         return jsonResponse(ctx.overseerManager.get(segments[1]));
@@ -6385,22 +6333,12 @@ export async function handleApi(
         segments[2] === 'message' &&
         method === 'POST'
       ) {
-        return await sendOverseerMessage(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 5 &&
-        segments[2] === 'actions' &&
-        segments[4] === 'confirm' &&
-        method === 'POST'
-      ) {
-        return await confirmOverseerAction(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'approvals' &&
-        method === 'POST'
-      ) {
-        return await decideOverseerApproval(req, ctx, segments[1], segments[3]);
+        return await sendOverseerMessage(
+          req,
+          ctx,
+          segments[1],
+          overseerSpeaker(daemonCtx, presented)
+        );
       }
     }
 

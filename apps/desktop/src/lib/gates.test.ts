@@ -3,6 +3,8 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   approvalReply,
+  findOverseerActionGate,
+  findOverseerApprovalGate,
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
@@ -151,6 +153,24 @@ describe('gate adapters', () => {
     expect(scopeRequestIdsByRun([later, scope]).get('r-1')).toEqual({
       requestId: 'm-s2',
     });
+  });
+
+  it('finds overseer gates by conversation and action or request', () => {
+    const tool = msg('m-t', {
+      data: {
+        type: 'tool-approval',
+        requestId: 'rq-1',
+        conversation: 'wc-1',
+        tool: 'Bash',
+        input: {},
+      },
+    });
+    expect(findOverseerActionGate([overseer], 'wc-1', 'a-1')?.id).toBe('m-o');
+    expect(findOverseerActionGate([overseer], 'wc-2', 'a-1')).toBeNull();
+    expect(findOverseerApprovalGate([tool, approval], 'wc-1', 'rq-1')?.id).toBe(
+      'm-t'
+    );
+    expect(findOverseerApprovalGate([approval], 'wc-1', 'req-1')).toBeNull();
   });
 });
 

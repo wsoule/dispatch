@@ -20,7 +20,11 @@ import { describeToolInput } from '../policyEngine.js';
 import { SYSTEM_SENDER } from './gates.js';
 
 export const TOOL_INPUT_PREVIEW_BYTES = 8192;
-const TOOL_APPROVAL_CHOICES = ['approve', 'approve-session', 'deny'] as const;
+export const TOOL_APPROVAL_CHOICES = [
+  'approve',
+  'approve-session',
+  'deny',
+] as const;
 
 // A tool call's input as its gate shows it: whole when its JSON fits in
 // 8 KiB, else that text cut on a code point and marked truncated.

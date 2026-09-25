@@ -9,6 +9,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
+import type { OverseerToolContext } from '../../src/orchestrator/overseerTools.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -232,4 +233,27 @@ export function withRunEndControls(messages: object): Query {
     stopTask: () => Promise.resolve(),
     applyFlagSettings: () => Promise.resolve(),
   }) as unknown as Query;
+}
+
+// OverseerToolContext['messaging'] for a registry built before any Messaging
+// exists; a test that needs the bus binds the real one after openMessaging.
+export function lateBoundOverseerMessaging(): {
+  port: OverseerToolContext['messaging'];
+  bind(real: OverseerToolContext['messaging']): void;
+} {
+  let real: OverseerToolContext['messaging'] | null = null;
+  const bound = () => {
+    if (real === null) throw new Error('overseer messaging used before bind()');
+    return real;
+  };
+  return {
+    port: {
+      answerRunApproval: (runId, answer, actor) =>
+        bound().answerRunApproval(runId, answer, actor),
+      sendAsHuman: (to, text, actor) => bound().sendAsHuman(to, text, actor),
+    },
+    bind: (next) => {
+      real = next;
+    },
+  };
 }

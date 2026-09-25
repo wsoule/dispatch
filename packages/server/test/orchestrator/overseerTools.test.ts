@@ -8,6 +8,9 @@ import { join } from 'node:path';
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
+import { overseerToolMessaging } from '../../src/messaging/overseerBus.js';
+import type { Messaging } from '../../src/messaging/service.js';
+import { openMessaging } from '../../src/messaging/service.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { MergeQueue } from '../../src/orchestrator/mergeQueue.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
@@ -19,7 +22,7 @@ import {
   OverseerToolRegistry,
 } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
-import { initGitRepo } from './helpers.js';
+import { initGitRepo, lateBoundOverseerMessaging } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
@@ -34,6 +37,8 @@ const liveQueues: MergeQueue[] = [];
 // some LATER test and write its transcript against whatever DISPATCH_HOME is
 // set then. Cancelling here interrupts the scripted delay immediately.
 const liveOrchestrators: Orchestrator[] = [];
+// Messaging a test opened, closed after its runs are stopped.
+const liveMessaging: Messaging[] = [];
 
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
@@ -52,6 +57,8 @@ afterEach(async () => {
     }
   }
   liveOrchestrators.length = 0;
+  for (const messaging of liveMessaging) messaging.close();
+  liveMessaging.length = 0;
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -98,6 +105,7 @@ interface Harness extends OverseerToolContext {
   registry: OverseerToolRegistry;
   // The open blocking questions to humans that `openGates` returns.
   gates: Message[];
+  lateMessaging: ReturnType<typeof lateBoundOverseerMessaging>;
 }
 
 /**
@@ -154,6 +162,7 @@ function makeHarness(): Harness {
   liveQueues.push(mergeQueue);
   const gates: Message[] = [];
   const ledgerStore = new LedgerStore(repo);
+  const lateMessaging = lateBoundOverseerMessaging();
   const ctx: OverseerToolContext = {
     store,
     cache,
@@ -162,9 +171,47 @@ function makeHarness(): Harness {
     openGates: () => gates,
     ledgerStore,
     defaultExecutor: 'fake',
+    messaging: lateMessaging.port,
   };
-  return { ...ctx, registry: new OverseerToolRegistry(ctx), gates };
+  return {
+    ...ctx,
+    registry: new OverseerToolRegistry(ctx),
+    gates,
+    lateMessaging,
+  };
 }
+
+// Opens messaging over the harness's orchestrator and binds the tools to it,
+// so runs raise tool-approval gates and approve/deny/message go over the bus.
+async function withBus(h: Harness): Promise<Messaging> {
+  const messaging = openMessaging({
+    rootDir: repo,
+    orchestrator: h.orchestrator,
+    store: h.store,
+    events: new EventBus(),
+    ownerRef: 'human:wyat',
+    dbPath: join(repo, 'messages.db'),
+  });
+  liveMessaging.push(messaging);
+  await messaging.recover();
+  h.lateMessaging.bind(overseerToolMessaging(messaging.engine));
+  return messaging;
+}
+
+// The open tool-approval gate a run is parked on, once it has been written.
+async function runGate(messaging: Messaging, runId: string): Promise<Message> {
+  const find = () =>
+    messaging.engine.openBlocking().find((m) => {
+      const data = m.data as { type?: string; runId?: string } | undefined;
+      return data?.type === 'tool-approval' && data.runId === runId;
+    });
+  await waitFor(() => find() !== undefined);
+  const gate = find();
+  if (gate === undefined) throw new Error(`no gate for ${runId}`);
+  return gate;
+}
+
+const CONFIRMED = { actor: 'human:wyat' };
 
 // An open blocking question to a human, as the engine stores it.
 function gate(id: string, over: Partial<Message>): Message {
@@ -647,7 +694,7 @@ describe('applyAction performs the real effect', () => {
       taskId: task.meta.id,
       executor: 'fake',
     });
-    const applied = await h.registry.applyAction(action.id);
+    const applied = await h.registry.applyAction(action.id, CONFIRMED);
 
     expect(applied.status).toBe('applied');
     const runs = h.orchestrator.list();
@@ -656,39 +703,72 @@ describe('applyAction performs the real effect', () => {
     expect(runs[0].executor).toBe('fake');
   });
 
-  it('approve_run lets the parked run continue to completion', async () => {
+  it("approve_run answers the run's tool-approval gate as the confirming human", async () => {
     const h = makeHarness();
+    const messaging = await withBus(h);
     const { runId } = await dispatchUntil(
       h,
       'Gated',
       'gated',
       'awaiting-approval'
     );
+    const gate = await runGate(messaging, runId);
 
     const action = h.registry.callMutatingTool('approve_run', { runId });
-    await h.registry.applyAction(action.id);
+    await h.registry.applyAction(action.id, CONFIRMED);
 
+    expect(messaging.engine.answerOf(gate.id)).toMatchObject({
+      from: 'human:wyat',
+      choice: 'approve',
+    });
     await waitFor(
       () => h.orchestrator.getRun(runId)?.meta.state === 'finished'
     );
     expect(h.orchestrator.pendingApprovalFor(runId)).toBeUndefined();
   });
 
-  it('deny_run refuses the tool call and the reason reaches the run', async () => {
+  it('approve_run for the session answers approve-session', async () => {
     const h = makeHarness();
+    const messaging = await withBus(h);
     const { runId } = await dispatchUntil(
       h,
       'Gated',
       'gated',
       'awaiting-approval'
     );
+    const gate = await runGate(messaging, runId);
+
+    const action = h.registry.callMutatingTool('approve_run', {
+      runId,
+      scope: 'session',
+    });
+    await h.registry.applyAction(action.id, CONFIRMED);
+
+    expect(messaging.engine.answerOf(gate.id)?.choice).toBe('approve-session');
+  });
+
+  it('deny_run refuses the tool call and the reason reaches the run', async () => {
+    const h = makeHarness();
+    const messaging = await withBus(h);
+    const { runId } = await dispatchUntil(
+      h,
+      'Gated',
+      'gated',
+      'awaiting-approval'
+    );
+    const gate = await runGate(messaging, runId);
 
     const action = h.registry.callMutatingTool('deny_run', {
       runId,
       reason: 'that would delete the repo',
     });
-    await h.registry.applyAction(action.id);
+    await h.registry.applyAction(action.id, CONFIRMED);
 
+    expect(messaging.engine.answerOf(gate.id)).toMatchObject({
+      from: 'human:wyat',
+      choice: 'deny',
+      body: 'that would delete the repo',
+    });
     await waitFor(() => h.orchestrator.getRun(runId)?.meta.state === 'failed');
     expect(h.orchestrator.getRun(runId)?.meta.error).toContain(
       'that would delete the repo'
@@ -705,7 +785,7 @@ describe('applyAction performs the real effect', () => {
     );
 
     const action = h.registry.callMutatingTool('cancel_run', { runId });
-    await h.registry.applyAction(action.id);
+    await h.registry.applyAction(action.id, CONFIRMED);
 
     expect(h.orchestrator.getRun(runId)?.meta.state).toBe('cancelled');
     expect(h.store.get(taskId)?.body).toContain(`[run ${runId}] cancelled`);
@@ -721,28 +801,34 @@ describe('applyAction performs the real effect', () => {
     );
 
     const action = h.registry.callMutatingTool('dequeue_merge', { runId });
-    await h.registry.applyAction(action.id);
+    await h.registry.applyAction(action.id, CONFIRMED);
 
     expect(h.mergeQueue.snapshot().entries).toHaveLength(0);
   });
 
-  it('message_run delivers the message onto the run transcript', async () => {
+  it('message_run sends the message to the run as the confirming human', async () => {
     const h = makeHarness();
+    const messaging = await withBus(h);
     const { runId } = await dispatchUntil(h, 'Long one', 'slow', 'running');
 
     const action = h.registry.callMutatingTool('message_run', {
       runId,
       text: 'check the tests',
     });
-    await h.registry.applyAction(action.id);
+    await h.registry.applyAction(action.id, CONFIRMED);
 
+    const sent = messaging.engine
+      .inbox(`run:${runId}`)
+      .find((i) => i.message.body === 'check the tests');
+    expect(sent?.message.from).toBe('human:wyat');
     const entries = h.orchestrator.getRun(runId)?.entries ?? [];
     expect(
       entries.some(
         (e) =>
           e.kind === 'message' &&
           e.from === 'user' &&
-          e.text === 'check the tests'
+          e.messageId === sent?.message.id &&
+          e.text?.includes('check the tests') === true
       )
     ).toBe(true);
   });
@@ -851,7 +937,7 @@ describe('pending action bookkeeping', () => {
       second.id,
     ]);
 
-    await h.registry.applyAction(first.id);
+    await h.registry.applyAction(first.id, CONFIRMED);
     h.registry.denyAction(second.id);
     expect(h.registry.listPending()).toHaveLength(0);
     expect(h.registry.getAction(second.id)?.status).toBe('denied');
@@ -878,11 +964,11 @@ describe('pending action bookkeeping', () => {
     const action = h.registry.callMutatingTool('dispatch_task', {
       taskId: task.meta.id,
     });
-    await h.registry.applyAction(action.id);
+    await h.registry.applyAction(action.id, CONFIRMED);
 
     // Without this, a double-confirm (two clicks, a retried request) would
     // dispatch the same task twice.
-    expect(h.registry.applyAction(action.id)).rejects.toThrow(
+    expect(h.registry.applyAction(action.id, CONFIRMED)).rejects.toThrow(
       /already applied/
     );
     expect(h.orchestrator.list()).toHaveLength(1);
@@ -900,8 +986,8 @@ describe('pending action bookkeeping', () => {
       taskId: task.meta.id,
     });
     const results = await Promise.allSettled([
-      h.registry.applyAction(action.id),
-      h.registry.applyAction(action.id),
+      h.registry.applyAction(action.id, CONFIRMED),
+      h.registry.applyAction(action.id, CONFIRMED),
     ]);
 
     expect(results.filter((r) => r.status === 'fulfilled')).toHaveLength(1);
@@ -911,7 +997,7 @@ describe('pending action bookkeeping', () => {
 
   it('refuses to apply or deny an action it has never seen', () => {
     const h = makeHarness();
-    expect(h.registry.applyAction('wa-ffffff')).rejects.toThrow(
+    expect(h.registry.applyAction('wa-ffffff', CONFIRMED)).rejects.toThrow(
       'unknown action: wa-ffffff'
     );
     expect(() => h.registry.denyAction('wa-ffffff')).toThrow(
@@ -928,7 +1014,7 @@ describe('pending action bookkeeping', () => {
       taskId: task.meta.id,
       executor: 'nonexistent-executor',
     });
-    expect(h.registry.applyAction(action.id)).rejects.toThrow(
+    expect(h.registry.applyAction(action.id, CONFIRMED)).rejects.toThrow(
       /unknown executor/
     );
     await waitFor(() => h.registry.getAction(action.id)?.status === 'pending');

@@ -81,6 +81,11 @@ import {
   openHumanDecisions,
   SYSTEM_SENDER,
 } from './messaging/gates.js';
+import {
+  createOverseerBus,
+  ensureOverseerActor,
+  overseerToolMessaging,
+} from './messaging/overseerBus.js';
 import { openMessaging } from './messaging/service.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
@@ -1475,9 +1480,15 @@ async function bootServer(
   // The overseer chat assistant (see orchestrator/overseer.ts), assembled here
   // alongside PlanManager against the same shared peers. Its tool registry is
   // the confirmation gate: mutating tool calls queue as pending actions, and
-  // only POST /api/overseer/:id/actions/:actionId/confirm reaches a real
+  // only a human's answer to an action's overseer-action gate reaches a real
   // orchestrator/merge-queue mutation. `defaultExecutor` is left unset — the
   // registry's own fallback is the same 'claude' api.ts defaults to.
+  const overseerAddress = actorContext.agentRef('overseer');
+  ensureOverseerActor(
+    messaging.store,
+    overseerAddress,
+    new Date().toISOString()
+  );
   const overseerManager = new OverseerManager({
     rootDir,
     registry: new OverseerToolRegistry({
@@ -1487,14 +1498,20 @@ async function bootServer(
       mergeQueue,
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
+      messaging: overseerToolMessaging(messaging.engine),
     }),
     events,
+    bus: createOverseerBus(messaging.engine, messaging.store, {
+      owner: actorContext.humanRef,
+      overseer: overseerAddress,
+    }),
   });
   if (opts.registerOverseers !== undefined) {
     opts.registerOverseers(overseerManager);
   } else {
     overseerManager.registerBackend('claude', new ClaudeOverseer(rootDir));
   }
+  messaging.bindOverseer(overseerManager);
 
   // The brain-dump inbox, scoped to this daemon's own actor, plus the one-time folds of older
   // storage shapes into it: the legacy single shared `inbox.md` (pre-dating per-actor files) and,

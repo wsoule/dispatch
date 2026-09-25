@@ -1172,14 +1172,16 @@ export interface OverseerMessage {
    * can be retried. `allowed` is an approval's yes; `applied` an action's.
    */
   outcome?: 'pending' | 'applied' | 'allowed' | 'denied' | 'failed';
+  /** `user` and `assistant` entries posted to the bus: the message there. */
+  messageId?: string;
 }
 
 // Mirrors OverseerApproval in packages/server/src/orchestrator/overseer.ts —
 // a built-in tool call (Bash, Edit, a project MCP tool) the overseer's running
-// turn is blocked on until a human decides it through
-// `decideOverseerApproval`. Allowing runs the call at once.
+// turn is blocked on until a human answers its `tool-approval` gate. Allowing
+// runs the call at once.
 export interface OverseerApproval {
-  /** The backend's handle for the call; what `decideOverseerApproval` names. */
+  /** The backend's handle for the call; what its gate's `requestId` names. */
   requestId: string;
   toolName: string;
   /** The call's input, exactly as the tool will receive it if allowed. */
@@ -1235,6 +1237,8 @@ export interface OverseerRecord {
   undeliveredDecisions: string[];
   /** The backend's resume handle from the most recent turn. */
   sessionId?: string;
+  /** The bus thread this conversation's lines are posted to, once one is. */
+  thread?: string;
   error?: string;
   createdAt: string;
   updatedAt: string;
@@ -2865,25 +2869,6 @@ export interface ApiClient {
     conversationId: string,
     text: string
   ): Promise<OverseerRecord>;
-  // Decides one queued mutating action. Approving runs the real effect before
-  // resolving, so the returned record already reflects the outcome; denying
-  // never runs it at all. 404s an unknown conversation or an action that
-  // isn't pending on it.
-  confirmOverseerAction(
-    conversationId: string,
-    actionId: string,
-    approve: boolean
-  ): Promise<OverseerRecord>;
-  // Decides one built-in tool call the overseer's running turn is parked on
-  // (see OverseerRecord.pendingApprovals). Same body as `approveRun`: allowing
-  // runs the call at once, `scope: 'session'` also pre-approves the tool for
-  // the rest of the conversation, and `reason` reaches the model on a deny.
-  // 404s an unknown conversation or a request that isn't parked on it.
-  decideOverseerApproval(
-    conversationId: string,
-    requestId: string,
-    decision: { allow: boolean; scope?: 'once' | 'session'; reason?: string }
-  ): Promise<OverseerRecord>;
   // Phase 5 P2: epic-level concurrent dispatch. `concurrency` defaults
   // server-side to the project's `orchestrator.epicConcurrency` config;
   // `maxSpendUsd`/`maxRuns` are ceilings that pause the session when reached.
@@ -3105,10 +3090,10 @@ export interface ApiClient {
 // dispatchd on some other port.
 //
 // `token` is the daemon token every call presents. Pass the app token to reach
-// the decide-tier calls (`decideScopeRequest`, `approveRun`,
-// `confirmOverseerAction`); the agent token reaches everything else. Omitting it
-// falls back to the token the daemon injected into the page it served, which
-// is how the browser UI gets one at all.
+// the decide-tier calls (`decideScopeRequest`, `approveRun`) and to answer
+// gates; the agent token reaches everything else. Omitting it falls back to
+// the token the daemon injected into the page it served, which is how the
+// browser UI gets one at all.
 export function createApiClient(baseUrl: string, token?: string): ApiClient {
   const target: ApiTarget = { baseUrl, token: token ?? injectedDaemonToken() };
   return {
@@ -3595,24 +3580,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ text }),
       }),
-    confirmOverseerAction: (conversationId, actionId, approve) =>
-      request(
-        target,
-        `/api/overseer/${conversationId}/actions/${actionId}/confirm`,
-        {
-          method: 'POST',
-          ...jsonBody({ approve }),
-        }
-      ),
-    decideOverseerApproval: (conversationId, requestId, decision) =>
-      request(
-        target,
-        `/api/overseer/${conversationId}/approvals/${requestId}`,
-        {
-          method: 'POST',
-          ...jsonBody(decision),
-        }
-      ),
     startEpic: (epicId, opts = {}) =>
       request(target, `/api/epics/${epicId}/dispatch`, {
         method: 'POST',
