@@ -25,6 +25,7 @@ import {
 } from '../api/http.js';
 import { openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
+import { isInternalAgent } from './overseerBus.js';
 import type { Principal } from './principal.js';
 import type { Messaging } from './service.js';
 
@@ -762,7 +763,7 @@ function registrationField(
 }
 
 // POST /api/agents/register — request tier. Registers agent:<caller's handle>/<name>
-// pending the owner's approval; a pending or approved name 409s until revoked.
+// pending approval; 409s on a pending or approved name, or on Dispatch's own.
 export async function registerAgent(
   req: Request,
   ctx: ApiContext
@@ -784,6 +785,12 @@ export async function registerAgent(
   const requester = humanActor(ctx);
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
   const existing = ctx.messaging.store.getAgent(address);
+  if (existing !== null && isInternalAgent(existing)) {
+    return errorResponse(
+      409,
+      `${address} is Dispatch's own agent — approve it in Agents instead`
+    );
+  }
   if (
     existing !== null &&
     (existing.status === 'approved' || existing.status === 'pending')

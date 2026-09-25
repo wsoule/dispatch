@@ -324,9 +324,8 @@ export function openMessaging(deps: {
 
   let overseer: OverseerGateTarget | null = null;
 
-  // Applies an answer to an overseer conversation. One the daemon no longer has
-  // (it restarted) is logged and the answerer told; an action or call already
-  // settled on a live conversation makes a replay a silent no-op.
+  // Applies an answer to an overseer conversation: one gone with a restart is
+  // logged and the answerer told; a replay of a settled one is a no-op.
   const applyToConversation = async (
     question: Message,
     answer: Message,

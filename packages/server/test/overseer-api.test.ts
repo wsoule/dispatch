@@ -578,6 +578,40 @@ describe('overseer lines on the bus', () => {
   });
 });
 
+describe('a revoked overseer', () => {
+  it('stays off: registering its name again with the agent token is refused', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const { ref } = (await json(await fetch(`${baseUrl}/api/whoami`))) as {
+      ref: string;
+    };
+    const overseer = `agent:${ref.slice('human:'.length)}/overseer`;
+    const revoked = await fetch(
+      `${baseUrl}/api/agents/${encodeURIComponent(overseer)}/revoke`,
+      { method: 'POST' }
+    );
+    expect(revoked.status).toBe(200);
+
+    const register = await fetch(`${baseUrl}/api/agents/register`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ name: 'overseer', client: 'probe' }),
+    });
+    expect(register.status).toBe(409);
+
+    expect((await startConversation()).res.status).toBe(409);
+    const { agents } = (await json(
+      await fetch(`${baseUrl}/api/agents/roster`)
+    )) as { agents: { address: string; status: string }[] };
+    expect(agents.find((a) => a.address === overseer)?.status).toBe('revoked');
+    expect(
+      (await openGates()).filter((m) => gateType(m) === 'agent-registration')
+    ).toEqual([]);
+  });
+});
+
 describe('POST /api/overseer model choice', () => {
   it('keeps a chosen model on the record and 400s a blank one', async () => {
     await startWithOverseer(new FakeOverseer({ ok: true, reply: 'hi' }));

@@ -1219,6 +1219,58 @@ describe('overseer on the bus', () => {
     messaging.close();
   });
 
+  it('an overseer whose record is pending, not approved, stays off', async () => {
+    const { messaging, manager, record } = await busHarness();
+    const agent = messaging.store.getAgent('agent:wyat/overseer');
+    if (agent === null) throw new Error('no overseer record');
+    messaging.store.putAgent({ ...agent, status: 'pending', approvedBy: null });
+    expect(() => manager.sendMessage(record.id, 'still there?', WYAT)).toThrow(
+      OrchestratorConflictError
+    );
+    expect(() =>
+      manager.start('hello', 'fake', undefined, undefined, WYAT)
+    ).toThrow(OrchestratorConflictError);
+    messaging.close();
+  });
+
+  it('a human line the bus refuses gets no reply on the bus either', async () => {
+    const base = makeHarness();
+    const { messaging, manager } = await openBus(
+      base,
+      new FakeOverseer({ ok: true, reply: 'hi' })
+    );
+    // The turn is over and its reply has landed on the bus.
+    const tagged = (id: string) =>
+      manager.get(id).state !== 'running' &&
+      manager.get(id).messages.at(-1)?.messageId !== undefined;
+    const started = manager.start('hello', 'fake', undefined, undefined, WYAT);
+    await waitFor(() => tagged(started.id));
+
+    // A request-tier teammate is no participant of the owner's thread.
+    const ALICE: Sender = { address: 'human:alice', canDecide: false };
+    manager.sendMessage(started.id, 'hello from alice', ALICE);
+    await waitFor(() => manager.get(started.id).state !== 'running');
+    // Posts land in order, so once this turn is tagged alice's have settled.
+    manager.sendMessage(started.id, 'and now?', WYAT);
+    await waitFor(() => tagged(started.id));
+
+    const current = manager.get(started.id);
+    const thread = messaging.engine.thread(current.thread ?? '').messages;
+    expect(thread.map((m) => [m.from, m.to, m.body])).toEqual([
+      ['human:wyat', ['agent:wyat/overseer'], 'hello'],
+      ['agent:wyat/overseer', ['human:wyat'], 'hi'],
+      ['human:wyat', ['agent:wyat/overseer'], 'and now?'],
+      ['agent:wyat/overseer', ['human:wyat'], 'hi'],
+    ]);
+    expect(
+      current.messages.slice(2, 4).map((m) => [m.role, m.text, m.messageId])
+    ).toEqual([
+      ['user', 'hello from alice', undefined],
+      ['assistant', 'hi', undefined],
+    ]);
+    messaging.close();
+  });
+
   it('an answer to a gate whose conversation is gone is marked applied and the answerer told', async () => {
     const { messaging } = await busHarness();
     const gate = messaging.engine

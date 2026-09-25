@@ -66,6 +66,7 @@ export interface OverseerToolContext {
   messaging: {
     answerRunApproval(
       runId: string,
+      requestId: string,
       answer: { choice: 'approve' | 'approve-session' | 'deny'; body: string },
       actor: string
     ): Promise<void>;
@@ -518,9 +519,10 @@ const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
     return `Approve ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${scope}`;
   },
   async apply(ctx, input, meta) {
-    requireApproval(ctx, input.runId);
+    const { pending } = requireApproval(ctx, input.runId);
     await ctx.messaging.answerRunApproval(
       input.runId,
+      pending.requestId,
       {
         choice: input.scope === 'session' ? 'approve-session' : 'approve',
         body: '',
@@ -551,9 +553,10 @@ const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
     return `Deny ${safeTitle(pending.toolName)} on run ${meta.id} ("${safeTitle(meta.taskTitle)}")${why}`;
   },
   async apply(ctx, input, meta) {
-    requireApproval(ctx, input.runId);
+    const { pending } = requireApproval(ctx, input.runId);
     await ctx.messaging.answerRunApproval(
       input.runId,
+      pending.requestId,
       { choice: 'deny', body: input.reason ?? '' },
       meta.actor
     );

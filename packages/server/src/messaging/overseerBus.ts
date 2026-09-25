@@ -1,5 +1,6 @@
 import type {
   Address,
+  AgentRecord,
   DeliveryEngine,
   GateData,
   Message,
@@ -14,9 +15,18 @@ import { OrchestratorConflictError } from '../orchestrator/types.js';
 import { closeGate, SYSTEM_SENDER } from './gates.js';
 import { previewToolInput, TOOL_APPROVAL_CHOICES } from './toolApproval.js';
 
+// Every internal agent's token hash starts with this; no sha256 hex digest
+// does, so no presented token can match one.
+const INTERNAL_TOKEN_PREFIX = 'internal:';
+
+// An agent Dispatch runs itself, such as the overseer; registration never
+// replaces its record.
+export function isInternalAgent(agent: AgentRecord): boolean {
+  return agent.tokenHash.startsWith(INTERNAL_TOKEN_PREFIX);
+}
+
 // Creates the overseer's agent record, approved, only when none exists, so a
-// human's revoke survives restarts. Its token hash is no sha256 hex digest,
-// so no presented token can match it.
+// human's revoke survives restarts.
 export function ensureOverseerActor(
   store: SqliteMessageStore,
   overseer: Address,
@@ -27,7 +37,7 @@ export function ensureOverseerActor(
     address: overseer,
     displayName: 'Overseer',
     client: 'dispatch',
-    tokenHash: `internal:${randomBytes(16).toString('hex')}`,
+    tokenHash: `${INTERNAL_TOKEN_PREFIX}${randomBytes(16).toString('hex')}`,
     status: 'approved',
     muted: false,
     approvedBy: SYSTEM_ADDRESS,
@@ -62,7 +72,7 @@ export interface OverseerBus {
     key: { actionId: string } | { requestId: string },
     reason: string
   ): void;
-  // The overseer's AgentRecord is revoked.
+  // The overseer's AgentRecord is anything but approved.
   revoked(): boolean;
 }
 
@@ -178,7 +188,7 @@ export function createOverseerBus(
         console.error('messaging: could not close an overseer gate', err);
       }
     },
-    revoked: () => store.getAgent(opts.overseer)?.status === 'revoked',
+    revoked: () => store.getAgent(opts.overseer)?.status !== 'approved',
   };
 }
 
@@ -188,10 +198,14 @@ export function overseerToolMessaging(
   engine: DeliveryEngine
 ): OverseerToolContext['messaging'] {
   return {
-    async answerRunApproval(runId, answer, actor) {
+    async answerRunApproval(runId, requestId, answer, actor) {
       const gate = engine.openBlocking().find((m) => {
         const data = gateOf(m);
-        return data?.type === 'tool-approval' && data.runId === runId;
+        return (
+          data?.type === 'tool-approval' &&
+          data.runId === runId &&
+          data.requestId === requestId
+        );
       });
       if (gate === undefined) {
         throw new OrchestratorConflictError(

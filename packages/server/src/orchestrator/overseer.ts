@@ -350,14 +350,14 @@ export class OverseerManager {
       updatedAt: now,
     };
     this.conversations.set(record.id, record);
-    this.postEntry(record.id, 0, speaker, 'human');
+    this.postEntry(record.id, 0, speaker);
     const options = this.turnOptionsFor(record.id);
     const toolset = this.toolsetFor(record.id);
     void this.runTurn(
       record.id,
       () => backend.start(prompt, toolset, options),
       [],
-      speaker
+      { speaker, line: 0 }
     );
     return record;
   }
@@ -394,7 +394,8 @@ export class OverseerManager {
     };
     this.conversations.set(conversationId, updated);
     this.ctx.events.broadcast({ type: 'overseer.changed', conversationId });
-    this.postEntry(conversationId, record.messages.length, speaker, 'human');
+    const line = record.messages.length;
+    this.postEntry(conversationId, line, speaker);
 
     // The transcript keeps what the human actually typed; the model gets that
     // plus the decisions it hasn't been told about yet.
@@ -406,7 +407,7 @@ export class OverseerManager {
       conversationId,
       () => backend.sendMessage(sessionId, outgoing, toolset, options),
       record.undeliveredDecisions,
-      speaker
+      { speaker, line }
     );
     return updated;
   }
@@ -416,13 +417,13 @@ export class OverseerManager {
   // whatever decisions this turn's prompt carried: a turn that failed may never
   // have reached the model at all, so they go back on the record rather than
   // being silently lost — the point of those notices is that the assistant
-  // never contradicts what the human actually decided. The reply goes to the
-  // turn's `speaker` on the bus.
+  // never contradicts what the human actually decided. `from` is who spoke the
+  // turn and the index of their line, which the reply answers on the bus.
   private async runTurn(
     conversationId: string,
     run: () => Promise<OverseerTurn>,
     drained: string[],
-    speaker: Sender | null
+    from: { speaker: Sender | null; line: number }
   ): Promise<void> {
     try {
       const turn = await run();
@@ -436,7 +437,12 @@ export class OverseerManager {
           { role: 'assistant', text: turn.reply, at: new Date().toISOString() },
         ],
       });
-      this.postEntry(conversationId, current.messages.length, speaker, 'reply');
+      this.postEntry(
+        conversationId,
+        current.messages.length,
+        from.speaker,
+        from.line
+      );
     } catch (err) {
       const current = this.conversations.get(conversationId);
       this.updateRecord(conversationId, {
@@ -810,9 +816,8 @@ export class OverseerManager {
     void this.raiseActionGate(conversationId, action);
   }
 
-  // Raises an action's gate, naming the last failed attempt if there was one
-  // (and replacing its gate if still open). A gate written after its action
-  // was decided closes at once. Never rejects.
+  // Raises an action's gate, replacing an open one with the last error if any;
+  // a gate written after its action was decided closes at once. Never rejects.
   private async raiseActionGate(
     conversationId: string,
     action: OverseerAction,
@@ -908,14 +913,13 @@ export class OverseerManager {
     });
   }
 
-  // Posts the transcript entry at `index` to the conversation's thread: a human
-  // line from `speaker`, or the overseer's reply to them. A turn no human spoke
-  // (the shared agent token) stays off the bus, logged once per conversation.
+  // Posts entry `index` to the thread: `speaker`'s line, or the reply to their
+  // line at `answers`. A turn no human spoke stays off the bus.
   private postEntry(
     conversationId: string,
     index: number,
     speaker: Sender | null,
-    as: 'human' | 'reply'
+    answers?: number
   ): void {
     const bus = this.ctx.bus;
     if (bus === undefined) return;
@@ -934,14 +938,22 @@ export class OverseerManager {
         const record = this.conversations.get(conversationId);
         const entry = record?.messages[index];
         if (record === undefined || entry === undefined) return;
+        if (answers !== undefined) {
+          // A line the bus refused gets no reply there either.
+          const line = record.messages[answers]?.messageId;
+          if (line === undefined) return;
+          const posted = await bus.post({
+            overseerTo: speaker.address,
+            text: entry.text,
+            replyTo: line,
+          });
+          this.tagEntry(conversationId, index, posted);
+          return;
+        }
         const replyTo =
           record.messages.findLast((m) => m.messageId !== undefined)
             ?.messageId ?? null;
-        const posted = await bus.post(
-          as === 'human'
-            ? { speaker, text: entry.text, replyTo }
-            : { overseerTo: speaker.address, text: entry.text, replyTo }
-        );
+        const posted = await bus.post({ speaker, text: entry.text, replyTo });
         this.tagEntry(conversationId, index, posted);
       })
       .catch((err: unknown) => {

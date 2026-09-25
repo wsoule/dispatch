@@ -1,5 +1,5 @@
 import { TaskStore } from '@dispatch/core';
-import type { Message } from '@dispatch/protocol';
+import type { JsonValue, Message } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -725,6 +725,33 @@ describe('applyAction performs the real effect', () => {
       () => h.orchestrator.getRun(runId)?.meta.state === 'finished'
     );
     expect(h.orchestrator.pendingApprovalFor(runId)).toBeUndefined();
+  });
+
+  it('approve_run answers the gate of the call the run is parked on, not an older one', async () => {
+    const h = makeHarness();
+    const messaging = await withBus(h);
+    const { runId } = await dispatchUntil(
+      h,
+      'Gated',
+      'gated',
+      'awaiting-approval'
+    );
+    const gate = await runGate(messaging, runId);
+    // A gate for an earlier call of the same run that never closed.
+    const stale: Message = {
+      ...gate,
+      id: 'm-00000000000000000000000000',
+      thread: 'm-00000000000000000000000000',
+      data: { ...(gate.data as object), requestId: 'req-0' } as JsonValue,
+    };
+    messaging.store.insertMessage(stale);
+
+    const action = h.registry.callMutatingTool('approve_run', { runId });
+    await h.registry.applyAction(action.id, CONFIRMED);
+
+    expect(messaging.engine.answerOf(gate.id)?.choice).toBe('approve');
+    // The run-end sweep may close the stale gate; nobody answers it.
+    expect(messaging.engine.answerOf(stale.id)?.choice).toBeUndefined();
   });
 
   it('approve_run for the session answers approve-session', async () => {

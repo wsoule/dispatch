@@ -248,8 +248,8 @@ export function lateBoundOverseerMessaging(): {
   };
   return {
     port: {
-      answerRunApproval: (runId, answer, actor) =>
-        bound().answerRunApproval(runId, answer, actor),
+      answerRunApproval: (runId, requestId, answer, actor) =>
+        bound().answerRunApproval(runId, requestId, answer, actor),
       sendAsHuman: (to, text, actor) => bound().sendAsHuman(to, text, actor),
     },
     bind: (next) => {

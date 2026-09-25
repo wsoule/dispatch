@@ -112,10 +112,10 @@ export interface OverseerSession {
   /**
    * Decides one built-in tool call the running turn is parked on (see
    * `OverseerRecord.pendingApprovals`) by answering its `tool-approval` gate.
-   * Allowing runs the call at once and
-   * the turn continues; denying hands the reason to the model. Owns the
-   * lock and the failure exactly as `confirmAction` does, and never rejects:
-   * the outcome is readable on `decidingRequestId` and `decideError`.
+   * Allowing runs the call at once and the turn continues; denying hands the
+   * reason to the model. Owns the lock and the failure exactly as
+   * `confirmAction` does, and never rejects: the outcome is readable on
+   * `decidingRequestId` and `decideError`.
    */
   decideApproval: (
     requestId: string,
@@ -194,13 +194,14 @@ export interface OverseerSession {
  * cache: the server responds with the full post-mutation record, so the
  * transcript updates the moment the call resolves rather than waiting a
  * round-trip for the `overseer.changed` refetch. Each write is followed by an
- * invalidation of the same key: a turn can settle — and broadcast `overseer.changed` — while the
- * mutation's own response is still in flight, in which case that event either
- * found no mounted query to invalidate (start) or its refetch result is about
- * to be overwritten by the staler mutation response (sendMessage). Marking the
- * key stale right after writing lets a refetch reconcile whatever was missed;
- * with a real LLM backend the window is milliseconds wide, but the scripted
- * fake backend settles inside it every time.
+ * invalidation of the same key: a turn can settle — and broadcast
+ * `overseer.changed` — while the mutation's own response is still in flight,
+ * in which case that event either found no mounted query to invalidate
+ * (start) or its refetch result is about to be overwritten by the staler
+ * mutation response (sendMessage). Marking the key stale right after writing
+ * lets a refetch reconcile whatever was missed; with a real LLM backend the
+ * window is milliseconds wide, but the scripted fake backend settles inside it
+ * every time.
  */
 export function useOverseerSession(
   client: ApiClient | null,
