@@ -12,6 +12,8 @@ import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
+import type { LedgerStorePort } from '../ledger.js';
+import { LedgerStore } from '../ledger.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
 import type { ApprovalGateRequest } from '../orchestrator/types.js';
@@ -26,6 +28,12 @@ import {
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
+import {
+  applyScopeAnswer,
+  expireScopeGates,
+  installScopePolicy,
+  SCOPE_EXPIRY_SWEEP_MS,
+} from './scopePolicy.js';
 import {
   isStaleApproval,
   raiseToolApproval,
@@ -52,6 +60,10 @@ export function openMessaging(deps: {
   events: EventBus;
   ownerRef: string;
   dbPath?: string;
+  // Where scope grants are recorded; defaults to the project's JSONL ledger.
+  ledgerStore?: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
+  // The task Activity line a policy grant writes; defaults to none.
+  appendPolicyActivity?: (taskId: string, text: string) => void;
 }): Messaging {
   const db = openMessagesDb(
     deps.dbPath ?? join(runsDir(deps.rootDir), 'messages.db')
@@ -264,6 +276,42 @@ export function openMessaging(deps: {
     }
   });
 
+  const scopeDeps = {
+    rootDir: deps.rootDir,
+    runOf: (id: string) =>
+      deps.orchestrator.list().find((r) => r.id === id) ?? null,
+    taskOf: (id: string) => deps.store.get(id),
+  };
+  const scopeEffects = {
+    ...scopeDeps,
+    owner: deps.ownerRef,
+    ledgerStore: deps.ledgerStore ?? new LedgerStore(deps.rootDir),
+    appendPolicyActivity: deps.appendPolicyActivity ?? (() => {}),
+    broadcastLedgerChanged: () =>
+      deps.events.broadcast({ type: 'ledger.changed' }),
+  };
+  // A grant is recorded; one whose run or task is gone is logged and the answerer told.
+  gates.register('scope', async (question, answer) => {
+    if (applyScopeAnswer(scopeEffects, question, answer) !== 'unresolved')
+      return;
+    const runId = question.from.slice('run:'.length);
+    console.error(
+      `messaging: scope grant for run ${runId} has no run or task to record against`
+    );
+    await noticeAnswerer(
+      question,
+      answer,
+      `Not recorded: run ${runId} or its task no longer exists, so this grant has no ledger entry.`
+    );
+  });
+  const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
+  const expiry = setInterval(() => {
+    expireScopeGates(engine, Date.now()).catch((err: unknown) =>
+      console.error('messaging: scope expiry failed', err)
+    );
+  }, SCOPE_EXPIRY_SWEEP_MS);
+  expiry.unref();
+
   // A run's end closes the gates nobody can act on any more.
   const unsubscribeRunTerminal = deps.orchestrator.onRunTerminal((meta) => {
     closeRunGates(
@@ -301,6 +349,8 @@ export function openMessaging(deps: {
     gates,
     recover: () => engine.recover(),
     close() {
+      clearInterval(expiry);
+      uninstallScopePolicy();
       unsubscribeRunStarted();
       unsubscribeRunTerminal();
       // A call that parks from here on is refused rather than left with no gate.

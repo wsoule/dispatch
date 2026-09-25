@@ -229,8 +229,8 @@ export function describeToolInput(input: unknown): string {
 
 /**
  * Subscribes the approval, verify-retry and merge gates to the daemon's own
- * signals. (The scope gate needs no subscription: it is consulted inline
- * where the request is created — see api/scopeRequests.ts.)
+ * signals. (The scope gate is not here: messaging subscribes it to new scope
+ * gates — see messaging/scopePolicy.ts.)
  *
  * - A tool-approval gate, at rung `approval`, is answered `approve` by the
  *   engine as the system unless the floor detector claims the call.

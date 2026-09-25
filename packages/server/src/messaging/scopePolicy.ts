@@ -1,0 +1,191 @@
+import type { PolicyRuling, TaskRisk } from '@dispatch/core';
+import { describePolicyAuthorization } from '@dispatch/core';
+import type { DeliveryEngine, Message } from '@dispatch/protocol';
+import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { isAbsolute, posix, relative } from 'node:path';
+
+import { scopeRequestEscapesRepo } from '../floor.js';
+import type { LedgerStorePort } from '../ledger.js';
+import { consultProjectPolicy } from '../policyEngine.js';
+import { SYSTEM_SENDER } from './gates.js';
+
+// Under the MCP's 30-minute wait, so the daemon's deny is what the agent hears.
+export const SCOPE_GATE_TTL_MS = 29 * 60_000;
+export const SCOPE_EXPIRY_SWEEP_MS = 30_000;
+
+const SCOPE_EXPIRED_BODY =
+  'Expired: no one decided within 29 minutes. Treat this as denied: proceed within your original fence, and report the blocker in your final summary and in a task_comment.';
+
+/**
+ * Whether every path an agent asked to edit lies inside one of the given
+ * checkouts (its run worktree, the project root) and outside `.git/`. The
+ * policy engine auto-grants only such requests (rung 2 of the ladder,
+ * docs/design/autonomy-ladder.md): a path that escapes the checkout, or the
+ * repository's own metadata, blocks for a human at every rung. Paths are
+ * taken as the agent wrote them — relative to its worktree, or absolute.
+ */
+export function scopePathsInsideRepo(
+  paths: string[],
+  roots: string[]
+): boolean {
+  return paths.every((path) => {
+    const candidates = isAbsolute(path)
+      ? roots.map((root) => relative(root, path))
+      : [posix.normalize(path)];
+    return candidates.some(
+      (rel) =>
+        rel !== '' &&
+        rel !== '.' &&
+        rel !== '..' &&
+        !rel.startsWith('../') &&
+        !isAbsolute(rel) &&
+        rel !== '.git' &&
+        !rel.startsWith('.git/')
+    );
+  });
+}
+
+type AutoRuling = Extract<PolicyRuling, { mode: 'auto' }>;
+
+interface ScopePolicyDeps {
+  rootDir: string;
+  runOf(runId: string): { taskId: string; worktreePath: string } | null;
+  taskOf(
+    taskId: string
+  ): { meta: { risk?: TaskRisk; parent: string | null } } | null;
+}
+
+interface ScopeEffectDeps extends ScopePolicyDeps {
+  owner: string;
+  ledgerStore: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
+  appendPolicyActivity(taskId: string, text: string): void;
+  broadcastLedgerChanged(): void;
+}
+
+// The auto-grant ruling for a run's scope request, or null when a human must
+// decide: a path leaving the repo or into .git/, a critical task, or a run or
+// task the daemon cannot find all fail closed.
+export function scopeRulingFor(
+  deps: ScopePolicyDeps,
+  runId: string,
+  paths: string[]
+): AutoRuling | null {
+  if (scopeRequestEscapesRepo(paths).length > 0) return null;
+  const run = deps.runOf(runId);
+  const task = run === null ? null : deps.taskOf(run.taskId);
+  if (run === null || task === null) return null;
+  if (!scopePathsInsideRepo(paths, [run.worktreePath, deps.rootDir]))
+    return null;
+  const ruling = consultProjectPolicy(deps.rootDir, 'scope', task.meta.risk);
+  return ruling.mode === 'auto' ? ruling : null;
+}
+
+// Records a scope grant in the ledger (and, for a policy grant, the task's
+// Activity). A replay finds the entry tagged with the gate id and skips.
+export function applyScopeAnswer(
+  deps: ScopeEffectDeps,
+  question: Message,
+  answer: Message
+): 'applied' | 'skipped' | 'unresolved' {
+  const gate = gateOf(question);
+  if (gate?.type !== 'scope' || answer.choice !== 'grant') return 'skipped';
+  const runId = question.from.slice('run:'.length);
+  const run = deps.runOf(runId);
+  const task = run === null ? null : deps.taskOf(run.taskId);
+  if (run === null || task === null) return 'unresolved';
+  const parent = task.meta.parent;
+  const tag = `[gate ${question.id}]`;
+  if (
+    deps.ledgerStore
+      .entriesFor(run.taskId, parent)
+      .some((e) => e.detail.endsWith(tag))
+  )
+    return 'skipped';
+  const byPolicy = answer.from === SYSTEM_ADDRESS;
+  // Written before the ledger entry: a crash between the two repeats this
+  // line on replay rather than losing it.
+  if (byPolicy)
+    deps.appendPolicyActivity(
+      run.taskId,
+      `[policy] Scope extended for run ${runId}: ${gate.paths.join(', ')} — ${answer.body}`
+    );
+  const note = answer.body.trim() === '' ? '' : ` (${answer.body})`;
+  deps.ledgerStore.add({
+    kind: 'decision',
+    title: `Scope extended for run ${runId}`,
+    detail: `${gate.paths.join(', ')} — ${gate.reason}${note} [decided by ${answer.from}] ${tag}`,
+    authoredBy: byPolicy ? deps.owner : answer.from,
+    epicId: parent,
+    sourceTaskId: run.taskId,
+  });
+  deps.broadcastLedgerChanged();
+  return 'applied';
+}
+
+// Grants a run's new scope gate as the system when the project's policy rung
+// covers it; anything else waits for a human.
+export function installScopePolicy(
+  engine: DeliveryEngine,
+  deps: ScopePolicyDeps
+): () => void {
+  return engine.subscribe((e) => {
+    if (e.type !== 'message') return;
+    const question = e.message;
+    const gate = gateOf(question);
+    if (
+      gate?.type !== 'scope' ||
+      question.kind !== 'question' ||
+      !question.from.startsWith('run:')
+    )
+      return;
+    const ruling = scopeRulingFor(
+      deps,
+      question.from.slice('run:'.length),
+      gate.paths
+    );
+    if (ruling === null) return;
+    void engine
+      .reply(
+        question.id,
+        {
+          choice: 'grant',
+          body: describePolicyAuthorization(ruling),
+          data: { type: 'x-policy', gate: 'scope', rung: ruling.rung },
+        },
+        SYSTEM_SENDER
+      )
+      .catch((err: unknown) => {
+        // A conflict means someone answered first; theirs stands.
+        if (err instanceof MessagingError && err.code === 'conflict') return;
+        console.error('messaging: scope auto-grant failed', err);
+      });
+  });
+}
+
+// Denies, as the system, every open scope gate nobody decided within the TTL.
+export async function expireScopeGates(
+  engine: DeliveryEngine,
+  nowMs: number
+): Promise<number> {
+  let expired = 0;
+  for (const question of engine.openBlocking()) {
+    if (gateOf(question)?.type !== 'scope') continue;
+    if (nowMs - Date.parse(question.createdAt) <= SCOPE_GATE_TTL_MS) continue;
+    try {
+      await engine.reply(
+        question.id,
+        {
+          body: SCOPE_EXPIRED_BODY,
+          choice: 'deny',
+          data: { type: 'x-expired' },
+        },
+        SYSTEM_SENDER
+      );
+      expired++;
+    } catch (err) {
+      if (!(err instanceof MessagingError && err.code === 'conflict'))
+        throw err;
+    }
+  }
+  return expired;
+}

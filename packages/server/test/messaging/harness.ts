@@ -8,6 +8,7 @@ import { join } from 'node:path';
 
 import { TaskCache } from '../../src/cache.js';
 import { EventBus } from '../../src/events.js';
+import { LedgerStore } from '../../src/ledger.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
@@ -21,6 +22,9 @@ import type {
 import { initGitRepo } from '../orchestrator/helpers.js';
 
 export const HUMAN: Sender = { address: 'human:wyat', canDecide: true };
+
+// Every policy Activity line openRecovered's messaging appended in this test.
+export const activity: { taskId: string; text: string }[] = [];
 
 // Waits for `check` to become true, polling rather than sleeping a fixed
 // amount — the delivery/run-start flows here settle asynchronously.
@@ -44,6 +48,7 @@ export function useTempProject(): { root(): string } {
   const originalDispatchHome = process.env.DISPATCH_HOME;
 
   beforeEach(() => {
+    activity.length = 0;
     fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
     process.env.DISPATCH_HOME = fakeHome;
     root = initGitRepo('dispatch-messaging-');
@@ -87,7 +92,7 @@ export function makeOrchestrator(root: string): {
 }
 
 // openMessaging over `root` with messages.db at its top level, recovered and
-// ready to send.
+// ready to send. Policy Activity lines land in `activity`.
 export async function openRecovered(
   root: string,
   orchestrator: Orchestrator,
@@ -101,6 +106,8 @@ export async function openRecovered(
     events,
     ownerRef: 'human:wyat',
     dbPath: join(root, 'messages.db'),
+    ledgerStore: new LedgerStore(root),
+    appendPolicyActivity: (taskId, text) => activity.push({ taskId, text }),
   });
   await messaging.recover();
   return messaging;

@@ -1,20 +1,14 @@
 import { describePolicyAuthorization } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
-import { scopeRequestEscapesRepo } from '../floor.js';
-import {
-  SCOPE_REQUEST_POLL_MS,
-  scopePathsInsideRepo,
-} from '../orchestrator/scopeRequests.js';
+import { scopeRulingFor } from '../messaging/scopePolicy.js';
+import { SCOPE_REQUEST_POLL_MS } from '../orchestrator/scopeRequests.js';
 import type {
   RunScopeRequest,
   ScopeDecider,
 } from '../orchestrator/scopeRequests.js';
 import { OrchestratorConflictError } from '../orchestrator/types.js';
-import {
-  consultProjectPolicy,
-  policyActivityAppender,
-} from '../policyEngine.js';
+import { policyActivityAppender } from '../policyEngine.js';
 import { humanActor } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
@@ -70,7 +64,15 @@ export async function requestScope(
   // request blocks as today. A request reaching outside the repo or into
   // .git/ is never policy's to grant: it parks for a human at every rung
   // (see scopeRequestEscapesRepo).
-  const ruling = policyRulingForScope(ctx, runId, paths);
+  const ruling = scopeRulingFor(
+    {
+      rootDir: ctx.rootDir,
+      runOf: (id) => ctx.orchestrator.list().find((r) => r.id === id) ?? null,
+      taskOf: (id) => ctx.store.get(id),
+    },
+    runId,
+    paths
+  );
   if (ruling !== null) {
     const authorization = describePolicyAuthorization(ruling);
     const decided = ctx.scopeRequests.decide(
@@ -105,29 +107,6 @@ export function listScopeRequests(ctx: ApiContext, runId: string): Response {
     return errorResponse(404, `run not found: ${runId}`);
   }
   return jsonResponse(ctx.scopeRequests.listOpen(runId));
-}
-
-// The auto-grant authorization for one request, or null when it must park
-// for a human: the task's risk caps the rung (a critical task never
-// auto-extends), and only paths inside the run's own checkout and outside
-// `.git/` qualify — anything else is the human's call at every rung. A run
-// or task the daemon cannot find fails closed. The floor's own escape test
-// runs first and is checked separately from the ladder, so no rung can reach
-// a path that leaves the repo.
-function policyRulingForScope(
-  ctx: ApiContext,
-  runId: string,
-  paths: string[]
-): Extract<ReturnType<typeof consultProjectPolicy>, { mode: 'auto' }> | null {
-  if (scopeRequestEscapesRepo(paths).length > 0) return null;
-  const run = ctx.orchestrator.list().find((r) => r.id === runId);
-  const task = run === undefined ? null : ctx.store.get(run.taskId);
-  if (run === undefined || task === null) return null;
-  if (!scopePathsInsideRepo(paths, [run.worktreePath, ctx.rootDir])) {
-    return null;
-  }
-  const ruling = consultProjectPolicy(ctx.rootDir, 'scope', task.meta.risk);
-  return ruling.mode === 'auto' ? ruling : null;
 }
 
 // Resolves a request id against its own run, so one run can never read or

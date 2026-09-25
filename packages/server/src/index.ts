@@ -1254,6 +1254,8 @@ async function bootServer(
     store,
     events,
     ownerRef: actorContext.humanRef,
+    ledgerStore,
+    appendPolicyActivity: policyActivityAppender({ store, cache, events }),
   });
   // Questions an agent raised mid-run. A run going terminal drops its own, so
   // the app never shows a card whose answer nobody is listening for.

@@ -58,6 +58,8 @@ function teammateSource(token: string, result: TokenLookup): CredentialSource {
 let root: string;
 let fakeHome: string;
 const originalDispatchHome = process.env.DISPATCH_HOME;
+// Each harness's messaging, closed after its test so none outlives the repo.
+const opened: Messaging[] = [];
 
 beforeEach(() => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
@@ -66,6 +68,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  for (const messaging of opened.splice(0)) messaging.close();
   if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
   else process.env.DISPATCH_HOME = originalDispatchHome;
   rmSync(fakeHome, { recursive: true, force: true });
@@ -107,6 +110,7 @@ function makeHarness(teammates: CredentialSource | null = null): {
     ownerRef: 'human:wyat',
     dbPath: join(root, 'messages.db'),
   });
+  opened.push(messaging);
   // resolvePrincipal reads only tokens, orchestrator and messaging, so a cast
   // subset stands in for the full ApiContext.
   const ctx = { tokens, orchestrator, messaging } as unknown as ApiContext;
