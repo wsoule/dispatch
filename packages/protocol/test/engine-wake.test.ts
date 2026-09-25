@@ -103,7 +103,7 @@ describe('wake', () => {
       {
         to: ['task:t-000003'],
         kind: 'message',
-        body: 'please look more',
+        body: 'please look\u2028more',
         wake: 'request',
       },
       run1

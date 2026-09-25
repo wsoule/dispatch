@@ -824,7 +824,7 @@ describe('msg_reply', () => {
 });
 
 describe('inbox_read', () => {
-  it('marks held and notified deliveries read but leaves pushed/read/answered alone, reporting exactly what it marked', async () => {
+  it('marks held, notified and pushed deliveries read but leaves read/answered alone, reporting exactly what it marked', async () => {
     daemon = new FakeDaemon();
     daemon.mailboxBody = {
       items: [
@@ -859,8 +859,13 @@ describe('inbox_read', () => {
     expect((result.structuredContent!.marked as string[]).sort()).toEqual([
       'd-held',
       'd-notified',
+      'd-pushed',
     ]);
-    expect(daemon.markReadCalls.sort()).toEqual(['d-held', 'd-notified']);
+    expect(daemon.markReadCalls.sort()).toEqual([
+      'd-held',
+      'd-notified',
+      'd-pushed',
+    ]);
   });
 
   it('does not mark anything read when markRead is false', async () => {

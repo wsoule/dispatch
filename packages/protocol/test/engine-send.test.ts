@@ -56,6 +56,27 @@ describe('DeliveryEngine.send', () => {
     ).rejects.toMatchObject({ code: 'invalid', field: 'to[0]' });
   });
 
+  it("names the caller's own to[] entry after a reply rewrites and de-duplicates recipients", async () => {
+    const { message: question } = await engine.send(
+      { to: ['human:wyat'], kind: 'question', body: 'ok?' },
+      run1
+    );
+    // run:r-000001 has ended, so a reply to it reaches task:t-000001 instead,
+    // and that address collapses into the explicit first entry.
+    host.endRun('t-000001');
+    await expect(
+      engine.send(
+        {
+          to: ['task:t-000001', 'run:r-000001', 'run:r-0000aa'],
+          kind: 'message',
+          body: 'see above',
+          replyTo: question.id,
+        },
+        human
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'to[2]' });
+  });
+
   it('notifies humans', async () => {
     const { deliveries } = await engine.send(
       { to: ['human:wyat'], kind: 'notice', body: 'fyi' },

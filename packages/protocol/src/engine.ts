@@ -254,14 +254,14 @@ export class DeliveryEngine {
     else if (input.kind === 'handoff') message.choices = ['accept', 'decline'];
     if (input.choice !== undefined) message.choice = input.choice;
 
+    const fields = this.recipientFields(input.to, replyTarget);
     const targets = this.resolveTargets(message.to, sender.address);
     const deliveries: Delivery[] = [];
     for (const t of targets) {
-      const index = message.to.indexOf(t.recipient);
       const planned = this.plan(
         t,
         muted,
-        index >= 0 ? `to[${index}]` : 'to',
+        fields.get(t.recipient) ?? 'to',
         t.recipient === replyTarget?.from
       );
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
@@ -298,15 +298,31 @@ export class DeliveryEngine {
     return { message, deliveries: settled, downgraded };
   }
 
+  // The address a reply actually goes to: an ended run's task (see deliverableAddress).
+  private rewriteForReply(address: Address, target: Message | null): Address {
+    return target !== null && address === target.from
+      ? this.deliverableAddress(address)
+      : address;
+  }
+
   // A reply's recipients, with the target's sender rewritten by
   // deliverableAddress so an ended run's task (and live successor) hears it.
   private replyRecipients(to: Address[], target: Message | null): Address[] {
     if (target === null) return [...to];
-    return [
-      ...new Set(
-        to.map((a) => (a === target.from ? this.deliverableAddress(a) : a))
-      ),
-    ];
+    return [...new Set(to.map((a) => this.rewriteForReply(a, target)))];
+  }
+
+  // Each resolved recipient's first `to[i]` as the caller wrote it, for errors.
+  private recipientFields(
+    to: Address[],
+    target: Message | null
+  ): Map<Address, string> {
+    const fields = new Map<Address, string>();
+    to.forEach((address, i) => {
+      const resolved = this.rewriteForReply(address, target);
+      if (!fields.has(resolved)) fields.set(resolved, `to[${i}]`);
+    });
+    return fields;
   }
 
   // Only participants may reply: the target's sender or recipients, where a run

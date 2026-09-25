@@ -402,7 +402,8 @@ const DEFAULT_INBOX_LIMIT = 50;
 const UNREAD_DELIVERY_STATES = ['held', 'notified', 'pushed'];
 
 // GET /api/mailbox, trimmed here to the newest `limit` items (the route has no
-// limit); marks the returned held/notified items read unless `markRead: false`.
+// limit); marks the returned unread (held/notified/pushed) items read unless
+// `markRead: false`.
 async function inboxRead(
   rootDir: string,
   server: McpServer,
@@ -433,9 +434,8 @@ async function inboxRead(
   const marked: string[] = [];
   const markReadErrors: { id: string; error: string }[] = [];
   if (args.markRead !== false) {
-    const toMark = items.filter(
-      (item) =>
-        item.delivery.state === 'held' || item.delivery.state === 'notified'
+    const toMark = items.filter((item) =>
+      UNREAD_DELIVERY_STATES.includes(item.delivery.state)
     );
     await Promise.all(
       toMark.map(async (item) => {
@@ -633,7 +633,8 @@ export function registerMessagingTools(
         'List your own mailbox, newest first: at most `limit` items (50 by ' +
         'default) in the given delivery `state`s — only unread ones ' +
         '(held, notified, pushed) when `state` is omitted. Marks every ' +
-        'returned held/notified item read unless `markRead: false` is passed.',
+        'returned unread item (held, notified, pushed) read unless ' +
+        '`markRead: false` is passed.',
       inputSchema: {
         state: z
           .array(

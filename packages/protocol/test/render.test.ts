@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import type { Message } from '../src/envelope.js';
-import { renderDigestLine, renderForAgent } from '../src/render.js';
+import { firstLine, renderDigestLine, renderForAgent } from '../src/render.js';
 
 const m: Message = {
   id: 'm-01abc',
@@ -104,5 +104,11 @@ describe('renderDigestLine', () => {
         '📬 #epic/e-000001 · question from run:r-000001: heads up (m-01abc)'
       );
     }
+  });
+});
+
+describe('firstLine', () => {
+  it('cuts on code points, never inside a surrogate pair', () => {
+    expect(firstLine(`${'a'.repeat(78)}😀😀😀`)).toBe(`${'a'.repeat(78)}😀…`);
   });
 });

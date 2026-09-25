@@ -1635,7 +1635,8 @@ export class Orchestrator {
    * terminal state through handleFinish and its work is committed and
    * reviewable like any other finished run.
    *
-   * That means this method changes no run state of its own. It records
+   * It changes no RunState of its own, but it adds the run to `stoppingRuns`,
+   * so messaging holds new mail for it (see requireDeliverableRun). It records
    * `stopRequestedAt` (a marker, so surfaces can show "Stopping…" and then
    * "Stopped", and so a daemon restart mid-stop doesn't forget), tells the
    * executor, and arms the escalation timer that catches an agent which ignores

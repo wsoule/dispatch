@@ -26,11 +26,12 @@ export function renderForAgent(m: Message): string {
   return lines.join('\n');
 }
 
-// A body's first line, cut to the digest width, for one-line summaries.
+// A body's first line, cut to the digest width in code points, for one-line summaries.
 export function firstLine(body: string): string {
   const first = body.split(LINE_BREAK, 1)[0] ?? '';
-  return first.length > DIGEST_WIDTH
-    ? `${first.slice(0, DIGEST_WIDTH - 1)}…`
+  const chars = Array.from(first);
+  return chars.length > DIGEST_WIDTH
+    ? `${chars.slice(0, DIGEST_WIDTH - 1).join('')}…`
     : first;
 }
 
