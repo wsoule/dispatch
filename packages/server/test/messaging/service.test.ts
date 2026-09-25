@@ -16,10 +16,14 @@ import { startServer } from '../../src/index.js';
 import { createRunTokens } from '../../src/messaging/runTokens.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
+import type { Orchestrator } from '../../src/orchestrator/orchestrator.js';
 import { BOOT_FORCE_FAIL_ERROR } from '../../src/orchestrator/orchestrator.js';
 import { runsDir } from '../../src/orchestrator/paths.js';
 import type { ExecutorProfile } from '../../src/orchestrator/types.js';
-import { DEFAULT_EXECUTOR_PROFILE } from '../../src/orchestrator/types.js';
+import {
+  DEFAULT_EXECUTOR_PROFILE,
+  TERMINAL_RUN_STATES,
+} from '../../src/orchestrator/types.js';
 import { StallingExecutor } from '../orchestrator/helpers.js';
 import {
   makeOrchestrator,
@@ -145,6 +149,12 @@ async function approveWake(
     .inbox('agent:asker')
     .filter((i) => i.message.kind === 'notice')
     .map((i) => i.message.body);
+}
+
+// Cancels every run still going, so none outlives the test's temp project.
+async function cancelLiveRuns(orchestrator: Orchestrator): Promise<void> {
+  for (const run of orchestrator.list())
+    if (!TERMINAL_RUN_STATES.has(run.state)) await orchestrator.cancel(run.id);
 }
 
 // A stalling executor whose runs cannot take mid-run messages, like the CLI's.
@@ -500,7 +510,7 @@ describe('wake gate handler', () => {
     messaging.close();
   });
 
-  it('notices the sender instead of waking while a review run is live', async () => {
+  it('notices the sender instead of waking while a review run is live, then wakes the task when it ends', async () => {
     const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
@@ -521,10 +531,12 @@ describe('wake gate handler', () => {
     expect(executor.started).toHaveLength(1);
     expect(messaging.store.unappliedAnsweredGates()).toEqual([]);
     await orchestrator.cancel(review.id);
+    await waitFor(() => executor.sent.some((s) => s.includes('wake up')));
+    await cancelLiveRuns(orchestrator);
     messaging.close();
   });
 
-  it('notices the sender instead of waking while the live execute run cannot take messages', async () => {
+  it('notices the sender instead of waking while the live execute run cannot take messages, then wakes the task when it ends', async () => {
     const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new NoMessagesExecutor();
     orchestrator.registerExecutor('claude', executor);
@@ -539,10 +551,12 @@ describe('wake gate handler', () => {
     ]);
     expect(executor.started).toHaveLength(1);
     await orchestrator.cancel(run.id);
+    await waitFor(() => executor.started.length === 2);
+    await cancelLiveRuns(orchestrator);
     messaging.close();
   });
 
-  it('notices the sender instead of waking while the live execute run is stopping', async () => {
+  it('notices the sender instead of waking while the live execute run is stopping, then wakes the task when it ends', async () => {
     const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
@@ -558,6 +572,8 @@ describe('wake gate handler', () => {
     ]);
     expect(executor.started).toHaveLength(1);
     await orchestrator.cancel(run.id);
+    await waitFor(() => executor.sent.some((s) => s.includes('wake up')));
+    await cancelLiveRuns(orchestrator);
     messaging.close();
   });
 

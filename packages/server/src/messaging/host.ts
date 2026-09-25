@@ -33,6 +33,8 @@ export interface DaemonHostDeps {
   ownerRef: string;
   gates: GateHandlers;
   onHumanMessage: (actor: string, message: Message) => void;
+  // Told when a wake could not start a run, so the caller can retry it later.
+  onWakeFailed?: (target: Address, message: Message) => void;
   now?: () => Date;
 }
 
@@ -118,6 +120,7 @@ export class DaemonMessagingHost implements MessagingHost {
       });
       return { ok: true, runId: meta.id };
     } catch (err) {
+      this.deps.onWakeFailed?.(target, message);
       return {
         ok: false,
         reason: err instanceof Error ? err.message : String(err),

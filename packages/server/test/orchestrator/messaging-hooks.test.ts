@@ -200,6 +200,54 @@ class FinishOnDemandExecutor implements Executor {
   }
 }
 
+// A Claude session that reports its result, then holds its wind-down until
+// the test calls releaseWindDown(); windingDown resolves once it is there.
+function windingDownClaude(): {
+  executor: ClaudeExecutor;
+  windingDown: Promise<void>;
+  releaseWindDown: () => void;
+} {
+  let reachWindDown!: () => void;
+  const windingDown = new Promise<void>((resolve) => {
+    reachWindDown = resolve;
+  });
+  let releaseWindDown!: () => void;
+  const windDownHeld = new Promise<void>((resolve) => {
+    releaseWindDown = resolve;
+  });
+  const executor = new ClaudeExecutor(() => {
+    const messages = (function* (): Generator<unknown> {
+      yield { type: 'system', subtype: 'init', session_id: 's' };
+      yield {
+        type: 'assistant',
+        message: { content: [{ type: 'text', text: 'done' }] },
+      };
+      yield {
+        type: 'result',
+        subtype: 'success',
+        is_error: false,
+        num_turns: 1,
+        total_cost_usd: 0.01,
+        session_id: 's',
+        result: 'done',
+        terminal_reason: 'completed',
+        modelUsage: {},
+        errors: [],
+      };
+    })();
+    return Object.assign(messages, {
+      stopTask: () => Promise.resolve(),
+      applyFlagSettings: () => {
+        reachWindDown();
+        return windDownHeld;
+      },
+      interrupt: () => Promise.resolve(),
+      close: () => {},
+    }) as unknown as Query;
+  });
+  return { executor, windingDown, releaseWindDown };
+}
+
 describe('Orchestrator messaging hooks', () => {
   it('mints a run token at start and fires onRunStarted', async () => {
     const { orchestrator, store } = makeOrchestrator(repo);
@@ -548,47 +596,8 @@ describe('Orchestrator messaging hooks', () => {
 
   it('re-holds a push that arrives while a Claude run winds down after its result', async () => {
     const { orchestrator, store, events } = makeOrchestrator(repo);
-    let reachWindDown!: () => void;
-    const windingDown = new Promise<void>((resolve) => {
-      reachWindDown = resolve;
-    });
-    let releaseWindDown!: () => void;
-    const windDownHeld = new Promise<void>((resolve) => {
-      releaseWindDown = resolve;
-    });
-    orchestrator.registerExecutor(
-      'claude',
-      new ClaudeExecutor(() => {
-        const messages = (function* (): Generator<unknown> {
-          yield { type: 'system', subtype: 'init', session_id: 's' };
-          yield {
-            type: 'assistant',
-            message: { content: [{ type: 'text', text: 'done' }] },
-          };
-          yield {
-            type: 'result',
-            subtype: 'success',
-            is_error: false,
-            num_turns: 1,
-            total_cost_usd: 0.01,
-            session_id: 's',
-            result: 'done',
-            terminal_reason: 'completed',
-            modelUsage: {},
-            errors: [],
-          };
-        })();
-        return Object.assign(messages, {
-          stopTask: () => Promise.resolve(),
-          applyFlagSettings: () => {
-            reachWindDown();
-            return windDownHeld;
-          },
-          interrupt: () => Promise.resolve(),
-          close: () => {},
-        }) as unknown as Query;
-      })
-    );
+    const { executor, windingDown, releaseWindDown } = windingDownClaude();
+    orchestrator.registerExecutor('claude', executor);
     const messaging = await openTestMessaging(orchestrator, store, events);
     const task = store.create({ title: 'Task' });
 
@@ -617,6 +626,45 @@ describe('Orchestrator messaging hooks', () => {
 
     releaseWindDown();
     await waitFor(() => orchestrator.getRun(run.id)?.meta.state === 'finished');
+    messaging.close();
+  });
+
+  it('wakes the task once the Claude run that blocked a wake finishes winding down', async () => {
+    const { orchestrator, store, events } = makeOrchestrator(repo);
+    const { executor, windingDown, releaseWindDown } = windingDownClaude();
+    orchestrator.registerExecutor('claude', executor);
+    const messaging = await openTestMessaging(orchestrator, store, events);
+    const task = store.create({ title: 'Task' });
+
+    const run = await orchestrator.dispatch(task.meta.id, 'claude');
+    await windingDown;
+    const next = new StallingExecutor();
+    orchestrator.registerExecutor('claude', next);
+    const sent = await messaging.engine.send(
+      {
+        to: [`task:${task.meta.id}`],
+        kind: 'message',
+        body: 'one more change',
+        wake: 'request',
+      },
+      { address: 'human:wyat', canDecide: true }
+    );
+    const deliveryId = sent.deliveries[0].id;
+    expect(messaging.store.getDelivery(deliveryId)?.state).toBe('held');
+    expect(orchestrator.list()).toHaveLength(1);
+
+    releaseWindDown();
+    await waitFor(() =>
+      next.sent.some((text) => text.includes('one more change'))
+    );
+    const successor = orchestrator.list().find((r) => r.resumedFrom === run.id);
+    expect(successor?.worktreePath).toBe(run.worktreePath);
+    expect(messaging.store.getDelivery(deliveryId)).toMatchObject({
+      state: 'pushed',
+      runId: successor?.id,
+    });
+
+    if (successor !== undefined) await orchestrator.cancel(successor.id);
     messaging.close();
   });
 });

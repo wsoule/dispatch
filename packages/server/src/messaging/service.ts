@@ -17,7 +17,7 @@ import { LedgerStore } from '../ledger.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
 import type { ApprovalGateRequest } from '../orchestrator/types.js';
-import { runKind } from '../orchestrator/types.js';
+import { runKind, TERMINAL_RUN_STATES } from '../orchestrator/types.js';
 import {
   closeGate,
   closeRunGates,
@@ -73,6 +73,15 @@ export function openMessaging(deps: {
   const runTokens = createRunTokens(randomBytes(32));
   deps.orchestrator.setRunTokenMinter(runTokens.mint);
 
+  // Whether any run of the task is still going, winding down included.
+  const hasActiveRun = (taskId: string) =>
+    deps.orchestrator
+      .list()
+      .some((r) => r.taskId === taskId && !TERMINAL_RUN_STATES.has(r.state));
+  // Wake messages, by task, whose wake failed while the task still had a run
+  // (one winding down, say); retried when a run of that task ends.
+  const blockedWakes = new Map<string, Message[]>();
+
   const gates = new GateHandlers();
   const host = new DaemonMessagingHost({
     rootDir: deps.rootDir,
@@ -83,6 +92,13 @@ export function openMessaging(deps: {
     onHumanMessage: () => {
       // message.new already reaches the desktop over the EventBus; no OS
       // notification is raised for a human's message yet.
+    },
+    onWakeFailed: (target, message) => {
+      const taskId = target.slice('task:'.length);
+      if (!hasActiveRun(taskId)) return;
+      const waiting = blockedWakes.get(taskId) ?? [];
+      if (!waiting.some((m) => m.id === message.id)) waiting.push(message);
+      blockedWakes.set(taskId, waiting);
     },
   });
 
@@ -182,6 +198,40 @@ export function openMessaging(deps: {
       );
     }
   });
+
+  // Re-runs the wakes a run blocked, for messages still held on the task. One
+  // wake, a human's first (it may continue the run), serves them all.
+  const retryBlockedWakes = async (taskId: string): Promise<void> => {
+    const target = `task:${taskId}`;
+    const held = (blockedWakes.get(taskId) ?? []).filter(
+      (m) =>
+        store.deliveries({
+          messageId: m.id,
+          recipient: target,
+          states: ['held'],
+        }).length > 0
+    );
+    blockedWakes.delete(taskId);
+    if (held.length === 0) return;
+    const denial = wakeDenial(taskId);
+    if (denial !== null) {
+      for (const m of held)
+        await noticeWakeSender(m, `Not woken: task ${taskId} ${denial}.`);
+      return;
+    }
+    const first = held.find((m) => m.from.startsWith('human:')) ?? held[0];
+    const result = await host.wake(target, first);
+    if (result.ok) return;
+    if (hasActiveRun(taskId)) {
+      blockedWakes.set(taskId, held);
+      return;
+    }
+    for (const m of held)
+      await noticeWakeSender(
+        m,
+        `Could not wake ${target}: ${result.reason}. Your message is waiting for it.`
+      );
+  };
 
   // A deciding human approved or denied an agent's registration. A replay is a
   // no-op, and only an approval records who approved it.
@@ -312,13 +362,20 @@ export function openMessaging(deps: {
   }, SCOPE_EXPIRY_SWEEP_MS);
   expiry.unref();
 
-  // A run's end closes the gates nobody can act on any more.
+  // A run's end closes the gates nobody can act on any more, and retries (a
+  // tick later, after its other end-of-run hooks) the wakes it blocked.
   const unsubscribeRunTerminal = deps.orchestrator.onRunTerminal((meta) => {
     closeRunGates(
       engine,
       { id: meta.id, hasTask: runKind(meta) === 'execute' },
       'the run ended'
     );
+    if (!blockedWakes.has(meta.taskId)) return;
+    void Promise.resolve()
+      .then(() => retryBlockedWakes(meta.taskId))
+      .catch((err: unknown) =>
+        console.error('messaging: wake retry failed', err)
+      );
   });
 
   // Bridging must be live before recover() runs, so a notice recover()
@@ -363,6 +420,7 @@ export function openMessaging(deps: {
       uninstallScopePolicy();
       unsubscribeRunStarted();
       unsubscribeRunTerminal();
+      blockedWakes.clear();
       // A call that parks from here on is refused rather than left with no gate.
       deps.orchestrator.setApprovalGate({
         raise: (request) => denyUngated(request, 'messaging is closed'),
