@@ -66,6 +66,13 @@ export function openToolApprovalGate(
   );
 }
 
+// Open blocking questions some human is asked (decisions/open, the decision feed).
+export function openHumanDecisions(engine: DeliveryEngine): Message[] {
+  return engine
+    .openBlocking()
+    .filter((m) => m.to.some((addr) => addr.startsWith('human:')));
+}
+
 // Closes what a run's end leaves unanswerable: approvals parked on it, and what
 // a run with no task asked. An execute run's questions wait for its task.
 export function closeRunGates(

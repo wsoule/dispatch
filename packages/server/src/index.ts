@@ -76,7 +76,11 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
-import { closeOrphanedGates, SYSTEM_SENDER } from './messaging/gates.js';
+import {
+  closeOrphanedGates,
+  openHumanDecisions,
+  SYSTEM_SENDER,
+} from './messaging/gates.js';
 import { openMessaging } from './messaging/service.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
@@ -1481,7 +1485,7 @@ async function bootServer(
       cache,
       orchestrator,
       mergeQueue,
-      questions,
+      openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
     }),
     events,
@@ -1640,8 +1644,7 @@ async function bootServer(
 
   const decisionFeed = new DecisionFeed({
     orchestrator,
-    questions,
-    scopeRequests,
+    openGates: () => openHumanDecisions(messaging.engine),
     fixLoopStore,
     cache,
     events,

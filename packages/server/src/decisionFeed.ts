@@ -1,10 +1,11 @@
 import type { FloorCheck, NotificationKind } from '@dispatch/core';
+import { notificationKindForMessage } from '@dispatch/core';
+import type { Message } from '@dispatch/protocol';
+import { gateOf } from '@dispatch/protocol';
 
 import type { EventBus, ServerEvent } from './events.js';
 import { floorCheckForToolInput, isBudgetCapFailure } from './floor.js';
 import type { FixLoopState } from './orchestrator/fixLoop.js';
-import type { QuestionRegistry } from './orchestrator/questions.js';
-import type { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import type { RunMeta } from './orchestrator/types.js';
 import { runKind } from './orchestrator/types.js';
 
@@ -20,10 +21,9 @@ import { runKind } from './orchestrator/types.js';
  * rather than redeclaring is what stops a kind being added here without the
  * toggles knowing about it.
  *
- * `approval` and `scope-request` are the "gates awaiting a decision" pair:
- * they are separate kinds rather than one because they are answered through
- * different routes and carry different payloads, and a surface has to render
- * them differently.
+ * `approval`, `scope-request` and `question` are the open gates, sorted onto
+ * the toggles by notificationKindForMessage; they stay separate kinds because
+ * each carries a different payload and a surface renders them differently.
  */
 type DecisionKind = NotificationKind;
 
@@ -103,17 +103,14 @@ export type DecisionPolicy = (
  * it documents that the feed only ever observes runs, and it lets a test
  * exercise the aggregation without standing up worktrees and executors.
  * `Orchestrator` satisfies it structurally, so index.ts passes the real one.
+ * `pendingApprovalFor` is the executor's full tool input, which the floor is
+ * checked against instead of a gate's truncated preview.
  */
 interface DecisionFeedRuns {
   list(): RunMeta[];
-  pendingApprovals(): {
-    runId: string;
-    taskId: string;
-    taskTitle: string;
-    requestId: string;
-    toolName: string;
-    input: unknown;
-  }[];
+  pendingApprovalFor(
+    runId: string
+  ): { requestId: string; input: unknown } | undefined;
 }
 
 /** The slice of TaskCache this feed reads: a task id to its title. */
@@ -128,8 +125,8 @@ interface DecisionFeedLoops {
 
 export interface DecisionFeedContext {
   orchestrator: DecisionFeedRuns;
-  questions: Pick<QuestionRegistry, 'listOpen'>;
-  scopeRequests: Pick<ScopeRequestRegistry, 'listOpen'>;
+  /** Open blocking questions addressed to a human (see openHumanDecisions). */
+  openGates: () => Message[];
   fixLoopStore: DecisionFeedLoops;
   cache: DecisionFeedTitles;
   events: Pick<EventBus, 'subscribe' | 'broadcast'>;
@@ -159,18 +156,14 @@ const RESOLVED_RETENTION_MS = 5 * 60_000;
  *  bound before the time window catches up with it. Oldest go first. */
 const MAX_RESOLVED = 50;
 
-/** Source events that can change what is awaiting a human. Deliberately not
- *  `run.log`: it fires per streamed entry and never moves a run in or out of
- *  this feed. */
+/** Source events that can change what is awaiting a human. A gate opens or is
+ *  answered with `message.new`. Deliberately not `run.log`: it fires per
+ *  streamed entry and never moves a run in or out of this feed. */
 const TRIGGER_EVENTS: ReadonlySet<ServerEvent['type']> = new Set([
-  'approval.requested',
+  'message.new',
+  'delivery.changed',
   'run.changed',
   'run.survey',
-  'question.asked',
-  'question.answered',
-  'question.closed',
-  'scope.requested',
-  'scope.decided',
   'fixloop.changed',
   'fixloop.capped',
 ]);
@@ -184,6 +177,11 @@ const blockingPolicy: DecisionPolicy = () => 'blocking';
 // slightly ahead of this clock never renders as a negative age.
 function ageSince(iso: string, nowMs: number): number {
   return Math.max(0, nowMs - Date.parse(iso));
+}
+
+// The id in an address of the given kind (`run:r-1` → `r-1`), else undefined.
+function addressId(address: string, prefix: string): string | undefined {
+  return address.startsWith(prefix) ? address.slice(prefix.length) : undefined;
 }
 
 // Truncates free text to one short line, so a summary stays a summary even
@@ -260,11 +258,11 @@ const STALLED_SUMMARY: Record<StalledRunReason, string> = {
 /**
  * The daemon's one feed of everything awaiting a human.
  *
- * Derived, never stored: every call recomputes from the live registries, so an
- * item resolves the moment the underlying gate is decided or the run moves on,
- * with no invalidation to get wrong. The only state kept here is the set of
- * items last seen open, which is what lets a resolution be reported once
- * (`state: 'resolved'`) instead of a row silently disappearing.
+ * Derived, never stored: every call recomputes from the open gates and the
+ * live registries, so an item resolves the moment its gate is answered or the
+ * run moves on, with no invalidation to get wrong. The only state kept here is
+ * the set of items last seen open, which is what lets a resolution be reported
+ * once (`state: 'resolved'`) instead of a row silently disappearing.
  */
 export class DecisionFeed {
   private readonly policy: DecisionPolicy;
@@ -292,9 +290,9 @@ export class DecisionFeed {
   /**
    * Starts broadcasting `decisions.changed` when the feed's contents change.
    *
-   * Rides `EventBus.subscribe` rather than a call at each producer: the four
-   * sources already announce themselves (a question is asked, a scope request
-   * is decided, a run changes state), so this needs to translate those into
+   * Rides `EventBus.subscribe` rather than a call at each producer: the
+   * sources already announce themselves (a gate is sent or answered, a run
+   * changes state, a fix loop caps), so this needs to translate those into
    * one feed-level event, not to be threaded through the orchestrator.
    *
    * Returns its own unsubscribe, matching the EventBus contract.
@@ -347,15 +345,13 @@ export class DecisionFeed {
     const nowMs = this.now();
     const nowIso = new Date(nowMs).toISOString();
     // One pass over the run list per recompute rather than a lookup per item:
-    // three of the five builders need to resolve a runId to its task, and the
-    // registry list is rebuilt on every call.
+    // gate and stalled-run items resolve a runId to its task, and the registry
+    // list is rebuilt on every call.
     const runs = new Map(
       this.ctx.orchestrator.list().map((run) => [run.id, run])
     );
     const open = [
-      ...this.approvalItems(nowMs, runs),
-      ...this.scopeRequestItems(nowMs, runs),
-      ...this.questionItems(nowMs, runs),
+      ...this.gateItems(nowMs, runs),
       ...this.fixLoopItems(nowMs),
       ...this.stalledRunItems(nowMs, runs),
     ]
@@ -391,8 +387,8 @@ export class DecisionFeed {
     // without its id or state moving — an orphaned agent that kept committing
     // escalates a stalled run from 'failed' to 'orphan-commits' in place, which
     // is what run.survey is a trigger event for. `since` and `ageMs` are kept
-    // out: age moves on every recompute, and an approval whose run has gone
-    // falls back to `now`, so folding either in would broadcast on a loop.
+    // out: age moves on every recompute, so folding it in would broadcast on
+    // a loop.
     this.signature = [...open, ...resolved]
       .map(
         (item) =>
@@ -422,79 +418,66 @@ export class DecisionFeed {
     return this.ctx.cache.get(taskId)?.meta.title;
   }
 
-  private approvalItems(
+  // One item per open gate a human is asked. A tool approval's floor is read
+  // off the executor's full input while that call is still the one parked.
+  private gateItems(
     nowMs: number,
     runs: Map<string, RunMeta>
   ): UnclassifiedDecisionItem[] {
-    return this.ctx.orchestrator.pendingApprovals().map((approval) => {
-      // The registry records no timestamp per approval request, and the run's
-      // `updatedAt` moved when it entered `awaiting-approval` — which is
-      // exactly when this started waiting.
-      const since =
-        runs.get(approval.runId)?.updatedAt ?? new Date(nowMs).toISOString();
-      // An approval for a floor command (force-push, npm publish, repo
-      // visibility) carries the check, which pins its disposition to blocking
-      // in list() regardless of the policy classifier.
-      const floor = floorCheckForToolInput(approval.input) ?? undefined;
-      return {
-        id: `approval:${approval.requestId}`,
-        kind: 'approval' as const,
-        summary: `${approval.taskTitle}: agent is waiting for permission to use ${approval.toolName}`,
-        runId: approval.runId,
-        taskId: approval.taskId,
-        taskTitle: approval.taskTitle,
-        since,
-        ageMs: ageSince(since, nowMs),
-        state: 'open' as const,
-        floor,
-      };
-    });
-  }
-
-  private scopeRequestItems(
-    nowMs: number,
-    runs: Map<string, RunMeta>
-  ): UnclassifiedDecisionItem[] {
-    return this.ctx.scopeRequests.listOpen().map((request) => {
-      const run = runs.get(request.runId);
-      const paths =
-        request.paths.length > 3
-          ? `${request.paths.slice(0, 3).join(', ')} +${request.paths.length - 3} more`
-          : request.paths.join(', ');
-      return {
-        id: `scope-request:${request.id}`,
-        kind: 'scope-request' as const,
-        summary: `agent asked to edit outside its scope: ${paths}`,
-        reason: oneLine(request.reason),
-        paths: request.paths,
-        runId: request.runId,
-        taskId: run?.taskId,
-        taskTitle: run?.taskTitle,
-        since: request.requestedAt,
-        ageMs: ageSince(request.requestedAt, nowMs),
+    const items: UnclassifiedDecisionItem[] = [];
+    for (const message of this.ctx.openGates()) {
+      const kind = notificationKindForMessage(message);
+      if (kind === null) continue;
+      const gate = gateOf(message);
+      const runId =
+        gate?.type === 'tool-approval'
+          ? gate.runId
+          : addressId(message.from, 'run:');
+      const run = runId === undefined ? undefined : runs.get(runId);
+      const taskId =
+        run?.taskId ??
+        (gate?.type === 'wake' ? addressId(gate.target, 'task:') : undefined);
+      const taskTitle =
+        run?.taskTitle ??
+        (taskId === undefined ? undefined : this.taskTitle(taskId));
+      const base = {
+        id: `${kind}:${message.id}`,
+        kind,
+        runId,
+        taskId,
+        taskTitle,
+        since: message.createdAt,
+        ageMs: ageSince(message.createdAt, nowMs),
         state: 'open' as const,
       };
-    });
-  }
-
-  private questionItems(
-    nowMs: number,
-    runs: Map<string, RunMeta>
-  ): UnclassifiedDecisionItem[] {
-    return this.ctx.questions.listOpen().map((question) => {
-      const run = runs.get(question.runId);
-      return {
-        id: `question:${question.id}`,
-        kind: 'question' as const,
-        summary: oneLine(question.question),
-        runId: question.runId,
-        taskId: run?.taskId,
-        taskTitle: run?.taskTitle,
-        since: question.askedAt,
-        ageMs: ageSince(question.askedAt, nowMs),
-        state: 'open' as const,
-      };
-    });
+      if (gate?.type === 'tool-approval') {
+        const pending =
+          runId === undefined
+            ? undefined
+            : this.ctx.orchestrator.pendingApprovalFor(runId);
+        const input =
+          pending?.requestId === gate.requestId ? pending.input : gate.input;
+        items.push({
+          ...base,
+          summary: `${taskTitle ?? runId ?? gate.conversation ?? 'Dispatch'}: agent is waiting for permission to use ${gate.tool}`,
+          floor: floorCheckForToolInput(input) ?? undefined,
+        });
+      } else if (gate?.type === 'scope') {
+        const paths =
+          gate.paths.length > 3
+            ? `${gate.paths.slice(0, 3).join(', ')} +${gate.paths.length - 3} more`
+            : gate.paths.join(', ');
+        items.push({
+          ...base,
+          summary: `agent asked to edit outside its scope: ${paths}`,
+          reason: oneLine(gate.reason),
+          paths: gate.paths,
+        });
+      } else {
+        items.push({ ...base, summary: oneLine(message.body) });
+      }
+    }
+    return items;
   }
 
   private fixLoopItems(nowMs: number): UnclassifiedDecisionItem[] {

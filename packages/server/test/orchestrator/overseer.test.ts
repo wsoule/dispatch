@@ -24,7 +24,6 @@ import type { FakeOverseerScript } from '../../src/orchestrator/overseers/fake.j
 import type { OverseerToolContext } from '../../src/orchestrator/overseerTools.js';
 import { OverseerToolRegistry } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
-import { QuestionRegistry } from '../../src/orchestrator/questions.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -138,7 +137,7 @@ function makeHarness(): Harness {
     cache,
     orchestrator,
     mergeQueue,
-    questions: new QuestionRegistry(),
+    openGates: () => [],
     ledgerStore: new LedgerStore(repo),
     defaultExecutor: 'fake',
   };

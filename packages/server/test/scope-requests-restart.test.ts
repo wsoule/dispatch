@@ -15,10 +15,9 @@ import { useTestAuth } from './testAuth.js';
 // relaunched the app, dispatchd restarted, reconcileOnBoot force-failed the
 // run, and the request vanished with the process — never re-shown, never
 // attached to the resumed run. These pin the fix end to end: the request is
-// still there on the failed run after the restart, the decision feed lists
-// it, the resume carries it onto the successor (and into that agent's
-// prompt), and a request whose run cannot come back is withdrawn rather than
-// left as a card nobody can act on.
+// still there on the failed run after the restart, the resume carries it onto
+// the successor (and into that agent's prompt), and a request whose run
+// cannot come back is withdrawn rather than left as a card nobody can act on.
 
 async function waitFor(
   check: () => Promise<boolean>,
@@ -38,12 +37,6 @@ interface ScopeRequestBody {
   runId: string;
   paths: string[];
   granted: boolean | null;
-}
-
-interface DecisionItem {
-  id: string;
-  kind: string;
-  runId?: string;
 }
 
 let root: string;
@@ -131,13 +124,6 @@ async function openRequestsOn(
   return open;
 }
 
-async function scopeDecisions(baseUrl: string): Promise<DecisionItem[]> {
-  const body: { items: DecisionItem[] } = await json(
-    await fetch(`${baseUrl}/api/decisions`)
-  );
-  return body.items.filter((item) => item.kind === 'scope-request');
-}
-
 async function waitForCrashRecorded(
   baseUrl: string,
   runId: string
@@ -149,7 +135,7 @@ async function waitForCrashRecorded(
 }
 
 describe('a scope request open across a daemon restart', () => {
-  it('is still there on the force-failed run, and in the decision feed, after the restart', async () => {
+  it('is still there on the force-failed run after the restart', async () => {
     const store = TaskStore.init(root);
     const task = store.create({
       title: 'Asked for scope, then the daemon died',
@@ -167,9 +153,6 @@ describe('a scope request open across a daemon restart', () => {
     const stillOpen = await openRequestsOn(baseUrl, lost.id);
     expect(stillOpen.map((r) => r.id)).toEqual([asked.id]);
     expect(stillOpen[0]?.granted).toBeNull();
-    const feed = await scopeDecisions(baseUrl);
-    expect(feed.map((item) => item.id)).toEqual([`scope-request:${asked.id}`]);
-    expect(feed[0]?.runId).toBe(lost.id);
 
     // A human can rule on it right there, before anything resumes — and the
     // ruling sticks, so the resumed agent will be told rather than re-asked.
@@ -183,7 +166,6 @@ describe('a scope request open across a daemon restart', () => {
     );
     expect(decided.status).toBe(200);
     expect(await openRequestsOn(baseUrl, lost.id)).toEqual([]);
-    expect(await scopeDecisions(baseUrl)).toEqual([]);
   });
 
   it('follows the run into its resumed successor, prompt included, and re-attaches on a repeat request', async () => {
@@ -211,7 +193,6 @@ describe('a scope request open across a daemon restart', () => {
     expect(carried.map((r) => r.id)).toEqual([asked.id]);
     expect(carried[0]?.runId).toBe(successor.id);
     expect(await openRequestsOn(baseUrl, lost.id)).toEqual([]);
-    expect((await scopeDecisions(baseUrl))[0]?.runId).toBe(successor.id);
 
     // The resumed agent is told what it was waiting on, by id.
     const prompt = after.started[0]?.prompt ?? '';
@@ -296,7 +277,6 @@ describe('a scope request open across a daemon restart', () => {
     await waitForCrashRecorded(baseUrl, lost.id);
 
     expect(await openRequestsOn(baseUrl, lost.id)).toEqual([]);
-    expect(await scopeDecisions(baseUrl)).toEqual([]);
     const fetched = await fetch(
       `${baseUrl}/api/runs/${lost.id}/scope-requests/${asked.id}`
     );

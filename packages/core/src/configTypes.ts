@@ -335,7 +335,8 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
  *
  * - `approval`        a run is parked on a permission gate.
  * - `scope-request`   an agent asked to edit outside its declared writes.
- * - `question`        an agent is blocked on a question it asked.
+ * - `question`        an agent sent a blocking question (msg_send) and waits
+ *                     on the answer.
  * - `fix-loop-capped` a review/fix loop exhausted its rounds and wants a ruling.
  * - `run-stalled`     a run failed or dead-ended and nobody has dealt with it.
  */
@@ -345,6 +346,30 @@ export type NotificationKind =
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
+
+const APPROVAL_GATES: ReadonlySet<string> = new Set([
+  'tool-approval',
+  'wake',
+  'agent-registration',
+  'overseer-action',
+]);
+
+/** The toggle a message notifies under; null when no human is being asked. */
+export function notificationKindForMessage(message: {
+  kind: string;
+  blocking: boolean;
+  data?: unknown;
+}): NotificationKind | null {
+  if (message.kind !== 'question' || !message.blocking) return null;
+  const data = message.data;
+  const type =
+    typeof data === 'object' && data !== null && !Array.isArray(data)
+      ? (data as { type?: unknown }).type
+      : undefined;
+  if (type === 'scope') return 'scope-request';
+  if (typeof type === 'string' && APPROVAL_GATES.has(type)) return 'approval';
+  return 'question';
+}
 
 /** Every kind, in the order the Settings UI renders them. */
 export const NOTIFICATION_KINDS: readonly NotificationKind[] = [

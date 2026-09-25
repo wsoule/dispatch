@@ -212,6 +212,7 @@ export {
   MODEL_ROLES,
   DEFAULT_PREVIEW,
   NOTIFICATION_KINDS,
+  notificationKindForMessage,
   previewSettings,
   syncSettings,
   projectPolicy,

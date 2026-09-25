@@ -1,5 +1,7 @@
-import { untrustedInline } from '@dispatch/core';
+import { notificationKindForMessage, untrustedInline } from '@dispatch/core';
 import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
+import type { Message } from '@dispatch/protocol';
+import { gateOf } from '@dispatch/protocol';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
@@ -7,7 +9,6 @@ import type { TaskCache } from '../cache.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
-import type { QuestionRegistry, RunQuestion } from './questions.js';
 import type { RunMeta } from './types.js';
 import { TERMINAL_RUN_STATES } from './types.js';
 
@@ -43,7 +44,7 @@ export class OverseerToolError extends Error {}
  * Everything the tools read and write through.
  *
  * Shaped like OrchestratorContext (store/cache) but bundling the peers the
- * status tools need, because the merge queue, question registry and ledger are
+ * status tools need, because the merge queue, the open gates and the ledger are
  * NOT owned by the Orchestrator — they are assembled alongside it in api.ts's
  * ApiContext. Taking them explicitly is what keeps this constructible in a
  * test without booting an HTTP server.
@@ -57,7 +58,8 @@ export interface OverseerToolContext {
   cache: TaskCache;
   orchestrator: Orchestrator;
   mergeQueue: MergeQueue;
-  questions: QuestionRegistry;
+  /** Open blocking questions addressed to a human (see openHumanDecisions). */
+  openGates: () => Message[];
   ledgerStore: LedgerStorePort;
   /**
    * Executor `dispatch_task` uses when the overseer doesn't name one. Matches
@@ -303,8 +305,26 @@ const pendingApprovalsTool: OverseerStatusTool<NoInput> = {
     'Tool calls that live runs are parked on, waiting for a human to allow or deny.',
   inputSchema: noInput,
   read(ctx) {
-    const pending = ctx.orchestrator.pendingApprovals();
-    return { approvals: pending, total: pending.length };
+    const runs = new Map(ctx.orchestrator.list().map((run) => [run.id, run]));
+    const approvals = ctx.openGates().flatMap((message) => {
+      const gate = gateOf(message);
+      if (gate?.type !== 'tool-approval' || gate.runId === undefined) return [];
+      const run = runs.get(gate.runId);
+      return [
+        {
+          messageId: message.id,
+          runId: gate.runId,
+          taskId: run?.taskId ?? null,
+          taskTitle: run?.taskTitle ?? null,
+          requestId: gate.requestId,
+          toolName: gate.tool,
+          // At most an 8 KiB preview; `truncated` says when it was cut.
+          input: gate.input,
+          truncated: gate.truncated === true,
+        },
+      ];
+    });
+    return { approvals, total: approvals.length };
   },
 };
 
@@ -317,16 +337,6 @@ const openQuestionsInput = z.object({
     ),
 });
 
-function questionFields(question: RunQuestion) {
-  return {
-    id: question.id,
-    runId: question.runId,
-    question: question.question,
-    options: question.options,
-    askedAt: question.askedAt,
-  };
-}
-
 const openQuestionsTool: OverseerStatusTool<
   z.infer<typeof openQuestionsInput>
 > = {
@@ -335,8 +345,22 @@ const openQuestionsTool: OverseerStatusTool<
     'Questions run agents have asked and are still blocked waiting on an answer to.',
   inputSchema: openQuestionsInput,
   read(ctx, input) {
-    const open = ctx.questions.listOpen(input.runId);
-    return { questions: open.map(questionFields), total: open.length };
+    const questions = ctx.openGates().flatMap((message) => {
+      if (notificationKindForMessage(message) !== 'question') return [];
+      if (!message.from.startsWith('run:')) return [];
+      const runId = message.from.slice('run:'.length);
+      if (input.runId !== undefined && runId !== input.runId) return [];
+      return [
+        {
+          messageId: message.id,
+          runId,
+          question: message.body,
+          options: message.choices ?? [],
+          askedAt: message.createdAt,
+        },
+      ];
+    });
+    return { questions, total: questions.length };
   },
 };
 

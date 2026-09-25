@@ -1,16 +1,11 @@
+import type { JsonValue, Message } from '@dispatch/protocol';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import type {
-  DecisionFeedContext,
-  DecisionItem,
-  DecisionPolicy,
-} from '../src/decisionFeed.js';
+import type { DecisionItem, DecisionPolicy } from '../src/decisionFeed.js';
 import { DecisionFeed } from '../src/decisionFeed.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
 import type { FixLoopState } from '../src/orchestrator/fixLoop.js';
-import { QuestionRegistry } from '../src/orchestrator/questions.js';
-import { ScopeRequestRegistry } from '../src/orchestrator/scopeRequests.js';
 import type { RunMeta, RunState } from '../src/orchestrator/types.js';
 
 const T0 = Date.parse('2026-08-22T12:00:00.000Z');
@@ -31,19 +26,65 @@ function runMeta(id: string, patch: Partial<RunMeta> = {}): RunMeta {
   };
 }
 
+// An open blocking question addressed to a human, as the engine stores it.
+function gate(id: string, over: Partial<Message>): Message {
+  return {
+    id,
+    thread: id,
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'q',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
+}
+
+// The ISO time `ms` milliseconds before T0.
+function ago(ms: number): string {
+  return new Date(T0 - ms).toISOString();
+}
+
+// A tool-approval gate for `runId`'s parked call, carrying `input` as its
+// preview.
+function approvalGate(
+  id: string,
+  runId: string,
+  requestId: string,
+  input: JsonValue,
+  over: Partial<Message> = {}
+): Message {
+  return gate(id, {
+    data: { type: 'tool-approval', requestId, runId, tool: 'Bash', input },
+    ...over,
+  });
+}
+
+// A plain question a run asked a human.
+function runQuestion(
+  id: string,
+  runId: string,
+  body: string,
+  over: Partial<Message> = {}
+): Message {
+  return gate(id, { from: `run:${runId}`, body, ...over });
+}
+
 // The whole feed stood up over in-memory stand-ins, so a test can put any run,
-// approval or fix-loop state in front of it without a daemon or a worktree.
+// open gate or fix-loop state in front of it without a daemon or a worktree.
 // `now` is a mutable clock so age and the resolved-item retention window are
 // assertable without sleeping.
 interface Harness {
   feed: DecisionFeed;
   events: EventBus;
-  questions: QuestionRegistry;
-  scopeRequests: ScopeRequestRegistry;
+  gates: Message[];
+  pending: Map<string, { requestId: string; input: unknown }>;
   runs: RunMeta[];
-  approvals: ReturnType<
-    DecisionFeedContext['orchestrator']['pendingApprovals']
-  >;
   loops: FixLoopState[];
   titles: Map<string, string>;
   setNow(ms: number): void;
@@ -51,20 +92,18 @@ interface Harness {
 
 function harness(policy?: DecisionPolicy): Harness {
   const events = new EventBus();
-  const questions = new QuestionRegistry();
-  const scopeRequests = new ScopeRequestRegistry();
+  const gates: Message[] = [];
+  const pending: Harness['pending'] = new Map();
   const runs: RunMeta[] = [];
-  const approvals: Harness['approvals'] = [];
   const loops: FixLoopState[] = [];
   const titles = new Map<string, string>();
   let now = T0;
   const feed = new DecisionFeed({
     orchestrator: {
       list: () => runs,
-      pendingApprovals: () => approvals,
+      pendingApprovalFor: (runId) => pending.get(runId),
     },
-    questions,
-    scopeRequests,
+    openGates: () => gates,
     fixLoopStore: { list: () => loops },
     cache: {
       get: (id) => {
@@ -79,10 +118,9 @@ function harness(policy?: DecisionPolicy): Harness {
   return {
     feed,
     events,
-    questions,
-    scopeRequests,
+    gates,
+    pending,
     runs,
-    approvals,
     loops,
     titles,
     setNow: (ms) => {
@@ -118,6 +156,81 @@ beforeEach(() => {
 });
 
 describe('DecisionFeed aggregation', () => {
+  it('builds approval, scope and question items from open gates', () => {
+    const runs = [
+      runMeta('r-000001', {
+        taskId: 't-000001',
+        taskTitle: 'Checkout',
+        state: 'awaiting-approval',
+      }),
+    ];
+    const feed = new DecisionFeed({
+      orchestrator: {
+        list: () => runs,
+        pendingApprovalFor: () => ({
+          requestId: 'req-1',
+          input: { command: 'git push --force origin main' },
+        }),
+      },
+      openGates: () => [
+        gate('m-a', {
+          data: {
+            type: 'tool-approval',
+            requestId: 'req-1',
+            runId: 'r-000001',
+            tool: 'Bash',
+            input: 'echo ok && …',
+            truncated: true,
+          },
+        }),
+        gate('m-s', {
+          from: 'run:r-000001',
+          choices: ['grant', 'deny'],
+          data: {
+            type: 'scope',
+            paths: ['a.ts', 'b.ts'],
+            reason: 'needs both',
+          },
+        }),
+        gate('m-q', { from: 'run:r-000001', body: 'Which cart?\nmore' }),
+        gate('m-w', {
+          data: { type: 'wake', target: 'task:t-000002', message: 'm-x' },
+        }),
+      ],
+      fixLoopStore: { list: () => [] },
+      cache: {
+        get: (id) => ({
+          meta: { title: id === 't-000002' ? 'Sleeper' : 'Checkout' },
+        }),
+      },
+      events: new EventBus(),
+    });
+    const items = feed.list();
+    expect(items.map((i) => i.id)).toEqual([
+      'approval:m-a',
+      'scope-request:m-s',
+      'question:m-q',
+      'approval:m-w',
+    ]);
+    expect(items[0]).toMatchObject({
+      runId: 'r-000001',
+      taskId: 't-000001',
+      summary: 'Checkout: agent is waiting for permission to use Bash',
+    });
+    // Pins the floor from the full input, not the truncated preview.
+    expect(items[0].floor).toBeDefined();
+    expect(items[1]).toMatchObject({
+      paths: ['a.ts', 'b.ts'],
+      reason: 'needs both',
+    });
+    // oneLine() flattens the question's whitespace into one summary line.
+    expect(items[2].summary).toBe('Which cart? more');
+    expect(items[3]).toMatchObject({
+      taskId: 't-000002',
+      taskTitle: 'Sleeper',
+    });
+  });
+
   it('collects all five kinds with their task/run reference, age and open state', () => {
     const live = runMeta('r-live', { state: 'awaiting-approval' });
     const dead = runMeta('r-dead', {
@@ -125,16 +238,28 @@ describe('DecisionFeed aggregation', () => {
       updatedAt: new Date(T0 - 120_000).toISOString(),
     });
     h.runs.push(live, dead);
-    h.approvals.push({
-      runId: live.id,
-      taskId: live.taskId,
-      taskTitle: live.taskTitle,
-      requestId: 'req-1',
-      toolName: 'Bash',
-      input: { command: 'rm -rf /' },
-    });
-    h.questions.ask(live.id, 'Which database?', ['sqlite']);
-    h.scopeRequests.request(live.id, ['src/a.ts'], 'needs the shared helper');
+    h.gates.push(
+      approvalGate(
+        'm-approval',
+        live.id,
+        'req-1',
+        { command: 'rm -rf /' },
+        { createdAt: ago(60_000) }
+      ),
+      runQuestion('m-question', live.id, 'Which database?', {
+        createdAt: ago(50_000),
+      }),
+      gate('m-scope', {
+        from: `run:${live.id}`,
+        choices: ['grant', 'deny'],
+        data: {
+          type: 'scope',
+          paths: ['src/a.ts'],
+          reason: 'needs the shared helper',
+        },
+        createdAt: ago(40_000),
+      })
+    );
     h.titles.set('t-99', 'Capped task');
     h.loops.push(cappedLoop('t-99'));
 
@@ -149,17 +274,25 @@ describe('DecisionFeed aggregation', () => {
     expect(items.every((item) => item.state === 'open')).toBe(true);
 
     const approval = byKind(items, 'approval')[0];
-    expect(approval.id).toBe('approval:req-1');
+    expect(approval.id).toBe('approval:m-approval');
     expect(approval.runId).toBe('r-live');
     expect(approval.taskId).toBe('t-r-live');
     expect(approval.summary).toContain('Bash');
     expect(approval.ageMs).toBe(60_000);
 
+    const question = byKind(items, 'question')[0];
+    expect(question.id).toBe('question:m-question');
+    expect(question.taskTitle).toBe('Task r-live');
+    expect(question.summary).toBe('Which database?');
+
     const scope = byKind(items, 'scope-request')[0];
     expect(scope.runId).toBe('r-live');
-    // Resolved off the run, which the registry record itself never carries.
+    // Resolved off the run, which the gate itself never carries.
     expect(scope.taskTitle).toBe('Task r-live');
     expect(scope.reason).toBe('needs the shared helper');
+    expect(scope.summary).toBe(
+      'agent asked to edit outside its scope: src/a.ts'
+    );
 
     const capped = byKind(items, 'fix-loop-capped')[0];
     expect(capped.id).toBe('fix-loop-capped:t-99');
@@ -173,22 +306,44 @@ describe('DecisionFeed aggregation', () => {
     expect(stalled.ageMs).toBe(120_000);
   });
 
+  it('names at most three paths in a scope summary and keeps the rest in paths', () => {
+    h.runs.push(runMeta('r-1'));
+    const paths = ['a.ts', 'b.ts', 'c.ts', 'd.ts', 'e.ts'];
+    h.gates.push(
+      gate('m-scope', {
+        from: 'run:r-1',
+        choices: ['grant', 'deny'],
+        data: { type: 'scope', paths, reason: 'many files' },
+      })
+    );
+    const [item] = h.feed.list();
+    expect(item.summary).toBe(
+      'agent asked to edit outside its scope: a.ts, b.ts, c.ts +2 more'
+    );
+    expect(item.paths).toEqual(paths);
+  });
+
+  it('leaves out blocking messages that ask no human question', () => {
+    h.runs.push(runMeta('r-1'));
+    h.gates.push(
+      gate('m-handoff', { from: 'run:r-1', kind: 'handoff' }),
+      gate('m-fyi', { from: 'run:r-1', blocking: false })
+    );
+    expect(h.feed.list()).toEqual([]);
+  });
+
   it('orders open items longest-waiting first', () => {
     const run = runMeta('r-1');
     h.runs.push(run);
-    h.setNow(T0);
-    const older = h.questions.ask(run.id, 'first');
-    h.setNow(T0 + 5_000);
-    const newer = h.questions.ask(run.id, 'second');
-    h.setNow(T0 + 10_000);
+    h.gates.push(
+      runQuestion('m-newer', run.id, 'second', { createdAt: ago(5_000) }),
+      runQuestion('m-older', run.id, 'first', { createdAt: ago(10_000) })
+    );
 
-    // askedAt comes from the registry's own clock, so order by it rather than
-    // by the ids, which are random.
-    const ids = h.feed.list().map((item) => item.id);
-    const expected = [older, newer]
-      .sort((a, b) => a.askedAt.localeCompare(b.askedAt))
-      .map((q) => `question:${q.id}`);
-    expect(ids).toEqual(expected);
+    expect(h.feed.list().map((item) => item.id)).toEqual([
+      'question:m-older',
+      'question:m-newer',
+    ]);
   });
 
   it('marks a run stalled for the strongest reason and skips ones already dealt with', () => {
@@ -284,10 +439,11 @@ describe('DecisionFeed resolution', () => {
   it('drops an answered question and reports it once as resolved', () => {
     const run = runMeta('r-1');
     h.runs.push(run);
-    const question = h.questions.ask(run.id, 'Which database?');
+    h.gates.push(runQuestion('m-q', run.id, 'Which database?'));
     expect(h.feed.list()).toHaveLength(1);
 
-    h.questions.answer(question.id, 'sqlite');
+    // Answered: the engine no longer lists it among the open gates.
+    h.gates.splice(0);
     h.setNow(T0 + 1_000);
     expect(h.feed.list()).toHaveLength(0);
 
@@ -298,8 +454,6 @@ describe('DecisionFeed resolution', () => {
   });
 
   it('keeps counting a resolved item age from when it started waiting', () => {
-    // A stalled run, whose `since` is the run's own updatedAt rather than the
-    // registry's real clock, so the fake clock governs the whole measurement.
     h.runs.push(runMeta('r-1', { state: 'failed' }));
     expect(h.feed.list()[0].ageMs).toBe(60_000);
 
@@ -316,9 +470,9 @@ describe('DecisionFeed resolution', () => {
   it('forgets a resolved item once its retention window passes', () => {
     const run = runMeta('r-1');
     h.runs.push(run);
-    const question = h.questions.ask(run.id, 'Which database?');
+    h.gates.push(runQuestion('m-q', run.id, 'Which database?'));
     h.feed.list();
-    h.questions.answer(question.id, 'sqlite');
+    h.gates.splice(0);
     h.setNow(T0 + 1_000);
     expect(h.feed.list({ includeResolved: true })).toHaveLength(1);
 
@@ -373,17 +527,31 @@ describe('DecisionFeed live updates', () => {
     return seen;
   }
 
-  it('broadcasts decisions.changed when a source event changes the feed', () => {
+  it('broadcasts decisions.changed when a new gate is stored', () => {
     const stop = h.feed.start();
     const seen = capture(h.events);
     const run = runMeta('r-1');
     h.runs.push(run);
-    h.questions.ask(run.id, 'Which database?');
+    const question = runQuestion('m-q', run.id, 'Which database?');
+    h.gates.push(question);
 
+    h.events.broadcast({ type: 'message.new', message: question });
+    expect(seen).toHaveLength(1);
+    stop();
+  });
+
+  it('broadcasts when a delivery change leaves a gate answered', () => {
+    const run = runMeta('r-1');
+    h.runs.push(run);
+    h.gates.push(runQuestion('m-q', run.id, 'Which database?'));
+    const stop = h.feed.start();
+    const seen = capture(h.events);
+
+    h.gates.splice(0);
     h.events.broadcast({
-      type: 'question.asked',
-      runId: run.id,
-      questionId: 'q-1',
+      type: 'delivery.changed',
+      deliveryId: 'd-1',
+      messageId: 'm-q',
     });
     expect(seen).toHaveLength(1);
     stop();
@@ -402,7 +570,7 @@ describe('DecisionFeed live updates', () => {
     const seen = capture(h.events);
     const run = runMeta('r-1');
     h.runs.push(run);
-    h.questions.ask(run.id, 'Which database?');
+    h.gates.push(runQuestion('m-q', run.id, 'Which database?'));
 
     // A streamed log line is the high-frequency event this feed must not
     // recompute on.
@@ -424,16 +592,13 @@ describe('DecisionFeed live updates', () => {
     const seen = capture(h.events);
     const run = runMeta('r-1');
     h.runs.push(run);
-    h.questions.ask(run.id, 'Which database?');
+    const question = runQuestion('m-q', run.id, 'Which database?');
+    h.gates.push(question);
 
-    // The poll lands between the registry write and the event it triggers.
+    // The poll lands between the store write and the event it triggers.
     h.feed.list();
 
-    h.events.broadcast({
-      type: 'question.asked',
-      runId: run.id,
-      questionId: 'q-1',
-    });
+    h.events.broadcast({ type: 'message.new', message: question });
     expect(seen).toHaveLength(1);
     stop();
   });
@@ -476,12 +641,9 @@ describe('DecisionFeed live updates', () => {
     stop();
     const run = runMeta('r-1');
     h.runs.push(run);
-    h.questions.ask(run.id, 'Which database?');
-    h.events.broadcast({
-      type: 'question.asked',
-      runId: run.id,
-      questionId: 'q-1',
-    });
+    const question = runQuestion('m-q', run.id, 'Which database?');
+    h.gates.push(question);
+    h.events.broadcast({ type: 'message.new', message: question });
     expect(seen).toHaveLength(0);
   });
 });
@@ -499,7 +661,7 @@ describe('DecisionFeed policy seam', () => {
       item.kind === 'run-stalled' ? 'recorded' : 'blocking'
     );
     withPolicy.runs.push(runMeta('r-1', { state: 'failed' }));
-    withPolicy.questions.ask('r-1', 'Which database?');
+    withPolicy.gates.push(runQuestion('m-q', 'r-1', 'Which database?'));
 
     expect(
       withPolicy.feed.list({ disposition: 'blocking' }).map((i) => i.kind)
@@ -520,46 +682,42 @@ describe('DecisionFeed irreversibility floor', () => {
   it('keeps a floor command approval blocking under a record-everything policy', () => {
     const h = harness(recordEverything);
     h.runs.push(runMeta('r-1'));
-    h.approvals.push(
-      {
-        runId: 'r-1',
-        taskId: 't-r-1',
-        taskTitle: 'Task r-1',
-        requestId: 'req-force',
-        toolName: 'Bash',
-        input: { command: 'git push --force origin main' },
-      },
-      {
-        runId: 'r-1',
-        taskId: 't-r-1',
-        taskTitle: 'Task r-1',
-        requestId: 'req-publish',
-        toolName: 'Bash',
-        input: { command: 'npm publish' },
-      },
-      {
-        runId: 'r-1',
-        taskId: 't-r-1',
-        taskTitle: 'Task r-1',
-        requestId: 'req-ls',
-        toolName: 'Bash',
-        input: { command: 'ls' },
-      }
+    h.gates.push(
+      approvalGate('m-force', 'r-1', 'req-force', {
+        command: 'git push --force origin main',
+      }),
+      approvalGate('m-publish', 'r-1', 'req-publish', {
+        command: 'npm publish',
+      }),
+      approvalGate('m-ls', 'r-1', 'req-ls', { command: 'ls' })
     );
     const byId = new Map(h.feed.list().map((item) => [item.id, item]));
-    expect(byId.get('approval:req-force')).toMatchObject({
+    expect(byId.get('approval:m-force')).toMatchObject({
       floor: 'force-push',
       disposition: 'blocking',
     });
-    expect(byId.get('approval:req-publish')).toMatchObject({
+    expect(byId.get('approval:m-publish')).toMatchObject({
       floor: 'publish',
       disposition: 'blocking',
     });
-    expect(byId.get('approval:req-ls')).toMatchObject({
+    expect(byId.get('approval:m-ls')).toMatchObject({
       disposition: 'recorded',
     });
-    expect(byId.get('approval:req-ls')?.floor).toBeUndefined();
+    expect(byId.get('approval:m-ls')?.floor).toBeUndefined();
     expect(h.feed.list({ disposition: 'blocking' })).toHaveLength(2);
+  });
+
+  it("checks the preview when the run's parked call is a different request", () => {
+    const h = harness(recordEverything);
+    h.runs.push(runMeta('r-1', { state: 'awaiting-approval' }));
+    h.pending.set('r-1', {
+      requestId: 'req-newer',
+      input: { command: 'git push --force origin main' },
+    });
+    h.gates.push(approvalGate('m-ls', 'r-1', 'req-older', { command: 'ls' }));
+    const [item] = h.feed.list();
+    expect(item.floor).toBeUndefined();
+    expect(item.disposition).toBe('recorded');
   });
 
   it('keeps a budget-exhausted run and a capped loop blocking under the same policy', () => {
@@ -596,15 +754,10 @@ describe('DecisionFeed ownership', () => {
       dispatchedBy: 'human:ada',
     });
     h.runs.push(adas);
-    h.approvals.push({
-      runId: adas.id,
-      taskId: adas.taskId,
-      taskTitle: adas.taskTitle,
-      requestId: 'req-1',
-      toolName: 'Bash',
-      input: { command: 'ls' },
-    });
-    h.questions.ask(adas.id, 'Which way?', []);
+    h.gates.push(
+      approvalGate('m-a', adas.id, 'req-1', { command: 'ls' }),
+      runQuestion('m-q', adas.id, 'Which way?')
+    );
 
     const items = h.feed.list();
     expect(items.map((item) => item.owner)).toEqual(['human:ada', 'human:ada']);
@@ -613,14 +766,7 @@ describe('DecisionFeed ownership', () => {
   it("leaves an item with no dispatcher ownerless, so everyone's", () => {
     const auto = runMeta('r-auto', { state: 'awaiting-approval' });
     h.runs.push(auto);
-    h.approvals.push({
-      runId: auto.id,
-      taskId: auto.taskId,
-      taskTitle: auto.taskTitle,
-      requestId: 'req-2',
-      toolName: 'Bash',
-      input: {},
-    });
+    h.gates.push(approvalGate('m-a', auto.id, 'req-2', {}));
     h.titles.set('t-99', 'Capped task');
     h.loops.push(cappedLoop('t-99'));
 

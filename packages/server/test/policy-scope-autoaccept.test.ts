@@ -181,8 +181,7 @@ describe('scope requests under policy rung 2', () => {
   });
 
   // The floor at this gate: a request reaching into .git/ or outside the repo
-  // parks for a human even though the rung would auto-grant it, and the feed
-  // still lists it as blocking rather than as a recorded auto-decision.
+  // parks for a human even though the rung would auto-grant it.
   it('never auto-grants a request outside the repo or into .git', async () => {
     const { runId } = await liveRun('Escaping scope');
     const record = await json<ScopeRequestBody>(
@@ -190,12 +189,6 @@ describe('scope requests under policy rung 2', () => {
     );
     expect(record.granted).toBeNull();
     expect(record.decidedBy).toBeNull();
-    const feed = await json<{ items: { id: string; disposition: string }[] }>(
-      await fetch(`${baseUrl}/api/decisions`)
-    );
-    expect(
-      feed.items.find((i) => i.id === `scope-request:${record.id}`)
-    ).toMatchObject({ disposition: 'blocking' });
     const ledger = await json<LedgerEntryBody[]>(
       await fetch(`${baseUrl}/api/ledger`)
     );

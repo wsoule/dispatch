@@ -23,6 +23,7 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
+import { openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import type { Principal } from './principal.js';
 import type { Messaging } from './service.js';
@@ -929,8 +930,5 @@ export function listOpenDecisions(ctx: ApiContext): Response {
   if (principal.kind !== 'human' || !principal.canDecide) {
     return errorResponse(403, 'listing open decisions needs a deciding human');
   }
-  const items = ctx.messaging.engine
-    .openBlocking()
-    .filter((m) => m.to.some((addr) => addr.startsWith('human:')));
-  return jsonResponse({ items });
+  return jsonResponse({ items: openHumanDecisions(ctx.messaging.engine) });
 }

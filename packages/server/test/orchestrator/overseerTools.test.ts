@@ -1,4 +1,5 @@
 import { TaskStore } from '@dispatch/core';
+import type { Message } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,7 +19,6 @@ import {
   OverseerToolRegistry,
 } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
-import { QuestionRegistry } from '../../src/orchestrator/questions.js';
 import { initGitRepo } from './helpers.js';
 
 let fakeHome: string;
@@ -96,6 +96,8 @@ const stubRunner = async (
 
 interface Harness extends OverseerToolContext {
   registry: OverseerToolRegistry;
+  // The open blocking questions to humans that `openGates` returns.
+  gates: Message[];
 }
 
 /**
@@ -150,18 +152,37 @@ function makeHarness(): Harness {
     stubRunner
   );
   liveQueues.push(mergeQueue);
-  const questions = new QuestionRegistry();
+  const gates: Message[] = [];
   const ledgerStore = new LedgerStore(repo);
   const ctx: OverseerToolContext = {
     store,
     cache,
     orchestrator,
     mergeQueue,
-    questions,
+    openGates: () => gates,
     ledgerStore,
     defaultExecutor: 'fake',
   };
-  return { ...ctx, registry: new OverseerToolRegistry(ctx) };
+  return { ...ctx, registry: new OverseerToolRegistry(ctx), gates };
+}
+
+// An open blocking question to a human, as the engine stores it.
+function gate(id: string, over: Partial<Message>): Message {
+  return {
+    id,
+    thread: id,
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'q',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
 }
 
 /** Dispatches `title` on `executor` and returns once the run has settled into `state`. */
@@ -338,13 +359,31 @@ describe('overseer status tools', () => {
     });
   });
 
-  it('pending_approvals names the tool call a run is parked on', async () => {
+  it('pending_approvals lists the tool-approval gates live runs are parked on', async () => {
     const h = makeHarness();
-    const { runId } = await dispatchUntil(
+    const { runId, taskId } = await dispatchUntil(
       h,
       'Gated',
       'gated',
       'awaiting-approval'
+    );
+    h.gates.push(
+      gate('m-a', {
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          runId,
+          tool: 'Bash',
+          input: { command: 'rm -rf /' },
+        },
+      }),
+      // Not tool approvals: a run's plain question and its scope request.
+      gate('m-q', { from: `run:${runId}`, body: 'Which database?' }),
+      gate('m-s', {
+        from: `run:${runId}`,
+        choices: ['grant', 'deny'],
+        data: { type: 'scope', paths: ['a.ts'], reason: 'needs it' },
+      })
     );
 
     const result = h.registry.callStatusTool('pending_approvals') as {
@@ -352,51 +391,84 @@ describe('overseer status tools', () => {
       total: number;
     };
     expect(result.total).toBe(1);
-    expect(result.approvals[0]).toMatchObject({
+    expect(result.approvals[0]).toEqual({
+      messageId: 'm-a',
       runId,
+      taskId,
+      taskTitle: 'Gated',
       requestId: 'req-1',
       toolName: 'Bash',
       input: { command: 'rm -rf /' },
+      truncated: false,
     });
   });
 
-  // The registry only clears a run's pending approval when approve() answers
-  // it, so a run cancelled mid-gate leaves the record behind. Reporting that as
-  // something waiting on the human would be worse than useless: nothing is
-  // listening for the answer any more, so acting on it can only fail.
-  it('pending_approvals drops a run that was cancelled while parked on the gate', async () => {
+  // A gate closes when its run ends or someone answers it; the tool reads only
+  // open gates, so neither can be offered to the human again.
+  it('pending_approvals drops a gate once it is no longer open', () => {
     const h = makeHarness();
-    const { runId } = await dispatchUntil(
-      h,
-      'Gated',
-      'gated',
-      'awaiting-approval'
+    h.gates.push(
+      gate('m-a', {
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          runId: 'r-abc123',
+          tool: 'Bash',
+          input: 'echo ok && …',
+          truncated: true,
+        },
+      })
     );
-    await h.orchestrator.cancel(runId);
+    const before = h.registry.callStatusTool('pending_approvals') as {
+      approvals: Record<string, unknown>[];
+      total: number;
+    };
+    expect(before.approvals[0]).toMatchObject({
+      messageId: 'm-a',
+      runId: 'r-abc123',
+      taskId: null,
+      truncated: true,
+    });
 
+    h.gates.splice(0);
     expect(
       (h.registry.callStatusTool('pending_approvals') as { total: number })
         .total
     ).toBe(0);
   });
 
-  it('open_questions lists unanswered questions and drops them once answered', () => {
+  it('open_questions lists the plain questions runs asked and drops them once answered', () => {
     const h = makeHarness();
-    const asked = h.questions.ask('r-abc123', 'Which database?', ['sqlite']);
+    h.gates.push(
+      gate('m-q', {
+        from: 'run:r-abc123',
+        body: 'Which database?',
+        choices: ['sqlite'],
+      }),
+      // Gates and questions from outside a run are not run questions.
+      gate('m-s', {
+        from: 'run:r-abc123',
+        choices: ['grant', 'deny'],
+        data: { type: 'scope', paths: ['a.ts'], reason: 'needs it' },
+      }),
+      gate('m-agent', { from: 'agent:helper', body: 'Anyone there?' })
+    );
 
     const before = h.registry.callStatusTool('open_questions') as {
       questions: Record<string, unknown>[];
       total: number;
     };
     expect(before.total).toBe(1);
-    expect(before.questions[0]).toMatchObject({
-      id: asked.id,
+    expect(before.questions[0]).toEqual({
+      messageId: 'm-q',
       runId: 'r-abc123',
       question: 'Which database?',
       options: ['sqlite'],
+      askedAt: '2026-09-25T10:00:00.000Z',
     });
 
-    h.questions.answer(asked.id, 'sqlite');
+    // Answered: the engine no longer lists it among the open gates.
+    h.gates.splice(0);
     expect(
       (h.registry.callStatusTool('open_questions') as { total: number }).total
     ).toBe(0);
@@ -404,8 +476,10 @@ describe('overseer status tools', () => {
 
   it('open_questions scopes to one run when given a runId', () => {
     const h = makeHarness();
-    h.questions.ask('r-aaa111', 'First?');
-    h.questions.ask('r-bbb222', 'Second?');
+    h.gates.push(
+      gate('m-1', { from: 'run:r-aaa111', body: 'First?' }),
+      gate('m-2', { from: 'run:r-bbb222', body: 'Second?' })
+    );
 
     const scoped = h.registry.callStatusTool('open_questions', {
       runId: 'r-bbb222',
