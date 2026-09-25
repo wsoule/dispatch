@@ -1,12 +1,17 @@
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'bun:test';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type { PlanProposal } from '../../src/orchestrator/planner.js';
 import {
   ClaudePlanner,
   EMPTY_TURN_MESSAGE,
 } from '../../src/orchestrator/planners/claude.js';
+import { floorDecision } from './helpers.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
 // native CLI binary — mirrors claude-executor.test.ts's own fixture for the
@@ -87,10 +92,19 @@ describe('ClaudePlanner.start', () => {
       preset: 'claude_code',
     });
     expect(captured?.settingSources).toEqual(['project', 'local']);
-    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
-    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob', 'Bash']);
+    // No Bash: plan mode does not stop a shell command from writing.
+    expect(captured?.tools).toEqual(['Read', 'Grep', 'Glob']);
+    expect(captured?.allowedTools).toEqual(['Read', 'Grep', 'Glob']);
     expect(captured?.strictMcpConfig).toBe(true);
     expect(captured?.skills).toEqual([]);
+    // There is no human to ask, so a floor command is refused before it runs.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
+    ).toBe('deny');
+    expect(captured?.settings).toEqual(floorGuard('deny').settings);
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'git log -1' })
+    ).toBeUndefined();
   });
 
   it('rejects when the result message is an error subtype', async () => {
@@ -337,6 +351,39 @@ describe('ClaudePlanner Claude Code CLI resolution', () => {
       );
     } finally {
       Bun.which = originalWhich;
+    }
+  });
+});
+
+describe('ClaudePlanner effort', () => {
+  it('applies config effort.plan to planning turns but not to drafts', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-planner-effort-'));
+    mkdirSync(join(root, '.dispatch'));
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'effort:\n  plan: high\n'
+    );
+    const seen: (Options | undefined)[] = [];
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    function* fakeMessages(): Generator<any> {
+      yield {
+        type: 'result',
+        subtype: 'success',
+        structured_output: { message: 'ok', proposal: { tasks: [] } },
+      };
+    }
+    const planner = new ClaudePlanner(root, (args: { options?: Options }) => {
+      seen.push(args.options);
+      return fakeMessages() as unknown as Query;
+    });
+
+    try {
+      await planner.start('plan it');
+      await planner.start('draft it', undefined, 'draft');
+      expect(seen[0]?.effort).toBe('high');
+      expect(seen[1]?.effort).toBeUndefined();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
     }
   });
 });

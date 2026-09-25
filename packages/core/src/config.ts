@@ -7,6 +7,7 @@ import type {
   CartoMode,
   ConfigPatch,
   DispatchConfig,
+  EffortConfig,
   EscalationStep,
   ExecutorCommand,
   ExecutorConfig,
@@ -39,10 +40,12 @@ import {
   DEFAULT_RECEIPTS,
   DEFAULT_REPO_DIGEST,
   DEFAULT_SYNC,
+  EFFORT_ROLES,
   EXECUTOR_MODEL_ROLES,
   EXECUTOR_PRICING_FIELDS,
   FIX_MODEL_TIERS,
   FIX_STRATEGIES,
+  isEffortLevel,
   LINEAR_DIRECTIONS,
   MAX_CONCURRENCY_HARD_CAP,
   MODEL_ROLES,
@@ -122,6 +125,7 @@ const DEFAULTS: DispatchConfig = {
   orchestrator: { ...DEFAULT_ORCHESTRATOR },
   preview: { ...DEFAULT_PREVIEW },
   models: { ...DEFAULT_MODELS },
+  effort: {},
   executors: {},
   remotes: {},
   linear: { ...DEFAULT_LINEAR, statusMap: { ...DEFAULT_LINEAR.statusMap } },
@@ -937,6 +941,32 @@ function parseModelConfig(raw: unknown): ModelConfig {
   return result;
 }
 
+// Validates the optional `effort:` block. Unlike models there is no default
+// per role: an absent role sends nothing and the model picks its own effort.
+function parseEffortConfig(raw: unknown): EffortConfig {
+  if (raw === undefined) return {};
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+    throw new ConfigError(
+      'invalid .dispatch/config.yml: effort must be an object'
+    );
+  }
+  const result: EffortConfig = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (!EFFORT_ROLES.includes(key as keyof EffortConfig)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: unknown effort role "${key}" (expected ${EFFORT_ROLES.join('|')})`
+      );
+    }
+    if (!isEffortLevel(value)) {
+      throw new ConfigError(
+        `invalid .dispatch/config.yml: effort.${key} must be one of low|medium|high|xhigh|max`
+      );
+    }
+    result[key as keyof EffortConfig] = value;
+  }
+  return result;
+}
+
 // Declared as `readonly string[]` (not the literal union) so a membership
 // check against an unvalidated `unknown` never needs an `as` cast.
 const VERIFY_FIELDS: readonly (keyof VerifyConfig)[] = [
@@ -1256,6 +1286,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       autoCommit: DEFAULTS.autoCommit,
       orchestrator: { ...DEFAULTS.orchestrator },
       models: { ...DEFAULTS.models },
+      effort: {},
       executors: {},
       remotes: {},
       linear: {
@@ -1355,6 +1386,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     verifySteps: raw.verifySteps,
     orchestrator: parseOrchestratorConfig(raw.orchestrator),
     models: parseModelConfig(raw.models),
+    effort: parseEffortConfig(raw.effort),
     executors: parseExecutorsConfig(raw.executors),
     remotes: parseRemotesConfig(raw.remotes),
     linear: parseLinearConfig(raw.linear),
@@ -1656,6 +1688,24 @@ export function updateConfig(
       }
       doc.setIn(['models', role], value.trim());
     }
+  }
+  if (patch.effort !== undefined) {
+    for (const [role, value] of Object.entries(patch.effort)) {
+      if (!EFFORT_ROLES.includes(role as keyof EffortConfig)) {
+        throw new ConfigError(
+          `invalid effort role: ${role} (expected ${EFFORT_ROLES.join('|')})`
+        );
+      }
+      if (value !== null && !isEffortLevel(value)) {
+        throw new ConfigError(
+          `invalid effort.${role}: must be one of low|medium|high|xhigh|max`
+        );
+      }
+      setOrDelete(doc, ['effort', role], value);
+    }
+    // An emptied block would read back as `effort: {}`; drop it instead.
+    const block = doc.getIn(['effort']);
+    if (YAML.isMap(block) && block.items.length === 0) doc.deleteIn(['effort']);
   }
   if (patch.executor !== undefined) {
     if (typeof patch.executor !== 'string' || patch.executor.trim() === '') {

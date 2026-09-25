@@ -3,6 +3,7 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  EffortLevel,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -58,6 +59,9 @@ export interface HealthPayload {
   // The daemon's event-loop watchdog. 'failed' means it never came up — for
   // a compiled daemon, that its worker module was left out of the build.
   watchdog?: 'idle' | 'starting' | 'armed' | 'failed' | 'stopped';
+  // Which backend this daemon's task store uses. Absent on older daemons;
+  // treat that as 'sqlite', the default.
+  storageBackend?: 'files' | 'sqlite';
   // Records the daemon's last cache rebuild could not read, plus the
   // identity problem above when there is one — visibility only, `ok` stays
   // true.
@@ -151,6 +155,8 @@ export interface RunMeta {
   error?: string;
   /** The Claude model this run was dispatched with, if one was chosen. */
   model?: string;
+  /** The reasoning effort this run started at; absent is the model default. */
+  effort?: EffortLevel;
   /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
   dispatchedBy?: string;
   // The approval this run is parked on while `state` is 'awaiting-approval',
@@ -1207,6 +1213,8 @@ export interface OverseerRecord {
   /** The model this conversation was opened on when the composer chose one;
    *  every follow-up reuses it. Absent: the configured `overseer` role's model. */
   model?: string;
+  /** Same rule as `model`, falling back to config `effort.overseer`. */
+  effort?: EffortLevel;
   state: OverseerState;
   messages: OverseerMessage[];
   /**
@@ -1722,10 +1730,16 @@ export interface IssuedTeamToken {
   expiresAt: string | null;
 }
 
+/** Why board sync isn't running — mirrors BoardSyncOffReason in
+ *  packages/server/src/api.ts: the board is kept as files, which it can't
+ *  share; it is off; or it is on in config.yml but didn't start. */
+export type BoardSyncOffReason = 'files' | 'off' | 'not-started';
+
 /** Board sync's state — mirrors SyncStatus in
- *  packages/server/src/team/boardSync/service.ts. */
+ *  packages/server/src/team/boardSync/service.ts. `reason` is absent on
+ *  daemons older than it. */
 export type BoardSyncStatus =
-  | { enabled: false }
+  | { enabled: false; reason?: BoardSyncOffReason }
   | {
       enabled: true;
       replica: string;
@@ -1830,8 +1844,9 @@ export interface LandingSnapshot {
 
 // Mirrors SyncState in packages/server/src/sync/boardSyncer.ts. No real
 // SyncResult a `syncOnce()` produces ever carries `'disabled'` or `'off'` —
-// GET /api/sync synthesizes `'disabled'` when no scheduler exists (no trunk
-// resolvable at boot) and `'off'` when the project's autoCommit is false.
+// GET /api/sync synthesizes `'disabled'` when no scheduler exists (database
+// backend, or no trunk resolvable at boot) and `'off'` when "Commit task
+// files to the main branch" (config `autoCommit`) is off.
 export type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
 
 // Mirrors SyncResult in packages/server/src/sync/boardSyncer.ts — the
@@ -2445,7 +2460,12 @@ export interface ApiClient {
   // re-dispatch cannot silently abandon work an agent had nearly finished.
   createRun(
     taskId: string,
-    opts?: { executor?: string; model?: string; fresh?: boolean }
+    opts?: {
+      executor?: string;
+      model?: string;
+      effort?: EffortLevel;
+      fresh?: boolean;
+    }
   ): Promise<RunMeta>;
   fetchRuns(): Promise<RunMeta[]>;
   // The executors this daemon registered (`GET /api/executors`) and which
@@ -2834,7 +2854,7 @@ export interface ApiClient {
   // `overseer` role's model; the conversation keeps it for every follow-up.
   startOverseer(
     prompt: string,
-    opts?: { backend?: string; model?: string }
+    opts?: { backend?: string; model?: string; effort?: EffortLevel }
   ): Promise<OverseerRecord>;
   getOverseer(id: string): Promise<OverseerRecord>;
   // Sends a follow-up on an existing conversation. Resolves (202) with the
@@ -3171,6 +3191,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         ...jsonBody({
           ...(opts.executor !== undefined ? { executor: opts.executor } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
           ...(opts.fresh !== undefined ? { fresh: opts.fresh } : {}),
         }),
       }),
@@ -3564,6 +3585,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
           prompt,
           ...(opts.backend !== undefined ? { backend: opts.backend } : {}),
           ...(opts.model !== undefined ? { model: opts.model } : {}),
+          ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
         }),
       }),
     getOverseer: (id) => request(target, `/api/overseer/${id}`),

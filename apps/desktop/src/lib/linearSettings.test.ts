@@ -236,7 +236,7 @@ describe('linearKeySourceNote', () => {
   });
 
   test('falls back to the first-connection copy when there is no key', () => {
-    expect(linearKeySourceNote(null)).toContain('Connect a Linear API key');
+    expect(linearKeySourceNote(null)).toContain('Paste a Linear API key');
   });
 });
 

@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { EventBus } from '../src/events.js';
+import { floorCheckForToolInput } from '../src/floor.js';
 import type { FixLoopState } from '../src/orchestrator/fixLoop.js';
 import type { RunMeta, RunState } from '../src/orchestrator/types.js';
 import { OrchestratorConflictError } from '../src/orchestrator/types.js';
@@ -543,6 +544,42 @@ describe('the approval gate', () => {
     await settle();
     expect(h.approved).toEqual([]);
     expect(h.ledger).toEqual([]);
+    h.stop();
+  });
+
+  it("keeps a Codex force-push parked at rung 4 through the daemon's floor", async () => {
+    const codexAsk = (requestId: string, command: string) => ({
+      runId: 'r-codex',
+      taskId: 't-000001',
+      requestId,
+      toolName: 'codex.commandExecution',
+      input: {
+        kind: 'command',
+        itemId: requestId,
+        command: `/bin/zsh -lc '${command}'`,
+        cwd: '/tmp/r-codex',
+      },
+    });
+    const h = harness({
+      pending: [
+        codexAsk('push', 'git push --force origin main'),
+        codexAsk('test', 'pnpm test'),
+      ],
+      // The predicate index.ts wires into the engine.
+      approvalFloor: (_toolName, input) =>
+        floorCheckForToolInput(input) !== null,
+    });
+    h.setPolicy('policy:\n  rung: 4\n');
+    for (const requestId of ['push', 'test']) {
+      h.events.broadcast({
+        type: 'approval.requested',
+        runId: 'r-codex',
+        requestId,
+        toolName: 'codex.commandExecution',
+      });
+    }
+    await settle();
+    expect(h.approved).toEqual([{ runId: 'r-codex', requestId: 'test' }]);
     h.stop();
   });
 

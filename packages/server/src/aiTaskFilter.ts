@@ -162,7 +162,10 @@ export class ClaudeAiTaskFilter implements AiTaskFilterPort {
         model: loadConfig(this.rootDir).models.summarize,
         permissionMode: 'plan',
         // No tools: this is a judgement about the strings in the prompt, not about the repo.
-        allowedTools: [],
+        // `tools: []` drops the built-ins; `strictMcpConfig` keeps the operator's own MCP
+        // servers (claude.ai connectors, plugins) off a call that reads untrusted text.
+        tools: [],
+        strictMcpConfig: true,
         outputFormat: { type: 'json_schema', schema: AI_FILTER_SCHEMA },
         abortController,
       };

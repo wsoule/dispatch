@@ -15,7 +15,7 @@ import type {
   OverseerSession,
 } from '../../hooks/useOverseerSession';
 import { formatRelativeTimeFromIso } from '../../lib/format';
-import { modelLabel, MODELS } from '../../lib/models';
+import { effortOptions, modelLabel, MODELS } from '../../lib/models';
 import type { OverseerThreadItem } from '../../lib/overseerThread';
 import { buildOverseerThread } from '../../lib/overseerThread';
 import { Markdown } from '../runs/Markdown';
@@ -450,6 +450,9 @@ export function OverseerChat({ overseer, compact = false }: OverseerChatProps) {
           models={COMPOSER_MODELS}
           modelId={overseer.model}
           onModelChange={overseer.setModel}
+          efforts={effortOptions(overseer.configuredEffort)}
+          effortId={overseer.effortId}
+          onEffortChange={overseer.setEffortId}
         />
       </div>
     );

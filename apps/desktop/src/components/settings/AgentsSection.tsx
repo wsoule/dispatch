@@ -1,15 +1,22 @@
+import type { ExecutorsResponse } from '@dispatch/client';
 import type {
+  ConfigPatch,
   DispatchConfig,
-  EscalationStep,
+  EffortConfig,
   ModelConfig,
 } from '@dispatch/core/browser';
-import { MODEL_ROLES } from '@dispatch/core/browser';
-import { useEffect, useState } from 'react';
+import { EFFORT_ROLES, MODEL_ROLES } from '@dispatch/core/browser';
 
-import { MODELS } from '../../lib/models';
-import { EscalationEditor } from './EscalationEditor';
+import {
+  DEFAULT_EFFORT_ID,
+  effortFromId,
+  effortOptions,
+  modelDisplayName,
+  MODELS,
+} from '../../lib/models';
+import { CliAgents } from './AgentsMoreGroups';
+import { ChoiceSetting, NumberSetting } from './fields';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
-import { Input } from '@/ui/input';
 import {
   Select,
   SelectContent,
@@ -20,181 +27,228 @@ import {
 
 interface AgentsSectionProps {
   config: DispatchConfig;
-  onSave: (patch: {
-    epicConcurrency?: number;
-    permissionMode?: string;
-    models?: Partial<ModelConfig>;
-    maxTurns?: number | null;
-    maxBudgetUsd?: number | null;
-    fixLoop?: { cap?: number; escalation?: EscalationStep[] };
-  }) => Promise<void>;
+  executors: ExecutorsResponse | null;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
+  canOperate: boolean;
 }
 
-// One row per config.models role, mirroring ModelConfig's doc comments in
-// packages/core/src/config.ts so the schema doesn't have to be read.
+// One row per config.models role, in plain words: what the work is, not the
+// role's config key. The key stays searchable through `keywords`.
 const ROLE_INFO: Record<keyof ModelConfig, { label: string; hint: string }> = {
-  execute: { label: 'Coding runs', hint: 'The agent that edits the repo.' },
+  execute: { label: 'Coding runs', hint: 'Agents that change your code.' },
   overseer: {
     label: 'Assistant',
-    hint: 'The overseer chat: a full agent session in the checkout that also holds the project controls.',
+    hint: 'The chat that watches your project and can act on it.',
   },
-  plan: { label: 'Planning', hint: 'Multi-turn planning conversations.' },
-  draft: {
-    label: 'Task drafting',
-    hint: 'One-shot natural-language task drafting.',
+  plan: {
+    label: 'Planning',
+    hint: 'Conversations that turn an idea into tasks.',
   },
+  draft: { label: 'Task drafting', hint: 'Turning a sentence into a task.' },
   enrich: {
-    label: 'Enrichment',
-    hint: 'Filling in description / acceptance criteria for a task or inbox item.',
+    label: 'Filling in details',
+    hint: 'Writing descriptions and acceptance criteria.',
   },
   cluster: {
-    label: 'Inbox clustering',
-    hint: 'Grouping inbox captures into suggested epics.',
+    label: 'Inbox grouping',
+    hint: 'Grouping inbox notes into suggested epics.',
   },
   summarize: {
     label: 'Summaries',
-    hint: 'Short mechanical text: titles, summaries, commit messages.',
+    hint: 'Titles, summaries and commit messages.',
   },
   judge: {
     label: 'Judgments',
-    hint: 'TypeSafe System One judgments: triage, readiness, checklist, model tier.',
+    hint: 'Quick yes/no calls such as triage and readiness.',
   },
 };
 
-// `judge` names a TypeSafe model, which the Claude picker below cannot offer;
-// it is set in config.yml until a TypeSafe model list exists.
+// `judge` names a TypeSafe model, which the Claude picker cannot offer; it is
+// set in config.yml until a TypeSafe model list exists.
 const PICKABLE_ROLES = MODEL_ROLES.filter((role) => role !== 'judge');
 
+function hasEffort(role: keyof ModelConfig): role is keyof EffortConfig {
+  return (EFFORT_ROLES as readonly string[]).includes(role);
+}
+
+// The picker's choices for a role: every dispatchable model, plus the role's
+// current model when it is an older one no longer offered, so the select
+// names it instead of going blank.
+function modelChoices(current: string): { id: string; label: string }[] {
+  if (MODELS.some((m) => m.id === current)) return MODELS;
+  return [
+    ...MODELS,
+    { id: current, label: modelDisplayName(current) ?? current },
+  ];
+}
+
 // Four of the six modes config.ts accepts; `plan` and `bypassPermissions`
-// fall through to the escape-hatch line below instead of a radio.
+// fall through to the note under the radios instead.
 const PERMISSION_MODES = [
-  ['auto', 'Let the classifier decide (default)'],
-  ['default', 'Always ask me first'],
-  ['acceptEdits', 'Let it edit files, ask before anything else'],
-  ['dontAsk', 'Never ask, let it run'],
+  ['auto', "Let Dispatch's safety check decide (recommended)"],
+  ['default', 'Ask me every time'],
+  ['acceptEdits', 'Allow file edits, ask for everything else'],
+  ['dontAsk', 'Never ask'],
 ] as const;
 
 const OFFERED_MODES: readonly string[] = PERMISSION_MODES.map(([mode]) => mode);
 
-// Reads a cap field as the string an input shows: absent stays empty rather
-// than rendering the literal word "undefined".
-function capToInput(value: number | undefined): string {
-  return value === undefined ? '' : String(value);
-}
-
-/** How agents run: models, concurrency, permission mode, turn/budget caps.
- *  Save feedback lives in the shell, not here — this only calls `onSave`. */
-export function AgentsSection({ config, onSave }: AgentsSectionProps) {
-  const [concurrency, setConcurrency] = useState('3');
-  const [maxTurns, setMaxTurns] = useState('');
-  const [maxBudgetUsd, setMaxBudgetUsd] = useState('');
-  const [fixLoopCap, setFixLoopCap] = useState('5');
-
-  // Re-seeds when config changes underneath (another window, a hand edit) —
-  // keyed on config values, so a field mid-edit isn't clobbered every render.
-  useEffect(() => {
-    setConcurrency(String(config.orchestrator.epicConcurrency));
-    setMaxTurns(capToInput(config.orchestrator.maxTurns));
-    setMaxBudgetUsd(capToInput(config.orchestrator.maxBudgetUsd));
-    setFixLoopCap(String(config.fixLoop.cap));
-  }, [config]);
-
-  // Optional-valued, unlike every other numeric field here: empty clears via
-  // null, a finite positive number saves, anything else snaps back.
-  function saveCap(
-    key: 'maxTurns' | 'maxBudgetUsd',
-    raw: string,
-    current: number | undefined,
-    setDraft: (value: string) => void
-  ) {
-    const trimmed = raw.trim();
-    if (trimmed === '') {
-      if (current !== undefined) void onSave({ [key]: null });
-      return;
-    }
-    const n = Number(trimmed);
-    if (Number.isFinite(n) && n > 0) {
-      if (n !== current) void onSave({ [key]: n });
-    } else {
-      setDraft(capToInput(current));
-    }
-  }
-
+/** Settings → Agents: models and effort per kind of work, the limits runs
+ *  work under, what they may do unasked, and the agents a dispatch can use.
+ *  Save feedback lives in the shell, not here: this only calls `onSave`. */
+export function AgentsSection({
+  config,
+  executors,
+  onSave,
+  canOperate,
+}: AgentsSectionProps) {
+  const agentNames = [
+    ...new Set([
+      ...(executors?.executors.map((e) => e.name) ?? []),
+      ...Object.keys(config.executors ?? {}),
+      config.orchestrator.executor,
+    ]),
+  ];
   return (
     <>
-      <SettingsGroup title="Models">
+      <SettingsGroup
+        title="Models"
+        hint="The model and effort for each kind of work. Higher effort thinks longer and costs more; Default lets the model decide."
+        keywords="thinking reasoning"
+      >
         {PICKABLE_ROLES.map((role) => {
           const info = ROLE_INFO[role];
+          const current = config.models[role];
           return (
             <SettingsRow
               key={role}
               title={info.label}
               subtitle={info.hint}
+              keywords={`${role} model ${hasEffort(role) ? 'effort' : ''}`}
               control={
-                <Select
-                  value={config.models[role]}
-                  onValueChange={(id) =>
-                    void onSave({ models: { [role]: id } })
-                  }
-                >
-                  <SelectTrigger
-                    aria-label={`${info.label} model`}
-                    className="w-[140px]"
+                <>
+                  <Select
+                    value={current}
+                    onValueChange={(id) =>
+                      void onSave({ models: { [role]: id } })
+                    }
                   >
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {MODELS.map((m) => (
-                      <SelectItem key={m.id} value={m.id}>
-                        {m.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    <SelectTrigger
+                      aria-label={`${info.label} model`}
+                      className="w-[124px]"
+                    >
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {modelChoices(current).map((m) => (
+                        <SelectItem key={m.id} value={m.id}>
+                          {m.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {hasEffort(role) ? (
+                    <Select
+                      value={config.effort?.[role] ?? DEFAULT_EFFORT_ID}
+                      onValueChange={(id) =>
+                        void onSave({
+                          effort: { [role]: effortFromId(id) ?? null },
+                        })
+                      }
+                    >
+                      <SelectTrigger
+                        aria-label={`${info.label} effort`}
+                        className="w-[112px]"
+                      >
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {effortOptions(undefined).map((o) => (
+                          <SelectItem key={o.id} value={o.id}>
+                            {o.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  ) : (
+                    // Holds the column so every model select lines up.
+                    <span aria-hidden className="w-[112px]" />
+                  )}
+                </>
               }
             />
           );
         })}
       </SettingsGroup>
 
-      <SettingsGroup title="How agents run">
-        <SettingsRow
-          title="How many run at once when you dispatch an epic"
-          htmlFor="how-many-run-at-once-when-you-dispatch-an-epic"
-          control={
-            <Input
-              id="how-many-run-at-once-when-you-dispatch-an-epic"
-              value={concurrency}
-              onChange={(e) => setConcurrency(e.target.value)}
-              onBlur={() => {
-                const n = Number(concurrency);
-                if (
-                  Number.isInteger(n) &&
-                  n >= 1 &&
-                  n !== config.orchestrator.epicConcurrency
-                ) {
-                  void onSave({ epicConcurrency: n });
-                } else {
-                  setConcurrency(String(config.orchestrator.epicConcurrency));
-                }
-              }}
-              inputMode="numeric"
-              className="w-20 text-right tabular-nums"
-            />
-          }
+      <SettingsGroup title="Limits" keywords="caps">
+        <NumberSetting
+          id="max-concurrency"
+          title="Runs at once"
+          subtitle="The most agents working on this project at the same time."
+          keywords="concurrency parallel"
+          value={config.orchestrator.maxConcurrency}
+          onSave={(n) => n !== null && void onSave({ maxConcurrency: n })}
         />
+        <NumberSetting
+          id="epic-concurrency"
+          title="Runs at once per epic"
+          subtitle="How many of an epic's tasks start together when you dispatch it."
+          keywords="concurrency parallel"
+          value={config.orchestrator.epicConcurrency}
+          onSave={(n) => n !== null && void onSave({ epicConcurrency: n })}
+        />
+        <NumberSetting
+          id="turn-cap"
+          title="Turns per run"
+          subtitle="Stops a run after this many turns. Leave empty for no limit."
+          keywords="cap maxTurns"
+          value={config.orchestrator.maxTurns}
+          placeholder="No limit"
+          allowEmpty
+          onSave={(maxTurns) => void onSave({ maxTurns })}
+        />
+        <NumberSetting
+          id="budget-cap-per-run"
+          title="Spend per run"
+          subtitle="Stops a run once it has spent this much. Leave empty for no limit."
+          keywords="budget cap cost dollars maxBudgetUsd"
+          value={config.orchestrator.maxBudgetUsd}
+          min={0.01}
+          integer={false}
+          suffix="USD"
+          placeholder="No limit"
+          allowEmpty
+          onSave={(maxBudgetUsd) => void onSave({ maxBudgetUsd })}
+        />
+        <NumberSetting
+          id="run-cost-estimate"
+          title="Expected cost per run"
+          subtitle="Used to plan spend before a run reports what it actually cost."
+          keywords="budget estimate"
+          value={config.orchestrator.runCostEstimateUsd}
+          min={0.01}
+          integer={false}
+          suffix="USD"
+          onSave={(n) => n !== null && void onSave({ runCostEstimateUsd: n })}
+        />
+      </SettingsGroup>
 
+      <SettingsGroup
+        title="Permissions"
+        keywords="approval permission mode classifier"
+      >
         <SettingsRow
-          title="When an agent wants to do something consequential"
-          subtitle="Auto lets the SDK’s own classifier approve every tool, so a dispatched agent proceeds unattended instead of stalling on the first Bash call."
+          title="When an agent wants to run a command or edit a file"
+          subtitle="Applies to every run and to the assistant."
+          keywords="approve tools bash"
           stacked
         >
-          {/* Native radios rather than the Radio primitive: these are styled
-              with `accent-*` as real inputs anyway, and a real input is what
-              keeps `getByLabelText(...).checked` meaningful in the tests. */}
+          {/* Native radios: a real input keeps `getByLabelText(...).checked`
+              meaningful in the tests. */}
           <div
             role="radiogroup"
-            aria-label="When an agent wants to do something consequential"
+            aria-label="When an agent wants to run a command or edit a file"
             className="grid gap-1.5"
           >
             {PERMISSION_MODES.map(([mode, label]) => (
@@ -217,87 +271,25 @@ export function AgentsSection({ config, onSave }: AgentsSectionProps) {
           {!OFFERED_MODES.includes(config.orchestrator.permissionMode) && (
             <SettingsHint>
               Currently &ldquo;{config.orchestrator.permissionMode}&rdquo;, set
-              in .dispatch/config.yml
+              by hand in .dispatch/config.yml.
             </SettingsHint>
           )}
         </SettingsRow>
+      </SettingsGroup>
 
-        <SettingsRow
-          title="Turn cap"
-          subtitle="Ceiling on turns for one run. Leave empty for no cap."
-          htmlFor="turn-cap"
-          control={
-            <Input
-              id="turn-cap"
-              value={maxTurns}
-              onChange={(e) => setMaxTurns(e.target.value)}
-              onBlur={() =>
-                saveCap(
-                  'maxTurns',
-                  maxTurns,
-                  config.orchestrator.maxTurns,
-                  setMaxTurns
-                )
-              }
-              inputMode="numeric"
-              placeholder="No cap"
-              className="w-24 text-right tabular-nums"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="Budget cap per run"
-          subtitle="Dollar ceiling on one run’s spend. Leave empty for no cap."
-          htmlFor="budget-cap-per-run"
-          control={
-            <Input
-              id="budget-cap-per-run"
-              value={maxBudgetUsd}
-              onChange={(e) => setMaxBudgetUsd(e.target.value)}
-              onBlur={() =>
-                saveCap(
-                  'maxBudgetUsd',
-                  maxBudgetUsd,
-                  config.orchestrator.maxBudgetUsd,
-                  setMaxBudgetUsd
-                )
-              }
-              inputMode="decimal"
-              placeholder="No cap"
-              className="w-24 text-right tabular-nums"
-            />
-          }
-        />
-
-        <SettingsRow
-          title="Fix-loop round cap"
-          subtitle="Last round the fix loop may dispatch before demanding a ruling."
-          htmlFor="fix-loop-round-cap"
-          control={
-            <Input
-              id="fix-loop-round-cap"
-              value={fixLoopCap}
-              onChange={(e) => setFixLoopCap(e.target.value)}
-              onBlur={() => {
-                const n = Number(fixLoopCap);
-                if (Number.isInteger(n) && n >= 1 && n !== config.fixLoop.cap) {
-                  void onSave({ fixLoop: { cap: n } });
-                } else {
-                  setFixLoopCap(String(config.fixLoop.cap));
-                }
-              }}
-              inputMode="numeric"
-              className="w-20 text-right tabular-nums"
-            />
-          }
+      <SettingsGroup title="Defaults">
+        <ChoiceSetting
+          id="default-executor"
+          title="Default agent"
+          subtitle="Used when a dispatch doesn't pick one."
+          keywords="executor"
+          value={config.orchestrator.executor}
+          choices={agentNames.map((name) => ({ value: name, label: name }))}
+          onSave={(executor) => void onSave({ executor })}
         />
       </SettingsGroup>
 
-      <EscalationEditor
-        steps={config.fixLoop.escalation}
-        onChange={(escalation) => void onSave({ fixLoop: { escalation } })}
-      />
+      <CliAgents config={config} onSave={onSave} canOperate={canOperate} />
     </>
   );
 }

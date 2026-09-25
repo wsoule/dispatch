@@ -14,6 +14,8 @@ import type { z } from 'zod';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import { cartoMcpServers } from '../executors/claude.js';
+import { floorGuard } from '../floorHook.js';
+import type { FloorPolicy } from '../floorHook.js';
 import type {
   OverseerBackend,
   OverseerToolDescriptor,
@@ -189,6 +191,24 @@ export class ClaudeOverseer implements OverseerBackend {
       (t) => `${OVERSEER_TOOL_PREFIX}${t.name}`
     );
     const allowed = new Set(allowedTools);
+    const { authorizeTool } = opts;
+    // Floor calls the human already approved in the PreToolUse hook, by
+    // tool-use id, with the input they approved: the CLI can still send such
+    // a call on to canUseTool, which must not ask a second time.
+    const approvedInHook = new Map<string, string>();
+    const holdForHuman: FloorPolicy | 'deny' =
+      authorizeTool === undefined
+        ? 'deny'
+        : async (request) => {
+            const decision = await authorizeTool(request);
+            if (decision.allow) {
+              approvedInHook.set(
+                request.toolUseId,
+                JSON.stringify(request.input)
+              );
+            }
+            return decision;
+          };
     const options: Options = {
       cwd: this.rootDir,
       // Pre-approves the registry's own tools; everything else still reaches
@@ -196,6 +216,10 @@ export class ClaudeOverseer implements OverseerBackend {
       allowedTools,
       canUseTool: async (toolName, input, callOpts) => {
         if (allowed.has(toolName)) {
+          return { behavior: 'allow', updatedInput: input };
+        }
+        if (approvedInHook.get(callOpts.toolUseID) === JSON.stringify(input)) {
+          approvedInHook.delete(callOpts.toolUseID);
           return { behavior: 'allow', updatedInput: input };
         }
         if (opts.authorizeTool === undefined) {
@@ -221,6 +245,20 @@ export class ClaudeOverseer implements OverseerBackend {
             reason !== undefined && reason !== '' ? reason : 'denied by user',
         };
       },
+      // Holds every irreversible call for a human in the PreToolUse hook,
+      // through the same authorizeTool gate canUseTool uses, since the CLI can
+      // skip canUseTool or let a settings PermissionRequest hook answer first
+      // (see floorGuard). With no one to ask, the call is refused, as
+      // canUseTool refuses it.
+      ...floorGuard(holdForHuman),
+      // No background tasks: a sub-agent or shell that outlives the turn keeps
+      // running after the query closes, when nothing can answer the floor
+      // hook, and under bypassPermissions a background sub-agent's floor
+      // command then ran, held or not (reproduced against the bundled CLI).
+      // Sub-agents run inside the turn instead, so a held call keeps the turn
+      // open until the human answers. `env` replaces the CLI's environment,
+      // hence the spread.
+      env: { ...process.env, CLAUDE_CODE_DISABLE_BACKGROUND_TASKS: '1' },
       mcpServers: {
         [SERVER_NAME]: createSdkMcpServer({
           name: SERVER_NAME,
@@ -249,6 +287,7 @@ export class ClaudeOverseer implements OverseerBackend {
         : {}),
       ...(resume !== undefined ? { resume } : {}),
       ...(opts.model !== undefined ? { model: opts.model } : {}),
+      ...(opts.effort !== undefined ? { effort: opts.effort } : {}),
     };
 
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->

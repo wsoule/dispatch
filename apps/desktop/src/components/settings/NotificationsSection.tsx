@@ -2,19 +2,21 @@ import type { DispatchConfig, NotificationKind } from '@dispatch/core/browser';
 import { isMaskedSecretUrl, NOTIFICATION_KINDS } from '@dispatch/core/browser';
 import { useEffect, useState } from 'react';
 
+import { SettingsSwitch } from './fields';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { PillButton } from '@/ui/ai/pill';
-import { Switch } from '@/ui/ai/switch';
 import { Input } from '@/ui/input';
 
 interface NotificationsSectionProps {
   config: DispatchConfig;
+  /** The webhook sends data elsewhere, so only the owner may change it. */
+  canOperate: boolean;
   onSave: (patch: {
     notifications?: {
       kinds?: Partial<Record<NotificationKind, boolean>>;
       webhook?: string | null;
     };
-  }) => Promise<void>;
+  }) => Promise<unknown>;
 }
 
 // One row per feed kind, worded as the thing that happened rather than the
@@ -22,23 +24,23 @@ interface NotificationsSectionProps {
 const KIND_INFO: Record<NotificationKind, { label: string; hint: string }> = {
   question: {
     label: 'An agent asks you a question',
-    hint: 'ask_user — the run is blocked until you answer.',
+    hint: 'The run waits until you answer.',
   },
   approval: {
-    label: 'An agent needs permission to use a tool',
-    hint: 'A run parked on a permission gate.',
+    label: 'An agent needs permission',
+    hint: 'A run is paused on a command it needs you to allow.',
   },
   'scope-request': {
-    label: 'An agent asks to edit outside its scope',
-    hint: 'Files beyond the task’s declared writes.',
+    label: 'An agent asks to edit extra files',
+    hint: 'Files outside the ones its task lists.',
   },
   'fix-loop-capped': {
-    label: 'A fix loop stops and needs a ruling',
-    hint: 'Review or verify failures the loop could not fix within its rounds.',
+    label: 'A fix loop gives up',
+    hint: "Problems it couldn't fix in its rounds, waiting for your call.",
   },
   'run-stalled': {
-    label: 'A run fails or stalls',
-    hint: 'Failed, interrupted with uncommitted work, or its base is gone.',
+    label: 'A run fails or gets stuck',
+    hint: 'It failed, stopped with unsaved work, or its starting point is gone.',
   },
 };
 
@@ -48,6 +50,7 @@ const KIND_INFO: Record<NotificationKind, { label: string; hint: string }> = {
 export function NotificationsSection({
   config,
   onSave,
+  canOperate,
 }: NotificationsSectionProps) {
   const [webhook, setWebhook] = useState('');
   // The daemon masks a stored webhook to its origin (the path is the
@@ -94,8 +97,9 @@ export function NotificationsSection({
   return (
     <>
       <SettingsGroup
-        title="What interrupts you"
-        hint="Each kind reaches beyond the app when it is on: a native notification while this window is in the background, and the webhook below. The inbox and the feed keep every item either way."
+        title="Notify me when"
+        hint="A system notification when Dispatch is in the background, plus the webhook below. Your inbox keeps everything either way."
+        keywords="alerts native"
       >
         {NOTIFICATION_KINDS.map((kind) => (
           <SettingsRow
@@ -104,7 +108,7 @@ export function NotificationsSection({
             subtitle={KIND_INFO[kind].hint}
             htmlFor={`notify-${kind}`}
             control={
-              <Switch
+              <SettingsSwitch
                 id={`notify-${kind}`}
                 checked={config.notifications.kinds[kind]}
                 onCheckedChange={(checked) =>
@@ -118,7 +122,7 @@ export function NotificationsSection({
         ))}
       </SettingsGroup>
 
-      <SettingsGroup title="Webhook">
+      <SettingsGroup title="Webhook" keywords="slack zapier http">
         {masked && !replacing ? (
           <SettingsRow
             title={
@@ -127,37 +131,42 @@ export function NotificationsSection({
                 <span className="text-(--text-secondary)">{stored}</span>
               </>
             }
-            subtitle="The stored URL is a credential and is only ever shown by its origin. Replace to enter a new one, Clear to remove it."
+            subtitle="Only the start of the address is shown, because the rest works like a password."
+            locked={!canOperate}
             control={
-              <>
-                <PillButton
-                  onClick={() => {
-                    setWebhook('');
-                    setRefused(false);
-                    setReplacing(true);
-                  }}
-                >
-                  Replace
-                </PillButton>
-                <PillButton
-                  onClick={() =>
-                    void onSave({ notifications: { webhook: null } })
-                  }
-                >
-                  Clear
-                </PillButton>
-              </>
+              canOperate && (
+                <>
+                  <PillButton
+                    onClick={() => {
+                      setWebhook('');
+                      setRefused(false);
+                      setReplacing(true);
+                    }}
+                  >
+                    Replace
+                  </PillButton>
+                  <PillButton
+                    onClick={() =>
+                      void onSave({ notifications: { webhook: null } })
+                    }
+                  >
+                    Clear
+                  </PillButton>
+                </>
+              )
             }
           />
         ) : (
           <SettingsRow
             title="Webhook URL"
-            subtitle="Every newly-blocking item is POSTed here as JSON, subject to the toggles above. Point Slack, a Zap, or your own endpoint at it. Leave empty for no webhook."
+            subtitle="Everything switched on above is also sent here as JSON: Slack, Zapier or your own server. Leave empty for none."
             htmlFor="webhook-url"
+            locked={!canOperate}
             stacked
             control={
               <Input
                 id="webhook-url"
+                disabled={!canOperate}
                 value={webhook}
                 onChange={(e) => setWebhook(e.target.value)}
                 onBlur={commitWebhook}
@@ -167,8 +176,8 @@ export function NotificationsSection({
           >
             {refused && (
               <span className="text-state-failed text-[12px]">
-                That is the masked form of a stored URL, not a URL. Paste the
-                full webhook URL.
+                That&rsquo;s the shortened address shown for a saved webhook.
+                Paste the full URL.
               </span>
             )}
           </SettingsRow>

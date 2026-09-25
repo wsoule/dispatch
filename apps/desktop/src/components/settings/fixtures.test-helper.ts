@@ -54,8 +54,15 @@ export function dataWith(
   return {
     config: testConfig,
     client: {},
+    // A database-backed board, the default; the Board sync page waits for this.
+    health: { pr: false, storageBackend: 'sqlite' },
+    syncStatus: null,
     portLoading: false,
     portError: false,
+    // No tier known and not attached: the shell locks config until a test
+    // passes `myTier`, the way it does before a connection exists.
+    myTier: null,
+    attachedWithoutAppToken: false,
     tasks: [],
     runs: [],
     linearStatus: {

@@ -1,4 +1,4 @@
-import type { BoardSyncStatus } from '@dispatch/client';
+import type { BoardSyncOffReason, BoardSyncStatus } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { RefreshCw } from 'lucide-react';
 import { useState } from 'react';
@@ -21,9 +21,22 @@ export function syncedWhen(status: BoardSyncStatus): string {
   })}`;
 }
 
+/** What to do about sharing that isn't running, by the daemon's reason for
+ *  it. An older daemon gives none; off is the likely one. */
+export function notSharingHint(reason: BoardSyncOffReason | undefined): string {
+  switch (reason) {
+    case 'not-started':
+      return "Sharing is on but didn't start: its remote or repo couldn't be reached when Dispatch started, or it was turned on since. Check where the board is kept below, then restart Dispatch for this project.";
+    case 'files':
+      return "This board is kept as files, which sharing can't carry.";
+    default:
+      return 'Turn on sharing below, then restart Dispatch for this project.';
+  }
+}
+
 /**
- * Settings → Daemon → Board sync: whether this board is shared with
- * teammates' daemons over git, and whether that is working. Everything here
+ * Settings → Board sync, top of the page: whether this board is shared with
+ * teammates over git, and whether that is working. Everything here
  * is what `dispatch sync status` prints, for someone who does not live in a
  * terminal — including the one thing sync cannot fix alone, a task created
  * separately on two machines under one id.
@@ -33,6 +46,7 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
   const queryClient = useQueryClient();
   const key = ['dispatch-sync-status', client?.baseUrl];
   const [syncing, setSyncing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const { data: status } = useQuery({
     queryKey: key,
     queryFn: () => {
@@ -45,34 +59,40 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
     refetchInterval: 15_000,
   });
 
+  async function syncNow() {
+    if (client === null) return;
+    setSyncing(true);
+    setSyncError(null);
+    try {
+      queryClient.setQueryData(key, await client.syncBoardNow());
+    } catch (err) {
+      setSyncError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSyncing(false);
+    }
+  }
+
   if (status === undefined) return null;
 
   if (!status.enabled) {
     return (
-      <SettingsGroup
-        title="Board sync"
-        hint="Share this board with teammates' own daemons, through a branch of this project's repository or a repository of its own."
-      >
+      <SettingsGroup title="Status" keywords="board sync" requires="none">
         <SettingsRow
-          title="Off"
-          subtitle={
-            <>
-              Add <code className="font-mono">sync: {'{ enabled: true }'}</code>{' '}
-              to .dispatch/config.yml and restart the daemon; add{' '}
-              <code className="font-mono">repo: &lt;url&gt;</code> to keep the
-              board in a repository of its own. Everyone who does the same
-              shares one board.
-            </>
-          }
+          title="Not sharing"
+          subtitle={notSharingHint(
+            'reason' in status ? status.reason : undefined
+          )}
+          keywords="off sync"
         />
       </SettingsGroup>
     );
   }
 
   return (
-    <SettingsGroup title="Board sync">
+    <SettingsGroup title="Status" keywords="board sync" requires="none">
       <SettingsRow
         title={syncedWhen(status)}
+        keywords="sync now last synced"
         subtitle={
           <span className="font-mono">
             {status.branch} on {status.remote}
@@ -83,20 +103,18 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
             variant="outline"
             size="sm"
             disabled={client === null || syncing}
-            onClick={() => {
-              if (client === null) return;
-              setSyncing(true);
-              void client
-                .syncBoardNow()
-                .then((next) => queryClient.setQueryData(key, next))
-                .finally(() => setSyncing(false));
-            }}
+            onClick={() => void syncNow()}
           >
             <RefreshCw />
             {syncing ? 'Syncing…' : 'Sync now'}
           </Button>
         }
       >
+        {syncError !== null && (
+          <SettingsHint className="text-state-failed">
+            Couldn&rsquo;t sync: {syncError}
+          </SettingsHint>
+        )}
         {status.paused !== null && (
           <SettingsHint className="text-(--state-waiting-fg)">
             {status.paused}
@@ -104,8 +122,8 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
         )}
         {status.lastError !== null && (
           <SettingsHint className="text-(--state-waiting-fg)">
-            The remote could not be reached: {status.lastError}. Work carries on
-            here and goes out on the next pass that reaches it.
+            Couldn&rsquo;t reach the remote: {status.lastError}. Your changes
+            are safe here and go out on the next successful sync.
           </SettingsHint>
         )}
         {status.pending > 0 && (
@@ -118,7 +136,7 @@ export function BoardSyncGroup({ data }: BoardSyncGroupProps) {
       {status.problems.map((problem) => (
         <SettingsRow
           key={problem.task}
-          title={`Needs a person: ${problem.task}`}
+          title={`Needs your attention: ${problem.task}`}
           subtitle={problem.message}
         />
       ))}

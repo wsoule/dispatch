@@ -1,3 +1,4 @@
+import { TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -362,7 +363,58 @@ describe('board sync', () => {
         headers: { authorization: `Bearer ${handle.tokens.agentToken}` },
       }
     );
-    expect(await res.json()).toEqual({ enabled: false });
+    expect(await res.json()).toEqual({ enabled: false, reason: 'off' });
+    const now = await rawFetch(
+      `http://127.0.0.1:${handle.port}/api/board-sync/now`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${handle.tokens.agentToken}` },
+      }
+    );
+    expect(now.status).toBe(409);
+    expect(await now.text()).toContain('sync.enabled: true');
+  });
+
+  // Turned on but never started: here its remote doesn't exist.
+  it('says so when it is on but did not start', async () => {
+    const ada = await teammate('ada', 'remote: nowhere');
+    expect((await ada.api('/api/board-sync')).body).toEqual({
+      enabled: false,
+      reason: 'not-started',
+    });
+    const now = await ada.sync();
+    expect(now.status).toBe(409);
+    expect((now.body as { error: string }).error).toContain("isn't running");
+  });
+
+  // A board kept as files is never shared this way, whatever config.yml says.
+  it('points a board kept as files at committing its task files', async () => {
+    const root = tempDir('dispatch-sync-files-');
+    runGitSync(root, ['init', '-q', '-b', 'main']);
+    TaskStore.init(root);
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'sync:\n  enabled: true\n'
+    );
+    const handle = await startServer({
+      rootDir: root,
+      port: 0,
+      webDistDir: null,
+      storeBackend: 'files',
+    });
+    handles.push(handle);
+    const base = `http://127.0.0.1:${handle.port}`;
+    const auth = { authorization: `Bearer ${handle.tokens.appToken}` };
+    const res = await rawFetch(`${base}/api/board-sync`, { headers: auth });
+    expect(await res.json()).toEqual({ enabled: false, reason: 'files' });
+    const now = await rawFetch(`${base}/api/board-sync/now`, {
+      method: 'POST',
+      headers: auth,
+    });
+    expect(now.status).toBe(409);
+    const text = await now.text();
+    expect(text).toContain('Commit task files to the main branch');
+    expect(text).not.toContain('sync.enabled');
   });
 
   it('leaves the file backend syncer’s own status route alone', async () => {

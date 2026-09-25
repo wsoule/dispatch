@@ -19,6 +19,7 @@ import { useEffect, useState } from 'react';
 
 import { relativeTime } from '../../lib/landingView';
 import { policyReceipts } from '../../lib/policyReceipts';
+import { SettingsSearchable } from './search';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { PanelRow } from '@/ui/chrome';
 import {
@@ -41,34 +42,42 @@ interface PolicyPatch {
 // What each ladder stop means, phrased for the slider. Cumulative on purpose:
 // a rung carries every demotion below it (see GATE_RUNGS in core's policy.ts).
 const RUNG_DESCRIPTIONS: Record<number, string> = {
-  1: 'Every gate parks on you. Nothing auto-decides.',
-  2: 'Scope requests auto-approve and record. Verify retries and merges still block.',
-  3: 'Scope and tool approvals auto-decide; a failed verify auto-retries through the fix loop. Merges still block.',
-  4: 'Green runs land through the merge queue on their own. You review the receipts.',
+  1: 'Every decision waits for you.',
+  2: 'Requests to edit extra files are approved for you. Everything else waits.',
+  3: 'Extra files and uncertain commands are decided for you, and failed checks go straight back to be fixed. Merging still waits.',
+  4: 'Work that passes its checks merges on its own. You review what happened afterwards.',
+};
+
+// Short names for the slider's stops, in the page's words rather than core's.
+const RUNG_LABELS: Record<number, string> = {
+  1: 'Review everything',
+  2: 'Allow extra files',
+  3: 'Fix on its own',
+  4: 'Merge on its own',
 };
 
 // One line per gate: what actually happens when it auto-decides, so the table
 // reads as behavior, not as config keys.
 const GATE_COPY: Record<PolicyGate, { label: string; meaning: string }> = {
   scope: {
-    label: 'Scope requests',
-    meaning: 'An agent asks to edit outside its declared writes',
+    label: 'Extra files',
+    meaning: 'An agent asks to edit files outside its task.',
   },
   approval: {
-    label: 'Tool approvals',
-    meaning: 'A tool call the safety classifier referred to a human',
+    label: 'Uncertain commands',
+    meaning: "A command the safety check wasn't sure about.",
   },
   'verify-retry': {
-    label: 'Verify retry',
-    meaning: 'A failed verification re-enters the fix loop',
+    label: 'Retrying failed checks',
+    meaning: 'Work that failed its checks goes back to be fixed.',
   },
   merge: {
-    label: 'Merge',
-    meaning: 'A finished green run enters the merge queue',
+    label: 'Merging',
+    meaning: 'Finished work that passed its checks joins the merge queue.',
   },
   wake: {
-    label: 'Wake sleeping agents for messages',
-    meaning: 'A queued message wakes a sleeping agent to deliver it',
+    label: 'Waking agents for messages',
+    meaning: 'A queued message wakes a sleeping agent to deliver it.',
   },
 };
 
@@ -76,13 +85,19 @@ const GATE_COPY: Record<PolicyGate, { label: string; meaning: string }> = {
 // only — enforcement lives server-side and never consults the rung. The six
 // members are the settled ladder's (epic e-ad1978 ledger); this list is what
 // the UI *promises*, so keep it in step with the server's floor checks.
-const FLOOR_ROWS: readonly string[] = [
-  'Force-push to refs the run does not own',
-  'Deletes outside declared writes',
-  'Spend above the budget cap',
-  'Publishing artifacts (npm publish, release-tag pushes)',
-  'Repo visibility and remote settings changes',
-  'Machine rulings on findings that require one',
+const FLOOR_ROWS: readonly { text: string; keywords: string }[] = [
+  { text: "Force-pushing over a branch the run doesn't own", keywords: 'git' },
+  { text: 'Deleting files outside the task', keywords: 'delete' },
+  { text: 'Spending past the per-run limit', keywords: 'budget cost cap' },
+  {
+    text: 'Publishing packages or pushing release tags',
+    keywords: 'npm release',
+  },
+  { text: 'Changing repo visibility or remote settings', keywords: 'github' },
+  {
+    text: 'A machine settling a finding that needs a person',
+    keywords: 'review',
+  },
 ];
 
 interface AutonomySliderProps {
@@ -149,7 +164,7 @@ function AutonomySlider({ rung, onRungChange }: AutonomySliderProps) {
                   : 'text-muted-foreground font-book hover:text-(--text-secondary)'
               }`}
             >
-              {stop.label}
+              {RUNG_LABELS[stop.rung] ?? stop.label}
             </button>
           );
         })}
@@ -190,11 +205,11 @@ function GateTable({ policy, onPinGate }: GateTableProps) {
                 >
                   {ruling.mode === 'auto'
                     ? ruling.authorizedBy === 'override'
-                      ? 'Auto + records (pinned)'
-                      : 'Auto + records'
+                      ? 'Automatic, pinned'
+                      : 'Automatic'
                     : pin === 'block'
-                      ? 'Blocks (pinned)'
-                      : 'Blocks'}
+                      ? 'Waits, pinned'
+                      : 'Waits for you'}
                 </span>
                 <Select
                   value={pin ?? 'rung'}
@@ -207,14 +222,14 @@ function GateTable({ policy, onPinGate }: GateTableProps) {
                 >
                   <SelectTrigger
                     aria-label={`${GATE_COPY[gate].label} override`}
-                    className="w-[130px]"
+                    className="w-[140px]"
                   >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="rung">Rung decides</SelectItem>
-                    <SelectItem value="block">Always block</SelectItem>
-                    <SelectItem value="auto">Always auto</SelectItem>
+                    <SelectItem value="rung">Follow level</SelectItem>
+                    <SelectItem value="block">Always wait</SelectItem>
+                    <SelectItem value="auto">Always automatic</SelectItem>
                   </SelectContent>
                 </Select>
               </>
@@ -222,34 +237,36 @@ function GateTable({ policy, onPinGate }: GateTableProps) {
           />
         );
       })}
+    </>
+  );
+}
 
-      <PanelRow className="bg-surface-quaternary text-muted-foreground h-8 min-h-0 gap-2 py-0 text-[12px] font-medium">
-        Irreversibility floor
-      </PanelRow>
+/** The hard stops: never configurable, shown so the promise is visible. */
+function HardStops() {
+  return (
+    <>
       {FLOOR_ROWS.map((row) => (
-        <PanelRow
-          key={row}
-          aria-disabled="true"
-          className="text-muted-foreground min-h-8 flex-nowrap gap-2 py-1 text-[13px]"
+        <SettingsSearchable
+          key={row.text}
+          text={`${row.text} ${row.keywords} hard stop floor`}
         >
-          <Lock aria-hidden className="size-3.5 shrink-0" />
-          <span className="min-w-0 flex-1">{row}</span>
-          <span className="font-book shrink-0 text-[12px]">Always blocks</span>
-        </PanelRow>
+          <PanelRow
+            aria-disabled="true"
+            className="text-muted-foreground min-h-9 flex-nowrap gap-2 py-1 text-[13px]"
+          >
+            <Lock aria-hidden className="size-3.5 shrink-0" />
+            <span className="min-w-0 flex-1">{row.text}</span>
+            <span className="font-book shrink-0 text-[12px]">Always waits</span>
+          </PanelRow>
+        </SettingsSearchable>
       ))}
-      <PanelRow>
-        <SettingsHint>
-          The floor does not move with the slider — these block at every rung,
-          with no override.
-        </SettingsHint>
-      </PanelRow>
     </>
   );
 }
 
 interface PolicySectionProps {
   config: DispatchConfig;
-  onSave: (patch: PolicyPatch) => Promise<void>;
+  onSave: (patch: PolicyPatch) => Promise<unknown>;
   client: ApiClient | null;
   /** Opens a task's full view, where its ledger holds the complete receipt.
    *  Absent (a shell without navigation), receipts render unlinked. */
@@ -295,18 +312,25 @@ export function PolicySection({
 
   return (
     <>
-      <SettingsGroup title="Autonomy">
-        <PanelRow className="flex-col items-stretch gap-1.5 py-3">
-          <AutonomySlider
-            rung={policy.rung}
-            onRungChange={(rung) => void onSave({ policy: { rung } })}
-          />
-        </PanelRow>
+      <SettingsGroup
+        title="Level"
+        hint="Every automatic decision is recorded, and the recent ones are listed below."
+        keywords="autonomy policy rung slider"
+      >
+        <SettingsSearchable text="autonomy level review everything merge on its own">
+          <PanelRow className="flex-col items-stretch gap-1.5 py-3">
+            <AutonomySlider
+              rung={policy.rung}
+              onRungChange={(rung) => void onSave({ policy: { rung } })}
+            />
+          </PanelRow>
+        </SettingsSearchable>
       </SettingsGroup>
 
       <SettingsGroup
-        title="Gate table"
-        hint="Per-gate pins win over the rung, in either direction. Every auto-decision still records to the ledger, findings, and evidence."
+        title="Overrides"
+        hint="Make one kind of decision always wait for you, or always go ahead, whatever the level."
+        keywords="gate table pin"
       >
         <GateTable
           policy={policy}
@@ -316,19 +340,29 @@ export function PolicySection({
         />
       </SettingsGroup>
 
-      <SettingsGroup title="Receipts">
+      <SettingsGroup
+        title="Hard stops"
+        requires="none"
+        hint="These always wait for you, at every level. They can't be overridden."
+        keywords="irreversibility floor"
+      >
+        <HardStops />
+      </SettingsGroup>
+
+      <SettingsGroup
+        title="Recent automatic decisions"
+        requires="none"
+        keywords="receipts ledger"
+      >
         {receiptsError && (
           <PanelRow>
-            <SettingsHint>
-              Could not load the ledger for this project.
-            </SettingsHint>
+            <SettingsHint>Couldn&rsquo;t load recent decisions.</SettingsHint>
           </PanelRow>
         )}
         {!receiptsError && receipts !== null && receipts.length === 0 && (
           <PanelRow>
             <SettingsHint>
-              No auto-decisions yet. When a gate auto-decides, its receipt lands
-              in the ledger and shows up here.
+              None yet. Each one is listed here and recorded on its task.
             </SettingsHint>
           </PanelRow>
         )}

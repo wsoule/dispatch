@@ -11,7 +11,7 @@ import { SettingsGroup } from './SettingsGroup';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -28,7 +28,8 @@ export function PreviewsSection({ config, onSave, canOperate }: Props) {
     <>
       <SettingsGroup
         title="Live previews"
-        hint="A run's dev server, started from its own worktree when someone presses Start on the Preview tab."
+        hint="Pressing Start on a run's Preview tab runs its app from the run's own checkout."
+        keywords="dev server"
       >
         <SwitchSetting
           id="preview-enabled"
@@ -38,8 +39,9 @@ export function PreviewsSection({ config, onSave, canOperate }: Props) {
         />
         <TextSetting
           id="preview-command"
-          title="Dev server command"
-          subtitle="Empty uses the worktree's package.json: its dev script, else start."
+          title="Start command"
+          subtitle="Leave empty to use package.json's dev script, or start if there isn't one."
+          keywords="dev server"
           value={preview.command}
           placeholder="pnpm dev --port $PORT"
           mono
@@ -49,7 +51,7 @@ export function PreviewsSection({ config, onSave, canOperate }: Props) {
         <TextSetting
           id="preview-install"
           title="Install command"
-          subtitle="Run once before the dev server when the worktree has no node_modules — a run's worktree is a fresh checkout."
+          subtitle="Runs first when the checkout has no node_modules yet."
           value={preview.installCommand}
           placeholder="pnpm install"
           mono
@@ -59,13 +61,13 @@ export function PreviewsSection({ config, onSave, canOperate }: Props) {
           }
         />
       </SettingsGroup>
-      <SettingsGroup title="Timing">
+      <SettingsGroup title="Timing" keywords="timeout">
         <NumberSetting
           id="preview-ready"
           title="Time to start"
-          subtitle="How long the dev server has to answer before the preview is reported as failed. Empty restores the default."
+          subtitle="The preview fails if the app hasn't answered by then. Leave empty for the default."
           value={preview.readyTimeoutSec}
-          suffix="s"
+          suffix="sec"
           allowEmpty
           onSave={(readyTimeoutSec) =>
             void onSave({ preview: { readyTimeoutSec } })
@@ -74,9 +76,10 @@ export function PreviewsSection({ config, onSave, canOperate }: Props) {
         <NumberSetting
           id="preview-idle"
           title="Stop when unused for"
-          subtitle="An idle dev server is pure cost; it is swept after this long with no request. Empty restores the default."
+          subtitle="An idle preview is stopped to free up the machine. Leave empty for the default."
+          keywords="idle"
           value={preview.idleTimeoutSec}
-          suffix="s"
+          suffix="sec"
           allowEmpty
           onSave={(idleTimeoutSec) =>
             void onSave({ preview: { idleTimeoutSec } })

@@ -1,4 +1,3 @@
-import type { Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'bun:test';
 import { rmSync } from 'node:fs';
 
@@ -8,7 +7,7 @@ import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
-import { initGitRepo } from './helpers.js';
+import { initGitRepo, withRunEndControls } from './helpers.js';
 
 const TS = '2026-01-01T00:00:00.000Z';
 
@@ -281,7 +280,7 @@ describe('ClaudeExecutor sub-agent entries', () => {
           result: '',
         };
       }
-      const executor = new ClaudeExecutor(() => messages() as unknown as Query);
+      const executor = new ClaudeExecutor(() => withRunEndControls(messages()));
       const entries: NormalizedEntry[] = [];
       await new Promise<void>((resolve) => {
         const events: ExecutorEvents = {

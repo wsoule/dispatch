@@ -149,7 +149,7 @@ describe('POST /api/tasks/:id/review', () => {
     expect(res.status).toBe(202);
     const meta = await json<{ id: string; kind: string; model: string }>(res);
     expect(meta.kind).toBe('review');
-    expect(meta.model).toBe('claude-opus-5');
+    expect(meta.model).toBe('claude-opus-5-5');
 
     await waitFor(async () => {
       const list = await json<Finding[]>(

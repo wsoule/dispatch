@@ -8,7 +8,7 @@ import { dataWith, testProject as project } from './fixtures.test-helper';
 
 const data = dataWith();
 
-// The section now holds the board sync group, which fetches its own status.
+// A query client keeps the section mountable if it grows a fetching group again.
 function render(ui: ReactElement) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -40,6 +40,7 @@ test('a failed daemon start shows the captured detail', () => {
 // The daemon row reads its state as a sentence-case word beside the dot.
 test('the daemon status reads Running while a client is up', () => {
   render(<DaemonSection activeProject={project} data={data} />);
+  expect(screen.getByRole('heading', { name: 'Status' })).toBeDefined();
+  expect(screen.getByText('Dispatch for this project')).toBeDefined();
   expect(screen.getByText('Running')).toBeDefined();
-  expect(screen.getByText('dispatchd')).toBeDefined();
 });

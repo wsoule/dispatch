@@ -102,7 +102,7 @@ export function linearKeySourceNote(
     case 'global':
       return 'Using your shared default key. Connect a key here to use a different Linear workspace for this project.';
     default:
-      return 'Connect a Linear API key to sync both ways. The key is sent once and never shown again.';
+      return 'Paste a Linear API key to connect. It is saved once and never shown again.';
   }
 }
 

@@ -85,6 +85,12 @@ describe('GET /api/health', () => {
     expect(body.watchdog).toBe('armed');
   });
 
+  // test/setup.ts pins DISPATCH_STORE_BACKEND=files for this daemon.
+  it('names the file backend its task store uses', async () => {
+    const body = await json(await fetch(`${baseUrl}/api/health`));
+    expect(body.storageBackend).toBe('files');
+  });
+
   it('serves JSON responses with an explicit utf-8 charset', async () => {
     const res = await fetch(`${baseUrl}/api/health`);
     expect(res.headers.get('content-type')).toBe(
@@ -555,14 +561,14 @@ describe('error paths', () => {
     expect(body.meta.selfReview).toBe(true);
   });
 
-  it('defaults selfReview to true when the create body omits it', async () => {
+  it('defaults selfReview to false when the create body omits it', async () => {
     const res = await fetch(`${baseUrl}/api/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: 'X' }),
     });
     expect(res.status).toBe(201);
-    expect((await json(res)).meta.selfReview).toBe(true);
+    expect((await json(res)).meta.selfReview).toBe(false);
   });
 
   it('creates a task with selfReview: false when explicitly opted out', async () => {

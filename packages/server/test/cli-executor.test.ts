@@ -159,6 +159,23 @@ describe('CliExecutor', () => {
     expect(textOf(rec.entries, 'assistant')).not.toContain('err');
   });
 
+  it('says up front that nothing holds an irreversible command', async () => {
+    const executor = new CliExecutor({
+      command: { run: ['sh', '-c', 'exit 0', 'sh', '{prompt}'] },
+    });
+    const rec = recorder();
+    executor.start(
+      { cwd: process.cwd(), prompt: 'x', permissionMode: 'acceptEdits' },
+      rec.events
+    );
+    await rec.finished;
+
+    expect(rec.entries[0]).toMatchObject({
+      kind: 'system',
+      text: 'sh has no approval protocol, so Dispatch cannot hold a force-push, a publish, a repo-settings change or a remote ref deletion for a human under permissionMode acceptEdits',
+    });
+  });
+
   it('fails the run when the command exits non-zero', async () => {
     const executor = new CliExecutor({
       command: { run: ['sh', '-c', 'exit 3'] },

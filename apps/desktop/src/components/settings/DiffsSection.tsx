@@ -5,6 +5,7 @@ import type {
   DiffLayout,
 } from '../../lib/diffDisplay';
 import { DiffSurface } from '../code/DiffSurface';
+import { SettingsSearchable } from './search';
 import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { Switch } from '@/ui/ai/switch';
 import { PanelRow } from '@/ui/chrome';
@@ -80,8 +81,10 @@ export function DiffsSection() {
   return (
     <>
       <SettingsGroup
-        title="Diffs"
-        hint="Stored in this browser, not .dispatch/config.yml — a display preference rather than project configuration."
+        title="Appearance"
+        hint="Saved in this browser only. Nothing here changes the project."
+        keywords="diff display"
+        requires="none"
       >
         <SettingsRow
           title="Layout"
@@ -205,19 +208,23 @@ export function DiffsSection() {
 
       <SettingsGroup
         title="Preview"
-        hint="Every diff in the app renders like this — a run’s changes, a pull request, the Git page. A change above applies here as you make it."
+        hint="Every diff in the app looks like this: runs, pull requests and the Git page."
+        keywords="diff sample"
+        requires="none"
       >
-        <PanelRow className="p-3">
-          {/* A fixed height with the surface as its own scroller: `CodeView` must be the
+        <SettingsSearchable text="diff preview sample">
+          <PanelRow className="p-3">
+            {/* A fixed height with the surface as its own scroller: `CodeView` must be the
             element that scrolls (see `DiffSurface`'s `className` note), and the settings page
             should not grow by the length of the sample. */}
-          <div className="border-border rounded-control flex h-72 min-h-0 w-full flex-col overflow-hidden border-[0.5px]">
-            <DiffSurface
-              patch={PREVIEW_PATCH}
-              cacheKeyPrefix="settings-preview"
-            />
-          </div>
-        </PanelRow>
+            <div className="border-border rounded-control flex h-72 min-h-0 w-full flex-col overflow-hidden border-[0.5px]">
+              <DiffSurface
+                patch={PREVIEW_PATCH}
+                cacheKeyPrefix="settings-preview"
+              />
+            </div>
+          </PanelRow>
+        </SettingsSearchable>
       </SettingsGroup>
     </>
   );

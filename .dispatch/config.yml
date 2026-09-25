@@ -79,5 +79,5 @@ verifySteps:
   - name: test
     command: moon run :test
 models:
-  execute: claude-opus-5
-  plan: claude-opus-5
+  execute: claude-opus-5-5
+  plan: claude-opus-5-5

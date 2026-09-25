@@ -131,7 +131,7 @@ export class BoardSyncScheduler {
     const run = this.runOnce()
       .catch((err) => {
         console.error(
-          `board sync: sync attempt failed unexpectedly: ${(err as Error).message}`
+          `task-file commit: sync attempt failed unexpectedly: ${(err as Error).message}`
         );
       })
       .finally(() => {
@@ -149,7 +149,7 @@ export class BoardSyncScheduler {
     // Re-checked here, not just at schedule time: the debounce window gives
     // a config edit time to land between notifyTaskChanged() and this call.
     if (!this.autoCommitEnabled()) return;
-    markBlockingSection('board sync');
+    markBlockingSection('task-file commit');
     const result = await this.syncer.syncOnce();
     this.lastSyncResult = result;
     this.lastSyncedAtIso = new Date().toISOString();

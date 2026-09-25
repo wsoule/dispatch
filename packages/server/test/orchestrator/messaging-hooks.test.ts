@@ -545,4 +545,78 @@ describe('Orchestrator messaging hooks', () => {
     await orchestrator.cancel(run.id);
     messaging.close();
   });
+
+  it('re-holds a push that arrives while a Claude run winds down after its result', async () => {
+    const { orchestrator, store, events } = makeOrchestrator(repo);
+    let reachWindDown!: () => void;
+    const windingDown = new Promise<void>((resolve) => {
+      reachWindDown = resolve;
+    });
+    let releaseWindDown!: () => void;
+    const windDownHeld = new Promise<void>((resolve) => {
+      releaseWindDown = resolve;
+    });
+    orchestrator.registerExecutor(
+      'claude',
+      new ClaudeExecutor(() => {
+        const messages = (function* (): Generator<unknown> {
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'done' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            num_turns: 1,
+            total_cost_usd: 0.01,
+            session_id: 's',
+            result: 'done',
+            terminal_reason: 'completed',
+            modelUsage: {},
+            errors: [],
+          };
+        })();
+        return Object.assign(messages, {
+          stopTask: () => Promise.resolve(),
+          applyFlagSettings: () => {
+            reachWindDown();
+            return windDownHeld;
+          },
+          interrupt: () => Promise.resolve(),
+          close: () => {},
+        }) as unknown as Query;
+      })
+    );
+    const messaging = await openTestMessaging(orchestrator, store, events);
+    const task = store.create({ title: 'Task' });
+
+    const run = await orchestrator.dispatch(task.meta.id, 'claude');
+    await windingDown;
+    expect(orchestrator.getRun(run.id)?.meta.state).toBe('running');
+    expect(() =>
+      orchestrator.deliverToRun(run.id, 'x', {
+        label: 'human:wyat',
+        messageId: 'm-x',
+        human: true,
+      })
+    ).toThrow(OrchestratorConflictError);
+    expect(() => orchestrator.notifyRun(run.id, 'x')).toThrow(
+      OrchestratorConflictError
+    );
+
+    const sent = await messaging.engine.send(
+      { to: [`task:${task.meta.id}`], kind: 'message', body: 'after result' },
+      { address: 'human:wyat', canDecide: true }
+    );
+    expect(messaging.store.getDelivery(sent.deliveries[0].id)).toMatchObject({
+      state: 'held',
+      runId: null,
+    });
+
+    releaseWindDown();
+    await waitFor(() => orchestrator.getRun(run.id)?.meta.state === 'finished');
+    messaging.close();
+  });
 });

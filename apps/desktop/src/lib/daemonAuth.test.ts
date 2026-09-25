@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   assertCanDecide,
   ATTACHED_DAEMON_EXPLANATION,
+  credentialTier,
   daemonBaseUrl,
   daemonRestartReadiness,
   decideAvailability,
@@ -61,6 +62,54 @@ describe('resolveDaemonAuth', () => {
       token: undefined,
       canDecide: false,
     });
+  });
+});
+
+// The tier Settings assumes until /api/whoami answers, read off the credential.
+describe('credentialTier', () => {
+  const base = { port: 45999, appToken: null, agentToken: null };
+
+  test('a teammate session says its own tier, whatever tokens are present', () => {
+    expect(credentialTier({ ...base, session: { tier: 'request' } })).toBe(
+      'request'
+    );
+    expect(credentialTier({ ...base, session: { tier: 'decide' } })).toBe(
+      'decide'
+    );
+    // A session wins over an app token, which would otherwise mean operator.
+    expect(
+      credentialTier({
+        ...base,
+        appToken: 'app',
+        session: { tier: 'decide' },
+      })
+    ).toBe('decide');
+  });
+
+  test('the app token is the owner, so operator', () => {
+    expect(credentialTier({ ...base, appToken: 'app' })).toBe('operator');
+    expect(
+      credentialTier({ ...base, appToken: 'app', agentToken: 'agent' })
+    ).toBe('operator');
+  });
+
+  test('only the on-disk agent token is request tier', () => {
+    expect(credentialTier({ ...base, agentToken: 'agent' })).toBe('request');
+    // An empty app token is no app token.
+    expect(credentialTier({ ...base, appToken: '', agentToken: 'agent' })).toBe(
+      'request'
+    );
+  });
+
+  test('no credential at all is no tier', () => {
+    expect(credentialTier(base)).toBeNull();
+    expect(
+      credentialTier({ ...base, appToken: '', agentToken: '' })
+    ).toBeNull();
+  });
+
+  test('no connection yet is no tier', () => {
+    expect(credentialTier(undefined)).toBeNull();
   });
 });
 

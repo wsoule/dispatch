@@ -61,7 +61,13 @@ export class CommitMessageGenerator {
         cwd: this.rootDir,
         model: loadConfig(this.rootDir).models.summarize,
         permissionMode: 'plan',
-        allowedTools: [],
+        // No built-in tools and no MCP servers: the prompt carries an untrusted
+        // diff. `allowedTools: []` only pre-approved nothing, so the model
+        // still had Bash, and plan mode runs a command a settings allow rule
+        // matches; project `.mcp.json` servers would still start without
+        // strictMcpConfig.
+        tools: [],
+        strictMcpConfig: true,
         outputFormat: { type: 'json_schema', schema: SCHEMA },
         abortController,
       };

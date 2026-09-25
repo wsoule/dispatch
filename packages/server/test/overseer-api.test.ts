@@ -165,6 +165,14 @@ describe('POST /api/overseer and GET /api/overseer/:id', () => {
     });
     expect(unknown.status).toBe(400);
     expect((await json(unknown)).error).toContain('invalid backend');
+
+    const badEffort = await fetch(`${baseUrl}/api/overseer`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prompt: 'hi', effort: 'extreme' }),
+    });
+    expect(badEffort.status).toBe(400);
+    expect((await json(badEffort)).error).toContain('invalid effort');
   });
 
   it('404s an unknown conversation id', async () => {

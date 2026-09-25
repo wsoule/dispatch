@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
 
+import { NEEDS_DECIDE, OPERATOR_ONLY } from './access';
 import { dataWith } from './fixtures.test-helper';
 import { grantableTiers, holderDates, TeamSection } from './TeamSection';
 
@@ -77,10 +78,12 @@ describe('holderDates', () => {
 describe('TeamSection', () => {
   test('below decide, it says who to ask instead of offering controls', () => {
     mount({ myTier: 'request', client: teamClient([]) as never });
-    expect(
-      screen.getByText('Inviting and removing people needs the decide tier')
-    ).toBeTruthy();
+    expect(screen.getByText('Inviting people')).toBeTruthy();
+    expect(screen.getByText(/Needs Can approve access/)).toBeTruthy();
     expect(screen.queryByRole('button', { name: /Invite/ })).toBeNull();
+    // Invites need Can approve, not the owner, and the lock agrees.
+    expect(screen.getByLabelText(NEEDS_DECIDE)).toBeTruthy();
+    expect(screen.queryByLabelText(OPERATOR_ONLY)).toBeNull();
   });
 
   test('lists teammates, marks who is online, and leaves the daemon’s own pair out', async () => {
@@ -151,7 +154,9 @@ describe('TeamSection', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Invite/ }));
     await waitFor(() =>
-      expect(screen.getByText(/only answers on this machine/)).toBeTruthy()
+      expect(
+        screen.getByText(/only accepts connections from this machine/)
+      ).toBeTruthy()
     );
   });
 

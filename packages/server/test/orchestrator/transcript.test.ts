@@ -182,6 +182,26 @@ describe('replayTranscript', () => {
     expect(replayTranscript(plain)?.meta.subagents).toBeUndefined();
   });
 
+  it('replays the token usage a finish recorded, and keeps it across later state lines', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-transcript-'));
+    const path = join(dir, 'r-000009.jsonl');
+    const transcript = new Transcript(path);
+    transcript.writeHeader(makeMeta({ id: 'r-000009' }));
+    const usage = {
+      inputTokens: 120,
+      cacheCreationInputTokens: 3000,
+      cacheReadInputTokens: 45000,
+      outputTokens: 900,
+      requests: 12,
+      subagentRequests: 0,
+      source: 'result' as const,
+    };
+    transcript.appendState('finished', 't1', { costUsd: 0.4, usage });
+    // A later review marker carries no usage and must not erase it.
+    transcript.appendState('finished', 't2', { reviewAction: 'merge' });
+    expect(replayTranscript(path)?.meta.usage).toEqual(usage);
+  });
+
   it('returns null when the transcript file does not exist', () => {
     expect(replayTranscript('/nonexistent/path/r-000003.jsonl')).toBeNull();
   });

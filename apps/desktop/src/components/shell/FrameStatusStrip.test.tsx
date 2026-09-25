@@ -75,7 +75,7 @@ test('no pill until the first sync status arrives', () => {
   expect(container.querySelector('[data-slot="sync-pill"]')).toBeNull();
 });
 
-test('"Auto-commit off" is offered only while the board syncer runs', () => {
+test('"Stop committing" is offered only while the board syncer runs', () => {
   let disabled = 0;
   const { rerender } = render(
     <TooltipProvider>
@@ -88,7 +88,14 @@ test('"Auto-commit off" is offered only while the board syncer runs', () => {
       />
     </TooltipProvider>
   );
-  fireEvent.click(screen.getByRole('button', { name: 'Auto-commit off' }));
+  const stop = screen.getByRole('button', {
+    name: 'Stop committing task files to the main branch',
+  });
+  expect(stop.textContent).toBe('Stop committing');
+  expect(stop.getAttribute('title')).toBe(
+    'Turn off “Commit task files to the main branch”'
+  );
+  fireEvent.click(stop);
   expect(disabled).toBe(1);
 
   rerender(
@@ -96,8 +103,14 @@ test('"Auto-commit off" is offered only while the board syncer runs', () => {
       <FrameStatusStrip {...props} syncStatus={status({ state: 'off' })} />
     </TooltipProvider>
   );
-  expect(screen.queryByRole('button', { name: 'Auto-commit off' })).toBeNull();
-  expect(screen.getByText(/Board sync is off/)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /Stop committing/ })).toBeNull();
+  expect(screen.getByText(/Task files not committed/)).toBeTruthy();
+});
+
+// Turning it off is a config save; a viewer below decide gets no handler.
+test('"Stop committing" is not offered without a handler', () => {
+  mount({ syncStatus: status(), onDisableAutoCommit: undefined });
+  expect(screen.queryByRole('button', { name: /Stop committing/ })).toBeNull();
 });
 
 test('the pill becomes focusable and mirrors its detail lines when it has any', () => {

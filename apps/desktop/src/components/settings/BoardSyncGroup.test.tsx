@@ -1,11 +1,14 @@
 import type { BoardSyncStatus } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
-import { BoardSyncGroup, syncedWhen } from './BoardSyncGroup';
+import { accessFor, SettingsAccessProvider } from './access';
+import { BoardSyncGroup, notSharingHint, syncedWhen } from './BoardSyncGroup';
 import { dataWith } from './fixtures.test-helper';
 
+// Mounted at the request tier: Sync now is its own route, open to any
+// teammate, so nothing here may depend on being able to save config.
 function mount(status: BoardSyncStatus) {
   const client = {
     baseUrl: 'http://127.0.0.1:1',
@@ -17,7 +20,9 @@ function mount(status: BoardSyncStatus) {
   });
   render(
     <QueryClientProvider client={queryClient}>
-      <BoardSyncGroup data={dataWith({ client: client as never })} />
+      <SettingsAccessProvider access={accessFor('request', false)}>
+        <BoardSyncGroup data={dataWith({ client: client as never })} />
+      </SettingsAccessProvider>
     </QueryClientProvider>
   );
   return client;
@@ -39,9 +44,21 @@ const on: BoardSyncStatus = {
 };
 
 test('off, it says how to turn it on', async () => {
-  mount({ enabled: false });
-  expect(await screen.findByText('Off')).toBeTruthy();
-  expect(screen.getByText(/sync:/)).toBeTruthy();
+  mount({ enabled: false, reason: 'off' });
+  expect(await screen.findByText('Not sharing')).toBeTruthy();
+  expect(screen.getByText(/Turn on sharing below/)).toBeTruthy();
+});
+
+// Already on in config: turning it on again is not the fix.
+test('on but not started, it says what to check instead', async () => {
+  mount({ enabled: false, reason: 'not-started' });
+  expect(await screen.findByText('Not sharing')).toBeTruthy();
+  expect(screen.getByText(/Sharing is on but didn.t start/)).toBeTruthy();
+  expect(screen.queryByText(/Turn on sharing below/)).toBeNull();
+});
+
+test('an older daemon that gives no reason reads as off', () => {
+  expect(notSharingHint(undefined)).toBe(notSharingHint('off'));
 });
 
 test('on, it names the branch and remote and offers to sync now', async () => {
@@ -50,6 +67,24 @@ test('on, it names the branch and remote and offers to sync now', async () => {
     await screen.findByText('dispatch-sync on git@example.com:team/repo.git')
   ).toBeTruthy();
   expect(screen.getByRole('button', { name: /Sync now/ })).toBeTruthy();
+});
+
+test('Sync now stays usable for a teammate who cannot change settings', async () => {
+  mount(on);
+  const button = await screen.findByRole('button', { name: /Sync now/ });
+  expect(button.closest('fieldset')?.disabled).toBe(false);
+});
+
+test('a failed Sync now says why instead of failing silently', async () => {
+  const client = mount(on);
+  client.syncBoardNow.mockImplementation(() =>
+    Promise.reject(new Error('remote hung up'))
+  );
+  fireEvent.click(await screen.findByRole('button', { name: /Sync now/ }));
+  expect(await screen.findByText(/sync: remote hung up/)).toBeTruthy();
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: /Sync now/ }).disabled
+  ).toBe(false);
 });
 
 test('an unreachable remote and waiting changes are said plainly', async () => {
@@ -69,7 +104,9 @@ test('a clash is shown as something that needs a person', async () => {
       },
     ],
   });
-  expect(await screen.findByText('Needs a person: t-abc12345')).toBeTruthy();
+  expect(
+    await screen.findByText('Needs your attention: t-abc12345')
+  ).toBeTruthy();
 });
 
 test('syncedWhen reads the states a person sees', () => {
@@ -87,5 +124,5 @@ test('past the seats it says it is paused, not that the remote is down', async (
   expect(
     await screen.findByText(/Board sync is paused on this machine/)
   ).toBeTruthy();
-  expect(screen.queryByText(/could not be reached/)).toBeNull();
+  expect(screen.queryByText(/reach the remote/)).toBeNull();
 });

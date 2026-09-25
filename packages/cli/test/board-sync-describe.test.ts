@@ -5,9 +5,38 @@ import { describeLicense } from '../src/commands/license.js';
 
 describe('describeSync', () => {
   test('off says how to turn it on', () => {
+    expect(
+      describeSync({ enabled: false, reason: 'off' }).join('\n')
+    ).toContain('sync: { enabled: true }');
+    // An older daemon doesn't say why; off is the likely reason.
     expect(describeSync({ enabled: false }).join('\n')).toContain(
       'sync: { enabled: true }'
     );
+  });
+
+  // Both switches push with the owner's git credentials, so the daemon lets
+  // only the person running it flip them from Settings.
+  test('says who can turn sharing or committing on', () => {
+    for (const reason of ['off', 'files'] as const) {
+      expect(describeSync({ enabled: false, reason }).join('\n')).toContain(
+        'The person running Dispatch for this project'
+      );
+    }
+  });
+
+  // Turning sync on does nothing for a board kept as files.
+  test('a board kept as files is pointed at committing its task files', () => {
+    const lines = describeSync({ enabled: false, reason: 'files' }).join('\n');
+    expect(lines).toContain('Commit task files to the main branch');
+    expect(lines).not.toContain('sync: { enabled: true }');
+  });
+
+  test('on but not started says what to check, not to turn it on', () => {
+    const lines = describeSync({ enabled: false, reason: 'not-started' }).join(
+      '\n'
+    );
+    expect(lines).toContain("isn't running");
+    expect(lines).not.toContain('Turn it on');
   });
 
   test('on says where, when, what is waiting, and what went wrong', () => {

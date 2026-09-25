@@ -177,9 +177,19 @@ function isLive(meta: RunMeta): boolean {
 // ---------------------------------------------------------------------------
 
 const listRunsInput = z.object({
-  /** Include runs that have already reached a terminal state. */
-  includeTerminal: z.boolean().optional(),
-  limit: z.number().int().positive().max(200).optional(),
+  includeTerminal: z
+    .boolean()
+    .optional()
+    .describe(
+      'Also include runs that already finished, failed or were cancelled. Omit to list only live runs.'
+    ),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(200)
+    .optional()
+    .describe('Most runs to return, newest first. Omit for all of them.'),
 });
 
 const runSummaryFields = (meta: RunMeta) => ({
@@ -228,7 +238,7 @@ const readyTasksTool: OverseerStatusTool<NoInput> = {
 const blockedTasksTool: OverseerStatusTool<NoInput> = {
   name: 'list_blocked_tasks',
   description:
-    'Tasks held up by at least one blocker that is not yet done or cancelled, ' +
+    'Tasks held up by at least one blocker that has not landed or been dropped, ' +
     'each with the blockers still holding it.',
   inputSchema: noInput,
   read(ctx) {
@@ -299,8 +309,12 @@ const pendingApprovalsTool: OverseerStatusTool<NoInput> = {
 };
 
 const openQuestionsInput = z.object({
-  /** Narrow to one run's questions; omit for every open question in the project. */
-  runId: z.string().optional(),
+  runId: z
+    .string()
+    .optional()
+    .describe(
+      "A run id (r-…) to narrow to that run's questions. Omit for every open question in the project."
+    ),
 });
 
 function questionFields(question: RunQuestion) {
@@ -327,9 +341,19 @@ const openQuestionsTool: OverseerStatusTool<
 };
 
 const ledgerInput = z.object({
-  /** Scope to one epic's entries; omit for every entry in the project. */
-  epicId: z.string().optional(),
-  limit: z.number().int().positive().max(200).optional(),
+  epicId: z
+    .string()
+    .optional()
+    .describe(
+      "An epic id (e-…) to scope to that epic's entries. Omit for every entry in the project."
+    ),
+  limit: z
+    .number()
+    .int()
+    .positive()
+    .max(200)
+    .optional()
+    .describe('Most entries to return. Omit for all of them.'),
 });
 
 function ledgerFields(entry: LedgerEntry) {
@@ -373,14 +397,31 @@ export const OVERSEER_STATUS_TOOLS: readonly OverseerStatusTool[] = [
 // ---------------------------------------------------------------------------
 
 const dispatchInput = z.object({
-  taskId: z.string(),
-  executor: z.string().optional(),
-  model: z.string().optional(),
+  taskId: z.string().describe('The task id (t-…) to run.'),
+  executor: z
+    .string()
+    .optional()
+    .describe(
+      "Executor name (e.g. claude, codex) for this run only. Omit to use the project's default."
+    ),
+  model: z
+    .string()
+    .optional()
+    .describe(
+      "Model id for this run only. Omit to use the project's configured model for the executor."
+    ),
 });
 
 const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   name: 'dispatch_task',
-  description: 'Start an agent run on a task.',
+  description:
+    'Start an agent run on a task, on its own branch and worktree. If the ' +
+    "task's last run was left recoverable by a daemon restart and you name " +
+    'no different executor or model, this resumes that run instead of ' +
+    'starting over. Refused when the task already has a live run, when the ' +
+    'executor is unknown, and for review/verify tasks the pipeline creates ' +
+    'itself. It does not check blockers — use list_ready_tasks to find work ' +
+    'that is safe to start.',
   inputSchema: dispatchInput,
   describe(ctx, input) {
     const doc = requireTask(ctx, input.taskId);
@@ -422,9 +463,13 @@ function requireApproval(ctx: OverseerToolContext, runId: string) {
 }
 
 const approveInput = z.object({
-  runId: z.string(),
-  /** 'session' also pre-approves the same tool for the rest of the run. */
-  scope: z.enum(['once', 'session']).optional(),
+  runId: z.string().describe('The run (r-…) parked on a tool call.'),
+  scope: z
+    .enum(['once', 'session'])
+    .optional()
+    .describe(
+      "'once' (the default) allows only this call; 'session' also pre-approves the same tool for the rest of the run."
+    ),
 });
 
 const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
@@ -448,8 +493,11 @@ const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
 };
 
 const denyInput = z.object({
-  runId: z.string(),
-  reason: z.string().optional(),
+  runId: z.string().describe('The run (r-…) parked on a tool call.'),
+  reason: z
+    .string()
+    .optional()
+    .describe('Why, in a sentence; recorded as the run failure.'),
 });
 
 const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
@@ -473,7 +521,9 @@ const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
   },
 };
 
-const cancelInput = z.object({ runId: z.string() });
+const cancelInput = z.object({
+  runId: z.string().describe('The live run (r-…) to stop.'),
+});
 
 const cancelRun: OverseerMutatingTool<z.infer<typeof cancelInput>> = {
   name: 'cancel_run',
@@ -492,7 +542,9 @@ const cancelRun: OverseerMutatingTool<z.infer<typeof cancelInput>> = {
   },
 };
 
-const dequeueInput = z.object({ runId: z.string() });
+const dequeueInput = z.object({
+  runId: z.string().describe('The queued run (r-…) to pull out.'),
+});
 
 const dequeueMerge: OverseerMutatingTool<z.infer<typeof dequeueInput>> = {
   name: 'dequeue_merge',
@@ -516,8 +568,11 @@ const dequeueMerge: OverseerMutatingTool<z.infer<typeof dequeueInput>> = {
 };
 
 const messageInput = z.object({
-  runId: z.string(),
-  text: z.string().min(1),
+  runId: z.string().describe('The live run (r-…) to message.'),
+  text: z
+    .string()
+    .min(1)
+    .describe("The message, delivered as the run agent's next user turn."),
 });
 
 const messageRun: OverseerMutatingTool<z.infer<typeof messageInput>> = {

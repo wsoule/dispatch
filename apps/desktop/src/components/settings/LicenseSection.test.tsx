@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
+import { OPERATOR_ONLY } from './fields';
 import { dataWith } from './fixtures.test-helper';
 import { LicenseSection, planLine } from './LicenseSection';
 
@@ -40,7 +41,7 @@ function mount(
 test('the free plan says how many people it fits and how many are here', async () => {
   mount(FREE);
   expect(await screen.findByText('Free plan: up to 3 people')).toBeTruthy();
-  expect(screen.getByText(/2 of 3 seats in use/)).toBeTruthy();
+  expect(screen.getByText(/2 of 3 seats used/)).toBeTruthy();
 });
 
 test('a licensed plan names who it is for and until when', () => {
@@ -89,7 +90,10 @@ test('a key that does not verify says why, and the plan stays', async () => {
 
 test('below the operator tier there is nothing to install with', async () => {
   mount(FREE, 'decide');
-  expect(await screen.findByText(/for whoever runs this daemon/)).toBeTruthy();
+  expect(
+    await screen.findByText(/Ask the person running Dispatch/)
+  ).toBeTruthy();
+  expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBeGreaterThan(0);
   await waitFor(() =>
     expect(screen.queryByLabelText('Paste a key')).toBeNull()
   );

@@ -6,14 +6,14 @@ import type {
 import { Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
-import { OPERATOR_ONLY } from './fields';
-import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  /** Resolves `false` when the save was refused; a form keeps its draft then. */
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -74,10 +74,16 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
   return (
     <>
       <SettingsGroup
-        title="Remotes"
-        hint="Terminals can open on these. Agent runs stay on this machine."
+        title="Machines"
+        hint="Terminals can open on these. Agents still run on this machine."
+        keywords="ssh remotes hosts"
       >
-        {remotes.length === 0 && <SettingsRow title="None yet" />}
+        {remotes.length === 0 && (
+          <SettingsRow
+            title="None yet"
+            subtitle="Hosts from your ssh config work, so keys and jump hosts stay there."
+          />
+        )}
         {remotes.map(([id, remote]) => (
           <SettingsRow
             key={id}
@@ -85,6 +91,7 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
             subtitle={
               <span className="font-mono">{describeRemote(remote)}</span>
             }
+            locked={!canOperate}
             control={
               canOperate ? (
                 <Button
@@ -100,7 +107,7 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
           />
         ))}
       </SettingsGroup>
-      <SettingsGroup title="Add a remote">
+      <SettingsGroup title="Add a machine" keywords="ssh remote">
         {canOperate ? (
           <SettingsRow title="Connection" htmlFor="remote-name" stacked>
             <form
@@ -108,9 +115,9 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
               onSubmit={(e) => {
                 e.preventDefault();
                 if (name === '' || next === null) return;
-                void onSave({ remotes: { [name]: next } }).then(() =>
-                  setForm(EMPTY)
-                );
+                void onSave({ remotes: { [name]: next } }).then((saved) => {
+                  if (saved !== false) setForm(EMPTY);
+                });
               }}
             >
               <Input
@@ -160,14 +167,12 @@ export function RemotesSection({ config, onSave, canOperate }: Props) {
                 disabled={name === '' || next === null}
               >
                 <Plus />
-                Add remote
+                Add machine
               </Button>
             </form>
           </SettingsRow>
         ) : (
-          <SettingsRow title="Adding or removing remotes">
-            <SettingsHint>{OPERATOR_ONLY}</SettingsHint>
-          </SettingsRow>
+          <SettingsRow title="Add a machine" locked />
         )}
       </SettingsGroup>
     </>

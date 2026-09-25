@@ -13,9 +13,11 @@ const DIST_DIR = join(DESKTOP_DIR, 'dist');
 // cask's constraint.
 const EXPECTED_VITE_TARGET = 'safari14';
 const EXPECTED_MINIMUM_SYSTEM_VERSION = '11.0';
-// Bare symbol means "this release or newer" (Cask Cookbook: top-level
-// depends_on macos: declares the minimum compatible release).
-const EXPECTED_CASK_CONSTRAINT = 'depends_on macos: :big_sur';
+// A bare `depends_on :macos` floors the cask at Homebrew's own minimum, Big Sur
+// (the oldest release in MacOSVersion::SYMBOLS), which is also the app's floor;
+// `brew style` flags an explicit `macos: :big_sur` as redundant. Raise the
+// app's floor past Big Sur and the cask must name that release explicitly.
+const EXPECTED_CASK_CONSTRAINT = 'depends_on :macos';
 
 // Safari 14.1 predates ES2022, so parsing at ES2021 is a deliberately
 // conservative proxy: anything that parses here certainly parses there. It is

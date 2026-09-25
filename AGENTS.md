@@ -70,13 +70,10 @@ for every mapped package and runs in CI on every PR.
 ## Skills
 
 Domain-specific context and conventions live in `.agents/skills/`. Before
-starting any task:
-
-1. List `.agents/skills/*/SKILL.md`
-2. Read only each skill's frontmatter description to identify relevant skills
-3. Read only the full `SKILL.md` files relevant to your task
-
-Do not load skills that are not relevant to the task.
+starting a task, read the full `SKILL.md` of each skill whose frontmatter
+description matches it, and no others. Claude Code surfaces those descriptions
+natively and Dispatch runs get them in their prompt; in a harness that does
+neither, list `.agents/skills/*/SKILL.md` and read the descriptions first.
 
 `.agents/skills/` is the single source of truth. `.claude/skills` is a symlink
 to it so Claude Code's native skill discovery picks up the same files; edit the
@@ -128,7 +125,5 @@ Carto keeps a generated map of this repo — file tree, import graph, and the
 highest-impact modules by dependent count — at `.carto/CONTEXT.md`, which is
 gitignored and refreshed by `carto sync` on every checkout, merge, and rebase.
 Read it when a change touches shared code and you want to know what depends on
-it. It used to live in this file as a generated block, which meant every sync
-dirtied a committed file with live dependency counts that no formatter could
-agree on; `dispatch doctor` repoints an older carto config that still targets
-`AGENTS.md`.
+it. If a sync ever writes into `AGENTS.md` instead, the local carto config is
+stale; `dispatch doctor` repoints it.

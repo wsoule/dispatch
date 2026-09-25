@@ -17,14 +17,16 @@ never change.
 ## The ready-work loop
 
 1. Call \`task_next\` to see tasks that are unblocked and ready to start (kind
-   \`task\`, status \`todo\`, every entry in \`blockedBy\` already done),
+   \`task\`, status \`ready\`, every entry in \`blockedBy\` landed or dropped),
    priority-ordered.
 2. Pick one, do the work.
 3. Call \`task_comment\` as you make progress — it appends a timestamped line
    to the task's Activity log, so anyone (human or agent) reading the file
    later can follow what happened.
-4. Call \`task_save\` with the task's \`id\` and \`status\` to move it forward
-   (e.g. \`in-progress\`, then \`done\`).
+4. Call \`task_save\` with the task's \`id\` and \`status\` to move it forward:
+   \`working\` while you are on it, \`review\` once the change is up for
+   review. \`landed\` means merged — when dispatchd runs the task, it sets
+   \`working\` through \`landed\` itself as the run and merge queue advance.
 
 ## Statuses are config-driven
 
@@ -66,10 +68,10 @@ this run's Session tab. Four channels cover every direction:
 - **App/user -> agent**: the human talks to you through this run's own
   Session composer in the app — those messages just show up as your next
   turn, no tool call needed on your end to receive them.
-- **Agent -> app/user**: call \`message_user\` with a short \`text\`
-  whenever you want to flag a question, a blocker, or a notable update to
-  the human beyond your normal assistant output — it lands on your own
-  Session tab, badged as coming from you.
+- **Agent -> app/user**: call \`message_user\` with a short \`text\` to
+  flag a blocker or a notable update to the human beyond your normal
+  assistant output — it lands on your own Session tab, badged as coming
+  from you, and does not wait for a reply.
 - **Agent -> app/user, waiting for a reply**: call \`ask_user\` with a
   \`question\` (and \`options\` for the answers you think likely) when a
   decision would change the shape of your result and the task doesn't

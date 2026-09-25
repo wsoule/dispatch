@@ -1,6 +1,9 @@
 // The Claude models a run can be dispatched with. localStorage here holds only
 // a per-device override of the project's `.dispatch/config.yml` default.
 
+import { EFFORT_LEVELS, isEffortLevel } from '@dispatch/core/browser';
+import type { EffortLevel } from '@dispatch/core/browser';
+
 export interface ModelOption {
   /** SDK model id passed straight through to the Agent SDK's `query({ options: { model } })`. */
   id: string;
@@ -10,7 +13,7 @@ export interface ModelOption {
 // The default for real work first; Fable is the hardest-work premium tier, Sonnet the
 // faster/cheaper pick for well-scoped tasks, Haiku the fastest for small mechanical changes.
 export const MODELS: ModelOption[] = [
-  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-opus-5-5', label: 'Opus 5.5' },
   { id: 'claude-fable-5-1', label: 'Fable 5.1' },
   { id: 'claude-sonnet-5', label: 'Sonnet 5' },
   { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5' },
@@ -101,6 +104,7 @@ export function modelLabel(id: string | undefined): string | undefined {
 // non-billable `<synthetic>` sentinel. Kept beside `MODELS` so all id→label mapping lives in
 // one file, per the parser's "map raw ids to display names in one place" note.
 const HISTORICAL_MODEL_LABELS: Record<string, string> = {
+  'claude-opus-5': 'Opus 5',
   'claude-fable-5': 'Fable 5',
   'claude-opus-4-8': 'Opus 4.8',
   'claude-opus-4-7': 'Opus 4.7',
@@ -132,4 +136,42 @@ export function modelDisplayName(
     .filter((m) => id.startsWith(m.id))
     .sort((a, b) => b.id.length - a.id.length)[0];
   return prefix?.label ?? id;
+}
+
+// The effort picker's sentinel for "send nothing": the server then applies the
+// config's effort for the role, or the model's own default.
+export const DEFAULT_EFFORT_ID = 'default';
+
+const EFFORT_LABELS: Record<EffortLevel, string> = {
+  low: 'Low',
+  medium: 'Medium',
+  high: 'High',
+  xhigh: 'Extra high',
+  max: 'Max',
+};
+
+// Picker choices: "Default" first (naming the configured level when there is
+// one, so the user sees what they would get), then the five SDK levels.
+export function effortOptions(
+  configured: EffortLevel | undefined
+): { id: string; label: string }[] {
+  return [
+    {
+      id: DEFAULT_EFFORT_ID,
+      label:
+        configured === undefined
+          ? 'Default'
+          : `Default (${EFFORT_LABELS[configured]})`,
+    },
+    ...EFFORT_LEVELS.map((level) => ({
+      id: level,
+      label: EFFORT_LABELS[level],
+    })),
+  ];
+}
+
+// The level a picker id stands for; the "Default" sentinel (or anything
+// unrecognised) is undefined, meaning no effort is sent.
+export function effortFromId(id: string): EffortLevel | undefined {
+  return isEffortLevel(id) ? id : undefined;
 }

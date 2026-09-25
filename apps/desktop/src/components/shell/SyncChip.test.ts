@@ -74,11 +74,14 @@ describe('syncSummary — board syncer', () => {
     expect(disabled.tone).toBe('blocked');
     expect(disabled.message).toBe('No trunk resolvable');
     expect(disabled.canDisableAutoCommit).toBe(false);
+    expect(syncSummary(boardStatus({ state: 'disabled' })).message).toBe(
+      'Task files not committed'
+    );
 
     const off = syncSummary(boardStatus({ state: 'off' }));
     expect(off.tone).toBe('ready');
     expect(off.message).toBe(
-      'Board sync is off · enable auto-commit in Settings'
+      'Task files not committed · Settings → Board sync'
     );
     expect(off.canDisableAutoCommit).toBe(false);
   });

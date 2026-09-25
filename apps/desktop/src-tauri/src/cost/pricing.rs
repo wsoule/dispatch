@@ -203,6 +203,15 @@ mod tests {
     }
 
     #[test]
+    fn point_release_ids_get_their_own_rates_not_the_prefix_family() {
+        // `claude-opus-5-5` / `claude-fable-5-1` start with the older id, so without their own
+        // entries the prefix match would bill them at Opus 5 / Fable 5 rates.
+        assert_eq!(cost_usd(Some("claude-opus-5-5"), 1_000_000, 0, 0, 0), 4.0);
+        assert_eq!(cost_usd(Some("claude-opus-5-5"), 0, 0, 1_000_000, 0), 0.2);
+        assert_eq!(cost_usd(Some("claude-fable-5-1"), 0, 0, 1_000_000, 0), 0.25);
+    }
+
+    #[test]
     fn sentinel_model_is_non_billable_not_default() {
         // `<synthetic>` is a real sentinel value seen in Claude Code logs - must resolve to
         // exactly 0.0, not silently fall through to _default rates.

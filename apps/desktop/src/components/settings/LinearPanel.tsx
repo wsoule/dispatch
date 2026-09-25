@@ -16,10 +16,11 @@ import {
   resolveMappedStateId,
   statusMapCompleteness,
 } from '../../lib/linearSettings';
+import { useSettingsAccess } from './access';
+import { SettingsSwitch } from './fields';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
 import { PillButton } from '@/ui/ai/pill';
-import { Switch } from '@/ui/ai/switch';
 import { Button } from '@/ui/button';
 import { PanelRow } from '@/ui/chrome';
 import { Input } from '@/ui/input';
@@ -51,8 +52,9 @@ function LinearIntervalRow({
   useEffect(() => setDraft(String(value)), [value]);
   return (
     <SettingsRow
-      title="Poll interval"
-      subtitle="Seconds between sync passes, minimum 30."
+      title="Check for changes every"
+      subtitle="At least 30 seconds."
+      keywords="poll interval"
       htmlFor="linear-poll-interval"
       control={
         <Input
@@ -156,6 +158,9 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
   const [importResult, setImportResult] = useState<LinearSyncSummary | null>(
     null
   );
+  // The key decides whose Linear account the board is sent to, so the daemon
+  // lets only the owner set or remove it; import and sync just use it.
+  const { canOperate } = useSettingsAccess();
 
   if (config === null || linearStatus === null) return null;
 
@@ -236,9 +241,14 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
 
   return (
     <>
+      {/* Connect, disconnect, import and sync use Linear's own routes, not
+          config, so the group stays open when config is read-only. Import
+          and sync are any teammate's; the key rows lock to the owner. */}
       <SettingsGroup
-        title="Linear"
-        hint="Keeps this project’s tasks and one Linear team in step. Issues in the team become tasks here and tasks created here become issues there; a task’s status change moves the issue to the matching workflow state, and the reverse, using the status map below. Sync runs on the interval you pick and only carries what changed since the last one — Import brings the team’s existing backlog across once. The API key stays in ~/.dispatch/credentials.json, never in the repo."
+        title="Connection"
+        hint="Your API key is stored on this machine, never in the repo."
+        keywords="linear api key"
+        requires="none"
       >
         {linearStatus.keySource !== 'project' && (
           <SettingsRow
@@ -246,6 +256,7 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
             subtitle={keyNote}
             htmlFor="linear-api-key"
             stacked
+            locked={!canOperate}
             control={
               <>
                 <Input
@@ -254,11 +265,12 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
                   autoComplete="off"
                   placeholder="Linear API key"
                   value={apiKey}
+                  disabled={!canOperate}
                   onChange={(e) => setApiKey(e.target.value)}
                   className="max-w-xs"
                 />
                 <Button
-                  disabled={connecting || apiKey.trim() === ''}
+                  disabled={!canOperate || connecting || apiKey.trim() === ''}
                   onClick={() => void connect()}
                 >
                   {connecting ? 'Connecting…' : 'Connect'}
@@ -275,129 +287,136 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
         )}
 
         {linearStatus.connected && (
-          <>
-            <SettingsRow
-              title={
-                <span className="flex items-center gap-1.5">
-                  <CheckCircle2 className="text-state-review size-3.5 shrink-0" />
-                  Connected{viewer !== null ? ` as ${viewer.name}` : ''}
-                </span>
-              }
-              control={
-                linearStatus.keySource === 'project' ? (
-                  <PillButton
-                    disabled={disconnecting}
-                    onClick={() => void disconnect()}
-                  >
-                    {disconnecting ? 'Disconnecting…' : 'Disconnect'}
-                  </PillButton>
-                ) : undefined
-              }
-            >
-              {disconnectError !== null && (
-                <span className="text-state-failed text-[12px]">
-                  {disconnectError}
-                </span>
-              )}
-            </SettingsRow>
-
-            <SettingsRow
-              title="Sync this project with Linear"
-              subtitle={teamChosen ? undefined : 'Choose a team first.'}
-              htmlFor="linear-enabled"
-              control={
-                <Switch
-                  id="linear-enabled"
-                  checked={config.linear.enabled}
-                  disabled={!configured}
-                  onCheckedChange={(checked) =>
-                    void data.handleUpdateConfig({
-                      linear: { enabled: checked },
-                    })
-                  }
-                />
-              }
-            />
-
-            {data.linearTeamsError !== null && (
-              <FetchFailureRow
-                error={data.linearTeamsError}
-                onRetry={() => data.refetchLinearTeams()}
-              />
+          <SettingsRow
+            title={
+              <span className="flex items-center gap-1.5">
+                <CheckCircle2 className="text-state-review size-3.5 shrink-0" />
+                Connected{viewer !== null ? ` as ${viewer.name}` : ''}
+              </span>
+            }
+            locked={linearStatus.keySource === 'project' && !canOperate}
+            control={
+              linearStatus.keySource === 'project' ? (
+                <PillButton
+                  disabled={!canOperate || disconnecting}
+                  onClick={() => void disconnect()}
+                >
+                  {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                </PillButton>
+              ) : undefined
+            }
+          >
+            {disconnectError !== null && (
+              <span className="text-state-failed text-[12px]">
+                {disconnectError}
+              </span>
             )}
-
-            <SettingsRow
-              title="Team"
-              control={
-                <Select
-                  value={config.linear.teamId ?? ''}
-                  onValueChange={(teamId) =>
-                    void data.handleUpdateConfig({ linear: { teamId } })
-                  }
-                >
-                  <SelectTrigger aria-label="Team" className="w-[200px]">
-                    <SelectValue placeholder="Choose a team" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {linearTeams.map((team) => (
-                      <SelectItem key={team.id} value={team.id}>
-                        {team.name} ({team.key})
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              }
-            />
-
-            <SettingsRow
-              title="Direction"
-              control={
-                <Select
-                  value={config.linear.direction}
-                  onValueChange={(direction) =>
-                    void data.handleUpdateConfig({
-                      linear: {
-                        direction: direction as 'both' | 'pull' | 'push',
-                      },
-                    })
-                  }
-                >
-                  <SelectTrigger aria-label="Direction" className="w-[200px]">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {LINEAR_DIRECTIONS.map((d) => (
-                      <SelectItem key={d.value} value={d.value}>
-                        {d.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              }
-            />
-
-            <LinearIntervalRow
-              value={config.linear.intervalSec}
-              onSave={(intervalSec) =>
-                void data.handleUpdateConfig({ linear: { intervalSec } })
-              }
-            />
-
-            <PanelRow>
-              <SettingsHint>
-                Labels sync in from Linear, but a label you add or remove here
-                does not push back out yet — edit labels on the Linear side for
-                now.
-              </SettingsHint>
-            </PanelRow>
-          </>
+          </SettingsRow>
         )}
       </SettingsGroup>
+
+      {linearStatus.connected && (
+        <SettingsGroup
+          title="Sync settings"
+          hint="Issues in the chosen team and tasks here stay in step, statuses included."
+          keywords="linear team direction"
+        >
+          <SettingsRow
+            title="Sync this project with Linear"
+            subtitle={teamChosen ? undefined : 'Choose a team first.'}
+            htmlFor="linear-enabled"
+            control={
+              <SettingsSwitch
+                id="linear-enabled"
+                checked={config.linear.enabled}
+                disabled={!configured}
+                onCheckedChange={(checked) =>
+                  void data.handleUpdateConfig({
+                    linear: { enabled: checked },
+                  })
+                }
+              />
+            }
+          />
+
+          {data.linearTeamsError !== null && (
+            <FetchFailureRow
+              error={data.linearTeamsError}
+              onRetry={() => data.refetchLinearTeams()}
+            />
+          )}
+
+          <SettingsRow
+            title="Team"
+            control={
+              <Select
+                value={config.linear.teamId ?? ''}
+                onValueChange={(teamId) =>
+                  void data.handleUpdateConfig({ linear: { teamId } })
+                }
+              >
+                <SelectTrigger aria-label="Team" className="w-[200px]">
+                  <SelectValue placeholder="Choose a team" />
+                </SelectTrigger>
+                <SelectContent>
+                  {linearTeams.map((team) => (
+                    <SelectItem key={team.id} value={team.id}>
+                      {team.name} ({team.key})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+
+          <SettingsRow
+            title="Direction"
+            control={
+              <Select
+                value={config.linear.direction}
+                onValueChange={(direction) =>
+                  void data.handleUpdateConfig({
+                    linear: {
+                      direction: direction as 'both' | 'pull' | 'push',
+                    },
+                  })
+                }
+              >
+                <SelectTrigger aria-label="Direction" className="w-[200px]">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {LINEAR_DIRECTIONS.map((d) => (
+                    <SelectItem key={d.value} value={d.value}>
+                      {d.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            }
+          />
+
+          <LinearIntervalRow
+            value={config.linear.intervalSec}
+            onSave={(intervalSec) =>
+              void data.handleUpdateConfig({ linear: { intervalSec } })
+            }
+          />
+
+          <PanelRow>
+            <SettingsHint>
+              Labels come in from Linear but don&rsquo;t go back out yet, so
+              change labels in Linear for now.
+            </SettingsHint>
+          </PanelRow>
+        </SettingsGroup>
+      )}
 
       {linearStatus.connected && teamChosen && (
         <SettingsGroup
           title="Status mapping"
-          hint={`${String(completeness.mapped)} of ${String(completeness.total)} mapped.`}
+          hint={`Which Linear state each column matches. ${String(completeness.mapped)} of ${String(completeness.total)} mapped.`}
+          keywords="workflow states columns"
         >
           {data.linearStatesError !== null && (
             <FetchFailureRow
@@ -422,10 +441,10 @@ export function LinearPanel({ data }: { data: DispatchProjectData }) {
       )}
 
       {linearStatus.connected && (
-        <SettingsGroup title="Sync">
+        <SettingsGroup title="Sync" keywords="linear import" requires="none">
           <SettingsRow
             title="Import from Linear"
-            subtitle="Sync only moves what changes after a task is linked — it never bulk-imports the backlog on its own. Import brings down every issue in this team that has no matching task yet."
+            subtitle="Sync only carries changes to linked tasks. Import brings in every issue in the team that isn't here yet."
             control={
               <PillButton
                 disabled={importing || !configured}

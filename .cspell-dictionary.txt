@@ -580,6 +580,8 @@ vsart
 vslab
 vsrow
 waitlist
+wakeup
+wakeups
 watskeburt
 wayfinding
 WHATWG
@@ -594,6 +596,7 @@ wrappy
 wsoule
 wyats
 wyatsoule
+xhigh
 xxxstarxxx
 Yegge
 Yegge's

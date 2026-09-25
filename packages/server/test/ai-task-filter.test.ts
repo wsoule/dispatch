@@ -194,6 +194,27 @@ describe('ClaudeAiTaskFilter', () => {
     expect(prompts[0]).toContain('Sentence: urgent tasks');
   });
 
+  // `allowedTools: []` looked like "no tools" but only skipped approval: the
+  // call still loaded every built-in plus the operator's MCP connectors.
+  test('offers the model no built-in or operator MCP tools', async () => {
+    let options: Record<string, unknown> = {};
+    const port = new ClaudeAiTaskFilter(tmpdir(), ((args: {
+      options: Record<string, unknown>;
+    }) => {
+      options = args.options;
+      return stubQuery({
+        type: 'result',
+        subtype: 'success',
+        session_id: 's',
+        structured_output: { clauses: [], join: 'and' },
+      })(args as never);
+    }) as never);
+    await port.toFilters('anything', vocab);
+    expect(options.tools).toEqual([]);
+    expect(options.strictMcpConfig).toBe(true);
+    expect(options.mcpServers).toBeUndefined();
+  });
+
   test('a non-success result throws', async () => {
     const port = new ClaudeAiTaskFilter(
       tmpdir(),

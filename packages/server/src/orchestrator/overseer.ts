@@ -1,4 +1,5 @@
 import { loadConfig, untrustedInline } from '@dispatch/core';
+import type { EffortLevel } from '@dispatch/core';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { EventBus } from '../events.js';
@@ -98,6 +99,9 @@ export interface OverseerRecord {
    * absent, each turn reads the `overseer` role's configured model afresh.
    */
   model?: string;
+  /** The effort this conversation was opened on, when the caller chose one;
+   *  same rule as `model`, falling back to config `effort.overseer`. */
+  effort?: EffortLevel;
   state: OverseerState;
   messages: OverseerMessage[];
   /**
@@ -261,6 +265,7 @@ export class OverseerManager {
     const record = this.conversations.get(conversationId);
     return {
       model: record?.model ?? config.models.overseer,
+      effort: record?.effort ?? config.effort?.overseer,
       permissionMode: config.orchestrator.permissionMode,
       ...(config.orchestrator.maxTurns !== undefined
         ? { maxTurns: config.orchestrator.maxTurns }
@@ -299,7 +304,8 @@ export class OverseerManager {
   start(
     prompt: string,
     backendName = 'claude',
-    model?: string
+    model?: string,
+    effort?: EffortLevel
   ): OverseerRecord {
     const backend = this.requireBackend(backendName);
     const now = new Date().toISOString();
@@ -308,6 +314,7 @@ export class OverseerManager {
       prompt,
       backendName,
       ...(model !== undefined ? { model } : {}),
+      ...(effort !== undefined ? { effort } : {}),
       state: 'running',
       messages: [{ role: 'user', text: prompt, at: now }],
       pendingActions: [],

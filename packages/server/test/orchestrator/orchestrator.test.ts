@@ -2493,7 +2493,10 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     const prompt = executor.lastOpts?.prompt ?? '';
     expect(prompt).toContain('## Repo orientation');
     expect(prompt).toContain('`packages/core` — @example/core: Shared types');
-    expect(prompt).toContain('`bun run lint`');
+    // Named, not prefixed with a runner: the repo may not use bun.
+    expect(prompt).toContain('**Root package.json scripts**');
+    expect(prompt).toContain('`lint`');
+    expect(prompt).not.toContain('bun run');
     // The instructions the orientation replaces must be gone, not duplicated.
     expect(prompt).not.toContain('before assuming you have exclusive access');
   });

@@ -20,7 +20,7 @@ const steps: EscalationStep[] = [
 test('adding a step continues the round numbering', () => {
   let next: EscalationStep[] = [];
   render(<EscalationEditor steps={steps} onChange={(s) => (next = s)} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Add step' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add round' }));
   expect(next).toHaveLength(3);
   expect(next[2]).toEqual({
     round: 3,
@@ -41,17 +41,17 @@ test('removing a middle step renumbers the rest', () => {
 test('adding to an empty list starts at round 1', () => {
   let next: EscalationStep[] = [];
   render(<EscalationEditor steps={[]} onChange={(s) => (next = s)} />);
-  fireEvent.click(screen.getByRole('button', { name: 'Add step' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Add round' }));
   expect(next).toEqual([
     { round: 1, strategy: 'resume', modelTier: 'standard' },
   ]);
 });
 
-// An empty ladder must say so rather than showing a bare "Add step" button
+// An empty ladder must say so rather than showing a bare "Add round" button
 // with no explanation of what an empty list means for the fix loop.
 test('an empty list explains itself instead of showing a bare Add button', () => {
   render(<EscalationEditor steps={[]} onChange={() => {}} />);
-  expect(screen.getByText(/no escalation steps/i)).toBeTruthy();
+  expect(screen.getByText(/no steps/i)).toBeTruthy();
 });
 
 // Removing the only remaining step must not throw and must report an empty
@@ -94,12 +94,10 @@ test('changing a strategy select patches only that row', () => {
 });
 
 // The ladder is its own settings group; the add control is the secondary pill.
-test('the editor is a sentence-case group with a pill Add step', () => {
+test('the editor is a sentence-case group with a pill Add round', () => {
   render(<EscalationEditor steps={steps} onChange={() => {}} />);
+  expect(screen.getByRole('heading', { name: 'Escalation' })).toBeDefined();
   expect(
-    screen.getByRole('heading', { name: 'Escalation ladder' })
-  ).toBeDefined();
-  expect(
-    screen.getByRole('button', { name: 'Add step' }).getAttribute('data-slot')
+    screen.getByRole('button', { name: 'Add round' }).getAttribute('data-slot')
   ).toBe('pill-button');
 });

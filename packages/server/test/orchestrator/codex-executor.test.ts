@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { PassThrough } from 'node:stream';
 
+import { floorCheckForToolInput } from '../../src/floor.js';
 import {
   CodexAppServer,
   type CodexAppServerProcess,
@@ -146,6 +147,8 @@ function startHarness(
     pricing?: () =>
       | { input: number; cachedInput?: number; output: number }
       | undefined;
+    permissionMode?: string;
+    cwd?: string;
   } = {}
 ): {
   entries: NormalizedEntry[];
@@ -165,12 +168,12 @@ function startHarness(
   });
   const run = executor.start(
     {
-      cwd: 'C:\\worktree',
+      cwd: options.cwd ?? 'C:\\worktree',
       projectRoot: 'C:\\project',
       runId: 'r-codex',
       runTokenFile: 'C:\\runs\\r-codex.token',
       prompt: 'make the change',
-      permissionMode: 'auto',
+      permissionMode: options.permissionMode ?? 'default',
       resumeSessionId,
       model,
     },
@@ -334,6 +337,14 @@ describe('CodexExecutor', () => {
       sessionId: 'thread-new',
       turns: 1,
       costUsd: 0.0027,
+      // Codex counts cached input inside inputTokens; the split separates it.
+      usage: {
+        inputTokens: 500,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 500,
+        outputTokens: 200,
+        source: 'result',
+      },
     });
     expect(harness.entries.find((entry) => entry.kind === 'usage')?.text).toBe(
       'tokens: 1200 total (1000 in, 200 out) ≈ $0.0027'
@@ -474,25 +485,15 @@ describe('CodexExecutor', () => {
   });
 
   it('maps every Dispatch permission mode onto Codex approvals and sandboxing', () => {
-    expect(codexPermission('auto')).toEqual({
-      approvalPolicy: 'on-request',
-      approvalsReviewer: 'auto_review',
-      sandbox: 'workspace-write',
-    });
     for (const mode of ['default', 'acceptEdits']) {
       expect(codexPermission(mode)).toEqual({
-        approvalPolicy: 'on-request',
+        approvalPolicy: 'untrusted',
         approvalsReviewer: 'user',
         sandbox: 'workspace-write',
       });
     }
-    expect(codexPermission('dontAsk')).toEqual({
-      approvalPolicy: 'never',
-      approvalsReviewer: 'user',
-      sandbox: 'workspace-write',
-    });
     expect(codexPermission('bypassPermissions')).toEqual({
-      approvalPolicy: 'never',
+      approvalPolicy: 'untrusted',
       approvalsReviewer: 'user',
       sandbox: 'danger-full-access',
     });
@@ -501,10 +502,14 @@ describe('CodexExecutor', () => {
       approvalsReviewer: 'user',
       sandbox: 'read-only',
     });
-    expect(codexPermission('wombat')).toBeNull();
-    expect(CODEX_EXECUTOR_PROFILE.permissionRefusal('auto')).toBeNull();
-    expect(CODEX_EXECUTOR_PROFILE.permissionRefusal('wombat')).toContain(
-      'wombat'
+    for (const mode of ['auto', 'dontAsk', 'wombat', 'constructor']) {
+      expect(codexPermission(mode)).toBeNull();
+    }
+    expect(CODEX_EXECUTOR_PROFILE.permissionRefusal('wombat')).toBe(
+      'Codex has no mapping for permissionMode "wombat"'
+    );
+    expect(CODEX_EXECUTOR_PROFILE.permissionRefusal('constructor')).toBe(
+      'Codex has no mapping for permissionMode "constructor"'
     );
     expect(CODEX_EXECUTOR_PROFILE.reportsCost).toBe(false);
     expect(CODEX_EXECUTOR_PROFILE.enforcesCaps).toBe(false);
@@ -601,7 +606,7 @@ describe('CodexExecutor', () => {
       {
         cwd: 'C:\\worktree',
         prompt: 'make the change',
-        permissionMode: 'auto',
+        permissionMode: 'default',
         maxBudgetUsd: 5,
         maxTurns: 40,
       },
@@ -626,6 +631,14 @@ describe('CodexExecutor', () => {
       state: 'finished',
       sessionId: 'thread-new',
       turns: 1,
+      // Tokens are reported even with no pricing to turn them into dollars.
+      usage: {
+        inputTokens: 1000,
+        cacheCreationInputTokens: 0,
+        cacheReadInputTokens: 0,
+        outputTokens: 200,
+        source: 'result',
+      },
     });
     expect(finishes[0]?.costUsd).toBeUndefined();
   });
@@ -729,8 +742,8 @@ describe('CodexExecutor', () => {
       expect(process.requests[2]?.params).toEqual({
         model: 'gpt-6-astra',
         cwd: 'C:\\worktree',
-        approvalPolicy: 'on-request',
-        approvalsReviewer: 'auto_review',
+        approvalPolicy: 'untrusted',
+        approvalsReviewer: 'user',
         sandbox: 'workspace-write',
         config: {
           mcp_servers: {
@@ -820,8 +833,8 @@ describe('CodexExecutor', () => {
         },
       },
     });
-    expect(resume?.params?.approvalPolicy).toBe('on-request');
-    expect(resume?.params?.approvalsReviewer).toBe('auto_review');
+    expect(resume?.params?.approvalPolicy).toBe('untrusted');
+    expect(resume?.params?.approvalsReviewer).toBe('user');
     expect(resume?.params?.sandbox).toBe('workspace-write');
     const turnStart = process.requests.find(
       (request) => request.method === 'turn/start'
@@ -1269,5 +1282,447 @@ describe('CodexExecutor', () => {
     expect(process.killed).toBe(true);
     expect(harness.finishes).toEqual([]);
     harness.run.approve('unused', { allow: false });
+  });
+});
+
+// A force-push approval as codex-cli 0.153 sends it: the command wrapped in
+// the user's login shell.
+const FORCE_PUSH_ASK = {
+  kind: 'command',
+  threadId: 'thread-new',
+  turnId: 'turn-1',
+  itemId: 'call-1',
+  command: "/bin/zsh -lc 'git push --force origin main'",
+  cwd: 'C:\\worktree',
+};
+
+const NO_EVENTS: ExecutorEvents = {
+  onEntry: () => {},
+  onApprovalRequest: () => {},
+  onFinish: () => {},
+};
+
+// Every mode core's config accepts (KNOWN_PERMISSION_MODES): each is either
+// refused or starts a run that holds a floor command for a human.
+const REFUSED_MODES = ['auto', 'dontAsk'];
+const ASKING_MODES = ['default', 'acceptEdits', 'bypassPermissions'];
+
+function answerTo(
+  process: FakeCodexProcess,
+  providerId: number | string
+): unknown {
+  return process.requests.find(
+    (message) => message.id === providerId && message.result !== undefined
+  )?.result;
+}
+
+// A command item's item/completed as codex-cli 0.153 sends it.
+function commandCompleted(
+  id: string,
+  command: string,
+  status: 'completed' | 'failed' | 'declined'
+): Record<string, unknown> {
+  return {
+    threadId: 'thread-new',
+    turnId: 'turn-1',
+    item: {
+      type: 'commandExecution',
+      id,
+      command,
+      cwd: 'C:\\worktree',
+      status,
+      aggregatedOutput: '',
+      exitCode: status === 'completed' ? 0 : null,
+    },
+  };
+}
+
+// Input written into a running shell, as the terminalInteraction notification
+// carries it: the shell's own item id, never a new item.
+function typed(stdin: string, turnId = 'turn-1'): Record<string, unknown> {
+  return {
+    threadId: 'thread-new',
+    turnId,
+    itemId: 'call-1',
+    processId: '16691',
+    stdin,
+  };
+}
+
+const TURN_COMPLETED = {
+  threadId: 'thread-new',
+  turn: { id: 'turn-1', status: 'completed', error: null },
+};
+
+describe('the irreversibility floor for Codex runs', () => {
+  for (const mode of REFUSED_MODES) {
+    it(`refuses a ${mode} run before the App Server starts`, () => {
+      const refusal = CODEX_EXECUTOR_PROFILE.permissionRefusal(mode);
+      expect(refusal).toContain(
+        'a force-push, a publish, a repo-settings change or a remote ref deletion could run without a human'
+      );
+      let spawned = 0;
+      const executor = new CodexExecutor(() => {
+        spawned += 1;
+        return new FakeCodexProcess();
+      });
+      expect(() =>
+        executor.start(
+          { cwd: 'C:\\worktree', prompt: 'push it', permissionMode: mode },
+          NO_EVENTS
+        )
+      ).toThrow(refusal ?? 'unreachable');
+      expect(spawned).toBe(0);
+    });
+  }
+
+  for (const mode of ASKING_MODES) {
+    it(`holds a force-push from a ${mode} run for a human`, async () => {
+      const process = scriptedProcess({
+        afterTurn(fake) {
+          fake.serverRequest(
+            'item/commandExecution/requestApproval',
+            'floor-1',
+            FORCE_PUSH_ASK
+          );
+        },
+      });
+      const harness = startHarness(process, undefined, undefined, {
+        permissionMode: mode,
+      });
+      await waitFor(() => harness.approvals.length === 1);
+
+      // Codex asks before every non-read-only command and asks Dispatch.
+      expect(
+        process.requests.find((request) => request.method === 'thread/start')
+          ?.params
+      ).toMatchObject({
+        approvalPolicy: 'untrusted',
+        approvalsReviewer: 'user',
+      });
+      // Parked with Dispatch unanswered, carrying the command the daemon's
+      // approval floor reads to keep it from any automatic answer.
+      expect(harness.approvals[0]).toMatchObject({
+        toolName: 'codex.commandExecution',
+        input: FORCE_PUSH_ASK,
+      });
+      expect(floorCheckForToolInput(harness.approvals[0]?.input)).toBe(
+        'force-push'
+      );
+      expect(answerTo(process, 'floor-1')).toBeUndefined();
+
+      harness.run.approve(harness.approvals[0]?.requestId ?? '', {
+        allow: false,
+      });
+      await waitFor(() => answerTo(process, 'floor-1') !== undefined);
+      expect(answerTo(process, 'floor-1')).toEqual({ decision: 'decline' });
+      await harness.run.interrupt();
+    });
+  }
+
+  it('leaves a plan run no way to act, and holds a floor ask for a human anyway', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.serverRequest(
+          'item/commandExecution/requestApproval',
+          'floor-1',
+          FORCE_PUSH_ASK
+        );
+      },
+    });
+    const harness = startHarness(process, undefined, undefined, {
+      permissionMode: 'plan',
+    });
+    await waitFor(() => harness.approvals.length === 1);
+    // Read-only has no writable root and no network, and Codex rejects a
+    // request to leave the sandbox under `never`.
+    expect(
+      process.requests.find((request) => request.method === 'thread/start')
+        ?.params
+    ).toMatchObject({ approvalPolicy: 'never', sandbox: 'read-only' });
+    expect(harness.approvals[0]?.input).toEqual(FORCE_PUSH_ASK);
+    expect(answerTo(process, 'floor-1')).toBeUndefined();
+    await harness.run.interrupt();
+  });
+
+  it('answers only floor-clear asks itself under bypassPermissions', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.serverRequest('item/commandExecution/requestApproval', 'cmd', {
+          ...FORCE_PUSH_ASK,
+          command: "/bin/zsh -lc 'pnpm test'",
+        });
+        fake.serverRequest('item/fileChange/requestApproval', 'edit', {
+          itemId: 'edit-1',
+          grantRoot: '/',
+        });
+        fake.serverRequest('item/permissions/requestApproval', 'perms', {
+          permissions: { network: { enabled: true } },
+        });
+        // Neither a missing command nor stdin into a running shell can be
+        // read by the floor, so both wait for a human.
+        fake.serverRequest('item/commandExecution/requestApproval', 'blind', {
+          ...FORCE_PUSH_ASK,
+          command: null,
+        });
+        fake.serverRequest('item/commandExecution/requestApproval', 'stdin', {
+          ...FORCE_PUSH_ASK,
+          kind: 'writeStdin',
+          command: 'bash',
+        });
+      },
+    });
+    const harness = startHarness(process, undefined, undefined, {
+      permissionMode: 'bypassPermissions',
+    });
+    await waitFor(
+      () =>
+        harness.approvals.length === 2 &&
+        ['cmd', 'edit', 'perms'].every(
+          (id) => answerTo(process, id) !== undefined
+        )
+    );
+    expect(answerTo(process, 'cmd')).toEqual({ decision: 'accept' });
+    expect(answerTo(process, 'edit')).toEqual({ decision: 'accept' });
+    expect(answerTo(process, 'perms')).toEqual({
+      permissions: { network: { enabled: true } },
+      scope: 'turn',
+    });
+    expect(
+      harness.approvals.map(
+        (approval) => (approval.input as { kind?: string }).kind
+      )
+    ).toEqual(['command', 'writeStdin']);
+    expect(answerTo(process, 'blind')).toBeUndefined();
+    expect(answerTo(process, 'stdin')).toBeUndefined();
+    await harness.run.interrupt();
+  });
+
+  it('sends every ask to Dispatch under default, edits inside the worktree too', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.serverRequest('item/commandExecution/requestApproval', 'cmd', {
+          ...FORCE_PUSH_ASK,
+          command: "/bin/zsh -lc 'pnpm test'",
+        });
+        fake.notify('item/started', {
+          threadId: 'thread-new',
+          turnId: 'turn-1',
+          item: {
+            type: 'fileChange',
+            id: 'edit-1',
+            changes: [{ path: '/work/tree/a.ts', kind: { type: 'add' } }],
+          },
+        });
+        fake.serverRequest('item/fileChange/requestApproval', 'edit', {
+          itemId: 'edit-1',
+          grantRoot: null,
+        });
+      },
+    });
+    const harness = startHarness(process, undefined, undefined, {
+      permissionMode: 'default',
+      cwd: '/work/tree',
+    });
+    await waitFor(() => harness.approvals.length === 2);
+    expect(answerTo(process, 'cmd')).toBeUndefined();
+    expect(answerTo(process, 'edit')).toBeUndefined();
+    await harness.run.interrupt();
+  });
+
+  it('accepts only edits wholly inside the worktree itself under acceptEdits', async () => {
+    const edit = (id: string, changes: unknown[]) => ({
+      threadId: 'thread-new',
+      turnId: 'turn-1',
+      item: { type: 'fileChange', id, changes, status: 'inProgress' },
+    });
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.notify(
+          'item/started',
+          edit('inside', [
+            { path: '/work/tree/src/a.ts', kind: { type: 'add' } },
+            {
+              path: '/work/tree/b.ts',
+              kind: { type: 'update', move_path: '/work/tree/c.ts' },
+            },
+          ])
+        );
+        fake.notify(
+          'item/started',
+          edit('outside', [{ path: '/work/other.ts', kind: { type: 'add' } }])
+        );
+        fake.notify(
+          'item/started',
+          edit('moved-out', [
+            {
+              path: '/work/tree/b.ts',
+              kind: { type: 'update', move_path: '/etc/b.ts' },
+            },
+          ])
+        );
+        fake.notify('item/started', edit('unreadable', [{ kind: 'add' }]));
+        for (const itemId of ['inside', 'outside', 'moved-out', 'unreadable']) {
+          fake.serverRequest('item/fileChange/requestApproval', itemId, {
+            itemId,
+            reason: null,
+            grantRoot: null,
+          });
+        }
+        fake.serverRequest('item/fileChange/requestApproval', 'unseen', {
+          itemId: 'never-started',
+        });
+        fake.serverRequest('item/fileChange/requestApproval', 'grant', {
+          itemId: 'inside',
+          grantRoot: '/work',
+        });
+        fake.serverRequest('item/commandExecution/requestApproval', 'cmd', {
+          ...FORCE_PUSH_ASK,
+          command: "/bin/zsh -lc 'pnpm test'",
+        });
+      },
+    });
+    const harness = startHarness(process, undefined, undefined, {
+      permissionMode: 'acceptEdits',
+      cwd: '/work/tree',
+    });
+    await waitFor(
+      () =>
+        harness.approvals.length === 6 &&
+        answerTo(process, 'inside') !== undefined
+    );
+    expect(answerTo(process, 'inside')).toEqual({ decision: 'accept' });
+    for (const id of [
+      'outside',
+      'moved-out',
+      'unreadable',
+      'unseen',
+      'grant',
+      'cmd',
+    ]) {
+      expect(answerTo(process, id)).toBeUndefined();
+    }
+    await harness.run.interrupt();
+  });
+
+  it('stops a run whose floor command ran without asking Dispatch', async () => {
+    // A ~/.codex/rules allow rule skips the ask: the item just starts and ends.
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.notify(
+          'item/completed',
+          commandCompleted('call-1', FORCE_PUSH_ASK.command, 'completed')
+        );
+        fake.notify('turn/completed', TURN_COMPLETED);
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.finishes.length === 1);
+
+    const error = harness.finishes[0]?.error ?? '';
+    expect(harness.finishes).toEqual([
+      { state: 'failed', sessionId: 'thread-new', turns: 1, error },
+    ]);
+    expect(error).toContain('force-push');
+    expect(error).toContain("/bin/zsh -lc 'git push --force origin main'");
+    expect(error).toContain('allow rule');
+    expect(harness.entries.map((entry) => entry.kind)).toEqual([
+      'tool',
+      'system',
+    ]);
+    expect(harness.entries[1]?.text).toBe(error);
+    expect(process.killed).toBe(true);
+  });
+
+  it('stops a run that types a floor command into a shell it started', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.serverRequest('item/commandExecution/requestApproval', 'shell', {
+          ...FORCE_PUSH_ASK,
+          command: '/bin/zsh -lc bash',
+        });
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.approvals.length === 1);
+    // The shell itself is an ordinary ask; what is typed into it never is.
+    harness.run.approve(harness.approvals[0]?.requestId ?? '', { allow: true });
+    process.notify(
+      'item/commandExecution/terminalInteraction',
+      typed('git push --force origin other\n', 'turn-other')
+    );
+    process.notify('item/commandExecution/terminalInteraction', typed('ls\n'));
+    process.notify(
+      'item/commandExecution/terminalInteraction',
+      typed('git push --for')
+    );
+    process.notify(
+      'item/commandExecution/terminalInteraction',
+      typed('ce origin main; exit\n')
+    );
+    await waitFor(() => harness.finishes.length === 1);
+
+    const error = harness.finishes[0]?.error ?? '';
+    expect(harness.finishes[0]?.state).toBe('failed');
+    expect(error).toContain('force-push');
+    expect(error).toContain('git push --force origin main; exit');
+    expect(error).toContain('shell');
+    expect(harness.entries.filter((entry) => entry.kind === 'system')).toEqual([
+      expect.objectContaining({ text: error }),
+    ]);
+  });
+
+  it('leaves a floor command alone when Dispatch was asked or it never ran', async () => {
+    const process = scriptedProcess({
+      afterTurn(fake) {
+        fake.serverRequest(
+          'item/commandExecution/requestApproval',
+          'floor-1',
+          FORCE_PUSH_ASK
+        );
+        fake.serverRequest('item/commandExecution/requestApproval', 'stdin', {
+          ...FORCE_PUSH_ASK,
+          kind: 'writeStdin',
+          itemId: 'shell-1',
+          command: 'git push --force origin main',
+        });
+      },
+    });
+    const harness = startHarness(process);
+    await waitFor(() => harness.approvals.length === 2);
+    for (const approval of harness.approvals) {
+      harness.run.approve(approval.requestId, { allow: true });
+    }
+    process.notify(
+      'item/completed',
+      commandCompleted('call-1', FORCE_PUSH_ASK.command, 'completed')
+    );
+    process.notify('item/commandExecution/terminalInteraction', {
+      ...typed('git push --force origin main\n'),
+      itemId: 'shell-1',
+    });
+    // A forbid rule or a declined ask ends the item without running it.
+    process.notify(
+      'item/completed',
+      commandCompleted('call-2', FORCE_PUSH_ASK.command, 'failed')
+    );
+    process.notify(
+      'item/completed',
+      commandCompleted('call-3', FORCE_PUSH_ASK.command, 'declined')
+    );
+    // An allow rule on a command clear of the floor is not Dispatch's concern.
+    process.notify(
+      'item/completed',
+      commandCompleted('call-4', "/bin/zsh -lc 'pnpm test'", 'completed')
+    );
+    process.notify('turn/completed', TURN_COMPLETED);
+    await waitFor(() => harness.finishes.length === 1);
+
+    expect(harness.finishes).toEqual([
+      { state: 'finished', sessionId: 'thread-new', turns: 1 },
+    ]);
+    expect(harness.entries.some((entry) => entry.kind === 'system')).toBe(
+      false
+    );
   });
 });

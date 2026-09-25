@@ -90,6 +90,53 @@ describe('who may change settings', () => {
     expect(configFile()).not.toContain('evil');
   });
 
+  // These push with the owner's own git credentials to a remote nobody may
+  // have chosen for them (sync defaults to origin), which is POST
+  // /api/git/push's authority. Off is gated too, like clearing a remote.
+  it('a decide-tier teammate cannot switch pushing on or off, or point it at another branch', async () => {
+    const lead = handle.team.teammates.issue('ada', 'decide');
+    // TaskStore.init writes autoCommit: true, so the refusals are checked
+    // against the file as it started rather than for absent keys.
+    const before = configFile();
+    for (const [body, key] of [
+      [{ autoCommit: false }, 'autoCommit'],
+      [{ sync: { enabled: true } }, 'sync.enabled'],
+      [{ sync: { branch: 'main' } }, 'sync.branch'],
+      [{ receipts: { enabled: false } }, 'receipts.enabled'],
+      [{ receipts: { branch: 'main' } }, 'receipts.branch'],
+    ] as const) {
+      const res = await patch(body, lead);
+      expect(res.status).toBe(403);
+      expect(((await res.json()) as { error: string }).error).toContain(
+        `changing ${key} needs the operator tier`
+      );
+    }
+    expect(configFile()).toBe(before);
+
+    // How often an already-running sync checks stays ordinary policy.
+    expect((await patch({ sync: { intervalSec: 60 } }, lead)).status).toBe(200);
+  });
+
+  it('the owner switches pushing on and off', async () => {
+    const res = await patch(
+      {
+        autoCommit: false,
+        sync: { enabled: true, branch: 'board' },
+        receipts: { enabled: false, branch: 'audit' },
+      },
+      handle.tokens.appToken
+    );
+    expect(res.status).toBe(200);
+    const cfg = (await res.json()) as {
+      autoCommit: boolean;
+      sync: { enabled: boolean; branch: string };
+      receipts: { enabled: boolean; branch: string };
+    };
+    expect(cfg.autoCommit).toBe(false);
+    expect(cfg.sync).toMatchObject({ enabled: true, branch: 'board' });
+    expect(cfg.receipts).toMatchObject({ enabled: false, branch: 'audit' });
+  });
+
   it('the owner changes all of it', async () => {
     const res = await patch(
       {

@@ -137,8 +137,8 @@ export function collectWorkspaces(rootDir: string): WorkspacePackage[] {
   return found;
 }
 
-// AGENTS.md tells every agent to list `.agents/skills/*/SKILL.md` and read each
-// frontmatter description to decide what's relevant. That listing is fixed for
+// An agent picks skills by reading each `.agents/skills/*/SKILL.md` frontmatter
+// description to decide what's relevant. That listing is fixed for
 // a given commit, so it is rendered here once instead of being re-derived by
 // every run. `.claude/skills` is a symlink to the same directory, so only one
 // of the two is ever read.
@@ -259,8 +259,8 @@ function renderSkills(skills: SkillSummary[]): string[] {
 function renderScripts(scripts: { name: string; command: string }[]): string[] {
   if (scripts.length === 0) return [];
   return [
-    '**Root scripts**: ' +
-      scripts.map((s) => `\`bun run ${s.name}\``).join(', '),
+    '**Root package.json scripts** (run them the way this repo does): ' +
+      scripts.map((s) => `\`${s.name}\``).join(', '),
   ];
 }
 
@@ -301,11 +301,16 @@ function renderDigest(digest: RepoDigest | null): string[] {
 // What `run_list` would return. Rendered so the agent knows who else is in the
 // repo without spending a call to ask — including the empty case, which is
 // itself the answer and stops a "maybe I should check" follow-up.
-function renderConcurrentRuns(runs: ConcurrentRun[]): string[] {
+function renderConcurrentRuns(
+  runs: ConcurrentRun[],
+  dispatchTools: boolean
+): string[] {
   if (runs.length === 0) {
     return [
-      '**Other agents**: no other runs are in flight right now. Call ' +
-        '`run_list` only if you need a fresher answer later in your work.',
+      dispatchTools
+        ? '**Other agents**: no other runs are in flight right now. Call ' +
+          '`run_list` only if you need a fresher answer later in your work.'
+        : '**Other agents**: no other runs are in flight right now.',
     ];
   }
   return [
@@ -329,7 +334,9 @@ function renderConcurrentRuns(runs: ConcurrentRun[]): string[] {
  * nothing) — a bare header with no facts under it is worse than no header.
  */
 export function renderOrientationSection(
-  orientation: RepoOrientation
+  orientation: RepoOrientation,
+  // False when the run has no dispatch MCP server, so `run_list` goes unnamed.
+  dispatchTools = true
 ): string | null {
   const repoBlocks = [
     renderDigest(orientation.digest),
@@ -348,7 +355,7 @@ export function renderOrientationSection(
   }
   const blocks = [
     ...repoBlocks,
-    renderConcurrentRuns(orientation.concurrentRuns),
+    renderConcurrentRuns(orientation.concurrentRuns, dispatchTools),
   ];
 
   return [

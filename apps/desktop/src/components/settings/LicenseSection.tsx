@@ -69,17 +69,19 @@ export function LicenseSection({ data }: LicenseSectionProps) {
     <>
       <SettingsGroup
         title="Plan"
-        hint="Dispatch is free for up to three people, with every feature. More than that needs a license key."
+        requires="none"
+        hint="Free for up to three people, with every feature. More people need a license key."
+        keywords="seats billing"
       >
         <SettingsRow
           title={planLine(status)}
-          subtitle={`${status.used} of ${status.seats} seats in use: you, and each teammate holding a live invite.`}
+          subtitle={`${status.used} of ${status.seats} seats used: you and everyone with an active invite.`}
         >
           {status.kind === 'expired' && (
             <SettingsHint className="text-(--state-waiting-fg)">
               The license for {status.org} expired on{' '}
-              {status.expiresAt?.slice(0, 10)}, so the free plan applies until a
-              new key is installed. The people invited first keep their seats.
+              {status.expiresAt?.slice(0, 10)}. The free plan applies until you
+              add a new key; the people invited first keep their seats.
             </SettingsHint>
           )}
           {status.kind === 'invalid' && status.reason !== null && (
@@ -90,7 +92,7 @@ export function LicenseSection({ data }: LicenseSectionProps) {
         </SettingsRow>
       </SettingsGroup>
 
-      <SettingsGroup title="License key">
+      <SettingsGroup title="License key" keywords="install" requires="none">
         {canInstall ? (
           <SettingsRow title="Paste a key" htmlFor="license-key" stacked>
             <form
@@ -115,8 +117,8 @@ export function LicenseSection({ data }: LicenseSectionProps) {
               </Button>
             </form>
             <SettingsHint className="mt-1.5">
-              Checked on this machine; nothing is sent anywhere. A key that does
-              not verify is refused, and the one installed stays.
+              Checked on this machine; nothing is sent anywhere. An invalid key
+              is refused and the current one stays.
             </SettingsHint>
             {error !== null && (
               <p role="alert" className="text-state-failed mt-1.5 text-[13px]">
@@ -126,8 +128,9 @@ export function LicenseSection({ data }: LicenseSectionProps) {
           </SettingsRow>
         ) : (
           <SettingsRow
-            title="Installing a key is for whoever runs this daemon"
-            subtitle="Ask them to add it under Settings → License, or with dispatch license set."
+            title="Add a key"
+            subtitle="Ask the person running Dispatch for this project to add it here, or with dispatch license set."
+            locked
           />
         )}
       </SettingsGroup>

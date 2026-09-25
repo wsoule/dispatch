@@ -12,8 +12,9 @@ export interface SyncSummary {
   message: string;
   /** Extra lines for the pill's tooltip: pending counts, the merge-driver warning. */
   detail: string[];
-  /** Whether "Auto-commit off" is worth offering — only while the board syncer is actually
-   * running (there is nothing to turn off on a receipts project or one already off). */
+  /** Whether the pill offers "Stop committing" (turns off "Commit task files to the main
+   * branch") — only while the file-backed syncer runs, not on a receipts project or one
+   * already off. */
   canDisableAutoCommit: boolean;
 }
 
@@ -68,8 +69,8 @@ function receiptsMessageFor(receipts: ReceiptsStatus): string {
 
 // One line a user can act on per state: `idle` says when, `local-only`/`blocked` say why
 // (from `detail`), `disabled` says what to do about it (a restart — see api.ts's
-// DISABLED_SYNC_DETAIL for why nothing here can recover it on its own), and `off` says how
-// to turn it on (Settings — the ordinary state for a project that has never opted in).
+// DISABLED_SYNC_DETAIL for why nothing here can recover it on its own), and `off` says where
+// to turn it on (Settings → Board sync — the ordinary state for a project never opted in).
 function messageFor(status: SyncStatus): string {
   switch (status.state) {
     case 'idle':
@@ -85,9 +86,9 @@ function messageFor(status: SyncStatus): string {
         ? 'A sync conflict needs resolving'
         : `Sync conflict: ${status.detail}`;
     case 'disabled':
-      return status.detail ?? 'Board sync is off';
+      return status.detail ?? 'Task files not committed';
     case 'off':
-      return 'Board sync is off · enable auto-commit in Settings';
+      return 'Task files not committed · Settings → Board sync';
   }
 }
 

@@ -129,7 +129,7 @@ describe('board sync production wiring', () => {
 
       expect(
         logSpy.mock.calls.some((call) =>
-          String(call[0]).includes('board sync disabled')
+          String(call[0]).includes("task files won't be committed")
         )
       ).toBe(true);
 

@@ -44,7 +44,10 @@ export function buildTaskPrompt(
   ledgerEntries: LedgerEntry[] = [],
   // Optional so this stays callable (and snapshot-stable) without a real
   // checkout to collect from — see collectOrientation, which is the impure half.
-  orientation: RepoOrientation | null = null
+  orientation: RepoOrientation | null = null,
+  // False for executors with no dispatch MCP server (ExecutorProfile.dispatchMcp):
+  // their prompt must not send the agent after tools it does not have.
+  dispatchTools = true
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -75,11 +78,17 @@ export function buildTaskPrompt(
   // present those instructions are reworded to point AT it instead. Placed
   // before them so the facts are already in view by the time they are cited.
   const orientationSection =
-    orientation === null ? null : renderOrientationSection(orientation);
+    orientation === null
+      ? null
+      : renderOrientationSection(orientation, dispatchTools);
   if (orientationSection !== null) sections.push(orientationSection);
+  // Only a rendered index can be cited: a repo with no .agents/skills (or
+  // skills only under .claude/skills) keeps the generic line.
+  const skillsIndexed =
+    orientationSection !== null && (orientation?.skills.length ?? 0) > 0;
 
   sections.push(
-    orientationSection === null
+    !skillsIndexed
       ? "Follow this repository's own contribution conventions (AGENTS.md / " +
           'CLAUDE.md at the repo root, and any .agents/skills or ' +
           '.claude/skills entries relevant to the change) exactly as a human ' +
@@ -90,49 +99,59 @@ export function buildTaskPrompt(
           'relevant to your change rather than enumerating the directory again.'
   );
 
-  sections.push(
-    orientationSection === null
-      ? 'The dispatch MCP server is connected in this session, with `run_list` ' +
-          'and `task_comment` available now — other agents may be dispatched ' +
-          'on other tasks in this tracker at the same time, so call `run_list` ' +
-          'before assuming you have exclusive access to the repo, and log ' +
-          "meaningful progress with `task_comment`; this task's Activity log " +
-          'is the shared record other agents and humans will read.'
-      : 'The dispatch MCP server is connected in this session, with ' +
-          '`task_comment` available now — log meaningful progress with it; this ' +
-          "task's Activity log is the shared record other agents and humans will " +
-          'read. Concurrency is already reported above, so you do not need to ' +
-          'open with `run_list`.'
-  );
+  if (dispatchTools) {
+    sections.push(
+      orientationSection === null
+        ? 'The dispatch MCP server is connected in this session, with `run_list` ' +
+            'and `task_comment` available now — other agents may be dispatched ' +
+            'on other tasks in this tracker at the same time, so call `run_list` ' +
+            'before assuming you have exclusive access to the repo, and log ' +
+            "meaningful progress with `task_comment`; this task's Activity log " +
+            'is the shared record other agents and humans will read.'
+        : 'The dispatch MCP server is connected in this session, with ' +
+            '`task_comment` available now — log meaningful progress with it; this ' +
+            "task's Activity log is the shared record other agents and humans will " +
+            'read. Concurrency is already reported above, so you do not need to ' +
+            'open with `run_list`.'
+    );
 
-  sections.push(
-    'When the task genuinely does not say which way to go — ambiguous ' +
-      'requirements, several valid approaches with different end results, ' +
-      'missing acceptance criteria — call `ask_user`; it blocks until the ' +
-      'human answers and returns their reply. Use it whenever a decision ' +
-      'would change the shape of the result and the task does not specify ' +
-      'it, and bundle everything you are unsure about into one call rather ' +
-      'than asking repeatedly. Do not use it for anything you can settle by ' +
-      'reading the repo (existing conventions, how a helper behaves, where ' +
-      'a file lives) — find that out yourself.'
-  );
+    sections.push(
+      'When the task genuinely does not say which way to go — ambiguous ' +
+        'requirements, several valid approaches with different end results, ' +
+        'missing acceptance criteria — call `ask_user`; it blocks until the ' +
+        'human answers and returns their reply. Use it whenever a decision ' +
+        'would change the shape of the result and the task does not specify ' +
+        'it, and bundle everything you are unsure about into one call rather ' +
+        'than asking repeatedly. Do not use it for anything you can settle by ' +
+        'reading the repo (existing conventions, how a helper behaves, where ' +
+        'a file lives) — find that out yourself.'
+    );
 
-  sections.push(
-    'Record verification evidence with the `record_evidence` MCP tool ' +
-      'instead of describing test results in prose — one call per command ' +
-      'load-bearing to your acceptance criteria. If you add a guard (a ' +
-      'check, a validation, a condition that should stop bad input or a ' +
-      'bad state), mutation-test it: revert the guard, rerun the tests, and ' +
-      'call `record_mutation` with how many failed. Zero means the guard or ' +
-      'its test is not doing its job.'
-  );
+    sections.push(
+      'Record verification evidence with the `record_evidence` MCP tool ' +
+        'instead of describing test results in prose — one call per command ' +
+        'load-bearing to your acceptance criteria. If you add a guard (a ' +
+        'check, a validation, a condition that should stop bad input or a ' +
+        'bad state), mutation-test it: revert the guard, rerun the tests, and ' +
+        'call `record_mutation` with how many failed. Zero means the guard or ' +
+        'its test is not doing its job.'
+    );
+  } else {
+    sections.push(
+      'List the verification commands you ran and what they showed in your ' +
+        'final summary. If you add a guard (a check, a validation, a ' +
+        'condition that should stop bad input or a bad state), mutation-test ' +
+        'it: revert the guard, rerun the tests, and report how many failed. ' +
+        'Zero means the guard or its test is not doing its job.'
+    );
+  }
 
   sections.push(
     'Commit your work (git add / git commit) before finishing — an ' +
       'uncommitted worktree cannot be reviewed or merged.'
   );
 
-  // On by default, opted out per-task with `self-review: false` in frontmatter.
+  // Opt-in for new tasks (see TaskMeta.selfReview); files without the key read as on.
   if (task.meta.selfReview) {
     sections.push(
       'Before finishing: self-review your work. Re-read the full diff of your changes, ' +

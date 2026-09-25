@@ -27,8 +27,9 @@ export interface TaskMeta {
   external: string | null;
   // When true, the dispatched agent is instructed (see server's prompt builder) to re-review
   // its own diff against the acceptance criteria before finishing, rather than stopping at
-  // "tests pass." Defaults to true — the extra pass is cheap next to reviewing (or merging) a
-  // half-checked diff, so tasks opt out of it rather than into it.
+  // "tests pass." New tasks default to false: Claude Opus 5 verifies unprompted and an explicit
+  // self-check makes it over-verify, and every run already gets a separate adversarial review.
+  // Opt in for executors that still benefit. Files without the key still parse as true.
   selfReview: boolean;
   /**
    * Paths or globs the planner expects this task to modify.

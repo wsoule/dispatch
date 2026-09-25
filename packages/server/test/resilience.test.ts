@@ -551,4 +551,17 @@ describe('a daemon restart with a run in flight', () => {
     expect(res.status).toBe(400);
     expect((await json(res)).error).toBe('invalid fresh: expected a boolean');
   });
+
+  it('rejects an effort outside the five SDK levels', async () => {
+    initGitRepoAt(root);
+    const store = TaskStore.init(root);
+    const task = store.create({ title: 'Bad effort' });
+    const baseUrl = await boot(new StallingExecutor(), 60_000);
+
+    const res = await postRun(baseUrl, task.meta.id, { effort: 'extreme' });
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toBe(
+      'invalid effort: extreme (expected low|medium|high|xhigh|max)'
+    );
+  });
 });

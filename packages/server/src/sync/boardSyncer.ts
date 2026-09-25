@@ -20,8 +20,9 @@ export interface SyncResult {
 }
 
 // 'disabled' and 'off' are never states a real syncOnce() result carries —
-// both are synthesized by GET /api/sync (see api.ts): 'disabled' when no
-// trunk was resolvable at boot, 'off' when the project has autoCommit: false.
+// both are synthesized by GET /api/sync (see api.ts): 'disabled' when there
+// is no syncer (database backend, or no trunk at boot), 'off' when the
+// project has autoCommit: false.
 type SyncState = 'idle' | 'local-only' | 'blocked' | 'disabled' | 'off';
 
 const TASKS_DIR = join('.dispatch', 'tasks');
@@ -36,9 +37,10 @@ function errorText(result: { stdout: string; stderr: string }): string {
 /**
  * Mirrors outstanding `.dispatch/tasks/*.md` files from the user's working
  * tree into the board's private sync worktree, commits them there, and
- * pushes to trunk. Reads from `rootDir` but never runs a git command or
- * writes a file there — every mutation happens inside `worktree.path`, a
- * separate checkout the user never sees.
+ * pushes to trunk. Every git command runs inside `worktree.path`, a separate
+ * checkout the user never sees; the only writes to `rootDir` are
+ * materialize()'s, which copy teammates' newer task files into (and remove
+ * trunk-deleted ones from) `rootDir/.dispatch/tasks`.
  */
 export class BoardSyncer {
   // `run` covers every local git step and stays synchronous; `runAsync` is
@@ -123,7 +125,7 @@ export class BoardSyncer {
       // guessing one (e.g. the empty tree) is exactly the resurrection bug
       // this design avoids, so this cycle simply skips materializing.
       console.error(
-        `board sync: could not resolve the sync worktree's HEAD before pulling (${this.rootDir}); skipping materialize() this cycle: ${errorText(beforePull)}`
+        `task-file commit: could not resolve the sync worktree's HEAD before pulling (${this.rootDir}); skipping materialize() this cycle: ${errorText(beforePull)}`
       );
     }
 

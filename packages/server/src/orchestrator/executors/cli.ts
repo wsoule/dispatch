@@ -1,5 +1,6 @@
 import type { ExecutorCommand } from '@dispatch/core';
 
+import { FLOOR_COMMAND_ACTIONS } from '../../floor.js';
 import type {
   Executor,
   ExecutorEvents,
@@ -23,7 +24,8 @@ import type {
  *   - No approval gate. A CLI agent asks the terminal, not us, so a run on one
  *     cannot be held at a tool call. The profile refuses every permission mode
  *     that implies a human gate, so a run is rejected at dispatch rather than
- *     silently proceeding ungated.
+ *     silently proceeding ungated. Nothing holds an irreversible command
+ *     (floor.ts) either, and each run's transcript opens by saying so.
  *   - No cost or turn reporting, so the spend gate charges the configured
  *     estimate and `maxTurns`/`maxBudgetUsd` are not enforced mid-run.
  *   - No resumable session, so a follow-up starts a fresh process.
@@ -150,6 +152,7 @@ export const CLI_EXECUTOR_PROFILE: ExecutorProfile = {
     GATED_MODES.has(permissionMode)
       ? `this agent is a plain CLI with no approval protocol, so it cannot run under "${permissionMode}" — dispatch it with an ungated mode, or use claude/codex for gated runs`
       : null,
+  dispatchMcp: false,
 };
 
 export interface CliExecutorOptions {
@@ -207,6 +210,14 @@ export class CliExecutor implements Executor {
         notify: () => {},
       };
     }
+
+    // Every mode this profile admits is ungated, so each run says what that
+    // costs rather than letting the floor (floor.ts) look enforced.
+    events.onEntry({
+      ts: new Date().toISOString(),
+      kind: 'system',
+      text: `${argv[0] ?? 'This agent'} has no approval protocol, so Dispatch cannot hold ${FLOOR_COMMAND_ACTIONS} for a human under permissionMode ${opts.permissionMode}`,
+    });
 
     if (stdinPrompt) {
       child.writeStdin(opts.prompt);

@@ -7,6 +7,7 @@ import type {
   RunMeta,
 } from '@dispatch/client';
 import type {
+  EffortLevel,
   EscalationStep,
   TaskDoc,
   UpdatePatch,
@@ -53,7 +54,14 @@ import {
   pushToLinearError,
   resolveLinearLink,
 } from '../../../lib/linearSettings';
-import { modelLabel, MODELS, readDefaultModel } from '../../../lib/models';
+import {
+  DEFAULT_EFFORT_ID,
+  effortFromId,
+  effortOptions,
+  modelLabel,
+  MODELS,
+  readDefaultModel,
+} from '../../../lib/models';
 import { notePatch } from '../../../lib/noteDraft';
 import { isTerminalRunState } from '../../../lib/runState';
 import { parseTaskSections } from '../../../lib/taskDisplay';
@@ -103,6 +111,9 @@ export interface TaskDetailPanelProps {
    * resolveExecuteModel). Absent, the picker falls back to the device default,
    * which ignores the project config. */
   defaultModel?: string;
+  /** The project's configured `effort.execute`, shown on the effort picker's
+   *  Default entry. The daemon applies it; the page never sends it itself. */
+  defaultEffort?: EffortLevel;
   /** What the daemon can dispatch on. Absent (or a single real executor) hides the picker. */
   executors?: ExecutorsResponse;
   statuses: string[];
@@ -124,7 +135,12 @@ export interface TaskDetailPanelProps {
    * as dragging its card, rather than waiting on a round-trip like every other field here
    * (`onUpdate`) does. */
   onMoveStatus: (id: string, status: string) => Promise<void>;
-  onDispatch: (id: string, executor?: string, model?: string) => Promise<void>;
+  onDispatch: (
+    id: string,
+    executor?: string,
+    model?: string,
+    opts?: { effort?: EffortLevel }
+  ) => Promise<void>;
   /** Jumps to a run's session/log — the "View run"/"Review run" button and every Sessions
    * row call this with the run's id. */
   onOpenSession: (runId: string) => void;
@@ -228,6 +244,7 @@ export function TaskPage({
   onClose,
   doc,
   defaultModel,
+  defaultEffort,
   executors,
   statuses,
   ready,
@@ -276,6 +293,9 @@ export function TaskPage({
   // The model this dispatch will use — seeded from the project's resolved default (config
   // models.execute layered under the device override), overridable per-dispatch.
   const [model, setModel] = useState(() => defaultModel ?? readDefaultModel());
+  // The effort picker's id; the Default sentinel sends nothing.
+  const [effortId, setEffortId] = useState(DEFAULT_EFFORT_ID);
+  const efforts = effortOptions(defaultEffort);
   // The executor this dispatch will use; undefined means "the daemon's default", which is
   // sent as no executor at all so a resumable run is never refused for naming one.
   const [executor, setExecutor] = useState<string | undefined>(undefined);
@@ -451,11 +471,12 @@ export function TaskPage({
       try {
         const chosen = explicit ?? executor;
         const runsOn = chosen ?? executors?.default ?? 'claude';
-        // The model picker lists Claude ids; any other executor picks its own.
+        // The model and effort pickers are Claude's; any other executor picks its own.
         await onDispatch(
           doc.meta.id,
           chosen,
-          runsOn === 'claude' ? model : undefined
+          runsOn === 'claude' ? model : undefined,
+          runsOn === 'claude' ? { effort: effortFromId(effortId) } : undefined
         );
       } catch (err) {
         fail('Dispatch failed', err);
@@ -463,7 +484,7 @@ export function TaskPage({
         setDispatching(false);
       }
     },
-    [doc.meta.id, executor, executors, model, onDispatch, fail]
+    [doc.meta.id, executor, executors, model, effortId, onDispatch, fail]
   );
 
   const patch = useCallback(
@@ -711,6 +732,28 @@ export function TaskPage({
                     <DropdownMenuItem key={m.id} onClick={() => setModel(m.id)}>
                       <span className="flex-1">{m.label}</span>
                       {m.id === model && <Check className="ml-auto size-3" />}
+                    </DropdownMenuItem>
+                  ))}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
+            {effectiveExecutor === 'claude' && (
+              <DropdownMenu>
+                <DropdownMenuTrigger
+                  render={<SelectPill aria-label="Effort" />}
+                >
+                  {efforts.find((e) => e.id === effortId)?.label}
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="start">
+                  {efforts.map((e) => (
+                    <DropdownMenuItem
+                      key={e.id}
+                      onClick={() => setEffortId(e.id)}
+                    >
+                      <span className="flex-1">{e.label}</span>
+                      {e.id === effortId && (
+                        <Check className="ml-auto size-3" />
+                      )}
                     </DropdownMenuItem>
                   ))}
                 </DropdownMenuContent>

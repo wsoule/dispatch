@@ -27,7 +27,7 @@ import type {
   LinearViewer,
 } from '../src/linear/client.js';
 import { json } from './json.js';
-import { useTestAuth } from './testAuth.js';
+import { rawFetch, useTestAuth } from './testAuth.js';
 
 const STATES: LinearWorkflowState[] = [
   { id: 's-todo', name: 'Todo', type: 'unstarted' },
@@ -245,6 +245,46 @@ describe('POST /api/linear/import', () => {
     const res = await fetch(`${baseUrl}/api/linear/import`, { method: 'POST' });
     expect(res.status).toBe(200);
     expect((await json(res)).errors).toEqual(['no Linear team selected']);
+  });
+});
+
+// The stored key decides whose Linear account, and which workspace, the board
+// is sent to, so only the owner may set or remove it. Using the key once it
+// is set (sync, import, the pickers) stays on the request tier.
+describe('who may change the Linear key', () => {
+  function post(path: string, token: string, body?: unknown) {
+    return rawFetch(`${baseUrl}/api/linear/${path}`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  }
+
+  it('refuses connect and disconnect below the operator tier, before any call out', async () => {
+    writeProjectCredential(root, 'linear', { apiKey: 'lin_api_owner_key' });
+    const lead = handle.team.teammates.issue('ada', 'decide');
+    for (const token of [handle.tokens.agentToken, lead]) {
+      const connect = await post('connect', token, {
+        apiKey: 'lin_api_someone_else',
+      });
+      expect(connect.status).toBe(403);
+      expect(((await json(connect)) as { code: string }).code).toBe(
+        'auth_insufficient_tier'
+      );
+      expect((await post('disconnect', token)).status).toBe(403);
+    }
+    expect(
+      readCredentials().projects?.[normalizeProjectPath(root)]?.linear?.apiKey
+    ).toBe('lin_api_owner_key');
+  });
+
+  it('leaves sync and import to the agent token', async () => {
+    const agent = handle.tokens.agentToken;
+    expect((await post('sync', agent)).status).toBe(200);
+    expect((await post('import', agent)).status).toBe(200);
   });
 });
 

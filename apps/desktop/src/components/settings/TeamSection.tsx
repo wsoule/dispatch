@@ -8,6 +8,7 @@ import { Check, Copy, UserMinus, UserPlus } from 'lucide-react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { useSettingsAccess } from './access';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { cn } from '@/lib/utils';
 import { Pill } from '@/ui/ai/pill';
@@ -28,14 +29,17 @@ interface TeamSectionProps {
 // Each tier in the words someone choosing one needs: what it adds over the
 // one below. Mirrors the ladder in packages/server/src/tiers.ts.
 const TIER_INFO: Record<AuthTier, { label: string; adds: string }> = {
-  request: { label: 'Request', adds: 'Board, runs, review and merge' },
+  request: {
+    label: 'Can work',
+    adds: 'Use the board, start runs, review and merge',
+  },
   decide: {
-    label: 'Decide',
-    adds: 'Also approvals, scope decisions and inviting others',
+    label: 'Can approve',
+    adds: 'Also approve requests and invite people',
   },
   operator: {
-    label: 'Operator',
-    adds: 'Also terminals, the browser, files and git — on your machine, as you',
+    label: 'Full access',
+    adds: 'Also terminals, files and git on your machine, acting as you',
   },
 };
 
@@ -113,6 +117,8 @@ export function TeamSection({ data }: TeamSectionProps) {
   const { client, myTier, presence } = data;
   const queryClient = useQueryClient();
   const canManage = myTier === 'decide' || myTier === 'operator';
+  // Invites need decide, not operator, so the lock says so.
+  const { decideReason } = useSettingsAccess();
   const holdersKey = ['dispatch-team-tokens', client?.baseUrl];
 
   const holders = useQuery({
@@ -141,10 +147,11 @@ export function TeamSection({ data }: TeamSectionProps) {
 
   if (!canManage) {
     return (
-      <SettingsGroup title="Team">
+      <SettingsGroup title="Members" keywords="invite team" requires="none">
         <SettingsRow
-          title="Inviting and removing people needs the decide tier"
-          subtitle="Ask whoever runs this daemon to invite you with a higher tier, or to invite the person for you."
+          title="Inviting people"
+          subtitle="Needs Can approve access. Ask the person running Dispatch for this project to invite them, or to raise your access."
+          locked={decideReason}
         />
       </SettingsGroup>
     );
@@ -192,7 +199,9 @@ export function TeamSection({ data }: TeamSectionProps) {
     <>
       <SettingsGroup
         title="Invite someone"
-        hint="They get their own token, so everything they do is credited to them."
+        requires="none"
+        hint="They get their own sign-in token, so everything they do is credited to them."
+        keywords="add member token access"
       >
         <SettingsRow title="Email or handle" htmlFor="team-invite-who" stacked>
           <form
@@ -250,8 +259,8 @@ export function TeamSection({ data }: TeamSectionProps) {
 
         {issued !== null && (
           <SettingsRow
-            title={`Send ${issued.handle} these, privately`}
-            subtitle="The token is shown this once. Lose it and invite them again, which replaces it."
+            title={`Send ${issued.handle} these privately`}
+            subtitle="The token is only shown once. If it's lost, invite them again to replace it."
             stacked
           >
             <div className="flex flex-col gap-2">
@@ -266,7 +275,8 @@ export function TeamSection({ data }: TeamSectionProps) {
                 ))
               ) : (
                 <SettingsHint>
-                  This daemon only answers on this machine. Restart it with{' '}
+                  Dispatch only accepts connections from this machine right now.
+                  To let them connect, restart it with{' '}
                   <code className="font-mono">
                     dispatch serve --host 0.0.0.0
                   </code>{' '}
@@ -287,11 +297,11 @@ export function TeamSection({ data }: TeamSectionProps) {
         )}
       </SettingsGroup>
 
-      <SettingsGroup title="People">
+      <SettingsGroup title="People" keywords="members team" requires="none">
         {people.length === 0 && (
           <SettingsRow
             title="Nobody else yet"
-            subtitle="Invite someone above and they appear here."
+            subtitle="People you invite show up here."
           />
         )}
         {people.map((holder) => {

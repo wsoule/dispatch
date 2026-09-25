@@ -3,7 +3,7 @@ import type {
   Options,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { describe, expect, it, test } from 'bun:test';
+import { describe, expect, it, spyOn, test } from 'bun:test';
 import {
   chmodSync,
   mkdirSync,
@@ -20,11 +20,17 @@ import {
   ClaudeExecutor,
   STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
-import { initGitRepo } from './helpers.js';
+import {
+  floorDecision,
+  initGitRepo,
+  preToolUse,
+  withRunEndControls,
+} from './helpers.js';
 
 // A no-op ExecutorEvents sink for tests below that only care about what
 // gets *sent* to the SDK's query() (the mcpServers wiring), not about any
@@ -64,6 +70,23 @@ describe('ClaudeExecutor Bun compatibility', () => {
 // carry an explicit `mcpServers.dispatch` stdio entry, since a real Claude
 // session (needed to prove the tools are actually callable end-to-end)
 // cannot be assumed to have credentials in this environment.
+describe('ClaudeExecutor effort', () => {
+  it('hands the run effort to query() and leaves it unset when absent', () => {
+    const seen: (Options | undefined)[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      seen.push(args.options);
+      return emptyMessages() as unknown as Query;
+    });
+    const base = { cwd: '/tmp/x', prompt: 'p', permissionMode: 'default' };
+
+    executor.start({ ...base, effort: 'xhigh' }, noopEvents);
+    executor.start(base, noopEvents);
+
+    expect(seen[0]?.effort).toBe('xhigh');
+    expect(seen[1]?.effort).toBeUndefined();
+  });
+});
+
 describe('ClaudeExecutor dispatch MCP server wiring', () => {
   it('wires an mcpServers.dispatch stdio entry rooted at the worktree cwd, with DISPATCH_PROJECT_ROOT set to the project root', () => {
     let captured: Options | undefined;
@@ -327,6 +350,477 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       preset: 'claude_code',
     });
     expect(captured?.settingSources).toEqual(['user', 'project', 'local']);
+  });
+
+  // The CLI skips canUseTool under bypassPermissions and on a matching
+  // settings allow rule, and a settings PermissionRequest hook can answer
+  // before it (all verified against the bundled CLI). So the guard's hook
+  // holds a floor command itself, through this executor's own approval flow,
+  // and returns the human's answer as its decision.
+  it('holds floor commands for a human through the approval flow, whatever the permission mode', async () => {
+    for (const permissionMode of ['bypassPermissions', 'auto', 'acceptEdits']) {
+      let captured: Options | undefined;
+      const requests: {
+        requestId: string;
+        toolName: string;
+        input: unknown;
+      }[] = [];
+      const executor = new ClaudeExecutor((args: { options?: Options }) => {
+        captured = args.options;
+        return emptyMessages() as unknown as Query;
+      });
+      const answers = [
+        { allow: true },
+        { allow: false, reason: 'not on main' },
+      ];
+      const run = executor.start(
+        { cwd: '/tmp/dispatch-worktree-x', prompt: 'x', permissionMode },
+        {
+          ...noopEvents,
+          onApprovalRequest: (request) => {
+            requests.push(request);
+            queueMicrotask(() =>
+              run.approve(request.requestId, answers.shift()!)
+            );
+          },
+        }
+      );
+      const push = { command: 'git push --force origin main' };
+      expect(await floorDecision(captured?.hooks, 'Bash', push)).toBe('allow');
+      expect(await preToolUse(captured?.hooks, 'Bash', push)).toMatchObject({
+        permissionDecision: 'deny',
+        permissionDecisionReason: 'not on main',
+      });
+      expect(requests).toEqual([
+        { requestId: 'floor-tu-1', toolName: 'Bash', input: push },
+        { requestId: 'floor-tu-1', toolName: 'Bash', input: push },
+      ]);
+      // Anything else takes the session's normal permission path.
+      expect(
+        await floorDecision(captured?.hooks, 'Bash', { command: 'bun test' })
+      ).toBeUndefined();
+      expect(requests).toHaveLength(2);
+      expect(captured?.settings).toEqual(floorGuard('deny').settings);
+    }
+  });
+
+  // A hold is parked on a human, so the run's own stop and cancel have to be
+  // able to answer it, or a run stopped mid-hold would wait on it forever.
+  it('answers a held floor command when the run is stopped or cancelled', async () => {
+    for (const end of ['requestStop', 'interrupt'] as const) {
+      let captured: Options | undefined;
+      const executor = new ClaudeExecutor((args: { options?: Options }) => {
+        captured = args.options;
+        // interrupt() calls both control methods on the live query.
+        return Object.assign(emptyMessages(), {
+          interrupt: () => Promise.resolve(),
+          close: () => {},
+        }) as unknown as Query;
+      });
+      const run = executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'auto',
+        },
+        noopEvents
+      );
+      const held = preToolUse(captured?.hooks, 'Bash', {
+        command: 'npm publish',
+      });
+      await Promise.resolve();
+      if (end === 'requestStop') run.requestStop();
+      else void run.interrupt();
+      expect(await held).toMatchObject({
+        permissionDecision: 'deny',
+        permissionDecisionReason:
+          end === 'requestStop' ? STOP_DENIAL_MESSAGE : 'run cancelled',
+      });
+    }
+  });
+
+  // After the hook's allow the CLI can still send the call on to canUseTool
+  // (a settings ask rule, one of its safety checks, another hook's "ask");
+  // the human already decided on that exact call, so it is not asked twice.
+  it('does not ask twice about a floor call the human approved in the hook', async () => {
+    let captured: Options | undefined;
+    const requests: string[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    });
+    const run = executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'x',
+        permissionMode: 'default',
+      },
+      {
+        ...noopEvents,
+        onApprovalRequest: (request) => {
+          requests.push(request.requestId);
+          queueMicrotask(() =>
+            run.approve(request.requestId, { allow: true, scope: 'session' })
+          );
+        },
+      }
+    );
+    const push = { command: 'git push --force origin main' };
+    expect(await floorDecision(captured?.hooks, 'Bash', push)).toBe('allow');
+    // "Allow Bash for this run" on the floor approval still grants routine
+    // Bash calls; it never pre-approves a floor call.
+    expect(
+      await captured?.canUseTool?.(
+        'Bash',
+        { command: 'bun test' },
+        {
+          signal: new AbortController().signal,
+          toolUseID: 'tu-2',
+          requestId: 'cli-uuid-2',
+        }
+      )
+    ).toEqual({ behavior: 'allow', updatedInput: { command: 'bun test' } });
+    expect(requests).toEqual(['floor-tu-1']);
+    const callOpts = {
+      signal: new AbortController().signal,
+      toolUseID: 'tu-1',
+      requestId: 'cli-uuid-1',
+    };
+    expect(await captured?.canUseTool?.('Bash', push, callOpts)).toEqual({
+      behavior: 'allow',
+      updatedInput: push,
+    });
+    expect(requests).toEqual(['floor-tu-1']);
+    // Only that exact call: a changed input, or the same id again, is asked.
+    const other = { command: 'git push --force origin release' };
+    await captured?.canUseTool?.('Bash', other, callOpts);
+    expect(requests).toEqual(['floor-tu-1', 'cli-uuid-1']);
+  });
+
+  // The run ends at its result, but a background sub-agent can still be
+  // working, and once the query closes the CLI cannot hear a hold's answer: a
+  // held floor call then went ahead as if no hook had decided (reproduced
+  // under bypassPermissions). So the result settles every pending hold as a
+  // refusal and stops the live background tasks before the query closes.
+  it('refuses pending holds and stops background tasks when the result arrives', async () => {
+    let captured: Options | undefined;
+    let releaseResult!: () => void;
+    const resultReleased = new Promise<void>((resolve) => {
+      releaseResult = resolve;
+    });
+    const stopped: string[] = [];
+    const applied: unknown[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      const messages = (async function* (): AsyncGenerator<unknown> {
+        yield { type: 'system', subtype: 'init', session_id: 's' };
+        yield {
+          type: 'system',
+          subtype: 'background_tasks_changed',
+          session_id: 's',
+          tasks: [
+            { task_id: 'task-sub', task_type: 'subagent', description: 'x' },
+          ],
+        };
+        yield {
+          type: 'assistant',
+          message: { content: [{ type: 'text', text: 'launched it' }] },
+        };
+        await resultReleased;
+        yield {
+          type: 'result',
+          subtype: 'success',
+          is_error: false,
+          num_turns: 1,
+          total_cost_usd: 0.01,
+          session_id: 's',
+          result: 'done',
+          terminal_reason: 'completed',
+          modelUsage: {},
+          errors: [],
+        };
+      })();
+      return Object.assign(messages, {
+        stopTask: (taskId: string) => {
+          stopped.push(taskId);
+          return Promise.resolve();
+        },
+        applyFlagSettings: (settings: unknown) => {
+          applied.push(settings);
+          return Promise.resolve();
+        },
+        interrupt: () => Promise.resolve(),
+        close: () => {},
+      }) as unknown as Query;
+    });
+    const finished = new Promise<void>((resolve) => {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'bypassPermissions',
+        },
+        { ...noopEvents, onFinish: () => resolve() }
+      );
+    });
+    // Let the stream deliver the task list before the hold is raised.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    const held = preToolUse(captured?.hooks, 'Bash', {
+      command: 'git push --force origin main',
+    });
+    releaseResult();
+    expect(await held).toMatchObject({ permissionDecision: 'deny' });
+    expect(String((await held)?.permissionDecisionReason)).toContain(
+      'run ended'
+    );
+    await finished;
+    expect(stopped).toEqual(['task-sub']);
+    expect(applied).toHaveLength(1);
+    // Nothing raised after the result can be approved either.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
+    ).toBe('deny');
+  });
+
+  // The CLI keeps working after the result (a finished or stopped background
+  // task starts a fresh main-agent turn) and once the query closes nothing
+  // can answer the floor hook; under bypassPermissions a floor command in
+  // that turn ran. Every result therefore denies every call at the hook and
+  // applies deny rules the CLI enforces by itself, even with nothing pending.
+  it('makes every result final: deny rules applied, every later call refused', async () => {
+    let captured: Options | undefined;
+    const applied: unknown[] = [];
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return Object.assign(
+        (function* (): Generator<unknown> {
+          yield { type: 'system', subtype: 'init', session_id: 's' };
+          yield {
+            type: 'assistant',
+            message: { content: [{ type: 'text', text: 'done' }] },
+          };
+          yield {
+            type: 'result',
+            subtype: 'success',
+            is_error: false,
+            num_turns: 1,
+            total_cost_usd: 0.01,
+            session_id: 's',
+            result: 'done',
+            terminal_reason: 'completed',
+            modelUsage: {},
+            errors: [],
+          };
+        })(),
+        {
+          applyFlagSettings: (settings: unknown) => {
+            applied.push(settings);
+            return Promise.resolve();
+          },
+          interrupt: () => Promise.resolve(),
+          close: () => {},
+        }
+      ) as unknown as Query;
+    });
+    await new Promise<void>((resolve) => {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'bypassPermissions',
+        },
+        { ...noopEvents, onFinish: () => resolve() }
+      );
+    });
+    expect(applied).toHaveLength(1);
+    const deny = (applied[0] as { permissions: { deny: string[] } }).permissions
+      .deny;
+    for (const tool of ['Bash', 'Write', 'Edit', 'Agent', 'SendMessage']) {
+      expect(deny).toContain(tool);
+    }
+    // Every tool: a named list missed Monitor, which runs a shell command
+    // and only some sessions have, and ran a force-push after the result.
+    expect(deny).toContain('*');
+    // The named fallback for a CLI that does not glob-match deny rules
+    // covers every MCP server, not only the ones this executor adds.
+    for (const rule of ['Monitor', 'mcp__*', 'ReadMcpResourceTool']) {
+      expect(deny).toContain(rule);
+    }
+    // Floor or not, nothing more runs once the result is in.
+    for (const [toolName, toolInput] of [
+      ['Bash', { command: 'bun test' }],
+      ['Edit', { file_path: 'a.ts' }],
+    ] as const) {
+      expect(
+        await preToolUse(captured?.hooks, toolName, toolInput)
+      ).toMatchObject({ permissionDecision: 'deny' });
+    }
+  });
+
+  it('still finishes when the CLI never confirms a background task stopped', async () => {
+    const executor = new ClaudeExecutor(
+      () =>
+        Object.assign(
+          (function* (): Generator<unknown> {
+            yield { type: 'system', subtype: 'init', session_id: 's' };
+            yield {
+              type: 'system',
+              subtype: 'background_tasks_changed',
+              session_id: 's',
+              tasks: [{ task_id: 't', task_type: 'shell', description: 'x' }],
+            };
+            yield {
+              type: 'assistant',
+              message: { content: [{ type: 'text', text: 'done' }] },
+            };
+            yield {
+              type: 'result',
+              subtype: 'success',
+              is_error: false,
+              num_turns: 1,
+              total_cost_usd: 0.01,
+              session_id: 's',
+              result: 'done',
+              terminal_reason: 'completed',
+              modelUsage: {},
+              errors: [],
+            };
+          })(),
+          {
+            stopTask: () => new Promise<void>(() => {}),
+            applyFlagSettings: () => Promise.resolve(),
+            interrupt: () => Promise.resolve(),
+            close: () => {},
+          }
+        ) as unknown as Query
+    );
+    const finish = await new Promise<{ state: string }>((resolve) => {
+      executor.start(
+        {
+          cwd: '/tmp/dispatch-worktree-x',
+          prompt: 'x',
+          permissionMode: 'auto',
+        },
+        { ...noopEvents, onFinish: resolve }
+      );
+    });
+    expect(finish.state).toBe('finished');
+  }, 15_000);
+
+  // An older Claude Code (a packaged app runs the `claude` on PATH) answers
+  // apply_flag_settings with "Unsupported control request subtype". The run
+  // still finishes, and the missing guarantee is logged with the CLI's
+  // version rather than lost. A step that throws at once, rather than
+  // rejecting, must not stop the run finishing either.
+  it('logs each wind-down step that fails, naming the CLI version, and still finishes', async () => {
+    const logged: string[] = [];
+    const errorSpy = spyOn(console, 'error').mockImplementation(
+      (...args: unknown[]) => {
+        logged.push(args.map(String).join(' '));
+      }
+    );
+    try {
+      const executor = new ClaudeExecutor(
+        () =>
+          Object.assign(
+            (function* (): Generator<unknown> {
+              yield {
+                type: 'system',
+                subtype: 'init',
+                session_id: 's',
+                claude_code_version: '2.1.42',
+              };
+              yield {
+                type: 'system',
+                subtype: 'background_tasks_changed',
+                session_id: 's',
+                tasks: [{ task_id: 't', task_type: 'shell', description: 'x' }],
+              };
+              yield {
+                type: 'assistant',
+                message: { content: [{ type: 'text', text: 'done' }] },
+              };
+              yield {
+                type: 'result',
+                subtype: 'success',
+                is_error: false,
+                num_turns: 1,
+                total_cost_usd: 0.01,
+                session_id: 's',
+                result: 'done',
+                terminal_reason: 'completed',
+                modelUsage: {},
+                errors: [],
+              };
+            })(),
+            {
+              stopTask: () =>
+                Promise.reject(
+                  new Error('Unsupported control request subtype: stop_task')
+                ),
+              applyFlagSettings: () => {
+                throw new Error(
+                  'Unsupported control request subtype: apply_flag_settings'
+                );
+              },
+              interrupt: () => Promise.resolve(),
+              close: () => {},
+            }
+          ) as unknown as Query
+      );
+      const finish = await new Promise<{ state: string }>((resolve) => {
+        executor.start(
+          {
+            cwd: '/tmp/dispatch-worktree-x',
+            prompt: 'x',
+            permissionMode: 'bypassPermissions',
+            runId: 'r-1',
+          },
+          { ...noopEvents, onFinish: resolve }
+        );
+      });
+      expect(finish.state).toBe('finished');
+      expect(logged).toHaveLength(2);
+      const denyWarning = logged.find((line) =>
+        line.includes('apply_flag_settings')
+      );
+      expect(denyWarning).toContain('run r-1');
+      expect(denyWarning).toContain('Claude Code 2.1.42');
+      expect(denyWarning).toContain('not refused by a deny rule');
+      const stopWarning = logged.find((line) => line.includes('stop_task'));
+      expect(stopWarning).toContain('Claude Code 2.1.42');
+      expect(stopWarning).toContain('background task t kept running');
+    } finally {
+      errorSpy.mockRestore();
+    }
+  });
+
+  // Each of these was exercised through this executor against the real CLI:
+  // AskUserQuestion's answers never arrive, cron jobs and wakeups die with
+  // the run, and EnterWorktree moves the agent out of the run's worktree.
+  it('removes the Claude Code tools that cannot work inside a dispatched run', () => {
+    let captured: Options | undefined;
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    });
+
+    executor.start(
+      { cwd: '/tmp/dispatch-worktree-x', prompt: 'x', permissionMode: 'auto' },
+      noopEvents
+    );
+
+    expect(captured?.disallowedTools).toEqual([
+      'AskUserQuestion',
+      'CronCreate',
+      'CronDelete',
+      'CronList',
+      'ScheduleWakeup',
+      'EnterWorktree',
+      'ExitWorktree',
+    ]);
+    // Dispatch's own question channel is the one that reaches the human.
+    expect(captured?.disallowedTools).not.toContain('mcp__dispatch__ask_user');
   });
 });
 
@@ -709,8 +1203,8 @@ describe('ClaudeExecutor session-id reporting during a run', () => {
           result: '',
         };
       }
-      const executor = new ClaudeExecutor(
-        () => fakeMessages() as unknown as Query
+      const executor = new ClaudeExecutor(() =>
+        withRunEndControls(fakeMessages())
       );
 
       // Order, not just presence: a session reported only alongside the
@@ -781,8 +1275,8 @@ describe('ClaudeExecutor resume session reattachment', () => {
   }> {
     const repo = initGitRepo('dispatch-claude-resume-');
     try {
-      const executor = new ClaudeExecutor(
-        () => sessionMessages(actualSessionId) as unknown as Query
+      const executor = new ClaudeExecutor(() =>
+        withRunEndControls(sessionMessages(actualSessionId))
       );
       const sessions: string[] = [];
       let entries = 0;
@@ -942,9 +1436,8 @@ async function finishForResult(
       yield* opts.preceding ?? [];
       yield { type: 'result', ...result };
     }
-    const executor = new ClaudeExecutor(
-      (() => fakeMessages() as unknown as Query) as never
-    );
+    const executor = new ClaudeExecutor((() =>
+      withRunEndControls(fakeMessages())) as never);
     return await new Promise((resolve) => {
       executor.start(
         {
@@ -1539,9 +2032,9 @@ describe('carto MCP entry honors carto.enabled', () => {
 });
 
 /**
- * The graceful-stop path against the one lever a live Agent SDK session gives
- * us: the `canUseTool` gate (see STOP_DENIAL_MESSAGE). These drive the gate
- * directly off the `Options` the executor hands to `query()` — the same
+ * The graceful-stop path against the lever a live Agent SDK session gives us:
+ * the PreToolUse hook and the `canUseTool` gate (see STOP_DENIAL_MESSAGE).
+ * These drive both directly off the `Options` the executor hands to `query()` — the same
  * `queryFn` seam the wiring tests above use — because the alternative is a real
  * credentialed Claude session, which CI cannot assume.
  */
@@ -1590,7 +2083,10 @@ describe('ClaudeExecutor graceful stop', () => {
     };
   }
 
-  function startStopped(events: ExecutorEvents = noopEvents) {
+  function startStopped(
+    events: ExecutorEvents = noopEvents,
+    permissionMode = 'acceptEdits'
+  ) {
     let captured: Options | undefined;
     const stub = stubQuery();
     const executor = new ClaudeExecutor((args: { options?: Options }) => {
@@ -1602,7 +2098,7 @@ describe('ClaudeExecutor graceful stop', () => {
         cwd: '/tmp/dispatch-worktree-stop',
         projectRoot: '/tmp/dispatch-project-stop',
         prompt: 'do the thing',
-        permissionMode: 'acceptEdits',
+        permissionMode,
       },
       events
     );
@@ -1665,6 +2161,46 @@ describe('ClaudeExecutor graceful stop', () => {
       expect(result.message).toBe(STOP_DENIAL_MESSAGE);
     } finally {
       stub.release();
+    }
+  });
+
+  // The CLI skips canUseTool under bypassPermissions, on a settings allow rule
+  // and for calls the auto-mode classifier approves; the hook runs in every
+  // mode, so it is what gets the stop to the agent there.
+  it('denies every call from the PreToolUse hook after the stop, in every permission mode', async () => {
+    for (const permissionMode of [
+      'default',
+      'acceptEdits',
+      'auto',
+      'bypassPermissions',
+    ]) {
+      const { run, stub, options } = startStopped(noopEvents, permissionMode);
+      try {
+        expect(
+          await floorDecision(options.hooks, 'Edit', { file_path: 'a.ts' })
+        ).toBeUndefined();
+        expect(
+          await floorDecision(options.hooks, 'Bash', { command: 'bun test' })
+        ).toBeUndefined();
+
+        run.requestStop();
+
+        for (const [toolName, toolInput] of [
+          ['Edit', { file_path: 'a.ts' }],
+          ['Bash', { command: 'bun test' }],
+          // Refused, not parked for a human: the run is winding down.
+          ['Bash', { command: 'git push --force origin main' }],
+        ] as const) {
+          expect(
+            await preToolUse(options.hooks, toolName, toolInput)
+          ).toMatchObject({
+            permissionDecision: 'deny',
+            permissionDecisionReason: STOP_DENIAL_MESSAGE,
+          });
+        }
+      } finally {
+        stub.release();
+      }
     }
   });
 

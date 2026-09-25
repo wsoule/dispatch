@@ -1,3 +1,4 @@
+import type { EffortLevel } from '@dispatch/core';
 import type { z } from 'zod';
 
 import type { OverseerAction } from './overseerTools.js';
@@ -86,6 +87,8 @@ export interface OverseerToolRequest {
 export interface OverseerTurnOptions {
   /** The model id to run the turn on; the backend's own default when absent. */
   model?: string;
+  /** Reasoning effort for the turn; the model's own default when absent. */
+  effort?: EffortLevel;
   /**
    * The project's `orchestrator.permissionMode` — the same policy a dispatched
    * run gets, so the overseer is exactly as autonomous as the agents it

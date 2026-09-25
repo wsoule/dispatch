@@ -48,7 +48,9 @@ This monorepo uses the `catalog` in `pnpm-workspace.yaml`.
 
 - moon is the task runner: CI, the git hooks, and you all go through it. Each
   package **also** keeps a plain `package.json` script for the same job, and the
-  two must stay byte-identical. This mirroring is deliberate, not leftover:
+  two must move together — identical, except where moon expresses a step as a
+  task dependency instead of a shell `&&`. This mirroring is deliberate, not
+  leftover:
   - knip discovers a workspace's entry points through its plugins, and those
     plugins key off the scripts (`bun test` turns on the bun-test plugin and
     makes `**/*.test.ts` entries; `vite build` turns on the vite plugin).

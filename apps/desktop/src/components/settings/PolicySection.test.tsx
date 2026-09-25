@@ -59,11 +59,7 @@ test('the slider sits on the configured rung and a stop click saves the new one'
   );
   const slider = screen.getByLabelText('Autonomy');
   expect((slider as HTMLInputElement).value).toBe('1');
-  fireEvent.click(
-    screen.getByRole('button', {
-      name: 'Auto-review, fix and retry verification',
-    })
-  );
+  fireEvent.click(screen.getByRole('button', { name: 'Fix on its own' }));
   expect(saves).toEqual([{ policy: { rung: 3 } }]);
 });
 
@@ -76,17 +72,15 @@ test('re-clicking the current stop does not save', () => {
       client={null}
     />
   );
-  fireEvent.click(
-    screen.getByRole('button', { name: 'Auto-accept scope requests' })
-  );
+  fireEvent.click(screen.getByRole('button', { name: 'Allow extra files' }));
   expect(saves).toEqual([]);
 });
 
 test('gate rows show the effective mode consultPolicy derives from the rung', () => {
   render(<PolicySection config={configAt(3)} onSave={noSave} client={null} />);
   // Rung 3: scope, approval, verify-retry and wake auto-decide, merge still blocks.
-  expect(screen.getAllByText('Auto + records')).toHaveLength(4);
-  expect(screen.getAllByText('Blocks')).toHaveLength(1);
+  expect(screen.getAllByText('Automatic')).toHaveLength(4);
+  expect(screen.getAllByText('Waits for you')).toHaveLength(1);
 });
 
 test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
@@ -98,23 +92,23 @@ test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
       client={null}
     />
   );
-  expect(screen.getByText('Auto + records (pinned)')).toBeDefined();
-  fireEvent.click(screen.getByRole('combobox', { name: 'Merge override' }));
-  chooseOption('Rung decides');
+  expect(screen.getByText('Automatic, pinned')).toBeDefined();
+  fireEvent.click(screen.getByRole('combobox', { name: 'Merging override' }));
+  chooseOption('Follow level');
   expect(saves).toEqual([{ policy: { gates: { merge: null } } }]);
   fireEvent.click(
-    screen.getByRole('combobox', { name: 'Scope requests override' })
+    screen.getByRole('combobox', { name: 'Extra files override' })
   );
-  chooseOption('Always block');
+  chooseOption('Always wait');
   expect(saves).toHaveLength(2);
   expect(saves[1]).toEqual({ policy: { gates: { scope: 'block' } } });
 });
 
 test('the irreversibility floor renders fixed rows with no control', () => {
   render(<PolicySection config={configAt(4)} onSave={noSave} client={null} />);
-  expect(screen.getAllByText('Always blocks')).toHaveLength(6);
+  expect(screen.getAllByText('Always waits')).toHaveLength(6);
   expect(screen.getByText(/Force-push/)).toBeDefined();
-  expect(screen.getByText(/npm publish/)).toBeDefined();
+  expect(screen.getByText(/Publishing packages/)).toBeDefined();
   // Even at the top rung the floor never gains a select: only the five
   // policy gates have overrides.
   expect(screen.getAllByRole('combobox')).toHaveLength(5);
@@ -158,13 +152,14 @@ test('an empty ledger explains where receipts will land', async () => {
     />
   );
   await waitFor(() =>
-    expect(screen.getByText(/No auto-decisions yet/)).toBeDefined()
+    expect(screen.getByText(/None yet\. Each one is listed here/)).toBeDefined()
   );
 });
 
-// The floor heading is a sentence-case 12px/500 row, never an uppercase tracked label,
-// and the receipt's task id is sans with the id tracking.
-test('the floor heading is 12px sentence case and receipt ids are tracked sans', async () => {
+// The hard stops are their own group under a 13px/600 sentence-case heading,
+// never an uppercase tracked label, and the receipt's task id is sans with the
+// id tracking.
+test('the hard stops heading is 13px sentence case and receipt ids are tracked sans', async () => {
   render(
     <PolicySection
       config={configAt(2)}
@@ -172,9 +167,9 @@ test('the floor heading is 12px sentence case and receipt ids are tracked sans',
       client={clientWith([receipt({})])}
     />
   );
-  const floor = screen.getByText('Irreversibility floor');
-  expect(floor.className).toContain('text-[12px]');
-  expect(floor.className).toContain('font-medium');
+  const floor = screen.getByRole('heading', { level: 2, name: 'Hard stops' });
+  expect(floor.className).toContain('text-[13px]');
+  expect(floor.className).toContain('font-semibold');
   expect(floor.className).not.toContain('uppercase');
   await screen.findByText('Scope extended for run r-x');
   const id = screen.getByText('t-aaaaaa');

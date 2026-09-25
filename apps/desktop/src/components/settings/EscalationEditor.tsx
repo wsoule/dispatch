@@ -1,5 +1,6 @@
 import type { EscalationStep } from '@dispatch/core/browser';
 
+import { SettingsSearchable } from './search';
 import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
 import { PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
@@ -18,13 +19,13 @@ interface EscalationEditorProps {
 }
 
 const STRATEGIES = [
-  ['resume', 'Resume'],
+  ['resume', 'Same agent'],
   ['fresh', 'Fresh agent'],
 ] as const;
 
 const MODEL_TIERS = [
-  ['standard', 'Standard'],
-  ['high', 'High'],
+  ['standard', 'Usual model'],
+  ['high', 'Stronger model'],
 ] as const;
 
 // Rounds are positional; the fix loop reads them in order, so a gap left by a
@@ -57,15 +58,18 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
 
   return (
     <SettingsGroup
-      title="Escalation ladder"
-      hint="What the fix loop tries on each round after a failed verify or review."
+      title="Escalation"
+      hint="What each fix round tries. Rounds without a step here keep the same agent on the usual model."
+      keywords="fix loop ladder rounds stronger model"
     >
       {steps.length === 0 && (
-        <PanelRow>
-          <SettingsHint>
-            No escalation steps — every round resumes at the standard tier.
-          </SettingsHint>
-        </PanelRow>
+        <SettingsSearchable text="no escalation steps">
+          <PanelRow>
+            <SettingsHint>
+              No steps: every round keeps the same agent on the usual model.
+            </SettingsHint>
+          </PanelRow>
+        </SettingsSearchable>
       )}
       {steps.map((step, index) => (
         <SettingsRow
@@ -83,7 +87,7 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
               >
                 <SelectTrigger
                   aria-label={`Round ${String(step.round)} strategy`}
-                  className="w-[120px]"
+                  className="w-[124px]"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -105,7 +109,7 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
               >
                 <SelectTrigger
                   aria-label={`Round ${String(step.round)} model tier`}
-                  className="w-[110px]"
+                  className="w-[136px]"
                 >
                   <SelectValue />
                 </SelectTrigger>
@@ -130,11 +134,13 @@ export function EscalationEditor({ steps, onChange }: EscalationEditorProps) {
           }
         />
       ))}
-      <PanelRow>
-        <PillButton type="button" onClick={addStep}>
-          Add step
-        </PillButton>
-      </PanelRow>
+      <SettingsSearchable text="add escalation step round">
+        <PanelRow>
+          <PillButton type="button" onClick={addStep}>
+            Add round
+          </PillButton>
+        </PanelRow>
+      </SettingsSearchable>
     </SettingsGroup>
   );
 }

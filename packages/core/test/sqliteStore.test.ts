@@ -75,7 +75,7 @@ for (const { name, make } of BACKENDS) {
         created: '2026-07-13T18:00:00Z',
         updated: '2026-07-13T18:00:00Z',
         external: null,
-        selfReview: true,
+        selfReview: false,
         writes: [],
         risk: 'routine',
         model: null,

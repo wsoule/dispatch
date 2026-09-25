@@ -398,7 +398,7 @@ export class SyncWorktree {
       if (!this.sparseCheckoutUnavailableLogged) {
         this.sparseCheckoutUnavailableLogged = true;
         console.error(
-          `board sync: git sparse-checkout unavailable for ${this.path} ` +
+          `task-file commit: git sparse-checkout unavailable for ${this.path} ` +
             `(${errorText(sparse)}); falling back to a full checkout`
         );
       }

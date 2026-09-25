@@ -2,6 +2,7 @@ import { SECRET_URL_MASK_SUFFIX } from '@dispatch/core/browser';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import { OPERATOR_ONLY } from './fields';
 import { testConfig as config } from './fixtures.test-helper';
 import { NotificationsSection } from './NotificationsSection';
 
@@ -17,9 +18,10 @@ test('unchecking a kind saves just that toggle', () => {
     <NotificationsSection
       config={config}
       onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
     />
   );
-  toggle('A fix loop stops and needs a ruling');
+  toggle('A fix loop gives up');
   expect(saved).toEqual([
     { notifications: { kinds: { 'fix-loop-capped': false } } },
   ]);
@@ -35,11 +37,12 @@ test('renders the saved toggle state', () => {
         },
       }}
       onSave={() => Promise.resolve()}
+      canOperate
     />
   );
   expect(
     screen
-      .getByRole('switch', { name: 'A run fails or stalls' })
+      .getByRole('switch', { name: 'A run fails or gets stuck' })
       .getAttribute('aria-checked')
   ).toBe('false');
   expect(
@@ -55,6 +58,7 @@ test('an edited webhook saves on blur, trimmed', () => {
     <NotificationsSection
       config={config}
       onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
     />
   );
   const input = screen.getByLabelText('Webhook URL');
@@ -81,6 +85,7 @@ test('clearing the webhook sends null', () => {
         },
       }}
       onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
     />
   );
   const input = screen.getByLabelText('Webhook URL');
@@ -96,6 +101,7 @@ test('an unchanged webhook saves nothing on blur', () => {
     <NotificationsSection
       config={config}
       onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
     />
   );
   fireEvent.blur(screen.getByLabelText('Webhook URL'));
@@ -115,6 +121,7 @@ function renderMasked(saved: unknown[]) {
         notifications: { ...config.notifications, webhook: MASKED },
       }}
       onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
     />
   );
 }
@@ -161,7 +168,9 @@ test('a value ending in the mask suffix is refused and PATCHes nothing', () => {
   fireEvent.change(input, { target: { value: MASKED } });
   fireEvent.blur(input);
   expect(saved).toEqual([]);
-  expect(screen.getByText(/masked form of a stored URL/)).toBeTruthy();
+  expect(
+    screen.getByText(/shortened address shown for a saved webhook/)
+  ).toBeTruthy();
 });
 
 test('the mask suffix is refused even with nothing stored', () => {
@@ -170,6 +179,7 @@ test('the mask suffix is refused even with nothing stored', () => {
     <NotificationsSection
       config={config}
       onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
     />
   );
   const input = screen.getByLabelText('Webhook URL');
@@ -185,4 +195,35 @@ test('Clear on a masked webhook PATCHes null', () => {
   renderMasked(saved);
   fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
   expect(saved).toEqual([{ notifications: { webhook: null } }]);
+});
+
+// The webhook sends data elsewhere, so below the operator tier it is disabled
+// and marked with the lock, and a masked one offers no Replace or Clear.
+test('below the operator tier the webhook is locked', () => {
+  const { unmount } = render(
+    <NotificationsSection
+      config={config}
+      onSave={() => Promise.resolve()}
+      canOperate={false}
+    />
+  );
+  expect(screen.getByLabelText<HTMLInputElement>('Webhook URL').disabled).toBe(
+    true
+  );
+  expect(screen.getAllByLabelText(OPERATOR_ONLY).length).toBe(1);
+  unmount();
+
+  render(
+    <NotificationsSection
+      config={{
+        ...config,
+        notifications: { ...config.notifications, webhook: MASKED },
+      }}
+      onSave={() => Promise.resolve()}
+      canOperate={false}
+    />
+  );
+  expect(screen.getByText(MASKED)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Replace' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Clear' })).toBeNull();
 });

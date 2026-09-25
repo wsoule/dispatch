@@ -8,13 +8,14 @@ import { ArrowDown, ArrowUp, Plus, Trash2 } from 'lucide-react';
 import { useState } from 'react';
 
 import { OPERATOR_ONLY, TextSetting } from './fields';
-import { SettingsGroup, SettingsHint, SettingsRow } from './SettingsGroup';
+import { SettingsGroup, SettingsRow } from './SettingsGroup';
 import { Button } from '@/ui/button';
 import { Input } from '@/ui/input';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  /** Resolves `false` when the save was refused; a form keeps its draft then. */
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -27,37 +28,27 @@ export function moved<T>(list: T[], from: number, by: -1 | 1): T[] {
   return next;
 }
 
-/**
- * The project's shape, on Settings → General: the board's statuses, the
- * named checks a branch must pass before it lands, and where pull-request
- * checkouts go.
- */
-export function ProjectGroups({ config, onSave, canOperate }: Props) {
+/** Where reviewing someone else's pull request checks it out. */
+export function PullRequestsGroup({ config, onSave, canOperate }: Props) {
   return (
-    <>
-      <StatusesGroup config={config} onSave={onSave} />
-      <VerifyStepsGroup
-        config={config}
-        onSave={onSave}
-        canOperate={canOperate}
+    <SettingsGroup title="Pull requests">
+      <TextSetting
+        id="pr-worktree-dir"
+        title="Checkout folder"
+        subtitle="Where a pull request you review gets checked out. Leave empty for the default."
+        keywords="worktree prWorktreeDir"
+        value={config.prWorktreeDir}
+        placeholder="../pr-worktrees"
+        mono
+        locked={canOperate ? undefined : OPERATOR_ONLY}
+        onSave={(prWorktreeDir) => void onSave({ prWorktreeDir })}
       />
-      <SettingsGroup title="Pull requests">
-        <TextSetting
-          id="pr-worktree-dir"
-          title="Where pull-request checkouts go"
-          subtitle="Reviewing someone's PR checks it out here. Empty keeps the default under the Dispatch home."
-          value={config.prWorktreeDir}
-          placeholder="../pr-worktrees"
-          mono
-          locked={canOperate ? undefined : OPERATOR_ONLY}
-          onSave={(prWorktreeDir) => void onSave({ prWorktreeDir })}
-        />
-      </SettingsGroup>
-    </>
+    </SettingsGroup>
   );
 }
 
-function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
+/** The board's columns, in order, with add, reorder and remove. */
+export function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
   const [draft, setDraft] = useState('');
   const statuses = config.statuses;
   const add = () => {
@@ -66,22 +57,25 @@ function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
     // New ones go before the last, which is where work ends.
     void onSave({
       statuses: [...statuses.slice(0, -1), name, ...statuses.slice(-1)],
-    }).then(() => setDraft(''));
+    }).then((saved) => {
+      if (saved !== false) setDraft('');
+    });
   };
   return (
     <SettingsGroup
-      title="Statuses"
-      hint="The board's columns, in order. A status some task is still in cannot be removed: move those tasks first."
+      title="Board columns"
+      hint="Tasks move through these from left to right. A column with tasks in it can't be removed."
+      keywords="statuses"
     >
       {statuses.map((status, i) => (
         <SettingsRow
           key={status}
           title={statusLabel(status)}
           control={
-            <span className="flex gap-1">
+            <span className="flex gap-0.5">
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 aria-label={`Move ${status} up`}
                 disabled={i === 0}
                 onClick={() =>
@@ -92,7 +86,7 @@ function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
               </Button>
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 aria-label={`Move ${status} down`}
                 disabled={i === statuses.length - 1}
                 onClick={() => void onSave({ statuses: moved(statuses, i, 1) })}
@@ -101,7 +95,7 @@ function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
               </Button>
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 aria-label={`Remove ${status}`}
                 disabled={statuses.length === 1}
                 onClick={() =>
@@ -116,62 +110,60 @@ function StatusesGroup({ config, onSave }: Omit<Props, 'canOperate'>) {
           }
         />
       ))}
-      <SettingsRow title="Add a status" htmlFor="status-new">
-        <form
-          className="flex gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            add();
-          }}
-        >
-          <Input
-            id="status-new"
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="qa"
-            className="w-48"
-          />
-          <Button
-            type="submit"
-            variant="outline"
-            disabled={draft.trim() === ''}
+      <SettingsRow
+        title="Add a column"
+        htmlFor="status-new"
+        control={
+          <form
+            className="flex gap-2"
+            onSubmit={(e) => {
+              e.preventDefault();
+              add();
+            }}
           >
-            <Plus />
-            Add status
-          </Button>
-        </form>
-      </SettingsRow>
+            <Input
+              id="status-new"
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              placeholder="qa"
+              className="w-32"
+            />
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={draft.trim() === ''}
+            >
+              <Plus />
+              Add
+            </Button>
+          </form>
+        }
+      />
     </SettingsGroup>
   );
 }
 
-function VerifyStepsGroup({ config, onSave, canOperate }: Props) {
+/** Named checks a branch must pass before it merges, run in order. */
+export function VerifyStepsList({ config, onSave, canOperate }: Props) {
   const steps = config.verifySteps ?? [];
   const [name, setName] = useState('');
   const [command, setCommand] = useState('');
   const save = (next: VerifyStep[]) =>
     onSave({ verifySteps: next.length === 0 ? null : next });
   return (
-    <SettingsGroup
-      title="Verify steps"
-      hint="Named checks a branch must pass before it lands, run in order, each reported on its own. Set, these replace the single verify command."
-    >
-      {steps.length === 0 && (
-        <SettingsRow
-          title="None"
-          subtitle="The verify command above is the only gate."
-        />
-      )}
+    <>
       {steps.map((step, i) => (
         <SettingsRow
           key={`${step.name}-${i}`}
           title={step.name}
           subtitle={<span className="font-mono">{step.command}</span>}
+          keywords="check step verify"
+          locked={!canOperate}
           control={
             canOperate ? (
               <Button
                 variant="ghost"
-                size="sm"
+                size="icon-sm"
                 aria-label={`Remove ${step.name}`}
                 onClick={() => void save(steps.filter((_, j) => j !== i))}
               >
@@ -181,8 +173,19 @@ function VerifyStepsGroup({ config, onSave, canOperate }: Props) {
           }
         />
       ))}
-      {canOperate ? (
-        <SettingsRow title="Add a step" htmlFor="verify-step-name">
+      <SettingsRow
+        title="Add a check"
+        subtitle={
+          steps.length === 0
+            ? 'None yet, so only the single command below runs.'
+            : undefined
+        }
+        htmlFor="verify-step-name"
+        keywords="verify step test lint typecheck"
+        locked={!canOperate}
+        stacked={canOperate}
+      >
+        {canOperate && (
           <form
             className="flex flex-wrap gap-2"
             onSubmit={(e) => {
@@ -191,7 +194,8 @@ function VerifyStepsGroup({ config, onSave, canOperate }: Props) {
               void save([
                 ...steps,
                 { name: name.trim(), command: command.trim() },
-              ]).then(() => {
+              ]).then((saved) => {
+                if (saved === false) return;
                 setName('');
                 setCommand('');
               });
@@ -199,6 +203,7 @@ function VerifyStepsGroup({ config, onSave, canOperate }: Props) {
           >
             <Input
               id="verify-step-name"
+              aria-label="Check name"
               value={name}
               onChange={(e) => setName(e.target.value)}
               placeholder="tests"
@@ -217,15 +222,11 @@ function VerifyStepsGroup({ config, onSave, canOperate }: Props) {
               disabled={name.trim() === '' || command.trim() === ''}
             >
               <Plus />
-              Add step
+              Add
             </Button>
           </form>
-        </SettingsRow>
-      ) : (
-        <SettingsRow title="Changing steps">
-          <SettingsHint>{OPERATOR_ONLY}</SettingsHint>
-        </SettingsRow>
-      )}
-    </SettingsGroup>
+        )}
+      </SettingsRow>
+    </>
   );
 }

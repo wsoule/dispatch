@@ -92,6 +92,7 @@ interface SyncStatusBody {
   pendingOutgoing: number;
   pendingIncoming: number;
   lastSyncedAt: string | null;
+  receipts: { state: string; detail: string | null };
 }
 
 describe('GET /api/sync', () => {
@@ -120,6 +121,10 @@ describe('GET /api/sync', () => {
       // a restart is the only way out, since SyncWorktree.open() only ever
       // runs once at boot.
       expect(body.detail).toContain('restart');
+      // With no branch there is no commit path either, so receipts can't
+      // point at one.
+      expect(body.receipts.state).toBe('disabled');
+      expect(body.receipts.detail).not.toContain('committed');
       expect(body.pushed).toBe(0);
       expect(body.pulled).toBe(0);
       expect(body.pendingOutgoing).toBe(0);
@@ -273,7 +278,11 @@ describe('GET /api/sync', () => {
       const body = (await res.json()) as SyncStatusBody;
 
       expect(body.state).toBe('off');
-      expect(body.detail).not.toBeNull();
+      // Names the Settings switch by its title, so the user can find it.
+      expect(body.detail).toContain('Commit task files to the main branch');
+      expect(body.receipts.detail).toContain(
+        'Commit task files to the main branch'
+      );
       expect(body.pendingOutgoing).toBe(0);
       expect(body.pendingIncoming).toBe(0);
 

@@ -1,7 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { loadConfig } from '@dispatch/core';
+import type { EffortLevel } from '@dispatch/core';
 
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
+import { floorGuard } from '../floorHook.js';
 import type {
   Planner,
   PlannerMode,
@@ -94,8 +97,8 @@ interface PlannerTurnOutput {
   questions: PlannerQuestion[];
 }
 
-// Shared invariants every turn's `proposal` must honor, restated on both the
-// opening and follow-up prompts so a resumed session never drifts from them.
+// Shared invariants every turn's `proposal` must honor. Stated once, on the
+// opening prompt; a resumed session still has them in context.
 const PROPOSAL_RULES =
   'Every task needs a clear title, a description of what "done" looks like, a ' +
   'list of concrete acceptance criteria, a priority (urgent|high|medium|low|' +
@@ -115,8 +118,8 @@ const PROPOSAL_RULES =
   'costs concurrency, while under-declaring (missing one you do touch) ' +
   'costs a merge conflict when two tasks collide on a file neither ' +
   'declared. Declare exactly what you expect to touch, and if a file is ' +
-  'genuinely shared ground for several tasks in this plan (in this repo, ' +
-  'the canonical example is `packages/server/src/api.ts`), list it in ' +
+  'genuinely shared ground for several tasks in this plan (a route table, ' +
+  'a barrel file, a shared types module), list it in ' +
   'every task that touches it rather than picking one owner — that is what ' +
   'correctly serializes them. `risk` is one of routine (the default; ' +
   'ordinary feature and fix work), elevated (touches shared contracts, ' +
@@ -159,9 +162,10 @@ function buildPlannerPrompt(userPrompt: string): string {
       'it. Do not write, edit, or run anything — you are in read-only ' +
       'planning mode. This is a conversation: the user may follow up to ' +
       'refine the plan across several turns.',
-    `Break the following request into either a single epic with its child ` +
-      'tasks, or a flat list of tasks with no epic if the request is small ' +
-      'enough that an epic wrapper would add no value:',
+    'Break the following request into tasks: a single epic with its child ' +
+      'tasks, or a flat list with no epic when an epic wrapper would add no ' +
+      'value. If the request itself asks for a particular shape (one task, ' +
+      'no epic), follow it:',
     userPrompt,
     buildQuestionRules(
       'Ask at most 4 questions in a single turn, picking the ones that would ' +
@@ -178,14 +182,10 @@ function buildPlannerPrompt(userPrompt: string): string {
 function buildFollowupPrompt(userMessage: string): string {
   return [
     'The user is refining the plan you are already working on, or answering ' +
-      'questions you asked. Apply their feedback and return the updated plan. ' +
-      'Stay in read-only planning mode — do not write, edit, or run anything.',
+      'questions you asked. Apply their feedback and return the full updated ' +
+      'plan, under the same question and proposal rules as before. Stay in ' +
+      'read-only planning mode — do not write, edit, or run anything.',
     userMessage,
-    buildQuestionRules(
-      'Ask at most 4 questions in a single turn, picking the ones that would ' +
-        'most change the resulting tasks.'
-    ),
-    PROPOSAL_RULES,
   ].join('\n\n');
 }
 
@@ -226,8 +226,11 @@ function buildDraftFollowupPrompt(userMessage: string): string {
 }
 
 // Both `tools` and `allowedTools` set to the same list: the former restricts
-// model access, the latter auto-approves in plan mode.
-const PLANNER_TOOLS = ['Read', 'Grep', 'Glob', 'Bash'];
+// which tools the model sees, the latter pre-approves them. No Bash: plan mode
+// does not stop a shell command from writing, and against the bundled CLI a
+// pre-approved Bash wrote one file and deleted another in the checkout.
+// Reading and searching are all a plan needs.
+const PLANNER_TOOLS = ['Read', 'Grep', 'Glob'];
 
 // Shown when two consecutive attempts at a turn both end with no structured
 // output; tells the user their answers are kept and to resend.
@@ -238,7 +241,7 @@ export const EMPTY_TURN_MESSAGE =
 /**
  * The real planner backend: a read-only Agent SDK planning *conversation* in
  * the main checkout (no worktree — a plan proposes work, it never touches the
- * repo), `permissionMode: 'plan'` so no tool actually executes, and a
+ * repo), with only the reading and searching tools in PLANNER_TOOLS, and a
  * json_schema `outputFormat` so each turn arrives as structured data instead
  * of free text to parse. Every turn is a discrete `query()` call: the opening
  * turn starts a fresh session; each follow-up passes the prior turn's
@@ -261,7 +264,12 @@ export class ClaudePlanner implements Planner {
     mode: PlannerMode = 'plan'
   ): Promise<PlannerTurn> {
     const builder = mode === 'draft' ? buildDraftPrompt : buildPlannerPrompt;
-    return this.runTurn(builder(prompt), undefined, model);
+    return this.runTurn(
+      builder(prompt),
+      undefined,
+      model,
+      this.effortFor(mode)
+    );
   }
 
   sendMessage(
@@ -272,18 +280,31 @@ export class ClaudePlanner implements Planner {
   ): Promise<PlannerTurn> {
     const builder =
       mode === 'draft' ? buildDraftFollowupPrompt : buildFollowupPrompt;
-    return this.runTurn(builder(message), sessionId, model);
+    return this.runTurn(
+      builder(message),
+      sessionId,
+      model,
+      this.effortFor(mode)
+    );
+  }
+
+  // Config `effort.plan`, read per turn so a settings change applies on the
+  // next one. Planning turns only: a draft runs on the cheap `draft` model.
+  private effortFor(mode: PlannerMode): EffortLevel | undefined {
+    if (mode !== 'plan') return undefined;
+    return loadConfig(this.rootDir).effort?.plan;
   }
 
   // Runs one turn, retrying attemptTurn once if the first call returns null.
   private async runTurn(
     prompt: string,
     resume: string | undefined,
-    model: string | undefined
+    model: string | undefined,
+    effort: EffortLevel | undefined
   ): Promise<PlannerTurn> {
-    const first = await this.attemptTurn(prompt, resume, model);
+    const first = await this.attemptTurn(prompt, resume, model, effort);
     if (first !== null) return first;
-    const second = await this.attemptTurn(prompt, resume, model);
+    const second = await this.attemptTurn(prompt, resume, model, effort);
     if (second !== null) return second;
     throw new Error(EMPTY_TURN_MESSAGE);
   }
@@ -293,7 +314,8 @@ export class ClaudePlanner implements Planner {
   private async attemptTurn(
     prompt: string,
     resume: string | undefined,
-    model: string | undefined
+    model: string | undefined,
+    effort: EffortLevel | undefined
   ): Promise<PlannerTurn | null> {
     const options: Options = {
       cwd: this.rootDir,
@@ -305,10 +327,15 @@ export class ClaudePlanner implements Planner {
       settingSources: ['project', 'local'],
       tools: PLANNER_TOOLS,
       allowedTools: PLANNER_TOOLS,
+      // The planner has no shell, but it has no human on hand to approve
+      // anything either, so an irreversible command that reached it some
+      // other way is refused (see floorGuard).
+      ...floorGuard('deny'),
       strictMcpConfig: true,
       skills: [],
       ...(resume !== undefined ? { resume } : {}),
       ...(model !== undefined ? { model } : {}),
+      ...(effort !== undefined ? { effort } : {}),
     };
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
     // PATH `claude` -> install hint) ClaudeExecutor.openQuery uses — see

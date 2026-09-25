@@ -94,7 +94,7 @@ function buildPrompt(items: InboxItem[]): string {
     .map((i) => `${i.id}: [${i.kind}] ${i.text.split('\n').join('\n    ')}`)
     .join('\n');
   return [
-    'These are raw one-line notes someone dumped into a capture inbox for a software project. ' +
+    'These are raw notes someone dumped into a capture inbox for a software project. ' +
       'Some of them are really the same piece of work described differently, or facets of one ' +
       'larger job that would be better tracked as a single epic than as loose tasks.',
     list,
@@ -146,7 +146,10 @@ export class InboxClusterer {
         model: loadConfig(this.rootDir).models.cluster,
         permissionMode: 'plan',
         // No tools: this is a judgement about the strings above, not about the repo.
-        allowedTools: [],
+        // `tools: []` drops the built-ins; `strictMcpConfig` keeps the operator's own MCP
+        // servers (claude.ai connectors, plugins) off a call that reads untrusted text.
+        tools: [],
+        strictMcpConfig: true,
         outputFormat: { type: 'json_schema', schema: SCHEMA },
         abortController,
       };

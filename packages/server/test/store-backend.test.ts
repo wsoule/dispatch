@@ -157,6 +157,11 @@ describe('a daemon on the sqlite backend', () => {
     rmSync(root, { recursive: true, force: true });
   });
 
+  it('names the sqlite backend in GET /api/health', async () => {
+    const body = await json(await fetch(`${baseUrl}/api/health`));
+    expect(body.storageBackend).toBe('sqlite');
+  });
+
   it('round-trips a task through the HTTP surface', async () => {
     const created = await json(
       await fetch(`${baseUrl}/api/tasks`, {

@@ -15,6 +15,10 @@ import { floorCheckForToolInput } from '../../floor.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type { StdioServerSpec } from '../dispatchMcp.js';
 import { cartoMcpSpec, cartoSpecFor, dispatchMcpSpec } from '../dispatchMcp.js';
+import { activeExperiments } from '../experiments.js';
+import type { ExperimentName } from '../experiments.js';
+import { floorGuard } from '../floorHook.js';
+import type { FloorPolicy } from '../floorHook.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -23,6 +27,7 @@ import type {
   ExecutorStartOptions,
   NormalizedEntry,
 } from '../types.js';
+import { ClaudeUsageMeter } from './claudeUsage.js';
 import { isSubagentSpawn, SubagentTracker } from './subagentTracker.js';
 
 // The Agent SDK's shape of one provider-neutral stdio server spec (see
@@ -90,14 +95,91 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 // make the user approve a tool call before being shown the question it asks.
 const ASK_USER_TOOL = 'mcp__dispatch__ask_user';
 
+// Claude Code tools that cannot do their job inside a dispatched run, removed
+// from the agent's tool list. Each was exercised through this executor
+// against the bundled CLI (SDK 0.3.207) and its result recorded:
+//
+// - AskUserQuestion: the answers come from the CLI's interactive picker,
+//   which a dispatched run does not have; even after a human approves the
+//   call, the agent is told "The user did not answer the questions."
+//   `mcp__dispatch__ask_user` is the channel that reaches the human.
+// - CronCreate / CronDelete / CronList / ScheduleWakeup: they schedule
+//   prompts into a session that outlives the current turn. A dispatched run
+//   ends at its result, so a cron job "dies when Claude exits" and a wakeup
+//   is refused outright ("Wakeup not scheduled").
+// - EnterWorktree / ExitWorktree: the run already lives in the worktree
+//   Dispatch created for it. EnterWorktree made a second worktree under the
+//   main checkout's `.claude/worktrees/` and moved the session there, so the
+//   agent's edits would land outside the branch Dispatch reviews and merges.
+//
+// Each tool definition is resent on every request, so dropping these also
+// removes about 20 KB of tool schema from every turn's prompt prefix.
+// `disallowedTools` is honored under every permission mode, including
+// `bypassPermissions`.
+export const UNUSABLE_IN_DISPATCHED_RUN = [
+  'AskUserQuestion',
+  'CronCreate',
+  'CronDelete',
+  'CronList',
+  'ScheduleWakeup',
+  'EnterWorktree',
+  'ExitWorktree',
+] as const;
+
+// The `lean-tools` experiment's further exclusions: tools that work in a
+// dispatched run but that few runs need, each resent in every request's
+// prompt prefix. Kept behind the experiment until run telemetry shows that
+// dropping them does not cost completed tasks.
+//
+// - Workflow: multi-agent orchestration; its own description reserves it for
+//   an explicit opt-in a task brief rarely carries. About 21.5 KB of schema,
+//   by far the largest tool definition.
+// - EnterPlanMode / ExitPlanMode: a plan-then-approve loop; a dispatched run
+//   already starts from a brief, and ExitPlanMode parks on a human approval.
+// - ReportFindings: the reporting channel of the code-review skill.
+// - NotebookEdit: Jupyter notebooks only.
+// - ListMcpResourcesTool / ReadMcpResourceTool / ReadMcpResourceDirTool: the
+//   dispatch MCP server's one resource is an onboarding brief the task prompt
+//   already covers.
+export const LEAN_TOOL_EXCLUSIONS = [
+  'Workflow',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'ReportFindings',
+  'NotebookEdit',
+  'ListMcpResourcesTool',
+  'ReadMcpResourceTool',
+  'ReadMcpResourceDirTool',
+] as const;
+
+// The SDK options each active experiment changes. `env` replaces the CLI's
+// environment wholesale rather than merging into it (sdk.d.ts), which is why
+// it starts from process.env.
+function experimentOptions(
+  experiments: readonly ExperimentName[]
+): Pick<Options, 'disallowedTools' | 'env'> {
+  const disallowed: string[] = [...UNUSABLE_IN_DISPATCHED_RUN];
+  if (experiments.includes('lean-tools')) {
+    disallowed.push(...LEAN_TOOL_EXCLUSIONS);
+  }
+  return {
+    disallowedTools: disallowed,
+    ...(experiments.includes('cache-1h')
+      ? { env: { ...process.env, ENABLE_PROMPT_CACHING_1H: '1' } }
+      : {}),
+  };
+}
+
 /**
  * What a tool call is refused with once the user has asked this run to stop.
  *
- * A graceful stop has exactly one lever against a live Agent SDK session: the
- * `canUseTool` gate. Whatever the agent is doing at the moment Stop is pressed
- * has already been through that gate, so it runs to completion untouched; every
- * NEXT tool call is refused with this text, which the SDK hands back to the
- * model as the tool result. The wording is an instruction rather than a bare
+ * A graceful stop's lever against a live Agent SDK session is the gate every
+ * tool call passes before it runs: the PreToolUse hook (floorGuard's
+ * `refusal`), which fires in every permission mode, and `canUseTool` behind
+ * it. Whatever the agent is doing at the moment Stop is pressed has already
+ * been through that gate, so it runs to completion untouched; every NEXT tool
+ * call is refused with this text, which the SDK hands back to the model as the
+ * tool result. The wording is an instruction rather than a bare
  * refusal for the same reason a human denial's `reason` is passed through: the
  * model reads it, writes its closing summary, and ends the turn, which produces
  * an ordinary `result` message and therefore an ordinary `onFinish` — the run
@@ -105,6 +187,56 @@ const ASK_USER_TOOL = 'mcp__dispatch__ask_user';
  * work. A model that ignores this and keeps calling tools is caught by
  * Orchestrator.requestStop's escalation timer, not here.
  */
+// What a call is refused with once the session's result has arrived: the run
+// is over, so nothing still pending can be approved.
+const RUN_ENDED_DENIAL =
+  'The run ended before a human decided on this call, so it was not run.';
+
+// How long windDown waits for the CLI to confirm it stopped the background
+// tasks and took the deny rules, and then lets it take in the answers it was
+// just sent, before the query is closed.
+const WIND_DOWN_STOP_MS = 5_000;
+const WIND_DOWN_FLUSH_MS = 250;
+
+// The deny rules applied once a run has ended. Nothing needs a tool after
+// the result, so `*` denies every tool: the CLI glob-matches deny rules
+// against tool names, and a named list kept missing tools that only some
+// sessions have. Monitor, which runs a shell command and is switched on by a
+// server-side feature flag, ran a force-push after the result until `*` was
+// here; so did a user-scope MCP server's shell tool. The named rules behind
+// it (commands, file changes, new work, every MCP server's tools, and the MCP
+// resource tools, which reach any connected server) still hold on a CLI that
+// does not glob-match.
+const RUN_ENDED_DENY_RULES = [
+  '*',
+  'Bash',
+  'PowerShell',
+  'Monitor',
+  'Write',
+  'Edit',
+  'MultiEdit',
+  'NotebookEdit',
+  'Agent',
+  'Task',
+  'SendMessage',
+  'Skill',
+  'Workflow',
+  'mcp__*',
+  'mcp__dispatch',
+  'mcp__carto',
+  'ListMcpResourcesTool',
+  'ReadMcpResourceTool',
+  'ReadMcpResourceDirTool',
+] as const;
+
+// Resolves when `work` settles or after `ms`, whichever comes first.
+function withinMs(ms: number, work: Promise<unknown>): Promise<unknown> {
+  return Promise.race([
+    work,
+    new Promise((resolve) => setTimeout(resolve, ms)),
+  ]);
+}
+
 export const STOP_DENIAL_MESSAGE =
   'The user asked this run to stop. Do not start any new tool calls. ' +
   'Summarize what you completed and what is left unfinished, then end your turn.';
@@ -511,7 +643,13 @@ export class ClaudeExecutor implements Executor {
   // test is what actually exercises) — this is the seam that makes
   // consume()'s own message-handling logic (e.g. M7's session-id capture)
   // unit-testable.
-  constructor(private readonly queryFn: typeof query = query) {}
+  //
+  // `experiments` is read once per run; tests pin it rather than depend on the
+  // daemon's DISPATCH_EXPERIMENTS.
+  constructor(
+    private readonly queryFn: typeof query = query,
+    private readonly experiments: () => ExperimentName[] = activeExperiments
+  ) {}
 
   // Opens the SDK query, resolving the Claude Code CLI the SDK spawns
   // robustly via the shared openClaudeQuery() (see claudeCli.ts for the exact
@@ -530,8 +668,12 @@ export class ClaudeExecutor implements Executor {
     // Set before every onFinish call, so notify() drops a note that arrives
     // after the run ended instead of leaving it in pendingNotes forever.
     let finished = false;
-    // Set by requestStop(); read by canUseTool below. See STOP_DENIAL_MESSAGE.
+    // Set by requestStop(); read by canUseTool and the PreToolUse hook below.
+    // See STOP_DENIAL_MESSAGE.
     let stopRequested = false;
+    // Set once the session's result has arrived and the run is winding down
+    // (see windDown below): nothing may be approved any more.
+    let ending = false;
     // Tools the user said "always, for this run" about. Session-scoped by construction: this
     // Set lives inside start(), so it dies with the run rather than leaking a permission grant
     // into the next one — which is the property that makes approve-for-session safe to offer
@@ -547,9 +689,52 @@ export class ClaudeExecutor implements Executor {
       });
     };
 
+    // Raises the orchestrator's approval flow for one call and waits for
+    // approve() — or for interrupt()/requestStop(), which answer every
+    // pending request themselves.
+    const askHuman = (
+      requestId: string,
+      toolName: string,
+      input: unknown
+    ): Promise<ApprovalDecision> => {
+      events.onApprovalRequest({ requestId, toolName, input });
+      return new Promise<ApprovalDecision>((resolve) => {
+        pendingApprovals.set(requestId, resolve);
+      });
+    };
+
+    // How the PreToolUse hook holds an irreversible call (see floorGuard):
+    // through the same approval flow, with no session-wide grant, since each
+    // irreversible act gets its own human decision.
+    // Floor calls the human already approved in the PreToolUse hook, by
+    // tool-use id, with the input they approved. The CLI can still send such a
+    // call on to canUseTool (a settings ask rule, one of its safety checks, or
+    // another hook's "ask"), which must not ask the human a second time.
+    const approvedInHook = new Map<string, string>();
+
+    const holdForHuman: FloorPolicy = async ({
+      requestId,
+      toolUseId,
+      toolName,
+      input,
+    }) => {
+      if (interrupted) return { allow: false, reason: 'run cancelled' };
+      if (ending) return { allow: false, reason: RUN_ENDED_DENIAL };
+      const decision = await askHuman(requestId, toolName, input);
+      if (decision.allow) {
+        approvedInHook.set(toolUseId, JSON.stringify(input));
+        // Safe to honour: sessionAllowed is never consulted for a floor call.
+        if (decision.scope === 'session') sessionAllowed.add(toolName);
+      }
+      return { allow: decision.allow, reason: decision.reason };
+    };
+
     const canUseTool: CanUseTool = async (toolName, input, callOpts) => {
       if (interrupted) {
         return { behavior: 'deny', message: 'run cancelled' };
+      }
+      if (ending) {
+        return { behavior: 'deny', message: RUN_ENDED_DENIAL };
       }
       // Ahead of every allow branch below, including the `acceptEdits`
       // auto-allow: after a stop, "the agent may edit files without asking"
@@ -563,6 +748,13 @@ export class ClaudeExecutor implements Executor {
       // earlier "approve Bash for this session" lets one through. Each
       // irreversible act gets its own human decision, at every policy rung.
       const floorHold = floorCheckForToolInput(input);
+      if (
+        floorHold !== null &&
+        approvedInHook.get(callOpts.toolUseID) === JSON.stringify(input)
+      ) {
+        approvedInHook.delete(callOpts.toolUseID);
+        return { behavior: 'allow', updatedInput: input };
+      }
       if (floorHold === null) {
         if (
           opts.permissionMode === 'acceptEdits' &&
@@ -574,11 +766,7 @@ export class ClaudeExecutor implements Executor {
           return { behavior: 'allow', updatedInput: input };
         }
       }
-      const { requestId } = callOpts;
-      events.onApprovalRequest({ requestId, toolName, input });
-      const decision = await new Promise<ApprovalDecision>((resolve) => {
-        pendingApprovals.set(requestId, resolve);
-      });
+      const decision = await askHuman(callOpts.requestId, toolName, input);
       if (decision.allow) {
         if (decision.scope === 'session') sessionAllowed.add(toolName);
         return { behavior: 'allow', updatedInput: input };
@@ -596,15 +784,32 @@ export class ClaudeExecutor implements Executor {
     };
 
     const queue = new MessageQueue(opts.prompt);
+    const experiments = this.experiments();
+    // Only stamped on runs that ran under at least one, so a default run's
+    // finish keeps exactly the shape it had before experiments existed.
+    const experimentStamp = experiments.length > 0 ? { experiments } : {};
+    // Holds every irreversible call for a human in the PreToolUse hook
+    // itself, and after a stop denies every call outright. canUseTool alone
+    // is not enough: the CLI skips it under bypassPermissions, on a
+    // matching settings allow rule, or when the auto-mode classifier
+    // approves, and a settings PermissionRequest hook can answer before it
+    // — see floorGuard.
+    const floor = floorGuard(holdForHuman, () =>
+      stopRequested ? STOP_DENIAL_MESSAGE : ending ? RUN_ENDED_DENIAL : null
+    );
     const sdkOptions: Options = {
       cwd: opts.cwd,
       permissionMode: opts.permissionMode as PermissionMode,
       maxTurns: opts.maxTurns,
       maxBudgetUsd: opts.maxBudgetUsd,
       model: opts.model,
+      effort: opts.effort,
       resume: opts.resumeSessionId,
       canUseTool,
-      hooks: { PostToolUse: [{ hooks: [postToolUse] }] },
+      settings: floor.settings,
+      // The floor's PreToolUse hook, plus the PostToolUse hook that hands
+      // queued notes to the agent with its next tool result.
+      hooks: { ...floor.hooks, PostToolUse: [{ hooks: [postToolUse] }] },
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
       // like a human running `claude` in this checkout, not like a bare SDK
@@ -624,6 +829,7 @@ export class ClaudeExecutor implements Executor {
       // these to actually find.
       systemPrompt: { type: 'preset', preset: 'claude_code' },
       settingSources: ['user', 'project', 'local'],
+      ...experimentOptions(experiments),
       // Bug fix (fix/executor-mcp-wiring): `query()` does NOT auto-load a
       // project's committed `.mcp.json` the way the interactive `claude` CLI
       // does — without this, a dispatched run has no dispatch MCP tools at
@@ -644,6 +850,86 @@ export class ClaudeExecutor implements Executor {
       },
     };
     const sdkQuery: Query = this.openQuery(queue, sdkOptions);
+
+    // Makes the session's end final before the query closes. The run ends at
+    // its result, but the CLI does not stop there: background sub-agents keep
+    // working, and a background task that finishes or is stopped queues a
+    // notification that starts a fresh main-agent turn. Once the query is
+    // closed nobody can answer the floor hook, and the CLI treats an
+    // unanswered hook as no decision, so under bypassPermissions a floor
+    // command in any of that later work ran (each case reproduced through this
+    // executor against the bundled CLI). So, on every result:
+    //
+    // - `ending` makes the hook refuse every call while the query is still
+    //   attached, and refuse any hold outright;
+    // - pending holds are answered with a refusal;
+    // - live background tasks are stopped;
+    // - flag-layer deny rules for every tool that can run a command or change
+    //   files are applied, so the CLI refuses those calls by itself once
+    //   nothing can answer it. Deny rules held under bypassPermissions and
+    //   over a hook's allow;
+    // - the CLI gets a moment to take those answers in.
+    //
+    // Each step's wait is bounded, so an unresponsive CLI cannot keep the run
+    // from finishing. A step that fails is logged with the CLI's version: the
+    // run still finishes, but without what that step guarantees, and an older
+    // Claude Code (a packaged app runs the `claude` on PATH) that lacks the
+    // control request is the likely cause. A step still pending when the query
+    // closes fails too; that is logged unless the run was cancelled, since a
+    // cancel closes the query on purpose.
+    const windDown = async (
+      liveTasks: readonly string[],
+      cliVersion: string | undefined
+    ): Promise<void> => {
+      ending = true;
+      events.onEnding?.();
+      const answeredHolds = pendingApprovals.size > 0;
+      for (const resolve of pendingApprovals.values()) {
+        resolve({ allow: false, reason: RUN_ENDED_DENIAL });
+      }
+      pendingApprovals.clear();
+      const cli = `Claude Code ${cliVersion ?? '(version unknown)'}`;
+      const warn =
+        (consequence: string) =>
+        (err: unknown): void => {
+          if (interrupted) return;
+          console.error(
+            `dispatchd: run ${opts.runId ?? '(no id)'}: ${cli} did not complete a step of ending the run, so ${consequence}: ${(err as Error).message}`
+          );
+        };
+      // Each SDK call is started inside a promise, so one that throws at
+      // once still leaves the others running and the run still finishes.
+      await withinMs(
+        WIND_DOWN_STOP_MS,
+        Promise.allSettled([
+          ...liveTasks.map((taskId) =>
+            Promise.resolve()
+              .then(() => sdkQuery.stopTask(taskId))
+              .catch(
+                warn(
+                  `background task ${taskId} kept running until the CLI exited`
+                )
+              )
+          ),
+          Promise.resolve()
+            .then(() =>
+              sdkQuery.applyFlagSettings({
+                permissions: { deny: [...RUN_ENDED_DENY_RULES] },
+              })
+            )
+            .catch(
+              warn(
+                'tool calls it starts after the result are not refused by a deny rule'
+              )
+            ),
+        ])
+      );
+      // Awaiting applyFlagSettings confirms the rules; the answers to holds
+      // and the stop requests are only written, so give the CLI a moment.
+      if (answeredHolds || liveTasks.length > 0) {
+        await new Promise((resolve) => setTimeout(resolve, WIND_DOWN_FLUSH_MS));
+      }
+    };
 
     // Fire-and-forget: `start()` must return the ExecutorRun handle
     // synchronously (same contract as FakeExecutor), before any onEntry/
@@ -679,11 +965,20 @@ export class ClaudeExecutor implements Executor {
       // lifecycle messages, tool results) into `agent` entries — see the
       // tracker's own doc comment for why one object has to see all three.
       const subagents = new SubagentTracker();
+      // The session's live background tasks (background_tasks_changed
+      // carries the whole set each time), so windDown can stop them.
+      let backgroundTasks: string[] = [];
+      // The CLI's version, from the init message, for windDown's warnings.
+      let cliVersion: string | undefined;
+      // Token usage by billing type — see ClaudeUsageMeter for why it reads
+      // both the streamed messages and the terminal result.
+      const usageMeter = new ClaudeUsageMeter();
       try {
         for await (const message of sdkQuery) {
           if (interrupted) break;
           if (message.type === 'assistant') {
             sawAssistantOutput = true;
+            usageMeter.onAssistant(message);
             if (message.error !== undefined) {
               lastApiError = {
                 kind: message.error,
@@ -705,6 +1000,11 @@ export class ClaudeExecutor implements Executor {
               events.onEntry(entry);
             }
           } else if (message.type === 'system') {
+            if (message.subtype === 'background_tasks_changed') {
+              backgroundTasks = message.tasks.map((task) => task.task_id);
+            } else if (message.subtype === 'init') {
+              cliVersion = message.claude_code_version;
+            }
             const lifecycle = subagents.onSystem(
               message,
               new Date().toISOString()
@@ -739,14 +1039,20 @@ export class ClaudeExecutor implements Executor {
             }
           } else if (message.type === 'result') {
             gotResult = true;
+            await windDown(backgroundTasks, cliVersion);
             if (!interrupted) {
               finished = true;
-              events.onFinish(
-                guardZeroTurnFinish(finishFromResult(message, lastApiError), {
-                  sawAssistantOutput,
-                  resumed: opts.resumeSessionId !== undefined,
-                })
-              );
+              events.onFinish({
+                ...guardZeroTurnFinish(
+                  finishFromResult(message, lastApiError),
+                  {
+                    sawAssistantOutput,
+                    resumed: opts.resumeSessionId !== undefined,
+                  }
+                ),
+                usage: usageMeter.fromResult(message),
+                ...experimentStamp,
+              });
             }
             break;
           }
@@ -757,6 +1063,8 @@ export class ClaudeExecutor implements Executor {
             state: 'failed',
             error: 'agent session ended without a final result',
             sessionId,
+            usage: usageMeter.fromStream(),
+            ...experimentStamp,
           });
         }
       } catch (err) {
@@ -773,6 +1081,8 @@ export class ClaudeExecutor implements Executor {
                 ? rewriteMissingCliError(message)
                 : 'agent session error',
             sessionId,
+            usage: usageMeter.fromStream(),
+            ...experimentStamp,
           });
         }
       } finally {
@@ -821,7 +1131,8 @@ export class ClaudeExecutor implements Executor {
         }
       },
       notify(text: string): void {
-        if (finished) return;
+        // Once the result arrived no further tool result can carry a note.
+        if (finished || ending) return;
         pendingNotes.push(text);
       },
     };

@@ -628,8 +628,8 @@ describe('the fix loop', () => {
       undefined,
     ]);
     expect(runs.slice(4).map((run) => run.model)).toEqual([
-      'claude-opus-5',
-      'claude-opus-5',
+      'claude-opus-5-5',
+      'claude-opus-5-5',
     ]);
     expect(runs[1].model).toBe('claude-haiku-4-5-20251001');
 
@@ -984,7 +984,7 @@ describe('an escalation step the resume path cannot serve', () => {
     // served by a fresh run at the execute model instead.
     const runs = await fixRuns();
     expect(runs[1].resumedFrom).toBeUndefined();
-    expect(runs[1].model).toBe('claude-opus-5');
+    expect(runs[1].model).toBe('claude-opus-5-5');
   }, 30000);
 });
 

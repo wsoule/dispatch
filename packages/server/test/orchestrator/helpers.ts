@@ -1,3 +1,4 @@
+import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import {
   mkdtempSync,
   readFileSync,
@@ -172,4 +173,63 @@ export async function withBrokenRepo<T>(
     rmSync(gitDir, { force: true });
     renameSync(parked, gitDir);
   }
+}
+
+// The PreToolUse decision a session's hooks give one tool call — what the
+// CLI acts on before any permission mode, allow rule or canUseTool.
+export async function floorDecision(
+  hooks: Options['hooks'],
+  toolName: string,
+  toolInput: unknown
+): Promise<unknown> {
+  if (hooks?.PreToolUse?.[0]?.hooks[0] === undefined) {
+    return 'no PreToolUse hook';
+  }
+  return (await preToolUse(hooks, toolName, toolInput))?.permissionDecision;
+}
+
+// The decision and the reason the CLI shows the model, from the same hook
+// floorDecision reads.
+export async function preToolUse(
+  hooks: Options['hooks'],
+  toolName: string,
+  toolInput: unknown
+): Promise<
+  | { permissionDecision?: unknown; permissionDecisionReason?: unknown }
+  | undefined
+> {
+  const hook = hooks?.PreToolUse?.[0]?.hooks[0];
+  if (hook === undefined) return undefined;
+  const output = await hook(
+    {
+      hook_event_name: 'PreToolUse',
+      tool_name: toolName,
+      tool_input: toolInput,
+      tool_use_id: 'tu-1',
+      session_id: 's',
+      transcript_path: '/tmp/t.jsonl',
+      cwd: '/tmp',
+    } as never,
+    'tu-1',
+    { signal: new AbortController().signal }
+  );
+  return (
+    output as {
+      hookSpecificOutput?: {
+        permissionDecision?: unknown;
+        permissionDecisionReason?: unknown;
+      };
+    }
+  ).hookSpecificOutput;
+}
+
+// A scripted message stream as the Claude executor's Query, with the two
+// control calls the executor makes when a run's result arrives (windDown)
+// answered as a current CLI answers them. Without them each call fails, and
+// the executor logs every step of ending a run that fails.
+export function withRunEndControls(messages: object): Query {
+  return Object.assign(messages, {
+    stopTask: () => Promise.resolve(),
+    applyFlagSettings: () => Promise.resolve(),
+  }) as unknown as Query;
 }

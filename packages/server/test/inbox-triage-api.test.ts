@@ -165,3 +165,38 @@ describe('POST /api/inbox/cluster with triage', () => {
     expect(triage).toBeNull();
   });
 });
+
+describe('InboxClusterer', () => {
+  // The clusterer reads teammates' raw captures, so its model call must carry
+  // no tools: no built-ins and none of the operator's own MCP connectors.
+  it('offers the model no built-in or operator MCP tools', async () => {
+    let options: Record<string, unknown> = {};
+    const clusterer = new InboxClusterer(root, ((args: {
+      options: Record<string, unknown>;
+    }) => {
+      options = args.options;
+      return (function* () {
+        yield {
+          type: 'result',
+          subtype: 'success',
+          session_id: 's',
+          structured_output: { groups: [] },
+        };
+      })() as unknown as Query;
+    }) as never);
+    const now = new Date().toISOString();
+    const item = (id: string) => ({
+      id,
+      kind: 'note' as const,
+      text: id,
+      done: false,
+      linkedTaskId: null,
+      createdByRunId: null,
+      created: now,
+    });
+    await clusterer.cluster([item('i-1'), item('i-2'), item('i-3')] as never);
+    expect(options.tools).toEqual([]);
+    expect(options.strictMcpConfig).toBe(true);
+    expect(options.mcpServers).toBeUndefined();
+  });
+});

@@ -8,23 +8,11 @@ description:
 
 # Browser Automation
 
-Use `agent-browser` for web automation in this repo. Run:
-
-```bash
-agent-browser --help
-```
-
-Core workflow:
-
-```bash
-agent-browser open <url>
-agent-browser snapshot -i
-agent-browser click @e1
-agent-browser fill @e2 "text"
-```
-
-Re-run `agent-browser snapshot -i` after page changes so element refs stay
-current.
+The browser tooling this repo ships is Playwright, behind the desktop app's e2e
+suite (`moonx desktop:e2e`; `testing-and-verification` covers when a browser
+test is warranted). For ad-hoc inspection of a running page, use the browser
+tooling your harness provides. `agent-browser` also works when it is installed,
+but it is not a dependency of this repo.
 
 Use browser automation for behavior that needs a rendered page, real DOM state,
 or interactive verification. Prefer focused Bun tests for pure logic and

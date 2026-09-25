@@ -194,6 +194,41 @@ describe('buildTaskPrompt', () => {
     expect(prompt).toContain('`packages/server/src/api.ts` (6 previous runs)');
   });
 
+  it('names no dispatch MCP tools for an executor that has none', () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      [],
+      fixtureOrientation(),
+      false
+    );
+    for (const tool of [
+      'run_list',
+      'task_comment',
+      'ask_user',
+      'record_evidence',
+      'record_mutation',
+    ]) {
+      expect(prompt).not.toContain(tool);
+    }
+    expect(prompt).not.toContain('dispatch MCP server');
+    // The quality bar survives; only the channel changes.
+    expect(prompt).toContain('mutation-test it');
+    expect(prompt).toContain('Commit your work');
+  });
+
+  it('keeps the generic skills line when orientation found no skills to index', () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      [],
+      fixtureOrientation({ skills: [] })
+    );
+    expect(prompt).toContain('## Repo orientation');
+    expect(prompt).toContain('.agents/skills or');
+    expect(prompt).not.toContain('The skills index above is complete');
+  });
+
   // The whole point of collecting orientation is to stop instructing agents to
   // go and re-derive what it already contains.
   it('drops the go-enumerate-the-skills instruction when orientation supplies the index', () => {

@@ -1,9 +1,12 @@
+import type { Options } from '@anthropic-ai/claude-agent-sdk';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import {
+  generateRepoDigest,
   headCommit,
   readRepoDigest,
   RepoDigestCache,
@@ -15,7 +18,7 @@ import type {
   DigestResult,
   RepoDigest,
 } from '../../src/orchestrator/repoDigest.js';
-import { initGitRepo, runGitSync } from './helpers.js';
+import { floorDecision, initGitRepo, runGitSync } from './helpers.js';
 
 // See the same note in hotspots.test.ts — without this redirect every write
 // below lands in the developer's real ~/.dispatch.
@@ -424,5 +427,74 @@ describe('RepoDigestCache', () => {
     } finally {
       rmSync(plain, { recursive: true, force: true });
     }
+  });
+});
+
+// One SDK result message for generateRepoDigest, recording the options it got.
+function digestQuery(
+  result: Record<string, unknown>,
+  seen: { options?: Record<string, unknown> } = {}
+) {
+  return ((args: { options: Record<string, unknown> }) => {
+    seen.options = args.options;
+    return (function* () {
+      yield { type: 'result', subtype: 'success', session_id: 's', ...result };
+    })();
+  }) as never;
+}
+
+describe('generateRepoDigest', () => {
+  // A plan-mode session can end on commentary about the map ("the map above is
+  // the deliverable…"); the final message must never be cached as the map.
+  it('returns the structured map, not the final message', async () => {
+    const out = await generateRepoDigest(
+      rootDir,
+      digestQuery({
+        result: 'The orientation map above is the complete deliverable.',
+        structured_output: { markdown: '# Map\n\n- `src/` — the code' },
+        total_cost_usd: 0.5,
+      })
+    );
+    expect(out).toEqual({
+      markdown: '# Map\n\n- `src/` — the code',
+      costUsd: 0.5,
+    });
+  });
+
+  it('throws rather than caching a turn that produced no map', async () => {
+    await expect(
+      generateRepoDigest(rootDir, digestQuery({ result: 'Done.' }))
+    ).rejects.toThrow('repo digest produced no map');
+  });
+
+  it("keeps the operator's settings, plugins and MCP connectors out", async () => {
+    const seen: { options?: Record<string, unknown> } = {};
+    await generateRepoDigest(
+      rootDir,
+      digestQuery({ structured_output: { markdown: 'x' } }, seen)
+    );
+    expect(seen.options?.settingSources).toEqual(['project', 'local']);
+    expect(seen.options?.strictMcpConfig).toBe(true);
+    expect(seen.options?.skills).toEqual([]);
+    expect(seen.options?.outputFormat).toBeDefined();
+  });
+
+  // The digest runs unattended over the repo's own content, so it gets no
+  // shell (plan mode let Bash write and delete files, verified against the
+  // bundled CLI), and the floor hook refuses anything irreversible.
+  it('reads without a shell and denies floor commands', async () => {
+    const seen: { options?: Record<string, unknown> } = {};
+    await generateRepoDigest(
+      rootDir,
+      digestQuery({ structured_output: { markdown: '# map' } }, seen)
+    );
+    expect(seen.options?.permissionMode).toBe('plan');
+    expect(seen.options?.tools).toEqual(['Read', 'Grep', 'Glob']);
+    expect(
+      await floorDecision(seen.options?.hooks as Options['hooks'], 'Bash', {
+        command: 'git push --tags',
+      })
+    ).toBe('deny');
+    expect(seen.options?.settings).toEqual(floorGuard('deny').settings);
   });
 });

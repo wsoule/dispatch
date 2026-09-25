@@ -2,8 +2,13 @@ import type { ExecutorPricing } from '@dispatch/core';
 import { CORE_VERSION, loadConfig } from '@dispatch/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 
+import {
+  FLOOR_COMMAND_ACTIONS,
+  floorCheckForCommand,
+  floorCheckForToolInput,
+} from '../../floor.js';
 import {
   CodexAppServer,
   type CodexAppServerMessage,
@@ -21,6 +26,7 @@ import type {
   ExecutorStartOptions,
   NormalizedEntry,
 } from '../types.js';
+import type { RunUsage } from '../usage.js';
 
 const STOP_MESSAGE =
   'The user asked this run to stop. Finish the current operation, start no new work, summarize what is complete and what remains, then end the turn.';
@@ -117,6 +123,20 @@ function tokenTotal(value: unknown): CodexTokenTotal | undefined {
     inputTokens: count('inputTokens'),
     cachedInputTokens: count('cachedInputTokens'),
     outputTokens: count('outputTokens'),
+  };
+}
+
+// Codex's cumulative thread totals in the provider-neutral billing split. Codex
+// counts cached input inside inputTokens and reports no cache writes, so the
+// uncached share is the difference and cache creation is always zero.
+function codexRunUsage(total: CodexTokenTotal): RunUsage {
+  const cached = Math.min(total.cachedInputTokens, total.inputTokens);
+  return {
+    inputTokens: total.inputTokens - cached,
+    cacheCreationInputTokens: 0,
+    cacheReadInputTokens: cached,
+    outputTokens: total.outputTokens,
+    source: 'result',
   };
 }
 
@@ -297,41 +317,30 @@ function closeDescription(close: {
 }
 
 export interface CodexPermission {
-  approvalPolicy: 'on-request' | 'never';
-  approvalsReviewer: 'auto_review' | 'user';
+  approvalPolicy: 'untrusted' | 'never';
+  // Pinned: a user's config.toml may default to Codex's own reviewer, which
+  // answers inside Codex and never asks Dispatch.
+  approvalsReviewer: 'user';
   sandbox: 'read-only' | 'workspace-write' | 'danger-full-access';
 }
 
-// Dispatch's permission vocabulary is the Claude SDK's; this is what each
-// mode means to Codex. `auto` lets Codex's own reviewer answer approvals,
-// the two asking modes route them to Dispatch's approval flow, the two
-// unattended modes never ask, and `plan` cannot write at all.
+// What each Dispatch mode means to Codex. `untrusted` is the one policy that
+// asks before every non-read-only command, which the floor needs; `plan`'s
+// read-only sandbox and `never` leave a floor command nothing it could reach.
 export function codexPermission(
   permissionMode: string
 ): CodexPermission | null {
   switch (permissionMode) {
-    case 'auto':
-      return {
-        approvalPolicy: 'on-request',
-        approvalsReviewer: 'auto_review',
-        sandbox: 'workspace-write',
-      };
     case 'default':
     case 'acceptEdits':
       return {
-        approvalPolicy: 'on-request',
-        approvalsReviewer: 'user',
-        sandbox: 'workspace-write',
-      };
-    case 'dontAsk':
-      return {
-        approvalPolicy: 'never',
+        approvalPolicy: 'untrusted',
         approvalsReviewer: 'user',
         sandbox: 'workspace-write',
       };
     case 'bypassPermissions':
       return {
-        approvalPolicy: 'never',
+        approvalPolicy: 'untrusted',
         approvalsReviewer: 'user',
         sandbox: 'danger-full-access',
       };
@@ -346,6 +355,16 @@ export function codexPermission(
   }
 }
 
+// Modes whose Codex settings keep approvals away from Dispatch, so the
+// irreversibility floor (floor.ts) could not hold a command for a human.
+const CODEX_FLOOR_REFUSALS = new Map([
+  [
+    'auto',
+    "Codex's auto mode sends approvals to Codex's own reviewer instead of Dispatch",
+  ],
+  ['dontAsk', 'Codex never asks for approval under dontAsk'],
+]);
+
 // Codex reports token usage but no dollar cost, runs one turn per prompt,
 // and has no equivalent of the SDK's turn/budget caps.
 export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
@@ -353,11 +372,93 @@ export const CODEX_EXECUTOR_PROFILE: ExecutorProfile = {
   reportsTurns: true,
   enforcesCaps: false,
   acceptsMessages: true,
-  permissionRefusal: (mode) =>
-    codexPermission(mode) === null
+  permissionRefusal: (mode) => {
+    const floorGap = CODEX_FLOOR_REFUSALS.get(mode);
+    if (floorGap !== undefined) {
+      return `${floorGap}, so ${FLOOR_COMMAND_ACTIONS} could run without a human. Use default (Dispatch reviews each command) or bypassPermissions (unattended; Dispatch still holds those actions) for Codex runs`;
+    }
+    return codexPermission(mode) === null
       ? `Codex has no mapping for permissionMode "${mode}"`
-      : null,
+      : null;
+  },
 };
+
+// The answer the executor gives a Codex approval itself, or undefined to hand
+// it to Dispatch's approval flow. A floor command is never answered here.
+function selfAnswer(
+  permissionMode: string,
+  approval: PendingCodexApproval,
+  cwd: string,
+  editPaths: ReadonlyMap<string, string[]>
+): ApprovalDecision | undefined {
+  const params = objectValue(approval.params);
+  if (approval.method === 'item/commandExecution/requestApproval') {
+    // Accepting may lift a sandbox the model asked to leave, which looks
+    // like any other ask, so only a mode with no sandbox answers here.
+    const readable =
+      typeof params?.command === 'string' &&
+      (params.kind ?? 'command') === 'command';
+    return permissionMode === 'bypassPermissions' &&
+      readable &&
+      floorCheckForToolInput(params) === null
+      ? { allow: true }
+      : undefined;
+  }
+  if (permissionMode === 'bypassPermissions') return { allow: true };
+  if (
+    permissionMode === 'acceptEdits' &&
+    approval.method === 'item/fileChange/requestApproval' &&
+    (params?.grantRoot === undefined || params.grantRoot === null) &&
+    typeof params?.itemId === 'string'
+  ) {
+    // The ask names no paths; its item/started notification, which Codex
+    // sends first, does.
+    const paths = editPaths.get(params.itemId);
+    return paths?.every((path) => isInside(cwd, path)) === true
+      ? { allow: true }
+      : undefined;
+  }
+  return undefined;
+}
+
+function isInside(root: string, path: string): boolean {
+  const rel = relative(root, path);
+  return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
+}
+
+// Every path a fileChange item writes, a move's destination included, or
+// undefined when any entry is unreadable so a partial list never passes.
+function fileChangePaths(item: CodexItem): string[] | undefined {
+  if (!Array.isArray(item.changes) || item.changes.length === 0) {
+    return undefined;
+  }
+  const paths: string[] = [];
+  for (const change of item.changes) {
+    const entry = objectValue(change);
+    if (typeof entry?.path !== 'string') return undefined;
+    paths.push(entry.path);
+    const movePath = objectValue(entry.kind)?.move_path;
+    if (typeof movePath === 'string') paths.push(movePath);
+  }
+  return paths;
+}
+
+// A floor command Codex ran without asking Dispatch, or undefined when it did
+// not run or an ask for its item already carried a floor command.
+function unaskedFloorCommand(
+  item: CodexItem,
+  flooredAsks: ReadonlySet<string>
+): string | undefined {
+  if (item.type !== 'commandExecution' || item.status !== 'completed') {
+    return undefined;
+  }
+  if (typeof item.id !== 'string' || flooredAsks.has(`command:${item.id}`)) {
+    return undefined;
+  }
+  const check = floorCheckForToolInput(item);
+  if (check === null) return undefined;
+  return `Codex ran a floor command (${check}) without asking Dispatch, most likely under an allow rule in $CODEX_HOME/rules: ${String(item.command)}. The run is stopped so a human can review it.`;
+}
 
 /** One Codex App Server process, one persisted thread, and one Codex turn. */
 export interface CodexExecutorOptions {
@@ -407,10 +508,24 @@ export class CodexExecutor implements Executor {
     const bufferedTurnMessages: CodexAppServerMessage[] = [];
     const pendingApprovals = new Map<string, PendingCodexApproval>();
     let nextApprovalId = 1;
+    const editPaths = new Map<string, string[]>();
+    // `${kind}:${itemId}` of each ask carrying a floor command; a floor act
+    // with none behind it never reached Dispatch.
+    const flooredAsks = new Set<string>();
+    // The unfinished last line typed into each running shell, by item.
+    const stdinTails = new Map<string, string>();
 
     server.onServerRequest((request) => {
       if (!isCodexApprovalMethod(request.method)) return false;
       if (terminal || interrupted) return true;
+      const asked = objectValue(request.params);
+      if (
+        typeof asked?.itemId === 'string' &&
+        floorCheckForToolInput(asked) !== null
+      ) {
+        const kind = typeof asked.kind === 'string' ? asked.kind : 'command';
+        flooredAsks.add(`${kind}:${asked.itemId}`);
+      }
       const approval: PendingCodexApproval = {
         method: request.method,
         params: request.params,
@@ -418,6 +533,16 @@ export class CodexExecutor implements Executor {
       };
       if (stopping) {
         server.respond(request.id, approvalResult(approval, { allow: false }));
+        return true;
+      }
+      const answer = selfAnswer(
+        opts.permissionMode,
+        approval,
+        opts.cwd,
+        editPaths
+      );
+      if (answer !== undefined) {
+        server.respond(request.id, approvalResult(approval, answer));
         return true;
       }
       const requestId = `codex-approval-${nextApprovalId++}`;
@@ -446,8 +571,16 @@ export class CodexExecutor implements Executor {
         sessionId: threadId,
         turns: 1,
         ...(costUsd === undefined ? {} : { costUsd }),
+        ...(lastUsage === undefined ? {} : { usage: codexRunUsage(lastUsage) }),
       });
       server.close();
+    };
+
+    // The act already happened; failing the run puts it in front of a human
+    // (a blocking run-stalled item) before the agent builds on it.
+    const stopForFloorBypass = (text: string): void => {
+      events.onEntry({ ts: new Date().toISOString(), kind: 'system', text });
+      finish({ state: 'failed', error: text });
     };
 
     const sendSteer = (message: string): void => {
@@ -495,11 +628,22 @@ export class CodexExecutor implements Executor {
         }
         return;
       }
+      // Recorded before the turn-start buffering below: an edit's approval
+      // can arrive while its item/started is still buffered.
+      if (message.method === 'item/started') {
+        const item = itemFrom(message);
+        const paths =
+          item?.type === 'fileChange' ? fileChangePaths(item) : undefined;
+        if (typeof item?.id === 'string' && paths !== undefined) {
+          editPaths.set(item.id, paths);
+        }
+      }
       if (
         turnStartPending &&
         turnId === undefined &&
         (message.method === 'item/started' ||
           message.method === 'item/completed' ||
+          message.method === 'item/commandExecution/terminalInteraction' ||
           message.method === 'thread/tokenUsage/updated' ||
           message.method === 'turn/completed')
       ) {
@@ -519,6 +663,34 @@ export class CodexExecutor implements Executor {
         const completed = message.method === 'item/completed';
         const entry = entryForItem(item, completed);
         if (entry !== undefined) events.onEntry(entry);
+        const bypass = completed
+          ? unaskedFloorCommand(item, flooredAsks)
+          : undefined;
+        if (bypass !== undefined) stopForFloorBypass(bypass);
+        return;
+      }
+      // Codex asks before starting a shell but not about what is typed into
+      // it, so each finished line is read against the floor here.
+      if (message.method === 'item/commandExecution/terminalInteraction') {
+        const params = objectValue(message.params);
+        if (params?.threadId !== threadId || params?.turnId !== turnId) return;
+        const itemId = params?.itemId;
+        if (typeof itemId !== 'string' || typeof params?.stdin !== 'string') {
+          return;
+        }
+        const lines = `${stdinTails.get(itemId) ?? ''}${params.stdin}`.split(
+          /\r\n|\r|\n/
+        );
+        stdinTails.set(itemId, lines.pop() ?? '');
+        if (flooredAsks.has(`writeStdin:${itemId}`)) return;
+        for (const line of lines) {
+          const check = floorCheckForCommand(line);
+          if (check === null) continue;
+          stopForFloorBypass(
+            `Codex typed a floor command (${check}) into a shell it started, and Codex does not ask about shell input: ${line.trim()}. The run is stopped so a human can review it.`
+          );
+          return;
+        }
         return;
       }
       if (message.method === 'thread/tokenUsage/updated') {

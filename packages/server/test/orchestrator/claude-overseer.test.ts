@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 import { z } from 'zod';
 
 import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
+import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type {
   OverseerToolResult,
   OverseerToolset,
@@ -14,6 +15,7 @@ import {
   OVERSEER_TOOL_PREFIX,
   overseerSdkTools,
 } from '../../src/orchestrator/overseers/claude.js';
+import { floorDecision, preToolUse } from './helpers.js';
 
 // The exact text the Agent SDK throws when it can't resolve its own bundled
 // native CLI binary — mirrors claude-planner.test.ts's fixture for the same
@@ -146,6 +148,73 @@ describe('ClaudeOverseer session wiring', () => {
     expect(captured?.permissionMode).toBe('auto');
     expect(captured?.maxTurns).toBe(40);
     expect(captured?.maxBudgetUsd).toBe(2.5);
+    // No background tasks: one outliving the turn ran floor commands after
+    // the query closed. The rest of the environment is inherited.
+    expect(captured?.env?.CLAUDE_CODE_DISABLE_BACKGROUND_TASKS).toBe('1');
+    expect(captured?.env?.PATH).toBe(process.env.PATH);
+    // With no one to authorize anything, a floor command is refused, as
+    // canUseTool refuses every gated call.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', {
+        command: 'gh release create v2.0.0',
+      })
+    ).toBe('deny');
+    expect(captured?.settings).toEqual(floorGuard('deny').settings);
+  });
+
+  // The hook holds a floor command through the same authorizeTool gate
+  // canUseTool uses, since the CLI can skip canUseTool or let a settings
+  // PermissionRequest hook answer first (see floorGuard).
+  it('holds floor commands for a human through authorizeTool', async () => {
+    const { toolset } = stubToolset();
+    const asked: { requestId: string; toolName: string }[] = [];
+    const { captured } = await runTurn(successStream(), toolset, undefined, {
+      authorizeTool: (request) => {
+        asked.push(request);
+        return Promise.resolve({ allow: false, reason: 'not from chat' });
+      },
+    });
+    const release = { command: 'gh release create v2.0.0' };
+    expect(await preToolUse(captured?.hooks, 'Bash', release)).toMatchObject({
+      permissionDecision: 'deny',
+      permissionDecisionReason: 'not from chat',
+    });
+    expect(asked).toEqual([
+      expect.objectContaining({
+        requestId: 'floor-tu-1',
+        toolName: 'Bash',
+        input: release,
+      }),
+    ]);
+    // Anything else is left to canUseTool and the session's own policy.
+    expect(
+      await floorDecision(captured?.hooks, 'Bash', { command: 'git status' })
+    ).toBeUndefined();
+    expect(asked).toHaveLength(1);
+  });
+
+  // After the hook's allow the CLI can still send the call on to canUseTool;
+  // the human already decided on that exact call, so authorizeTool is not
+  // asked again.
+  it('does not ask twice about a floor call approved in the hook', async () => {
+    const { toolset } = stubToolset();
+    let asks = 0;
+    const { captured } = await runTurn(successStream(), toolset, undefined, {
+      authorizeTool: () => {
+        asks += 1;
+        return Promise.resolve({ allow: true });
+      },
+    });
+    const release = { command: 'gh release create v2.0.0' };
+    expect(await floorDecision(captured?.hooks, 'Bash', release)).toBe('allow');
+    expect(
+      await captured?.canUseTool?.('Bash', release, {
+        signal: new AbortController().signal,
+        toolUseID: 'tu-1',
+        requestId: 'cli-uuid-1',
+      })
+    ).toEqual({ behavior: 'allow', updatedInput: release });
+    expect(asks).toBe(1);
   });
 
   it('leaves the caps and policy to the SDK defaults when the project sets none', async () => {

@@ -1,3 +1,4 @@
+import type { FloorCheck } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import {
@@ -131,6 +132,217 @@ describe('floorCheckForCommand', () => {
     expect(
       floorCheckForCommand('git push origin main; npm run publish-check')
     ).toBeNull();
+  });
+});
+
+// The detectors as they stood before the linear-time rewrite, kept verbatim as
+// the oracle the current ones must agree with. They backtrack in cubic time,
+// so they only ever see short commands here.
+const LEGACY_SEGMENT = '[^|;&\\n]*';
+const LEGACY_CHECKS: readonly [FloorCheck, RegExp][] = [
+  [
+    'force-push',
+    new RegExp(
+      `\\bgit\\b${LEGACY_SEGMENT}\\bpush\\b${LEGACY_SEGMENT}(?:--force(?:-with-lease)?(?![\\w-])|\\s-[a-zA-Z]*f[a-zA-Z]*\\b|\\s\\+\\S+)`
+    ),
+  ],
+  [
+    'publish',
+    /\b(?:npm|pnpm|yarn|bun|npx|cargo)\b[^|;&\n]*\s(?:un)?publish(?![\w-])/,
+  ],
+  [
+    'publish',
+    new RegExp(
+      `\\bgit\\b${LEGACY_SEGMENT}\\bpush\\b${LEGACY_SEGMENT}(?:--tags(?![\\w-])|--follow-tags(?![\\w-])|\\S*refs/tags/|\\s(?:\\S+:)?v\\d+(?:\\.\\d+)*(?=\\s|$))`
+    ),
+  ],
+  ['publish', /\bgh\b[^|;&\n]*\brelease\b[^|;&\n]*\b(?:create|upload)\b/],
+  [
+    'repo-settings',
+    new RegExp(
+      `\\bgh\\b${LEGACY_SEGMENT}(?:\\bvisibility\\b|\\bdefault[-_]branch\\b|\\bprivate=|\\brepo\\b${LEGACY_SEGMENT}\\b(?:delete|archive)\\b|-X\\s+DELETE${LEGACY_SEGMENT}/repos/)`
+    ),
+  ],
+  [
+    'delete-outside-writes',
+    new RegExp(
+      `\\bgit\\b${LEGACY_SEGMENT}\\bpush\\b${LEGACY_SEGMENT}(?:--delete\\b|\\s-d\\b|\\s:\\S+)`
+    ),
+  ],
+];
+
+function legacyFloorCheck(command: string): FloorCheck | null {
+  for (const [check, pattern] of LEGACY_CHECKS) {
+    if (pattern.test(command)) return check;
+  }
+  return null;
+}
+
+// Commands built mostly around near-complete floor patterns (`git … push …
+// flag`, `gh … -X … DELETE …`), with noise, delimiters and newlines dropped
+// in at random points, so the segment boundaries are what gets exercised.
+function* generatedCommands(count: number): Generator<string> {
+  const tokens = [
+    'git',
+    'push',
+    'gh',
+    'repo',
+    'release',
+    '-X',
+    'DELETE',
+    '/repos/',
+    'npm',
+    'publish',
+    '--force',
+    '-f',
+    '-fu1',
+    '+main',
+    '--delete',
+    '-d',
+    ':feat',
+    '--tags',
+    'refs/tags/',
+    'x:v2.3',
+    'v1.2',
+    'git-lfs',
+    'origin',
+    'a',
+    '1',
+    '"',
+    '-',
+  ];
+  const separators = [
+    ' ',
+    ' ',
+    ' ',
+    '',
+    '.',
+    '\n',
+    '\t',
+    ';',
+    '|',
+    '&',
+    '&&',
+    ' \n ',
+  ];
+  const chains = [
+    ['git', 'push'],
+    ['gh', 'release'],
+    ['gh', 'repo'],
+    ['gh', '-X'],
+    ['gh'],
+    ['npm'],
+    ['pnpm', '-r'],
+    ['cargo'],
+  ];
+  const markers = [
+    '--force',
+    '--force-with-lease',
+    '-f',
+    '-uf',
+    '-fu1',
+    '+main',
+    '--delete',
+    '-d',
+    ':feat',
+    '--tags',
+    '--follow-tags',
+    'x:refs/tags/v1',
+    'v1.2.3',
+    'x:v2.3',
+    'v1x',
+    'create',
+    'upload',
+    'delete',
+    'archive',
+    'visibility',
+    'default_branch',
+    'private=',
+    'DELETE /repos/o',
+    'DELETE',
+    '/repos/x',
+    'publish',
+    'unpublish',
+    'publish-check',
+  ];
+  // mulberry32 from a fixed seed, so a failure names a reproducible case.
+  // (Math.imul keeps the multiply in 32 bits; a plain `*` loses the low bits
+  // to floating point and the sequence collapses into short cycles.)
+  let seed = 7;
+  const pick = <T>(list: readonly T[]): T => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    const unit = ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    return list[Math.floor(unit * list.length)];
+  };
+  const noise = (): string => {
+    let text = '';
+    for (let i = 0; i < pick([0, 1, 2, 3]); i++)
+      text += pick(tokens) + pick(separators);
+    return text;
+  };
+  for (let n = 0; n < count; n++) {
+    let command = '';
+    for (let r = 0; r < pick([1, 2, 3]); r++) {
+      command += noise();
+      for (const word of pick(chains))
+        command += word + pick(separators) + noise();
+      command += pick(markers) + pick(separators) + pick(['', pick(markers)]);
+    }
+    yield command;
+  }
+}
+
+describe('floorCheckForCommand, rewritten for linear time', () => {
+  it('agrees with the pre-rewrite detectors on generated commands', () => {
+    const verdicts = new Map<string, number>();
+    for (const command of generatedCommands(40_000)) {
+      const expected = legacyFloorCheck(command);
+      expect({ command, check: floorCheckForCommand(command) }).toEqual({
+        command,
+        check: expected,
+      });
+      verdicts.set(String(expected), (verdicts.get(String(expected)) ?? 0) + 1);
+    }
+    // The generator has to reach every kind of hold for the comparison to say
+    // anything about it.
+    for (const check of [
+      'force-push',
+      'publish',
+      'repo-settings',
+      'delete-outside-writes',
+      'null',
+    ]) {
+      expect(verdicts.get(check) ?? 0).toBeGreaterThan(50);
+    }
+  });
+
+  // Each of these took the pre-rewrite detectors (or a first rewrite) from
+  // tens of milliseconds at 5 KB to seconds or minutes at this size; they now
+  // take a few milliseconds, well under the bound on any machine. The
+  // `git.push;` runs cross segment ends with no whitespace, which defeated a
+  // regex form of the `refs/tags/` check; the plain script checks ordinary
+  // input stays fast too.
+  it('stays fast on long commands that stalled the old detectors', () => {
+    for (const command of [
+      'git.push;'.repeat(11_111),
+      'git-push|'.repeat(11_111),
+      'git.push&'.repeat(11_111) + 'refs/tags/x',
+      'cd src && ls -la | grep ts; git status --short\nnpm run build\n'.repeat(
+        1_700
+      ),
+      'git push '.repeat(12_000),
+      'echo "' + 'git status and push later '.repeat(4_000) + '"',
+      'git push -' + 'f'.repeat(100_000) + '1',
+      'git push ' + 'a'.repeat(100_000),
+      'gh ' + '-X DELETE '.repeat(10_000),
+      'npm '.repeat(25_000),
+    ]) {
+      const started = performance.now();
+      floorCheckForCommand(command);
+      expect(performance.now() - started).toBeLessThan(250);
+    }
   });
 });
 

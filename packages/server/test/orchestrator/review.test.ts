@@ -878,7 +878,7 @@ describe('ReviewRunner', () => {
       openFindings: [],
     });
     expect(runKind(meta)).toBe('review');
-    expect(meta.model).toBe('claude-opus-5');
+    expect(meta.model).toBe('claude-opus-5-5');
 
     await waitFor(
       () => findingStore.list({ taskId: task.meta.id }).length === 2

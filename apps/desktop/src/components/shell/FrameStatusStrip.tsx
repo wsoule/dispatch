@@ -21,8 +21,10 @@ const DOT_CLASS: Record<SyncTone, string> = {
 interface FrameStatusStripProps {
   /** `null` until the first `GET /api/sync` resolves — no pill yet. */
   syncStatus: SyncStatus | null;
-  /** Flips `.dispatch/config.yml`'s `autoCommit` off — the pill's kill switch. */
-  onDisableAutoCommit: () => void;
+  /** The pill's "Stop committing" kill switch: turns off "Commit task files to the main
+   * branch" (`.dispatch/config.yml`'s `autoCommit`). Absent for a viewer who can't
+   * change config, who is offered no switch. */
+  onDisableAutoCommit?: () => void;
   /** Settled spend across today's runs, or `null` to show nothing. */
   spendToday: number | null;
   /** The live milestone fan-outs summed (App sums `data.liveEpicSessions`): how many
@@ -131,13 +133,16 @@ export function FrameStatusStrip({
             {sync.detail.length > 0 && (
               <span className="sr-only">{sync.detail.join('. ')}</span>
             )}
-            {sync.canDisableAutoCommit && (
+            {sync.canDisableAutoCommit && onDisableAutoCommit !== undefined && (
               <button
                 type="button"
                 onClick={onDisableAutoCommit}
+                // The name starts with the visible text so voice control can target it.
+                aria-label="Stop committing task files to the main branch"
+                title="Turn off “Commit task files to the main branch”"
                 className="text-muted-foreground shrink-0 underline decoration-dotted underline-offset-2 hover:text-(--text-secondary)"
               >
-                Auto-commit off
+                Stop committing
               </button>
             )}
           </TooltipTrigger>

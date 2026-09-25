@@ -41,6 +41,11 @@ export type PromptBarProps = {
   models?: PromptBarModel[];
   modelId?: string;
   onModelChange?: (id: string) => void;
+  /** A second select beside the model one, same shape — the reasoning effort
+   *  the conversation runs at. Omitted, no effort select renders. */
+  efforts?: PromptBarModel[];
+  effortId?: string;
+  onEffortChange?: (id: string) => void;
   /** Mic is affordance-only — dictation isn't wired up here, so this is optional. */
   onMicClick?: () => void;
   disabled?: boolean;
@@ -97,6 +102,9 @@ export function PromptBar({
   models = [],
   modelId,
   onModelChange,
+  efforts = [],
+  effortId,
+  onEffortChange,
   onMicClick,
   disabled = false,
   placeholder = 'Write a message…',
@@ -193,22 +201,36 @@ export function PromptBar({
       </Popover>
 
       <div className="flex items-center justify-between gap-1 px-0.5 pb-0.5">
-        {models.length > 0 ? (
-          <Select value={modelId} onValueChange={onModelChange}>
-            <SelectTrigger aria-label="Choose model">
-              <SelectValue placeholder="Model" />
-            </SelectTrigger>
-            <SelectContent>
-              {models.map((model) => (
-                <SelectItem key={model.id} value={model.id}>
-                  {model.label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <span />
-        )}
+        <div className="flex items-center gap-1">
+          {models.length > 0 && (
+            <Select value={modelId} onValueChange={onModelChange}>
+              <SelectTrigger aria-label="Choose model">
+                <SelectValue placeholder="Model" />
+              </SelectTrigger>
+              <SelectContent>
+                {models.map((model) => (
+                  <SelectItem key={model.id} value={model.id}>
+                    {model.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+          {efforts.length > 0 && (
+            <Select value={effortId} onValueChange={onEffortChange}>
+              <SelectTrigger aria-label="Choose effort">
+                <SelectValue placeholder="Effort" />
+              </SelectTrigger>
+              <SelectContent>
+                {efforts.map((effort) => (
+                  <SelectItem key={effort.id} value={effort.id}>
+                    {effort.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          )}
+        </div>
 
         <div className="flex items-center gap-1">
           <IconButton

@@ -1,6 +1,6 @@
 import { TaskStore, updateConfig } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -910,5 +910,25 @@ describe('OverseerManager turn options', () => {
     h.manager.sendMessage(started.id, 'and?');
     await waitFor(() => h.manager.get(started.id).state === 'ready');
     expect(h.gated.options?.model).toBe('claude-fable-5-1');
+  });
+
+  it('sends no effort by default, then config effort.overseer, and a chosen effort wins', async () => {
+    const h = makeGated([]);
+    const plain = h.manager.start('hi', 'gated');
+    await waitFor(() => h.manager.get(plain.id).state === 'ready');
+    expect(h.gated.options?.effort).toBeUndefined();
+
+    appendFileSync(
+      join(repo, '.dispatch', 'config.yml'),
+      'effort:\n  overseer: high\n'
+    );
+    h.manager.sendMessage(plain.id, 'and?');
+    await waitFor(() => h.manager.get(plain.id).state === 'ready');
+    expect(h.gated.options?.effort).toBe('high');
+
+    const chosen = h.manager.start('hi', 'gated', undefined, 'max');
+    expect(chosen.effort).toBe('max');
+    await waitFor(() => h.manager.get(chosen.id).state === 'ready');
+    expect(h.gated.options?.effort).toBe('max');
   });
 });

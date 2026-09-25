@@ -79,6 +79,28 @@ export function resolveDaemonAuth(
 }
 
 /**
+ * The tier this window's own credential carries, known without asking the
+ * daemon: a teammate session says its tier, the app token is the owner's
+ * operator token, the on-disk agent token is request tier. Used only until
+ * `/api/whoami` answers (and if it never does, e.g. an older daemon), so the
+ * owner is not shown their own settings as locked while it loads. The daemon
+ * still enforces every tier; this only decides what the UI offers.
+ */
+export function credentialTier(
+  connection: DaemonConnection | undefined
+): AuthTier | null {
+  if (connection === undefined) return null;
+  if (connection.session !== undefined) return connection.session.tier;
+  if (connection.appToken !== null && connection.appToken !== '') {
+    return 'operator';
+  }
+  if (connection.agentToken !== null && connection.agentToken !== '') {
+    return 'request';
+  }
+  return null;
+}
+
+/**
  * Backstop for the decide-tier call sites: refuses locally rather than sending a
  * request the daemon can only answer with a 403, so the surface reports the
  * actionable sentence instead of an auth error.

@@ -8,10 +8,23 @@ import { attachToRunningDaemon } from './appToken.js';
 /** Board sync's state as a few lines a person can read at a glance. */
 export function describeSync(status: SyncStatus): string[] {
   if (!status.enabled) {
-    return [
-      'Board sync is off.',
-      'Turn it on with `sync: { enabled: true }` in .dispatch/config.yml and restart the daemon.',
-    ];
+    switch (status.reason) {
+      case 'files':
+        return [
+          "Board sync isn't available: it shares boards kept in Dispatch's database, and this project keeps its tasks as files.",
+          'They reach teammates through "Commit task files to the main branch". The person running Dispatch for this project turns it on in Settings → Board sync, or with `autoCommit: true` in .dispatch/config.yml.',
+        ];
+      case 'not-started':
+        return [
+          "Board sync is on but isn't running: its remote or repo couldn't be resolved when Dispatch started, or it was turned on since.",
+          'Check `sync.remote` or `sync.repo` in Settings → Board sync, then restart Dispatch for this project.',
+        ];
+      default:
+        return [
+          'Board sync is off. It shares a database-backed project with teammates.',
+          'The person running Dispatch for this project can turn it on in Settings → Board sync, or with `sync: { enabled: true }` in .dispatch/config.yml, then restart Dispatch.',
+        ];
+    }
   }
   const lines = [
     `Syncing as ${status.replica}, on ${status.branch} of ${status.remote}`,

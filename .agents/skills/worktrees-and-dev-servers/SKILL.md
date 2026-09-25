@@ -13,10 +13,8 @@ Prefer the workspace the host already gave you. Create or remove git worktrees
 only when the user explicitly asks for local/manual parallelization or the repo
 documents a worktree workflow.
 
-When a repo includes its own helper scripts, use those instead of inventing a
-parallel convention. Common signs are `scripts/wt.*`, `scripts/run-dev.*`,
-`.env.worktree`, `WORKTREE_*`/`PORT_OFFSET` env vars, or README/AGENTS
-instructions for worktree paths and ports.
+This repo's worktree helper is `moonx root:wt` (`scripts/wt.ts`); use it instead
+of inventing a parallel convention.
 
 ## Worktree Location
 
@@ -34,13 +32,9 @@ out of the main working tree, so `git status`, file watchers, typecheck, and
 example under `.agents/ignore/` — because nesting one working tree inside
 another confuses git and tooling.
 
-If the repo exposes a `moonx root:wt` suite, let it own worktree placement
-instead of choosing a path manually.
+`moonx root:wt` owns worktree placement; don't choose a path manually.
 
 ## Worktree Commands
-
-If the repo exposes a `moonx root:wt` suite, inspect its help or source before
-use:
 
 ```bash
 moonx root:wt -- new <slug>    # create a worktree, allocate offset, pnpm install
@@ -51,17 +45,15 @@ moonx root:wt -- ps            # show per-worktree port status (LISTEN / -)
 moonx root:wt -- list          # summary of managed + external worktrees
 ```
 
-Do not assume these commands exist. If they do not, use plain `git worktree`
-commands only after checking the current branch, existing worktrees, and the
-target directory.
+For anything the suite doesn't cover, use plain `git worktree` commands only
+after checking the current branch, existing worktrees, and the target directory.
 
 ## Ports
 
-For local projects on this machine, keep dev-server ports explicit and
-project-specific. If the repo defines a port offset file such as
-`.env.worktree`, let the repo's scripts load it. Otherwise, prefer passing a
-specific `PORT`/tool option in the command you run rather than relying on a
-tool's default port.
+`wt new` records a port offset in the worktree's `.env.worktree`, but no dev
+server reads it yet: `moonx desktop:dev` always binds 5173 (Tauri's `devUrl`
+depends on it), so two worktrees running it collide. Where a tool takes an
+explicit `PORT` or port flag, pass one rather than relying on its default.
 
 ## Cleanup Contract
 
@@ -69,12 +61,11 @@ If you start dev servers, Playwright fixtures, or browser debug instances,
 record the command and port in your notes. Before completing the turn, stop
 processes you started.
 
-Use the repo cleanup helper when one exists:
+For a managed worktree, use the cleanup helper:
 
 ```bash
 moonx root:wt -- clean <slug>
 ```
 
-If there is no helper, kill only the exact process you started or the exact port
-you were using. Avoid broad cleanup commands that could affect another local
-project.
+Otherwise kill only the exact process you started or the exact port you were
+using. Avoid broad cleanup commands that could affect another local project.

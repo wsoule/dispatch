@@ -358,6 +358,31 @@ describe('TaskPage', () => {
     ]);
   });
 
+  test('the effort picker defaults to sending none and sends the level picked', async () => {
+    const efforts: (string | undefined)[] = [];
+    mountPage(undefined, {
+      defaultEffort: 'xhigh',
+      onDispatch: (_id, _executor, _model, opts) => {
+        efforts.push(opts?.effort);
+        return Promise.resolve();
+      },
+    });
+    const picker = screen.getByRole('button', { name: 'Effort' });
+    expect(picker.textContent).toBe('Default (Extra high)');
+
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
+    );
+    await settle(() => fireEvent.click(picker));
+    await settle(() =>
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Max' }))
+    );
+    await settle(() =>
+      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
+    );
+    expect(efforts).toEqual([undefined, 'max']);
+  });
+
   test('the header crumb reads Project › Tasks › id Title with the three icons', () => {
     mountPage();
     const crumb = document.querySelector('[data-slot="page-header-crumb"]');

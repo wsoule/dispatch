@@ -1,3 +1,4 @@
+import type { HealthPayload, SyncStatus } from '@dispatch/client';
 import type {
   CartoMode,
   ConfigPatch,
@@ -13,11 +14,11 @@ import {
   SwitchSetting,
   TextSetting,
 } from './fields';
-import { SettingsGroup } from './SettingsGroup';
+import { SettingsGroup, SettingsRow } from './SettingsGroup';
 
 interface Props {
   config: DispatchConfig;
-  onSave: (patch: ConfigPatch) => Promise<void>;
+  onSave: (patch: ConfigPatch) => Promise<unknown>;
   canOperate: boolean;
 }
 
@@ -70,12 +71,26 @@ export function ownRepoPatch(repo: string | null): {
 }
 
 /**
- * The daemon's own jobs, on Settings → Daemon: sharing the board with
- * teammates' daemons, keeping the receipt log (and where it is pushed), the
- * code map, and the repo digest. Where anything is pushed is the owner's
- * call alone.
+ * How this project's board is kept, or null until known. GET /api/health says
+ * so; an older daemon doesn't, but its receipt log is off exactly when its
+ * board is kept as files (GET /api/sync).
  */
-export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
+export function boardStorage(
+  health: Pick<HealthPayload, 'storageBackend'> | undefined,
+  syncStatus: Pick<SyncStatus, 'receipts'> | null
+): 'files' | 'sqlite' | null {
+  if (health?.storageBackend !== undefined) return health.storageBackend;
+  if (syncStatus === null) return null;
+  return syncStatus.receipts.state === 'disabled' ? 'files' : 'sqlite';
+}
+
+/**
+ * Settings → Board sync, for a board kept in Dispatch's database: sharing it
+ * with teammates' copies of Dispatch through a branch of its own in git.
+ * Whether and where the board is pushed is the owner's call alone: it goes
+ * out on their own git credentials.
+ */
+export function BoardSyncSettings({ config, onSave, canOperate }: Props) {
   const locked = canOperate ? undefined : OPERATOR_ONLY;
   const sync = config.sync ?? {
     enabled: false,
@@ -83,41 +98,38 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
     branch: 'dispatch-sync',
     intervalSec: 30,
   };
-  const receipts = config.receipts ?? { enabled: true };
-  const pushes = receipts.remote !== undefined || receipts.repo !== undefined;
   // The choice is held here, not read back from config, until it can be
   // saved: picking "a repo of its own" has nothing to write until a URL is
   // typed, and writing an empty one would snap the choice straight back.
   const savedSyncPlace = placeOf(sync);
-  const savedReceiptsPlace: Place | 'off' = pushes ? placeOf(receipts) : 'off';
   const [syncPlace, setSyncPlace] = useState<Place>(savedSyncPlace);
-  const [receiptsPlace, setReceiptsPlace] = useState<Place | 'off'>(
-    savedReceiptsPlace
-  );
   // Follows the config when it changes underneath (a save, another window).
   useEffect(() => setSyncPlace(savedSyncPlace), [savedSyncPlace]);
-  useEffect(() => setReceiptsPlace(savedReceiptsPlace), [savedReceiptsPlace]);
 
   return (
     <>
       <SettingsGroup
-        title="Board sync settings"
-        hint="Changes here take effect when the daemon restarts."
+        title="Sharing"
+        hint="Changes to these take effect the next time Dispatch restarts for this project."
+        keywords="sync restart"
       >
         <SwitchSetting
           id="sync-enabled"
-          title="Share this board with teammates' daemons"
+          title="Share this board with teammates"
+          subtitle="Everyone who turns this on with the same repo and branch shares one board."
+          keywords="sync enabled"
           checked={sync.enabled}
+          locked={locked}
           onSave={(enabled) => void onSave({ sync: { enabled } })}
         />
         <ChoiceSetting
           id="sync-place"
-          title="Where the board travels"
+          title="Where the board is kept"
           value={syncPlace}
           locked={locked}
           choices={[
             { value: 'remote', label: "This project's repo" },
-            { value: 'repo', label: 'A repo of its own' },
+            { value: 'repo', label: 'A separate repo' },
           ]}
           onSave={(place) => {
             setSyncPlace(place);
@@ -129,7 +141,7 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
           <TextSetting
             id="sync-remote"
             title="Remote"
-            subtitle="One of this project's git remotes, by name."
+            subtitle="The name of one of this project's git remotes."
             value={sync.remote}
             placeholder="origin"
             mono
@@ -140,7 +152,7 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
           <TextSetting
             id="sync-repo"
             title="Repo"
-            subtitle="A git URL, or a path relative to the project."
+            subtitle="A git URL, or a path relative to this project."
             value={sync.repo}
             placeholder="git@github.com:acme/dispatch-board.git"
             mono
@@ -151,10 +163,11 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
         <TextSetting
           id="sync-branch"
           title="Branch"
-          subtitle="Nothing but sync writes to it. In a repo shared by several projects, give each its own."
+          subtitle="Only the board is written here. Give each project its own if they share a repo."
           value={sync.branch}
           placeholder="dispatch-sync"
           mono
+          locked={locked}
           onSave={(branch) => void onSave({ sync: { branch } })}
         />
         <NumberSetting
@@ -162,26 +175,94 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
           title="Check for teammates' changes every"
           value={sync.intervalSec}
           min={5}
-          suffix="s"
+          suffix="sec"
           allowEmpty
           onSave={(intervalSec) => void onSave({ sync: { intervalSec } })}
         />
       </SettingsGroup>
+    </>
+  );
+}
 
+/**
+ * Settings → Board sync, for a board kept as task files in the repo, which
+ * sharing cannot carry: committing those files to the main branch instead.
+ * Pushing to that branch uses the owner's git credentials, so it's theirs.
+ */
+export function CommitTaskFilesGroup({
+  config,
+  onSave,
+  syncStatus,
+  canOperate,
+}: Props & {
+  /** GET /api/sync; `disabled` on this backend means no branch resolved at boot. */
+  syncStatus: SyncStatus | null;
+}) {
+  return (
+    <SettingsGroup
+      title="Task files"
+      hint="This board is kept as files in the repo, not in Dispatch's database."
+      keywords="board sync files git"
+    >
+      <SwitchSetting
+        id="auto-commit"
+        title="Commit task files to the main branch"
+        subtitle="Commits your task edits from a private checkout, pushes them to the repo's main branch, and brings teammates' edits back in."
+        keywords="autoCommit auto-commit git commit push"
+        checked={config.autoCommit}
+        locked={canOperate ? undefined : OPERATOR_ONLY}
+        onSave={(autoCommit) => void onSave({ autoCommit })}
+      />
+      {syncStatus?.state === 'disabled' && (
+        <SettingsRow
+          title="No main branch to commit to"
+          subtitle="This repo has no origin default branch and no local main or master branch. Add one, then restart Dispatch for this project."
+          keywords="trunk"
+        />
+      )}
+      <SettingsRow
+        title="Sharing isn't available"
+        subtitle="Sharing a board through a branch of its own works only for boards kept in Dispatch's database."
+        keywords="sync share teammates"
+      />
+    </SettingsGroup>
+  );
+}
+
+/**
+ * Settings → Background: the receipt log (and where it is pushed), the code
+ * map and the repo digest. Whether the log is kept, and where it is pushed,
+ * is the owner's call: it is the audit trail, pushed on their credentials.
+ */
+export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
+  const locked = canOperate ? undefined : OPERATOR_ONLY;
+  const receipts = config.receipts ?? { enabled: true };
+  const pushes = receipts.remote !== undefined || receipts.repo !== undefined;
+  // Held here until it can be saved, for the same reason as BoardSyncSettings.
+  const savedReceiptsPlace: Place | 'off' = pushes ? placeOf(receipts) : 'off';
+  const [receiptsPlace, setReceiptsPlace] = useState<Place | 'off'>(
+    savedReceiptsPlace
+  );
+  useEffect(() => setReceiptsPlace(savedReceiptsPlace), [savedReceiptsPlace]);
+
+  return (
+    <>
       <SettingsGroup
         title="Receipt log"
-        hint="The audit trail as plain files in git: every task, finding, decision and piece of run evidence."
+        hint="A record of every task, finding, decision and piece of run evidence, kept as plain files in git."
+        keywords="audit trail history"
       >
         <SwitchSetting
           id="receipts-enabled"
-          title="Keep the receipt log"
+          title="Keep a receipt log"
           checked={receipts.enabled}
+          locked={locked}
           onSave={(enabled) => void onSave({ receipts: { enabled } })}
         />
         <TextSetting
           id="receipts-dir"
           title="Folder"
-          subtitle="Empty keeps the default under the Dispatch home. A relative path is read from the project."
+          subtitle="Leave empty for the default. A relative path starts from this project."
           value={receipts.dir}
           mono
           locked={locked}
@@ -189,13 +270,14 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
         />
         <ChoiceSetting
           id="receipts-place"
-          title="Push it after each change to"
+          title="Push it to"
+          subtitle="After each change. Nowhere keeps it on this machine."
           value={receiptsPlace}
           locked={locked}
           choices={[
-            { value: 'off', label: 'Nowhere (this machine only)' },
+            { value: 'off', label: 'Nowhere' },
             { value: 'remote', label: "This project's repo" },
-            { value: 'repo', label: 'A repo of its own' },
+            { value: 'repo', label: 'A separate repo' },
           ]}
           onSave={(place) => {
             setReceiptsPlace(place);
@@ -229,38 +311,45 @@ export function DaemonConfigGroups({ config, onSave, canOperate }: Props) {
           <TextSetting
             id="receipts-branch"
             title="Branch"
-            subtitle="One machine per branch: each log is its own history."
+            subtitle="Use one branch per machine; each keeps its own history."
             value={receipts.branch}
             placeholder={DEFAULT_RECEIPTS_BRANCH}
             mono
+            locked={locked}
             onSave={(branch) => void onSave({ receipts: { branch } })}
           />
         )}
       </SettingsGroup>
 
-      <SettingsGroup title="Background work">
+      <SettingsGroup
+        title="Code understanding"
+        hint="What agents are told about your codebase before they start."
+      >
         <ChoiceSetting<CartoMode>
           id="carto"
-          title="Code map (Carto)"
-          subtitle="The dependency graph behind what a change touches. Without carto the built-in scanner is used."
+          title="Code map"
+          subtitle="Shows what a change affects. Uses Carto when available, a simpler built-in scan otherwise."
+          keywords="carto dependency graph impact"
           value={config.carto.enabled}
           choices={[
-            { value: 'detect', label: 'Use it if present' },
-            { value: 'on', label: 'Use it, build it if needed' },
-            { value: 'off', label: 'Built-in scanner only' },
+            { value: 'detect', label: 'Carto if installed' },
+            { value: 'on', label: 'Always Carto' },
+            { value: 'off', label: 'Built-in only' },
           ]}
           onSave={(enabled) => void onSave({ carto: { enabled } })}
         />
         <SwitchSetting
           id="repo-digest"
-          title="Repo digest"
-          subtitle="A short summary of the repository, kept for agents' prompts."
+          title="Repo summary"
+          subtitle="A short overview of the repository, given to agents when they start."
+          keywords="digest"
           checked={config.repoDigest.enabled}
           onSave={(enabled) => void onSave({ repoDigest: { enabled } })}
         />
         <NumberSetting
           id="repo-digest-cooldown"
-          title="Refresh the digest at most every"
+          title="Refresh the summary at most every"
+          keywords="digest cooldown"
           value={config.repoDigest.cooldownHours}
           suffix="hours"
           allowEmpty

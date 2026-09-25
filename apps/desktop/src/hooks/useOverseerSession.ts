@@ -3,12 +3,15 @@ import {
   ApiError,
   type OverseerRecord,
 } from '@dispatch/client';
+import type { EffortLevel } from '@dispatch/core/browser';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import type { Dispatch, SetStateAction } from 'react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { isFakeOverseerDevToolEnabled } from '../lib/devTools';
 import {
+  DEFAULT_EFFORT_ID,
+  effortFromId,
   readRoleModelOverride,
   resolveRoleModel,
   storeRoleModelOverride,
@@ -121,6 +124,15 @@ export interface OverseerSession {
   /** Picks the model for the next conversation and remembers it on this device. */
   setModel: (id: string) => void;
   /**
+   * The effort picker's id for the next conversation; `DEFAULT_EFFORT_ID`
+   * sends none, so the daemon applies config `effort.overseer`. An open
+   * conversation keeps the effort it started on (`record.effort`).
+   */
+  effortId: string;
+  setEffortId: (id: string) => void;
+  /** The project's configured `effort.overseer`, for the Default entry's label. */
+  configuredEffort: EffortLevel | undefined;
+  /**
    * Which action `confirmAction` is currently deciding, or `null`. Lives on the
    * session for the same reason `draft` does: the surfaces that render a
    * confirm card are unmounted by ordinary navigation (the rail's tab toggle
@@ -188,7 +200,9 @@ export function useOverseerSession(
   projectPath: string | null,
   // The project's configured `models.overseer`, once config has loaded —
   // what the composer's picker shows until the human picks otherwise.
-  configuredModel?: string
+  configuredModel?: string,
+  // The project's configured `effort.overseer`, named on the Default entry.
+  configuredEffort?: EffortLevel
 ): OverseerSession {
   const queryClient = useQueryClient();
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -216,6 +230,7 @@ export function useOverseerSession(
     setChosenModel(id);
     storeRoleModelOverride('overseer', id);
   }, []);
+  const [effortId, setEffortId] = useState(DEFAULT_EFFORT_ID);
 
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
@@ -257,6 +272,7 @@ export function useOverseerSession(
       // flipping the flag applies to the next conversation without a reload.
       const rec = await client.startOverseer(prompt, {
         model,
+        effort: effortFromId(effortId),
         ...(isFakeOverseerDevToolEnabled() ? { backend: 'fake' } : {}),
       });
       queryClient.setQueryData(overseerKey(port, rec.id), rec);
@@ -270,7 +286,7 @@ export function useOverseerSession(
       });
       return rec;
     },
-    [client, model, port, queryClient]
+    [client, model, effortId, port, queryClient]
   );
 
   const sendMessage = useCallback(
@@ -432,6 +448,9 @@ export function useOverseerSession(
     decideError,
     model,
     setModel,
+    effortId,
+    setEffortId,
+    configuredEffort,
     reset,
     draft,
     setDraft,
