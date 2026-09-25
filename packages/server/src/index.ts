@@ -76,6 +76,7 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
+import { closeOrphanedGates, SYSTEM_SENDER } from './messaging/gates.js';
 import { openMessaging } from './messaging/service.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
@@ -1305,6 +1306,8 @@ async function bootServer(
   // Only after reconcileOnBoot: run earlier, a replayed wake's new run would be
   // force-failed as an orphan. Still before HTTP serves or auto-resume fires.
   await messaging.recover();
+  // Runs force-failed above left their gates open; nobody can act on them now.
+  closeOrphanedGates(messaging.engine, orchestrator);
   // The requests hydrated from the previous process: kept while their run is
   // still live (a restart-with-nothing-in-flight reload) or is one this boot
   // force-failed and can still resume — those re-surface to the human and
@@ -1676,6 +1679,9 @@ async function bootServer(
     approvalFloor,
     // The Activity half of each receipt; the ledger half is the engine's own.
     appendActivity: policyActivityAppender({ store, cache, events }),
+    answerGate: async (messageId, answer) => {
+      await messaging.engine.reply(messageId, answer, SYSTEM_SENDER);
+    },
   });
   const stopPolicyEngine = policyEngine.start();
 

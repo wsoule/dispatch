@@ -78,6 +78,7 @@ import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
   ApprovalDecision,
+  ApprovalGatePort,
   BranchEntry,
   BranchEntryStatus,
   Executor,
@@ -386,6 +387,8 @@ export class Orchestrator {
   // Mints each run's messaging token at start (see setRunTokenMinter); null
   // leaves runs without one, as in fixtures that never set it.
   private mintRunToken: ((runId: string) => string) | null = null;
+  // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
+  private approvalGate: ApprovalGatePort | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -464,6 +467,11 @@ export class Orchestrator {
   // token file (runTokenPath) and passes the executor only that path.
   setRunTokenMinter(mint: (runId: string) => string): void {
     this.mintRunToken = mint;
+  }
+
+  // Installed by messaging at boot: raises and settles the gate a parked tool call waits on.
+  setApprovalGate(port: ApprovalGatePort | null): void {
+    this.approvalGate = port;
   }
 
   // Subscribes to "a run just became live" (its ExecutorRun is registered), so
@@ -1381,6 +1389,7 @@ export class Orchestrator {
     this.registry.setPendingApproval(runId, undefined);
     executorRun.approve(requestId, resolved);
     this.transition(runId, 'running');
+    this.approvalGate?.settle(runId, requestId, 'answered');
   }
 
   // `resume: true` is the request-changes path: valid on any run that has
@@ -1641,7 +1650,8 @@ export class Orchestrator {
    * "Stopped", and so a daemon restart mid-stop doesn't forget), tells the
    * executor, and arms the escalation timer that catches an agent which ignores
    * the request. Idempotent: pressing Stop twice re-signals the executor but
-   * does not restart the clock or write a second marker.
+   * does not restart the clock or write a second marker. A run parked on a
+   * tool call leaves `awaiting-approval` here, and its gate closes.
    *
    * Deliberately synchronous with no `await` between reading the run's state
    * and appending its marker, for the same reason handleFinish is: an `await`
@@ -1669,7 +1679,8 @@ export class Orchestrator {
 
     if (meta.stopRequestedAt !== undefined) {
       executorRun.requestStop();
-      return meta;
+      this.releaseParkedApproval(runId, 'the run is stopping');
+      return this.registry.get(runId)!;
     }
 
     const now = new Date().toISOString();
@@ -1695,6 +1706,7 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'run.changed' });
 
     executorRun.requestStop();
+    this.releaseParkedApproval(runId, 'the run is stopping');
 
     // Same rule as cancel(): a task file this can't write costs the Activity
     // line, never the stop itself.
@@ -1714,6 +1726,17 @@ export class Orchestrator {
 
     this.scheduleStopEscalation(runId);
     return this.registry.get(runId)!;
+  }
+
+  // The executor answers a parked call itself when the run stops or winds
+  // down, so the run is running again and its gate closes.
+  private releaseParkedApproval(runId: string, reason: string): void {
+    const meta = this.registry.get(runId);
+    const pending = this.registry.getPendingApproval(runId);
+    if (meta?.state !== 'awaiting-approval' || pending === undefined) return;
+    this.registry.setPendingApproval(runId, undefined);
+    this.transition(runId, 'running');
+    this.approvalGate?.settle(runId, pending.requestId, reason);
   }
 
   /**
@@ -4512,6 +4535,17 @@ export class Orchestrator {
           requestId: request.requestId,
           toolName: request.toolName,
         });
+        const meta = this.registry.get(runId);
+        if (meta !== undefined) {
+          this.approvalGate?.raise({
+            runId,
+            taskId: meta.taskId,
+            taskTitle: meta.taskTitle,
+            requestId: request.requestId,
+            toolName: request.toolName,
+            input: request.input,
+          });
+        }
         // Awaiting-approval can sit for arbitrarily long — capture whatever
         // this run just did rather than letting the cooldown delay it.
         this.forceClaimsRefresh(runId);
@@ -4519,6 +4553,7 @@ export class Orchestrator {
       onSession: (sessionId) => this.recordSession(runId, sessionId),
       onEnding: () => {
         this.stoppingRuns.add(runId);
+        this.releaseParkedApproval(runId, 'the run ended');
       },
       onFinish: (finish) => this.handleFinish(runId, finish),
     };

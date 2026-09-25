@@ -87,6 +87,22 @@ export interface ApprovalDecision {
   reason?: string;
 }
 
+/** What the orchestrator tells messaging when a run parks on a tool call. */
+export interface ApprovalGateRequest {
+  runId: string;
+  taskId: string;
+  taskTitle: string;
+  requestId: string;
+  toolName: string;
+  input: unknown;
+}
+
+/** The tool-approval gate's lifecycle; installed by openMessaging. */
+export interface ApprovalGatePort {
+  raise(request: ApprovalGateRequest): void;
+  settle(runId: string, requestId: string, reason: string): void;
+}
+
 export interface ExecutorRun {
   interrupt(): Promise<void>;
   /**

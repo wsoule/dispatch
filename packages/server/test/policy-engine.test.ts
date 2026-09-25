@@ -1,4 +1,6 @@
 import type { AddLedgerInput, LedgerEntry, TaskRisk } from '@dispatch/core';
+import type { JsonValue, Message } from '@dispatch/protocol';
+import { MessagingError } from '@dispatch/protocol';
 import { afterEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -6,6 +8,7 @@ import { join } from 'node:path';
 
 import { EventBus } from '../src/events.js';
 import { floorCheckForToolInput } from '../src/floor.js';
+import { previewToolInput } from '../src/messaging/toolApproval.js';
 import type { FixLoopState } from '../src/orchestrator/fixLoop.js';
 import type { RunMeta, RunState } from '../src/orchestrator/types.js';
 import { OrchestratorConflictError } from '../src/orchestrator/types.js';
@@ -77,7 +80,12 @@ interface Harness {
   diffs: Map<string, { path: string; status: string }[]>;
   ledger: AddLedgerInput[];
   activity: { taskId: string; text: string }[];
-  approved: { runId: string; requestId: string }[];
+  answered: {
+    messageId: string;
+    choice: string;
+    body: string;
+    data?: unknown;
+  }[];
   fireTerminal(meta: RunMeta): void;
   setPolicy(yaml: string): void;
   stop(): void;
@@ -99,7 +107,9 @@ function harness(
     /** The declared risk every task in this harness carries. */
     risk?: TaskRisk;
     approvalFloor?: ApprovalFloor;
+    /** Each one's run is seeded as awaiting-approval on its task. */
     pending?: PendingApproval[];
+    answerGateThrows?: Error;
     diffThrows?: Error;
     writes?: string[];
   } = {}
@@ -108,7 +118,9 @@ function harness(
   roots.push(root);
   mkdirSync(join(root, '.dispatch'), { recursive: true });
   const events = new EventBus();
-  const runs: RunMeta[] = [];
+  const runs: RunMeta[] = (opts.pending ?? []).map((p) =>
+    runMeta(p.runId, { taskId: p.taskId, state: 'awaiting-approval' })
+  );
   const loops = new Map<string, FixLoopState>();
   const ignited: string[] = [];
   const verifyResults = new Map<string, VerificationResult>();
@@ -117,7 +129,7 @@ function harness(
   const diffs = new Map<string, { path: string; status: string }[]>();
   const ledger: AddLedgerInput[] = [];
   const activity: { taskId: string; text: string }[] = [];
-  const approved: { runId: string; requestId: string }[] = [];
+  const answered: Harness['answered'] = [];
   const terminalCallbacks: ((meta: RunMeta) => void)[] = [];
   const engine = new PolicyEngine({
     rootDir: root,
@@ -137,10 +149,8 @@ function harness(
         terminalCallbacks.push(cb);
         return () => {};
       },
-      pendingApprovals: () => opts.pending ?? [],
-      approve: (runId, requestId) => {
-        approved.push({ runId, requestId });
-      },
+      pendingApprovalFor: (runId) =>
+        opts.pending?.find((p) => p.runId === runId),
       diff: (runId) => {
         if (opts.diffThrows !== undefined) throw opts.diffThrows;
         return { files: diffs.get(runId) ?? [] };
@@ -183,6 +193,13 @@ function harness(
     appendActivity: (taskId, text) => {
       activity.push({ taskId, text });
     },
+    answerGate: (messageId, answer) => {
+      if (opts.answerGateThrows !== undefined) {
+        return Promise.reject(opts.answerGateThrows);
+      }
+      answered.push({ messageId, ...answer });
+      return Promise.resolve();
+    },
   });
   const stop = engine.start();
   return {
@@ -198,7 +215,7 @@ function harness(
     diffs,
     ledger,
     activity,
-    approved,
+    answered,
     fireTerminal: (meta) => {
       for (const cb of terminalCallbacks) cb(meta);
     },
@@ -503,6 +520,35 @@ describe('the per-task risk cap through the engine', () => {
   });
 });
 
+function approvalGate(
+  input: unknown,
+  extra: Record<string, unknown> = {}
+): Message {
+  return {
+    id: 'm-gate00000000000000000000001',
+    thread: 'm-gate00000000000000000000001',
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'Needs a shell wants to run Bash',
+    refs: [{ type: 'run', id: 'r-impl1' }],
+    urgent: false,
+    blocking: true,
+    choices: ['approve', 'approve-session', 'deny'],
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    data: {
+      type: 'tool-approval',
+      requestId: 'req-1',
+      runId: 'r-impl1',
+      tool: 'Bash',
+      input,
+      ...extra,
+    } as JsonValue,
+  };
+}
+
 describe('the approval gate', () => {
   const pending = [
     {
@@ -514,99 +560,126 @@ describe('the approval gate', () => {
     },
   ];
 
-  it('auto-allows a referred tool call at rung 3 and records both receipts', async () => {
+  it('answers a referred tool call as the system at rung 3 and records both receipts', async () => {
     const h = harness({ pending, approvalFloor: () => false });
     h.setPolicy('policy:\n  rung: 3\n');
     h.events.broadcast({
-      type: 'approval.requested',
-      runId: 'r-impl1',
-      requestId: 'req-1',
-      toolName: 'Bash',
+      type: 'message.new',
+      message: approvalGate({ command: 'pnpm install' }),
     });
     await settle();
-    expect(h.approved).toEqual([{ runId: 'r-impl1', requestId: 'req-1' }]);
-    expect(h.ledger).toHaveLength(1);
+    expect(h.answered).toMatchObject([
+      {
+        messageId: 'm-gate00000000000000000000001',
+        choice: 'approve',
+        data: { type: 'x-policy' },
+      },
+    ]);
     expect(h.ledger[0].detail).toContain('Bash: pnpm install');
-    expect(h.ledger[0].detail).toContain('policy rung 3');
     expect(h.activity[0].text).toContain('[policy] Tool approval auto-allowed');
     h.stop();
   });
 
-  it('a floor action stays parked at every rung', async () => {
-    const h = harness({ pending, approvalFloor: () => true });
+  it('checks the floor against the full input, not the gate preview', async () => {
+    const command = `${'echo ok && '.repeat(900)}git push --force origin main`;
+    const h = harness({
+      pending: [{ ...pending[0], input: { command } }],
+      approvalFloor: (_tool, input) => floorCheckForToolInput(input) !== null,
+    });
     h.setPolicy('policy:\n  rung: 4\n');
+    const preview = previewToolInput({ command });
+    expect(preview.truncated).toBe(true);
     h.events.broadcast({
-      type: 'approval.requested',
-      runId: 'r-impl1',
-      requestId: 'req-1',
-      toolName: 'Bash',
+      type: 'message.new',
+      message: approvalGate(preview.input, { truncated: true }),
     });
     await settle();
-    expect(h.approved).toEqual([]);
-    expect(h.ledger).toEqual([]);
+    expect(h.answered).toEqual([]);
     h.stop();
   });
 
   it("keeps a Codex force-push parked at rung 4 through the daemon's floor", async () => {
-    const codexAsk = (requestId: string, command: string) => ({
-      runId: 'r-codex',
+    const codexAsk = (runId: string, command: string) => ({
+      runId,
       taskId: 't-000001',
-      requestId,
+      requestId: 'codex-approval-1',
       toolName: 'codex.commandExecution',
       input: {
         kind: 'command',
-        itemId: requestId,
+        itemId: 'item-1',
         command: `/bin/zsh -lc '${command}'`,
-        cwd: '/tmp/r-codex',
+        cwd: `/tmp/${runId}`,
       },
     });
+    const asks = [
+      codexAsk('r-codex1', 'git push --force origin main'),
+      codexAsk('r-codex2', 'pnpm test'),
+    ];
     const h = harness({
-      pending: [
-        codexAsk('push', 'git push --force origin main'),
-        codexAsk('test', 'pnpm test'),
-      ],
+      pending: asks,
       // The predicate index.ts wires into the engine.
       approvalFloor: (_toolName, input) =>
         floorCheckForToolInput(input) !== null,
     });
     h.setPolicy('policy:\n  rung: 4\n');
-    for (const requestId of ['push', 'test']) {
+    for (const [i, ask] of asks.entries()) {
       h.events.broadcast({
-        type: 'approval.requested',
-        runId: 'r-codex',
-        requestId,
-        toolName: 'codex.commandExecution',
+        type: 'message.new',
+        message: {
+          ...approvalGate(ask.input, {
+            runId: ask.runId,
+            requestId: ask.requestId,
+            tool: ask.toolName,
+          }),
+          id: `m-gate0000000000000000000000${i + 2}`,
+        },
       });
     }
     await settle();
-    expect(h.approved).toEqual([{ runId: 'r-codex', requestId: 'test' }]);
+    expect(h.answered.map((a) => a.messageId)).toEqual([
+      'm-gate00000000000000000000003',
+    ]);
     h.stop();
   });
 
-  it('never auto-allows below rung 3, or with no floor detector wired', async () => {
+  it('records nothing when a human answered first', async () => {
+    const h = harness({
+      pending,
+      approvalFloor: () => false,
+      answerGateThrows: new MessagingError(
+        'conflict',
+        'already answered',
+        'replyTo'
+      ),
+    });
+    h.setPolicy('policy:\n  rung: 3\n');
+    h.events.broadcast({
+      type: 'message.new',
+      message: approvalGate({ command: 'pnpm install' }),
+    });
+    await settle();
+    expect(h.ledger).toEqual([]);
+    h.stop();
+  });
+
+  it('never auto-answers below rung 3, or with no floor detector wired', async () => {
     const below = harness({ pending, approvalFloor: () => false });
     below.setPolicy('policy:\n  rung: 2\n');
     below.events.broadcast({
-      type: 'approval.requested',
-      runId: 'r-impl1',
-      requestId: 'req-1',
-      toolName: 'Bash',
+      type: 'message.new',
+      message: approvalGate({ command: 'pnpm install' }),
     });
     await settle();
-    expect(below.approved).toEqual([]);
+    expect(below.answered).toEqual([]);
     below.stop();
-
     const unwired = harness({ pending });
     unwired.setPolicy('policy:\n  rung: 4\n');
     unwired.events.broadcast({
-      type: 'approval.requested',
-      runId: 'r-impl1',
-      requestId: 'req-1',
-      toolName: 'Bash',
+      type: 'message.new',
+      message: approvalGate({ command: 'pnpm install' }),
     });
     await settle();
-    expect(unwired.approved).toEqual([]);
-    expect(unwired.ledger).toEqual([]);
+    expect(unwired.answered).toEqual([]);
     unwired.stop();
   });
 });

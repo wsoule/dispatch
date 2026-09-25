@@ -14,11 +14,23 @@ import { join } from 'node:path';
 import type { EventBus } from '../events.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
+import type { ApprovalGateRequest } from '../orchestrator/types.js';
 import { runKind } from '../orchestrator/types.js';
-import { GateHandlers } from './gates.js';
+import {
+  closeGate,
+  closeRunGates,
+  GateHandlers,
+  openToolApprovalGate,
+  SYSTEM_SENDER,
+} from './gates.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
+import {
+  isStaleApproval,
+  raiseToolApproval,
+  toolApprovalDecision,
+} from './toolApproval.js';
 
 export interface Messaging {
   engine: DeliveryEngine;
@@ -86,10 +98,33 @@ export function openMessaging(deps: {
           body,
           refs: [{ type: 'message', id: about.id }],
         },
-        { address: SYSTEM_ADDRESS, canDecide: true }
+        SYSTEM_SENDER
       );
     } catch (err) {
       console.error('messaging: wake notice failed', err);
+    }
+  };
+
+  // Tells whoever answered `question` that its effect could not apply. A
+  // policy answer (from the system itself) has no inbox, so it hears nothing.
+  const noticeAnswerer = async (
+    question: Message,
+    answer: Message,
+    body: string
+  ) => {
+    if (answer.from === SYSTEM_ADDRESS) return;
+    try {
+      await engine.send(
+        {
+          to: [engine.deliverableAddress(answer.from)],
+          kind: 'notice',
+          body,
+          refs: [{ type: 'message', id: question.id }],
+        },
+        SYSTEM_SENDER
+      );
+    } catch (err) {
+      console.error('messaging: answer notice failed', err);
     }
   };
 
@@ -158,6 +193,86 @@ export function openMessaging(deps: {
     })
   );
 
+  // Refuses a parked call nobody can be asked about, a tick later: the
+  // executor registers its resolver right after raising.
+  const denyUngated = (request: ApprovalGateRequest, why: string) => {
+    void Promise.resolve().then(() => {
+      try {
+        deps.orchestrator.approve(request.runId, request.requestId, {
+          allow: false,
+          reason: `Dispatch could not ask a human: ${why}`,
+        });
+      } catch (err) {
+        console.error('messaging: could not release an ungated tool call', err);
+      }
+    });
+  };
+
+  // Tool approvals: the orchestrator parks the run; this asks the owner.
+  deps.orchestrator.setApprovalGate({
+    raise: (request) => {
+      raiseToolApproval(engine, deps.ownerRef, request)
+        .then((gate) => {
+          // The run ended, or its call was settled, while the gate was being written.
+          const pending = deps.orchestrator.pendingApprovalFor(request.runId);
+          if (!deps.orchestrator.isRunLive(request.runId))
+            closeGate(engine, gate.id, 'the run ended');
+          else if (pending?.requestId !== request.requestId)
+            closeGate(engine, gate.id, 'the call was already settled');
+        })
+        .catch((err: unknown) => {
+          console.error('messaging: could not raise a tool-approval gate', err);
+          denyUngated(
+            request,
+            err instanceof Error ? err.message : String(err)
+          );
+        });
+    },
+    settle: (runId, requestId, reason) => {
+      const gate = openToolApprovalGate(engine, runId, requestId);
+      if (gate !== null) closeGate(engine, gate.id, reason);
+    },
+  });
+
+  // A human (or policy) answered a parked tool call; a stale run is logged and
+  // the answerer told, not retried.
+  gates.register('tool-approval', async (question, answer) => {
+    const gate = gateOf(question);
+    if (
+      gate === null ||
+      gate.type !== 'tool-approval' ||
+      gate.runId === undefined
+    )
+      return;
+    try {
+      deps.orchestrator.approve(
+        gate.runId,
+        gate.requestId,
+        toolApprovalDecision(answer)
+      );
+    } catch (err) {
+      if (!isStaleApproval(err)) throw err;
+      const why = err instanceof Error ? err.message : String(err);
+      console.error(
+        `messaging: approval for run ${gate.runId} arrived after it moved on: ${why}`
+      );
+      await noticeAnswerer(
+        question,
+        answer,
+        `Not applied: run ${gate.runId} was no longer waiting on this approval (${why}).`
+      );
+    }
+  });
+
+  // A run's end closes the gates nobody can act on any more.
+  const unsubscribeRunTerminal = deps.orchestrator.onRunTerminal((meta) => {
+    closeRunGates(
+      engine,
+      { id: meta.id, hasTask: runKind(meta) === 'execute' },
+      'the run ended'
+    );
+  });
+
   // Bridging must be live before recover() runs, so a notice recover()
   // produces while replaying (e.g. a wake failure) still reaches the bus.
   const unsubscribeEngine = engine.subscribe((e) =>
@@ -187,6 +302,12 @@ export function openMessaging(deps: {
     recover: () => engine.recover(),
     close() {
       unsubscribeRunStarted();
+      unsubscribeRunTerminal();
+      // A call that parks from here on is refused rather than left with no gate.
+      deps.orchestrator.setApprovalGate({
+        raise: (request) => denyUngated(request, 'messaging is closed'),
+        settle: () => {},
+      });
       unsubscribeEngine();
       db.close();
     },

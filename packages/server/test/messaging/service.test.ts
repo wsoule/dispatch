@@ -1,4 +1,3 @@
-import type { TaskStorePort } from '@dispatch/core';
 import { TaskStore } from '@dispatch/core';
 import type { Delivery, Message } from '@dispatch/protocol';
 import {
@@ -6,12 +5,10 @@ import {
   SqliteMessageStore,
   SYSTEM_ADDRESS,
 } from '@dispatch/protocol';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { describe, expect, it } from 'bun:test';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { TaskCache } from '../../src/cache.js';
 import type { ServerEvent } from '../../src/events.js';
 import { EventBus } from '../../src/events.js';
 import type { ServerHandle } from '../../src/index.js';
@@ -19,25 +16,17 @@ import { startServer } from '../../src/index.js';
 import { createRunTokens } from '../../src/messaging/runTokens.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
-import {
-  BOOT_FORCE_FAIL_ERROR,
-  Orchestrator,
-} from '../../src/orchestrator/orchestrator.js';
+import { BOOT_FORCE_FAIL_ERROR } from '../../src/orchestrator/orchestrator.js';
 import { runsDir } from '../../src/orchestrator/paths.js';
 import type { ExecutorProfile } from '../../src/orchestrator/types.js';
 import { DEFAULT_EXECUTOR_PROFILE } from '../../src/orchestrator/types.js';
-import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
-
-// Waits for `check` to become true, polling rather than sleeping a fixed
-// amount — the delivery/run-start flows here settle asynchronously.
-async function waitFor(check: () => boolean, timeoutMs = 3000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (check()) return;
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-  throw new Error('waitFor timed out');
-}
+import { StallingExecutor } from '../orchestrator/helpers.js';
+import {
+  makeOrchestrator,
+  openRecovered,
+  useTempProject,
+  waitFor,
+} from './harness.js';
 
 function stubMessage(overrides: Partial<Message> = {}): Message {
   return {
@@ -112,53 +101,7 @@ function seedApprovedWake(
   return { question, answer };
 }
 
-let root: string;
-let fakeHome: string;
-const originalDispatchHome = process.env.DISPATCH_HOME;
-
-beforeEach(() => {
-  fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
-  process.env.DISPATCH_HOME = fakeHome;
-  root = initGitRepo('dispatch-messaging-service-');
-});
-
-afterEach(() => {
-  if (originalDispatchHome === undefined) delete process.env.DISPATCH_HOME;
-  else process.env.DISPATCH_HOME = originalDispatchHome;
-  rmSync(fakeHome, { recursive: true, force: true });
-  rmSync(root, { recursive: true, force: true });
-});
-
-function makeOrchestrator(): { orchestrator: Orchestrator; store: TaskStore } {
-  const store = TaskStore.init(root);
-  const cache = new TaskCache();
-  cache.rebuild(store);
-  const events = new EventBus();
-  const orchestrator = new Orchestrator({
-    rootDir: root,
-    store,
-    cache,
-    events,
-  });
-  return { orchestrator, store };
-}
-
-// openMessaging over this test's root, recovered and ready to send.
-async function openRecovered(
-  orchestrator: Orchestrator,
-  store: TaskStorePort
-): Promise<Messaging> {
-  const messaging = openMessaging({
-    rootDir: root,
-    orchestrator,
-    store,
-    events: new EventBus(),
-    ownerRef: 'human:wyat',
-    dbPath: join(root, 'messages.db'),
-  });
-  await messaging.recover();
-  return messaging;
-}
+const project = useTempProject();
 
 // Sends `taskId` a wake-requesting message from human:asker, approves the wake
 // gate it raises, and returns the bodies of the notices human:asker received.
@@ -198,8 +141,8 @@ class NoMessagesExecutor extends StallingExecutor {
 
 describe('openMessaging', () => {
   it('boot recovers before serving', async () => {
-    const { orchestrator, store } = makeOrchestrator();
-    const dbPath = join(root, 'messages.db');
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    const dbPath = join(project.root(), 'messages.db');
     // Seed a message.db as if a crash caught a delivery mid-send to a run
     // that is no longer live (dispatchd never registered it this boot).
     const seedDb = openMessagesDb(dbPath);
@@ -212,7 +155,7 @@ describe('openMessaging', () => {
 
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
@@ -227,7 +170,7 @@ describe('openMessaging', () => {
   });
 
   it('bridges engine events to the bus', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const events = new EventBus();
     const seen: ServerEvent[] = [];
     events.subscribe((e) => {
@@ -236,12 +179,12 @@ describe('openMessaging', () => {
       }
     });
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
     await messaging.engine.send(
@@ -256,18 +199,18 @@ describe('openMessaging', () => {
   });
 
   it('delivers held messages when a run starts', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('stalling', executor);
     const task = store.create({ title: 'Read the mail' });
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
 
@@ -292,17 +235,17 @@ describe('openMessaging', () => {
   });
 
   it('keeps task mail away from a review run and hands it to the next execute run', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'Under review' });
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events: new EventBus(),
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
     const human = { address: 'human:wyat', canDecide: true };
@@ -338,18 +281,18 @@ describe('openMessaging', () => {
     messaging.close();
   });
 
-  it("answers a review run's question after it ended, keeping the answer off the task", async () => {
-    const { orchestrator, store } = makeOrchestrator();
+  it("closes a review run's question when it ends, so no answer can reach its task", async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'Under review' });
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events: new EventBus(),
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
     const human = { address: 'human:wyat', canDecide: true };
@@ -371,19 +314,20 @@ describe('openMessaging', () => {
     );
     await orchestrator.cancel(review.id);
 
-    const answer = await messaging.engine.reply(
-      question.message.id,
-      { body: 'reviewer answer' },
-      human
-    );
-    expect(answer.message.to).toEqual([`run:${review.id}`]);
-    expect(answer.deliveries).toEqual([
-      expect.objectContaining({ runId: null, state: 'held' }),
-    ]);
+    expect(messaging.engine.answerOf(question.message.id)?.data).toEqual({
+      type: 'x-closed',
+      reason: 'the run ended',
+    });
+    await expect(
+      messaging.engine.reply(
+        question.message.id,
+        { body: 'reviewer answer' },
+        human
+      )
+    ).rejects.toMatchObject({ code: 'conflict' });
     expect(messaging.engine.openBlocking()).toEqual([]);
 
-    // deliverHeld claims every held row it will move at once, so once the
-    // task's own mail leaves `held`, the reviewer's answer was passed over.
+    // The task's own mail still reaches its next execute run.
     const forTask = await messaging.engine.send(
       { to: [`task:${task.meta.id}`], kind: 'message', body: 'implementer' },
       human
@@ -393,24 +337,23 @@ describe('openMessaging', () => {
       () =>
         messaging.store.getDelivery(forTask.deliveries[0].id)?.state !== 'held'
     );
-    expect(messaging.store.getDelivery(answer.deliveries[0].id)).toMatchObject({
-      runId: null,
-      state: 'held',
-    });
     await orchestrator.cancel(run.id);
     messaging.close();
   });
 
   it('opens with default limits when config.yml is malformed', async () => {
-    const { orchestrator, store } = makeOrchestrator();
-    writeFileSync(join(root, '.dispatch/config.yml'), 'statuses: [a\n');
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    writeFileSync(
+      join(project.root(), '.dispatch/config.yml'),
+      'statuses: [a\n'
+    );
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events: new EventBus(),
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
     const sent = await messaging.engine.send(
@@ -424,18 +367,18 @@ describe('openMessaging', () => {
 
 describe('wake gate handler', () => {
   it('approve dispatches the task', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'Wake me' });
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
 
@@ -468,18 +411,18 @@ describe('wake gate handler', () => {
   });
 
   it('is a silent no-op replay while a live execute run can take the message', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'Wake me' });
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
 
@@ -542,11 +485,11 @@ describe('wake gate handler', () => {
   });
 
   it('notices the sender instead of waking while a review run is live', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'Under review' });
-    const messaging = await openRecovered(orchestrator, store);
+    const messaging = await openRecovered(project.root(), orchestrator, store);
     const review = await orchestrator.dispatchAuxRun({
       taskId: task.meta.id,
       kind: 'review',
@@ -566,11 +509,11 @@ describe('wake gate handler', () => {
   });
 
   it('notices the sender instead of waking while the live execute run cannot take messages', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new NoMessagesExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'CLI-style run' });
-    const messaging = await openRecovered(orchestrator, store);
+    const messaging = await openRecovered(project.root(), orchestrator, store);
     const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
 
     const notices = await approveWake(messaging, task.meta.id);
@@ -584,11 +527,11 @@ describe('wake gate handler', () => {
   });
 
   it('notices the sender instead of waking while the live execute run is stopping', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'Winding down' });
-    const messaging = await openRecovered(orchestrator, store);
+    const messaging = await openRecovered(project.root(), orchestrator, store);
     const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
     orchestrator.requestStop(run.id);
 
@@ -603,11 +546,11 @@ describe('wake gate handler', () => {
   });
 
   it('treats a task lookup that throws as a deny, notices the sender and marks the gate applied', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const task = store.create({ title: 'Unreadable' });
-    const messaging = await openRecovered(orchestrator, store);
+    const messaging = await openRecovered(project.root(), orchestrator, store);
     store.get = () => {
       throw new Error('task file unreadable');
     };
@@ -631,19 +574,19 @@ describe('wake gate handler', () => {
   });
 
   it('tells a sender whose run has ended through its task, and never replays the wake', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     // Only 'stalling' is registered, so waking onto the default executor fails.
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('stalling', executor);
     const asking = store.create({ title: 'Asking task' });
     const sleeping = store.create({ title: 'Sleeping task' });
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events: new EventBus(),
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
 
@@ -683,15 +626,15 @@ describe('wake gate handler', () => {
   });
 
   it('marks the wake applied even when its failure notice cannot be delivered', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const sleeping = store.create({ title: 'Sleeping task' });
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events: new EventBus(),
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
 
@@ -719,17 +662,17 @@ describe('wake gate handler', () => {
 
   for (const status of ['dropped', 'landed'] as const) {
     it(`does not wake a task that became ${status} before the approval`, async () => {
-      const { orchestrator, store } = makeOrchestrator();
+      const { orchestrator, store } = makeOrchestrator(project.root());
       const executor = new StallingExecutor();
       orchestrator.registerExecutor('claude', executor);
       const task = store.create({ title: 'Closed out later' });
       const messaging = openMessaging({
-        rootDir: root,
+        rootDir: project.root(),
         orchestrator,
         store,
         events: new EventBus(),
         ownerRef: 'human:wyat',
-        dbPath: join(root, 'messages.db'),
+        dbPath: join(project.root(), 'messages.db'),
       });
       await messaging.recover();
 
@@ -764,17 +707,17 @@ describe('wake gate handler', () => {
   }
 
   it('does not wake an epic or a missing task on replay', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();
     orchestrator.registerExecutor('claude', executor);
     const epic = store.create({ title: 'An epic', kind: 'epic' });
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events: new EventBus(),
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
 
@@ -801,16 +744,16 @@ describe('wake gate handler', () => {
   it('sends a notice to the original sender when the wake fails', async () => {
     // No executor registered at all: dispatchOrResume's default executor
     // name will never resolve, so host.wake() reports { ok: false }.
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const task = store.create({ title: 'Wake me' });
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
 
@@ -870,15 +813,15 @@ describe('agent-registration gate handler', () => {
   }
 
   it('approve sets the agent approved with approvedBy the answerer', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
     seedPendingAgent(messaging);
@@ -902,15 +845,15 @@ describe('agent-registration gate handler', () => {
   });
 
   it('deny sets the agent revoked with no approver', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
     seedPendingAgent(messaging);
@@ -934,15 +877,15 @@ describe('agent-registration gate handler', () => {
   });
 
   it('a repeated (replayed) answer for an already-applied status is a no-op', async () => {
-    const { orchestrator, store } = makeOrchestrator();
+    const { orchestrator, store } = makeOrchestrator(project.root());
     const events = new EventBus();
     const messaging = openMessaging({
-      rootDir: root,
+      rootDir: project.root(),
       orchestrator,
       store,
       events,
       ownerRef: 'human:wyat',
-      dbPath: join(root, 'messages.db'),
+      dbPath: join(project.root(), 'messages.db'),
     });
     await messaging.recover();
     seedPendingAgent(messaging);
@@ -980,10 +923,10 @@ describe('boot ordering', () => {
   // recover() must run after reconcileOnBoot(), or a replayed wake's run is
   // force-failed as an orphan of the previous process.
   it('a wake approved before a crash dispatches cleanly on the next boot, without being force-failed', async () => {
-    const store = TaskStore.init(root);
+    const store = TaskStore.init(project.root());
     const task = store.create({ title: 'Wake me on reboot' });
 
-    const dbPath = join(runsDir(root), 'messages.db');
+    const dbPath = join(runsDir(project.root()), 'messages.db');
     const seedDb = openMessagesDb(dbPath);
     const seedStore = new SqliteMessageStore(seedDb);
     const original = stubMessage({
@@ -1027,7 +970,7 @@ describe('boot ordering', () => {
     let handle: ServerHandle | undefined;
     try {
       handle = await startServer({
-        rootDir: root,
+        rootDir: project.root(),
         port: 0,
         writeDaemonFile: false,
         registerExecutors: (orchestrator) => {

@@ -768,6 +768,7 @@ export type GateData =
       conversation?: string;
       tool: string;
       input: unknown;
+      truncated?: true; // set when `input` was cut to fit
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: string; message: string }

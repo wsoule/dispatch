@@ -1,5 +1,15 @@
-import type { GateData, Message } from '@dispatch/protocol';
-import { gateOf } from '@dispatch/protocol';
+import type {
+  DeliveryEngine,
+  GateData,
+  Message,
+  Sender,
+} from '@dispatch/protocol';
+import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+
+export const SYSTEM_SENDER: Sender = {
+  address: SYSTEM_ADDRESS,
+  canDecide: true,
+};
 
 export type GateHandler = (question: Message, answer: Message) => Promise<void>;
 
@@ -21,4 +31,85 @@ export class GateHandlers {
     if (handler === undefined) return;
     await handler(question, answer);
   }
+}
+
+// Closes an open question as the system; false when an answer got there first.
+export function closeGate(
+  engine: DeliveryEngine,
+  questionId: string,
+  reason: string
+): boolean {
+  try {
+    engine.close(questionId, reason);
+    return true;
+  } catch (err) {
+    if (err instanceof MessagingError && err.code === 'conflict') return false;
+    throw err;
+  }
+}
+
+// The open tool-approval gate a run's parked call is waiting on.
+export function openToolApprovalGate(
+  engine: DeliveryEngine,
+  runId: string,
+  requestId: string
+): Message | null {
+  return (
+    engine.openBlocking().find((m) => {
+      const gate = gateOf(m);
+      return (
+        gate?.type === 'tool-approval' &&
+        gate.runId === runId &&
+        gate.requestId === requestId
+      );
+    }) ?? null
+  );
+}
+
+// Closes what a run's end leaves unanswerable: approvals parked on it, and what
+// a run with no task asked. An execute run's questions wait for its task.
+export function closeRunGates(
+  engine: DeliveryEngine,
+  run: { id: string; hasTask: boolean },
+  reason: string
+): number {
+  let closed = 0;
+  for (const question of engine.openBlocking()) {
+    const gate = gateOf(question);
+    const parked = gate?.type === 'tool-approval' && gate.runId === run.id;
+    const orphaned = question.from === `run:${run.id}` && !run.hasTask;
+    if ((parked || orphaned) && closeGate(engine, question.id, reason))
+      closed++;
+  }
+  return closed;
+}
+
+// Boot: runs the previous daemon left behind are gone, so their gates close.
+export function closeOrphanedGates(
+  engine: DeliveryEngine,
+  runs: {
+    isRunLive(runId: string): boolean;
+    taskIdOfRun(runId: string): string | null;
+  }
+): number {
+  const dead = new Set<string>();
+  for (const question of engine.openBlocking()) {
+    const gate = gateOf(question);
+    const runId =
+      gate?.type === 'tool-approval'
+        ? gate.runId
+        : question.from.startsWith('run:')
+          ? question.from.slice('run:'.length)
+          : undefined;
+    if (runId !== undefined && !runs.isRunLive(runId)) dead.add(runId);
+  }
+  let closed = 0;
+  for (const id of dead) {
+    closed += closeRunGates(
+      engine,
+      { id, hasTask: runs.taskIdOfRun(id) !== null },
+      'the daemon restarted'
+    );
+  }
+  return closed;
 }

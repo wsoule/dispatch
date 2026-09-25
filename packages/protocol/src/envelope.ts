@@ -77,7 +77,8 @@ export type GateData =
       runId?: string;
       conversation?: string;
       tool: string;
-      input: JsonValue;
+      input: JsonValue; // at most an 8 KiB preview; the executor holds the real input
+      truncated?: true; // set when `input` was cut to fit
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: Address; message: string }
