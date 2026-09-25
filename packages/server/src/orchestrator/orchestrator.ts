@@ -240,6 +240,10 @@ const AUTO_RESUME_QUIET_MS = 30_000;
 // the ceiling costs nothing but bounds the retry loop.
 const AUTO_RESUME_MAX_ATTEMPTS = 20;
 
+// The opening turn of a run a wake continues; the held messages follow it.
+const WAKE_PROMPT =
+  'New messages arrived for this task; they follow. Read them and carry on.';
+
 // Sort order for the Branches surface: the rows that need a human decision
 // come first, read-only live runs last.
 const STATUS_RANK: Record<BranchEntryStatus, number> = {
@@ -569,6 +573,25 @@ export class Orchestrator {
     this.transcriptFor(runId).appendEntry(entry);
     this.ctx.events.broadcast({ type: 'run.log', runId, entry });
     executorRun.send(text);
+  }
+
+  // A run's own message to a human, on its transcript, as message_user wrote it.
+  logOutgoing(runId: string, message: { id: string; body: string }): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined) return;
+    const entry: NormalizedEntry = {
+      ts: new Date().toISOString(),
+      kind: 'message',
+      from: 'agent',
+      fromLabel: `${meta.taskTitle} (${meta.id})`,
+      toUser: true,
+      text: message.body,
+      messageId: message.id,
+    };
+    this.bestEffort(`logging an outgoing message for run ${runId}`, () => {
+      this.transcriptFor(runId).appendEntry(entry);
+    });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
   }
 
   // deliverToRun for a non-interrupting channel digest: logged the same way,
@@ -2224,6 +2247,30 @@ export class Orchestrator {
       });
     }
     return meta;
+  }
+
+  // A wake's next run. Only a human's wake may continue a finished run's session
+  // (request changes); anything else dispatches or resumes.
+  async wakeTask(
+    taskId: string,
+    opts: { actor: string; continueFinished: boolean }
+  ): Promise<RunMeta> {
+    const latest = this.registry
+      .list()
+      .find((r) => r.taskId === taskId && runKind(r) === 'execute');
+    if (
+      opts.continueFinished &&
+      latest !== undefined &&
+      TERMINAL_RUN_STATES.has(latest.state) &&
+      latest.sessionId !== undefined &&
+      latest.sessionId !== '' &&
+      latest.reviewedAt === undefined &&
+      this.registry.liveRunForTask(taskId) === undefined &&
+      this.resumeBlockReason(latest) !== null
+    ) {
+      return this.requestChanges(latest, WAKE_PROMPT, opts.actor);
+    }
+    return this.dispatchOrResume(taskId, { actor: opts.actor });
   }
 
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so

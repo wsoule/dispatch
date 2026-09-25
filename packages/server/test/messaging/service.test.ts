@@ -1,5 +1,5 @@
 import { TaskStore } from '@dispatch/core';
-import type { Delivery, Message } from '@dispatch/protocol';
+import type { Delivery, Message, Sender } from '@dispatch/protocol';
 import {
   openMessagesDb,
   SqliteMessageStore,
@@ -103,8 +103,24 @@ function seedApprovedWake(
 
 const project = useTempProject();
 
-// Sends `taskId` a wake-requesting message from human:asker, approves the wake
-// gate it raises, and returns the bodies of the notices human:asker received.
+// Registers agent:asker as an approved agent and returns it as a sender. Its
+// wakes raise a gate at the default rung, where a human's are allowed outright.
+function approvedAsker(messaging: Messaging): Sender {
+  messaging.store.putAgent({
+    address: 'agent:asker',
+    displayName: 'Asker',
+    client: 'test-client',
+    tokenHash: 'hash',
+    status: 'approved',
+    muted: false,
+    approvedBy: 'human:wyat',
+    createdAt: '2026-09-23T10:00:00.000Z',
+  });
+  return { address: 'agent:asker', canDecide: false };
+}
+
+// Sends `taskId` a wake-requesting message from agent:asker, approves the wake
+// gate it raises, and returns the bodies of the notices agent:asker received.
 async function approveWake(
   messaging: Messaging,
   taskId: string
@@ -116,7 +132,7 @@ async function approveWake(
       body: 'wake up',
       wake: 'request',
     },
-    { address: 'human:asker', canDecide: true }
+    approvedAsker(messaging)
   );
   const [question] = messaging.engine.openBlocking();
   expect(question?.data).toMatchObject({ type: 'wake' });
@@ -126,7 +142,7 @@ async function approveWake(
     { address: 'human:wyat', canDecide: true }
   );
   return messaging.engine
-    .inbox('human:asker')
+    .inbox('agent:asker')
     .filter((i) => i.message.kind === 'notice')
     .map((i) => i.message.body);
 }
@@ -391,7 +407,7 @@ describe('wake gate handler', () => {
         body: 'please wake up',
         wake: 'request',
       },
-      { address: 'human:asker', canDecide: true }
+      approvedAsker(messaging)
     );
     const [question] = messaging.engine.openBlocking();
     expect(question).toBeDefined();
@@ -465,10 +481,10 @@ describe('wake gate handler', () => {
     messaging.store.insertMessage(question);
     messaging.store.insertMessage(answer);
     const wakes: string[] = [];
-    const dispatchOrResume = orchestrator.dispatchOrResume.bind(orchestrator);
-    orchestrator.dispatchOrResume = (taskId, request) => {
+    const wakeTask = orchestrator.wakeTask.bind(orchestrator);
+    orchestrator.wakeTask = (taskId, opts) => {
       wakes.push(taskId);
-      return dispatchOrResume(taskId, request);
+      return wakeTask(taskId, opts);
     };
 
     await messaging.gates.handle(question, answer);
@@ -683,7 +699,7 @@ describe('wake gate handler', () => {
           body: 'wake up',
           wake: 'request',
         },
-        { address: 'human:asker', canDecide: true }
+        approvedAsker(messaging)
       );
       const [question] = messaging.engine.openBlocking();
       store.update(task.meta.id, { status });
@@ -696,7 +712,7 @@ describe('wake gate handler', () => {
       expect(executor.started).toHaveLength(0);
       expect(store.get(task.meta.id)?.meta.status).toBe(status);
       const notices = messaging.engine
-        .inbox('human:asker')
+        .inbox('agent:asker')
         .filter((i) => i.message.kind === 'notice')
         .map((i) => i.message.body);
       expect(notices).toEqual([
@@ -764,7 +780,7 @@ describe('wake gate handler', () => {
         body: 'ping',
         wake: 'request',
       },
-      { address: 'human:asker', canDecide: true }
+      approvedAsker(messaging)
     );
     const [question] = messaging.engine.openBlocking();
     await messaging.engine.reply(
@@ -774,7 +790,7 @@ describe('wake gate handler', () => {
     );
 
     const notice = messaging.engine
-      .inbox('human:asker')
+      .inbox('agent:asker')
       .find((i) => i.message.kind === 'notice');
     expect(notice?.message.body).toContain('Could not wake');
     messaging.close();

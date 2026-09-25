@@ -25,7 +25,7 @@ export interface DaemonHostDeps {
     | 'taskIdOfRun'
     | 'deliverToRun'
     | 'notifyRun'
-    | 'dispatchOrResume'
+    | 'wakeTask'
   >;
   // Read-only: task parent/kind/status/risk lookups for wake policy and
   // epic channel membership.
@@ -104,15 +104,17 @@ export class DaemonMessagingHost implements MessagingHost {
     this.deps.onHumanMessage(actor, message);
   }
 
-  // Dispatches or resumes a sleeping task as the system actor; an orchestrator
-  // throw (a live run already, say) becomes a failed WakeResult.
-  async wake(target: Address, _message: Message): Promise<WakeResult> {
+  // Wakes a sleeping task as its human sender, who may continue a finished run,
+  // or as the system; an orchestrator throw becomes a failed WakeResult.
+  async wake(target: Address, message: Message): Promise<WakeResult> {
     if (!target.startsWith('task:'))
       return { ok: false, reason: `cannot wake ${target}` };
     const taskId = target.slice('task:'.length);
+    const human = message.from.startsWith('human:');
     try {
-      const meta = await this.deps.orchestrator.dispatchOrResume(taskId, {
-        actor: 'agent:dispatch',
+      const meta = await this.deps.orchestrator.wakeTask(taskId, {
+        actor: human ? message.from : 'agent:dispatch',
+        continueFinished: human,
       });
       return { ok: true, runId: meta.id };
     } catch (err) {
@@ -123,13 +125,15 @@ export class DaemonMessagingHost implements MessagingHost {
     }
   }
 
-  // Denies waking anything but a dispatchable task; otherwise defers to the
-  // project's 'wake' policy, capped by the task's declared risk.
+  // Denies waking anything but a dispatchable task; allows a human's wake;
+  // otherwise defers to the project's 'wake' policy, capped by the task's risk.
   decide(request: PolicyRequest): PolicyRuling {
     const target = request.target;
     if (!target.startsWith('task:')) return 'deny';
     const task = this.deps.store.get(target.slice('task:'.length));
     if (task === null || wakeRefusal(task) !== null) return 'deny';
+    // A human waking a task is their own call, as /message {resume} was.
+    if (request.message.from.startsWith('human:')) return 'allow';
     const ruling: CorePolicyRuling = consultProjectPolicy(
       this.deps.rootDir,
       'wake',

@@ -333,6 +333,16 @@ export function openMessaging(deps: {
         })
   );
 
+  // A run's message to a human lands on the run's transcript.
+  const unsubscribeOutgoing = engine.subscribe((e) => {
+    if (e.type !== 'message' || !e.message.from.startsWith('run:')) return;
+    if (!e.message.to.some((addr) => addr.startsWith('human:'))) return;
+    deps.orchestrator.logOutgoing(
+      e.message.from.slice('run:'.length),
+      e.message
+    );
+  });
+
   // Held task mail waits for the task's next execute run; a review or verify
   // run only gets mail addressed to its own run.
   const unsubscribeRunStarted = deps.orchestrator.onRunStarted((meta) => {
@@ -358,6 +368,7 @@ export function openMessaging(deps: {
         raise: (request) => denyUngated(request, 'messaging is closed'),
         settle: () => {},
       });
+      unsubscribeOutgoing();
       unsubscribeEngine();
       db.close();
     },

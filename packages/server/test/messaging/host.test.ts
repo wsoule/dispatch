@@ -49,7 +49,7 @@ function makeHost(
   const calls: Record<string, unknown[][]> = {
     deliverToRun: [],
     notifyRun: [],
-    dispatchOrResume: [],
+    wakeTask: [],
   };
   const orchestrator: DaemonHostDeps['orchestrator'] = {
     liveRunIdForTask: () => null,
@@ -61,8 +61,8 @@ function makeHost(
     notifyRun: (runId, digest) => {
       calls.notifyRun.push([runId, digest]);
     },
-    dispatchOrResume: (taskId, request) => {
-      calls.dispatchOrResume.push([taskId, request]);
+    wakeTask: (taskId, opts) => {
+      calls.wakeTask.push([taskId, opts]);
       return Promise.reject(new Error('not implemented in this stub'));
     },
     ...orchestratorOverrides,
@@ -159,9 +159,21 @@ describe('DaemonMessagingHost.decide', () => {
       host.decide({
         type: 'wake',
         target: `task:${task.meta.id}`,
-        message: stubMessage(),
+        message: stubMessage({ from: 'run:r-000002' }),
       })
     ).toBe('ask');
+  });
+
+  it("allows a human sender's wake at the default rung", () => {
+    const task = store.create({ title: 'Some work' });
+    const { host } = makeHost();
+    expect(
+      host.decide({
+        type: 'wake',
+        target: `task:${task.meta.id}`,
+        message: stubMessage({ from: 'human:ada' }),
+      })
+    ).toBe('allow');
   });
 
   it('allows once policy rung 3 is configured (wake is a rung-3 gate)', () => {
@@ -175,7 +187,7 @@ describe('DaemonMessagingHost.decide', () => {
       host.decide({
         type: 'wake',
         target: `task:${task.meta.id}`,
-        message: stubMessage(),
+        message: stubMessage({ from: 'run:r-000002' }),
       })
     ).toBe('allow');
   });
@@ -191,7 +203,7 @@ describe('DaemonMessagingHost.decide', () => {
       host.decide({
         type: 'wake',
         target: `task:${task.meta.id}`,
-        message: stubMessage(),
+        message: stubMessage({ from: 'run:r-000002' }),
       })
     ).toBe('ask');
   });
@@ -222,9 +234,9 @@ describe('DaemonMessagingHost.implicitMembers', () => {
 });
 
 describe('DaemonMessagingHost.wake', () => {
-  it('returns { ok: false, reason } when dispatchOrResume throws', async () => {
+  it('returns { ok: false, reason } when wakeTask throws', async () => {
     const { host } = makeHost({
-      dispatchOrResume: () =>
+      wakeTask: () =>
         Promise.reject(new Error('task already has a live run: r-000001')),
     });
     const result = await host.wake('task:t-abc123', stubMessage());
@@ -236,7 +248,7 @@ describe('DaemonMessagingHost.wake', () => {
 
   it('returns { ok: true, runId } on success', async () => {
     const { host } = makeHost({
-      dispatchOrResume: () => Promise.resolve({ id: 'r-000009' } as RunMeta),
+      wakeTask: () => Promise.resolve({ id: 'r-000009' } as RunMeta),
     });
     const result = await host.wake('task:t-abc123', stubMessage());
     expect(result).toEqual({ ok: true, runId: 'r-000009' });
@@ -246,5 +258,17 @@ describe('DaemonMessagingHost.wake', () => {
     const { host } = makeHost();
     const result = await host.wake('human:wyat', stubMessage());
     expect(result.ok).toBe(false);
+  });
+
+  it('credits a human sender, who may continue a finished run; anyone else wakes as the system', async () => {
+    const { host, calls } = makeHost();
+    await host.wake('task:t-abc123', stubMessage({ from: 'human:ada' }));
+    await host.wake('task:t-abc123', stubMessage({ from: 'run:r-000002' }));
+    await host.wake('task:t-abc123', stubMessage({ from: 'agent:reviewer' }));
+    expect(calls.wakeTask).toEqual([
+      ['t-abc123', { actor: 'human:ada', continueFinished: true }],
+      ['t-abc123', { actor: 'agent:dispatch', continueFinished: false }],
+      ['t-abc123', { actor: 'agent:dispatch', continueFinished: false }],
+    ]);
   });
 });
