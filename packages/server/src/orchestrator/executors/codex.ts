@@ -1,5 +1,5 @@
 import type { ExecutorPricing } from '@dispatch/core';
-import { CORE_VERSION, loadConfig } from '@dispatch/core';
+import { CORE_VERSION, DISPATCH_MCP_TOOLS, loadConfig } from '@dispatch/core';
 import { existsSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, relative } from 'node:path';
@@ -179,13 +179,12 @@ function buildCodexMcpServers(
   const ours: Record<string, unknown> = {
     dispatch: toCodexMcp(
       dispatchMcpSpec(cwd, projectRoot, runId, runTokenFile),
+      // Under untrusted Codex elicits approval for an unlisted MCP tool, and
+      // the transport rejects it; the run token already authorizes each call.
       {
-        tools: {
-          task_comment: { approval_mode: 'approve' },
-          record_evidence: { approval_mode: 'approve' },
-          record_mutation: { approval_mode: 'approve' },
-          ask_user: { approval_mode: 'approve' },
-        },
+        tools: Object.fromEntries(
+          DISPATCH_MCP_TOOLS.map((name) => [name, { approval_mode: 'approve' }])
+        ),
       }
     ),
     ...(carto === null ? {} : { carto: toCodexMcp(carto) }),

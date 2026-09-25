@@ -1,3 +1,4 @@
+import { DISPATCH_MCP_TOOLS } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 import { EventEmitter } from 'node:events';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -10,7 +11,10 @@ import {
   CodexAppServer,
   type CodexAppServerProcess,
 } from '../../src/orchestrator/codexAppServer.js';
-import type { StdioServerSpec } from '../../src/orchestrator/dispatchMcp.js';
+import {
+  dispatchMcpSpec,
+  type StdioServerSpec,
+} from '../../src/orchestrator/dispatchMcp.js';
 import {
   CODEX_EXECUTOR_PROFILE,
   CodexExecutor,
@@ -21,6 +25,10 @@ import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
+
+const APPROVE_EVERY_DISPATCH_TOOL = Object.fromEntries(
+  DISPATCH_MCP_TOOLS.map((name) => [name, { approval_mode: 'approve' }])
+);
 
 interface RpcMessage {
   id?: number | string;
@@ -185,6 +193,67 @@ function startHarness(
     }
   );
   return { entries, approvals, sessions, finishes, run };
+}
+
+// The tool names the real dispatch MCP server lists, spawned from the same
+// spec a run gets and asked over stdio JSON-RPC.
+async function registeredDispatchTools(): Promise<string[]> {
+  const root = mkdtempSync(join(tmpdir(), 'codex-dispatch-tools-'));
+  const savedBin = process.env.DISPATCH_MCP_BIN;
+  delete process.env.DISPATCH_MCP_BIN;
+  const spec = dispatchMcpSpec(root, root, 'r-tools');
+  if (savedBin !== undefined) process.env.DISPATCH_MCP_BIN = savedBin;
+  const child = Bun.spawn([spec.command, ...spec.args], {
+    env: spec.env,
+    stdin: 'pipe',
+    stdout: 'pipe',
+    stderr: 'ignore',
+  });
+  const reader = child.stdout.getReader();
+  const decoder = new TextDecoder();
+  let buffered = '';
+  const write = (message: object): void => {
+    void child.stdin.write(`${JSON.stringify(message)}\n`);
+  };
+  const response = async (id: number): Promise<RpcMessage> => {
+    for (;;) {
+      for (
+        let newline = buffered.indexOf('\n');
+        newline !== -1;
+        newline = buffered.indexOf('\n')
+      ) {
+        const line = buffered.slice(0, newline).trim();
+        buffered = buffered.slice(newline + 1);
+        if (line === '') continue;
+        const message = JSON.parse(line) as RpcMessage;
+        if (message.id === id) return message;
+      }
+      const { value, done } = await reader.read();
+      if (done) throw new Error('dispatch MCP server exited before answering');
+      buffered += decoder.decode(value, { stream: true });
+    }
+  };
+  try {
+    write({
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'initialize',
+      params: {
+        protocolVersion: '2025-06-18',
+        capabilities: {},
+        clientInfo: { name: 'codex-executor-test', version: '0' },
+      },
+    });
+    await response(1);
+    write({ jsonrpc: '2.0', method: 'notifications/initialized' });
+    write({ jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
+    const list = (await response(2)).result as { tools: { name: string }[] };
+    return list.tools.map((tool) => tool.name).sort();
+  } finally {
+    child.kill();
+    await child.exited;
+    rmSync(root, { recursive: true, force: true });
+  }
 }
 
 describe('CodexAppServer transport', () => {
@@ -392,6 +461,32 @@ describe('CodexExecutor', () => {
     expect(config.mcp_servers.dispatch.env.DISPATCH_RUN_TOKEN).toBeUndefined();
     await harness.run.interrupt();
   });
+
+  // Codex rejects an unlisted MCP tool under untrusted: it elicits approval,
+  // and the transport answers requests it does not know with -32601.
+  it('pre-approves every tool the dispatch MCP server registers', async () => {
+    const registered = await registeredDispatchTools();
+    expect(registered).toContain('msg_send');
+    const fake = scriptedProcess();
+    const harness = startHarness(fake);
+    await waitFor(() =>
+      fake.requests.some((request) => request.method === 'thread/start')
+    );
+    const start = fake.requests.find(
+      (request) => request.method === 'thread/start'
+    );
+    const config = start?.params?.config as {
+      mcp_servers: {
+        dispatch: { tools: Record<string, { approval_mode?: string }> };
+      };
+    };
+    const approved = Object.entries(config.mcp_servers.dispatch.tools)
+      .filter(([, tool]) => tool.approval_mode === 'approve')
+      .map(([name]) => name)
+      .sort();
+    expect(approved).toEqual(registered);
+    await harness.run.interrupt();
+  }, 20_000);
 
   it('notify after finish is a no-op', async () => {
     const process = scriptedProcess({
@@ -757,12 +852,7 @@ describe('CodexExecutor', () => {
               }),
               required: true,
               tool_timeout_sec: 1860,
-              tools: {
-                task_comment: { approval_mode: 'approve' },
-                record_evidence: { approval_mode: 'approve' },
-                record_mutation: { approval_mode: 'approve' },
-                ask_user: { approval_mode: 'approve' },
-              },
+              tools: APPROVE_EVERY_DISPATCH_TOOL,
             },
           },
         },
@@ -824,12 +914,7 @@ describe('CodexExecutor', () => {
           }),
           required: true,
           tool_timeout_sec: 1860,
-          tools: {
-            task_comment: { approval_mode: 'approve' },
-            record_evidence: { approval_mode: 'approve' },
-            record_mutation: { approval_mode: 'approve' },
-            ask_user: { approval_mode: 'approve' },
-          },
+          tools: APPROVE_EVERY_DISPATCH_TOOL,
         },
       },
     });

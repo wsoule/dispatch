@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { DISPATCH_MCP_TOOLS, TaskStore } from '@dispatch/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
@@ -74,6 +74,14 @@ describe('server identity', () => {
       'task_save',
       'thread_read',
     ]);
+  });
+
+  // Codex pre-approves DISPATCH_MCP_TOOLS by name and rejects any other tool.
+  it('registers exactly the tools core names in DISPATCH_MCP_TOOLS', async () => {
+    const { tools } = await client.listTools();
+    expect(tools.map((t) => t.name).sort()).toEqual(
+      [...DISPATCH_MCP_TOOLS].sort()
+    );
   });
 
   it('does not claim task_save is idempotent (create makes a new task every call)', async () => {

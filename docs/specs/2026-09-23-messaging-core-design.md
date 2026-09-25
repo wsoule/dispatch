@@ -495,6 +495,9 @@ The same tools for runs and external agents, in `packages/mcp`:
   the caller (a run's task).
 - Each external-agent MCP process makes a session id at start and sends it on
   every `msg_send` and `msg_reply`; a run is one session and sends none.
+- A Codex run pre-approves every dispatch tool by name (`DISPATCH_MCP_TOOLS` in
+  `packages/core`). Under `untrusted` Codex asks the client about any other MCP
+  tool, and Dispatch's transport rejects that ask, so the tool never runs.
 
 The CLI's own `ApiClient` (`packages/cli/src/apiClient.ts`) and its test fakes
 mirror the new routes.
