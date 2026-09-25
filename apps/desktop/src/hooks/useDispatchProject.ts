@@ -44,6 +44,7 @@ import type {
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { mayChangeAgentRoster } from '../lib/agentRoster';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
   configChangedQueryKeys,
@@ -125,6 +126,14 @@ export function landingKey(
   port: number | undefined
 ): [string, number | undefined] {
   return ['dispatch-landing', port];
+}
+
+// The Settings agent roster (`GET /api/agents/roster`), exported so anything
+// that changes an agent's row elsewhere can refresh it.
+export function agentRosterKey(
+  port: number | undefined
+): [string, number | undefined] {
+  return ['dispatch-agent-roster', port];
 }
 
 function readStoredShowArchived(): boolean {
@@ -1373,6 +1382,12 @@ export function useDispatchProject(
               );
           } else if (event.type === 'presence.changed') {
             void queryClient.invalidateQueries({ queryKey: presenceQueryKey });
+          } else if (event.type === 'message.new') {
+            if (mayChangeAgentRoster(event.message)) {
+              void queryClient.invalidateQueries({
+                queryKey: agentRosterKey(port),
+              });
+            }
           } else if (event.type === 'run.changed') {
             void queryClient.invalidateQueries({ queryKey: runsQueryKey });
             void queryClient.invalidateQueries({ queryKey: presenceQueryKey });

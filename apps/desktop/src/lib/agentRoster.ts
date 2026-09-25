@@ -1,4 +1,4 @@
-import type { AgentStatus, AgentSummary } from '@dispatch/client';
+import type { AgentStatus, AgentSummary, Message } from '@dispatch/client';
 
 const STATUS_ORDER: Record<AgentStatus, number> = {
   pending: 0,
@@ -33,4 +33,17 @@ export function rosterActions(agent: AgentSummary): RosterActions {
 export function handleOf(address: string): string {
   const colon = address.indexOf(':');
   return colon === -1 ? address : address.slice(colon + 1);
+}
+
+/** Whether a new message may have changed the roster: a registration gate adds
+ *  a pending agent, and any answer may be the one that settles such a gate. */
+export function mayChangeAgentRoster(message: Message): boolean {
+  if (message.kind === 'answer') return true;
+  const data = message.data;
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    'type' in data &&
+    data.type === 'agent-registration'
+  );
 }

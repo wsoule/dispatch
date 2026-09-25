@@ -1,7 +1,12 @@
-import type { AgentSummary } from '@dispatch/client';
+import type { AgentSummary, Message } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { handleOf, rosterActions, sortRoster } from './agentRoster';
+import {
+  handleOf,
+  mayChangeAgentRoster,
+  rosterActions,
+  sortRoster,
+} from './agentRoster';
 
 function agent(over: Partial<AgentSummary> = {}): AgentSummary {
   return {
@@ -85,5 +90,71 @@ describe('handleOf', () => {
 
   test('keeps a value with no kind as it is', () => {
     expect(handleOf('wyat')).toBe('wyat');
+  });
+});
+
+function message(over: Partial<Message> = {}): Message {
+  return {
+    id: 'm-1',
+    thread: 'm-1',
+    replyTo: null,
+    from: 'run:r-1',
+    to: ['human:wyat'],
+    kind: 'message',
+    body: 'hello',
+    refs: [],
+    urgent: false,
+    blocking: false,
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
+}
+
+describe('mayChangeAgentRoster', () => {
+  test('a registration gate adds a pending agent', () => {
+    expect(
+      mayChangeAgentRoster(
+        message({
+          from: 'system',
+          kind: 'question',
+          blocking: true,
+          choices: ['approve', 'deny'],
+          data: {
+            type: 'agent-registration',
+            agent: 'agent:wyat/cursor.macbook',
+            client: 'cursor',
+            requestedBy: 'human:wyat',
+          },
+        })
+      )
+    ).toBe(true);
+  });
+
+  test('an answer may settle a registration gate', () => {
+    expect(
+      mayChangeAgentRoster(
+        message({
+          from: 'human:wyat',
+          to: ['system'],
+          kind: 'answer',
+          replyTo: 'm-0',
+          choice: 'approve',
+        })
+      )
+    ).toBe(true);
+  });
+
+  test('ordinary traffic and other gates leave the roster alone', () => {
+    expect(mayChangeAgentRoster(message())).toBe(false);
+    expect(
+      mayChangeAgentRoster(
+        message({
+          kind: 'question',
+          blocking: true,
+          data: { type: 'tool-approval', runId: 'r-1', requestId: 'q-1' },
+        })
+      )
+    ).toBe(false);
   });
 });

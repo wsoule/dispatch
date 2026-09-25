@@ -1,6 +1,7 @@
 import type { AgentSummary } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -9,10 +10,12 @@ import {
 } from '@testing-library/react';
 import { describe, expect, mock, test } from 'bun:test';
 
+import { agentRosterKey } from '../../hooks/useDispatchProject';
 import { accessFor, NEEDS_DECIDE, SettingsAccessProvider } from './access';
 import { AgentRosterSection } from './AgentRosterSection';
 import { dataWith } from './fixtures.test-helper';
 
+const PORT = 4321;
 const PENDING = 'agent:wyat/cursor.macbook';
 const APPROVED = 'agent:wyat/claude-code.macbook';
 const REVOKED = 'agent:ada/codex.studio';
@@ -75,13 +78,16 @@ function mount(
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(
+  render(
     <QueryClientProvider client={queryClient}>
       <SettingsAccessProvider access={accessFor(tier, false)}>
-        <AgentRosterSection data={dataWith({ client: client as never })} />
+        <AgentRosterSection
+          data={dataWith({ client: client as never, port: PORT })}
+        />
       </SettingsAccessProvider>
     </QueryClientProvider>
   );
+  return queryClient;
 }
 
 // The roster row naming `address`; the row's own text holds every cell.
@@ -213,6 +219,35 @@ describe('AgentRosterSection', () => {
     expect((await screen.findByRole('alert')).textContent).toBe(
       'no agent agent:wyat/cursor.macbook'
     );
+  });
+
+  // Approving from Needs you or the CLI answers the gate elsewhere; the data
+  // layer invalidates this key, and the row must stop offering Approve.
+  test('a change made elsewhere shows once the roster key is invalidated', async () => {
+    const client = rosterClient();
+    const queryClient = mount(client);
+    const pending = await row(PENDING);
+    expect(within(pending).getByText('Pending')).toBeTruthy();
+
+    client.listAgentRoster.mockImplementation(() =>
+      Promise.resolve({
+        agents: ROSTER.map((a) =>
+          a.address === PENDING
+            ? { ...a, status: 'approved' as const, approvedBy: 'human:ada' }
+            : a
+        ),
+      })
+    );
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: agentRosterKey(PORT) })
+    );
+
+    await waitFor(async () =>
+      expect(within(await row(PENDING)).getByText('Approved')).toBeTruthy()
+    );
+    expect(
+      within(await row(PENDING)).queryByRole('button', { name: /^Approve/ })
+    ).toBeNull();
   });
 
   test('an empty roster says how an agent gets on it', async () => {

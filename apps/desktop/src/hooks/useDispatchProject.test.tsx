@@ -127,7 +127,8 @@ void mock.module('@dispatch/client', () => ({
 }));
 
 // Imported after the mocks above so the hook closes over them.
-const { useDispatchProject } = await import('./useDispatchProject');
+const { agentRosterKey, useDispatchProject } =
+  await import('./useDispatchProject');
 const { overseerKey } = await import('./useOverseerSession');
 
 function wrapper(queryClient: QueryClient) {
@@ -265,6 +266,82 @@ test('a task change does not invalidate overseer records', async () => {
   expect(
     queryClient.getQueryState(overseerKey(PORT, 'w-1'))?.isInvalidated
   ).toBe(false);
+});
+
+// A registration is a gate message and approving it anywhere (Needs you, the
+// CLI) sends an answer; either may change a row the settings roster shows.
+test('a registration or an answer invalidates the agent roster', async () => {
+  const queryClient = await mountConnected();
+  const message = {
+    id: 'm-1',
+    thread: 'm-1',
+    replyTo: null,
+    from: 'system',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'New agent agent:wyat/cursor.macbook wants to join this project.',
+    refs: [],
+    data: {
+      type: 'agent-registration',
+      agent: 'agent:wyat/cursor.macbook',
+      client: 'cursor',
+      requestedBy: 'human:wyat',
+    },
+    urgent: false,
+    blocking: true,
+    choices: ['approve', 'deny'],
+    wake: 'none' as const,
+    createdAt: '2026-09-25T10:00:00.000Z',
+  };
+  const seed = () =>
+    queryClient.setQueryData(agentRosterKey(PORT), { agents: [] });
+  const invalidated = () =>
+    queryClient.getQueryState(agentRosterKey(PORT))?.isInvalidated;
+
+  seed();
+  act(() => {
+    sink?.onEvent({ type: 'message.new', message });
+  });
+  expect(invalidated()).toBe(true);
+
+  seed();
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: {
+        ...message,
+        id: 'm-2',
+        replyTo: 'm-1',
+        from: 'human:wyat',
+        to: ['system'],
+        kind: 'answer',
+        body: '',
+        data: undefined,
+        blocking: false,
+        choices: undefined,
+        choice: 'approve',
+      },
+    });
+  });
+  expect(invalidated()).toBe(true);
+
+  seed();
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: {
+        ...message,
+        id: 'm-3',
+        from: 'run:r-1',
+        kind: 'message',
+        body: 'done',
+        data: undefined,
+        blocking: false,
+        choices: undefined,
+      },
+    });
+  });
+  expect(invalidated()).toBe(false);
 });
 
 function runFixture(id: string, state: RunMeta['state']): RunMeta {

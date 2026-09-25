@@ -5,6 +5,7 @@ import type { ReactElement } from 'react';
 import { useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import { agentRosterKey } from '../../hooks/useDispatchProject';
 import { handleOf, rosterActions, sortRoster } from '../../lib/agentRoster';
 import { isInsufficientTier } from '../../lib/daemonAuth';
 import { useSettingsAccess } from './access';
@@ -84,7 +85,7 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   const { client, port } = data;
   const { canDecide, decideReason } = useSettingsAccess();
   const queryClient = useQueryClient();
-  const rosterKey = ['dispatch-agent-roster', port];
+  const rosterKey = agentRosterKey(port);
   // Addresses with a change in flight, whose row's buttons wait for it.
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
