@@ -2,8 +2,10 @@ import type {
   ConnectEventsOptions,
   EpicProgress,
   EpicSessionOptions,
+  Message,
+  ReplyInput,
   RunMeta,
-  RunScopeRequest,
+  SendInput,
   ServerEvent,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
@@ -20,9 +22,14 @@ const PORT = 4321;
 // bun hoists this mock across every file in the run, so `isTauri` keeps the
 // real function's contract (the window global) rather than a constant — the
 // deep-link tests enter Tauri by defining `__TAURI_INTERNALS__`.
+const APP_CONNECTION = { port: PORT, appToken: 'app-token', agentToken: null };
+let connectionFixture: {
+  port: number;
+  appToken: string | null;
+  agentToken: string | null;
+} = APP_CONNECTION;
 void mock.module('../lib/tauri', () => ({
-  ensureDispatchd: () =>
-    Promise.resolve({ port: PORT, appToken: 'app-token', agentToken: null }),
+  ensureDispatchd: () => Promise.resolve(connectionFixture),
   restartDispatchd: () => Promise.resolve(),
   isTauri: () => '__TAURI_INTERNALS__' in window,
 }));
@@ -34,11 +41,24 @@ let sink: {
   onEvent: (event: ServerEvent) => void;
 } | null = null;
 
-// What the daemon's run list says right now, and the open scope requests it
-// reports per run — set by the restart test below, empty for everyone else.
+// Every OS notification the hook asked for. The real `notify` only fires
+// inside a focused-away Tauri window, so the tests read the request instead.
+const notified: { title: string; body: string; kind?: string }[] = [];
+void mock.module('../lib/notifications', () => ({
+  notify: (title: string, body: string, kind?: string) => {
+    notified.push({ title, body, kind });
+    return Promise.resolve();
+  },
+  setNotificationKinds: () => {},
+}));
+
+// What the daemon's run list says right now, the open gates it reports, and
+// every messaging call the hook made — set by the gate tests below.
 let runsFixture: RunMeta[] = [];
-let openScopeRequests = new Map<string, RunScopeRequest[]>();
-const scopeRequestListings: string[] = [];
+let openGatesFixture: Message[] = [];
+let openDecisionsCalls = 0;
+const sentMessages: SendInput[] = [];
+const replies: [string, ReplyInput][] = [];
 
 // The bulk epic-progress listing the daemon returns, how many times it was
 // asked for, and every `startEpic` body the hook sent — the fan-out tests
@@ -71,9 +91,25 @@ void mock.module('@dispatch/client', () => ({
         ],
         default: 'claude',
       }),
-    listScopeRequests: (runId: string) => {
-      scopeRequestListings.push(runId);
-      return Promise.resolve(openScopeRequests.get(runId) ?? []);
+    openDecisions: () => {
+      openDecisionsCalls += 1;
+      return Promise.resolve({ items: openGatesFixture });
+    },
+    sendMessage: (input: SendInput) => {
+      sentMessages.push(input);
+      return Promise.resolve({
+        message: {},
+        deliveries: [],
+        downgraded: false,
+      });
+    },
+    replyToMessage: (id: string, input: ReplyInput) => {
+      replies.push([id, input]);
+      return Promise.resolve({
+        message: {},
+        deliveries: [],
+        downgraded: false,
+      });
     },
     fetchAllEpicProgress: () => {
       epicProgressFetches += 1;
@@ -128,6 +164,8 @@ void mock.module('@dispatch/client', () => ({
 
 // Imported after the mocks above so the hook closes over them.
 const { useDispatchProject } = await import('./useDispatchProject');
+const { ATTACHED_DAEMON_MESSAGING_EXPLANATION } =
+  await import('../lib/daemonAuth');
 const { overseerKey } = await import('./useOverseerSession');
 
 function wrapper(queryClient: QueryClient) {
@@ -282,55 +320,253 @@ function runFixture(id: string, state: RunMeta['state']): RunMeta {
   };
 }
 
-function scopeRequestFixture(id: string, runId: string): RunScopeRequest {
+// A blocking question as dispatchd lists it under `GET /api/decisions/open`.
+function gateMessage(id: string, over: Partial<Message>): Message {
   return {
     id,
-    runId,
-    paths: ['packages/core/src/browser.ts'],
-    reason: 'the type my scoped code needs is not re-exported',
-    requestedAt: '2026-08-23T00:00:01Z',
-    granted: null,
-    decisionReason: null,
-    decidedAt: null,
-    decidedBy: null,
+    thread: id,
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'q',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
   };
 }
 
-// Incident 2026-08-23: the only way this hook learned of a scope request was
-// the live `scope.requested` frame. An app relaunched after a dispatchd
-// restart never received it, so the card the human had not decided vanished
-// for good. The daemon now persists the request and carries it onto the
-// resumed run; this pins the app's half — the open requests of every live run
-// are read back without any event having arrived.
-test("a live run's open scope request is surfaced from the listing, without a scope.requested event", async () => {
-  runsFixture = [
-    runFixture('r-resumed', 'running'),
-    runFixture('r-dead', 'failed'),
-  ];
-  openScopeRequests = new Map([
-    ['r-resumed', [scopeRequestFixture('sr-abc123', 'r-resumed')]],
+function toolApprovalGate(id: string, runId: string, requestId: string) {
+  return gateMessage(id, {
+    choices: ['approve', 'approve-session', 'deny'],
+    data: {
+      type: 'tool-approval',
+      requestId,
+      runId,
+      tool: 'Bash',
+      input: { command: 'ls' },
+    },
+  });
+}
+
+const approvalGate = toolApprovalGate('m-a', 'r-1', 'req-1');
+const scopeGate = gateMessage('m-s', {
+  from: 'run:r-1',
+  choices: ['grant', 'deny'],
+  data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
+});
+const questionGate = gateMessage('m-q', {
+  from: 'run:r-1',
+  body: 'Which cart?',
+  choices: ['old', 'new'],
+});
+
+// Mounts the hook over `gates` with live run r-1 parked on an approval, and
+// waits until the open gates have been read into its three maps.
+async function mountWithGates(gates: Message[]) {
+  runsFixture = [runFixture('r-1', 'awaiting-approval')];
+  openGatesFixture = gates;
+  openDecisionsCalls = 0;
+  notified.length = 0;
+  sentMessages.length = 0;
+  replies.length = 0;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const rendered = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(rendered.result.current.pendingApprovals.has('r-1')).toBe(true);
+  });
+  return rendered.result;
+}
+
+// Also drops the inbox rows a run question recorded, which persist per root
+// in localStorage and would leak into later tests.
+function resetGateFixtures() {
+  runsFixture = [];
+  openGatesFixture = [];
+  window.localStorage.clear();
+}
+
+// After a reload nothing was seen live: the open gates alone rebuild the
+// approval, scope and question cards.
+test('open gates fill the approval, scope and question maps', async () => {
+  const result = await mountWithGates([approvalGate, scopeGate, questionGate]);
+
+  expect(result.current.pendingApprovals.get('r-1')).toEqual({
+    requestId: 'req-1',
+    toolName: 'Bash',
+    input: { command: 'ls' },
+  });
+  expect(result.current.pendingScopeRequests.get('r-1')?.requestId).toBe('m-s');
+  expect(result.current.openQuestions.get('r-1')?.[0].id).toBe('m-q');
+  resetGateFixtures();
+});
+
+test('a new blocking question refetches the open gates', async () => {
+  await mountWithGates([approvalGate]);
+  const before = openDecisionsCalls;
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-q2', { from: 'run:r-1', body: 'And now?' }),
+    });
+  });
+
+  await waitFor(() => {
+    expect(openDecisionsCalls).toBeGreaterThan(before);
+  });
+  resetGateFixtures();
+});
+
+// A run that parks several tool calls at once raises one notification, not
+// one per gate; another run still gets its own.
+test('a deciding window notifies one tool approval per waiting run', async () => {
+  await mountWithGates([approvalGate]);
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-a2', 'r-1', 'req-2'),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-b', 'r-9', 'req-1'),
+    });
+  });
+
+  expect(notified).toEqual([
+    { title: 'Approval needed', body: 'Bash · r-9', kind: 'approval' },
   ]);
-  scopeRequestListings.length = 0;
+  resetGateFixtures();
+});
+
+test('the card handlers answer their gates with the matching choice', async () => {
+  const result = await mountWithGates([approvalGate, scopeGate, questionGate]);
+
+  await act(async () => {
+    await result.current.handleApprove('r-1', 'req-1', true, {
+      scope: 'session',
+    });
+    await result.current.handleDecideScopeRequest('r-1', 'm-s', false, 'no');
+    await result.current.handleAnswerQuestion('r-1', 'm-q', 'new');
+    await result.current.handleAnswerQuestion('r-1', 'm-q', 'neither');
+    await result.current.handleSendMessage('r-1', 'keep going');
+  });
+
+  expect(replies).toEqual([
+    ['m-a', { body: '', choice: 'approve-session' }],
+    ['m-s', { body: 'no', choice: 'deny' }],
+    ['m-q', { body: 'new', choice: 'new' }],
+    ['m-q', { body: 'neither' }],
+  ]);
+  expect(sentMessages).toEqual([
+    { to: ['run:r-1'], kind: 'message', body: 'keep going' },
+  ]);
+  const stale = await result.current.handleApprove('r-1', 'req-9', true).then(
+    () => 'resolved',
+    (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+  );
+  expect(stale).toBe('This approval is no longer waiting for you.');
+  resetGateFixtures();
+});
+
+test('request changes wakes the task and follows its new run', async () => {
+  const followed: [string, string][] = [];
+  runsFixture = [runFixture('r-1', 'finished')];
+  openGatesFixture = [];
+  sentMessages.length = 0;
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
   const { result } = renderHook(
-    () => useDispatchProject('/repo', { selectedRunId: null }),
+    () =>
+      useDispatchProject('/repo', {
+        selectedRunId: null,
+        onRunDispatched: (runId, taskId) => followed.push([runId, taskId]),
+      }),
     { wrapper: wrapper(queryClient) }
   );
-
   await waitFor(() => {
-    expect(result.current.pendingScopeRequests.get('r-resumed')).toEqual({
-      requestId: 'sr-abc123',
-    });
+    expect(result.current.runs).toHaveLength(1);
   });
-  // Only live runs are asked: the force-failed predecessor has no agent
-  // listening, and its card (if any) belongs to the decision feed.
-  expect(scopeRequestListings).toEqual(['r-resumed']);
-  expect(result.current.pendingScopeRequests.has('r-dead')).toBe(false);
 
-  runsFixture = [];
-  openScopeRequests = new Map();
+  // The daemon wakes the task inside the send, so the new run is listed next.
+  runsFixture = [runFixture('r-2', 'running'), runFixture('r-1', 'finished')];
+  await act(async () => {
+    await result.current.handleRequestChanges('r-1', 'use the new cart');
+  });
+  expect(sentMessages).toEqual([
+    {
+      to: ['task:t-1'],
+      kind: 'message',
+      body: 'use the new cart',
+      wake: 'request',
+    },
+  ]);
+  expect(followed).toEqual([['r-2', 't-1']]);
+
+  runsFixture = [runFixture('r-1', 'finished')];
+  const notWoken = await result.current
+    .handleRequestChanges('r-1', 'again')
+    .then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+  expect(notWoken).toBe(
+    'The task did not wake. Your message is waiting for its next run.'
+  );
+  resetGateFixtures();
+});
+
+// The shared agent token can neither read open gates nor send, so an attached
+// window shows no cards, notifies no gates and refuses a send locally.
+test('a window on the agent token reads no gates, notifies none and sends nothing', async () => {
+  connectionFixture = { port: PORT, appToken: null, agentToken: 'agent' };
+  runsFixture = [runFixture('r-1', 'awaiting-approval')];
+  openGatesFixture = [approvalGate, scopeGate, questionGate];
+  openDecisionsCalls = 0;
+  notified.length = 0;
+  sentMessages.length = 0;
+  try {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { result } = renderHook(
+      () => useDispatchProject('/repo', { selectedRunId: null }),
+      { wrapper: wrapper(queryClient) }
+    );
+    await waitFor(() => {
+      expect(result.current.runs).toHaveLength(1);
+    });
+    expect(sink).not.toBeNull();
+
+    act(() => {
+      sink?.onEvent({ type: 'message.new', message: approvalGate });
+    });
+
+    expect(openDecisionsCalls).toBe(0);
+    expect(result.current.pendingApprovals.size).toBe(0);
+    expect(result.current.pendingScopeRequests.size).toBe(0);
+    expect(result.current.openQuestions.size).toBe(0);
+    expect(notified).toEqual([]);
+    const refused = await result.current.handleSendMessage('r-1', 'hi').then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+    expect(refused).toBe(ATTACHED_DAEMON_MESSAGING_EXPLANATION);
+    expect(sentMessages).toEqual([]);
+  } finally {
+    connectionFixture = APP_CONNECTION;
+    resetGateFixtures();
+  }
 });
 
 function epicProgressFixtureFor(epicId: string): EpicProgress {

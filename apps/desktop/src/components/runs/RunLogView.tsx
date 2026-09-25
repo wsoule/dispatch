@@ -1,9 +1,4 @@
-import type {
-  NormalizedEntry,
-  RunMeta,
-  RunQuestion,
-  RunScopeRequest,
-} from '@dispatch/client';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { foldSubagents } from '@dispatch/core/browser';
 import {
   Info,
@@ -16,6 +11,7 @@ import { useMemo, useState } from 'react';
 
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import type { DecideAvailability } from '../../lib/daemonAuth';
+import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import { groupLogEntries } from '../../lib/runLog';
 import {
   continueMessage,
@@ -91,11 +87,8 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
 interface RunLogViewProps {
   meta: RunMeta;
   entries: NormalizedEntry[];
-  /** The approval this run is parked on — from the live `approval.requested` event or from
-   * the `pendingApproval` the daemon attaches to run reads (see lib/pendingApprovals.ts) — or
-   * `null` when there isn't one. `meta.state` can still read `awaiting-approval` with this
-   * `null` when the daemon that raised the request is gone (a restart mid-pause); the banner
-   * below covers that case. */
+  /** The approval this run is parked on, from its open gate, or `null`. A parked run can
+   * show `null` when this window cannot read gates; the banner below covers that case. */
   pendingApproval: {
     requestId: string;
     toolName: string;
@@ -107,12 +100,11 @@ interface RunLogViewProps {
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
   onSendMessage: (text: string) => Promise<void>;
-  /** Questions this run's agent is blocked on, oldest first. Usually one, but an agent can
-   * dispatch several `ask_user` calls in a single turn, and each parks its own tool call. */
+  /** Blocking questions this run's agent sent a human, oldest first. Usually one, but an
+   * agent can send several in a single turn. */
   openQuestions: RunQuestion[];
   onAnswerQuestion: (questionId: string, answer: string) => Promise<void>;
-  /** The scope request seen live via `scope.requested`, fetched in full
-   * (paths + reason) once its id arrives — `null` when there isn't one. */
+  /** The run's open scope gate (paths + reason), or `null` when there isn't one. */
   pendingScopeRequest: RunScopeRequest | null;
   onDecideScopeRequest: (granted: boolean) => Promise<void>;
   /** Whether this window can decide at all — see `decideAvailability`. Gates the approval
@@ -180,9 +172,8 @@ export function RunLogView({
   const canContinue = deriveRunDisposition(meta) === 'stopped-short';
   const orphanWork = postFailWorkLabel(meta);
 
-  // The approval card's input preview: the request's own input when the
-  // source carried it (the run read does), else a best-effort lookup of the
-  // most recent tool-log entry with a matching name.
+  // The approval card's input preview: the gate's own preview when it carried
+  // one, else a best-effort lookup of the most recent matching tool-log entry.
   const pendingApprovalInput =
     pendingApproval !== null
       ? (pendingApproval.input ??
@@ -350,10 +341,15 @@ export function RunLogView({
             ) : (
               <div className="bg-surface-quaternary text-muted-foreground rounded-card border-border font-book flex items-start gap-2 border-[0.5px] px-3 py-2 text-[12px]">
                 <Info className="size-3.5 shrink-0 translate-y-0.5" />
-                This run is waiting on an approval this window didn&rsquo;t see
-                live — reopen it from a session that was connected when the
-                approval was requested, or check the run&rsquo;s process
-                directly.
+                {/* A window that cannot decide cannot read open gates, so it says why. */}
+                {scopeDecide.explanation ?? (
+                  <>
+                    This run is waiting on an approval this window didn&rsquo;t
+                    see live — reopen it from a session that was connected when
+                    the approval was requested, or check the run&rsquo;s process
+                    directly.
+                  </>
+                )}
               </div>
             ))}
         </div>

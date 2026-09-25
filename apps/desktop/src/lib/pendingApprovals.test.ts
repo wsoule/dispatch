@@ -1,7 +1,7 @@
-import type { RunMeta } from '@dispatch/client';
+import type { Message, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import { mergePendingApprovals } from './pendingApprovals';
+import { pendingApprovalsFromGates } from './pendingApprovals';
 
 function run(id: string, overrides: Partial<RunMeta> = {}): RunMeta {
   return {
@@ -19,53 +19,82 @@ function run(id: string, overrides: Partial<RunMeta> = {}): RunMeta {
   };
 }
 
-describe('mergePendingApprovals', () => {
-  // The reload case: nothing was seen live, the run read alone must be enough
-  // to put an Approve button back in front of the human.
-  test('a parked run is answerable from the run read alone', () => {
-    const merged = mergePendingApprovals(
-      [run('a', { pendingApproval: { requestId: 'req-1', toolName: 'Bash' } })],
-      new Map()
-    );
-    expect(merged.get('a')).toEqual({ requestId: 'req-1', toolName: 'Bash' });
-  });
+// A tool-approval gate as dispatchd sends it: from the system, to the owner.
+function gate(
+  id: string,
+  data: Record<string, unknown>,
+  createdAt = '2026-09-14T00:00:30.000Z'
+): Message {
+  return {
+    id,
+    thread: id,
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'Bash wants to run',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    choices: ['approve', 'approve-session', 'deny'],
+    wake: 'none',
+    createdAt,
+    data: { type: 'tool-approval', tool: 'Bash', input: {}, ...data },
+  };
+}
 
-  test('the run read wins over a live entry for the same run', () => {
-    const merged = mergePendingApprovals(
-      [run('a', { pendingApproval: { requestId: 'req-2', toolName: 'Bash' } })],
-      new Map([['a', { requestId: 'req-1', toolName: 'Bash' }]])
+describe('pendingApprovalsFromGates', () => {
+  // The reload case: the open gate alone puts an Approve button back in front
+  // of the human, with the preview the gate carries.
+  test('a parked run is answerable from its open gate', () => {
+    const approvals = pendingApprovalsFromGates(
+      [gate('m-1', { requestId: 'req-1', runId: 'a', input: { cmd: 'ls' } })],
+      [run('a')]
     );
-    expect(merged.get('a')?.requestId).toBe('req-2');
-  });
-
-  // Between the WS event and the refetch it triggers, the run list still says
-  // 'running' — the live entry must not be dropped in that window.
-  test('a live entry fills in until the refetch carries the request', () => {
-    const merged = mergePendingApprovals(
-      [run('a', { state: 'awaiting-approval' })],
-      new Map([['a', { requestId: 'req-1', toolName: 'Edit' }]])
-    );
-    expect(merged.get('a')).toEqual({ requestId: 'req-1', toolName: 'Edit' });
+    expect(approvals.get('a')).toEqual({
+      requestId: 'req-1',
+      toolName: 'Bash',
+      input: { cmd: 'ls' },
+    });
   });
 
   test('a run that is no longer awaiting approval contributes nothing', () => {
-    const merged = mergePendingApprovals(
-      [
-        run('a', {
-          state: 'finished',
-          pendingApproval: { requestId: 'stale', toolName: 'Bash' },
-        }),
-      ],
-      new Map([['a', { requestId: 'stale', toolName: 'Bash' }]])
+    const approvals = pendingApprovalsFromGates(
+      [gate('m-1', { requestId: 'stale', runId: 'a' })],
+      [run('a', { state: 'finished' })]
     );
-    expect(merged.size).toBe(0);
+    expect(approvals.size).toBe(0);
   });
 
-  test('before the first run list arrives, live entries stand on their own', () => {
-    const merged = mergePendingApprovals(
-      undefined,
-      new Map([['a', { requestId: 'req-1', toolName: 'Bash' }]])
+  test('before the first run list arrives, open gates stand on their own', () => {
+    const approvals = pendingApprovalsFromGates(
+      [gate('m-1', { requestId: 'req-1', runId: 'a' })],
+      undefined
     );
-    expect(merged.get('a')?.requestId).toBe('req-1');
+    expect(approvals.get('a')?.requestId).toBe('req-1');
+  });
+
+  // Parallel tool calls park one gate each; the oldest is answered first.
+  test('a run with two open approvals shows the oldest', () => {
+    const approvals = pendingApprovalsFromGates(
+      [
+        gate('m-2', { requestId: 'req-2', runId: 'a' }, '2026-09-14T00:00:40Z'),
+        gate('m-1', { requestId: 'req-1', runId: 'a' }, '2026-09-14T00:00:30Z'),
+      ],
+      [run('a')]
+    );
+    expect(approvals.get('a')?.requestId).toBe('req-1');
+  });
+
+  // An overseer conversation's gate has no run; the chat shows it.
+  test('a conversation-bound approval and other gates are not run approvals', () => {
+    const approvals = pendingApprovalsFromGates(
+      [
+        gate('m-1', { requestId: 'req-1', conversation: 'wc-1' }),
+        { ...gate('m-2', {}), data: { type: 'scope', paths: [], reason: 'x' } },
+      ],
+      undefined
+    );
+    expect(approvals.size).toBe(0);
   });
 });

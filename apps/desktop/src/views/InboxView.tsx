@@ -1,4 +1,4 @@
-import type { RepoPr, RunQuestion } from '@dispatch/client';
+import type { RepoPr } from '@dispatch/client';
 import {
   AtSign,
   Check,
@@ -23,6 +23,7 @@ import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
 import { tintForState } from '../lib/feedState';
 import { formatRelativeTimeFromIso } from '../lib/format';
+import type { RunQuestion } from '../lib/gates';
 import type {
   InboxBadge,
   InboxData,

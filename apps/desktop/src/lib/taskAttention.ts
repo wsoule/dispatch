@@ -1,10 +1,7 @@
-import type {
-  MergeQueueSnapshot,
-  RunMeta,
-  RunQuestion,
-} from '@dispatch/client';
+import type { MergeQueueSnapshot, RunMeta } from '@dispatch/client';
 
 import { deriveFeedState, isUrgentState } from './feedState';
+import type { RunQuestion } from './gates';
 
 /** The subset of `FeedState` where a task's card/row earns the attention tint: the run is
  * waiting on the user (approval or question), stopped without finishing, or finished and

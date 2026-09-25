@@ -162,9 +162,8 @@ export function OverviewView({
     onStopFixLoop: (row) => void data.handleStopFixLoop(row.taskId),
     onApprove: (row, allow) => {
       const pending = data.pendingApprovals.get(row.runId);
-      // Without the request id there is nothing to answer — this window never saw the
-      // approval.requested event (a reload drops it), so open the run, where the log can
-      // recover it, rather than firing a decision at a request we cannot name.
+      // Without the request id there is nothing to answer (the gate is not listed yet, or this
+      // window cannot read gates), so open the run, where the log says why.
       if (pending === undefined) {
         onOpenRun(row.runId);
         return;

@@ -1,9 +1,10 @@
-import type { RunMeta, RunQuestion } from '@dispatch/client';
+import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { MessageSquare } from 'lucide-react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useScopeRequest } from '../../hooks/useScopeRequest';
+import type { RunQuestion } from '../../lib/gates';
 import { isTerminalRunState } from '../../lib/runState';
 import { RunLogView } from '../runs/RunLogView';
 import { TabSkeleton } from './TabSkeleton';

@@ -1,16 +1,11 @@
-import type { ApiClient, RunScopeRequest } from '@dispatch/client';
+import type { ApiClient } from '@dispatch/client';
 import { useQuery } from '@tanstack/react-query';
 
-function scopeRequestKey(
-  port: number | undefined,
-  runId: string | undefined,
-  requestId: string | undefined
-) {
-  return ['dispatch-scope-request', port, runId, requestId] as const;
-}
+import type { RunScopeRequest } from '../lib/gates';
+import { openGatesKey, toScopeRequest } from '../lib/gates';
 
-/** The full record (paths/reason) for a pending scope request — the
- *  `scope.requested` WS event only carries its id, so this fetches the rest. */
+/** The full record (paths/reason) for a run's open scope gate, read from the
+ *  open-gates query the hook already keeps fresh. */
 export function useScopeRequest(
   client: ApiClient | null,
   port: number | undefined,
@@ -18,14 +13,17 @@ export function useScopeRequest(
   requestId: string | undefined
 ): { request: RunScopeRequest | null; loading: boolean } {
   const { data, isLoading } = useQuery({
-    queryKey: scopeRequestKey(port, runId, requestId),
+    queryKey: openGatesKey(port),
     queryFn: () => {
-      if (client === null || runId === undefined || requestId === undefined) {
-        throw new Error('dispatchd client not ready');
-      }
-      return client.fetchScopeRequest(runId, requestId);
+      if (client === null) throw new Error('dispatchd client not ready');
+      return client.openDecisions();
     },
-    enabled: client !== null && runId !== undefined && requestId !== undefined,
+    enabled: client !== null && requestId !== undefined,
+    select: (d) => {
+      const message = d.items.find((m) => m.id === requestId);
+      const request = message === undefined ? null : toScopeRequest(message);
+      return request !== null && request.runId === runId ? request : null;
+    },
   });
   return { request: data ?? null, loading: isLoading };
 }

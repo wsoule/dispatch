@@ -1,10 +1,7 @@
-import type {
-  MergeQueueSnapshot,
-  RunMeta,
-  RunQuestion,
-} from '@dispatch/client';
+import type { MergeQueueSnapshot, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
+import type { RunQuestion } from './gates';
 import { deriveTaskAttentionById } from './taskAttention';
 
 function run(over: Partial<RunMeta> = {}): RunMeta {

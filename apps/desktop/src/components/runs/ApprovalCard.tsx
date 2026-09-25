@@ -12,9 +12,8 @@ import { Textarea } from '@/ui/textarea';
 
 interface ApprovalCardProps {
   toolName: string;
-  /** The pending tool call's input, when this window saw the `approval.requested` WS event
-   * and could still find the matching log entry — see RunLogView's doc comment on
-   * `pendingApproval` for why this can legitimately be `null` (e.g. after a reload). */
+  /** The pending tool call's input: the gate's preview, else the matching log entry's input.
+   * Can be `null` when neither carried one. */
   toolInput: unknown;
   /** When the run went into `awaiting-approval`, so the header can say how long it has been
    * stuck. A frozen run looks identical to a busy one without it. */

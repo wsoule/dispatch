@@ -1,7 +1,8 @@
-import type { RepoPr, RunMeta, RunQuestion } from '@dispatch/client';
+import type { RepoPr, RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
+import type { RunQuestion } from './gates';
 import type { InboxEntry } from './inbox';
 import type { InboxData, InboxInput } from './inboxQueue';
 import {

@@ -3,7 +3,6 @@ import type {
   MergeQueueSnapshot,
   RepoPr,
   RunMeta,
-  RunQuestion,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 
@@ -12,6 +11,7 @@ import type { FeedRowModel } from './controlRoom';
 import { buildFeed } from './controlRoom';
 import type { FeedState } from './feedState';
 import { FEED_STATE_LABEL, isUrgentState } from './feedState';
+import type { RunQuestion } from './gates';
 import type { InboxEntry } from './inbox';
 import { parseTaskSections } from './taskDisplay';
 

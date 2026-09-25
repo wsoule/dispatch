@@ -20,8 +20,8 @@ interface ScopeRequestCardProps {
 const DENY_ID = 'deny';
 const GRANT_ID = 'grant';
 
-/** An agent parked on permission to edit outside its declared fence — grant
- *  or deny, no ruling text required (this only gates one tool call). Built on the
+/** An agent's scope gate: it waits on permission to edit outside its declared fence — grant
+ *  or deny, no ruling text required (a grant is advisory and logged). Built on the
  *  `ui/ai/approval-card` primitive for the question/options chrome; the affected paths and the
  *  daemon-unavailable notice render as their own blocks below since the primitive has no slot
  *  for either. */

@@ -24,7 +24,7 @@ interface NotificationsSectionProps {
 const KIND_INFO: Record<NotificationKind, { label: string; hint: string }> = {
   question: {
     label: 'An agent asks you a question',
-    hint: 'The run waits until you answer.',
+    hint: 'The agent waits until you answer.',
   },
   approval: {
     label: 'An agent needs permission',

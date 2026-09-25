@@ -2,6 +2,8 @@ import type { RunMeta } from '@dispatch/client';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
+import type { DecideAvailability } from '../../lib/daemonAuth';
+import { ATTACHED_DAEMON_EXPLANATION } from '../../lib/daemonAuth';
 import { CONTINUE_PROMPT } from '../../lib/runState';
 import { RunLogView } from './RunLogView';
 
@@ -25,9 +27,17 @@ function meta(over: Partial<RunMeta> = {}): RunMeta {
   } as RunMeta;
 }
 
+const CAN_DECIDE: DecideAvailability = {
+  enabled: true,
+  notice: null,
+  explanation: null,
+  restart: null,
+};
+
 function renderLog(
   runMeta: RunMeta,
-  onRequestChanges: (text: string) => Promise<void> = noop
+  onRequestChanges: (text: string) => Promise<void> = noop,
+  scopeDecide: DecideAvailability = CAN_DECIDE
 ) {
   return render(
     <RunLogView
@@ -40,17 +50,30 @@ function renderLog(
       onAnswerQuestion={noop}
       pendingScopeRequest={null}
       onDecideScopeRequest={noop}
-      scopeDecide={{
-        enabled: true,
-        notice: null,
-        explanation: null,
-        restart: null,
-      }}
+      scopeDecide={scopeDecide}
       onRestartDaemon={noop}
       onRequestChanges={onRequestChanges}
     />
   );
 }
+
+// A window that cannot decide cannot read open gates either, so a parked run
+// shows why rather than claiming the approval was missed.
+test('a parked run with no approval in view says why the window cannot see it', () => {
+  renderLog(meta({ state: 'awaiting-approval' }), noop, {
+    enabled: false,
+    notice: 'Restart daemon to enable approvals',
+    explanation: ATTACHED_DAEMON_EXPLANATION,
+    restart: { safe: true, blockedReason: null },
+  });
+  expect(screen.getByText(ATTACHED_DAEMON_EXPLANATION)).toBeDefined();
+  expect(screen.queryByText(/didn.t see live/)).toBeNull();
+});
+
+test('a deciding window keeps the not-seen-live banner', () => {
+  renderLog(meta({ state: 'awaiting-approval' }));
+  expect(screen.getByText(/didn.t see live/)).toBeDefined();
+});
 
 // A run cut off with its session intact is the case the button exists for.
 test('offers Continue on a run that stopped short', () => {

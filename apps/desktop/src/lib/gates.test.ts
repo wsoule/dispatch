@@ -1,0 +1,240 @@
+import type { Message } from '@dispatch/client';
+import { describe, expect, it } from 'bun:test';
+
+import {
+  approvalReply,
+  findToolApprovalGate,
+  foldsIntoOpenApproval,
+  gateNotification,
+  questionsByRun,
+  runIdOf,
+  scopeRequestIdsByRun,
+  toRunQuestion,
+  toScopeRequest,
+} from './gates';
+import { isKindEnabled } from './notificationEdges';
+import { pendingApprovalsFromGates } from './pendingApprovals';
+
+function msg(id: string, over: Partial<Message>): Message {
+  return {
+    id,
+    thread: id,
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'q',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
+}
+const approval = msg('m-a', {
+  choices: ['approve', 'approve-session', 'deny'],
+  data: {
+    type: 'tool-approval',
+    requestId: 'req-1',
+    runId: 'r-1',
+    tool: 'Bash',
+    input: { command: 'ls' },
+  },
+});
+const scope = msg('m-s', {
+  from: 'run:r-1',
+  choices: ['grant', 'deny'],
+  data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
+});
+const question = msg('m-q', {
+  from: 'run:r-1',
+  body: 'Which cart?',
+  choices: ['old', 'new'],
+});
+const wake = msg('m-w', {
+  choices: ['approve', 'deny'],
+  body: 'run:r-2 wants to wake task:t-2',
+  data: { type: 'wake', target: 'task:t-2', message: 'm-x' },
+});
+const overseer = msg('m-o', {
+  choices: ['confirm', 'cancel'],
+  data: {
+    type: 'overseer-action',
+    conversation: 'wc-1',
+    actionId: 'a-1',
+    summary: 'Dispatch t-1',
+  },
+});
+const ALL_ON = {
+  approval: true,
+  'scope-request': true,
+  question: true,
+  'fix-loop-capped': true,
+  'run-stalled': true,
+};
+
+describe('gate adapters', () => {
+  it('turns each gate into the shape its card takes, and nothing else', () => {
+    expect(toRunQuestion(question)).toEqual({
+      id: 'm-q',
+      runId: 'r-1',
+      question: 'Which cart?',
+      options: ['old', 'new'],
+      askedAt: question.createdAt,
+      answer: null,
+      answeredAt: null,
+    });
+    expect(toRunQuestion(scope)).toBeNull();
+    expect(toScopeRequest(scope)).toMatchObject({
+      id: 'm-s',
+      runId: 'r-1',
+      paths: ['a.ts'],
+      reason: 'needed',
+      granted: null,
+    });
+    expect(toScopeRequest(question)).toBeNull();
+    expect(
+      questionsByRun([approval, scope, question])
+        .get('r-1')
+        ?.map((q) => q.id)
+    ).toEqual(['m-q']);
+    expect(scopeRequestIdsByRun([scope]).get('r-1')).toEqual({
+      requestId: 'm-s',
+    });
+    expect(findToolApprovalGate([approval], 'r-1', 'req-1')?.id).toBe('m-a');
+    expect(findToolApprovalGate([approval], 'r-1', 'req-2')).toBeNull();
+  });
+
+  it('keeps only awaiting-approval runs once runs have loaded', () => {
+    expect(pendingApprovalsFromGates([approval], undefined).get('r-1')).toEqual(
+      { requestId: 'req-1', toolName: 'Bash', input: { command: 'ls' } }
+    );
+    expect(
+      pendingApprovalsFromGates(
+        [approval],
+        [{ id: 'r-1', state: 'running' } as never]
+      ).size
+    ).toBe(0);
+  });
+
+  it('maps card decisions onto gate choices', () => {
+    expect(approvalReply(true)).toEqual({ body: '', choice: 'approve' });
+    expect(approvalReply(true, { scope: 'session' })).toEqual({
+      body: '',
+      choice: 'approve-session',
+    });
+    expect(approvalReply(false, { reason: 'no' })).toEqual({
+      body: 'no',
+      choice: 'deny',
+    });
+  });
+
+  it('names the run a message came from or is about', () => {
+    expect(runIdOf(question)).toBe('r-1');
+    expect(runIdOf(approval)).toBe('r-1');
+    expect(runIdOf(wake)).toBeNull();
+    expect(runIdOf(msg('m-t', { from: 'task:t-1' }))).toBeNull();
+  });
+
+  it('a question from an agent that is not a run has no run card', () => {
+    expect(toRunQuestion(msg('m-g', { from: 'agent:wyat/codex' }))).toBeNull();
+    expect(toScopeRequest({ ...scope, from: 'agent:wyat/codex' })).toBeNull();
+  });
+
+  it('keeps the newest scope request per run', () => {
+    const later = {
+      ...scope,
+      id: 'm-s2',
+      createdAt: '2026-09-25T10:05:00.000Z',
+    };
+    expect(scopeRequestIdsByRun([later, scope]).get('r-1')).toEqual({
+      requestId: 'm-s2',
+    });
+  });
+});
+
+describe('gateNotification', () => {
+  it('notifies a tool approval as today, under the approval toggle', () => {
+    expect(gateNotification(approval, () => 'Checkout')).toEqual({
+      title: 'Approval needed',
+      body: 'Bash · Checkout',
+      kind: 'approval',
+    });
+  });
+  it('a wake gate notifies under approval, so switching approval off silences it', () => {
+    const note = gateNotification(wake, () => undefined);
+    expect(note?.kind).toBe('approval');
+    expect(isKindEnabled({ ...ALL_ON, approval: false }, note?.kind)).toBe(
+      false
+    );
+  });
+  it('leaves run questions to the edge detector and overseer gates to the chat', () => {
+    expect(gateNotification(question, () => 'Checkout')).toBeNull();
+    expect(gateNotification(overseer, () => undefined)).toBeNull();
+    expect(
+      gateNotification(
+        { ...question, kind: 'answer', blocking: false },
+        () => undefined
+      )
+    ).toBeNull();
+  });
+  it('titles a scope gate with its task and an agent question with its first line', () => {
+    expect(gateNotification(scope, () => 'Checkout')).toEqual({
+      title: 'An agent needs scope approval',
+      body: 'Checkout',
+      kind: 'scope-request',
+    });
+    expect(
+      gateNotification(
+        msg('m-g', { from: 'agent:wyat/codex', body: 'Ship it?\nDetails' }),
+        () => undefined
+      )
+    ).toEqual({
+      title: 'An agent has a question',
+      body: 'Ship it?',
+      kind: 'question',
+    });
+  });
+  it('stays quiet for a gate no human is asked, and for an overseer tool approval', () => {
+    expect(
+      gateNotification({ ...approval, to: ['agent:wyat/codex'] }, () => 'x')
+    ).toBeNull();
+    const chatApproval = msg('m-c', {
+      choices: ['approve', 'approve-session', 'deny'],
+      data: {
+        type: 'tool-approval',
+        requestId: 'req-9',
+        conversation: 'wc-1',
+        tool: 'Bash',
+        input: {},
+      },
+    });
+    expect(gateNotification(chatApproval, () => undefined)).toBeNull();
+  });
+});
+
+describe('foldsIntoOpenApproval', () => {
+  it("folds a run's next tool approval into the one it is already waiting on", () => {
+    const second = msg('m-a2', {
+      choices: ['approve', 'approve-session', 'deny'],
+      data: {
+        type: 'tool-approval',
+        requestId: 'req-2',
+        runId: 'r-1',
+        tool: 'Edit',
+        input: {},
+      },
+    });
+    expect(foldsIntoOpenApproval(second, [approval])).toBe(true);
+    // The gate itself, already in the cache, is not a second one.
+    expect(foldsIntoOpenApproval(approval, [approval])).toBe(false);
+    expect(
+      foldsIntoOpenApproval(
+        { ...second, data: { ...(second.data as object), runId: 'r-2' } },
+        [approval]
+      )
+    ).toBe(false);
+    expect(foldsIntoOpenApproval(wake, [approval])).toBe(false);
+  });
+});

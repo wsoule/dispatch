@@ -37,19 +37,22 @@ export interface DaemonAuth {
   token: string | undefined;
   /** True only with an app token — the daemon 403s decide routes otherwise. */
   canDecide: boolean;
+  /** False for the shared agent token or no credential, which messaging refuses. */
+  canMessage: boolean;
 }
 
 /** Shown wherever a decide-tier action is unavailable. */
 export const RESTART_FOR_APPROVALS = 'Restart daemon to enable approvals';
 
-/**
- * Why approvals are off, in one sentence: this window attached to a daemon it
- * did not start, so it never saw the app token that daemon printed once at
- * startup. Covers every decide-tier gate — a run's tool approval as much as a
- * scope request — since the daemon holds all of them to the same token.
- */
+/** Why approvals are off: this window never saw the app token of a daemon it did
+ *  not start, and open gates are listed to deciding humans only. */
 export const ATTACHED_DAEMON_EXPLANATION =
-  "This window didn't start the daemon, so it can't approve tool calls or scope requests. Use the app token the daemon printed at startup.";
+  "This window didn't start the daemon, so it can't see or answer tool approvals, scope requests or agent questions. Use the app token the daemon printed at startup.";
+
+/** Why sending is off: messaging refuses the shared agent token this window
+ *  fell back to. */
+export const ATTACHED_DAEMON_MESSAGING_EXPLANATION =
+  "This window didn't start the daemon, so it can't send messages to runs or tasks. Use the app token the daemon printed at startup.";
 
 /**
  * Picks the credential to send. The app token grants request tier as well as
@@ -59,22 +62,26 @@ export const ATTACHED_DAEMON_EXPLANATION =
 export function resolveDaemonAuth(
   connection: DaemonConnection | undefined
 ): DaemonAuth {
-  if (connection === undefined) return { token: undefined, canDecide: false };
+  if (connection === undefined) {
+    return { token: undefined, canDecide: false, canMessage: false };
+  }
   // A cookie-authenticated teammate: no token to present, since the browser
-  // attaches the cookie itself.
+  // attaches the cookie itself. Every tier is a human principal, so it sends.
   if (connection.session !== undefined) {
     return {
       token: undefined,
       canDecide: connection.session.tier !== 'request',
+      canMessage: true,
     };
   }
   if (connection.appToken !== null && connection.appToken !== '') {
-    return { token: connection.appToken, canDecide: true };
+    return { token: connection.appToken, canDecide: true, canMessage: true };
   }
   const agentToken = connection.agentToken;
   return {
     token: agentToken !== null && agentToken !== '' ? agentToken : undefined,
     canDecide: false,
+    canMessage: false,
   };
 }
 
@@ -107,6 +114,12 @@ export function credentialTier(
  */
 export function assertCanDecide(auth: DaemonAuth): void {
   if (!auth.canDecide) throw new Error(ATTACHED_DAEMON_EXPLANATION);
+}
+
+/** The same backstop for sends and wakes, which messaging refuses only to the
+ *  shared agent token. */
+export function assertCanMessage(auth: DaemonAuth): void {
+  if (!auth.canMessage) throw new Error(ATTACHED_DAEMON_MESSAGING_EXPLANATION);
 }
 
 /**
