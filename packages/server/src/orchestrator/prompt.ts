@@ -47,7 +47,9 @@ export function buildTaskPrompt(
   orientation: RepoOrientation | null = null,
   // False for executors with no dispatch MCP server (ExecutorProfile.dispatchMcp):
   // their prompt must not send the agent after tools it does not have.
-  dispatchTools = true
+  dispatchTools = true,
+  // The address the agent asks (the project owner); null names a placeholder.
+  human: string | null = null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -115,16 +117,22 @@ export function buildTaskPrompt(
             'open with `run_list`.'
     );
 
+    const askWho = human ?? 'human:<owner handle>';
     sections.push(
       'When the task genuinely does not say which way to go — ambiguous ' +
         'requirements, several valid approaches with different end results, ' +
-        'missing acceptance criteria — call `ask_user`; it blocks until the ' +
-        'human answers and returns their reply. Use it whenever a decision ' +
-        'would change the shape of the result and the task does not specify ' +
-        'it, and bundle everything you are unsure about into one call rather ' +
-        'than asking repeatedly. Do not use it for anything you can settle by ' +
-        'reading the repo (existing conventions, how a helper behaves, where ' +
-        'a file lives) — find that out yourself.'
+        'missing acceptance criteria — ask with `msg_send` ' +
+        `(to: ["${askWho}"], kind: "question", blocking: true, plus ` +
+        'choices when the answer is one of a few options); it blocks until ' +
+        'the human answers and returns their reply. Bundle everything you ' +
+        'are unsure about into one question, and never ask what you can ' +
+        'settle by reading the repo. To edit outside your declared writes, ' +
+        'ask first with msg_send(kind: "question", blocking: true, ' +
+        'choices: ["grant", "deny"], data: { type: "scope", paths: [...], ' +
+        'reason: "..." }) and edit only on "grant". Messages for you arrive ' +
+        'in this session; answer a question with `msg_reply`, and ' +
+        '`inbox_read` lists anything you missed. A message to another task ' +
+        "waits for that task's next run."
     );
 
     sections.push(

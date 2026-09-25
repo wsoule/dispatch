@@ -15,7 +15,7 @@ import { daemonFilePath } from '../src/daemon.js';
 import { agentName, agentTokenFilePath } from '../src/identity.js';
 import { createDispatchMcpServer } from '../src/index.js';
 import type { MessageBlockingTiming } from '../src/index.js';
-import { withBearer } from '../src/messaging.js';
+import { SCOPE_EXPIRED_NOTE, withBearer } from '../src/messaging.js';
 
 // Polls are paced by retryDelayMs; requestTimeoutMs stays generous so a slow
 // host never turns a same-process 4xx into a spurious retry.
@@ -670,6 +670,35 @@ describe('msg_send (blocking)', () => {
     );
     expect(result.structuredContent?.message).toBeTruthy();
     expect(daemon.answerPolls).toBeGreaterThan(1);
+  });
+
+  // The daemon denies an undecided scope gate before this budget runs out;
+  // reaching it means the daemon never answered, so the agent reads a denial.
+  it('tells a scope request that timed out to treat it as denied', async () => {
+    daemon = new FakeDaemon();
+    daemon.answerAfterPolls = Number.MAX_SAFE_INTEGER;
+    writeFakeDaemonFile(daemon.start());
+    const client = await connectClient(root);
+
+    const result = (await client.callTool(
+      {
+        name: 'msg_send',
+        arguments: {
+          to: ['human:wyat'],
+          kind: 'question',
+          body: 'need the shared barrel',
+          blocking: true,
+          choices: ['grant', 'deny'],
+          data: { type: 'scope', paths: ['src/index.ts'], reason: 'export' },
+        },
+      },
+      undefined,
+      { timeout: 10_000 }
+    )) as ToolCallResult;
+
+    expect(result.isError).toBeUndefined();
+    expect(result.structuredContent?.answer).toBeNull();
+    expect(result.structuredContent?.note).toBe(SCOPE_EXPIRED_NOTE);
   });
 
   it('stops polling immediately on a non-retryable 4xx instead of riding out the budget', async () => {

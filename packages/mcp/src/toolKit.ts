@@ -40,46 +40,6 @@ export function pollSignal(
   return signal === undefined ? timeout : AbortSignal.any([timeout, signal]);
 }
 
-/** How long `ask_user` waits, and how hard it polls while waiting. */
-export interface QuestionTiming {
-  /** Total budget across every poll before giving up on an answer. */
-  totalWaitMs: number;
-  /** Per-request timeout; longer than the daemon's own 30s poll window. */
-  requestTimeoutMs: number;
-  /** Pause after a clean unanswered poll, and after a failed one. */
-  retryDelayMs: number;
-  errorDelayMs: number;
-}
-
-// The MCP client aborts a tool call at its own tool timeout, so the executor
-// sets that ceiling above `totalWaitMs` for this server — see claude.ts.
-export const DEFAULT_QUESTION_TIMING: QuestionTiming = {
-  totalWaitMs: 30 * 60_000,
-  requestTimeoutMs: 45_000,
-  retryDelayMs: 250,
-  errorDelayMs: 2000,
-};
-
-/** How long `request_scope` waits, and how hard it polls while waiting. */
-export interface ScopeTiming {
-  /** Total budget across every poll before self-denying. */
-  totalWaitMs: number;
-  /** Per-request timeout; longer than the daemon's own 30s poll window. */
-  requestTimeoutMs: number;
-  /** Pause after a clean undecided poll, and after a failed one. */
-  retryDelayMs: number;
-  errorDelayMs: number;
-}
-
-// Same numbers as DEFAULT_QUESTION_TIMING, and the same reasoning: the
-// executor's MCP client timeout sits above totalWaitMs (see claude.ts).
-export const DEFAULT_SCOPE_TIMING: ScopeTiming = {
-  totalWaitMs: 30 * 60_000,
-  requestTimeoutMs: 45_000,
-  retryDelayMs: 250,
-  errorDelayMs: 2000,
-};
-
 /** How long `msg_send` waits for a blocking answer, and how hard it polls. */
 export interface MessageBlockingTiming {
   /** Total budget when any recipient is a human. */
@@ -94,8 +54,8 @@ export interface MessageBlockingTiming {
   errorDelayMs: number;
 }
 
-// Human and polling numbers match DEFAULT_QUESTION_TIMING; the agent fallback
-// matches core's DEFAULT_MESSAGING.agentBlockingTimeoutSec (600s).
+// The executor sets the MCP client's tool timeout above `humanTotalWaitMs` (see
+// dispatchMcp.ts); the agent fallback matches DEFAULT_MESSAGING's 600s.
 export const DEFAULT_MESSAGE_BLOCKING_TIMING: MessageBlockingTiming = {
   humanTotalWaitMs: 30 * 60_000,
   defaultAgentTotalWaitMs: 600_000,

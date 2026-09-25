@@ -14,9 +14,9 @@ import type { RunUsage } from './usage.js';
 // human-to-agent or agent-to-agent chat turn that carries `from`/`fromLabel`
 // so the transcript/UI can tell who's talking, instead of the undifferentiated
 // `system` "user: ..." notes this used to be recorded as. `from: 'user'` is
-// the run's own human via the Session composer; `from: 'agent'` is either
-// another live run's `agent_message` (sender identified via `fromLabel`) or
-// this run's own `message_user` call flagging something to the human.
+// the run's own human via the Session composer; `from: 'agent'` is either a
+// message from another sender (named by `fromLabel`) or one this run sent to a
+// human.
 export interface NormalizedEntry {
   ts: string;
   kind:
@@ -51,7 +51,7 @@ export interface NormalizedEntry {
   // (the app renders that as "You" unconditionally).
   fromLabel?: string;
   // Distinguishes the two `from: 'agent'` directions, which are otherwise
-  // shaped identically. `true` marks this run's own `message_user` call —
+  // shaped identically. `true` marks a message this run sent to a human —
   // the agent flagging something UP to the human — so the app can badge it
   // as "To you" rather than rendering it like an inbound message from
   // another agent (`inject`, where `toUser` is absent and `fromLabel` names
@@ -180,9 +180,9 @@ export interface ExecutorStartOptions {
   projectRoot?: string;
   // This run's own id — ClaudeExecutor passes it through as `DISPATCH_RUN_ID`
   // in the dispatch MCP server's env (see claude.ts's
-  // buildDispatchMcpServerConfig) so `agent_message`/`message_user` know
-  // whose identity to attach to a message without the calling agent having
-  // to know or supply its own run id. Optional for the same reason
+  // buildDispatchMcpServerConfig) so the tools that record the calling run
+  // know which run it is without the calling agent having to know or supply
+  // its own run id. Optional for the same reason
   // `projectRoot` is: FakeExecutor fixtures that never touch messaging don't
   // need to pass it; every real Orchestrator call site always does.
   runId?: string;

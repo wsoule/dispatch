@@ -8,8 +8,8 @@
 // every signature is an unlock prompt for a window nobody has open.
 //
 // The daemon counts as idle only when BOTH hold for `timeoutMs`:
-//  - no HTTP request started or finished, and none is still in flight (the
-//    ask_user/request_scope long-polls stay in flight for their whole wait);
+//  - no HTTP request started or finished, and none is still in flight (a
+//    blocking msg_send long-polls for its answer for its whole wait);
 //  - `isBusy()` stayed false — the caller's list of long-lived work
 //    (connected sockets, live runs, a non-empty merge queue, open terminals).
 //

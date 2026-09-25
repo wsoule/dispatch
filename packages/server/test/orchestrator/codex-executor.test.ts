@@ -485,6 +485,25 @@ describe('CodexExecutor', () => {
       .map(([name]) => name)
       .sort();
     expect(approved).toEqual(registered);
+    expect(approved).toEqual(
+      expect.arrayContaining([
+        'msg_send',
+        'msg_reply',
+        'inbox_read',
+        'thread_read',
+        'channel_join',
+        'channel_leave',
+        'channel_list',
+      ])
+    );
+    for (const retired of [
+      'ask_user',
+      'request_scope',
+      'agent_message',
+      'message_user',
+    ]) {
+      expect(approved).not.toContain(retired);
+    }
     await harness.run.interrupt();
   }, 20_000);
 

@@ -18,6 +18,7 @@ import {
   buildCartoMcpServerConfig,
   cartoMcpServers,
   ClaudeExecutor,
+  MESSAGING_TOOLS,
   STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
@@ -255,11 +256,8 @@ describe('ClaudeExecutor dispatch MCP server wiring', () => {
     expect(dispatch?.env?.DISPATCH_HOME).toBe('/tmp/dispatch-home-under-test');
   });
 
-  // agent-comms: `agent_message`/`message_user` (packages/mcp/src/tools.ts)
-  // read DISPATCH_RUN_ID back out of their own process env to identify the
-  // calling run as a message's sender without it having to know its own run
-  // id ahead of time — this proves the executor actually wires that env var
-  // through to the spawned MCP server.
+  // The dispatch MCP tools that record the calling run read DISPATCH_RUN_ID
+  // from their own env; this proves the executor wires it to the MCP server.
   it('wires DISPATCH_RUN_ID to the run id passed in ExecutorStartOptions', () => {
     let captured: Options | undefined;
     const fakeQueryFn = (args: { options?: Options }) => {
@@ -820,7 +818,7 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       'ExitWorktree',
     ]);
     // Dispatch's own question channel is the one that reaches the human.
-    expect(captured?.disallowedTools).not.toContain('mcp__dispatch__ask_user');
+    expect(captured?.disallowedTools).not.toContain('mcp__dispatch__msg_send');
   });
 });
 
@@ -927,6 +925,42 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
       behavior: 'allow',
       updatedInput: { file_path: 'x.txt' },
     });
+    expect(approvalRequested).toBe(false);
+  });
+
+  it("auto-allows every messaging tool under 'acceptEdits'", async () => {
+    let captured: Options | undefined;
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    });
+    let approvalRequested = false;
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'go',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: () => {
+          approvalRequested = true;
+        },
+        onFinish: () => {},
+      }
+    );
+    for (const tool of MESSAGING_TOOLS) {
+      const result = await captured?.canUseTool?.(
+        tool,
+        { to: ['human:wyat'] },
+        fakeCanUseToolOptions(`req-${tool}`)
+      );
+      expect(result).toEqual({
+        behavior: 'allow',
+        updatedInput: { to: ['human:wyat'] },
+      });
+    }
     expect(approvalRequested).toBe(false);
   });
 });

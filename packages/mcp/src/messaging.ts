@@ -292,6 +292,22 @@ function answerCopyNote(kind: MessagingCredential['kind']): string {
         'it twice';
 }
 
+// A scope request's timeout note. The daemon denies an undecided scope gate
+// before this wait ends, so reaching it means the daemon could not answer.
+export const SCOPE_EXPIRED_NOTE =
+  'No one decided in time. Treat this as denied: proceed within your ' +
+  'original fence, and report the blocker in your final summary and in a ' +
+  'task_comment.';
+
+// True for a scope request's gate payload (`data: { type: 'scope', … }`).
+function isScopeData(data: unknown): boolean {
+  return (
+    typeof data === 'object' &&
+    data !== null &&
+    (data as { type?: unknown }).type === 'scope'
+  );
+}
+
 // POST /api/messages, then (when `blocking`) long-polls for its answer.
 async function msgSend(
   rootDir: string,
@@ -344,7 +360,9 @@ async function msgSend(
     return toolResult({
       message: result.message,
       answer: null,
-      note: 'no answer yet — it will arrive in your inbox',
+      note: isScopeData(args.data)
+        ? SCOPE_EXPIRED_NOTE
+        : 'no answer yet — it will arrive in your inbox',
     });
   }
   return toolResult({
@@ -569,14 +587,26 @@ export function registerMessagingTools(
         'Send a message on the agent-communication bus. ' +
         ADDRESS_GRAMMAR +
         ' `kind` is message|question|answer|handoff|notice or a custom ' +
-        '`x-<slug>`. Set `blocking: true` on a `question` (with `choices`) ' +
-        'to wait for an answer: a human recipient gets up to 30 minutes, an ' +
-        "agent recipient gets this project's configured " +
-        'agentBlockingTimeoutSec (10 minutes by default). If nobody answers ' +
-        'in time this returns `answer: null` — the question stays open in ' +
-        'your inbox. Inside a dispatch run, any answer this call DOES ' +
-        'receive is also pushed to your session; outside one it also waits ' +
-        'in your inbox. Do not act on it twice.',
+        '`x-<slug>`. A `notice` or `message` does not wait and returns no ' +
+        'reply; use it for a blocker or a notable update. When a decision ' +
+        'would change the shape of the result and the task does not specify ' +
+        'it, send a `question` with `blocking: true` instead: bundle ' +
+        'everything you are unsure about into one question, never ask what ' +
+        'you can settle by reading the repo, and pass `choices` for the ' +
+        'answers you consider likely (the answer may still be free text). A ' +
+        'human recipient gets up to 30 minutes to answer, an agent recipient ' +
+        "this project's configured agentBlockingTimeoutSec (10 minutes by " +
+        'default). If nobody answers in time this returns `answer: null`: ' +
+        'proceed on your best judgement and note the assumption; the ' +
+        'question stays open, and a late answer still reaches you. Inside a ' +
+        'dispatch run, any answer this call DOES receive is also pushed to ' +
+        'your session; outside one it also waits in your inbox. Do not act ' +
+        'on it twice. To edit outside your declared writes, send kind ' +
+        '"question", blocking true, choices ["grant","deny"], data { type: ' +
+        '"scope", paths, reason } to your human; no decision in time (29 ' +
+        'minutes) means denied. Your human: inside a run, the address in ' +
+        'your task prompt; otherwise human:<handle> from your own ' +
+        'agent:<handle>/<name>.',
       inputSchema: {
         to: z.array(z.string()).min(1),
         kind: MESSAGE_KIND_SCHEMA,

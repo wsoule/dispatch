@@ -335,7 +335,7 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
  *
  * - `approval`        a run is parked on a permission gate.
  * - `scope-request`   an agent asked to edit outside its declared writes.
- * - `question`        an agent called `ask_user` and is blocked on the answer.
+ * - `question`        an agent is blocked on a question it asked.
  * - `fix-loop-capped` a review/fix loop exhausted its rounds and wants a ruling.
  * - `run-stalled`     a run failed or dead-ended and nobody has dealt with it.
  */

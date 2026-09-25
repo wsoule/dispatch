@@ -116,8 +116,24 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic());
     expect(prompt).toContain('run_list');
     expect(prompt).toContain('task_comment');
-    expect(prompt).toContain('ask_user');
+    expect(prompt).toContain('msg_send');
     expect(prompt).toContain('Commit your work');
+  });
+
+  it('names the messaging tools and the human to ask', () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      [],
+      null,
+      true,
+      'human:wyat'
+    );
+    expect(prompt).toContain('msg_send');
+    expect(prompt).toContain('"human:wyat"');
+    expect(prompt).toContain('choices: ["grant", "deny"]');
+    expect(prompt).not.toContain('ask_user');
+    expect(prompt).not.toContain('request_scope');
   });
 
   it('tells implementers to record evidence and mutation-test guards', () => {
@@ -205,7 +221,7 @@ describe('buildTaskPrompt', () => {
     for (const tool of [
       'run_list',
       'task_comment',
-      'ask_user',
+      'msg_send',
       'record_evidence',
       'record_mutation',
     ]) {

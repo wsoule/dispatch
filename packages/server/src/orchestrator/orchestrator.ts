@@ -5162,7 +5162,8 @@ export class Orchestrator {
       parentEpic,
       ledgerEntries,
       this.orientationFor(task.meta.id),
-      this.executorProfile(executorName).dispatchMcp !== false
+      this.executorProfile(executorName).dispatchMcp !== false,
+      this.ctx.actorContext?.humanRef ?? null
     );
   }
 

@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { ActorContext, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   appendFileSync,
@@ -2468,6 +2468,31 @@ describe('Orchestrator per-run caps and prompt assembly', () => {
     expect(executor.lastOpts?.prompt).toContain('Add login rate limiting');
     expect(executor.lastOpts?.prompt).toContain('Harden auth');
     expect(executor.lastOpts?.prompt).toContain('resistant to abuse');
+  });
+
+  it("names the project owner's address as the human to ask", async () => {
+    const store = TaskStore.init(repo);
+    const cache = new TaskCache();
+    cache.rebuild(store);
+    const orchestrator = new Orchestrator({
+      rootDir: repo,
+      store,
+      cache,
+      events: new EventBus(),
+      actorContext: ActorContext.resolve(repo, (args) =>
+        args.includes('user.email') ? 'wyat@example.com' : 'Wyat'
+      ),
+    });
+    const executor = new CapturingExecutor();
+    orchestrator.registerExecutor('fake', executor);
+    const task = store.create({ title: 'Ask the owner' });
+
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+
+    expect(executor.lastOpts?.prompt).toContain('to: ["human:wyat"]');
   });
 
   it('hands the agent the repo orientation instead of instructions to go find it', async () => {

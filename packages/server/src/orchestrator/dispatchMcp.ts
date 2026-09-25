@@ -36,8 +36,8 @@ const MCP_ENV_PASSTHROUGH: readonly string[] = [
   'DISPATCH_HOME',
 ];
 
-// Per-call ceiling on dispatch's own MCP tools. Must stay above `ask_user`'s
-// 30-minute wait budget or it cuts that tool call off.
+// Per-call ceiling on dispatch's own MCP tools. Must stay above msg_send's
+// 30-minute blocking wait for a human, or it cuts that call off.
 export const DISPATCH_MCP_TOOL_TIMEOUT_MS = 31 * 60_000;
 
 // Locates the dispatch MCP server's stdio entry point via module resolution
@@ -55,7 +55,7 @@ function resolveMcpBin(): string {
 // via `--root` so task_* tools read the checkout the agent edits;
 // `DISPATCH_PROJECT_ROOT` names the project so daemon discovery and
 // task_comment target the real daemon file and `.dispatch/tasks`;
-// `DISPATCH_RUN_ID` lets agent_message/message_user identify the sender.
+// `DISPATCH_RUN_ID` names the calling run to the tools that record it.
 // `DISPATCH_MCP_BIN` (set by the packaged desktop app) points at the compiled
 // MCP binary so a release needs neither `bun` nor the monorepo checkout.
 export function dispatchMcpSpec(

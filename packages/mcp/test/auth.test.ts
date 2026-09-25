@@ -15,24 +15,12 @@ import { dirname, join } from 'node:path';
 
 import { daemonFilePath } from '../src/daemon.js';
 import { createDispatchMcpServer } from '../src/index.js';
-import type { ScopeTiming } from '../src/index.js';
 
 const AGENT_TOKEN = 'agent-token-from-the-daemon-file';
 const APP_TOKEN = 'app-token-mcp-must-never-reach';
 
-// Milliseconds instead of the production minutes, so the scope loop reaches
-// its expiry path in test time.
-const FAST_SCOPE_TIMING: ScopeTiming = {
-  totalWaitMs: 300,
-  requestTimeoutMs: 200,
-  retryDelayMs: 10,
-  errorDelayMs: 10,
-};
-
 async function connectClient(rootDir: string): Promise<Client> {
-  const server = createDispatchMcpServer(rootDir, {
-    scopeTiming: FAST_SCOPE_TIMING,
-  });
+  const server = createDispatchMcpServer(rootDir);
   const client = new Client({ name: 'test-client', version: '1.0' });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
@@ -70,29 +58,11 @@ class FakeDaemon {
             { status: 401 }
           );
         }
-        if (url.pathname.endsWith('/decide')) {
-          return Response.json(
-            { error: 'needs the app token', code: 'auth_insufficient_tier' },
-            { status: 403 }
-          );
-        }
         if (url.pathname === '/api/runs') return Response.json([]);
         if (url.pathname === '/api/inbox') {
           return Response.json([{ id: 'i-1' }], { status: 201 });
         }
-        if (url.pathname.endsWith('/scope-requests')) {
-          return Response.json({
-            id: 'sr-1',
-            granted: null,
-            decisionReason: null,
-          });
-        }
-        // A scope-request read-back: still undecided.
-        return Response.json({
-          id: 'sr-1',
-          granted: null,
-          decisionReason: null,
-        });
+        return Response.json({ error: 'not found' }, { status: 404 });
       },
     });
     return this.server.port ?? 0;
@@ -212,19 +182,4 @@ describe('no path from this package to an app token', () => {
     );
     expect(offenders).toEqual([]);
   });
-});
-
-describe('an expired scope request', () => {
-  it('denies locally when the daemon refuses its self-denial', async () => {
-    process.env.DISPATCH_RUN_ID = 'r-self1';
-    const client = await connectClient(root);
-    const result = (await client.callTool({
-      name: 'request_scope',
-      arguments: { paths: ['src/a.ts'], reason: 'needed for the fix' },
-    })) as ToolCallResult;
-    // The daemon refused to record the denial; the agent is still denied.
-    expect(result.structuredContent?.granted).toBe(false);
-    const decide = daemon.seen.find((r) => r.path.endsWith('/decide'));
-    expect(decide?.auth).toBe(`Bearer ${AGENT_TOKEN}`);
-  }, 20_000);
 });

@@ -91,9 +91,19 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
   'NotebookEdit',
 ]);
 
-// Auto-allowed alongside the edit tools under `acceptEdits`: gating it would
-// make the user approve a tool call before being shown the question it asks.
-const ASK_USER_TOOL = 'mcp__dispatch__ask_user';
+// Auto-allowed with the edit tools under `acceptEdits`: gating them would make
+// the user approve a question before seeing it.
+export const MESSAGING_TOOLS: ReadonlySet<string> = new Set(
+  [
+    'msg_send',
+    'msg_reply',
+    'inbox_read',
+    'thread_read',
+    'channel_join',
+    'channel_leave',
+    'channel_list',
+  ].map((tool) => `mcp__dispatch__${tool}`)
+);
 
 // Claude Code tools that cannot do their job inside a dispatched run, removed
 // from the agent's tool list. Each was exercised through this executor
@@ -102,7 +112,7 @@ const ASK_USER_TOOL = 'mcp__dispatch__ask_user';
 // - AskUserQuestion: the answers come from the CLI's interactive picker,
 //   which a dispatched run does not have; even after a human approves the
 //   call, the agent is told "The user did not answer the questions."
-//   `mcp__dispatch__ask_user` is the channel that reaches the human.
+//   `mcp__dispatch__msg_send` is the channel that reaches the human.
 // - CronCreate / CronDelete / CronList / ScheduleWakeup: they schedule
 //   prompts into a session that outlives the current turn. A dispatched run
 //   ends at its result, so a cron job "dies when Claude exits" and a wakeup
@@ -758,7 +768,8 @@ export class ClaudeExecutor implements Executor {
       if (floorHold === null) {
         if (
           opts.permissionMode === 'acceptEdits' &&
-          (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) || toolName === ASK_USER_TOOL)
+          (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) ||
+            MESSAGING_TOOLS.has(toolName))
         ) {
           return { behavior: 'allow', updatedInput: input };
         }

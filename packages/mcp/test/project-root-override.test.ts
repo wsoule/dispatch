@@ -15,11 +15,10 @@ import { createDispatchMcpServer } from '../src/index.js';
 // DISPATCH_PROJECT_ROOT to the dispatch PROJECT's root. These tests prove
 // tools.ts's `projectRoot()` override actually takes effect for the two
 // tools that must NOT resolve against the worktree — see its doc comment in
-// packages/mcp/src/tools.ts for why: run_list/agent_message's daemon
-// discovery (the daemon file is keyed by a hash of the project root, not the
-// worktree) and task_comment's write (a comment written to the worktree's
-// copy of a task file is discarded the moment that run's branch is merged
-// or discarded).
+// packages/mcp/src/tools.ts for why: run_list's daemon discovery (the daemon
+// file is keyed by a hash of the project root, not the worktree) and
+// task_comment's write (a comment written to the worktree's copy of a task
+// file is discarded the moment that run's branch is merged or discarded).
 
 interface ToolCallResult {
   structuredContent?: Record<string, unknown>;

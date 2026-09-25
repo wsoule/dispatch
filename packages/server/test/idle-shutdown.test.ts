@@ -72,7 +72,7 @@ describe('IdleShutdown', () => {
       () => (fired += 1)
     );
 
-    // A long-poll like ask_user: in flight for three timeouts' worth.
+    // A blocking msg_send's long-poll: in flight for three timeouts' worth.
     await idle.track(() => sleep(120));
     expect(fired).toBe(0);
 
