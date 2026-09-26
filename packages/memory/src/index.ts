@@ -42,3 +42,23 @@ export {
   validateReason,
 } from './validate.js';
 export type { MemoryWriteInput, ValidMemoryInput } from './validate.js';
+export {
+  createMemoryIds,
+  insertFresh,
+  newMemoryEntry,
+  newProposal,
+} from './records.js';
+export type { MemoryIds, NewEntryInput, NewProposalInput } from './records.js';
+export {
+  MEMORY_DB_VERSION,
+  MEMORY_MIN_READER_VERSION,
+  openMemoryDb,
+} from './schema.js';
+export type { SearchMode } from './schema.js';
+export { SqliteMemoryStore } from './sqliteStore.js';
+export type {
+  EntryFilter,
+  MemoryStore,
+  RecallRow,
+  SearchHit,
+} from './store.js';

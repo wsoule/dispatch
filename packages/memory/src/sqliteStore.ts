@@ -1,0 +1,675 @@
+import { queryAll, queryOne } from '@dispatch/core';
+import type { SqliteDatabase, SqlValue } from '@dispatch/core';
+import type { Address } from '@dispatch/protocol';
+import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+
+import { memoryContentHash } from './contentHash.js';
+import { MemoryError } from './errors.js';
+import { cutUtf8 } from './limits.js';
+import type { SearchMode } from './schema.js';
+import type {
+  EntryFilter,
+  MemoryStore,
+  RecallRow,
+  SearchHit,
+} from './store.js';
+import type {
+  DisplayState,
+  MemoryEntry,
+  MemoryProposal,
+  ProposalState,
+  RecallVia,
+  Revision,
+  RevisionCause,
+} from './types.js';
+
+const COLUMNS = [
+  'id',
+  'handle',
+  'scope',
+  'kind',
+  'title',
+  'body',
+  'refs',
+  'epic',
+  'applies_to',
+  'project_key',
+  'author',
+  'trust',
+  'status',
+  'status_reason',
+  'decay',
+  'pinned',
+  'supersedes',
+  'superseded_by',
+  'origin',
+  'proposal_id',
+  'decided_by',
+  'decided_by_policy',
+  'rev',
+  'content_hash',
+  'created_at',
+  'updated_at',
+  'last_recalled_at',
+  'recall_count',
+] as const;
+
+interface EntryRow {
+  id: string;
+  handle: string;
+  scope: string;
+  kind: string;
+  title: string;
+  body: string;
+  refs: string;
+  epic: string | null;
+  applies_to: string;
+  project_key: string | null;
+  author: string;
+  trust: string;
+  status: string;
+  status_reason: string | null;
+  decay: string;
+  pinned: number;
+  supersedes: string | null;
+  superseded_by: string | null;
+  origin: string | null;
+  proposal_id: string | null;
+  decided_by: string | null;
+  decided_by_policy: string | null;
+  rev: number;
+  content_hash: string;
+  created_at: string;
+  updated_at: string;
+  last_recalled_at: string | null;
+  recall_count: number;
+}
+
+// The values of COLUMNS, in order; refs, appliesTo and the policy decision as JSON text.
+function entryParams(e: MemoryEntry): SqlValue[] {
+  return [
+    e.id,
+    e.handle,
+    e.scope,
+    e.kind,
+    e.title,
+    e.body,
+    JSON.stringify(e.refs),
+    e.epic,
+    JSON.stringify(e.appliesTo),
+    e.projectKey,
+    e.author,
+    e.trust,
+    e.status,
+    e.statusReason,
+    e.decay,
+    e.pinned ? 1 : 0,
+    e.supersedes,
+    e.supersededBy,
+    e.origin,
+    e.proposal,
+    e.decidedBy,
+    e.decidedByPolicy === null ? null : JSON.stringify(e.decidedByPolicy),
+    e.rev,
+    memoryContentHash(e),
+    e.createdAt,
+    e.updatedAt,
+    e.lastRecalledAt,
+    e.recallCount,
+  ];
+}
+
+function entryFromRow(r: EntryRow): MemoryEntry {
+  return {
+    id: r.id,
+    handle: r.handle,
+    scope: r.scope as MemoryEntry['scope'],
+    kind: r.kind as MemoryEntry['kind'],
+    title: r.title,
+    body: r.body,
+    refs: JSON.parse(r.refs) as MemoryEntry['refs'],
+    epic: r.epic,
+    appliesTo: JSON.parse(r.applies_to) as string[],
+    projectKey: r.project_key,
+    author: r.author,
+    trust: r.trust as MemoryEntry['trust'],
+    status: r.status as MemoryEntry['status'],
+    statusReason: r.status_reason as MemoryEntry['statusReason'],
+    decay: r.decay as MemoryEntry['decay'],
+    pinned: r.pinned === 1,
+    supersedes: r.supersedes,
+    supersededBy: r.superseded_by,
+    origin: r.origin,
+    proposal: r.proposal_id,
+    decidedBy: r.decided_by,
+    decidedByPolicy:
+      r.decided_by_policy === null
+        ? null
+        : (JSON.parse(r.decided_by_policy) as MemoryEntry['decidedByPolicy']),
+    rev: r.rev,
+    createdAt: r.created_at,
+    updatedAt: r.updated_at,
+    lastRecalledAt: r.last_recalled_at,
+    recallCount: r.recall_count,
+  };
+}
+
+// Displayed state as SQL: expired entries read as retired, like displayState().
+const STATE_SQL: Record<DisplayState, string> = {
+  active: "(e.status = 'active' AND e.decay = 'fresh')",
+  stale: "(e.status = 'active' AND e.decay = 'stale')",
+  retired: "(e.status = 'retired' OR e.decay = 'expired')",
+};
+
+// The WHERE clause (without WHERE) and its parameters for an EntryFilter.
+function filterSql(filter: EntryFilter): { where: string; params: SqlValue[] } {
+  const clauses: string[] = [];
+  const params: SqlValue[] = [];
+  const inList = (column: string, values: readonly string[]) => {
+    clauses.push(`${column} IN (${values.map(() => '?').join(', ')})`);
+    params.push(...values);
+  };
+  if (filter.scopes !== undefined) inList('e.scope', filter.scopes);
+  if (filter.kinds !== undefined) inList('e.kind', filter.kinds);
+  if (filter.ids !== undefined) inList('e.id', filter.ids);
+  // An empty state list matches nothing, rather than every row.
+  if (filter.states !== undefined)
+    clauses.push(
+      filter.states.length === 0
+        ? '0'
+        : `(${filter.states.map((s) => STATE_SQL[s]).join(' OR ')})`
+    );
+  if (filter.projectKey !== undefined) {
+    clauses.push('(e.project_key IS NULL OR e.project_key = ?)');
+    params.push(filter.projectKey);
+  }
+  return { where: clauses.join(' AND '), params };
+}
+
+function escapeLike(term: string): string {
+  return term.replace(/[\\%_]/g, (c) => `\\${c}`);
+}
+
+// SQLite-backed MemoryStore; searches with FTS5 when the open found it, else LIKE.
+export class SqliteMemoryStore implements MemoryStore {
+  readonly search: SearchMode;
+  private readonly db: SqliteDatabase;
+  private depth = 0;
+
+  constructor(opened: { db: SqliteDatabase; search: SearchMode }) {
+    this.db = opened.db;
+    this.search = opened.search;
+  }
+
+  // BEGIN IMMEDIATE takes the write lock up front, so two daemons sharing a
+  // personal file queue behind busy_timeout instead of failing mid-write.
+  transaction<T>(fn: () => T): T {
+    if (this.depth > 0) return fn();
+    this.db.exec('BEGIN IMMEDIATE');
+    this.depth++;
+    try {
+      const out = fn();
+      this.db.exec('COMMIT');
+      return out;
+    } catch (err) {
+      this.db.exec('ROLLBACK');
+      throw err;
+    } finally {
+      this.depth--;
+    }
+  }
+
+  getEntry(id: string): MemoryEntry | null {
+    const row = queryOne<EntryRow>(
+      this.db,
+      'SELECT * FROM entries e WHERE e.id = ?',
+      [id]
+    );
+    return row === undefined ? null : entryFromRow(row);
+  }
+
+  entriesByHandle(handle: string): MemoryEntry[] {
+    return queryAll<EntryRow>(
+      this.db,
+      'SELECT * FROM entries e WHERE e.handle = ?',
+      [handle]
+    ).map(entryFromRow);
+  }
+
+  entryByOrigin(origin: string): MemoryEntry | null {
+    const row = queryOne<EntryRow>(
+      this.db,
+      'SELECT * FROM entries e WHERE e.origin = ?',
+      [origin]
+    );
+    return row === undefined ? null : entryFromRow(row);
+  }
+
+  listEntries(filter: EntryFilter = {}): MemoryEntry[] {
+    const { where, params } = filterSql(filter);
+    return queryAll<EntryRow>(
+      this.db,
+      `SELECT * FROM entries e${where === '' ? '' : ` WHERE ${where}`} ORDER BY e.seq`,
+      params
+    ).map(entryFromRow);
+  }
+
+  // Terms are quoted, so FTS operator words and syntax match as plain text.
+  searchEntries(
+    terms: readonly string[],
+    match: 'all' | 'any',
+    filter: EntryFilter,
+    limit: number
+  ): SearchHit[] {
+    if (terms.length === 0) return [];
+    const { where, params } = filterSql(filter);
+    const and = where === '' ? '' : ` AND ${where}`;
+    if (this.search === 'fts5') {
+      const query = terms
+        .map((t) => `"${t.replace(/"/g, '""')}"`)
+        .join(match === 'all' ? ' ' : ' OR ');
+      const rows = queryAll<EntryRow & { score: number; snip: string }>(
+        this.db,
+        `SELECT e.*, bm25(entries_fts) AS score, snippet(entries_fts, 1, '', '', '…', 16) AS snip
+         FROM entries_fts JOIN entries e ON e.seq = entries_fts.rowid
+         WHERE entries_fts MATCH ?${and} ORDER BY score, e.id LIMIT ?`,
+        [query, ...params, limit]
+      );
+      return rows.map((r) => ({
+        entry: entryFromRow(r),
+        score: r.score,
+        snippet: r.snip,
+      }));
+    }
+    const likes = terms.map(
+      () =>
+        "(lower(e.title) LIKE ? ESCAPE '\\' OR lower(e.body) LIKE ? ESCAPE '\\')"
+    );
+    const likeParams = terms.flatMap((t) => {
+      const pattern = `%${escapeLike(t.toLowerCase())}%`;
+      return [pattern, pattern];
+    });
+    const rows = queryAll<EntryRow>(
+      this.db,
+      `SELECT * FROM entries e WHERE (${likes.join(match === 'all' ? ' AND ' : ' OR ')})${and}
+       ORDER BY e.updated_at DESC, e.id LIMIT ?`,
+      [...likeParams, ...params, limit]
+    );
+    return rows.map((r) => ({
+      entry: entryFromRow(r),
+      score: 0,
+      snippet: cutUtf8(r.body, 160),
+    }));
+  }
+
+  insertEntry(entry: MemoryEntry, by: Address, cause: RevisionCause): void {
+    this.transaction(() => {
+      this.db
+        .prepare(
+          `INSERT INTO entries (${COLUMNS.join(', ')}) VALUES (${COLUMNS.map(() => '?').join(', ')})`
+        )
+        .run(...entryParams(entry));
+      this.appendRevision(entry, by, cause);
+    });
+  }
+
+  updateEntry(entry: MemoryEntry, by: Address, cause: RevisionCause): void {
+    this.transaction(() => {
+      const current = this.getEntry(entry.id);
+      if (current === null)
+        throw new MemoryError('not-found', `no memory ${entry.id}`, 'id');
+      if (entry.rev !== current.rev + 1)
+        throw new MemoryError(
+          'conflict',
+          `${current.handle} changed meanwhile (now rev ${current.rev})`,
+          'id'
+        );
+      const sets = COLUMNS.filter((c) => c !== 'id')
+        .map((c) => `${c} = ?`)
+        .join(', ');
+      this.db
+        .prepare(`UPDATE entries SET ${sets} WHERE id = ?`)
+        .run(...entryParams(entry).slice(1), entry.id);
+      this.appendRevision(entry, by, cause);
+    });
+  }
+
+  // Removes the entry and every row that holds its content; an imported
+  // entry leaves a tombstone so a re-import never brings it back.
+  deleteEntry(id: string, by: Address, at: string): void {
+    this.transaction(() => {
+      const entry = this.getEntry(id);
+      if (entry === null)
+        throw new MemoryError('not-found', `no memory ${id}`, 'id');
+      if (entry.origin !== null) {
+        this.db
+          .prepare(
+            'INSERT OR REPLACE INTO deleted_origins (origin, entry_id, deleted_by, at) VALUES (?, ?, ?, ?)'
+          )
+          .run(entry.origin, id, by, at);
+      }
+      for (const table of ['revisions', 'recalls', 'activity', 'exports'])
+        this.db.prepare(`DELETE FROM ${table} WHERE memory_id = ?`).run(id);
+      this.db.prepare('DELETE FROM entries WHERE id = ?').run(id);
+    });
+  }
+
+  revisions(id: string): Revision[] {
+    return queryAll<{
+      memory_id: string;
+      rev: number;
+      snapshot_json: string;
+      by_addr: string;
+      cause: string;
+      at: string;
+    }>(this.db, 'SELECT * FROM revisions WHERE memory_id = ? ORDER BY rev', [
+      id,
+    ]).map((r) => ({
+      memoryId: r.memory_id,
+      rev: r.rev,
+      snapshot: JSON.parse(r.snapshot_json) as MemoryEntry,
+      by: r.by_addr,
+      cause: r.cause as RevisionCause,
+      at: r.at,
+    }));
+  }
+
+  // Every recall bumps the count; only one that counts as use moves the decay
+  // clock and revives a stale or expired entry.
+  recordRecall(
+    memoryId: string,
+    input: {
+      runId: string | null;
+      via: RecallVia;
+      at: string;
+      countsAsUse: boolean;
+    }
+  ): void {
+    this.transaction(() => {
+      if (input.runId !== null) {
+        this.db
+          .prepare(
+            'INSERT OR IGNORE INTO recalls (memory_id, run_id, via, at) VALUES (?, ?, ?, ?)'
+          )
+          .run(memoryId, input.runId, input.via, input.at);
+      }
+      const entry = this.getEntry(memoryId);
+      if (entry === null) return;
+      if (!input.countsAsUse) {
+        this.db
+          .prepare(
+            'UPDATE entries SET recall_count = recall_count + 1 WHERE id = ?'
+          )
+          .run(memoryId);
+        return;
+      }
+      if (entry.status === 'active' && entry.decay !== 'fresh') {
+        this.updateEntry(
+          {
+            ...entry,
+            decay: 'fresh',
+            lastRecalledAt: input.at,
+            recallCount: entry.recallCount + 1,
+            rev: entry.rev + 1,
+          },
+          SYSTEM_ADDRESS,
+          'decay'
+        );
+        return;
+      }
+      this.db
+        .prepare(
+          'UPDATE entries SET last_recalled_at = ?, recall_count = recall_count + 1 WHERE id = ?'
+        )
+        .run(input.at, memoryId);
+    });
+  }
+
+  recallsForRun(runId: string): RecallRow[] {
+    return queryAll<{
+      memory_id: string;
+      run_id: string;
+      via: string;
+      at: string;
+    }>(
+      this.db,
+      'SELECT * FROM recalls WHERE run_id = ? ORDER BY at, memory_id',
+      [runId]
+    ).map((r) => ({
+      memoryId: r.memory_id,
+      runId: r.run_id,
+      via: r.via as RecallVia,
+      at: r.at,
+    }));
+  }
+
+  isTombstoned(origin: string): boolean {
+    return (
+      queryOne(
+        this.db,
+        'SELECT 1 AS one FROM deleted_origins WHERE origin = ?',
+        [origin]
+      ) !== undefined
+    );
+  }
+
+  meta(key: string): string | null {
+    return (
+      queryOne<{ value: string }>(
+        this.db,
+        'SELECT value FROM meta WHERE key = ?',
+        [key]
+      )?.value ?? null
+    );
+  }
+
+  setMeta(key: string, value: string): void {
+    this.db
+      .prepare('INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)')
+      .run(key, value);
+  }
+
+  countEntries(): number {
+    return (
+      queryOne<{ n: number }>(this.db, 'SELECT COUNT(*) AS n FROM entries')
+        ?.n ?? 0
+    );
+  }
+
+  insertProposal(p: MemoryProposal): void {
+    this.db
+      .prepare(
+        `INSERT INTO proposals (${PROPOSAL_COLUMNS.join(', ')}) VALUES (${PROPOSAL_COLUMNS.map(() => '?').join(', ')})`
+      )
+      .run(...proposalParams(p));
+  }
+
+  updateProposal(p: MemoryProposal): void {
+    const sets = PROPOSAL_COLUMNS.filter((c) => c !== 'id')
+      .map((c) => `${c} = ?`)
+      .join(', ');
+    this.db
+      .prepare(`UPDATE proposals SET ${sets} WHERE id = ?`)
+      .run(...proposalParams(p).slice(1), p.id);
+  }
+
+  getProposal(id: string): MemoryProposal | null {
+    const row = queryOne<ProposalRow>(
+      this.db,
+      'SELECT * FROM proposals WHERE id = ?',
+      [id]
+    );
+    return row === undefined ? null : proposalFromRow(row);
+  }
+
+  proposalByOrigin(origin: string): MemoryProposal | null {
+    const row = queryOne<ProposalRow>(
+      this.db,
+      'SELECT * FROM proposals WHERE origin = ?',
+      [origin]
+    );
+    return row === undefined ? null : proposalFromRow(row);
+  }
+
+  listProposals(filter: { states?: ProposalState[] } = {}): MemoryProposal[] {
+    const states = filter.states;
+    const where =
+      states === undefined
+        ? ''
+        : ` WHERE state IN (${states.map(() => '?').join(', ')})`;
+    return queryAll<ProposalRow>(
+      this.db,
+      `SELECT * FROM proposals${where} ORDER BY created_at, id`,
+      states ?? []
+    ).map(proposalFromRow);
+  }
+
+  countOpenProposals(): number {
+    return (
+      queryOne<{ n: number }>(
+        this.db,
+        "SELECT COUNT(*) AS n FROM proposals WHERE state = 'open'"
+      )?.n ?? 0
+    );
+  }
+
+  close(): void {
+    this.db.close();
+  }
+
+  private appendRevision(
+    entry: MemoryEntry,
+    by: Address,
+    cause: RevisionCause
+  ): void {
+    this.db
+      .prepare(
+        'INSERT INTO revisions (memory_id, rev, snapshot_json, by_addr, cause, at) VALUES (?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        entry.id,
+        entry.rev,
+        JSON.stringify(entry),
+        by,
+        cause,
+        new Date().toISOString()
+      );
+  }
+}
+
+const PROPOSAL_COLUMNS = [
+  'id',
+  'action',
+  'scope',
+  'target',
+  'base_rev',
+  'content_json',
+  'reason',
+  'author',
+  'author_trust',
+  'operator',
+  'run_id',
+  'task_id',
+  'origin',
+  'content_hash',
+  'gate_id',
+  'state',
+  'matched_personal',
+  'decided_by',
+  'decided_by_policy',
+  'decision_reason',
+  'result_id',
+  'created_at',
+  'decided_at',
+] as const;
+
+interface ProposalRow {
+  id: string;
+  action: string;
+  scope: string;
+  target: string | null;
+  base_rev: number | null;
+  content_json: string | null;
+  reason: string | null;
+  author: string;
+  author_trust: string;
+  operator: string | null;
+  run_id: string | null;
+  task_id: string | null;
+  origin: string | null;
+  content_hash: string | null;
+  gate_id: string | null;
+  state: string;
+  matched_personal: number;
+  decided_by: string | null;
+  decided_by_policy: string | null;
+  decision_reason: string | null;
+  result_id: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+// The values of PROPOSAL_COLUMNS, in order; content and policy decision as JSON text.
+function proposalParams(p: MemoryProposal): SqlValue[] {
+  return [
+    p.id,
+    p.action,
+    p.scope,
+    p.target,
+    p.baseRev,
+    p.content === null ? null : JSON.stringify(p.content),
+    p.reason,
+    p.author,
+    p.authorTrust,
+    p.operator,
+    p.runId,
+    p.taskId,
+    p.origin,
+    p.contentHash,
+    p.gate,
+    p.state,
+    p.matchedPersonal ? 1 : 0,
+    p.decidedBy,
+    p.decidedByPolicy === null ? null : JSON.stringify(p.decidedByPolicy),
+    p.decisionReason,
+    p.result,
+    p.createdAt,
+    p.decidedAt,
+  ];
+}
+
+function proposalFromRow(r: ProposalRow): MemoryProposal {
+  return {
+    id: r.id,
+    action: r.action as MemoryProposal['action'],
+    scope: r.scope as MemoryProposal['scope'],
+    target: r.target,
+    baseRev: r.base_rev,
+    content:
+      r.content_json === null
+        ? null
+        : (JSON.parse(r.content_json) as MemoryProposal['content']),
+    reason: r.reason,
+    author: r.author,
+    authorTrust: r.author_trust as MemoryProposal['authorTrust'],
+    operator: r.operator,
+    runId: r.run_id,
+    taskId: r.task_id,
+    origin: r.origin,
+    contentHash: r.content_hash,
+    gate: r.gate_id,
+    state: r.state as MemoryProposal['state'],
+    matchedPersonal: r.matched_personal === 1,
+    decidedBy: r.decided_by,
+    decidedByPolicy:
+      r.decided_by_policy === null
+        ? null
+        : (JSON.parse(
+            r.decided_by_policy
+          ) as MemoryProposal['decidedByPolicy']),
+    decisionReason: r.decision_reason,
+    result: r.result_id,
+    createdAt: r.created_at,
+    decidedAt: r.decided_at,
+  };
+}
