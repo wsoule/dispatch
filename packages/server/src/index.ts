@@ -100,7 +100,7 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { boardSyncDir, scopeRequestsPath } from './orchestrator/paths.js';
+import { boardSyncDir } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -111,13 +111,11 @@ import {
 } from './orchestrator/pr.js';
 import { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import type { PrWorktreeManagerCtx } from './orchestrator/prWorktree.js';
-import { QuestionRegistry } from './orchestrator/questions.js';
 import {
   generateRepoDigest,
   RepoDigestCache,
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
-import { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import { runKind, TERMINAL_RUN_STATES } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import {
@@ -1212,13 +1210,6 @@ async function bootServer(
           readDigestConfig
         )
       : new RepoDigestCache(rootDir);
-  // Out-of-scope edit requests from run agents. Built ahead of the
-  // orchestrator because resumeRun hands a restarted run's requests to its
-  // successor; persisted so the card a human had not decided when dispatchd
-  // restarted comes back instead of vanishing with the process.
-  const scopeRequests = new ScopeRequestRegistry({
-    path: scopeRequestsPath(rootDir),
-  });
   // The TypeSafe judgment client, resolved once at boot: a key added later
   // needs a restart, same as the executors. Tests pass `judgments`
   // explicitly (null disables).
@@ -1230,7 +1221,6 @@ async function bootServer(
     rootDir,
     store,
     cache,
-    scopeRequests,
     judgments,
     events,
     jj,
@@ -1266,14 +1256,6 @@ async function bootServer(
     ledgerStore,
     appendPolicyActivity: policyActivityAppender({ store, cache, events }),
   });
-  // Questions an agent raised mid-run. A run going terminal drops its own, so
-  // the app never shows a card whose answer nobody is listening for.
-  const questions = new QuestionRegistry();
-  orchestrator.onRunTerminal((meta) => {
-    if (questions.closeRun(meta.id) > 0) {
-      events.broadcast({ type: 'question.closed', runId: meta.id });
-    }
-  });
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
@@ -1296,19 +1278,6 @@ async function bootServer(
       }
     );
   });
-  // Same lifecycle for out-of-scope edit requests: a run that ends still
-  // holding one open should not leave it dangling for a human to find later.
-  // A boot force-fail is deliberately NOT a terminal transition here (see
-  // reconcileOnBoot) — that is the one ending a request must outlive.
-  orchestrator.onRunTerminal((meta) => {
-    scopeRequests.closeRun(meta.id);
-  });
-  // A force-failed run a human reviews instead of resuming has no successor
-  // for its request to follow; the review is where the card should go. The
-  // run's own review event is what refreshes an open app's view of it.
-  orchestrator.onRunReviewed((meta) => {
-    scopeRequests.closeRun(meta.id);
-  });
 
   // Boot-time hygiene (spec §4): any run left non-terminal by a previous
   // crash is marked failed, and worktree directories with no matching
@@ -1319,22 +1288,6 @@ async function bootServer(
   await messaging.recover();
   // Runs force-failed above left their gates open; nobody can act on them now.
   closeOrphanedGates(messaging.engine, orchestrator);
-  // The requests hydrated from the previous process: kept while their run is
-  // still live (a restart-with-nothing-in-flight reload) or is one this boot
-  // force-failed and can still resume — those re-surface to the human and
-  // follow the run into its successor. Anything else has nobody left to act
-  // on a decision, so it is withdrawn rather than shown.
-  const withdrawn = scopeRequests.reconcile((runId) => {
-    const run = orchestrator.getRun(runId);
-    if (run === null) return false;
-    if (!TERMINAL_RUN_STATES.has(run.meta.state)) return true;
-    return orchestrator.resumeBlockReason(run.meta) === null;
-  });
-  if (withdrawn.length > 0) {
-    console.log(
-      `dispatchd: withdrew ${withdrawn.length} stale scope request(s) at boot: ${withdrawn.join(', ')}`
-    );
-  }
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -1686,8 +1639,8 @@ async function bootServer(
   const stopWebhookDelivery = webhookDelivery.start();
 
   // The gate hooks themselves — verify-retry and merge consult the project's
-  // policy off the daemon's own signals; the scope gate consults inline in
-  // api/scopeRequests.ts. See policyEngine.ts.
+  // policy off the daemon's own signals; the scope gate consults it in
+  // messaging/scopePolicy.ts. See policyEngine.ts.
   const policyEngine = new PolicyEngine({
     rootDir,
     store,
@@ -1771,10 +1724,8 @@ async function bootServer(
     trackedFilesCache,
     reviewComments,
     conversations,
-    questions,
     browsers,
     terminals,
-    scopeRequests,
     decisionFeed,
     linearSync,
     gitRepo,

@@ -92,12 +92,6 @@ import { listTaskFindings, startTaskReview } from './api/review.js';
 import { listRunClaims } from './api/runClaims.js';
 import { createRunEvidence, createRunMutation } from './api/runEvidence.js';
 import {
-  decideScopeRequest,
-  getScopeRequest,
-  listScopeRequests,
-  requestScope,
-} from './api/scopeRequests.js';
-import {
   closeTerminal,
   createTerminal,
   deleteTerminal,
@@ -198,13 +192,7 @@ import {
 } from './orchestrator/prReviewTask.js';
 import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import { toLandingWorktree } from './orchestrator/prWorktree.js';
-import type {
-  QuestionRegistry,
-  RunQuestion,
-} from './orchestrator/questions.js';
-import { QUESTION_POLL_MS } from './orchestrator/questions.js';
 import type { ReviewRunner } from './orchestrator/review.js';
-import type { ScopeRequestRegistry } from './orchestrator/scopeRequests.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
@@ -302,8 +290,6 @@ export interface ApiContext {
   inboxTriage: InboxTriageScheduler;
   reviewComments: ReviewCommentStore;
   conversations: ConversationStore;
-  questions: QuestionRegistry;
-  scopeRequests: ScopeRequestRegistry;
   // The one feed of everything awaiting a human — see decisionFeed.ts.
   decisionFeed: DecisionFeed;
   linearSync: LinearSync;
@@ -830,60 +816,6 @@ async function handleRunPreview(
     return jsonResponse({ preview: null, reason: result.refusal.reason });
   }
   return jsonResponse({ preview: withRemote(result.preview) });
-}
-
-async function approveRun(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as {
-    requestId?: unknown;
-    allow?: unknown;
-    scope?: unknown;
-    reason?: unknown;
-  };
-  if (typeof body.requestId !== 'string' || body.requestId.trim() === '') {
-    return errorResponse(400, 'invalid requestId: requestId is required');
-  }
-  if (typeof body.allow !== 'boolean') {
-    return errorResponse(400, 'invalid allow: expected a boolean');
-  }
-  if (
-    body.scope !== undefined &&
-    body.scope !== 'once' &&
-    body.scope !== 'session'
-  ) {
-    return errorResponse(400, "invalid scope: expected 'once' or 'session'");
-  }
-  ctx.orchestrator.approve(runId, body.requestId, {
-    allow: body.allow,
-    scope: body.scope,
-    reason: typeof body.reason === 'string' ? body.reason : undefined,
-  });
-  return jsonResponse({ ok: true });
-}
-
-async function sendRunMessage(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown; resume?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  if (body.resume !== undefined && typeof body.resume !== 'boolean') {
-    return errorResponse(400, 'invalid resume: expected a boolean');
-  }
-  const meta = ctx.orchestrator.sendMessage(runId, body.text, {
-    resume: body.resume === true,
-  });
-  return jsonResponse(meta);
 }
 
 // Phase 5 P1: `action: 'pr'` is routed to PrManager.openPr rather than
@@ -3332,177 +3264,6 @@ async function submitPrReview(
   return jsonResponse(result);
 }
 
-// `fromRunId` is optional and identifies the SENDER (a different run than
-// `runId`, the recipient) — the MCP `agent_message` tool passes its own
-// `DISPATCH_RUN_ID` here so Orchestrator.inject can resolve a real sender
-// label (task title + id) instead of falling back to the generic "another
-// agent". A `fromRunId` that doesn't resolve to a known run is not an
-// error here — inject()'s own resolveSenderLabel already tolerates an
-// unresolvable sender by falling back to the generic label, so this route
-// just passes the raw value through rather than pre-validating it.
-async function injectRunMessage(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown; fromRunId?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  if (body.fromRunId !== undefined && typeof body.fromRunId !== 'string') {
-    return errorResponse(400, 'invalid fromRunId: expected a string');
-  }
-  const meta = ctx.orchestrator.inject(
-    runId,
-    body.text,
-    body.fromRunId !== undefined ? { runId: body.fromRunId } : undefined
-  );
-  return jsonResponse(meta);
-}
-
-// POST /api/runs/:id/message-user — the agent→human channel (spec's
-// `message_user`): records a `from: 'agent'` message entry on the AGENT'S
-// OWN run, using that run's own task title + id as the label, so the human
-// sees "this agent flagged something" in the exact same Session tab as
-// everything else that run has said. Unlike `inject`, this never sends
-// anything back into the executor (there is no "recipient" to deliver
-// to) — it only needs the run to still be live so appending to its
-// transcript/broadcasting means something to a connected client, the same
-// liveness bar `inject` itself already enforces.
-async function messageUser(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { text?: unknown };
-  if (typeof body.text !== 'string' || body.text.trim() === '') {
-    return errorResponse(400, 'invalid text: text is required');
-  }
-  const meta = ctx.orchestrator.messageUser(runId, body.text);
-  return jsonResponse(meta);
-}
-
-// The transcript text a question lands as, so the session log records what
-// was asked without depending on a card the user may already have dismissed.
-function questionEntryText(question: string, options: string[]): string {
-  if (options.length === 0) return question;
-  return `${question}\n\n${options.map((o) => `- ${o}`).join('\n')}`;
-}
-
-// POST /api/runs/:id/questions — `ask_user` posts here, then long-polls the
-// GET below. `messageUser` writes the entry and gates this to a live run.
-async function askQuestion(
-  req: Request,
-  ctx: ApiContext,
-  runId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { question?: unknown; options?: unknown };
-  if (typeof body.question !== 'string' || body.question.trim() === '') {
-    return errorResponse(400, 'invalid question: question is required');
-  }
-  if (
-    body.options !== undefined &&
-    (!Array.isArray(body.options) ||
-      body.options.some((o) => typeof o !== 'string'))
-  ) {
-    return errorResponse(400, 'invalid options: expected an array of strings');
-  }
-  const question = body.question.trim();
-  const options = ((body.options as string[] | undefined) ?? [])
-    .map((o) => o.trim())
-    .filter((o) => o !== '');
-
-  ctx.orchestrator.messageUser(runId, questionEntryText(question, options));
-  const record = ctx.questions.ask(runId, question, options);
-  ctx.events.broadcast({
-    type: 'question.asked',
-    runId,
-    questionId: record.id,
-  });
-  return jsonResponse(record, 201);
-}
-
-// Resolves a question id against its own run, so one run can never read or
-// answer another run's question by guessing an id.
-function questionFor(
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): RunQuestion | null {
-  const record = ctx.questions.get(questionId);
-  return record !== undefined && record.runId === runId ? record : null;
-}
-
-// GET /api/runs/:id/questions/:qid — `?wait=1` parks for up to
-// QUESTION_POLL_MS. Coming back unanswered means "poll again", not an error.
-async function getQuestion(
-  req: Request,
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): Promise<Response> {
-  const record = questionFor(ctx, runId, questionId);
-  if (record === null) {
-    return errorResponse(404, `question not found: ${questionId}`);
-  }
-  const wait = new URL(req.url).searchParams.get('wait') === '1';
-  if (!wait) return jsonResponse(record);
-  return jsonResponse(
-    await ctx.questions.waitForAnswer(questionId, QUESTION_POLL_MS)
-  );
-}
-
-// POST /api/runs/:id/questions/:qid/answer — unblocks whatever is parked on
-// the long-poll above. 409s on a second answer: the first one already went.
-async function answerQuestion(
-  req: Request,
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const body = parsed.value as { answer?: unknown };
-  if (typeof body.answer !== 'string' || body.answer.trim() === '') {
-    return errorResponse(400, 'invalid answer: answer is required');
-  }
-  if (questionFor(ctx, runId, questionId) === null) {
-    return errorResponse(404, `question not found: ${questionId}`);
-  }
-  const record = ctx.questions.answer(questionId, body.answer.trim());
-  // The agent already has the answer by this point, so a run that vanished
-  // out from under the transcript write must not turn this into a failure.
-  try {
-    ctx.orchestrator.recordAnswer(runId, body.answer.trim());
-  } catch (err) {
-    if (!(err instanceof OrchestratorNotFoundError)) throw err;
-  }
-  ctx.events.broadcast({ type: 'question.answered', runId, questionId });
-  ctx.events.broadcast({ type: 'run.changed' });
-  return jsonResponse(record);
-}
-
-// DELETE /api/runs/:id/questions/:qid — the asking agent stopped listening
-// (its tool call was cancelled or gave up), so the card must stop asking.
-function withdrawQuestion(
-  ctx: ApiContext,
-  runId: string,
-  questionId: string
-): Response {
-  if (questionFor(ctx, runId, questionId) === null) {
-    return errorResponse(404, `question not found: ${questionId}`);
-  }
-  ctx.questions.withdraw(questionId);
-  ctx.events.broadcast({ type: 'question.closed', runId });
-  return new Response(null, { status: 204 });
-}
-
 // Validates an optional `model` body field the way createRun does: absent
 // means "the configured role's model"; present must be a non-empty string.
 // Returns the 400 to send, or the model (possibly undefined) to pass on.
@@ -4445,15 +4206,6 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   tier: Exclude<AuthTier, 'request'>;
 }> = [
   // ---- decide: adjudication -------------------------------------------------
-  {
-    method: 'POST',
-    segments: ['runs', '*', 'scope-requests', '*', 'decide'],
-    tier: 'decide',
-  },
-  // A run's tool-approval gate is an adjudication like the one above: with it
-  // on the request tier, any agent holding the on-disk agent token could wave
-  // its own parked tool call through.
-  { method: 'POST', segments: ['runs', '*', 'approval'], tier: 'decide' },
   // Starting a preview runs a command out of the run's own worktree — a
   // worktree the agent just wrote to, including its package.json. On the
   // request tier an agent holding the on-disk agent token could use this to
@@ -5388,9 +5140,7 @@ export async function handleApi(
     if (segments[0] === 'runs') {
       if (segments.length === 1 && method === 'GET') {
         return jsonResponse(
-          ctx.orchestrator.decorateRunsWithPendingApproval(
-            ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
-          )
+          ctx.orchestrator.decorateRunsWithPushed(ctx.orchestrator.list())
         );
       }
       if (
@@ -5405,26 +5155,7 @@ export async function handleApi(
         if (result === null) {
           return errorResponse(404, `run not found: ${segments[1]}`);
         }
-        // Same decoration as the list: a paused run's approval must be
-        // answerable from a fresh read, not only from the live event.
-        const [meta] = ctx.orchestrator.decorateRunsWithPendingApproval([
-          result.meta,
-        ]);
-        return jsonResponse({ ...result, meta });
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'approval' &&
-        method === 'POST'
-      ) {
-        return await approveRun(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'message' &&
-        method === 'POST'
-      ) {
-        return await sendRunMessage(req, ctx, segments[1]);
+        return jsonResponse(result);
       }
       if (
         segments.length === 3 &&
@@ -5582,85 +5313,6 @@ export async function handleApi(
       ) {
         return await commentPr(req, ctx, segments[1]);
       }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'inject' &&
-        method === 'POST'
-      ) {
-        return await injectRunMessage(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'message-user' &&
-        method === 'POST'
-      ) {
-        return await messageUser(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'questions' &&
-        method === 'POST'
-      ) {
-        return await askQuestion(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'questions' &&
-        method === 'GET'
-      ) {
-        return jsonResponse(ctx.questions.listOpen(segments[1]));
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'questions' &&
-        method === 'GET'
-      ) {
-        return await getQuestion(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'questions' &&
-        method === 'DELETE'
-      ) {
-        return withdrawQuestion(ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 5 &&
-        segments[2] === 'questions' &&
-        segments[4] === 'answer' &&
-        method === 'POST'
-      ) {
-        return await answerQuestion(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'scope-requests' &&
-        method === 'POST'
-      ) {
-        return await requestScope(req, ctx, segments[1]);
-      }
-      if (
-        segments.length === 3 &&
-        segments[2] === 'scope-requests' &&
-        method === 'GET'
-      ) {
-        return listScopeRequests(ctx, segments[1]);
-      }
-      if (
-        segments.length === 4 &&
-        segments[2] === 'scope-requests' &&
-        method === 'GET'
-      ) {
-        return await getScopeRequest(req, ctx, segments[1], segments[3]);
-      }
-      if (
-        segments.length === 5 &&
-        segments[2] === 'scope-requests' &&
-        segments[4] === 'decide' &&
-        method === 'POST'
-      ) {
-        return await decideScopeRequest(req, ctx, segments[1], segments[3]);
-      }
     }
 
     if (segments[0] === 'conversations') {
@@ -5781,12 +5433,6 @@ export async function handleApi(
       method === 'GET'
     ) {
       return listOpenDecisions(ctx);
-    }
-
-    // GET /api/questions — every open question across every run, for the
-    // app's "an agent is waiting on you" surfaces.
-    if (segments[0] === 'questions' && segments.length === 1) {
-      if (method === 'GET') return jsonResponse(ctx.questions.listOpen());
     }
 
     // GET /api/decisions — every item awaiting a human, across all four

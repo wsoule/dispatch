@@ -14,7 +14,6 @@ import { join } from 'node:path';
 import { daemonFilePath, readDaemonFile } from '../src/daemonfile.js';
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
-import type { Executor, ExecutorRun } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { rawFetch } from './testAuth.js';
 
@@ -37,19 +36,6 @@ interface AuthError {
   code: string;
 }
 
-async function waitFor(
-  check: () => Promise<boolean>,
-  timeoutMs = 3000,
-  intervalMs = 20
-): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    if (await check()) return;
-    await new Promise((resolve) => setTimeout(resolve, intervalMs));
-  }
-  throw new Error('waitFor timed out');
-}
-
 function initDispatchGitRepo(): string {
   const dir = mkdtempSync(join(tmpdir(), 'dispatch-daemon-auth-'));
   runGitSync(dir, ['init', '-b', 'main']);
@@ -60,20 +46,6 @@ function initDispatchGitRepo(): string {
   runGitSync(dir, ['commit', '-m', 'initial commit']);
   return dir;
 }
-
-// Never calls onFinish, so a dispatched run stays `running` — the only state
-// the scope-request routes accept one from.
-const controllable: Executor = {
-  start() {
-    return {
-      interrupt: async () => {},
-      requestStop: () => {},
-      send: () => {},
-      approve: () => {},
-      notify: () => {},
-    } satisfies ExecutorRun;
-  },
-};
 
 let fakeHome: string;
 let root: string;
@@ -95,9 +67,7 @@ beforeEach(async () => {
     // The daemon file is the point of several tests below, so this suite is
     // one of the few that lets the server write a real one.
     writeDaemonFile: true,
-    registerExecutors: (orchestrator) => {
-      orchestrator.registerExecutor('claude', controllable);
-    },
+    registerExecutors: () => {},
   });
   baseUrl = `http://127.0.0.1:${handle.port}`;
   agentToken = handle.tokens.agentToken;
@@ -112,57 +82,34 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-// Dispatches a task, waits for its run to be `running`, and opens a scope
-// request on it — the exact state a decide-tier call acts on.
-async function liveScopeRequest(): Promise<{ runId: string; id: string }> {
-  const task = await json<{ meta: { id: string } }>(
-    await rawFetch(`${baseUrl}/api/tasks`, {
+// Registers an agent with the shared agent token and returns its address: a
+// pending registration is the state a decide-tier approval acts on.
+async function pendingAgent(): Promise<string> {
+  const registered = await json<{ address: string }>(
+    await rawFetch(`${baseUrl}/api/agents/register`, {
       method: 'POST',
       headers: auth(agentToken),
-      body: JSON.stringify({ title: 'Needs a shared export' }),
+      body: JSON.stringify({ name: 'reviewer', client: 'codex' }),
     })
   );
-  const meta = await json<{ id: string }>(
-    await rawFetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
-      method: 'POST',
-      headers: auth(agentToken),
-      body: JSON.stringify({ executor: 'claude' }),
-    })
-  );
-  await waitFor(async () => {
-    const r = await json<{ meta: { state: string } }>(
-      await rawFetch(`${baseUrl}/api/runs/${meta.id}`, {
-        headers: auth(agentToken),
-      })
-    );
-    return r.meta.state === 'running';
-  });
-  const record = await json<{ id: string }>(
-    await rawFetch(`${baseUrl}/api/runs/${meta.id}/scope-requests`, {
-      method: 'POST',
-      headers: auth(agentToken),
-      body: JSON.stringify({
-        paths: ['packages/core/src/browser.ts'],
-        reason: 'the scoped code needs a type this file never re-exports',
-      }),
-    })
-  );
-  return { runId: meta.id, id: record.id };
+  return registered.address;
 }
 
-function decide(
-  runId: string,
-  requestId: string,
-  token: string | null
-): Promise<Response> {
+function decide(address: string, token: string | null): Promise<Response> {
   return rawFetch(
-    `${baseUrl}/api/runs/${runId}/scope-requests/${requestId}/decide`,
-    {
-      method: 'POST',
-      headers: auth(token),
-      body: JSON.stringify({ granted: true, reason: 'looks fine' }),
-    }
+    `${baseUrl}/api/agents/${encodeURIComponent(address)}/approve`,
+    { method: 'POST', headers: auth(token) }
   );
+}
+
+// The roster status of one registered agent.
+async function agentStatus(address: string): Promise<string | undefined> {
+  const roster = await json<{ agents: { address: string; status: string }[] }>(
+    await rawFetch(`${baseUrl}/api/agents/roster`, {
+      headers: auth(agentToken),
+    })
+  );
+  return roster.agents.find((agent) => agent.address === address)?.status;
 }
 
 describe('open routes', () => {
@@ -291,50 +238,30 @@ describe('request tier', () => {
 
 describe('decide tier', () => {
   it('403s a decision made with the agent token, and says how to get the app token', async () => {
-    const { runId, id } = await liveScopeRequest();
-    const res = await decide(runId, id, agentToken);
+    const address = await pendingAgent();
+    const res = await decide(address, agentToken);
     expect(res.status).toBe(403);
     const body = await json<AuthError>(res);
     expect(body.code).toBe('auth_insufficient_tier');
     expect(body.error).toContain('DISPATCH_APP_TOKEN');
 
-    // The refusal must leave no trace of a decision behind — a forged
-    // justification in the record is the whole thing being prevented.
-    const record = await json<{ granted: boolean | null }>(
-      await rawFetch(`${baseUrl}/api/runs/${runId}/scope-requests/${id}`, {
-        headers: auth(agentToken),
-      })
-    );
-    expect(record.granted).toBeNull();
-    const ledger = await json<{ kind: string }[]>(
-      await rawFetch(`${baseUrl}/api/ledger`, { headers: auth(agentToken) })
-    );
-    expect(ledger.some((entry) => entry.kind === 'decision')).toBe(false);
+    // The refusal must leave no trace: an agent approving itself onto the
+    // roster is the whole thing being prevented.
+    expect(await agentStatus(address)).toBe('pending');
   });
 
   it('401s a decision made with no token at all', async () => {
-    const { runId, id } = await liveScopeRequest();
-    const res = await decide(runId, id, null);
+    const address = await pendingAgent();
+    const res = await decide(address, null);
     expect(res.status).toBe(401);
     expect((await json<AuthError>(res)).code).toBe('auth_missing_token');
   });
 
   it('lets the app token through and records the decision', async () => {
-    const { runId, id } = await liveScopeRequest();
-    const res = await decide(runId, id, appToken);
+    const address = await pendingAgent();
+    const res = await decide(address, appToken);
     expect(res.status).toBe(200);
-    expect((await json<{ granted: boolean }>(res)).granted).toBe(true);
-
-    // The mirror of the agent-token case: the same read that shows nothing
-    // after a refusal must show the entry after a real decision.
-    const ledger = await json<{ kind: string; title: string }[]>(
-      await rawFetch(`${baseUrl}/api/ledger`, { headers: auth(agentToken) })
-    );
-    expect(
-      ledger.some(
-        (entry) => entry.kind === 'decision' && entry.title.includes(runId)
-      )
-    ).toBe(true);
+    expect(await agentStatus(address)).toBe('approved');
   });
 });
 
@@ -394,34 +321,6 @@ describe('token storage', () => {
       readFileSync(path, 'utf8').includes(appToken)
     );
     expect(carrying).toEqual([]);
-  });
-});
-
-// A run's approval route is an adjudication: the tier check runs before the
-// handler, so the agent token 403s before any lookup and the app token
-// reaches the handler.
-describe('run approval tier', () => {
-  const approvalPath = '/api/runs/r-000000/approval';
-  const body = JSON.stringify({ requestId: 'req-1', allow: true });
-
-  it('403s an approval made with the agent token', async () => {
-    const res = await rawFetch(`${baseUrl}${approvalPath}`, {
-      method: 'POST',
-      headers: { ...auth(agentToken), 'content-type': 'application/json' },
-      body,
-    });
-    expect(res.status).toBe(403);
-    expect((await json<AuthError>(res)).code).toBe('auth_insufficient_tier');
-  });
-
-  it('lets the app token through to the handler', async () => {
-    const res = await rawFetch(`${baseUrl}${approvalPath}`, {
-      method: 'POST',
-      headers: { ...auth(appToken), 'content-type': 'application/json' },
-      body,
-    });
-    expect(res.status).not.toBe(403);
-    expect(res.status).not.toBe(401);
   });
 });
 

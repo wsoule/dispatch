@@ -219,15 +219,6 @@ export function teamTokensPath(rootDir: string): string {
   );
 }
 
-// Where open scope requests live across a daemon restart — see
-// ScopeRequestRegistry's persist()/hydrate(). Without it a request an agent
-// was parked on when dispatchd restarted vanished with the process, and the
-// human never saw the card again. One file per project, flat alongside
-// merge-queue.json for the same reason.
-export function scopeRequestsPath(rootDir: string): string {
-  return join(runsDir(rootDir), 'scope-requests.json');
-}
-
 // Where a project's terminal sessions keep their scrollback and index (see
 // terminals.ts). Under `runs/` rather than beside the repo for the same reason
 // transcripts are: this is per-machine scratch a person never diffs, and it

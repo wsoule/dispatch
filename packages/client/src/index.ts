@@ -141,8 +141,6 @@ export type {
   RunPreview,
   RunPreviewReason,
   RunPreviewResult,
-  RunQuestion,
-  RunScopeRequest,
   RunSurvey,
   SendInput,
   SendResult,

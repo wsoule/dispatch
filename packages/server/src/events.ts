@@ -17,19 +17,12 @@ import type { SyncResult } from './sync/boardSyncer.js';
 // "some run's lifecycle/registry state changed, go refetch" (same
 // refetch-not-diff contract as task.changed); `run.log` streams one
 // NormalizedEntry as it's produced, keyed by runId so a client can append it
-// to the right run's log without a refetch; `approval.requested` tells
-// clients a run is now waiting on a human decision.
+// to the right run's log without a refetch.
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
-  | {
-      type: 'approval.requested';
-      runId: string;
-      requestId: string;
-      toolName: string;
-    }
   // Phase 5 P1: a plan's state (running -> ready|failed) changed, or it was
   // just confirmed — same "go refetch, no payload beyond the id" contract as
   // run.changed.
@@ -47,15 +40,6 @@ export type ServerEvent =
   | { type: 'review.changed'; runId: string }
   // .dispatch/config.yml changed through the Settings screen.
   | { type: 'config.changed' }
-  // A run agent's question was asked, answered, or withdrawn (the agent
-  // stopped listening) — refetch the open questions.
-  | { type: 'question.asked'; runId: string; questionId: string }
-  | { type: 'question.answered'; runId: string; questionId: string }
-  | { type: 'question.closed'; runId: string }
-  // A run agent asked to edit outside its scope, or that request was
-  // granted/denied — refetch the open scope requests.
-  | { type: 'scope.requested'; runId: string; requestId: string }
-  | { type: 'scope.decided'; runId: string; requestId: string }
   // A terminal session produced output, or ended. Both carry only the id, on
   // the same "go refetch" contract as run.changed — a client holds a byte
   // cursor and pulls the increment from GET /api/terminals/:id/output, so it

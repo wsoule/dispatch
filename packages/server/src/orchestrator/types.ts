@@ -45,20 +45,13 @@ export interface NormalizedEntry {
   // event, so the transcript can show what the sub-agent was asked to do.
   agent?: SubagentEvent;
   from?: 'user' | 'agent';
-  // Who sent a `from: 'agent'` message — e.g. the sender run's task title
-  // + id ("Fix login bug (r-abc123)"), or a generic fallback when the
-  // sender's identity couldn't be resolved. Never set for `from: 'user'`
-  // (the app renders that as "You" unconditionally).
+  // Who a message entry is from: the sender's address for a delivered
+  // message, or this run's task title + id for one it sent to a human.
   fromLabel?: string;
-  // Distinguishes the two `from: 'agent'` directions, which are otherwise
-  // shaped identically. `true` marks a message this run sent to a human —
-  // the agent flagging something UP to the human — so the app can badge it
-  // as "To you" rather than rendering it like an inbound message from
-  // another agent (`inject`, where `toUser` is absent and `fromLabel` names
-  // a *different* run).
+  // `true` marks a message this run sent to a human (`logOutgoing`), so the
+  // app badges it "To you" instead of rendering it as inbound.
   toUser?: boolean;
-  // The id (`m-<ulid>`) of the message an `Orchestrator.deliverToRun` entry
-  // delivered; absent for inject/messageUser entries.
+  // The id (`m-<ulid>`) of the message this entry delivered or sent.
   messageId?: string;
   // Set on entries delivered via `Orchestrator.notifyRun` — a non-interrupting
   // channel digest rather than a message the agent must respond to.

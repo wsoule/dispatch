@@ -541,11 +541,8 @@ describe('GET /api/runs/:id/diff', () => {
   });
 });
 
-// A run parked on an approval gate must be answerable from a plain read:
-// the `approval.requested` WS event is the only other carrier of the request
-// id, and a client that connected after it fired (a reload, the CLI) would
-// otherwise see the run stuck with nothing it could decide.
-describe('GET /api/runs — pendingApproval', () => {
+// A parked run's approval lives in its tool-approval gate, not on the run.
+describe('GET /api/runs — a run parked on an approval', () => {
   let gateHandle: ServerHandle;
   let gateBaseUrl: string;
   let gateRoot: string;
@@ -570,7 +567,7 @@ describe('GET /api/runs — pendingApproval', () => {
     rmSync(gateRoot, { recursive: true, force: true });
   });
 
-  it('carries the pending request on the list and the detail while parked, and drops it once answered', async () => {
+  it('lists as awaiting-approval with no pendingApproval key, and its gate is in the open decisions', async () => {
     const task = await json(
       await fetch(`${gateBaseUrl}/api/tasks`, {
         method: 'POST',
@@ -592,88 +589,38 @@ describe('GET /api/runs — pendingApproval', () => {
       return r.meta.state === 'awaiting-approval';
     });
 
-    const expected = { requestId: 'go', toolName: 'noop', input: {} };
     const listed = (await json(await fetch(`${gateBaseUrl}/api/runs`))).find(
       (r: { id: string }) => r.id === dispatched.id
     );
-    expect(listed.pendingApproval).toEqual(expected);
+    expect(listed.state).toBe('awaiting-approval');
+    expect('pendingApproval' in listed).toBe(false);
     const detail = await json(
       await fetch(`${gateBaseUrl}/api/runs/${dispatched.id}`)
     );
-    expect(detail.meta.pendingApproval).toEqual(expected);
+    expect(detail.meta.state).toBe('awaiting-approval');
+    expect('pendingApproval' in detail.meta).toBe(false);
 
-    // The id a fresh reader learned is the one the gate accepts.
-    const decided = await fetch(
-      `${gateBaseUrl}/api/runs/${dispatched.id}/approval`,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          requestId: detail.meta.pendingApproval.requestId,
-          allow: true,
-        }),
-      }
-    );
-    expect(decided.status).toBe(200);
-    await waitFor(async () => {
-      const r = await json(
-        await fetch(`${gateBaseUrl}/api/runs/${dispatched.id}`)
-      );
-      return r.meta.state !== 'awaiting-approval';
-    });
-    const after = await json(
-      await fetch(`${gateBaseUrl}/api/runs/${dispatched.id}`)
-    );
-    expect(after.meta.pendingApproval).toBeUndefined();
-  });
-});
-
-describe('POST /api/runs/:id/approval', () => {
-  it('400s a missing requestId', async () => {
-    const task = await createTask('Approval body validation');
-    const meta = await json(
-      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ executor: 'fake' }),
-      })
-    );
-    const res = await fetch(`${baseUrl}/api/runs/${meta.id}/approval`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ allow: true }),
-    });
-    expect(res.status).toBe(400);
-    expect((await json(res)).error).toMatch(/requestId/);
-  });
-
-  it('404s an unknown run id', async () => {
-    const res = await fetch(`${baseUrl}/api/runs/r-000000/approval`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ requestId: 'x', allow: true }),
-    });
-    expect(res.status).toBe(404);
-  });
-});
-
-describe('POST /api/runs/:id/message', () => {
-  it('400s a missing text field', async () => {
-    const task = await createTask('Message body validation');
-    const meta = await json(
-      await fetch(`${baseUrl}/api/tasks/${task.meta.id}/runs`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ executor: 'fake' }),
-      })
-    );
-    const res = await fetch(`${baseUrl}/api/runs/${meta.id}/message`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(400);
-    expect((await json(res)).error).toMatch(/text/);
+    // The gate is sent asynchronously once the run parks.
+    const approvalGates = async (): Promise<unknown[]> => {
+      const open = await fetch(`${gateBaseUrl}/api/decisions/open`, {
+        headers: { authorization: `Bearer ${gateHandle.tokens.appToken}` },
+      });
+      expect(open.status).toBe(200);
+      return ((await json(open)).items as { data?: unknown }[])
+        .map((m) => m.data as { type?: string; runId?: string } | undefined)
+        .filter(
+          (d) => d?.type === 'tool-approval' && d.runId === dispatched.id
+        );
+    };
+    await waitFor(async () => (await approvalGates()).length > 0);
+    expect(await approvalGates()).toEqual([
+      expect.objectContaining({
+        type: 'tool-approval',
+        runId: dispatched.id,
+        requestId: 'go',
+        tool: 'noop',
+      }),
+    ]);
   });
 });
 

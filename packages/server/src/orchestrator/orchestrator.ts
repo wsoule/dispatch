@@ -66,14 +66,11 @@ import {
   buildTaskPrompt,
   renderContinuationPrompt,
   renderFreshSessionNotice,
-  renderScopeRequestsSection,
-  untrustedInline,
 } from './prompt.js';
 import { prNumberFromOrigin } from './prReviewTask.js';
 import type { PendingApproval } from './registry.js';
 import { RunRegistry } from './registry.js';
 import { RepoDigestCache } from './repoDigest.js';
-import type { RunScopeRequest } from './scopeRequests.js';
 import type { RunDetail } from './transcript.js';
 import { replayTranscript, Transcript } from './transcript.js';
 import type {
@@ -174,19 +171,9 @@ export interface OrchestratorContext {
   // pre-existing synchronous Bun.spawnSync ones. Same seam PrManager /
   // MergeQueue / GitRepo share, so a test stubs git rather than running it.
   commandRunner?: CommandRunner;
-  // Where a run's out-of-fence requests live, so resumeRun can hand a
-  // predecessor's still-open (or decided-while-dead) requests to the successor
-  // it creates — see the `carry` call there. Optional: a test that never
-  // resumes across a restart has nothing to carry.
-  scopeRequests?: ScopeRequestCarrier;
   // The TypeSafe judgment client, or null/absent when none is configured —
   // only the fresh-dispatch model tier consults it (see modelForFreshRun).
   judgments?: JudgmentClient | null;
-}
-
-/** The one thing the orchestrator asks of the scope-request registry. */
-interface ScopeRequestCarrier {
-  carry(fromRunId: string, toRunId: string): RunScopeRequest[];
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -575,7 +562,7 @@ export class Orchestrator {
     executorRun.send(text);
   }
 
-  // A run's own message to a human, on its transcript, as message_user wrote it.
+  // A run's own message to a human, logged on its transcript.
   logOutgoing(runId: string, message: { id: string; body: string }): void {
     const meta = this.registry.get(runId);
     if (meta === undefined) return;
@@ -705,67 +692,12 @@ export class Orchestrator {
       }));
   }
 
-  // Every approval request currently waiting on a human, flattened into one
-  // row per run. The registry holds these per-run for approve()'s benefit;
-  // read surfaces (the overseer's status tools) need the whole list, and
-  // deriving it from `list()` alone is impossible — RunState only says
-  // `awaiting-approval`, never which tool call is being asked about.
-  //
-  // Filtered on that state because approve() is the ONLY thing that clears a
-  // run's pending approval: a run cancelled (or zombie-healed) while parked on
-  // a gate keeps its record forever. Nothing is listening for an answer to
-  // those any more, so listing them would only offer the human an action that
-  // approve() itself would then refuse.
-  pendingApprovals(): {
-    runId: string;
-    taskId: string;
-    taskTitle: string;
-    requestId: string;
-    toolName: string;
-    input: unknown;
-  }[] {
-    return this.registry
-      .listPendingApprovals()
-      .filter(({ meta }) => meta.state === 'awaiting-approval')
-      .map(({ meta, approval }) => ({
-        runId: meta.id,
-        taskId: meta.taskId,
-        taskTitle: meta.taskTitle,
-        requestId: approval.requestId,
-        toolName: approval.toolName,
-        input: approval.input,
-      }));
-  }
-
-  // The approval one run is parked on, if any. Lets a caller answer an
-  // approval by run id alone instead of having to carry the requestId it was
-  // told about earlier — see approve(), which still requires an explicit
-  // requestId so a stale answer can never resolve a newer request.
-  //
-  // Gated on the run's state for the same reason pendingApprovals() filters on
-  // it: a stale record left on a cancelled run is not an answerable request.
+  // The approval one run is parked on, if any. Only an `awaiting-approval` run
+  // counts: a record left on a cancelled run is not an answerable request.
   pendingApprovalFor(runId: string): PendingApproval | undefined {
     const meta = this.registry.get(runId);
     if (meta?.state !== 'awaiting-approval') return undefined;
     return this.registry.getPendingApproval(runId);
-  }
-
-  /**
-   * Attaches each awaiting-approval run's pending request to its meta for API
-   * reads. The registry keeps approvals in memory and the `approval.requested`
-   * WS event carries the id live — but a client that connects afterwards (a
-   * reload, a relaunched app, the CLI) had no way to learn which request a
-   * parked run is waiting on, so it could see the run was stuck and still not
-   * answer it. Computed per request and never persisted: the record dies with
-   * the executor, exactly like the pause it describes.
-   */
-  decorateRunsWithPendingApproval<T extends RunMeta>(
-    runs: T[]
-  ): (T & { pendingApproval?: PendingApproval })[] {
-    return runs.map((run) => {
-      const pending = this.pendingApprovalFor(run.id);
-      return pending === undefined ? run : { ...run, pendingApproval: pending };
-    });
   }
 
   // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
@@ -1503,98 +1435,6 @@ export class Orchestrator {
     return meta;
   }
 
-  // Resolves the label a `from: 'agent'` message entry should carry —
-  // the sender run's task title + id when `from.runId` names a run this
-  // orchestrator still knows about (live or terminal-but-registered), or
-  // an explicit `from.label` override, or the generic fallback that keeps
-  // `agent_message`'s pre-identity behavior (and its existing API test's
-  // exact prefix text) unchanged when the sender can't be resolved at all.
-  private resolveSenderLabel(from?: { runId?: string; label?: string }): {
-    fromLabel: string;
-  } {
-    if (from?.runId !== undefined) {
-      const senderMeta = this.registry.get(from.runId);
-      if (senderMeta !== undefined) {
-        return {
-          fromLabel: `${untrustedInline(senderMeta.taskTitle)} (${senderMeta.id})`,
-        };
-      }
-    }
-    if (from?.label !== undefined && from.label.trim() !== '') {
-      return { fromLabel: untrustedInline(from.label) };
-    }
-    return { fromLabel: 'another agent' };
-  }
-
-  // The messaging half of agent collaboration (spec's `agent_message`):
-  // injects a message from *another* agent into a live run's executor.
-  // Distinct from sendMessage's human-authored channel — this one always
-  // prefixes the text with the resolved SENDER's identity (see
-  // resolveSenderLabel) so the receiving agent can tell who's talking, and
-  // deliberately only accepts a run that's actively `running` (not
-  // provisioning, not awaiting-approval, not terminal): every other state
-  // 409s, since "another agent has something to say right now" is only
-  // unambiguous while the run is actually running. `resume`-style
-  // reactivation is sendMessage's job, not this one's.
-  inject(
-    runId: string,
-    text: string,
-    from?: { runId?: string; label?: string }
-  ): RunMeta {
-    const meta = this.requireRun(runId);
-    if (meta.state !== 'running') {
-      throw new OrchestratorConflictError(`run is not running: ${runId}`);
-    }
-    const executorRun = this.registry.getExecutorRun(runId);
-    // Same zombie self-heal as approve()/sendMessage() above — the state
-    // check just above guarantees `meta.state === 'running'` here, so a
-    // missing ExecutorRun means the executor died out from under a live run.
-    if (executorRun === undefined) {
-      this.healZombieRun(meta);
-    }
-    const { fromLabel } = this.resolveSenderLabel(from);
-    const prefixed = `[message from ${fromLabel}] ${text}`;
-    const entry: NormalizedEntry = {
-      ts: new Date().toISOString(),
-      kind: 'message',
-      from: 'agent',
-      fromLabel,
-      text,
-    };
-    this.transcriptFor(runId).appendEntry(entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
-    executorRun.send(prefixed);
-    return meta;
-  }
-
-  // The agent->human channel (spec's `message_user`): records a
-  // `from: 'agent'` message entry on the CALLING run's own transcript —
-  // labeled with that same run's task title + id — so an agent can flag a
-  // question or update to the human without waiting for its own assistant
-  // output to be read. Unlike `inject`, there is no separate recipient run
-  // to deliver text into; this only ever writes to `runId`'s own transcript
-  // and broadcasts it, so a connected Session tab badges it immediately.
-  // Same `running`-only liveness gate as `inject` — a run that isn't
-  // actively running has no reason to be raising anything to the user right
-  // now.
-  messageUser(runId: string, text: string): RunMeta {
-    const meta = this.requireRun(runId);
-    if (meta.state !== 'running') {
-      throw new OrchestratorConflictError(`run is not running: ${runId}`);
-    }
-    const entry: NormalizedEntry = {
-      ts: new Date().toISOString(),
-      kind: 'message',
-      from: 'agent',
-      fromLabel: `${meta.taskTitle} (${meta.id})`,
-      toUser: true,
-      text,
-    };
-    this.transcriptFor(runId).appendEntry(entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
-    return meta;
-  }
-
   // Records a command the implementer actually ran, stamped with `at` here
   // so the caller can echo the record back — data in place of a prose report.
   recordEvidence(
@@ -1640,20 +1480,6 @@ export class Orchestrator {
     }
     this.ctx.events.broadcast({ type: 'run.changed' });
     return full;
-  }
-
-  // Records the human's reply to an `ask_user` question on the run's own
-  // transcript. The agent gets it as its tool result, so nothing is injected.
-  recordAnswer(runId: string, text: string): void {
-    this.requireRun(runId);
-    const entry: NormalizedEntry = {
-      ts: new Date().toISOString(),
-      kind: 'message',
-      from: 'user',
-      text,
-    };
-    this.transcriptFor(runId).appendEntry(entry);
-    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
   }
 
   /**
@@ -4151,7 +3977,7 @@ export class Orchestrator {
   // already registered as 'running'). reconcileOnBoot() already heals this
   // exact shape of zombie once, at boot, for every run whose transcript is
   // non-terminal; this covers the same run going zombie *after* boot, lazily,
-  // the moment approve()/sendMessage()/inject() next tries to reach its
+  // the moment approve()/sendMessage()/deliverToRun() next tries to reach its
   // executor and finds nothing there.
   //
   // Reuses transition()'s state-line/registry-update/`run.changed` broadcast
@@ -4209,7 +4035,7 @@ export class Orchestrator {
 
   // Starts `executor` for a run that dispatch()/requestChanges() has already
   // registered and transitioned to 'running', then records its live
-  // ExecutorRun so approve()/sendMessage()/inject() can reach it.
+  // ExecutorRun so approve()/sendMessage()/deliverToRun() can reach it.
   //
   // If start() throws *synchronously* — most commonly the Claude Agent SDK
   // failing to locate its native CLI binary (a broken `--omit=optional`
@@ -4576,12 +4402,6 @@ export class Orchestrator {
       onApprovalRequest: (request) => {
         this.registry.setPendingApproval(runId, request);
         this.transition(runId, 'awaiting-approval');
-        this.ctx.events.broadcast({
-          type: 'approval.requested',
-          runId,
-          requestId: request.requestId,
-          toolName: request.toolName,
-        });
         const meta = this.registry.get(runId);
         if (meta !== undefined) {
           this.approvalGate?.raise({
@@ -4736,7 +4556,7 @@ export class Orchestrator {
     }
 
     // Synchronous, no await before this — closes the window a concurrent
-    // approve()/sendMessage()/inject() could otherwise race (see below).
+    // approve()/sendMessage()/deliverToRun() could otherwise race (see below).
     this.transition(runId, effectiveFinish.state, {
       costUsd: effectiveFinish.costUsd,
       turns: effectiveFinish.turns,
@@ -5040,43 +4860,13 @@ export class Orchestrator {
       });
     }
 
-    // The predecessor's scope requests follow it into the successor: an open
-    // one is still a card in front of a human, and it has to belong to the run
-    // whose agent can act on the answer. Carried BEFORE the prompt is built so
-    // the agent is told what it was waiting on; the re-broadcast is what moves
-    // the card to the new run in an open app.
-    const carried = this.ctx.scopeRequests?.carry(meta.id, newRunId) ?? [];
-    for (const request of carried) {
-      if (request.granted !== null) continue;
-      this.ctx.events.broadcast({
-        type: 'scope.requested',
-        runId: newRunId,
-        requestId: request.id,
-      });
-    }
-    // A reattached session already holds every ruling the agent was GIVEN,
-    // but not the one its dead request_scope poll never received — so the
-    // carried section goes on both prompt shapes.
-    const prompt = [
-      continuing
-        ? renderContinuationPrompt(meta, newRunId)
-        : `${this.promptForTask(task, executorName)}\n\n${renderFreshSessionNotice(meta, newRunId)}`,
-      renderScopeRequestsSection(carried),
-    ]
-      .filter((section): section is string => section !== null)
-      .join('\n\n');
+    const prompt = continuing
+      ? renderContinuationPrompt(meta, newRunId)
+      : `${this.promptForTask(task, executorName)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
 
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
       : '';
-    const openCarried = carried.filter((r) => r.granted === null).length;
-    const carriedNote =
-      openCarried > 0
-        ? `; carried ${openCarried} undecided scope request${openCarried === 1 ? '' : 's'} (${carried
-            .filter((r) => r.granted === null)
-            .map((r) => r.id)
-            .join(', ')})`
-        : '';
     const how =
       opts.auto === true
         ? `auto-resumed after ${meta.state} (daemon restart)`
@@ -5088,7 +4878,7 @@ export class Orchestrator {
       meta.taskId,
       {
         status: 'working',
-        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}${carriedNote}`,
+        appendActivity: `${now} ${how} (run ${newRunId})${sessionNote}${substitutionNote}`,
         // Left unattributed on the auto path: no person asked for this one, and
         // crediting the daemon's operator would misreport who acted.
         activityActor:

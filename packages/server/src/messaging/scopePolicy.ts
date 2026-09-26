@@ -65,7 +65,7 @@ interface ScopeEffectDeps extends ScopePolicyDeps {
 // The auto-grant ruling for a run's scope request, or null when a human must
 // decide: a path leaving the repo or into .git/, a critical task, or a run or
 // task the daemon cannot find all fail closed.
-export function scopeRulingFor(
+function scopeRulingFor(
   deps: ScopePolicyDeps,
   runId: string,
   paths: string[]

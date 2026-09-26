@@ -1331,6 +1331,38 @@ describe('messaging HTTP routes', () => {
     });
     expect(retried.status).toBe(201);
   });
+
+  it('the old question, scope, approval and message routes are gone', async () => {
+    // A real live run, so each old route reaches its handler today instead of 404ing on an unknown run.
+    const { runId } = await liveRun('Old routes');
+    const run = `/api/runs/${runId}`;
+    for (const [method, path] of [
+      ['POST', `${run}/approval`],
+      ['POST', `${run}/message`],
+      ['POST', `${run}/inject`],
+      ['POST', `${run}/message-user`],
+      ['POST', `${run}/questions`],
+      ['GET', `${run}/questions`],
+      ['GET', `${run}/questions/q-1`],
+      ['DELETE', `${run}/questions/q-1`],
+      ['POST', `${run}/questions/q-1/answer`],
+      ['GET', '/api/questions'],
+      ['POST', `${run}/scope-requests`],
+      ['GET', `${run}/scope-requests`],
+      ['GET', `${run}/scope-requests/sr-1`],
+      ['POST', `${run}/scope-requests/sr-1/decide`],
+      ['POST', '/api/overseer/wc-1/actions/a-1/confirm'],
+      ['POST', '/api/overseer/wc-1/approvals/rq-1'],
+    ] as const) {
+      const res = await fetch(`${baseUrl}${path}`, {
+        method,
+        headers: authHeaders(handle.tokens.appToken),
+        body: method === 'POST' ? '{}' : undefined,
+      });
+      expect([method, path, res.status]).toEqual([method, path, 404]);
+    }
+    await handle.orchestrator.cancel(runId);
+  });
 });
 
 describe('messaging thread rate limit', () => {

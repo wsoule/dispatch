@@ -14,12 +14,12 @@ const EXPERIMENTS = [
   // executors/claude.ts.
   'lean-tools',
   // Writes the CLI's prompt-cache entries with a 1-hour TTL instead of 5
-  // minutes. A dispatched run can sit longer than 5 minutes on a human
-  // (ask_user, request_scope, a tool approval) or a long build, after which
-  // the next request re-writes the whole conversation at the cache-write rate
-  // instead of reading it at the cache-read rate. 1-hour writes cost 2x the
-  // input rate rather than 1.25x, so this only pays off when such gaps are
-  // common; compare cacheCreationInputTokens across arms.
+  // minutes. A dispatched run can sit longer than 5 minutes on a human (a
+  // blocking question, a scope or tool-approval gate) or a long build, after
+  // which the next request re-writes the whole conversation at the
+  // cache-write rate instead of reading it at the cache-read rate. 1-hour
+  // writes cost 2x the input rate rather than 1.25x, so this only pays off
+  // when such gaps are common; compare cacheCreationInputTokens across arms.
   'cache-1h',
 ] as const;
 

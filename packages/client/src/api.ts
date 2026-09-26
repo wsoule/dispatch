@@ -159,12 +159,6 @@ export interface RunMeta {
   effort?: EffortLevel;
   /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
   dispatchedBy?: string;
-  // The approval this run is parked on while `state` is 'awaiting-approval',
-  // so a client that connects after the `approval.requested` event fired (a
-  // reload, a relaunched app, the CLI) can still answer it. The daemon
-  // decorates it onto run reads from its in-memory registry; it is never
-  // persisted and is absent in every other state.
-  pendingApproval?: { requestId: string; toolName: string; input?: unknown };
   // How many sub-agents this run's agent has fanned out into and where they
   // stand, kept live by the daemon from the run's `agent` entries and rebuilt
   // from them on replay. Absent until the first sub-agent is spawned. Mirrors
@@ -296,10 +290,8 @@ export interface BranchEntry {
 
 // Mirrors NormalizedEntry in packages/server/src/orchestrator/types.ts — the
 // one log-entry shape every executor streams, real or fake. `kind: 'message'`
-// is the agent-comms identified chat channel: `from: 'user'` is the run's own
-// human via the Session composer, `from: 'agent'` is either another live
-// run's `agent_message` (sender named in `fromLabel`) or this run's own
-// `message_user` call raised to the human.
+// is a message delivered to the run (`from` names a human or an agent) or one
+// the run sent to a human (`toUser`).
 export interface NormalizedEntry {
   ts: string;
   kind:
@@ -325,13 +317,10 @@ export interface NormalizedEntry {
   agent?: SubagentEvent;
   from?: 'user' | 'agent';
   fromLabel?: string;
-  // Set on this run's own `message_user` call — the agent flagging something
-  // UP to the human — so the app can badge it distinctly from an inbound
-  // `agent_message` (which has no `toUser` and whose `fromLabel` names a
-  // different run). See the server-side NormalizedEntry for the full note.
+  // Set on a message this run sent to a human, so the app badges it "To you"
+  // instead of rendering it as inbound.
   toUser?: boolean;
-  // The messaging-core message id (`m-<ulid>`) this entry mirrors, when it
-  // was delivered via the orchestrator's `deliverToRun`.
+  // The messaging-core message id (`m-<ulid>`) this entry delivered or sent.
   messageId?: string;
   // Set on entries delivered via the orchestrator's `notifyRun` — a
   // non-interrupting channel digest rather than a message to respond to.
@@ -834,12 +823,6 @@ export type ServerEvent =
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
-  | {
-      type: 'approval.requested';
-      runId: string;
-      requestId: string;
-      toolName: string;
-    }
   // Phase 5 P2: a plan's state (running -> ready|failed) changed, or it was
   // just confirmed. Same "go refetch" contract as the other *.changed events
   // — mirrors packages/server/src/events.ts exactly.
@@ -879,15 +862,6 @@ export type ServerEvent =
   | { type: 'config.changed' }
   // A task draft changed state or was dismissed — no id, refetch the list.
   | { type: 'draft.changed' }
-  // A run agent's question was asked, answered, or withdrawn. Mirrors
-  // packages/server/src/events.ts.
-  | { type: 'question.asked'; runId: string; questionId: string }
-  | { type: 'question.answered'; runId: string; questionId: string }
-  | { type: 'question.closed'; runId: string }
-  // A run agent asked to edit outside its scope, or that request was
-  // granted/denied. Mirrors packages/server/src/events.ts.
-  | { type: 'scope.requested'; runId: string; requestId: string }
-  | { type: 'scope.decided'; runId: string; requestId: string }
   // The repo's git state changed via one of the `/api/git/*` mutation
   // routes. Mirrors packages/server/src/events.ts.
   | { type: 'git.changed' }
@@ -957,33 +931,6 @@ export type ServerEvent =
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   // Mirrors packages/server/src/events.ts exactly.
   | { type: 'delivery.changed'; deliveryId: string; messageId: string };
-
-// Mirrors RunQuestion in packages/server/src/orchestrator/questions.ts: one
-// question an agent is blocked on until the human answers it.
-export interface RunQuestion {
-  id: string;
-  runId: string;
-  question: string;
-  /** Suggested answers rendered as one-click chips; free text always allowed. */
-  options: string[];
-  askedAt: string;
-  answer: string | null;
-  answeredAt: string | null;
-}
-
-// Mirrors RunScopeRequest in packages/server/src/orchestrator/scopeRequests.ts:
-// an out-of-scope edit an agent asked for, blocked until it is decided.
-export interface RunScopeRequest {
-  id: string;
-  runId: string;
-  paths: string[];
-  reason: string;
-  requestedAt: string;
-  granted: boolean | null;
-  decisionReason: string | null;
-  decidedAt: string | null;
-  decidedBy: 'app' | 'api' | null;
-}
 
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {
@@ -2208,7 +2155,7 @@ export interface ConnectEventsOptions {
   reconnectDelayMs?: number;
   // Called for every successfully parsed ServerEvent, including
   // `task.changed` and `hello` — the orchestrator UI (Phase 4 Slice O3) needs
-  // `run.changed`/`run.log`/`approval.requested` too, which `onChange` alone
+  // `run.changed`/`run.log`/`message.new` too, which `onChange` alone
   // can't carry (it fires only for `task.changed`, unchanged from Phase 2R,
   // so existing callers keep their exact behavior). A malformed frame never
   // reaches this callback — see the `try/catch` around `JSON.parse` below.
@@ -2483,19 +2430,6 @@ export interface ApiClient {
   fetchAgentSessions(): Promise<AgentSessionMeta[]>;
   fetchRun(id: string): Promise<RunDetail>;
   fetchRunClaims(): Promise<RunClaim[]>;
-  /** `scope: 'session'` also pre-approves the same tool for the rest of this run; `reason`
-   * is passed to the model as the denial message, so a refusal explains itself. */
-  approveRun(
-    runId: string,
-    requestId: string,
-    allow: boolean,
-    opts?: { scope?: 'once' | 'session'; reason?: string }
-  ): Promise<void>;
-  sendRunMessage(
-    runId: string,
-    text: string,
-    opts?: { resume?: boolean }
-  ): Promise<RunMeta>;
   cancelRun(runId: string): Promise<void>;
   /**
    * Asks a live run to stop gracefully: the agent finishes its current
@@ -2799,37 +2733,6 @@ export interface ApiClient {
    * poll with `fetchPlan`, whose proposal is confirmed through the ordinary
    * `confirmPlan` (which also links the note to the task it writes). */
   enrichNote(id: string): Promise<{ planId: string }>;
-  // Phase 5 P2: the messaging half (`agent_message`'s daemon-side landing
-  // spot) — injects a message into a *running* run, prefixed
-  // `[message from <sender>]` server-side (a generic "another agent" label
-  // when `fromRunId` is omitted or doesn't resolve to a known run). 409s
-  // when the run isn't currently `running`.
-  injectRun(runId: string, text: string, fromRunId?: string): Promise<RunMeta>;
-  // agent-comms: the agent->human channel (`message_user`'s daemon-side
-  // landing spot) — records a `from: 'agent'` message on the run's OWN
-  // transcript rather than delivering into any executor. 409s when the run
-  // isn't currently `running`.
-  messageUser(runId: string, text: string): Promise<RunMeta>;
-  // The blocking agent→human channel (`ask_user`'s landing spot):
-  // every unanswered question, and the call that unblocks the agent on one.
-  fetchOpenQuestions(): Promise<RunQuestion[]>;
-  answerQuestion(
-    runId: string,
-    questionId: string,
-    answer: string
-  ): Promise<RunQuestion>;
-  // The blocking agent->orchestrator channel (`request_scope`'s landing
-  // spot): the run's still-open requests (what survives a daemon restart —
-  // the only way to find one without having seen its `scope.requested`
-  // event live), one request by id, and the call that decides it.
-  listScopeRequests(runId: string): Promise<RunScopeRequest[]>;
-  fetchScopeRequest(runId: string, requestId: string): Promise<RunScopeRequest>;
-  decideScopeRequest(
-    runId: string,
-    requestId: string,
-    granted: boolean,
-    reason?: string
-  ): Promise<RunScopeRequest>;
   // Phase 5 P2: the big-prompt plan flow. `startPlan` returns immediately
   // (202) with the plan's id — poll `fetchPlan`/watch `plan.changed` over WS
   // for it to move to `ready`/`failed`. `confirmPlan` sends the (possibly
@@ -3090,10 +2993,9 @@ export interface ApiClient {
 // dispatchd on some other port.
 //
 // `token` is the daemon token every call presents. Pass the app token to reach
-// the decide-tier calls (`decideScopeRequest`, `approveRun`) and to answer
-// gates; the agent token reaches everything else. Omitting it falls back to
-// the token the daemon injected into the page it served, which is how the
-// browser UI gets one at all.
+// the decide-tier calls and to answer gates; the agent token reaches
+// everything else. Omitting it falls back to the token the daemon injected
+// into the page it served, which is how the browser UI gets one at all.
 export function createApiClient(baseUrl: string, token?: string): ApiClient {
   const target: ApiTarget = { baseUrl, token: token ?? injectedDaemonToken() };
   return {
@@ -3186,17 +3088,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchAgentSessions: () => request(target, '/api/agents'),
     fetchRun: (id) => request(target, `/api/runs/${id}`),
     fetchRunClaims: () => request(target, '/api/runs/claims'),
-    approveRun: async (runId, requestId, allow, opts = {}) => {
-      await request(target, `/api/runs/${runId}/approval`, {
-        method: 'POST',
-        ...jsonBody({ requestId, allow, ...opts }),
-      });
-    },
-    sendRunMessage: (runId, text, opts = {}) =>
-      request(target, `/api/runs/${runId}/message`, {
-        method: 'POST',
-        ...jsonBody({ text, ...opts }),
-      }),
     cancelRun: async (runId) => {
       await request(target, `/api/runs/${runId}/cancel`, { method: 'POST' });
     },
@@ -3519,31 +3410,6 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(target, `/api/notes/${id}/promote`, { method: 'POST' }),
     enrichNote: (id) =>
       request(target, `/api/notes/${id}/enrich`, { method: 'POST' }),
-    injectRun: (runId, text, fromRunId) =>
-      request(target, `/api/runs/${runId}/inject`, {
-        method: 'POST',
-        ...jsonBody(fromRunId !== undefined ? { text, fromRunId } : { text }),
-      }),
-    messageUser: (runId, text) =>
-      request(target, `/api/runs/${runId}/message-user`, {
-        method: 'POST',
-        ...jsonBody({ text }),
-      }),
-    fetchOpenQuestions: () => request(target, '/api/questions'),
-    answerQuestion: (runId, questionId, answer) =>
-      request(target, `/api/runs/${runId}/questions/${questionId}/answer`, {
-        method: 'POST',
-        ...jsonBody({ answer }),
-      }),
-    listScopeRequests: (runId) =>
-      request(target, `/api/runs/${runId}/scope-requests`),
-    fetchScopeRequest: (runId, requestId) =>
-      request(target, `/api/runs/${runId}/scope-requests/${requestId}`),
-    decideScopeRequest: (runId, requestId, granted, reason) =>
-      request(target, `/api/runs/${runId}/scope-requests/${requestId}/decide`, {
-        method: 'POST',
-        ...jsonBody({ granted, reason }),
-      }),
     startPlan: (prompt, opts = {}) =>
       request(target, '/api/plan', {
         method: 'POST',
