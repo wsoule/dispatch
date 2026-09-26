@@ -33,6 +33,16 @@ const GATE = {
   },
 };
 
+// A second call the same run parked after the first, with its own gate.
+const GATE_2 = {
+  ...GATE,
+  id: 'm-gate02',
+  thread: 'm-gate02',
+  body: 'Checkout wants to run write_file',
+  createdAt: '2026-09-25T10:00:05Z',
+  data: { ...GATE.data, requestId: 'fake-approval-2', tool: 'write_file' },
+};
+
 function runMeta(id: string, taskId: string, state: string) {
   return {
     id,
@@ -63,6 +73,8 @@ let server: ReturnType<typeof Bun.serve>;
 let replies: { id: string; body: unknown; auth: string | null }[];
 let sends: { body: unknown; auth: string | null }[];
 let decisionReads: number;
+// The gates GET /api/decisions/open lists, oldest first.
+let openGates: (typeof GATE)[];
 // Whether a wake of t-3 started a run, for `message --resume`.
 let woke: boolean;
 const originalDispatchHome = process.env.DISPATCH_HOME;
@@ -99,7 +111,7 @@ function startFakeDaemon(): ReturnType<typeof Bun.serve> {
       }
       if (url.pathname === '/api/decisions/open') {
         decisionReads++;
-        return Response.json({ items: [GATE] });
+        return Response.json({ items: openGates });
       }
       if (url.pathname === '/api/messages' && req.method === 'POST') {
         const body = (await req.json()) as { to: string[]; wake?: string };
@@ -144,6 +156,7 @@ beforeEach(async () => {
   replies = [];
   sends = [];
   decisionReads = 0;
+  openGates = [GATE];
   woke = false;
   ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
@@ -215,6 +228,32 @@ describe('dispatch approve', () => {
     );
     expect(replies).toEqual([]);
   });
+
+  // Each parked call has its own gate, and the daemon answers any of them.
+  it('answers exactly the named call when a run parked several', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    openGates = [GATE, GATE_2];
+    await run('approve', 'r-1', 'fake-approval-2');
+    expect(replies.map((r) => r.id)).toEqual(['m-gate02']);
+    expect(lines).toContain('r-1 approved (fake-approval-2)');
+  });
+
+  it('with several parked calls and no request id, names them and answers none', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    openGates = [GATE, GATE_2];
+    await expect(run('approve', 'r-1')).rejects.toThrow(
+      'r-1 is parked on 2 calls: fake-approval-1 (run_shell), fake-approval-2 (write_file)'
+    );
+    expect(replies).toEqual([]);
+  });
+
+  it('--reason without --deny is refused rather than dropped', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(
+      run('approve', 'r-1', '--reason', 'looks fine')
+    ).rejects.toThrow('--reason goes with --deny');
+    expect(replies).toEqual([]);
+  });
 });
 
 describe('dispatch run show', () => {
@@ -229,15 +268,32 @@ describe('dispatch run show', () => {
     );
   });
 
+  it('lists every parked call, since each is answered by its own request id', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    openGates = [GATE, GATE_2];
+    await run('run', 'show', 'r-1');
+    const at = lines.indexOf(
+      'awaiting approval on 2 calls — answer each with: dispatch approve r-1 <requestId> [--deny] (needs the app token: --token or DISPATCH_APP_TOKEN)'
+    );
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(lines.slice(at + 1, at + 3)).toEqual([
+      '  run_shell (fake-approval-1)',
+      '  write_file (fake-approval-2)',
+    ]);
+  });
+
   it('without an app token it still says how to answer, without the gate details', async () => {
     await run('run', 'show', 'r-1');
     expect(lines).toContain(`awaiting approval — ${answerWith}`);
     expect(decisionReads).toBe(0);
   });
 
-  it('a gate the token cannot read falls back to the plain line', async () => {
+  it('a gate the token cannot read falls back to the plain line and says why', async () => {
     await run('run', 'show', 'r-1', '--token', AGENT_TOKEN);
     expect(lines).toContain(`awaiting approval — ${answerWith}`);
+    expect(lines).toContain(
+      '  could not read its gates with that token: use a human token'
+    );
   });
 
   it('prints nothing about approvals for a run that is not parked', async () => {
