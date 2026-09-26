@@ -95,6 +95,14 @@ export {
   wireState,
 } from './states.js';
 export type { TaskStateName, WireTaskState } from './states.js';
+export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
+export type {
+  A2AStore,
+  ClientRow,
+  TaskListQuery,
+  TaskPatch,
+  TaskRow,
+} from './store/sqlite.js';
 export { ENVELOPE_URI, EXTENSION_URIS, GATE_URI, WORK_URI } from './uris.js';
 export type { ExtensionUri } from './uris.js';
 export type {
