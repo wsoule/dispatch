@@ -20,7 +20,14 @@ export type {
   MessageView,
   TextMediaType,
 } from './codec.js';
-export { A2AError } from './errors.js';
+export {
+  A2AError,
+  a2aFieldPath,
+  authFailure,
+  errorResponse,
+  HttpFailure,
+  rateLimited,
+} from './errors.js';
 export type { A2AReason } from './errors.js';
 export {
   activatedExtensions,
@@ -87,6 +94,10 @@ export {
   wrapExternalData,
 } from './sanitize.js';
 export type { ExternalContent, SanitizedContent } from './sanitize.js';
+export { handleA2A, matchRoute } from './server/handle.js';
+export type { HandleOptions, Route } from './server/handle.js';
+export { IpLimiter } from './server/limits.js';
+export { decodePageToken, encodePageToken } from './server/paging.js';
 export {
   INTERRUPTED_STATES,
   stateFromWire,

@@ -1,0 +1,147 @@
+import type {
+  Admission,
+  AuthResult,
+  BridgePort,
+  Caller,
+  CardInputs,
+  ContinueInput,
+  ContinueResult,
+  ListPage,
+  ListQuery,
+  OpenInput,
+  OpenResult,
+  TaskFacts,
+} from '../src/port.js';
+import { CLIENT, facts } from './facts.js';
+
+// A recording BridgePort whose world is plain maps; tests script its answers.
+export class FakePort implements BridgePort {
+  calls: { method: string; args: unknown[] }[] = [];
+  tokens = new Map<string, AuthResult>([
+    ['good', { ok: true, caller: { address: CLIENT, name: 'a2a.acme' } }],
+    [
+      'other',
+      {
+        ok: true,
+        caller: { address: 'agent:wyat/a2a.other', name: 'a2a.other' },
+      },
+    ],
+    [
+      'revoked',
+      {
+        ok: false,
+        status: 401,
+        reason: 'AUTH_AGENT_REVOKED',
+        message: "this client's access was revoked",
+      },
+    ],
+    [
+      'pending',
+      {
+        ok: false,
+        status: 403,
+        reason: 'AUTH_AGENT_PENDING',
+        message: 'awaiting approval in Dispatch',
+      },
+    ],
+  ]);
+  tasks = new Map<string, TaskFacts>([['m-root', facts()]]);
+  cardInputs: CardInputs = {
+    name: 'Acme API',
+    description: null,
+    publicUrl: 'http://127.0.0.1:1',
+    version: '0.0.0-test',
+    skills: ['ask'],
+    blockingWaitSec: 60,
+    pushNotifications: false,
+  };
+  requestAdmission: Admission = { ok: true };
+  streamLimit = 5;
+  openStreams = 0;
+  private readonly watchers = new Map<string, Set<() => void>>();
+  onOpen: (input: OpenInput) => OpenResult = () => ({
+    kind: 'task',
+    taskId: 'm-root',
+  });
+  onContinue: (input: ContinueInput) => ContinueResult = () => ({
+    reask: null,
+  });
+  onCancel: (taskId: string) => void = () => {};
+
+  authenticate(bearer: string): Promise<AuthResult> {
+    this.calls.push({ method: 'authenticate', args: [bearer] });
+    return Promise.resolve(
+      this.tokens.get(bearer) ?? {
+        ok: false,
+        status: 401,
+        reason: 'AUTH_INVALID_TOKEN',
+        message: 'unknown token',
+      }
+    );
+  }
+  admit(_caller: Caller, what: 'request' | 'stream'): Promise<Admission> {
+    if (what === 'request') return Promise.resolve(this.requestAdmission);
+    if (this.openStreams >= this.streamLimit)
+      return Promise.resolve({ ok: false, retryAfterSec: 1 });
+    this.openStreams += 1;
+    let released = false;
+    return Promise.resolve({
+      ok: true,
+      release: () => {
+        if (!released) {
+          released = true;
+          this.openStreams -= 1;
+        }
+      },
+    });
+  }
+  card(): Promise<CardInputs> {
+    return Promise.resolve(this.cardInputs);
+  }
+  open(_caller: Caller, input: OpenInput): Promise<OpenResult> {
+    this.calls.push({ method: 'open', args: [input] });
+    return Promise.resolve(this.onOpen(input));
+  }
+  continue(_caller: Caller, input: ContinueInput): Promise<ContinueResult> {
+    this.calls.push({ method: 'continue', args: [input] });
+    return Promise.resolve(this.onContinue(input));
+  }
+  facts(caller: Caller, taskId: string): Promise<TaskFacts | null> {
+    const f = this.tasks.get(taskId);
+    return Promise.resolve(
+      f !== undefined && f.client === caller.address ? f : null
+    );
+  }
+  list(caller: Caller, query: ListQuery): Promise<ListPage> {
+    this.calls.push({ method: 'list', args: [query] });
+    const ids = [...this.tasks.values()]
+      .filter((f) => f.client === caller.address)
+      .map((f) => f.id);
+    return Promise.resolve({
+      ids: ids.slice(0, query.pageSize),
+      nextPageToken: '',
+      totalSize: ids.length,
+    });
+  }
+  cancel(_caller: Caller, taskId: string): Promise<void> {
+    this.calls.push({ method: 'cancel', args: [taskId] });
+    this.onCancel(taskId);
+    return Promise.resolve();
+  }
+  watch(_caller: Caller, taskId: string, onChange: () => void): () => void {
+    const set = this.watchers.get(taskId) ?? new Set();
+    set.add(onChange);
+    this.watchers.set(taskId, set);
+    return () => {
+      set.delete(onChange);
+    };
+  }
+  get activeWatchers(): number {
+    return [...this.watchers.values()].reduce((n, s) => n + s.size, 0);
+  }
+  // Replaces a task's facts and fires its watchers, as the daemon's watch does.
+  change(taskId: string, next: TaskFacts): void {
+    this.tasks.set(taskId, next);
+    for (const fn of this.watchers.get(taskId) ?? []) fn();
+  }
+}
