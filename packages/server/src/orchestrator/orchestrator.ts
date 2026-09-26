@@ -1987,6 +1987,23 @@ export class Orchestrator {
     if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
     if (meta.prUrl !== undefined) return 'run has an open PR';
     if (meta.baseDiscarded === true) return "run's base needs a human";
+    return this.pickUpBlockReason(meta);
+  }
+
+  // Why a human's request cannot continue exactly this run, or null. Unlike
+  // resumeBlockReason a finished run, an open PR or a flagged base do not
+  // block: the human chose this run, and their request is the review.
+  continueBlockReason(meta: RunMeta): string | null {
+    if (!TERMINAL_RUN_STATES.has(meta.state)) {
+      return `run is ${meta.state}, not ended`;
+    }
+    if (runKind(meta) !== 'execute') return 'run is not an execute run';
+    if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
+    return this.pickUpBlockReason(meta);
+  }
+
+  // What stops any ended execute run being picked up in its own worktree.
+  private pickUpBlockReason(meta: RunMeta): string | null {
     if (meta.sessionId === undefined) return 'run never started a session';
     if (!existsSync(meta.worktreePath)) return 'run has no worktree left';
     if (this.registry.list().some((r) => r.resumedFrom === meta.id)) {
@@ -2106,6 +2123,14 @@ export class Orchestrator {
       return this.requestChanges(latest, WAKE_PROMPT, opts.actor);
     }
     return this.dispatchOrResume(taskId, { actor: opts.actor });
+  }
+
+  // A human's wake of one ended execute run continues exactly that run.
+  wakeRun(runId: string, opts: { actor: string }): RunMeta {
+    const meta = this.requireRun(runId);
+    const reason = this.continueBlockReason(meta);
+    if (reason !== null) throw new OrchestratorConflictError(reason);
+    return this.requestChanges(meta, WAKE_PROMPT, opts.actor);
   }
 
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so

@@ -93,6 +93,85 @@ describe('human wakes', () => {
     messaging.close();
   });
 
+  it("a human's wake of one run continues that run, not the task's newest", async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    const finishing = (session: string) =>
+      new FakeExecutor({
+        session,
+        finish: { state: 'finished', sessionId: session },
+      });
+    const messaging = await openRecovered(project.root(), orchestrator, store);
+    const task = store.create({ title: 'Two attempts' });
+    orchestrator.registerExecutor('agent', finishing('s-1'));
+    const older = await orchestrator.dispatch(task.meta.id, 'agent', {});
+    await waitFor(
+      () => orchestrator.getRun(older.id)?.meta.state === 'finished'
+    );
+    orchestrator.registerExecutor('agent', finishing('s-2'));
+    const newer = await orchestrator.dispatch(task.meta.id, 'agent', {});
+    await waitFor(
+      () => orchestrator.getRun(newer.id)?.meta.state === 'finished'
+    );
+    const stalling = new StallingExecutor();
+    orchestrator.registerExecutor('agent', stalling);
+
+    await messaging.engine.send(
+      {
+        to: [`run:${older.id}`],
+        kind: 'message',
+        body: 'rename foo to bar',
+        wake: 'request',
+      },
+      HUMAN
+    );
+
+    const next = orchestrator.list().find((r) => r.resumedFrom !== undefined);
+    expect(next?.resumedFrom).toBe(older.id);
+    expect(next?.worktreePath).toBe(older.worktreePath);
+    expect(stalling.started[0]?.resumeSessionId).toBe('s-1');
+    await waitFor(() =>
+      stalling.sent.some((s) => s.includes('rename foo to bar'))
+    );
+    if (next !== undefined) await orchestrator.cancel(next.id);
+    messaging.close();
+  });
+
+  it('tells the human why a woken run cannot be continued', async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    orchestrator.registerExecutor(
+      'agent',
+      new FakeExecutor({
+        session: 's-1',
+        finish: { state: 'finished', sessionId: 's-1' },
+      })
+    );
+    const messaging = await openRecovered(project.root(), orchestrator, store);
+    const task = store.create({ title: 'Reviewed already' });
+    const run = await orchestrator.dispatch(task.meta.id, 'agent', {});
+    await waitFor(() => orchestrator.getRun(run.id)?.meta.state === 'finished');
+    orchestrator.review(run.id, 'discard');
+
+    await messaging.engine.send(
+      {
+        to: [`run:${run.id}`],
+        kind: 'message',
+        body: 'one more thing',
+        wake: 'request',
+      },
+      HUMAN
+    );
+
+    expect(orchestrator.list()).toHaveLength(1);
+    const notices = messaging.engine
+      .inbox('human:wyat')
+      .filter((i) => i.message.kind === 'notice');
+    expect(notices).toHaveLength(1);
+    expect(notices[0]?.message.body).toStartWith(
+      `Could not wake run:${run.id}: run has already been reviewed (discarded)`
+    );
+    messaging.close();
+  });
+
   it('a human wake of a task that never ran dispatches it with no gate', async () => {
     const { orchestrator, store } = makeOrchestrator(project.root());
     const stalling = new StallingExecutor();

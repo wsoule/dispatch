@@ -158,12 +158,13 @@ export class DeliveryEngine {
   }
 
   // A target's initial delivery state and run; null drops a not-live run that
-  // only a channel reached. A reply to an ended run with no task is held on it.
+  // only a channel reached. A reply to an ended run with no task, or a human's
+  // wake of an ended run, is held on it.
   private plan(
     target: Target,
     muted: boolean,
     field: string,
-    repliesToIt: boolean
+    heldIfEnded: boolean
   ): Delivery | null {
     const base = {
       id: this.id('d'),
@@ -189,7 +190,7 @@ export class DeliveryEngine {
       case 'run':
         if (!this.host.isLiveRun(parsed.id)) {
           if (target.via === 'channel') return null;
-          if (repliesToIt) return { ...base, runId: null, state: 'held' };
+          if (heldIfEnded) return { ...base, runId: null, state: 'held' };
           throw new MessagingError(
             'invalid',
             `run ${parsed.id} is not live`,
@@ -256,13 +257,14 @@ export class DeliveryEngine {
 
     const fields = this.recipientFields(input.to, replyTarget);
     const targets = this.resolveTargets(message.to, sender.address);
+    const wakesRuns = wakesEndedRuns(message);
     const deliveries: Delivery[] = [];
     for (const t of targets) {
       const planned = this.plan(
         t,
         muted,
         fields.get(t.recipient) ?? 'to',
-        t.recipient === replyTarget?.from
+        t.recipient === replyTarget?.from || wakesRuns
       );
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
     }
@@ -698,8 +700,14 @@ export class DeliveryEngine {
   // After a wake-requesting send, asks the host to wake each held task
   // recipient (or gates/denies it), so the message is actually seen soon.
   private async runWake(message: Message, settled: Delivery[]): Promise<void> {
+    const wakesRuns = wakesEndedRuns(message);
     for (const d of settled) {
-      if (d.state !== 'held' || !d.recipient.startsWith('task:')) continue;
+      if (d.state !== 'held') continue;
+      if (
+        !d.recipient.startsWith('task:') &&
+        !(wakesRuns && d.recipient.startsWith('run:'))
+      )
+        continue;
       const ruling = this.host.decide({
         type: 'wake',
         target: d.recipient,
@@ -798,4 +806,9 @@ function alreadyAnswered(questionId: string): MessagingError {
 // A system close carries `x-closed` data and applies no gate effect.
 function isClose(answer: Message): boolean {
   return (answer.data as { type?: unknown } | undefined)?.type === 'x-closed';
+}
+
+// Only a human's wake may name an ended run: it asks to continue exactly that run.
+function wakesEndedRuns(message: Message): boolean {
+  return message.wake === 'request' && message.from.startsWith('human:');
 }
