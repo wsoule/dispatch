@@ -90,6 +90,8 @@ export function openMessaging(deps: {
   ledgerStore?: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
   // The task Activity line a policy grant writes; defaults to none.
   appendPolicyActivity?: (taskId: string, text: string) => void;
+  // How often the scope-gate expiry sweep runs, and its clock; tests shorten both.
+  scopeExpiry?: { sweepMs?: number; now?: () => number };
 }): Messaging {
   const db = openMessagesDb(
     deps.dbPath ?? join(runsDir(deps.rootDir), 'messages.db')
@@ -441,10 +443,10 @@ export function openMessaging(deps: {
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
   const expiry = setInterval(() => {
-    expireScopeGates(engine, Date.now()).catch((err: unknown) =>
-      console.error('messaging: scope expiry failed', err)
+    expireScopeGates(engine, deps.scopeExpiry?.now?.() ?? Date.now()).catch(
+      (err: unknown) => console.error('messaging: scope expiry failed', err)
     );
-  }, SCOPE_EXPIRY_SWEEP_MS);
+  }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
   expiry.unref();
 
   // A run's end closes the gates nobody can act on any more, and retries (a
