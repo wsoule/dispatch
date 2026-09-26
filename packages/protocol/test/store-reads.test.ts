@@ -6,7 +6,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { Message } from '../src/envelope.js';
-import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
+import {
+  addIdemKey,
+  openMessagesDb,
+  SqliteMessageStore,
+} from '../src/sqliteStore.js';
 
 // The messages table as the shipped v1 schema created it.
 const V1_MESSAGES_DDL =
@@ -80,6 +84,43 @@ describe('the idem_key column', () => {
     db.prepare(V1_INSERT).run('m-01', 'm-01', null, ...row);
     db.prepare(V1_INSERT).run('m-02', 'm-02', null, ...row);
     expect(new SqliteMessageStore(db).getMessage('m-02')?.body).toBe('hi');
+    db.close();
+  });
+
+  it('tolerates another process adding the column between its check and its ALTER', () => {
+    const path = join(dir, 'messages.db');
+    const db = openSqliteDb(path);
+    db.exec(V1_MESSAGES_DDL);
+    const other = openSqliteDb(path);
+    // The first column check returns, then the other process migrates the file.
+    let raced = false;
+    const racing: SqliteDatabase = {
+      driver: db.driver,
+      prepare(sql) {
+        const stmt = db.prepare(sql);
+        if (raced || !sql.startsWith('PRAGMA table_info')) return stmt;
+        raced = true;
+        return {
+          all: (...params) => {
+            const rows = stmt.all(...params);
+            other.exec('ALTER TABLE messages ADD COLUMN idem_key TEXT');
+            return rows;
+          },
+          get: (...params) => stmt.get(...params),
+          run: (...params) => stmt.run(...params),
+        };
+      },
+      exec: (sql) => db.exec(sql),
+      close: () => db.close(),
+    };
+    addIdemKey(racing);
+    expect(raced).toBe(true);
+    const index = queryAll<{ name: string }>(
+      db,
+      "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'messages_idem'"
+    );
+    expect(index).toHaveLength(1);
+    other.close();
     db.close();
   });
 });

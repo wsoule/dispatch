@@ -77,13 +77,23 @@ export function openMessagesDb(path: string): SqliteDatabase {
 
 // Additive, so an older build still opens and writes the file: its insert names
 // its columns and leaves idem_key NULL, which the partial index ignores.
-function addIdemKey(db: SqliteDatabase): void {
-  const columns = queryAll<{ name: string }>(db, 'PRAGMA table_info(messages)');
-  if (!columns.some((c) => c.name === 'idem_key')) {
-    db.exec('ALTER TABLE messages ADD COLUMN idem_key TEXT');
+export function addIdemKey(db: SqliteDatabase): void {
+  if (!hasIdemKey(db)) {
+    try {
+      db.exec('ALTER TABLE messages ADD COLUMN idem_key TEXT');
+    } catch (err) {
+      // A daemon opening the same file at once may have added it first.
+      if (!hasIdemKey(db)) throw err;
+    }
   }
   db.exec(
     'CREATE UNIQUE INDEX IF NOT EXISTS messages_idem ON messages (from_addr, idem_key) WHERE idem_key IS NOT NULL'
+  );
+}
+
+function hasIdemKey(db: SqliteDatabase): boolean {
+  return queryAll<{ name: string }>(db, 'PRAGMA table_info(messages)').some(
+    (c) => c.name === 'idem_key'
   );
 }
 

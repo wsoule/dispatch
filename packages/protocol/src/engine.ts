@@ -219,6 +219,10 @@ export class DeliveryEngine {
     if (replyTarget !== null) this.authorizeReply(replyTarget, sender);
     validateSendInput(input, sender.address, sender.canDecide, replyTarget);
     await this.checkBreaker(replyTarget, sender);
+    // The breaker await lets a duplicate commit first, so look again before the
+    // answered check: a raced retry replays rather than meeting conflict.
+    const raced = key === undefined ? null : this.replay(sender.address, key);
+    if (raced !== null) return raced;
     if (
       input.kind === 'answer' &&
       replyTarget !== null &&
@@ -279,8 +283,8 @@ export class DeliveryEngine {
 
     const question = message.kind === 'answer' ? replyTarget : null;
     const written = this.store.transaction((): Delivery[] | SendResult => {
-      // Re-checked inside the write: the breaker await lets a duplicate key or
-      // a second answer race in, and the duplicate replays.
+      // Re-checked inside the write for a writer on another connection; the
+      // unique index is the last backstop.
       const prior = key === undefined ? null : this.replay(sender.address, key);
       if (prior !== null) return prior;
       if (question !== null && this.store.answersTo(question.id).length > 0)

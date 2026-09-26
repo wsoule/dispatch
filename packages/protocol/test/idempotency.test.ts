@@ -198,6 +198,97 @@ describe('durable idempotency keys', () => {
     expect(store.thread(a.message.thread)).toHaveLength(1);
   });
 
+  it('replays a duplicate answer that races the first into its write', async () => {
+    const { message: q } = await engine.send(
+      {
+        to: [CLIENT],
+        kind: 'question',
+        blocking: true,
+        body: 'Which region?',
+        choices: ['us', 'eu'],
+      },
+      human
+    );
+    const answer = () =>
+      engine.send(
+        {
+          to: ['human:wyat'],
+          kind: 'answer',
+          replyTo: q.id,
+          body: '',
+          choice: 'eu',
+          idempotencyKey: 'ans-race',
+        },
+        client
+      );
+    const [a, b] = await Promise.all([answer(), answer()]);
+    expect(b.replayed).toBe(true);
+    expect(b.message.id).toBe(a.message.id);
+    expect(store.answersTo(q.id)).toHaveLength(1);
+  });
+
+  it('looks the key up before validation, so a retry that no longer validates replays', async () => {
+    const { message: q } = await engine.send(
+      {
+        to: [CLIENT],
+        kind: 'question',
+        blocking: true,
+        body: 'Which region?',
+        choices: ['us', 'eu'],
+      },
+      human
+    );
+    const first = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'answer',
+        replyTo: q.id,
+        body: '',
+        choice: 'eu',
+        idempotencyKey: 'ans-v',
+      },
+      client
+    );
+    const retry = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'answer',
+        replyTo: q.id,
+        body: '',
+        choice: 'mars',
+        idempotencyKey: 'ans-v',
+      },
+      client
+    );
+    expect(retry.replayed).toBe(true);
+    expect(retry.message.id).toBe(first.message.id);
+  });
+
+  it('looks the key up before participation, so a retry naming a thread the sender is not in replays', async () => {
+    store.putAgent(approved('agent:wyat/a2a.other'));
+    const { message: elsewhere } = await engine.send(
+      { to: ['agent:wyat/a2a.other'], kind: 'message', body: 'not for you' },
+      human
+    );
+    const first = await engine.send(
+      { to: ['human:wyat'], kind: 'message', body: 'hi', idempotencyKey: 'p' },
+      client
+    );
+    const retry = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'message',
+        replyTo: elsewhere.id,
+        body: 'hi',
+        idempotencyKey: 'p',
+      },
+      client
+    );
+    expect(retry.replayed).toBe(true);
+    expect(retry.message.id).toBe(first.message.id);
+    expect(retry.message.replyTo).toBeNull();
+  });
+
   it('gives a revoked sender no replay', async () => {
     await engine.send(
       { to: ['human:wyat'], kind: 'message', body: 'x', idempotencyKey: 'r' },
