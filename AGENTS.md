@@ -54,11 +54,14 @@ For non-moon commands that CI-gate themselves, unset the var:
 
 Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
 
-- `packages/core`, `packages/client`, `packages/cli`, `packages/mcp` are MIT.
+- `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`,
+  `packages/protocol`, `packages/memory` are MIT.
 - Everything else (`packages/server`, `packages/ui`, `packages/web`,
   `packages/demo`, `apps/desktop`, `apps/demo`, `apps/site`) is `FSL-1.1-ALv2`
   (`LICENSE`), source-available and converting to Apache-2.0 two years after
   each release.
+- `packages/server/src/team/` and `packages/server/test/team/` are Elastic-2.0
+  (their own `LICENSE` files).
 
 When adding a new workspace package, add it to the `EXPECTED` map in
 `scripts/check-licenses.ts` with the license the split above assigns it, set

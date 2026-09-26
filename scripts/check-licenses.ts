@@ -21,6 +21,7 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/cli': 'MIT',
   '@dispatch/mcp': 'MIT',
   '@dispatch/protocol': 'MIT',
+  '@dispatch/memory': 'MIT',
   // The daemon is FSL, except its team features (see LICENSED_DIRS).
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
