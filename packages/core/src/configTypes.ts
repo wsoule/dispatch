@@ -187,6 +187,9 @@ export interface DispatchConfig {
   repoDigest: RepoDigestConfig;
   notifications: NotificationsConfig;
   messaging: MessagingConfig;
+  /** Optional only so hand-built fixtures stay valid; `loadConfig` always
+   *  sets it. */
+  memory?: MemoryConfig;
   /**
    * The git receipt log. `loadConfig` always populates this, so a config it
    * returns can be read without a fallback; it is optional only so callers
@@ -430,6 +433,29 @@ export const DEFAULT_MESSAGING: MessagingConfig = {
   urgentPerHour: 10,
   agentTurnsPerThreadPerHour: 20,
   agentBlockingTimeoutSec: 600,
+};
+
+/** Memory's prompt budget, write limits and decay clock. */
+export interface MemoryConfig {
+  indexTokens: number;
+  personalWritesPerHour: number;
+  proposalsPerHour: number;
+  maxOpenProposals: number;
+  proposalTtlDays: number;
+  staleAfterDays: number;
+  retireAfterDays: number;
+  claudeAutoMemory: 'export' | 'off';
+}
+
+export const DEFAULT_MEMORY: MemoryConfig = {
+  indexTokens: 1000,
+  personalWritesPerHour: 50,
+  proposalsPerHour: 10,
+  maxOpenProposals: 50,
+  proposalTtlDays: 14,
+  staleAfterDays: 60,
+  retireAfterDays: 180,
+  claudeAutoMemory: 'off',
 };
 
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */
@@ -696,4 +722,6 @@ export interface ConfigPatch {
     readyTimeoutSec?: number | null;
     idleTimeoutSec?: number | null;
   };
+  /** A value sets the key, `null` removes it (its default applies again). */
+  memory?: { [K in keyof MemoryConfig]?: MemoryConfig[K] | null };
 }

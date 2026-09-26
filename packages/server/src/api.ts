@@ -1162,6 +1162,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'receipts',
     'sync',
     'preview',
+    'memory',
   ] as const) {
     if (!(key in body)) continue;
     const field = objectField(body, key);
