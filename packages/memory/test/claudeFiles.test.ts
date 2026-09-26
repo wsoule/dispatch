@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 
 import {
   diffExport,
@@ -32,13 +32,18 @@ const entry = {
 };
 const ctx = { taskId: 't-1a2b3c', epic: null };
 
-// The file as Claude Code rewrites it: new metadata keys, the body untouched.
+// The file as Claude Code rewrites it: `metadata: ` with a trailing space, its
+// own node_type and new keys, the body untouched.
 function claudeTouch(text: string): string {
-  return text.replace(
-    'metadata:\n',
-    'metadata:\n  modified: 2026-09-26T08:00:00.000Z\n  originSessionId: 1b2c\n'
+  const touched = text.replace(
+    /^metadata:[ \t]*\n {2}node_type: memory\n/m,
+    'metadata: \n  node_type: note\n  modified: 2026-09-26T08:00:00.000Z\n  originSessionId: 1b2c\n'
   );
+  expect(touched).not.toBe(text);
+  return touched;
 }
+
+const utf8 = (text: string) => new TextEncoder().encode(text).byteLength;
 
 describe('topic files', () => {
   it('render in Claude’s own layout with a provenance line and an escaped body', () => {
@@ -97,6 +102,64 @@ describe('topic files', () => {
       title: 'no frontmatter at all',
       type: undefined,
     });
+    expect(
+      parseMemoryFile(
+        '---\ntype: feedback\nmodified: "2026-01-01"\nmetadata:\n  type: reference\n  modified: "2026-02-02"\n---\nbody',
+        'both.md'
+      )
+    ).toMatchObject({ type: 'reference', modified: '2026-02-02' });
+  });
+
+  it('round-trips body lines that already start with an escaping backslash', () => {
+    const escaped = {
+      ...entry,
+      body: '\\# already escaped\n\\\\~~~~ twice\n  # indented\n\\not structure',
+    };
+    const text = renderTopicFile(escaped);
+    for (const line of text.split('\n'))
+      expect(line).not.toMatch(/^\s*(?:#{1,6}[ \t]|~{4,})/);
+    expect(parseMemoryFile(text, 'e.md').body).toBe(escaped.body);
+  });
+
+  it('reads frontmatter behind a byte-order mark', () => {
+    expect(
+      parseMemoryFile(
+        '\uFEFF---\ndescription: bom\nmetadata:\n  type: reference\n---\nbody',
+        'bom.md'
+      )
+    ).toMatchObject({ title: 'bom', type: 'reference', body: 'body' });
+  });
+
+  it('reads frontmatter with an unknown tag without logging a warning', () => {
+    const emit = spyOn(process, 'emitWarning');
+    try {
+      const parsed = parseMemoryFile(
+        '---\ndescription: !foo hi\n---\nbody',
+        'tag.md'
+      );
+      expect(parsed).toMatchObject({ title: 'hi', body: 'body' });
+      expect(emit).not.toHaveBeenCalled();
+    } finally {
+      emit.mockRestore();
+    }
+  });
+
+  it('keeps the last of duplicate frontmatter keys', () => {
+    expect(
+      parseMemoryFile(
+        '---\ndescription: one\ndescription: two\nmetadata:\n  type: reference\n---\nbody',
+        'dup.md'
+      )
+    ).toMatchObject({ title: 'two', type: 'reference', body: 'body' });
+  });
+
+  it('trims trailing whitespace in linear time', () => {
+    expect(parseMemoryFile('text \t\u00a0\u3000\n\n', 'ws.md').body).toBe(
+      'text'
+    );
+    const started = performance.now();
+    parseMemoryFile(`${' '.repeat(65_000)}x`, 'ws.md');
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it('cuts a long body at 8 KiB on a line boundary with a marker', () => {
@@ -105,9 +168,7 @@ describe('topic files', () => {
       'big.md'
     );
     expect(parsed.truncated).toBe(true);
-    expect(
-      new TextEncoder().encode(parsed.body).byteLength
-    ).toBeLessThanOrEqual(8192);
+    expect(utf8(parsed.body)).toBeLessThanOrEqual(8192);
     expect(parsed.body).toMatch(
       /\n\[truncated by Dispatch: \d+ bytes; long-form belongs in Docs\]$/
     );
@@ -117,18 +178,17 @@ describe('topic files', () => {
     const parsed = parseMemoryFile('x'.repeat(10_000), 'long.md');
     expect(parsed.truncated).toBe(true);
     expect(parsed.body.startsWith('xxx')).toBe(true);
-    expect(
-      new TextEncoder().encode(parsed.body).byteLength
-    ).toBeLessThanOrEqual(8192);
+    expect(utf8(parsed.body)).toBeLessThanOrEqual(8192);
   });
 
   it('reads unparseable frontmatter as body rather than failing', () => {
     const parsed = parseMemoryFile('---\nkey: [unclosed\n---\ntext', 'bad.md');
     expect(parsed.type).toBeUndefined();
     expect(parsed.body).toContain('text');
+    expect(parsed.title).toBe('key: [unclosed');
   });
 
-  it('maps Claude types to kinds and reach (D4)', () => {
+  it('maps Claude types to kinds and reach', () => {
     expect(
       ['user', 'feedback', 'project', 'reference', undefined, 'odd'].map(
         kindFromClaudeType
@@ -161,8 +221,8 @@ describe('MEMORY.md', () => {
     );
     for (const line of lines.slice(2))
       expect(line.startsWith('- [')).toBe(true);
-    // spec:1325-1326: `\`, `[` and `]` are escaped; the leading `- [` already
-    // keeps a `#` from starting a heading, so it stays as written.
+    // `\`, `[` and `]` are escaped; the leading `- [` already keeps a `#`
+    // from starting a heading, so it stays as written.
     expect(text).toContain(
       `- [# heading\\] (evil.md) \\[x](${hostile.id}.md) — hazard · unreviewed`
     );
@@ -174,10 +234,30 @@ describe('MEMORY.md', () => {
       id: `mem-01K5Z6J${String(i).padStart(19, '0')}`,
     }));
     const { text, included } = renderClaudeIndex(many, ctx, 200);
-    expect(new TextEncoder().encode(text).byteLength).toBeLessThanOrEqual(600);
+    expect(utf8(text)).toBeLessThanOrEqual(600);
     expect(included.length).toBeGreaterThan(0);
     expect(included).toEqual(many.slice(0, included.length));
     expect(text.split('\n')).toHaveLength(2 + included.length);
+  });
+
+  it('never skips a line that crosses the budget for a shorter one after it', () => {
+    const at = (i: number, title: string) => ({
+      ...entry,
+      id: `mem-01K5Z6K${String(i).padStart(19, '0')}`,
+      title,
+    });
+    const [short, long, shortToo] = [
+      at(0, 'a'),
+      at(1, 'x'.repeat(200)),
+      at(2, 'b'),
+    ];
+    const fits = utf8(renderClaudeIndex([short, shortToo], ctx, 10_000).text);
+    const { included } = renderClaudeIndex(
+      [short, long, shortToo],
+      ctx,
+      Math.ceil(fits / 3)
+    );
+    expect(included).toEqual([short]);
   });
 
   // A link line becomes its link text (the target and Dispatch's ` — kind · tags`
@@ -196,6 +276,20 @@ describe('MEMORY.md', () => {
     expect(newIndexLines(written, current, new Set(['note.md']))).toEqual([
       'a [bracketed] title',
     ]);
+  });
+
+  it('reads a link only at the start of a line, after an optional bullet', () => {
+    const current = '* [starred](note.md)\n- see [note](note.md) first';
+    expect(newIndexLines('', current, new Set(['note.md']))).toEqual([
+      'see [note](note.md) first',
+    ]);
+  });
+
+  it('reads a 64 KiB line of brackets in linear time', () => {
+    const started = performance.now();
+    const titles = newIndexLines('', `- ${'['.repeat(65_536)}`, new Set());
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(titles).toHaveLength(1);
   });
 });
 

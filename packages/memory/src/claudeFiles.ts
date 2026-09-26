@@ -59,9 +59,11 @@ export type ExportChange =
 const BREAKS = new RegExp(LINE_BREAK.source, 'g');
 const FRONTMATTER = /^---\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?:\r?\n|$)/;
 const PROVENANCE = /^> Dispatch memory #[0-9A-Z]{8} /;
-// The backslash untrustedBlock puts before a heading or fence line.
-const ESCAPED_STRUCTURE = /^\\(?=\s*(?:#{1,6}[ \t]|~{4,}))/;
-const LINK = /\[((?:\\.|[^\\\]])*)\]\(([^()\s]*)\)/;
+// A heading or fence line behind backslashes: parse strips one, so render adds
+// one to a body line already shaped like this and the round trip is exact.
+const ESCAPED_STRUCTURE = /^\\+\s*(?:#{1,6}[ \t]|~{4,})/;
+// Anchored to the line start, so a line of many `[` is scanned once.
+const LINK = /^(?:[-*+][ \t]+)?\[((?:\\.|[^\\\]])*)\]\(([^()\s]*)\)/;
 const HEADER_LINES = new Set(CLAUDE_INDEX_HEADER.split('\n'));
 
 // user and feedback notes become preferences; project and anything unknown are facts.
@@ -115,7 +117,13 @@ export function renderTopicFile(e: MemoryEntry): string {
     '',
     `> Dispatch memory ${e.handle} · ${e.scope} ${e.kind} · by ${untrustedInline(e.author)} · ${trustNote(e)}`,
     '',
-    untrustedBlock(e.body.replace(BREAKS, '\n')),
+    untrustedBlock(
+      e.body
+        .replace(BREAKS, '\n')
+        .split('\n')
+        .map((line) => (ESCAPED_STRUCTURE.test(line) ? `\\${line}` : line))
+        .join('\n')
+    ),
     '',
   ].join('\n');
 }
@@ -161,7 +169,7 @@ function nonEmpty(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() !== '' ? value : undefined;
 }
 
-// Cut to the body limit on a line boundary, ending with the marker the spec names.
+// Cut to the body limit on a line boundary, ending with a marker naming the bytes cut.
 function cutBody(body: string): { body: string; truncated: boolean } {
   const limit = MEMORY_LIMITS.bodyBytes;
   const size = utf8Bytes(body);
@@ -190,13 +198,18 @@ export function parseMemoryFile(
   text: string,
   fileName: string
 ): ParsedMemoryFile {
-  const source = text.startsWith('﻿') ? text.slice(1) : text;
+  const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
   let front: Record<string, unknown> = {};
   let rest = source;
   const match = FRONTMATTER.exec(source);
   if (match !== null) {
     try {
-      front = record(parseYaml(match[1] ?? '') as unknown);
+      front = record(
+        parseYaml(match[1] ?? '', {
+          logLevel: 'error',
+          uniqueKeys: false,
+        }) as unknown
+      );
       rest = source.slice(match[0].length);
     } catch {
       // Unparseable frontmatter reads as body, never as a failed ingest.
@@ -210,11 +223,14 @@ export function parseMemoryFile(
     while (lines.length > 0 && lines[0].trim() === '') lines.shift();
   }
   const unescaped = lines
-    .map((line) => line.replace(ESCAPED_STRUCTURE, ''))
+    .map((line) => (ESCAPED_STRUCTURE.test(line) ? line.slice(1) : line))
     .join('\n')
-    .replace(/\s+$/, '');
+    .trimEnd();
   const { body, truncated } = cutBody(unescaped);
-  const firstLine = body.split('\n').find((line) => line.trim() !== '');
+  // A frontmatter fence left in the body by unparseable YAML is never the title.
+  const firstLine = body
+    .split('\n')
+    .find((line) => line.trim() !== '' && line.trim() !== '---');
   const title = cutUtf8(
     untrustedInline(
       nonEmpty(front.description) ??
