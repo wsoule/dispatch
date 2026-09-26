@@ -510,6 +510,9 @@ importers:
       '@dispatch/protocol':
         specifier: workspace:*
         version: link:../protocol
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.0
     devDependencies:
       '@types/bun':
         specifier: 'catalog:'

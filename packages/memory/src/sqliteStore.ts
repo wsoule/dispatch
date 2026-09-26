@@ -3,12 +3,15 @@ import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 import type { Address } from '@dispatch/protocol';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 
+import type { ManifestRow } from './claudeFiles.js';
 import { memoryContentHash } from './contentHash.js';
 import { MemoryError } from './errors.js';
 import { cutUtf8 } from './limits.js';
 import type { SearchMode } from './schema.js';
 import type {
   EntryFilter,
+  IngestProblem,
+  IngestProblemRow,
   MemoryStore,
   RecallRow,
   SearchHit,
@@ -533,6 +536,82 @@ export class SqliteMemoryStore implements MemoryStore {
     );
   }
 
+  manifest(lineage: string): ManifestRow[] {
+    return queryAll<ExportRow>(
+      this.db,
+      'SELECT * FROM exports WHERE lineage = ? ORDER BY file',
+      [lineage]
+    ).map(manifestFromRow);
+  }
+
+  replaceManifest(lineage: string, rows: readonly ManifestRow[]): void {
+    this.transaction(() => {
+      this.db.prepare('DELETE FROM exports WHERE lineage = ?').run(lineage);
+      const insert = this.db.prepare(PUT_MANIFEST_ROW);
+      for (const row of rows)
+        insert.run(...manifestParams({ ...row, lineage }));
+    });
+  }
+
+  putManifestRow(row: ManifestRow): void {
+    this.db.prepare(PUT_MANIFEST_ROW).run(...manifestParams(row));
+  }
+
+  deleteManifestRow(lineage: string, file: string): void {
+    this.db
+      .prepare('DELETE FROM exports WHERE lineage = ? AND file = ?')
+      .run(lineage, file);
+  }
+
+  manifestLineages(): string[] {
+    return queryAll<{ lineage: string }>(
+      this.db,
+      'SELECT DISTINCT lineage FROM exports ORDER BY lineage'
+    ).map((r) => r.lineage);
+  }
+
+  addIngestProblem(row: IngestProblemRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO ingest_problems (id, lineage, file, reason, size, sha256, content, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'
+      )
+      .run(
+        row.id,
+        row.lineage,
+        row.file,
+        row.reason,
+        row.size,
+        row.sha256,
+        row.content,
+        row.at
+      );
+  }
+
+  ingestProblems(limit: number): IngestProblem[] {
+    return queryAll<IngestProblem>(
+      this.db,
+      'SELECT id, lineage, file, reason, size, at FROM ingest_problems ORDER BY at DESC, id DESC LIMIT ?',
+      [limit]
+    );
+  }
+
+  takeIngestProblem(
+    id: string
+  ): Pick<IngestProblemRow, 'lineage' | 'file' | 'content'> | null {
+    return this.transaction(() => {
+      const row = queryOne<
+        Pick<IngestProblemRow, 'lineage' | 'file' | 'content'>
+      >(
+        this.db,
+        'SELECT lineage, file, content FROM ingest_problems WHERE id = ?',
+        [id]
+      );
+      if (row === undefined) return null;
+      this.db.prepare('DELETE FROM ingest_problems WHERE id = ?').run(id);
+      return { lineage: row.lineage, file: row.file, content: row.content };
+    });
+  }
+
   close(): void {
     this.db.close();
   }
@@ -555,6 +634,33 @@ export class SqliteMemoryStore implements MemoryStore {
         new Date().toISOString()
       );
   }
+}
+
+const PUT_MANIFEST_ROW =
+  'INSERT OR REPLACE INTO exports (lineage, file, store, memory_id, rev, parsed_hash) VALUES (?, ?, ?, ?, ?, ?)';
+
+interface ExportRow {
+  lineage: string;
+  file: string;
+  store: string;
+  memory_id: string;
+  rev: number;
+  parsed_hash: string;
+}
+
+function manifestParams(r: ManifestRow): SqlValue[] {
+  return [r.lineage, r.file, r.store, r.memoryId, r.rev, r.parsedHash];
+}
+
+function manifestFromRow(r: ExportRow): ManifestRow {
+  return {
+    lineage: r.lineage,
+    file: r.file,
+    store: r.store,
+    memoryId: r.memory_id,
+    rev: r.rev,
+    parsedHash: r.parsed_hash,
+  };
 }
 
 const PROPOSAL_COLUMNS = [

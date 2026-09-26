@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
+import type { ManifestRow } from '../src/claudeFiles.js';
 import { MemoryError } from '../src/errors.js';
 import {
   createMemoryIds,
@@ -202,5 +203,74 @@ describe('SqliteMemoryStore', () => {
     });
     expect(s.countOpenProposals()).toBe(0);
     expect(s.listProposals({ states: ['rejected'] })).toHaveLength(1);
+  });
+
+  it('keeps an export manifest per lineage, dropped with its entry', () => {
+    const s = store();
+    const e = entry(s);
+    const row = (lineage: string, file: string, rev = 1): ManifestRow => ({
+      lineage,
+      file,
+      store: 'shared',
+      memoryId: file === 'a.md' ? e.id : `mem-${file}`,
+      rev,
+      parsedHash: `h-${file}`,
+    });
+    s.replaceManifest('r-1', [row('r-1', 'a.md'), row('r-1', 'b.md')]);
+    s.replaceManifest('r-2', [row('r-2', 'c.md')]);
+    s.putManifestRow(row('r-1', 'b.md', 2));
+    s.deleteManifestRow('r-2', 'c.md');
+    expect(s.manifest('r-1')).toEqual([
+      row('r-1', 'a.md'),
+      row('r-1', 'b.md', 2),
+    ]);
+    expect(s.manifestLineages()).toEqual(['r-1']);
+    s.replaceManifest('r-1', [row('r-1', 'a.md', 3)]);
+    expect(s.manifest('r-1')).toEqual([row('r-1', 'a.md', 3)]);
+    s.deleteEntry(e.id, 'human:wyat', NOW);
+    expect(s.manifest('r-1')).toEqual([]);
+    expect(s.manifestLineages()).toEqual([]);
+  });
+
+  it('lists ingest problems newest first without content, and takes one by id', () => {
+    const s = store();
+    const problem = (id: string, at: string, content: string | null) => ({
+      id,
+      lineage: 'r-1',
+      file: `${id}.md`,
+      reason: 'too-large',
+      size: 70_000,
+      sha256: 'abc',
+      content,
+      at,
+    });
+    s.addIngestProblem(problem('p1', NOW, 'first 8 KiB'));
+    s.addIngestProblem(problem('p2', '2026-09-25T11:00:00.000Z', null));
+    expect(s.ingestProblems(10)).toEqual([
+      {
+        id: 'p2',
+        lineage: 'r-1',
+        file: 'p2.md',
+        reason: 'too-large',
+        size: 70_000,
+        at: '2026-09-25T11:00:00.000Z',
+      },
+      {
+        id: 'p1',
+        lineage: 'r-1',
+        file: 'p1.md',
+        reason: 'too-large',
+        size: 70_000,
+        at: NOW,
+      },
+    ]);
+    expect(s.ingestProblems(1).map((p) => p.id)).toEqual(['p2']);
+    expect(s.takeIngestProblem('p1')).toEqual({
+      lineage: 'r-1',
+      file: 'p1.md',
+      content: 'first 8 KiB',
+    });
+    expect(s.takeIngestProblem('p1')).toBeNull();
+    expect(s.ingestProblems(10).map((p) => p.id)).toEqual(['p2']);
   });
 });

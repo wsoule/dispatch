@@ -1,5 +1,6 @@
 import type { Address } from '@dispatch/protocol';
 
+import type { ManifestRow } from './claudeFiles.js';
 import type { SearchMode } from './schema.js';
 import type {
   DisplayState,
@@ -26,6 +27,20 @@ export interface SearchHit {
   score: number;
   snippet: string;
 }
+
+// A file a Claude memory scan refused; `content` keeps what the owner may accept.
+export interface IngestProblemRow {
+  id: string;
+  lineage: string;
+  file: string;
+  reason: string;
+  size: number;
+  sha256: string;
+  content: string | null;
+  at: string;
+}
+
+export type IngestProblem = Omit<IngestProblemRow, 'sha256' | 'content'>;
 
 export interface RecallRow {
   memoryId: string;
@@ -74,5 +89,18 @@ export interface MemoryStore {
   proposalByOrigin(origin: string): MemoryProposal | null;
   listProposals(filter?: { states?: ProposalState[] }): MemoryProposal[];
   countOpenProposals(): number;
+  manifest(lineage: string): ManifestRow[];
+  /** Replaces every row of `lineage` in one transaction. */
+  replaceManifest(lineage: string, rows: readonly ManifestRow[]): void;
+  putManifestRow(row: ManifestRow): void;
+  deleteManifestRow(lineage: string, file: string): void;
+  manifestLineages(): string[];
+  addIngestProblem(row: IngestProblemRow): void;
+  /** Newest first, without the kept content. */
+  ingestProblems(limit: number): IngestProblem[];
+  /** Removes the problem and returns what accepting it needs. */
+  takeIngestProblem(
+    id: string
+  ): Pick<IngestProblemRow, 'lineage' | 'file' | 'content'> | null;
   close(): void;
 }

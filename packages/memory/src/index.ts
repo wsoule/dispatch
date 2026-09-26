@@ -58,6 +58,8 @@ export type { SearchMode } from './schema.js';
 export { SqliteMemoryStore } from './sqliteStore.js';
 export type {
   EntryFilter,
+  IngestProblem,
+  IngestProblemRow,
   MemoryStore,
   RecallRow,
   SearchHit,
@@ -96,3 +98,22 @@ export type {
   SearchQuery,
   SearchResult,
 } from './engine.js';
+export {
+  CLAUDE_INDEX_HEADER,
+  CLAUDE_TYPE_FOR_KIND,
+  diffExport,
+  kindFromClaudeType,
+  newIndexLines,
+  parsedHash,
+  parseMemoryFile,
+  projectOnlyForClaudeType,
+  renderClaudeIndex,
+  renderTopicFile,
+  topicFileName,
+} from './claudeFiles.js';
+export type {
+  ExportChange,
+  ManifestRow,
+  ParsedMemoryFile,
+  ScannedFile,
+} from './claudeFiles.js';
