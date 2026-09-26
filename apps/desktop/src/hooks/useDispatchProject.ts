@@ -41,6 +41,7 @@ import type {
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core/browser';
+import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
@@ -109,6 +110,20 @@ import { useTransitionNotifications } from './useTransitionNotifications';
 // Shared empty list, so the maps derived from the open gates keep their
 // identity while the query is loading or disabled.
 const NO_GATES: Message[] = [];
+
+// Drops an answered gate from the cached open list at once, so its card goes
+// before the refetch lands and cannot send a second answer to a closed gate.
+function dropOpenGate(
+  queryClient: QueryClient,
+  port: number | undefined,
+  gateId: string
+): void {
+  queryClient.setQueryData<{ items: Message[] }>(openGatesKey(port), (prev) =>
+    prev === undefined
+      ? prev
+      : { items: prev.items.filter((m) => m.id !== gateId) }
+  );
+}
 
 // The daemon's notice saying why a wake-requesting message woke nothing, read
 // from the sender's unread mail; null when there is none or it cannot be read.
@@ -2037,6 +2052,7 @@ export function useDispatchProject(
         throw new Error('This approval is no longer waiting for you.');
       }
       await client.replyToMessage(gate.id, approvalReply(allow, opts));
+      dropOpenGate(queryClient, port, gate.id);
       void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: runsQueryKey });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
@@ -2069,6 +2085,7 @@ export function useDispatchProject(
         body: reason ?? '',
         choice: granted ? 'grant' : 'deny',
       });
+      dropOpenGate(queryClient, port, requestId);
       void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },
@@ -2103,6 +2120,7 @@ export function useDispatchProject(
           ? { body: answer, choice: answer }
           : { body: answer }
       );
+      dropOpenGate(queryClient, port, questionId);
       void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
       void queryClient.invalidateQueries({ queryKey: ['dispatch-run', port] });
     },

@@ -57,6 +57,8 @@ void mock.module('../lib/notifications', () => ({
 let runsFixture: RunMeta[] = [];
 let openGatesFixture: Message[] = [];
 let openDecisionsCalls = 0;
+// Holds open-gate reads open while set, so a test sees the cache before them.
+let decisionsHold: Promise<void> | null = null;
 const sentMessages: SendInput[] = [];
 const replies: [string, ReplyInput][] = [];
 const approvalReads: [string, string][] = [];
@@ -96,9 +98,10 @@ void mock.module('@dispatch/client', () => ({
         ],
         default: 'claude',
       }),
-    openDecisions: () => {
+    openDecisions: async () => {
       openDecisionsCalls += 1;
-      return Promise.resolve({ items: openGatesFixture });
+      if (decisionsHold !== null) await decisionsHold;
+      return { items: openGatesFixture };
     },
     sendMessage: (input: SendInput) => {
       sentMessages.push(input);
@@ -497,6 +500,55 @@ test('the card handlers answer their gates with the matching choice', async () =
   resetGateFixtures();
 });
 
+// An answer closes its gate, and the event that says so refetches the list.
+test('an answer on the bus refetches the open gates', async () => {
+  await mountWithGates([approvalGate]);
+  const before = openDecisionsCalls;
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-ans', {
+        kind: 'answer',
+        blocking: false,
+        replyTo: 'm-a',
+      }),
+    });
+  });
+
+  await waitFor(() => {
+    expect(openDecisionsCalls).toBeGreaterThan(before);
+  });
+  resetGateFixtures();
+});
+
+// The card goes as soon as its answer lands, before the refetch, so a second
+// click cannot send a second answer to a closed gate.
+test('an answered gate leaves the open list without waiting for the refetch', async () => {
+  const result = await mountWithGates([approvalGate, scopeGate, questionGate]);
+  let release = () => {};
+  decisionsHold = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    await act(async () => {
+      await result.current.handleAnswerQuestion('r-1', 'm-q', 'new');
+      await result.current.handleDecideScopeRequest('r-1', 'm-s', true);
+      await result.current.handleApprove('r-1', 'req-1', true);
+    });
+    // Every refetch is held, so only the answered-gate drop can empty these.
+    await waitFor(() => {
+      expect(result.current.openQuestions.has('r-1')).toBe(false);
+      expect(result.current.pendingScopeRequests.has('r-1')).toBe(false);
+      expect(result.current.pendingApprovals.has('r-1')).toBe(false);
+    });
+  } finally {
+    decisionsHold = null;
+    release();
+    resetGateFixtures();
+  }
+});
+
 // A card whose gate carries only a preview reads the parked call whole.
 test('a parked call is read in full by its run and request id', async () => {
   const result = await mountWithGates([approvalGate]);
@@ -652,6 +704,20 @@ test('a window on the agent token reads no gates, notifies none and sends nothin
     );
     expect(refused).toBe(ATTACHED_DAEMON_MESSAGING_EXPLANATION);
     expect(sentMessages).toEqual([]);
+    // Answering a question or deciding a scope gate is refused here too.
+    replies.length = 0;
+    const settle = (p: Promise<void>) =>
+      p.then(
+        () => 'resolved',
+        (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+      );
+    expect(
+      await settle(result.current.handleAnswerQuestion('r-1', 'm-q', 'new'))
+    ).not.toBe('resolved');
+    expect(
+      await settle(result.current.handleDecideScopeRequest('r-1', 'm-s', true))
+    ).not.toBe('resolved');
+    expect(replies).toEqual([]);
   } finally {
     connectionFixture = APP_CONNECTION;
     resetGateFixtures();
