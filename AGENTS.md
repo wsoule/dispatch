@@ -54,7 +54,8 @@ For non-moon commands that CI-gate themselves, unset the var:
 
 Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
 
-- `packages/core`, `packages/client`, `packages/cli`, `packages/mcp` are MIT.
+- `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`,
+  `packages/protocol`, `packages/a2a` are MIT.
 - Everything else (`packages/server`, `packages/ui`, `packages/web`,
   `packages/demo`, `apps/desktop`, `apps/demo`, `apps/site`) is `FSL-1.1-ALv2`
   (`LICENSE`), source-available and converting to Apache-2.0 two years after
