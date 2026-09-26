@@ -1315,10 +1315,8 @@ export class Orchestrator {
     return candidates[0]?.branch ?? null;
   }
 
-  // Answers one of the calls a run is parked on. Only valid while the run is
-  // `awaiting-approval` and `requestId` is parked on it — both mismatches are
-  // 400s, not 404s, since the run itself does exist. The run stays parked
-  // while any other call is.
+  // Answers one parked call (a 400 when the run or call is not parked); the run
+  // stays awaiting-approval while any other call is.
   approve(
     runId: string,
     requestId: string,
@@ -1990,9 +1988,8 @@ export class Orchestrator {
     return this.pickUpBlockReason(meta);
   }
 
-  // Why a human's request cannot continue exactly this run, or null. Unlike
-  // resumeBlockReason a finished run, an open PR or a flagged base do not
-  // block: the human chose this run, and their request is the review.
+  // Why a human cannot continue exactly this run, or null. A finished run, an
+  // open PR or a flagged base pass: the human chose it, and asking is the review.
   continueBlockReason(meta: RunMeta): string | null {
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
       return `run is ${meta.state}, not ended`;

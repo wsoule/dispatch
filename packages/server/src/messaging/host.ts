@@ -107,9 +107,8 @@ export class DaemonMessagingHost implements MessagingHost {
     this.deps.onHumanMessage(actor, message);
   }
 
-  // Wakes a sleeping task as its human sender, who may continue a finished run,
-  // or as the system; a human may also continue one named run. An orchestrator
-  // throw becomes a failed WakeResult.
+  // Wakes a task as its human sender (who may continue a finished run) or as the
+  // system, or continues the one run a human names; a throw becomes a failure.
   async wake(target: Address, message: Message): Promise<WakeResult> {
     const human = message.from.startsWith('human:');
     if (target.startsWith('run:') && human) {
@@ -144,9 +143,8 @@ export class DaemonMessagingHost implements MessagingHost {
     }
   }
 
-  // Denies waking anything but a dispatchable task, or a run a human names;
-  // allows a human's wake; otherwise defers to the project's 'wake' policy,
-  // capped by the task's risk.
+  // Allows a human's wake of a dispatchable task or of a run; an agent's task
+  // wake follows the project's 'wake' policy, capped by the task's risk.
   decide(request: PolicyRequest): PolicyRuling {
     const target = request.target;
     const human = request.message.from.startsWith('human:');

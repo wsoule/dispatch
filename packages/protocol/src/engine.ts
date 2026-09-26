@@ -120,9 +120,8 @@ export class DeliveryEngine {
     return { muted: agent.muted };
   }
 
-  // Expands channels, de-duplicates (direct beats channel) and drops the
-  // sender itself, including a run's own task. `fields` names each address's
-  // entry in the caller's own `to`, for errors.
+  // Expands channels, de-duplicates (direct beats channel) and drops the sender
+  // itself, including a run's own task; errors name the caller's `to` entry.
   private resolveTargets(
     to: Address[],
     sender: Address,
@@ -166,9 +165,8 @@ export class DeliveryEngine {
     return [...byRecipient.values()];
   }
 
-  // A target's initial delivery state and run; null drops a not-live run that
-  // only a channel reached. A reply to an ended run with no task, or a human's
-  // wake of an ended run, is held on it.
+  // A target's initial delivery; null drops an ended run only a channel reached.
+  // `heldIfEnded` holds mail to an ended run instead of refusing it.
   private plan(
     target: Target,
     muted: boolean,
