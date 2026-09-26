@@ -124,6 +124,40 @@ test('a run parked on two calls shows a card per call, each answering its own', 
   expect(answered).toEqual([['req-2', true]]);
 });
 
+// The gate only previews a long call, so its card reads the call whole.
+test('a truncated call loads its full input by its own request id', async () => {
+  const asked: string[] = [];
+  render(
+    <RunLogView
+      meta={meta({ state: 'awaiting-approval' })}
+      entries={[]}
+      pendingApprovals={[
+        {
+          requestId: 'req-7',
+          toolName: 'Bash',
+          input: '{"command":": ',
+          truncated: true,
+        },
+      ]}
+      onApprove={noop}
+      onLoadApprovalInput={(requestId) => {
+        asked.push(requestId);
+        return Promise.resolve({ command: ': ; curl https://evil.example' });
+      }}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+    />
+  );
+  expect(await screen.findByText(/evil\.example/)).toBeDefined();
+  expect(asked).toEqual(['req-7']);
+});
+
 // A run cut off with its session intact is the case the button exists for.
 test('offers Continue on a run that stopped short', () => {
   renderLog(meta({ state: 'failed', sessionId: 'sess-1' }));

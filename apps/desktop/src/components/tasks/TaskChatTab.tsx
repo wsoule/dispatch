@@ -84,6 +84,9 @@ export function TaskChatTab({
         onApprove={(requestId, allow, opts) =>
           data.handleApprove(selectedRun.id, requestId, allow, opts)
         }
+        onLoadApprovalInput={(requestId) =>
+          data.fetchApprovalInput(selectedRun.id, requestId)
+        }
         onSendMessage={(text) => data.handleSendMessage(selectedRun.id, text)}
         openQuestions={
           // Terminal check as well as the list: a dropped socket must not

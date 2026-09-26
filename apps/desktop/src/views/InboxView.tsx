@@ -741,6 +741,10 @@ function DetailBody({
                   key={call.requestId}
                   toolName={call.toolName}
                   toolInput={call.input}
+                  truncated={call.truncated}
+                  loadFullInput={() =>
+                    project.fetchApprovalInput(row.runId, call.requestId)
+                  }
                   frozenSince={row.since}
                   onDecide={(allow, opts) =>
                     project.handleApprove(

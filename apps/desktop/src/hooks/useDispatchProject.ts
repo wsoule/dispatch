@@ -552,6 +552,8 @@ export interface DispatchProjectData {
     allow: boolean,
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
+  /** The full input of a call a run is parked on, which its gate may only preview. */
+  fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
   handleCancelRun: (runId: string) => Promise<void>;
   /** Asks a live run to wind down: it finishes its current operation, then stops,
@@ -2022,6 +2024,16 @@ export function useDispatchProject(
     [client, queryClient, runsQueryKey, port, auth]
   );
 
+  const fetchApprovalInput = useCallback(
+    async (runId: string, requestId: string): Promise<unknown> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      // The full input is decide-tier, like the gate it belongs to.
+      assertCanDecide(auth);
+      return (await client.fetchRunApproval(runId, requestId)).input;
+    },
+    [client, auth]
+  );
+
   const handleDecideScopeRequest = useCallback(
     async (
       _runId: string,
@@ -2783,6 +2795,7 @@ export function useDispatchProject(
     handleSendDraftMessage,
     handleDispatch,
     handleApprove,
+    fetchApprovalInput,
     handleSendMessage,
     handleCancelRun,
     handleStopRun,

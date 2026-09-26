@@ -96,6 +96,8 @@ interface RunLogViewProps {
     allow: boolean,
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
+  /** Reads a parked call's full input, for a card whose gate carries only a preview. */
+  onLoadApprovalInput?: (requestId: string) => Promise<unknown>;
   onSendMessage: (text: string) => Promise<void>;
   /** Blocking questions this run's agent sent a human, oldest first. Usually one, but an
    * agent can send several in a single turn. */
@@ -126,6 +128,7 @@ export function RunLogView({
   entries,
   pendingApprovals,
   onApprove,
+  onLoadApprovalInput,
   onSendMessage,
   openQuestions,
   onAnswerQuestion,
@@ -318,6 +321,12 @@ export function RunLogView({
                   key={approval.requestId}
                   toolName={approval.toolName}
                   toolInput={approval.input}
+                  truncated={approval.truncated}
+                  loadFullInput={
+                    onLoadApprovalInput === undefined
+                      ? undefined
+                      : () => onLoadApprovalInput(approval.requestId)
+                  }
                   frozenSince={meta.updatedAt}
                   onDecide={(allow, opts) =>
                     onApprove(approval.requestId, allow, opts)

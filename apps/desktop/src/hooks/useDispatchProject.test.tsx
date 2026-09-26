@@ -59,6 +59,7 @@ let openGatesFixture: Message[] = [];
 let openDecisionsCalls = 0;
 const sentMessages: SendInput[] = [];
 const replies: [string, ReplyInput][] = [];
+const approvalReads: [string, string][] = [];
 
 // The bulk epic-progress listing the daemon returns, how many times it was
 // asked for, and every `startEpic` body the hook sent — the fan-out tests
@@ -102,6 +103,10 @@ void mock.module('@dispatch/client', () => ({
         deliveries: [],
         downgraded: false,
       });
+    },
+    fetchRunApproval: (runId: string, requestId: string) => {
+      approvalReads.push([runId, requestId]);
+      return Promise.resolve({ tool: 'Bash', input: { command: 'ls -la' } });
     },
     replyToMessage: (id: string, input: ReplyInput) => {
       replies.push([id, input]);
@@ -478,6 +483,18 @@ test('the card handlers answer their gates with the matching choice', async () =
     (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
   );
   expect(stale).toBe('This approval is no longer waiting for you.');
+  resetGateFixtures();
+});
+
+// A card whose gate carries only a preview reads the parked call whole.
+test('a parked call is read in full by its run and request id', async () => {
+  const result = await mountWithGates([approvalGate]);
+  approvalReads.length = 0;
+
+  const input = await result.current.fetchApprovalInput('r-1', 'req-1');
+
+  expect(input).toEqual({ command: 'ls -la' });
+  expect(approvalReads).toEqual([['r-1', 'req-1']]);
   resetGateFixtures();
 });
 
