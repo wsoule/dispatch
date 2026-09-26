@@ -62,3 +62,26 @@ export type {
   RecallRow,
   SearchHit,
 } from './store.js';
+export { queryTerms, relevanceTerms, STOPWORDS } from './query.js';
+export {
+  compareRank,
+  KIND_CLASS,
+  rankEntries,
+  reaches,
+  specificity,
+} from './rank.js';
+export type { RankContext, Ranked } from './rank.js';
+export { estimateTokens, indexLine, reachTags, renderIndex } from './render.js';
+export type {
+  IndexVariant,
+  RenderedIndex,
+  RenderIndexOptions,
+} from './render.js';
+export {
+  isA2AAgent,
+  personalIdentityFor,
+  proposalVisible,
+  refuseA2A,
+  sharedScopesFor,
+} from './visibility.js';
+export type { Viewer } from './visibility.js';
