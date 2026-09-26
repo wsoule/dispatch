@@ -412,6 +412,12 @@ importers:
       '@a2a-js/sdk':
         specifier: 'catalog:'
         version: 1.2.0(express@5.2.1)
+      '@dispatch/core':
+        specifier: workspace:*
+        version: link:../core
+      '@dispatch/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@types/bun':
         specifier: 'catalog:'
