@@ -301,11 +301,15 @@ export function openMessaging(deps: {
     raise: (request) => {
       raiseToolApproval(engine, deps.ownerRef, request)
         .then((gate) => {
-          // The run ended, or its call was settled, while the gate was being written.
-          const pending = deps.orchestrator.pendingApprovalFor(request.runId);
+          // The run ended, or this call was settled, while the gate was being written.
           if (!deps.orchestrator.isRunLive(request.runId))
             closeGate(engine, gate.id, 'the run ended');
-          else if (pending?.requestId !== request.requestId)
+          else if (
+            deps.orchestrator.pendingApprovalFor(
+              request.runId,
+              request.requestId
+            ) === undefined
+          )
             closeGate(engine, gate.id, 'the call was already settled');
         })
         .catch((err: unknown) => {

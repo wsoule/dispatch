@@ -758,6 +758,7 @@ export type GateData =
       tool: string;
       input: unknown;
       truncated?: true; // set when `input` was cut to fit
+      floor: boolean; // the irreversibility floor holds the call, judged on its full input
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: string; message: string }
@@ -2492,6 +2493,12 @@ export interface ApiClient {
   stopRunPreview(runId: string): Promise<void>;
   /** The run's requirement checklist; 404s until the finish hook wrote one. */
   fetchRunChecklist(runId: string): Promise<RunChecklist>;
+  /** The full input of a call the run is parked on, which its tool-approval
+   *  gate may carry only a preview of. Decide-tier; 404s once it is settled. */
+  fetchRunApproval(
+    runId: string,
+    requestId: string
+  ): Promise<{ tool: string; input: unknown }>;
   reviewRun(
     runId: string,
     action: 'merge' | 'discard' | 'pr'
@@ -3133,6 +3140,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     },
     fetchRunChecklist: (runId) =>
       request(target, `/api/runs/${runId}/checklist`),
+    fetchRunApproval: (runId, requestId) =>
+      request(target, `/api/runs/${runId}/approvals/${requestId}`),
     reviewRun: (runId, action) =>
       request(target, `/api/runs/${runId}/review`, {
         method: 'POST',

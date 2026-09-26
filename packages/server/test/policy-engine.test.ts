@@ -149,8 +149,10 @@ function harness(
         terminalCallbacks.push(cb);
         return () => {};
       },
-      pendingApprovalFor: (runId) =>
-        opts.pending?.find((p) => p.runId === runId),
+      pendingApprovalFor: (runId, requestId) =>
+        opts.pending?.find(
+          (p) => p.runId === runId && p.requestId === requestId
+        ),
       diff: (runId) => {
         if (opts.diffThrows !== undefined) throw opts.diffThrows;
         return { files: diffs.get(runId) ?? [] };

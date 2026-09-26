@@ -12,8 +12,8 @@ import { randomBytes } from 'node:crypto';
 
 import type { OverseerToolContext } from '../orchestrator/overseerTools.js';
 import { OrchestratorConflictError } from '../orchestrator/types.js';
-import { closeGate, SYSTEM_SENDER } from './gates.js';
-import { previewToolInput, TOOL_APPROVAL_CHOICES } from './toolApproval.js';
+import { closeGate, openToolApprovalGate, SYSTEM_SENDER } from './gates.js';
+import { TOOL_APPROVAL_CHOICES, toolApprovalGateData } from './toolApproval.js';
 
 // Every internal agent's token hash starts with this; no sha256 hex digest
 // does, so no presented token can match one.
@@ -168,13 +168,10 @@ export function createOverseerBus(
           blocking: true,
           choices: [...TOOL_APPROVAL_CHOICES],
           body: `The overseer wants to run ${approval.summary}`,
-          data: {
-            type: 'tool-approval',
-            requestId: approval.requestId,
-            conversation: conversationId,
-            tool: approval.toolName,
-            ...previewToolInput(approval.input),
-          } satisfies GateData,
+          data: toolApprovalGateData(
+            { conversation: conversationId },
+            approval
+          ),
         },
         SYSTEM_SENDER
       );
@@ -199,15 +196,8 @@ export function overseerToolMessaging(
 ): OverseerToolContext['messaging'] {
   return {
     async answerRunApproval(runId, requestId, answer, actor) {
-      const gate = engine.openBlocking().find((m) => {
-        const data = gateOf(m);
-        return (
-          data?.type === 'tool-approval' &&
-          data.runId === runId &&
-          data.requestId === requestId
-        );
-      });
-      if (gate === undefined) {
+      const gate = openToolApprovalGate(engine, runId, requestId);
+      if (gate === null) {
         throw new OrchestratorConflictError(
           `run is not awaiting approval: ${runId}`
         );

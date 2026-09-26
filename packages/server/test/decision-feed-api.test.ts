@@ -339,6 +339,82 @@ describe('GET /api/decisions', () => {
   });
 });
 
+describe('GET /api/runs/:id/approvals/:requestId', () => {
+  it("returns a parked floor call's full input, which its cut gate flags", async () => {
+    const { runId } = await liveRun('Push it', 'parking');
+    const command = `${' '.repeat(9000)}; git push --force origin main`;
+    parking.park('req-1', 'Bash', { command });
+    let gate: Message | undefined;
+    await waitFor(async () => {
+      const open: { items: Message[] } = await json(
+        await fetch(`${baseUrl}/api/decisions/open`)
+      );
+      gate = open.items[0];
+      return gate !== undefined;
+    });
+    expect(gate?.data).toMatchObject({ truncated: true, floor: true });
+    expect(JSON.stringify(gate?.data)).not.toContain('git push');
+
+    const res = await fetch(`${baseUrl}/api/runs/${runId}/approvals/req-1`);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ tool: 'Bash', input: { command } });
+    const [item] = await decisions();
+    expect(item).toMatchObject({
+      floor: 'force-push',
+      disposition: 'blocking',
+    });
+  });
+
+  it('404s a request the run is not parked on, and refuses the agent token', async () => {
+    const { runId } = await liveRun('Needs a shell', 'parking');
+    await parkForApproval();
+
+    const missing = await fetch(`${baseUrl}/api/runs/${runId}/approvals/req-9`);
+    expect(missing.status).toBe(404);
+    const asAgent = await fetch(
+      `${baseUrl}/api/runs/${runId}/approvals/req-1`,
+      { headers: { authorization: `Bearer ${handle.tokens.agentToken}` } }
+    );
+    expect(asAgent.status).toBe(403);
+  });
+});
+
+describe('gates across a daemon restart', () => {
+  it("closes a dead run's approval but keeps an execute run's scope gate open", async () => {
+    await liveRun('Needs a shell', 'parking');
+    const approval = await parkForApproval();
+    await liveRun('Needs scope');
+    const scopeId = await requestScope(['a.ts'], 'needs the helper');
+
+    await handle.stop();
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('claude', new StallingExecutor());
+        orchestrator.registerExecutor('parking', new ParkingExecutor());
+      },
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const open: { items: Message[] } = await json(
+      await fetch(`${baseUrl}/api/decisions/open`)
+    );
+    expect(open.items.map((m) => m.id)).toEqual([scopeId]);
+    expect(
+      (await decisions()).filter((i) => i.kind !== 'run-stalled')
+    ).toMatchObject([
+      { id: `scope-request:${scopeId}`, kind: 'scope-request' },
+    ]);
+    const answer: { answer: { data?: { type?: string } } | null } = await json(
+      await fetch(`${baseUrl}/api/messages/${approval.id}/answer`)
+    );
+    expect(answer.answer?.data?.type).toBe('x-closed');
+  });
+});
+
 describe('decisions.changed over /ws', () => {
   it('fires when a gate opens and again when it is answered', async () => {
     await liveRun('Needs a shell', 'parking');

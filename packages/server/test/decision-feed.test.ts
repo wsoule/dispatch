@@ -5,6 +5,11 @@ import type { DecisionItem, DecisionPolicy } from '../src/decisionFeed.js';
 import { DecisionFeed } from '../src/decisionFeed.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
+import { floorCheckForToolInput } from '../src/floor.js';
+import {
+  previewToolInput,
+  toolApprovalGateData,
+} from '../src/messaging/toolApproval.js';
 import type { FixLoopState } from '../src/orchestrator/fixLoop.js';
 import type { RunMeta, RunState } from '../src/orchestrator/types.js';
 
@@ -51,7 +56,7 @@ function ago(ms: number): string {
 }
 
 // A tool-approval gate for `runId`'s parked call, carrying `input` as its
-// preview.
+// preview and its floor flag as the raiser judged it.
 function approvalGate(
   id: string,
   runId: string,
@@ -60,7 +65,14 @@ function approvalGate(
   over: Partial<Message> = {}
 ): Message {
   return gate(id, {
-    data: { type: 'tool-approval', requestId, runId, tool: 'Bash', input },
+    data: {
+      type: 'tool-approval',
+      requestId,
+      runId,
+      tool: 'Bash',
+      input,
+      floor: floorCheckForToolInput(input) !== null,
+    },
     ...over,
   });
 }
@@ -101,7 +113,10 @@ function harness(policy?: DecisionPolicy): Harness {
   const feed = new DecisionFeed({
     orchestrator: {
       list: () => runs,
-      pendingApprovalFor: (runId) => pending.get(runId),
+      pendingApprovalFor: (runId, requestId) => {
+        const parked = pending.get(runId);
+        return parked?.requestId === requestId ? parked : undefined;
+      },
     },
     openGates: () => gates,
     fixLoopStore: { list: () => loops },
@@ -181,6 +196,7 @@ describe('DecisionFeed aggregation', () => {
             tool: 'Bash',
             input: 'echo ok && …',
             truncated: true,
+            floor: true,
           },
         }),
         gate('m-s', {
@@ -707,7 +723,73 @@ describe('DecisionFeed irreversibility floor', () => {
     expect(h.feed.list({ disposition: 'blocking' })).toHaveLength(2);
   });
 
-  it("checks the preview when the run's parked call is a different request", () => {
+  it('names the hold of a flagged gate whose preview was cut from the parked call', () => {
+    const h = harness(recordEverything);
+    const command = `${' '.repeat(9000)}; git push --force origin main`;
+    h.runs.push(runMeta('r-1', { state: 'awaiting-approval' }));
+    h.pending.set('r-1', { requestId: 'req-1', input: { command } });
+    h.gates.push(
+      gate('m-cut', {
+        data: toolApprovalGateData(
+          { runId: 'r-1' },
+          { requestId: 'req-1', toolName: 'Bash', input: { command } }
+        ),
+      })
+    );
+    const [item] = h.feed.list();
+    expect(item).toMatchObject({
+      floor: 'force-push',
+      disposition: 'blocking',
+    });
+  });
+
+  it("holds an overseer's floor call whose preview was cut, and names it from the conversation", () => {
+    const command = `git push --force origin main ${'#'.repeat(9000)}`;
+    const data = toolApprovalGateData(
+      { conversation: 'c-1' },
+      { requestId: 'req-1', toolName: 'Bash', input: { command } }
+    );
+    expect(previewToolInput({ command }).truncated).toBe(true);
+    const feed = (conversationApprovalInput?: () => unknown) =>
+      new DecisionFeed({
+        orchestrator: {
+          list: () => [],
+          pendingApprovalFor: () => undefined,
+        },
+        openGates: () => [gate('m-o', { data })],
+        fixLoopStore: { list: () => [] },
+        cache: { get: () => null },
+        events: new EventBus(),
+        conversationApprovalInput,
+        policy: recordEverything,
+      });
+    // From the parked call's full input, and from the preview when it is gone.
+    expect(feed(() => ({ command })).list()[0]).toMatchObject({
+      floor: 'force-push',
+      disposition: 'blocking',
+    });
+    expect(feed().list()[0]?.floor).toBe('force-push');
+  });
+
+  it('never holds a gate the raiser did not flag, whatever its preview says', () => {
+    const h = harness(recordEverything);
+    h.runs.push(runMeta('r-1'));
+    h.gates.push(
+      gate('m-x', {
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          runId: 'r-1',
+          tool: 'Bash',
+          input: { command: 'git push --force origin main' },
+          floor: false,
+        },
+      })
+    );
+    expect(h.feed.list()[0]?.floor).toBeUndefined();
+  });
+
+  it('ignores a different call parked on the same run', () => {
     const h = harness(recordEverything);
     h.runs.push(runMeta('r-1', { state: 'awaiting-approval' }));
     h.pending.set('r-1', {
