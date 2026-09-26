@@ -89,8 +89,10 @@ export interface BuildFeedInput {
   mergeQueue: MergeQueueSnapshot | null;
   /** Run id -> each tool call the run is parked on, oldest first, from its open gates. */
   pendingApprovals: ReadonlyMap<string, readonly { toolName: string }[]>;
-  /** Run id -> the questions its agent is blocked on, oldest first. */
+  /** Run id -> the open questions its agent asked, oldest first, live run or ended. */
   openQuestions: ReadonlyMap<string, readonly { question: string }[]>;
+  /** Run id -> its newest open scope gate, live run or ended. */
+  openScopeRequests: ReadonlyMap<string, { paths: readonly string[] }>;
   /** Task id -> its fix-loop state, for the per-row loop annotations. */
   fixLoops: ReadonlyMap<string, FixLoopState>;
   query: string;
@@ -164,10 +166,18 @@ function attentionFor(
   state: FeedState,
   run: RunMeta,
   pendingApprovals: BuildFeedInput['pendingApprovals'],
-  openQuestions: BuildFeedInput['openQuestions']
+  openQuestions: BuildFeedInput['openQuestions'],
+  openScopeRequests: BuildFeedInput['openScopeRequests']
 ): FeedRowModel['attention'] {
   if (state === 'answer') {
     const asked = openQuestions.get(run.id) ?? [];
+    const scope = openScopeRequests.get(run.id);
+    if (asked.length === 0 && scope !== undefined) {
+      return {
+        reason: 'Asks to edit outside its fence',
+        detail: scope.paths.join(', '),
+      };
+    }
     return {
       reason:
         asked.length <= 1
@@ -220,6 +230,7 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     mergeQueue,
     pendingApprovals,
     openQuestions,
+    openScopeRequests,
     fixLoops,
     query,
     activeStates,
@@ -258,13 +269,16 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
     if (runKindOf(run) !== 'execute' && foldedInto.has(run.baseBranch))
       continue;
     const derived = deriveFeedState(run, queueByRunId.get(run.id));
-    if (derived === null) continue;
+    // An open question or scope gate asks for an answer whether or not its run is
+    // still live: an execute run's asks stay open for its task after it ends.
+    const asks =
+      (openQuestions.get(run.id)?.length ?? 0) > 0 ||
+      openScopeRequests.has(run.id);
+    if (derived === null && !asks) continue;
     const loop = fixLoops.get(run.taskId) ?? null;
-    // A run blocked on a question still reads as 'running' in its own metadata, so without
-    // this it would sit in the calm part of the feed looking busy. `answer` is its own ask.
-    const asked = openQuestions.get(run.id) ?? [];
+    // Only a parked approval outranks an ask: the run cannot move until it is answered.
     let state: FeedState =
-      derived === 'working' && asked.length > 0 ? 'answer' : derived;
+      asks && derived !== 'approve' ? 'answer' : (derived ?? 'answer');
 
     // A working run that is really a fix-loop round is the machine fixing, not
     // generic progress — the pass number is the point.
@@ -326,7 +340,13 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
         attention:
           auxFailed !== null
             ? { reason: `The AI ${auxFailed} agent failed`, detail: null }
-            : attentionFor(state, run, pendingApprovals, openQuestions),
+            : attentionFor(
+                state,
+                run,
+                pendingApprovals,
+                openQuestions,
+                openScopeRequests
+              ),
         fixLoop: loop,
       },
     });

@@ -419,7 +419,11 @@ test('open gates fill the approval, scope and question maps', async () => {
       truncated: false,
     },
   ]);
-  expect(result.current.pendingScopeRequests.get('r-1')?.requestId).toBe('m-s');
+  expect(result.current.pendingScopeRequests.get('r-1')).toMatchObject({
+    id: 'm-s',
+    paths: ['a.ts'],
+    reason: 'needed',
+  });
   expect(result.current.openQuestions.get('r-1')?.[0].id).toBe('m-q');
   resetGateFixtures();
 });

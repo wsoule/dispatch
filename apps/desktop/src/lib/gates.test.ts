@@ -10,7 +10,7 @@ import {
   gateNotification,
   questionsByRun,
   runIdOf,
-  scopeRequestIdsByRun,
+  scopeRequestsByRun,
   toRunQuestion,
   toScopeRequest,
 } from './gates';
@@ -101,8 +101,10 @@ describe('gate adapters', () => {
         .get('r-1')
         ?.map((q) => q.id)
     ).toEqual(['m-q']);
-    expect(scopeRequestIdsByRun([scope]).get('r-1')).toEqual({
-      requestId: 'm-s',
+    expect(scopeRequestsByRun([scope]).get('r-1')).toMatchObject({
+      id: 'm-s',
+      runId: 'r-1',
+      paths: ['a.ts'],
     });
     expect(findToolApprovalGate([approval], 'r-1', 'req-1')?.id).toBe('m-a');
     expect(findToolApprovalGate([approval], 'r-1', 'req-2')).toBeNull();
@@ -157,9 +159,7 @@ describe('gate adapters', () => {
       id: 'm-s2',
       createdAt: '2026-09-25T10:05:00.000Z',
     };
-    expect(scopeRequestIdsByRun([later, scope]).get('r-1')).toEqual({
-      requestId: 'm-s2',
-    });
+    expect(scopeRequestsByRun([later, scope]).get('r-1')?.id).toBe('m-s2');
   });
 
   it('finds overseer gates by conversation and action or request', () => {

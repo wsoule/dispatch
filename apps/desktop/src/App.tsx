@@ -591,6 +591,7 @@ function App() {
         mergeQueue: data.mergeQueue,
         pendingApprovals: data.pendingApprovals,
         openQuestions: data.openQuestions,
+        openScopeRequests: data.pendingScopeRequests,
         fixLoops: data.fixLoops,
         me: data.me,
       }),
@@ -603,6 +604,7 @@ function App() {
       data.mergeQueue,
       data.pendingApprovals,
       data.openQuestions,
+      data.pendingScopeRequests,
       data.fixLoops,
     ]
   );

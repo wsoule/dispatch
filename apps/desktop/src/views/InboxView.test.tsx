@@ -35,6 +35,7 @@ function projectWith(
     retryEnsureDispatchd: () => {},
     openQuestions: new Map(),
     pendingApprovals: new Map(),
+    pendingScopeRequests: new Map(),
     scopeDecide: {
       enabled: true,
       notice: null,
@@ -460,6 +461,56 @@ test('an answer row shows its question card with the indigo Answer button on the
   fireEvent.click(screen.getByRole('radio', { name: 'Left' }));
   expect(answers).toEqual(['Left']);
   expect(screen.getByRole('button', { name: 'Answer' })).toBeDefined();
+});
+
+// An ended run's scope gate stays open for its task, so its row still decides it.
+test('an answer row with an open scope gate shows the scope card', async () => {
+  const decided: string[] = [];
+  renderInbox(
+    dataWith([
+      {
+        state: 'answer',
+        rows: [
+          row({ taskId: 't-a', runId: 'r-a', state: 'answer', title: 'Fence' }),
+        ],
+      },
+    ]),
+    {
+      project: projectWith({
+        pendingScopeRequests: new Map([
+          [
+            'r-a',
+            {
+              id: 'm-s',
+              runId: 'r-a',
+              paths: ['src/payments/cart.ts'],
+              reason: 'the cart lives there',
+              requestedAt: '2026-08-10T00:00:00.000Z',
+              granted: null,
+              decisionReason: null,
+              decidedAt: null,
+              decidedBy: null,
+            },
+          ],
+        ]),
+        handleDecideScopeRequest: (
+          runId: string,
+          requestId: string,
+          granted: boolean
+        ) => {
+          decided.push(`${runId}:${requestId}:${granted}`);
+          return Promise.resolve();
+        },
+      } as unknown as Partial<DispatchProjectData>),
+    }
+  );
+  fireEvent.click(rowOf('Fence'));
+  expect(screen.getByText('src/payments/cart.ts')).toBeDefined();
+  await act(async () => {
+    fireEvent.click(screen.getByRole('radio', { name: /Deny/ }));
+    await Promise.resolve();
+  });
+  expect(decided).toEqual(['r-a:m-s:false']);
 });
 
 // Each parked call is its own gate, so the detail pane shows one card per call.

@@ -124,10 +124,10 @@ export function questionsByRun(
   return byRun;
 }
 
-/** Each run's newest open scope gate; its message id is the request id. */
-export function scopeRequestIdsByRun(
+/** Each run's newest open scope gate; its message id is what a decision replies to. */
+export function scopeRequestsByRun(
   gates: readonly Message[]
-): Map<string, { requestId: string }> {
+): Map<string, RunScopeRequest> {
   const newest = new Map<string, RunScopeRequest>();
   for (const message of gates) {
     const request = toScopeRequest(message);
@@ -137,11 +137,7 @@ export function scopeRequestIdsByRun(
       newest.set(request.runId, request);
     }
   }
-  const ids = new Map<string, { requestId: string }>();
-  for (const [runId, request] of newest) {
-    ids.set(runId, { requestId: request.id });
-  }
-  return ids;
+  return newest;
 }
 
 /** The open tool-approval gate for one parked call: (run, request id) names it. */

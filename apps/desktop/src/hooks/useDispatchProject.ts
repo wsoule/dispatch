@@ -66,7 +66,7 @@ import { isFakeExecutorDevToolEnabled } from '../lib/devTools';
 import type { WorkEpicOptions } from '../lib/epicSession';
 import { epicPausedNotice } from '../lib/epicSession';
 import { fixLoopCappedNotice } from '../lib/fixLoopStatus';
-import type { RunQuestion } from '../lib/gates';
+import type { RunQuestion, RunScopeRequest } from '../lib/gates';
 import {
   approvalReply,
   findToolApprovalGate,
@@ -74,7 +74,7 @@ import {
   gateNotification,
   openGatesKey,
   questionsByRun,
-  scopeRequestIdsByRun,
+  scopeRequestsByRun,
 } from '../lib/gates';
 import type { InboxEntryDraft, InboxState } from '../lib/inbox';
 import {
@@ -89,6 +89,7 @@ import { notify, setNotificationKinds } from '../lib/notifications';
 import type { PendingApproval } from '../lib/pendingApprovals';
 import { pendingApprovalsFromGates } from '../lib/pendingApprovals';
 import { isTerminalRunState, runSurveyNotice } from '../lib/runState';
+import { taskIdsWithOpenAsks } from '../lib/taskAsks';
 import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
@@ -104,10 +105,6 @@ import {
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
 import { useTransitionNotifications } from './useTransitionNotifications';
-
-// A run's open scope gate; `requestId` is the gate message's id, which the
-// decision replies to.
-type PendingScopeRequest = { requestId: string };
 
 // Shared empty list, so the maps derived from the open gates keep their
 // identity while the query is loading or disabled.
@@ -509,8 +506,8 @@ export interface DispatchProjectData {
   notePlanRecord: PlanRecord | undefined;
   /** Run id -> each tool call it is parked on, oldest first, from the open gates. */
   pendingApprovals: Map<string, PendingApproval[]>;
-  /** Run id -> the newest scope gate its agent is waiting on. */
-  pendingScopeRequests: Map<string, PendingScopeRequest>;
+  /** Run id -> the newest open scope gate its agent raised, live or ended. */
+  pendingScopeRequests: Map<string, RunScopeRequest>;
   handleDecideScopeRequest: (
     runId: string,
     requestId: string,
@@ -1037,7 +1034,7 @@ export function useDispatchProject(
     [openGates, runs]
   );
   const pendingScopeRequests = useMemo(
-    () => scopeRequestIdsByRun(openGates),
+    () => scopeRequestsByRun(openGates),
     [openGates]
   );
   // Keyed by run so a view holding one run finds its questions in one lookup.
@@ -1752,10 +1749,10 @@ export function useDispatchProject(
     () =>
       deriveTaskAttentionById(
         latestRunByTaskId,
-        openQuestions,
+        taskIdsWithOpenAsks(runs ?? [], openQuestions, pendingScopeRequests),
         mergeQueue ?? null
       ),
-    [latestRunByTaskId, openQuestions, mergeQueue]
+    [latestRunByTaskId, runs, openQuestions, pendingScopeRequests, mergeQueue]
   );
 
   const handleUpdate = useCallback(

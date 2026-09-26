@@ -14,6 +14,7 @@ import { useEffect, useMemo, useState } from 'react';
 
 import { ApprovalCard } from '../components/runs/ApprovalCard';
 import { QuestionCard } from '../components/runs/QuestionCard';
+import { ScopeRequestCard } from '../components/runs/ScopeRequestCard';
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useNotificationInbox } from '../components/shell/NotificationInboxContext';
 import { useShellActions } from '../components/shell/ShellActionsContext';
@@ -23,7 +24,6 @@ import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
 import { tintForState } from '../lib/feedState';
 import { formatRelativeTimeFromIso } from '../lib/format';
-import type { RunQuestion } from '../lib/gates';
 import type {
   InboxBadge,
   InboxData,
@@ -95,17 +95,6 @@ interface InboxViewProps {
  * everything else lands in the conversation. */
 function tabFor(state: FeedState): TaskTab {
   return state === 'review' || state === 'ruling' ? 'diff' : 'chat';
-}
-
-// The question an answer row surfaces: the oldest still-unanswered one, or — if every
-// question already carries an answer (a stale render between the answer landing and the
-// run leaving the feed) — the first of those, so the pane never silently drops back to the
-// plain state mid-transition.
-function firstOpenQuestion(
-  questions: RunQuestion[] | undefined
-): RunQuestion | undefined {
-  if (questions === undefined || questions.length === 0) return undefined;
-  return questions.find((q) => q.answer === null) ?? questions[0];
 }
 
 /** The live rows' read keys, tagged with the project they were loaded for so a project
@@ -713,20 +702,37 @@ function DetailBody({
     case 'ask': {
       const { row } = item;
       if (row.state === 'answer') {
-        const question = firstOpenQuestion(
-          project.openQuestions?.get(row.runId)
-        );
-        if (question !== undefined) {
+        const questions = project.openQuestions?.get(row.runId) ?? [];
+        const scope = project.pendingScopeRequests?.get(row.runId);
+        if (questions.length > 0 || scope !== undefined) {
           return (
-            <div className="p-4">
-              <QuestionCard
-                question={question.question}
-                options={question.options}
-                askedAt={question.askedAt}
-                onAnswer={(answer) =>
-                  project.handleAnswerQuestion(row.runId, question.id, answer)
-                }
-              />
+            <div className="flex flex-col gap-3 p-4">
+              {questions.map((question) => (
+                <QuestionCard
+                  key={question.id}
+                  question={question.question}
+                  options={question.options}
+                  askedAt={question.askedAt}
+                  onAnswer={(answer) =>
+                    project.handleAnswerQuestion(row.runId, question.id, answer)
+                  }
+                />
+              ))}
+              {scope !== undefined && (
+                <ScopeRequestCard
+                  paths={scope.paths}
+                  reason={scope.reason}
+                  onDecide={(granted) =>
+                    project.handleDecideScopeRequest(
+                      row.runId,
+                      scope.id,
+                      granted
+                    )
+                  }
+                  availability={project.scopeDecide}
+                  onRestartDaemon={project.handleRestartDaemon}
+                />
+              )}
             </div>
           );
         }
