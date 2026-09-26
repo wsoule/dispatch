@@ -63,7 +63,8 @@ const RUNS = [
   runMeta('r-3', 't-3', 'finished'),
   runMeta('r-5', 't-5', 'finished'),
 ];
-const WOKEN_RUN = runMeta('r-4', 't-3', 'running');
+// The run a human's wake of r-3 starts: it continues r-3's session.
+const WOKEN_RUN = { ...runMeta('r-4', 't-3', 'running'), resumedFrom: 'r-3' };
 
 let root: string;
 let fakeHome: string;
@@ -75,8 +76,10 @@ let sends: { body: unknown; auth: string | null }[];
 let decisionReads: number;
 // The gates GET /api/decisions/open lists, oldest first.
 let openGates: (typeof GATE)[];
-// Whether a wake of t-3 started a run, for `message --resume`.
+// Whether a wake of r-3 started a run, for `message --resume`.
 let woke: boolean;
+// The human's unread mail, where the daemon says why a wake woke nothing.
+let mailbox: { delivery: unknown; message: unknown }[];
 const originalDispatchHome = process.env.DISPATCH_HOME;
 const originalAppToken = process.env.DISPATCH_APP_TOKEN;
 
@@ -122,13 +125,20 @@ function startFakeDaemon(): ReturnType<typeof Bun.serve> {
             { status: 400 }
           );
         }
-        if (body.to.includes('task:t-3') && body.wake === 'request') {
+        if (body.to.includes('run:r-3') && body.wake === 'request') {
           woke = true;
         }
         return Response.json(
-          { message: GATE, deliveries: [], downgraded: false },
+          {
+            message: { ...GATE, id: 'm-sent', kind: 'message' },
+            deliveries: [],
+            downgraded: false,
+          },
           { status: 201 }
         );
+      }
+      if (url.pathname === '/api/mailbox') {
+        return Response.json({ items: mailbox });
       }
       const reply = /^\/api\/messages\/([^/]+)\/reply$/.exec(url.pathname);
       if (reply !== null && req.method === 'POST') {
@@ -158,6 +168,7 @@ beforeEach(async () => {
   decisionReads = 0;
   openGates = [GATE];
   woke = false;
+  mailbox = [];
   ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
   lines = [];
@@ -331,12 +342,13 @@ describe('dispatch message', () => {
     );
   });
 
-  it('--resume wakes the run task and names the run that picked it up', async () => {
+  // Feedback on one run continues exactly that run, not the task's newest.
+  it('--resume continues the named run and names its continuation', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     await run('message', 'r-3', 'rename', 'it', '--resume');
     expect(sends.map((s) => s.body)).toEqual([
       {
-        to: ['task:t-3'],
+        to: ['run:r-3'],
         kind: 'message',
         body: 'rename it',
         wake: 'request',
@@ -345,10 +357,36 @@ describe('dispatch message', () => {
     expect(lines).toContain('requested changes on r-3 — new run r-4');
   });
 
-  it('--resume with no run woken says the message is waiting', async () => {
+  it('--resume on a run that is still live just delivers the message', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await run('message', 'r-1', 'keep', 'going', '--resume');
+    expect(lines).toContain('sent message to r-1');
+  });
+
+  it("--resume that continued nothing gives the daemon's reason", async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    mailbox = [
+      {
+        delivery: { id: 'd-1' },
+        message: {
+          ...GATE,
+          id: 'm-notice',
+          kind: 'notice',
+          blocking: false,
+          body: 'Could not wake run:r-5: run has no worktree left. Your message is waiting for it.',
+          refs: [{ type: 'message', id: 'm-sent' }],
+        },
+      },
+    ];
+    await expect(run('message', 'r-5', 'again', '--resume')).rejects.toThrow(
+      'Could not wake run:r-5: run has no worktree left. Your message is waiting for it.'
+    );
+  });
+
+  it('--resume with no reason on record still says the message is waiting', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     await expect(run('message', 'r-5', 'again', '--resume')).rejects.toThrow(
-      't-5 did not wake; your message is waiting for its next run'
+      'r-5 did not continue; your message is waiting for it'
     );
   });
 });

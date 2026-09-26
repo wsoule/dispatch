@@ -60,6 +60,10 @@ let openDecisionsCalls = 0;
 const sentMessages: SendInput[] = [];
 const replies: [string, ReplyInput][] = [];
 const approvalReads: [string, string][] = [];
+// Runs inside a send, the way the daemon wakes a run before the send returns.
+let duringSend: (() => void) | null = null;
+// The caller's unread mail, where the daemon's notices land.
+let mailboxFixture: { delivery: unknown; message: Message }[] = [];
 
 // The bulk epic-progress listing the daemon returns, how many times it was
 // asked for, and every `startEpic` body the hook sent — the fan-out tests
@@ -98,12 +102,14 @@ void mock.module('@dispatch/client', () => ({
     },
     sendMessage: (input: SendInput) => {
       sentMessages.push(input);
+      duringSend?.();
       return Promise.resolve({
-        message: {},
+        message: { id: 'm-sent' },
         deliveries: [],
         downgraded: false,
       });
     },
+    getMailbox: () => Promise.resolve({ items: mailboxFixture }),
     fetchRunApproval: (runId: string, requestId: string) => {
       approvalReads.push([runId, requestId]);
       return Promise.resolve({ tool: 'Bash', input: { command: 'ls -la' } });
@@ -396,6 +402,7 @@ async function mountWithGates(gates: Message[]) {
 function resetGateFixtures() {
   runsFixture = [];
   openGatesFixture = [];
+  mailboxFixture = [];
   window.localStorage.clear();
 }
 
@@ -498,9 +505,14 @@ test('a parked call is read in full by its run and request id', async () => {
   resetGateFixtures();
 });
 
-test('request changes wakes the task and follows its new run', async () => {
+// Feedback on one run continues exactly that run, not the task's newest one.
+test('request changes continues the named run and follows its continuation', async () => {
   const followed: [string, string][] = [];
-  runsFixture = [runFixture('r-1', 'finished')];
+  const r2 = {
+    ...runFixture('r-2', 'finished'),
+    createdAt: '2026-08-24T00:00:00Z',
+  };
+  runsFixture = [r2, runFixture('r-1', 'finished')];
   openGatesFixture = [];
   sentMessages.length = 0;
   const queryClient = new QueryClient({
@@ -515,33 +527,86 @@ test('request changes wakes the task and follows its new run', async () => {
     { wrapper: wrapper(queryClient) }
   );
   await waitFor(() => {
-    expect(result.current.runs).toHaveLength(1);
+    expect(result.current.runs).toHaveLength(2);
   });
 
-  // The daemon wakes the task inside the send, so the new run is listed next.
-  runsFixture = [runFixture('r-2', 'running'), runFixture('r-1', 'finished')];
-  await act(async () => {
-    await result.current.handleRequestChanges('r-1', 'use the new cart');
-  });
+  // The daemon continues r-1 inside the send, so its continuation is listed next.
+  duringSend = () => {
+    runsFixture = [
+      { ...runFixture('r-3', 'running'), resumedFrom: 'r-1' },
+      r2,
+      runFixture('r-1', 'finished'),
+    ];
+  };
+  try {
+    await act(async () => {
+      await result.current.handleRequestChanges('r-1', 'use the new cart');
+    });
+  } finally {
+    duringSend = null;
+  }
   expect(sentMessages).toEqual([
     {
-      to: ['task:t-1'],
+      to: ['run:r-1'],
       kind: 'message',
       body: 'use the new cart',
       wake: 'request',
     },
   ]);
-  expect(followed).toEqual([['r-2', 't-1']]);
+  expect(followed).toEqual([['r-3', 't-1']]);
+  resetGateFixtures();
+});
 
-  runsFixture = [runFixture('r-1', 'finished')];
-  const notWoken = await result.current
+// A continuation that already existed is not the one this request started.
+test('request changes that continued nothing says why, from the daemon notice', async () => {
+  runsFixture = [
+    { ...runFixture('r-2', 'running'), resumedFrom: 'r-1' },
+    runFixture('r-1', 'finished'),
+  ];
+  openGatesFixture = [];
+  mailboxFixture = [
+    {
+      delivery: {},
+      message: {
+        ...gateMessage('m-n', {
+          kind: 'notice',
+          blocking: false,
+          body: 'Could not wake run:r-1: run was already resumed. Your message is waiting for it.',
+        }),
+        refs: [{ type: 'message', id: 'm-sent' }],
+      },
+    },
+  ];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.runs).toHaveLength(2);
+  });
+
+  const refused = await result.current
     .handleRequestChanges('r-1', 'again')
     .then(
       () => 'resolved',
       (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
     );
-  expect(notWoken).toBe(
-    'The task did not wake. Your message is waiting for its next run.'
+  expect(refused).toBe(
+    'Could not wake run:r-1: run was already resumed. Your message is waiting for it.'
+  );
+
+  mailboxFixture = [];
+  const unexplained = await result.current
+    .handleRequestChanges('r-1', 'again')
+    .then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+  expect(unexplained).toBe(
+    'The run did not continue. Your message is waiting for it.'
   );
   resetGateFixtures();
 });

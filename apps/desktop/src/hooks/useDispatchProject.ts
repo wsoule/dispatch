@@ -113,6 +113,29 @@ type PendingScopeRequest = { requestId: string };
 // identity while the query is loading or disabled.
 const NO_GATES: Message[] = [];
 
+// The daemon's notice saying why a wake-requesting message woke nothing, read
+// from the sender's unread mail; null when there is none or it cannot be read.
+async function wakeNoticeFor(
+  client: ApiClient,
+  messageId: string
+): Promise<string | null> {
+  try {
+    const { items } = await client.getMailbox(undefined, [
+      'held',
+      'notified',
+      'pushed',
+    ]);
+    const notice = items.findLast(
+      ({ message }) =>
+        message.kind === 'notice' &&
+        message.refs.some((r) => r.type === 'message' && r.id === messageId)
+    );
+    return notice?.message.body ?? null;
+  } catch {
+    return null;
+  }
+}
+
 // Persists the Board/List/Runs "show archived" toggle across restarts — mirrors BoardView's
 // own `dispatch:tasks-view-mode` persistence. Guarded for `window` for the same reason (this
 // is a Tauri/browser-only app, never SSR'd, but a stray server-side render of this module
@@ -2150,15 +2173,11 @@ export function useDispatchProject(
     async (runId: string, text: string): Promise<void> => {
       if (client === null) return;
       assertCanMessage(auth);
-      const taskId =
-        queryClient
-          .getQueryData<RunMeta[]>(runsQueryKey)
-          ?.find((r) => r.id === runId)?.taskId ??
-        (await client.fetchRun(runId)).meta.taskId;
-      // A human's wake continues the task's work; the daemon wakes it inside
-      // the send, so the run it woke is already listed below.
-      await client.sendMessage({
-        to: [`task:${taskId}`],
+      const before = new Set((await client.fetchRuns()).map((r) => r.id));
+      // A human's wake of an ended run continues exactly that run, inside the
+      // send, so its continuation is already listed below.
+      const sent = await client.sendMessage({
+        to: [`run:${runId}`],
         kind: 'message',
         body: text,
         wake: 'request',
@@ -2167,19 +2186,22 @@ export function useDispatchProject(
       queryClient.setQueryData(runsQueryKey, runs);
       void queryClient.invalidateQueries({ queryKey: tasksQueryKey });
       void queryClient.invalidateQueries({ queryKey: readyQueryKey });
-      const live = runs.find(
-        (r) =>
-          r.taskId === taskId &&
-          (r.kind ?? 'execute') === 'execute' &&
-          !isTerminalRunState(r.state)
+      const continued = runs.find(
+        (r) => r.resumedFrom === runId && !before.has(r.id)
       );
-      if (live === undefined) {
-        throw new Error(
-          'The task did not wake. Your message is waiting for its next run.'
-        );
+      if (continued !== undefined) {
+        // Follow the continuation so the caller keeps showing the live run.
+        onRunDispatched?.(continued.id, continued.taskId);
+        return;
       }
-      // Follow the woken run so the caller keeps showing the one that's live.
-      onRunDispatched?.(live.id, taskId);
+      // A run that is still live simply got the message.
+      if (runs.some((r) => r.id === runId && !isTerminalRunState(r.state))) {
+        return;
+      }
+      throw new Error(
+        (await wakeNoticeFor(client, sent.message.id)) ??
+          'The run did not continue. Your message is waiting for it.'
+      );
     },
     [
       client,

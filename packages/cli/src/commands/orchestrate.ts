@@ -286,6 +286,26 @@ async function describeParkedApproval(
   }
 }
 
+// The daemon's notice saying why a wake-requesting message woke nothing, read
+// from the sender's unread mail; null when there is none or it cannot be read.
+async function wakeNoticeFor(
+  client: ApiClient,
+  messageId: string
+): Promise<string | null> {
+  try {
+    const { items } = await client.getMailbox(['held', 'notified', 'pushed']);
+    const notice = items.findLast(
+      ({ message }) =>
+        message.kind === 'notice' &&
+        message.refs.some((r) => r.type === 'message' && r.id === messageId)
+    );
+    return notice?.message.body ?? null;
+  } catch (err) {
+    if (err instanceof CliError) return null;
+    throw err;
+  }
+}
+
 export function registerOrchestrateCommands(
   program: Command,
   ctx: CliContext
@@ -549,10 +569,7 @@ export function registerOrchestrateCommands(
     .description(
       'Send a message to a live run, or request changes on a finished one (needs the daemon app token)'
     )
-    .option(
-      '--resume',
-      "request changes on a finished run (wakes the run's task)"
-    )
+    .option('--resume', 'request changes on a finished run (continues it)')
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(
       async (
@@ -574,24 +591,36 @@ export function registerOrchestrateCommands(
           ctx.log(`sent message to ${runId}`);
           return;
         }
-        // A wake-requesting send to the task starts (or continues) its run
-        // before it returns, so the run it woke is live by now.
-        const { taskId } = (await client.getRun(runId)).meta;
-        await client.sendMessage({
-          to: [`task:${taskId}`],
+        // A human's wake of an ended run continues exactly that run before the
+        // send returns, so its continuation is listed by now.
+        const before = new Set((await client.listRuns()).map((r) => r.id));
+        const sent = await client.sendMessage({
+          to: [`run:${runId}`],
           kind: 'message',
           body,
           wake: 'request',
         });
-        const live = (await client.listRuns()).find(
-          (r) => r.taskId === taskId && exitCodeForRunState(r.state) === null
+        const after = await client.listRuns();
+        const continued = after.find(
+          (r) => r.resumedFrom === runId && !before.has(r.id)
         );
-        if (live === undefined) {
+        const named = after.find((r) => r.id === runId);
+        if (
+          continued === undefined &&
+          named !== undefined &&
+          exitCodeForRunState(named.state) === null
+        ) {
+          // A run that is still live simply got the message.
+          ctx.log(`sent message to ${runId}`);
+          return;
+        }
+        if (continued === undefined) {
           throw new CliError(
-            `${taskId} did not wake; your message is waiting for its next run`
+            (await wakeNoticeFor(client, sent.message.id)) ??
+              `${runId} did not continue; your message is waiting for it`
           );
         }
-        ctx.log(`requested changes on ${runId} — new run ${live.id}`);
+        ctx.log(`requested changes on ${runId} — new run ${continued.id}`);
       }
     );
 
