@@ -1,3 +1,4 @@
+export { answerArtifact } from './artifacts.js';
 export {
   decodeInbound,
   decodeMessage,
@@ -28,6 +29,24 @@ export type {
   WorkRequestV1,
   WorkStateV1,
 } from './ext.js';
+export {
+  checkInboundRecipients,
+  checkReachClient,
+  CLIENT_NAME_PREFIX,
+  clientNameFor,
+  gateInScope,
+  isClientAddress,
+  isReservedName,
+  normalizeName,
+  replyChain,
+  scopeOf,
+} from './policy.js';
+export type {
+  ReachFacts,
+  RecipientFacts,
+  ScopeInput,
+  TaskLink,
+} from './policy.js';
 export type {
   A2APolicy,
   Admission,
@@ -45,6 +64,14 @@ export type {
   OpenResult,
   TaskFacts,
 } from './port.js';
+export {
+  decideState,
+  GATE_SENTENCES,
+  project,
+  projectionKey,
+  statusAt,
+} from './projection.js';
+export type { Decision, ProjectionView, StatusText } from './projection.js';
 export {
   sanitizeExternal,
   unwrapExternalData,
