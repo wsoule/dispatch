@@ -132,7 +132,7 @@ export function buildTaskPrompt(
         'reason: "..." }) and edit only on "grant". Messages for you arrive ' +
         'in this session; answer a question with `msg_reply`, and ' +
         '`inbox_read` lists anything you missed. A message to another task ' +
-        "waits for that task's next run."
+        'reaches its live run, or waits for its next one.'
     );
 
     sections.push(

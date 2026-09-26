@@ -8,9 +8,8 @@ import { startServer } from '../src/index.js';
 import { initGitRepo, StallingExecutor } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
-// The daemon's own wiring of scope gates: at rung 2 a run's scope gate is
-// granted by Dispatch, recorded in the ledger and in the task's Activity. On
-// sqlite, so a grant written to the default JSONL ledger never reaches the API.
+// At rung 2 the daemon grants a run's scope gate and records it in the ledger
+// and the task's Activity; on sqlite, which is the ledger the API reads.
 
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;

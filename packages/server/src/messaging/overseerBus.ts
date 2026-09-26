@@ -1,6 +1,5 @@
 import type {
   Address,
-  AgentRecord,
   DeliveryEngine,
   GateData,
   Message,
@@ -13,17 +12,8 @@ import { randomBytes } from 'node:crypto';
 import type { OverseerToolContext } from '../orchestrator/overseerTools.js';
 import { OrchestratorConflictError } from '../orchestrator/types.js';
 import { closeGate, openToolApprovalGate, SYSTEM_SENDER } from './gates.js';
+import { INTERNAL_TOKEN_PREFIX } from './internalAgents.js';
 import { TOOL_APPROVAL_CHOICES, toolApprovalGateData } from './toolApproval.js';
-
-// Every internal agent's token hash starts with this; no sha256 hex digest
-// does, so no presented token can match one.
-const INTERNAL_TOKEN_PREFIX = 'internal:';
-
-// An agent Dispatch runs itself, such as the overseer; registration never
-// replaces its record.
-export function isInternalAgent(agent: AgentRecord): boolean {
-  return agent.tokenHash.startsWith(INTERNAL_TOKEN_PREFIX);
-}
 
 // Creates the overseer's agent record, approved, only when none exists, so a
 // human's revoke survives restarts.
