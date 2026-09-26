@@ -13,7 +13,7 @@ import type {
 } from '../src/types.js';
 
 // A host whose world is plain maps; `changes` records every changed() call.
-class FakeMemoryHost implements MemoryHost {
+export class FakeMemoryHost implements MemoryHost {
   operators = new Map<string, Operator>();
   tasks = new Map<string, IndexContext>();
   runTasks = new Map<string, string>();
@@ -43,7 +43,7 @@ class FakeMemoryHost implements MemoryHost {
 }
 
 // In-memory shared and personal stores; `down` makes an identity unavailable.
-function fakeStores(fts: 'auto' | 'off' = 'auto') {
+export function fakeStores(fts: 'auto' | 'off' = 'auto') {
   const shared = new SqliteMemoryStore(openMemoryDb(':memory:', { fts }));
   const personal = new Map<string, SqliteMemoryStore>();
   const down = new Set<string>();
@@ -89,6 +89,11 @@ export const RUN: Principal = {
   address: 'run:r-9f2c01',
   canDecide: false,
   kind: 'run',
+};
+export const OWNER: Principal = {
+  address: 'human:wyat',
+  canDecide: true,
+  kind: 'human',
 };
 export const ADA: Principal = {
   address: 'human:ada',

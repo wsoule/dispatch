@@ -42,6 +42,23 @@ export interface IngestProblemRow {
 
 export type IngestProblem = Omit<IngestProblemRow, 'sha256' | 'content'>;
 
+// One line of a human's personal activity: what their runs and agents did to
+// their memory, which the Inbox lists with an Undo.
+export interface ActivityRow {
+  id: string;
+  at: string;
+  kind:
+    | 'saved'
+    | 'edited'
+    | 'retired'
+    | 'ingested'
+    | 'throttled'
+    | 'ingest-problem';
+  memoryId: string | null;
+  runId: string | null;
+  summary: string;
+}
+
 export interface RecallRow {
   memoryId: string;
   runId: string;
@@ -83,6 +100,16 @@ export interface MemoryStore {
   meta(key: string): string | null;
   setMeta(key: string, value: string): void;
   countEntries(): number;
+  appendActivity(row: ActivityRow): void;
+  /** Rows after `sinceIso`, newest first. */
+  activitySince(sinceIso: string, limit: number): ActivityRow[];
+  hasActivitySince(kind: ActivityRow['kind'], sinceIso: string): boolean;
+  /** Revisions `by` wrote after `sinceIso` with one of `causes`. */
+  countRevisionsBy(
+    by: Address,
+    sinceIso: string,
+    causes: readonly RevisionCause[]
+  ): number;
   insertProposal(p: MemoryProposal): void;
   updateProposal(p: MemoryProposal): void;
   getProposal(id: string): MemoryProposal | null;

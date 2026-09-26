@@ -9,6 +9,7 @@ import { MemoryError } from './errors.js';
 import { cutUtf8 } from './limits.js';
 import type { SearchMode } from './schema.js';
 import type {
+  ActivityRow,
   EntryFilter,
   IngestProblem,
   IngestProblemRow,
@@ -476,6 +477,61 @@ export class SqliteMemoryStore implements MemoryStore {
     return (
       queryOne<{ n: number }>(this.db, 'SELECT COUNT(*) AS n FROM entries')
         ?.n ?? 0
+    );
+  }
+
+  appendActivity(row: ActivityRow): void {
+    this.db
+      .prepare(
+        'INSERT INTO activity (id, at, kind, memory_id, run_id, summary) VALUES (?, ?, ?, ?, ?, ?)'
+      )
+      .run(row.id, row.at, row.kind, row.memoryId, row.runId, row.summary);
+  }
+
+  activitySince(sinceIso: string, limit: number): ActivityRow[] {
+    return queryAll<{
+      id: string;
+      at: string;
+      kind: string;
+      memory_id: string | null;
+      run_id: string | null;
+      summary: string;
+    }>(
+      this.db,
+      'SELECT * FROM activity WHERE at > ? ORDER BY at DESC, id DESC LIMIT ?',
+      [sinceIso, limit]
+    ).map((r) => ({
+      id: r.id,
+      at: r.at,
+      kind: r.kind as ActivityRow['kind'],
+      memoryId: r.memory_id,
+      runId: r.run_id,
+      summary: r.summary,
+    }));
+  }
+
+  hasActivitySince(kind: ActivityRow['kind'], sinceIso: string): boolean {
+    return (
+      queryOne(
+        this.db,
+        'SELECT 1 AS one FROM activity WHERE kind = ? AND at > ? LIMIT 1',
+        [kind, sinceIso]
+      ) !== undefined
+    );
+  }
+
+  countRevisionsBy(
+    by: Address,
+    sinceIso: string,
+    causes: readonly RevisionCause[]
+  ): number {
+    if (causes.length === 0) return 0;
+    return (
+      queryOne<{ n: number }>(
+        this.db,
+        `SELECT COUNT(*) AS n FROM revisions WHERE by_addr = ? AND at > ? AND cause IN (${causes.map(() => '?').join(', ')})`,
+        [by, sinceIso, ...causes]
+      )?.n ?? 0
     );
   }
 

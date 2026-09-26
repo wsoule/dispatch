@@ -1,4 +1,6 @@
+import { untrustedInline } from '@dispatch/core';
 import type { MemoryConfig } from '@dispatch/core';
+import type { Address, Ref } from '@dispatch/protocol';
 
 import { MemoryError } from './errors.js';
 import { parseMemoryRef } from './handle.js';
@@ -7,10 +9,11 @@ import { cutUtf8 } from './limits.js';
 import { queryTerms, relevanceTerms } from './query.js';
 import { compareRank, rankEntries, reaches, specificity } from './rank.js';
 import type { RankContext, Ranked } from './rank.js';
+import { createMemoryIds, insertFresh, newMemoryEntry } from './records.js';
 import { renderIndex } from './render.js';
 import type { IndexVariant, RenderedIndex } from './render.js';
 import type { SearchMode } from './schema.js';
-import type { EntryFilter, MemoryStore } from './store.js';
+import type { ActivityRow, EntryFilter, MemoryStore } from './store.js';
 import { displayState } from './types.js';
 import type {
   DisplayState,
@@ -19,9 +22,18 @@ import type {
   MemoryScope,
   MemoryTrust,
   Principal,
+  ProposalAction,
   Revision,
+  RevisionCause,
+  SharedScope,
 } from './types.js';
-import { validateQuery } from './validate.js';
+import {
+  checkTarget,
+  validateMemoryInput,
+  validateQuery,
+  validateReason,
+} from './validate.js';
+import type { ValidMemoryInput } from './validate.js';
 import {
   personalIdentityFor,
   refuseA2A,
@@ -82,6 +94,47 @@ export interface RankedIndex {
   personalUnavailable: boolean;
 }
 
+// `origin` and `cause` are engine-internal: only in-process callers (the
+// ledger importer, amendments, ingest, sync) set them; routes and tools refuse them.
+export interface SaveInput {
+  scope: MemoryScope;
+  kind: MemoryKind;
+  title: string;
+  body: string;
+  refs?: Ref[];
+  epic?: string | null;
+  appliesTo?: string[];
+  supersedes?: string | null;
+  projectOnly?: boolean;
+  origin?: string | null;
+  cause?: 'save' | 'ingest';
+}
+
+// `active` means the write took effect; `proposed` means it waits on a decision.
+export type SaveResult =
+  | { status: 'active'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+export interface EditInput {
+  title?: string;
+  body?: string;
+  kind?: MemoryKind;
+  refs?: Ref[];
+  baseRev?: number;
+  cause?: 'edit' | 'ingest';
+}
+
+// What a shared write asks for; `origin` is set only by in-process callers.
+interface ProposeInput {
+  action: ProposalAction;
+  scope: SharedScope;
+  valid?: ValidMemoryInput;
+  target?: MemoryEntry;
+  baseRev?: number;
+  reason?: string;
+  origin?: string | null;
+}
+
 interface Located {
   entry: MemoryEntry;
   store: MemoryStore;
@@ -106,9 +159,57 @@ const view = (entry: MemoryEntry): EntryView => ({
 const clamp = (value: number | undefined, fallback: number, max: number) =>
   Math.min(Math.max(1, value ?? fallback), max);
 
-// Reads memory for a principal across the shared store and their operator's
-// personal store, applying the one visibility rule to every path.
+const HOUR_MS = 3_600_000;
+const ACTIVITY_LIMIT = 200;
+// Revisions that spend a run's or agent's hourly personal-write budget.
+const RATED_CAUSES: readonly RevisionCause[] = [
+  'save',
+  'edit',
+  'retire',
+  'ingest',
+];
+
+const isDecider = (principal: Principal): boolean =>
+  principal.kind === 'human' && principal.canDecide;
+
+// Trust is never raised by an agent: only a human principal writes `human`.
+const trustOf = (principal: Principal): MemoryTrust =>
+  principal.kind === 'human' ? 'human' : 'agent';
+
+function sharedScope(scope: unknown): SharedScope {
+  if (scope === 'project' || scope === 'team') return scope;
+  throw new MemoryError('invalid', 'scope: expected project|team', 'scope');
+}
+
+// A supplied base revision must be one the entry has had.
+function checkBaseRev(entry: MemoryEntry, baseRev?: number): number | null {
+  if (baseRev === undefined) return null;
+  if (!Number.isInteger(baseRev) || baseRev < 1 || baseRev > entry.rev)
+    throw new MemoryError(
+      'invalid',
+      `baseRev: ${entry.handle} has revisions 1 to ${entry.rev}`,
+      'baseRev'
+    );
+  return baseRev;
+}
+
+// An origin names one source row, so a second entry claiming it is a conflict.
+function checkOrigin(store: MemoryStore, origin: string | null): void {
+  if (origin === null) return;
+  const existing = store.entryByOrigin(origin);
+  if (existing !== null)
+    throw new MemoryError(
+      'conflict',
+      `origin: ${existing.handle} already holds ${origin}`,
+      'origin'
+    );
+}
+
+// Reads and writes memory for a principal across the shared store and their
+// operator's personal store, applying the one visibility rule to every path.
 export class MemoryEngine {
+  private readonly ids = createMemoryIds();
+
   constructor(
     private readonly deps: {
       stores: MemoryStores;
@@ -296,8 +397,573 @@ export class MemoryEngine {
     return out;
   }
 
+  async save(principal: Principal, input: SaveInput): Promise<SaveResult> {
+    const viewer = this.viewer(principal);
+    if (input.projectOnly === true && input.scope !== 'personal')
+      throw new MemoryError(
+        'invalid',
+        'projectOnly: only personal memory is narrowed to a project',
+        'projectOnly'
+      );
+    const projectKey =
+      input.scope === 'personal' && input.projectOnly === true
+        ? this.deps.host.projectKey()
+        : null;
+    const valid = validateMemoryInput({ ...input, projectKey });
+    if (valid.scope === 'personal')
+      return this.savePersonal(viewer, valid, input);
+    const scope = valid.scope;
+    const supersedes = input.supersedes ?? null;
+    const target =
+      supersedes === null
+        ? null
+        : checkTarget(
+            this.findVisible(viewer, supersedes),
+            scope,
+            'supersedes',
+            supersedes
+          );
+    if (!isDecider(principal))
+      return await this.propose(viewer, {
+        action: target === null ? 'add' : 'supersede',
+        scope,
+        valid,
+        target: target ?? undefined,
+        baseRev: target?.rev,
+        origin: input.origin ?? null,
+      });
+    return this.saveShared(viewer, scope, valid, target, input);
+  }
+
+  async edit(
+    principal: Principal,
+    ref: string,
+    input: EditInput
+  ): Promise<SaveResult> {
+    const viewer = this.viewer(principal);
+    const { entry, store } = this.resolve(viewer, ref);
+    checkTarget(entry, entry.scope, 'id', ref);
+    const baseRev = checkBaseRev(entry, input.baseRev);
+    const valid = validateMemoryInput({
+      scope: entry.scope,
+      kind: input.kind ?? entry.kind,
+      title: input.title ?? entry.title,
+      body: input.body ?? entry.body,
+      refs: input.refs ?? entry.refs,
+      epic: entry.epic,
+      appliesTo: entry.appliesTo,
+      projectKey: entry.projectKey,
+    });
+    const content = {
+      kind: valid.kind,
+      title: valid.title,
+      body: valid.body,
+      refs: valid.refs,
+    };
+    const cause = input.cause ?? 'edit';
+    if (entry.scope === 'personal') {
+      this.checkPersonalRate(principal, store);
+      store.transaction(() => {
+        // A stale base still writes; the row names whose change it replaced.
+        const replaced =
+          baseRev !== null && baseRev < entry.rev
+            ? (store.revisions(entry.id).at(-1)?.by ?? null)
+            : null;
+        const next = this.revise(
+          store,
+          entry,
+          { ...content, trust: trustOf(principal) },
+          principal.address,
+          cause
+        );
+        const note =
+          replaced === null ? '' : ` (replaced a change by ${replaced})`;
+        this.logActivity(
+          store,
+          cause === 'ingest' ? 'ingested' : 'edited',
+          entry.id,
+          principal,
+          `${principal.address} changed your memory: ${untrustedInline(next.title)}${note}`
+        );
+      });
+      this.deps.host.changed({ scope: 'personal' });
+      return { status: 'active', id: entry.id, handle: entry.handle };
+    }
+    const scope = entry.scope;
+    if (!isDecider(principal))
+      return await this.propose(viewer, {
+        action: 'supersede',
+        scope,
+        valid,
+        target: entry,
+        baseRev: baseRev ?? entry.rev,
+      });
+    store.transaction(() =>
+      this.revise(
+        store,
+        entry,
+        { ...content, trust: 'human' },
+        principal.address,
+        cause
+      )
+    );
+    this.deps.host.changed({ scope, id: entry.id });
+    return { status: 'active', id: entry.id, handle: entry.handle };
+  }
+
+  async forget(
+    principal: Principal,
+    ref: string,
+    reason: string
+  ): Promise<SaveResult> {
+    const viewer = this.viewer(principal);
+    const why = validateReason(reason);
+    const { entry, store } = this.resolve(viewer, ref);
+    checkTarget(entry, entry.scope, 'id', ref);
+    const retired = { status: 'retired', statusReason: 'forgotten' } as const;
+    if (entry.scope === 'personal') {
+      this.checkPersonalRate(principal, store);
+      store.transaction(() => {
+        this.revise(store, entry, retired, principal.address, 'retire');
+        this.logActivity(
+          store,
+          'retired',
+          entry.id,
+          principal,
+          `${principal.address} retired from your memory: ${untrustedInline(entry.title)} (${why})`
+        );
+      });
+      this.deps.host.changed({ scope: 'personal' });
+      return { status: 'active', id: entry.id, handle: entry.handle };
+    }
+    const scope = entry.scope;
+    if (!isDecider(principal))
+      return await this.propose(viewer, {
+        action: 'retire',
+        scope,
+        target: entry,
+        baseRev: entry.rev,
+        reason: why,
+      });
+    store.transaction(() =>
+      this.revise(store, entry, retired, principal.address, 'retire')
+    );
+    this.deps.host.changed({ scope, id: entry.id });
+    return { status: 'active', id: entry.id, handle: entry.handle };
+  }
+
+  // Restores the previous revision as a new one. Undoing a creation retires
+  // the entry as `undone` and brings back the entry it superseded.
+  undo(principal: Principal, ref: string): EntryView {
+    const viewer = this.viewer(principal);
+    const { entry, store } = this.resolve(viewer, ref);
+    this.mayManage(viewer, entry, 'undo');
+    const by = principal.address;
+    const next = store.transaction(() => {
+      if (entry.rev === 1) {
+        const undone = this.revise(
+          store,
+          entry,
+          { status: 'retired', statusReason: 'undone' },
+          by,
+          'undo'
+        );
+        const replaced =
+          entry.supersedes === null ? null : store.getEntry(entry.supersedes);
+        if (replaced !== null && replaced.supersededBy === entry.id)
+          this.revise(
+            store,
+            replaced,
+            { status: 'active', statusReason: null, supersededBy: null },
+            by,
+            'undo'
+          );
+        return undone;
+      }
+      const previous = store
+        .revisions(entry.id)
+        .find((r) => r.rev === entry.rev - 1);
+      if (previous === undefined)
+        throw new MemoryError(
+          'conflict',
+          `${entry.handle} has no revision ${entry.rev - 1} to restore`,
+          'id'
+        );
+      // Recall bookkeeping records use, not content, so it stays current.
+      const { recallCount, lastRecalledAt, decay } = entry;
+      return this.revise(
+        store,
+        entry,
+        { ...previous.snapshot, recallCount, lastRecalledAt, decay },
+        by,
+        'undo'
+      );
+    });
+    this.changedFor(entry);
+    return view(next);
+  }
+
+  confirm(principal: Principal, ref: string): EntryView {
+    const viewer = this.viewer(principal);
+    const { entry, store } = this.resolve(viewer, ref);
+    this.mayManage(viewer, entry, 'confirm');
+    if (entry.trust !== 'agent') return view(entry);
+    const next = store.transaction(() =>
+      this.revise(
+        store,
+        entry,
+        { trust: 'confirmed', decidedBy: principal.address },
+        principal.address,
+        'edit'
+      )
+    );
+    this.changedFor(entry);
+    return view(next);
+  }
+
+  setPinned(principal: Principal, ref: string, pinned: boolean): EntryView {
+    const viewer = this.viewer(principal);
+    const { entry, store } = this.resolve(viewer, ref);
+    this.mayManage(viewer, entry, pinned ? 'pin' : 'unpin');
+    if (entry.pinned === pinned) return view(entry);
+    const next = store.transaction(() =>
+      this.revise(store, entry, { pinned }, principal.address, 'edit')
+    );
+    this.changedFor(entry);
+    return view(next);
+  }
+
+  // Copies a personal entry into shared memory; the personal entry stays.
+  async promote(
+    principal: Principal,
+    ref: string,
+    scope: SharedScope
+  ): Promise<SaveResult> {
+    const viewer = this.viewer(principal);
+    const target = sharedScope(scope);
+    const { entry } = this.resolve(viewer, ref);
+    if (entry.scope !== 'personal')
+      throw new MemoryError(
+        'invalid',
+        `id: ${entry.handle} is already ${entry.scope} memory`,
+        'id'
+      );
+    checkTarget(entry, 'personal', 'id', ref);
+    this.mayManage(viewer, entry, 'promote');
+    const valid = validateMemoryInput({
+      scope: target,
+      kind: entry.kind,
+      title: entry.title,
+      body: entry.body,
+      refs: entry.refs,
+    });
+    if (!isDecider(principal))
+      return await this.propose(viewer, {
+        action: 'add',
+        scope: target,
+        valid,
+      });
+    const store = this.deps.stores.shared();
+    const now = this.now();
+    const copy = insertFresh(
+      store,
+      this.ids,
+      Date.parse(now),
+      (id) =>
+        newMemoryEntry(
+          {
+            ...valid,
+            author: entry.author,
+            trust: entry.trust === 'human' ? 'human' : 'confirmed',
+            decidedBy: principal.address,
+          },
+          id,
+          now
+        ),
+      principal.address,
+      'save'
+    );
+    this.deps.host.changed({ scope: target, id: copy.id });
+    return { status: 'active', id: copy.id, handle: copy.handle };
+  }
+
+  // Removes the entry, its revisions, recalls and activity; an imported
+  // entry's origin is tombstoned so a re-import never brings it back.
+  hardDelete(principal: Principal, ref: string): void {
+    const viewer = this.viewer(principal);
+    const { entry, store } = this.resolve(viewer, ref);
+    this.mayManage(viewer, entry, 'delete');
+    store.deleteEntry(entry.id, principal.address, this.now());
+    this.changedFor(entry);
+  }
+
+  // The caller's own personal activity, oldest first, the newest 200 rows.
+  activity(principal: Principal, since: string): ActivityRow[] {
+    const viewer = this.viewer(principal);
+    if (principal.kind !== 'human')
+      throw new MemoryError(
+        'forbidden',
+        'only a human reads their memory activity',
+        'principal'
+      );
+    const sinceMs = Date.parse(since);
+    if (Number.isNaN(sinceMs))
+      throw new MemoryError('invalid', 'since: expected an ISO time', 'since');
+    return this.personalStoreFor(viewer)
+      .activitySince(new Date(sinceMs).toISOString(), ACTIVITY_LIMIT)
+      .reverse();
+  }
+
   private now(): string {
     return this.deps.host.now().toISOString();
+  }
+
+  private savePersonal(
+    viewer: Viewer,
+    valid: ValidMemoryInput,
+    input: SaveInput
+  ): SaveResult {
+    const { principal } = viewer;
+    const store = this.personalStoreFor(viewer);
+    const supersedes = input.supersedes ?? null;
+    const target =
+      supersedes === null
+        ? null
+        : checkTarget(
+            this.findVisible(viewer, supersedes),
+            'personal',
+            'supersedes',
+            supersedes
+          );
+    const origin = input.origin ?? null;
+    checkOrigin(store, origin);
+    this.checkPersonalRate(principal, store);
+    const now = this.now();
+    const cause = input.cause ?? 'save';
+    const entry = store.transaction(() => {
+      const created = insertFresh(
+        store,
+        this.ids,
+        Date.parse(now),
+        (id) =>
+          newMemoryEntry(
+            {
+              ...valid,
+              author: principal.address,
+              trust: trustOf(principal),
+              origin,
+              supersedes: target?.id ?? null,
+            },
+            id,
+            now
+          ),
+        principal.address,
+        cause
+      );
+      if (target !== null)
+        this.revise(
+          store,
+          target,
+          {
+            status: 'retired',
+            statusReason: 'superseded',
+            supersededBy: created.id,
+          },
+          principal.address,
+          'retire'
+        );
+      this.logActivity(
+        store,
+        cause === 'ingest' ? 'ingested' : 'saved',
+        created.id,
+        principal,
+        `${principal.address} saved to your memory: ${untrustedInline(created.title)}`
+      );
+      return created;
+    });
+    this.deps.host.changed({ scope: 'personal' });
+    return { status: 'active', id: entry.id, handle: entry.handle };
+  }
+
+  // A decide-tier human's direct write to project or team memory.
+  private saveShared(
+    viewer: Viewer,
+    scope: SharedScope,
+    valid: ValidMemoryInput,
+    target: MemoryEntry | null,
+    input: SaveInput
+  ): SaveResult {
+    const { principal } = viewer;
+    const store = this.deps.stores.shared();
+    const origin = input.origin ?? null;
+    checkOrigin(store, origin);
+    const now = this.now();
+    const entry = store.transaction(() => {
+      const created = insertFresh(
+        store,
+        this.ids,
+        Date.parse(now),
+        (id) =>
+          newMemoryEntry(
+            {
+              ...valid,
+              author: principal.address,
+              trust: 'human',
+              origin,
+              supersedes: target?.id ?? null,
+            },
+            id,
+            now
+          ),
+        principal.address,
+        input.cause ?? 'save'
+      );
+      if (target !== null)
+        this.revise(
+          store,
+          target,
+          {
+            status: 'retired',
+            statusReason: 'superseded',
+            supersededBy: created.id,
+          },
+          principal.address,
+          'retire'
+        );
+      return created;
+    });
+    this.deps.host.changed({ scope, id: entry.id });
+    return { status: 'active', id: entry.id, handle: entry.handle };
+  }
+
+  // Shared writes that need a decision; refused until proposals exist.
+  private propose(_viewer: Viewer, _input: ProposeInput): Promise<SaveResult> {
+    return Promise.reject(
+      new MemoryError(
+        'forbidden',
+        'shared memory from you is a proposal, and this build takes no proposals yet',
+        'scope'
+      )
+    );
+  }
+
+  // Writes `changes` onto `entry` as its next revision and returns the result.
+  private revise(
+    store: MemoryStore,
+    entry: MemoryEntry,
+    changes: Partial<MemoryEntry>,
+    by: Address,
+    cause: RevisionCause
+  ): MemoryEntry {
+    const next: MemoryEntry = {
+      ...entry,
+      ...changes,
+      id: entry.id,
+      rev: entry.rev + 1,
+      updatedAt: this.now(),
+    };
+    store.updateEntry(next, by, cause);
+    return next;
+  }
+
+  // The principal's own personal store, or forbidden: no operator, no personal scope.
+  private personalStoreFor(viewer: Viewer): MemoryStore {
+    const identity = personalIdentityFor(viewer);
+    if (identity === null)
+      throw new MemoryError(
+        'forbidden',
+        'this principal acts for no human, so it has no personal memory',
+        'scope'
+      );
+    return this.deps.stores.personal(identity);
+  }
+
+  // Runs and agents share one hourly budget for tool writes and ingested
+  // files; the first refusal in an hour leaves the operator one activity row.
+  private checkPersonalRate(principal: Principal, store: MemoryStore): void {
+    if (principal.kind === 'human') return;
+    const limit = this.deps.config().personalWritesPerHour;
+    const since = new Date(
+      this.deps.host.now().getTime() - HOUR_MS
+    ).toISOString();
+    if (store.countRevisionsBy(principal.address, since, RATED_CAUSES) < limit)
+      return;
+    if (!store.hasActivitySince('throttled', since))
+      this.logActivity(
+        store,
+        'throttled',
+        null,
+        principal,
+        `${principal.address} hit the personal memory write limit; further writes this hour are refused`
+      );
+    throw new MemoryError(
+      'limited',
+      `at most ${limit} personal memory writes per hour`,
+      'scope'
+    );
+  }
+
+  // Undo, confirm, pin, promote and hard delete: a personal entry's own
+  // human, or a decide-tier human for shared memory.
+  private mayManage(viewer: Viewer, entry: MemoryEntry, verb: string): void {
+    const { principal, operator } = viewer;
+    if (entry.scope === 'personal') {
+      if (principal.kind === 'human' && operator?.human === principal.address)
+        return;
+      throw new MemoryError(
+        'forbidden',
+        `only ${operator?.human ?? 'its human'} may ${verb} ${entry.handle}`,
+        'id'
+      );
+    }
+    if (isDecider(principal)) return;
+    throw new MemoryError(
+      'forbidden',
+      `only a decide-tier human may ${verb} ${entry.scope} memory`,
+      'id'
+    );
+  }
+
+  // Personal changes announce no id, so no title or handle leaves the store.
+  private changedFor(entry: MemoryEntry): void {
+    this.deps.host.changed(
+      entry.scope === 'personal'
+        ? { scope: 'personal' }
+        : { scope: entry.scope, id: entry.id }
+    );
+  }
+
+  // A supersede or retire target among every store the viewer can see, so a
+  // personal write naming a team entry is told why (invalid), not "not found".
+  private findVisible(viewer: Viewer, ref: string): MemoryEntry | null {
+    try {
+      return this.resolve(viewer, ref).entry;
+    } catch (err) {
+      if (err instanceof MemoryError && err.code === 'not-found') return null;
+      throw err;
+    }
+  }
+
+  // One row of the operator's personal activity (the Inbox undo list).
+  private logActivity(
+    store: MemoryStore,
+    kind: ActivityRow['kind'],
+    memoryId: string | null,
+    principal: Principal,
+    summary: string
+  ): void {
+    const at = this.now();
+    store.appendActivity({
+      id: this.ids.activity(Date.parse(at)),
+      at,
+      kind,
+      memoryId,
+      runId:
+        principal.kind === 'run'
+          ? principal.address.slice('run:'.length)
+          : null,
+      summary,
+    });
   }
 
   // Hits merged from several stores: bm25, then the index rank. LIKE mode

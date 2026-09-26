@@ -57,6 +57,7 @@ export {
 export type { SearchMode } from './schema.js';
 export { SqliteMemoryStore } from './sqliteStore.js';
 export type {
+  ActivityRow,
   EntryFilter,
   IngestProblem,
   IngestProblemRow,
@@ -90,11 +91,14 @@ export type { Viewer } from './visibility.js';
 export type { MemoryHost, MemoryStores } from './host.js';
 export { MemoryEngine } from './engine.js';
 export type {
+  EditInput,
   EntryView,
   IndexRequest,
   ListQuery,
   RankedIndex,
   ReadResult,
+  SaveInput,
+  SaveResult,
   SearchQuery,
   SearchResult,
 } from './engine.js';
