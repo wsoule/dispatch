@@ -85,3 +85,14 @@ export {
   sharedScopesFor,
 } from './visibility.js';
 export type { Viewer } from './visibility.js';
+export type { MemoryHost, MemoryStores } from './host.js';
+export { MemoryEngine } from './engine.js';
+export type {
+  EntryView,
+  IndexRequest,
+  ListQuery,
+  RankedIndex,
+  ReadResult,
+  SearchQuery,
+  SearchResult,
+} from './engine.js';
