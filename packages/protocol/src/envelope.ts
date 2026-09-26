@@ -123,6 +123,21 @@ export function gateOf(message: { data?: JsonValue }): GateData | null {
     : null;
 }
 
+// True only for the daemon's own marker: a client, peer or human cannot forge one.
+export function isSystemMarker(
+  message: Pick<Message, 'from' | 'data'>,
+  type: 'x-closed' | 'x-breaker'
+): boolean {
+  const data = message.data;
+  return (
+    message.from === SYSTEM_ADDRESS &&
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (data as { [key: string]: JsonValue })['type'] === type
+  );
+}
+
 function invalid(field: string, why: string): never {
   throw new MessagingError('invalid', `${field}: ${why}`, field);
 }

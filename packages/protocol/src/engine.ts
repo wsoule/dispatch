@@ -1,6 +1,11 @@
 import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
-import { checkIdempotencyKey, gateOf, validateSendInput } from './envelope.js';
+import {
+  checkIdempotencyKey,
+  gateOf,
+  isSystemMarker,
+  validateSendInput,
+} from './envelope.js';
 import type { JsonValue, Message, Ref, SendInput } from './envelope.js';
 import { MessagingError } from './errors.js';
 import type { MessagingHost, WakeResult } from './host.js';
@@ -269,7 +274,13 @@ export class DeliveryEngine {
     if (input.choice !== undefined) message.choice = input.choice;
 
     const fields = this.recipientFields(input.to, replyTarget);
-    const targets = this.resolveTargets(message.to, sender.address);
+    const targets = this.admitExternal(
+      this.resolveTargets(message.to, sender.address),
+      fields,
+      sender,
+      replyTarget,
+      message
+    );
     const deliveries: Delivery[] = [];
     for (const t of targets) {
       const planned = this.plan(
@@ -295,8 +306,12 @@ export class DeliveryEngine {
     });
     if (!Array.isArray(written)) return written;
     const answered = written;
-    // A gate's effect lands before anyone hears of the answer.
-    if (question !== null && gateOf(question) !== null && !isClose(message))
+    // A gate's effect lands before anyone hears of the answer; a system close has none.
+    if (
+      question !== null &&
+      gateOf(question) !== null &&
+      !isSystemMarker(message, 'x-closed')
+    )
       await this.applyGate(question, message);
     this.emit({ type: 'message', message });
     for (const d of answered) this.emit({ type: 'delivery', delivery: d });
@@ -315,6 +330,52 @@ export class DeliveryEngine {
     }
 
     return { message, deliveries: settled, downgraded };
+  }
+
+  // Refuses or drops A2A clients and peers before anything is stored: gate data
+  // never leaves the machine, and a channel member the host refuses is skipped.
+  private admitExternal(
+    targets: Target[],
+    fields: Map<Address, string>,
+    sender: Sender,
+    replyTarget: Message | null,
+    message: Message
+  ): Target[] {
+    const external = (t: Target) => this.isExternal(t.recipient);
+    if (!targets.some(external)) return targets;
+    if (gateOf(message) !== null) {
+      throw new MessagingError(
+        'forbidden',
+        'gate data never goes to an A2A client or peer',
+        'data'
+      );
+    }
+    const out: Target[] = [];
+    for (const t of targets) {
+      if (!external(t)) {
+        out.push(t);
+        continue;
+      }
+      const target = {
+        recipient: t.recipient,
+        via: t.via,
+        field: fields.get(t.recipient) ?? 'to',
+      };
+      try {
+        const admission =
+          this.host.admitExternal?.(target, sender, replyTarget, message) ??
+          'deliver';
+        if (admission === 'deliver') out.push(t);
+      } catch (err) {
+        if (t.via === 'channel' && err instanceof MessagingError) continue;
+        throw err;
+      }
+    }
+    return out;
+  }
+
+  private isExternal(address: Address): boolean {
+    return (this.host.external?.(address) ?? null) !== null;
   }
 
   // The first send under (from, key) as send() would return it now, or null.
@@ -418,11 +479,20 @@ export class DeliveryEngine {
     let next = d;
     if (d.state === 'sending' && d.runId !== null) {
       const push = d.via === 'direct' || message.urgent;
+      const external = this.isExternal(message.from);
       try {
         if (push)
-          await this.host.push(d.runId, renderForAgent(message), message);
+          await this.host.push(
+            d.runId,
+            renderForAgent(message, external),
+            message
+          );
         else
-          await this.host.notify(d.runId, renderDigestLine(message), message);
+          await this.host.notify(
+            d.runId,
+            renderDigestLine(message, external),
+            message
+          );
         next = {
           ...d,
           state: push ? 'pushed' : 'notified',
@@ -790,14 +860,9 @@ export class DeliveryEngine {
       SYSTEM_ADDRESS
     );
     if (count < this.limits.agentTurnsPerThreadPerHour) return;
-    const flagged = this.store.thread(replyTarget.thread).some((m) => {
-      const data = m.data as { type?: string } | undefined;
-      return (
-        m.from === SYSTEM_ADDRESS &&
-        data?.type === 'x-breaker' &&
-        m.createdAt >= since
-      );
-    });
+    const flagged = this.store
+      .thread(replyTarget.thread)
+      .some((m) => isSystemMarker(m, 'x-breaker') && m.createdAt >= since);
     if (!flagged) {
       await this.send(
         {
@@ -824,9 +889,4 @@ function alreadyAnswered(questionId: string): MessagingError {
     `${questionId} is already answered`,
     'replyTo'
   );
-}
-
-// A system close carries `x-closed` data and applies no gate effect.
-function isClose(answer: Message): boolean {
-  return (answer.data as { type?: unknown } | undefined)?.type === 'x-closed';
 }

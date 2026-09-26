@@ -2,7 +2,7 @@ import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 
 import type { Address } from './address.js';
-import { gateOf } from './envelope.js';
+import { gateOf, isSystemMarker } from './envelope.js';
 import type { JsonValue, Message, MessageKind, Ref } from './envelope.js';
 import { DELIVERY_STATES } from './store.js';
 import type {
@@ -411,8 +411,7 @@ export class SqliteMessageStore implements MessageStore {
       const answer = this.getMessage(r.answer_id);
       if (question === null || answer === null || gateOf(question) === null)
         return [];
-      const data = answer.data as { type?: unknown } | undefined;
-      return data?.type === 'x-closed' ? [] : [{ question, answer }];
+      return isSystemMarker(answer, 'x-closed') ? [] : [{ question, answer }];
     });
   }
 
