@@ -1,7 +1,7 @@
 # Messaging core
 
-Status: **design approved 2026-09-23; protocol, daemon host and MCP tools built;
-replacements and desktop UI not yet.** First of six sub-projects that turn
+Status: **design approved 2026-09-23; protocol, daemon host, MCP tools and
+replacements built; desktop UI not yet.** First of six sub-projects that turn
 Dispatch from a task tracker into an agent communication platform.
 
 ## Why
@@ -292,16 +292,20 @@ are dispatched, then recorded in `gate_effects`. Handlers must be idempotent:
 
 **Wake.** Only held `task:` recipients of a `wake: 'request'` message are woken.
 `host.decide` denies anything but a task that exists and is not an epic, landed
-or dropped. Any other wake, whoever sent it, consults the autonomy ladder's
-`wake` gate, which stops blocking at rung 3 and is capped by the task's risk:
-`auto` → `allow`, otherwise `ask`. So at rungs 1–2 a human's wake also raises a
-gate to the owner. Always allowing a human sender's wake, which would retire
-`/message {resume: true}`, is not built yet.
+or dropped. A human sender's wake is then allowed at every rung, with no gate:
+waking a task is their own call, as `/message {resume: true}` was. Any other
+wake consults the autonomy ladder's `wake` gate, which stops blocking at rung 3
+and is capped by the task's risk: `auto` → `allow`, otherwise `ask`.
 
-- `allow` → `host.wake` calls `dispatchOrResume` for the task as
-  `agent:dispatch`: a new run resuming the task's latest session. It never
-  pushes into a finished run — Claude runs end at their first `result` and Codex
-  runs have one turn. On failure the sender gets "Could not wake …".
+- `allow` → `host.wake` calls the orchestrator's `wakeTask`, acting as the human
+  sender or as `agent:dispatch`. A human's wake continues the task's latest
+  execute run when that run has ended unreviewed with a session and is not a
+  failed run waiting to be resumed: a new run continues its session in its
+  worktree (request changes). Otherwise, and always for an agent's wake, it
+  calls `dispatchOrResume`: a new run resuming the task's latest session. An
+  agent's wake never continues a finished run. Nothing is pushed into a finished
+  run — Claude runs end at their first `result` and Codex runs have one turn. On
+  failure the sender gets "Could not wake …".
 - `deny` → stays held; the sender gets a `notice`.
 - `ask` → the engine sends a blocking `question` with
   `GateData { type: 'wake' }` and choices approve/deny to `host.owner(target)`,
@@ -309,7 +313,7 @@ gate to the owner. Always allowing a human sender's wake, which would retire
 
 Approving a wake gate does nothing while the task has a live execute run that
 can take its mail. Otherwise it re-checks the deny conditions (the task may have
-landed since) and tells the sender "Not woken: task … is <status>", or wakes,
+landed since) and tells the sender `Not woken: task … is <status>.`, or wakes,
 telling the sender if that fails. Either way the gate is marked applied. Notices
 to a sender run that has ended go to its task.
 
@@ -334,13 +338,18 @@ the defaults):
   MCP tool timeout.
 - Blocking messages to humans wait up to 30 minutes in the MCP tool (the in-run
   MCP tool timeout is 31). On expiry a plain question stays open and its answer
-  is pushed to the run later, or held for its task. An expired `scope` gate
-  closes as denied, matching today's `request_scope`. `tool-approval` gates are
+  is pushed to the run later, or held for its task. The daemon denies an
+  undecided `scope` gate itself 29 minutes after it was sent, from a sweep every
+  30 s, so the agent hears the deny before the MCP's 30-minute wait ends. A
+  plain question or scope gate from an execute run stays open when the run ends
+  or dies with the daemon, and its answer reaches the task's next execute run.
+  One from a review or verify run closes with the run. `tool-approval` gates are
   not MCP calls — they park the executor's `canUseTool` — and have no timeout.
 
 **Rendering.** A pushed message is a header, then every body line quoted with
-`│ ` so a body can never pass for a header, then any of `(in reply to <id>)`,
-`choices: a | b`, `choice: a`, `refs: …`, and for a blocking message
+`│` and a space so a body can never pass for a header, then any of
+`(in reply to <id>)`, `choices: a | b`, `choice: a`, `refs: …`, and for a
+blocking message
 `The sender is waiting. Answer with msg_reply(messageId: "<id>").`
 
 ```text
@@ -380,8 +389,8 @@ shared `agentToken` with a 403 that points runs at `DISPATCH_RUN_TOKEN_FILE` and
 everyone else at `POST /api/agents/register`.
 
 **Gate answers need the `decide` tier.** A reply to a question carrying
-`GateData` is accepted only from a human at the `decide` tier or above, exactly
-as `POST /api/runs/:id/approval` and scope `decide` are today. Agents can answer
+`GateData` is accepted only from a human at the `decide` tier or above, as the
+run-approval and scope-decide routes it replaced required. Agents can answer
 plain questions; they can never approve their own tool calls, scope, wake-ups or
 registrations.
 
@@ -446,7 +455,10 @@ check and fails closed with 401/403 before any handler runs. A principal is a
 team member's token (a human, deciding at the `decide` tier), a live run's
 token, or an approved agent's token. Approve and revoke answer the open
 registration gate as the calling human, so its handler stays the one writer of
-an agent's status.
+an agent's status. The one status written elsewhere is the overseer's,
+`agent:<owner>/overseer`: the daemon creates its record approved, once, when
+none exists, and never re-approves it. A human's revoke turns the overseer off
+(409) until a human approves it again, across restarts.
 
 **Authorization: participants or deciding humans.** A principal acts as itself;
 an execute run also as its task and that task's other execute runs; a deciding
@@ -458,7 +470,10 @@ human as anyone.
 - A mailbox, marking a delivery read, and joining or leaving a channel need the
   principal to act as that address. A run's own mailbox merges its address, its
   task and deliveries bound to it.
-- Recent threads and open decisions are for deciding humans only.
+- Recent threads and open decisions are for deciding humans only. A window
+  without a deciding credential (the shared agent token, or a request-tier
+  session) cannot read open gates, so its approval, question and scope cards are
+  empty and it notifies nothing about them.
 - An epic's children cannot leave its channel (404 says why).
 
 WebSocket event `message.new` carries the message inline (every client fetches
@@ -489,8 +504,8 @@ The same tools for runs and external agents, in `packages/mcp`:
 - `inbox_read` lists the caller's mailbox newest first, at most `limit` items
   (default 50). Without `state` it asks only for unread states (`held`,
   `notified`, `pushed`), so read mail never crowds the limit. It marks the
-  returned `held`/`notified` items read unless `markRead: false`, and returns
-  the ids it marked.
+  returned `held`, `notified` and `pushed` items read unless `markRead: false`,
+  and returns the ids it marked.
 - `channel_join`/`channel_leave` take a bare channel name; `member` defaults to
   the caller (a run's task).
 - Each external-agent MCP process makes a session id at start and sends it on
@@ -500,17 +515,18 @@ The same tools for runs and external agents, in `packages/mcp`:
   tool, and Dispatch's transport rejects that ask, so the tool never runs.
 
 The CLI's own `ApiClient` (`packages/cli/src/apiClient.ts`) and its test fakes
-mirror the new routes.
+mirror the routes the CLI calls: open decisions, a message and its answer,
+reply, and send.
 
 ## Replacements
 
 | Today                                                   | After                                                                                                                                        |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /api/runs/:id/inject`, `agent_message`            | Removed. Injection survives only as the daemon's internal `push` hook.                                                                       |
-| `POST /api/runs/:id/message`                            | `msg_send` from `human:<owner>` to `run:<id>`                                                                                                |
+| `POST /api/runs/:id/message`                            | `msg_send` from `human:<owner>` to `run:<id>`; `{resume: true}` is a human's `wake: 'request'` message to `task:<id>`                        |
 | `message_user`                                          | `message`/`notice` to a human                                                                                                                |
 | `ask_user`, `QuestionRegistry`                          | blocking `question` to a human                                                                                                               |
-| tool approvals, `awaiting-approval` flag                | blocking `question`, `GateData tool-approval`, choices approve/deny                                                                          |
+| tool approvals, `awaiting-approval` flag                | blocking `question`, `GateData tool-approval`, choices approve, approve-session, deny                                                        |
 | `request_scope`, `ScopeRequestRegistry`                 | blocking `question`, `GateData scope`; autonomy auto-grant reads `data`                                                                      |
 | `decisionFeed.ts`                                       | query over open blocking questions to humans                                                                                                 |
 | overseer chat, its pending actions and tool approvals   | a thread between the owner and `agent:<owner>/overseer`; actions become `overseer-action` gates and its tool approvals `tool-approval` gates |
@@ -521,6 +537,15 @@ and `orchestrator.approve` checks it — but it is entered only when a
 `tool-approval` gate is sent and left only when that gate is answered or closed,
 so the state and the open gate cannot disagree. `RunStatePill`, `ApprovalCard`
 and `pendingApprovals.ts` keep their rendering and change their source.
+
+A tool-approval gate closes (`x-closed`) when its run ends, is stopped, or did
+not survive a daemon restart, so a later answer is a `conflict`. A parked call
+whose gate cannot be sent, including one that parks after messaging has closed,
+is denied.
+
+The overseer's conversation record stays its transcript. A line is mirrored to
+the thread only when a human spoke it; a line sent with the agent token stays
+off the bus.
 
 **Not replaced:** the brain-dump inbox (`.dispatch/inbox/`) and ledger
 decisions/hazards/constraints belong to memory (#2) and docs (#4); plan, enrich

@@ -99,7 +99,7 @@ your runs.
 | `@dispatch/core`   | ~4.3k                 | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding |
 | `@dispatch/server` | ~33.7k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
 | `@dispatch/cli`    | ~2.8k                 | The `dispatch` binary                                                                                                                          |
-| `@dispatch/mcp`    | ~1.7k                 | Stdio MCP server, 14 tools                                                                                                                     |
+| `@dispatch/mcp`    | ~1.7k                 | Stdio MCP server, 17 tools                                                                                                                     |
 | `@dispatch/client` | ~2.9k                 | Typed API client and React hooks over the daemon                                                                                               |
 | `@dispatch/ui`     | ~6.7k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
 | `@dispatch/web`    | ~0.9k                 | Browser board UI — **no dependents, see below**                                                                                                |
@@ -147,15 +147,19 @@ the obvious fields (`status`, `priority`, `assignee`, `blockedBy`, `labels`,
 Grouped by what they're for:
 
 - **Tasks and planning** — `/api/tasks/*`, `/api/plan/*`, `/api/tasks/draft*`
-- **Runs** — dispatch, message, resume, stop, archive, questions, edits,
-  comments, send-back, review, evidence
+- **Runs** — dispatch, resume, stop, archive, edits, comments, send-back,
+  review, evidence
+- **Messaging** — `/api/messages/*`, `/api/threads/*`, `/api/mailbox`,
+  `/api/channels/*`, `/api/decisions/open`, `/api/agents/roster`,
+  `/api/agents/register`: the message bus, where questions, scope requests and
+  tool approvals are gates
 - **Review** — `/api/prs/*` (comments, diff, findings, review agent, submit),
   `/api/runs/:id/review*`
 - **Merge** — `/api/merge-queue/*`, `/api/epics/:id/land`, `/api/branches/*`
 - **Repo** — `/api/git/*`, `/api/impact`, `/api/landing`
 - **Capture** — `/api/inbox/*`, `/api/notes/*`, `/api/conversations`
-- **Overseer** — `/api/overseer`, `/api/overseer/:id/message`, action
-  confirmation, built-in tool-call approval
+- **Overseer** — `/api/overseer`, `/api/overseer/:id/message`; its action
+  confirmations and built-in tool-call approvals are gates on the message bus
 - **Integrations** — `/api/linear/*`
 - **Meta** — `/api/health`, `/api/sync`, `/api/config`, `/api/agents`
 
@@ -248,9 +252,8 @@ Notable modules:
 |                                                |       | actions, built-in tools behind the run permission policy               |
 | `verify.ts`                                    | 360   | Runs `verifySteps` from config, records structured results             |
 | `planner.ts`                                   | 243   | Proposes a task set; indices resolve to real ids at confirm            |
-| `scopeRequests.ts`                             | —     | Runtime scope escalation, decided by app, API, or policy               |
 | `../policyEngine.ts`                           | —     | Autonomy ladder: gates consult per-project policy, auto-decide, record |
-| `questions.ts`                                 | —     | Agent-to-human questions, blocking until answered                      |
+| `../messaging/`                                | —     | Message bus host: questions, scope, approval and wake gates            |
 | `epic.ts`/`epicBranch.ts`                      | —     | Epic sessions, progress, and their branches                            |
 | `repoDigest.ts`/`orientation.ts`/`hotspots.ts` | —     | Repo context handed to agents                                          |
 | `jj.ts`                                        | —     | Jujutsu support, including colocation with git                         |
@@ -266,9 +269,9 @@ plans, sessions, agents, impact, inbox/brain-dump, settings, gallery.
 takes `--json`.
 
 **MCP** (`packages/mcp`) — stdio server registered into the project's
-`.mcp.json` by `dispatch init`. 14 tools. Five (`task_list`, `task_get`,
+`.mcp.json` by `dispatch init`. 17 tools. Five (`task_list`, `task_get`,
 `task_save`, `task_comment`, `task_next`) operate on `.dispatch/tasks/*.md`
-directly and need no daemon; the other nine require a running `dispatchd` and
+directly and need no daemon; the other twelve require a running `dispatchd` and
 return a clear error without one. A `workflow://onboarding` resource briefs a
 connecting agent on the conventions.
 

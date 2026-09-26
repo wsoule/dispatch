@@ -136,11 +136,12 @@ test.describe('overseer chat end to end', () => {
     await page.goto(authedUrl(baseURL));
     await page.locator('#dispatch-sidebar').waitFor();
 
-    // The Overseer row sits in the rail's fixed top group. Scoped to the rail
-    // because the frame's status strip carries a ghost "Overseer" link too,
-    // which would make an unscoped name lookup ambiguous under strict mode.
+    // The overseer's row, labelled Assistant, sits in the rail's fixed top
+    // group. Scoped to the rail because the frame's status strip carries a
+    // ghost "Assistant" link too, which would make an unscoped name lookup
+    // ambiguous under strict mode.
     const rail = page.locator('#dispatch-sidebar');
-    const overseerRow = rail.getByRole('button', { name: /^Overseer/ });
+    const overseerRow = rail.getByRole('button', { name: /^Assistant/ });
     await overseerRow.click();
     await expect(page.getByLabel('Overseer opening question')).toBeVisible();
 

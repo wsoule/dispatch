@@ -451,35 +451,57 @@ binary from `@dispatch/mcp`.
 On the file backend the five `task_*` tools operate directly on
 `.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
 file changes through its watcher like any other edit); on the database backend
-they go through the daemon like everything else. The other nine always talk to
+they go through the daemon like everything else. The other twelve always talk to
 `dispatchd` over its local HTTP API, and return a clear error when it isn't
 running.
 
 Tools (server name `dispatch`):
 
-| Tool              | Input                                                                                                        | Output                                         |
-| ----------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------- |
-| `task_list`       | `{ status?, kind?, parent? }`                                                                                | `{ tasks: TaskSummary[], problems: string[] }` |
-| `task_get`        | `{ id }`                                                                                                     | `{ meta, body }`                               |
-| `task_save`       | `{ id?, title?, status?, kind?, parent?, blockedBy?, labels?, priority?, assignee?, description?, writes? }` | `{ meta, body }`                               |
-| `task_comment`    | `{ id, text }`                                                                                               | `{ meta }`                                     |
-| `task_next`       | `{}`                                                                                                         | `{ tasks: TaskSummary[], problems: string[] }` |
-| `run_list`        | `{}`                                                                                                         | `{ runs, note? }`                              |
-| `agent_message`   | `{ runId? \| taskId?, text }`                                                                                | `{ ok, runId }`                                |
-| `message_user`    | `{ text }`                                                                                                   | `{ ok, runId }`                                |
-| `ask_user`        | `{ question, options? }`                                                                                     | `{ answer }`                                   |
-| `request_scope`   | `{ paths, reason }`                                                                                          | `{ granted, reason }`                          |
-| `dispatch_note`   | `{ kind, title, body? }`                                                                                     | `{ ok, id }`                                   |
-| `record_decision` | `{ kind, title, detail, appliesTo? }`                                                                        | `{ ok, id }`                                   |
-| `record_evidence` | `{ command, exitCode, durationMs, summary }`                                                                 | `{ ok }`                                       |
-| `record_mutation` | `{ guard, file, testsFailed }`                                                                               | `{ ok }`                                       |
+| Tool              | Input                                                                                                        | Output                                                  |
+| ----------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------- |
+| `task_list`       | `{ status?, kind?, parent? }`                                                                                | `{ tasks: TaskSummary[], problems: string[] }`          |
+| `task_get`        | `{ id }`                                                                                                     | `{ meta, body }`                                        |
+| `task_save`       | `{ id?, title?, status?, kind?, parent?, blockedBy?, labels?, priority?, assignee?, description?, writes? }` | `{ meta, body }`                                        |
+| `task_comment`    | `{ id, text }`                                                                                               | `{ meta }`                                              |
+| `task_next`       | `{}`                                                                                                         | `{ tasks: TaskSummary[], problems: string[] }`          |
+| `run_list`        | `{}`                                                                                                         | `{ runs, note? }`                                       |
+| `msg_send`        | `{ to, kind, body, refs?, data?, urgent?, blocking?, choices?, wake? }`                                      | `{ message, deliveries?, downgraded?, answer?, note? }` |
+| `msg_reply`       | `{ messageId, body, choice? }`                                                                               | `{ message, deliveries?, downgraded? }`                 |
+| `inbox_read`      | `{ state?, limit?, markRead? }`                                                                              | `{ items, marked, markReadErrors? }`                    |
+| `thread_read`     | `{ threadId }`                                                                                               | `{ messages, deliveries }`                              |
+| `channel_join`    | `{ name, member? }`                                                                                          | `{ ok }`                                                |
+| `channel_leave`   | `{ name, member? }`                                                                                          | `{ ok }`                                                |
+| `channel_list`    | `{}`                                                                                                         | `{ channels }`                                          |
+| `dispatch_note`   | `{ kind, title, body? }`                                                                                     | `{ ok, id }`                                            |
+| `record_decision` | `{ kind, title, detail, appliesTo? }`                                                                        | `{ ok, id }`                                            |
+| `record_evidence` | `{ command, exitCode, durationMs, summary }`                                                                 | `{ ok }`                                                |
+| `record_mutation` | `{ guard, file, testsFailed }`                                                                               | `{ ok }`                                                |
 
 `task_save` creates when `id` is omitted (title required) and updates only the
 given fields otherwise; `kind` and `description` take effect on create only.
-`ask_user` and `request_scope` block until a human answers or the wait times
-out. A `workflow://onboarding` resource briefs a connecting agent on the same
-conventions. See `docs/archive/plans/2026-07-20-phase-3-mcp-server.md` for the
-original design.
+`msg_send` with `blocking: true` blocks until the recipient answers or the wait
+times out (30 minutes for a human). That is how an agent asks a person a
+question, and how a run asks to edit outside its declared `writes`: a blocking
+`question` with choices `grant`/`deny` and this `data`:
+`{ type: 'scope', paths, reason }`. A `workflow://onboarding` resource briefs a
+connecting agent on the same conventions. See
+`docs/archive/plans/2026-07-20-phase-3-mcp-server.md` for the original design,
+and `docs/specs/2026-09-23-messaging-core-design.md` for the messaging tools.
+
+### Answering from the CLI
+
+The desktop app shows a run's tool approvals, questions and scope requests as
+cards. From a terminal:
+
+    dispatch approve <runId>              # --deny, or --session for the rest of the run
+    dispatch scope decide <messageId>     # --deny to refuse
+    dispatch message <runId> <text>       # --resume requests changes on a finished run
+
+These act as a human, so each needs the daemon's app token: pass `--token` or
+set `DISPATCH_APP_TOKEN` to the value `dispatch serve` prints at startup. The
+agent token in the daemon file is refused. A daemon that another command started
+in the background printed its app token to `/dev/null`; stop it and run
+`dispatch serve` instead.
 
 ## Dependency graph with Carto (optional)
 
