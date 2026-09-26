@@ -7,7 +7,7 @@ import { isTerminalRunState } from './runState';
 // their answer reaches the task's next run, so they belong to the task.
 
 /** The runs whose open asks a task's chat shows: the selected run, then the
- *  task's other ended execute runs, whose asks now wait for the task. */
+ *  task's other ended execute runs, whose asks wait for the task. */
 export function askRunIdsForChat(
   runs: readonly RunMeta[],
   selected: RunMeta

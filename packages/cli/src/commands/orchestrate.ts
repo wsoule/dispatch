@@ -252,9 +252,8 @@ function pickRunGate(
   throw new CliError(`${runId} is not awaiting an approval`);
 }
 
-// The `run show` lines for a parked run. An app token names each parked call's
-// tool and request id; without one the lines omit them, and a token the daemon
-// refuses is named as the reason.
+// The `run show` lines for a parked run: each parked call's tool and request id
+// with an app token, else just how to answer, naming a refused token's error.
 async function describeParkedApproval(
   baseUrl: string,
   runId: string,
@@ -595,7 +594,7 @@ export function registerOrchestrateCommands(
           return;
         }
         // A human's wake of an ended run continues exactly that run before the
-        // send returns, so its continuation is listed by now.
+        // send returns, so its continuation is already listed after it.
         const before = new Set((await client.listRuns()).map((r) => r.id));
         const sent = await client.sendMessage({
           to: [`run:${runId}`],

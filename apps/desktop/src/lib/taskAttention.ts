@@ -10,9 +10,8 @@ export type TaskAttention = 'waiting' | 'failed' | 'review';
 /**
  * Which tasks need a human right now, keyed by task id — the task screen's counterpart to
  * the Control room feed's grouping. Reuses `deriveFeedState` so a run the queue is landing
- * doesn't read as "needs review", and mirrors `buildFeed`'s ask override: a task with an open
- * question or scope gate from any of its runs, live or ended, is waiting on an answer
- * (`askingTaskIds`, see `taskIdsWithOpenAsks`).
+ * doesn't read as "needs review", and mirrors `buildFeed`'s ask override: a task in
+ * `askingTaskIds` (see `taskIdsWithOpenAsks`) is waiting on an answer.
  */
 export function deriveTaskAttentionById(
   latestRunByTaskId: ReadonlyMap<string, RunMeta>,

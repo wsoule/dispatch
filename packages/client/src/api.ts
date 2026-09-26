@@ -868,7 +868,7 @@ export type ServerEvent =
   | { type: 'git.changed' }
   // A finding's verdict/ruling changed, or a review run raised a new one.
   | { type: 'finding.changed' }
-  // A decision/hazard/constraint/handoff was added to the ledger.
+  // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
   // A task's fix loop moved between states, or stopped. Mirrors
   // packages/server/src/events.ts exactly.
@@ -2154,12 +2154,8 @@ export interface ConnectEventsOptions {
   // Defaults to 1000ms. Overridden in tests so reconnect assertions don't
   // have to wait a full second.
   reconnectDelayMs?: number;
-  // Called for every successfully parsed ServerEvent, including
-  // `task.changed` and `hello` — the orchestrator UI (Phase 4 Slice O3) needs
-  // `run.changed`/`run.log`/`message.new` too, which `onChange` alone
-  // can't carry (it fires only for `task.changed`, unchanged from Phase 2R,
-  // so existing callers keep their exact behavior). A malformed frame never
-  // reaches this callback — see the `try/catch` around `JSON.parse` below.
+  // Called for every parsed ServerEvent, where `onChange` hears only
+  // `task.changed`; a malformed frame never reaches it (see JSON.parse below).
   onEvent?: (event: ServerEvent) => void;
   // Daemon token for the upgrade, since the guard covers `/ws` too. Defaults
   // to whatever the daemon injected into the page it served.
