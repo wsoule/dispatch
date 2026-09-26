@@ -242,6 +242,15 @@ describe('POST /api/ledger', () => {
     expect(res.status).toBe(400);
   });
 
+  it('400s a handoff, which is a message now', async () => {
+    const res = await fetch(`${baseUrl}/api/ledger`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ kind: 'handoff', title: 't', detail: 'd' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
   it('400s a missing detail', async () => {
     const res = await fetch(`${baseUrl}/api/ledger`, {
       method: 'POST',

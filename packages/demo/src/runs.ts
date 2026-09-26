@@ -156,10 +156,8 @@ function T(
   return { ts: '', kind: 'tool', toolName, toolInput, status };
 }
 
-// One agent-to-user message — the shape `messageUser()` writes for both
-// `ask_user` questions and `request_scope` asks (see api.ts's
-// questionEntryText/scopeRequestEntryText). `fromLabel` mirrors
-// `"${taskTitle} (${runId})"`, the label resolveSenderLabel would produce.
+// A run's `msg_send` question or scope gate to a human, in the shape
+// Orchestrator.logOutgoing writes: `toUser`, labelled "<task title> (<run id>)".
 function Msg(taskTitle: string, id: string, text: string): NormalizedEntry {
   return {
     ts: '',
@@ -175,7 +173,7 @@ function Msg(taskTitle: string, id: string, text: string): NormalizedEntry {
 // run — the shape Orchestrator.requestChanges actually records for
 // `sendMessage(runId, prompt, { resume: true })`: `{ ts, kind: 'message',
 // from: 'user', text }`, with no `fromLabel`/`toUser`. That pair is reserved
-// for an agent's own `messageUser()` calls (Msg, above) — a fix round's
+// for a run's own messages to a human (Msg, above) — a fix round's
 // prompt is not the agent broadcasting to the human, it is the loop's
 // automated feedback arriving the same way a human's own "request changes"
 // text would. RunLogView.tsx renders `toUser: true` as a "TO YOU" megaphone
@@ -712,15 +710,9 @@ function writeVerifyRun(dir: string, rootDir: string): void {
   });
 }
 
-// A scope request that was granted: t-3f8a21 needs to touch routes.ts as
-// well as discount.ts, since the inline client-trusted check being retired
-// lives in the route handler itself. `messageUser()` is how both
-// `request_scope` and `ask_user` actually land text on a transcript (see
-// api/scopeRequests.ts's scopeRequestEntryText) — the grant itself lives only
-// in the daemon's in-memory ScopeRequestRegistry (never persisted to disk),
-// so the outcome is recorded here as a system note, the way the Session log
-// would read it, rather than pretending to replay a registry record that
-// does not survive a restart in the real system either.
+// A granted scope gate: t-3f8a21 must edit routes.ts too, where the check
+// being retired lives. The demo seeds no messages.db, so a system note stands
+// in for the grant.
 function writeScopeRequestRun(dir: string, rootDir: string): void {
   const taskId = 't-3f8a21';
   const taskTitle = 'Validate discount codes server-side';
@@ -764,16 +756,9 @@ function writeScopeRequestRun(dir: string, rootDir: string): void {
   });
 }
 
-// A run holding unanswered `ask_user` questions. There is no on-disk plan
-// artifact to seed here: PlanManager's PlanRecord is explicitly in-memory
-// only ("a lost daemon losing in-flight drafts is acceptable", plan.ts) and
-// is never written to any file, so a static demo fixture cannot reproduce
-// one after a restart any more than the real daemon can. The closest thing
-// that DOES survive on disk is a run transcript whose agent asked
-// clarifying questions via `ask_user` and never got an answer — exactly
-// what QuestionRegistry's own timeout path documents (UNANSWERED_NOTE in
-// packages/mcp/src/tools.ts): the agent proceeds on its own judgement and
-// states the assumption, rather than the run hanging forever.
+// Plan drafts are in-memory only (plan.ts), so this seeds the nearest durable
+// thing: a run whose blocking `msg_send` question timed out unanswered, and
+// which went on with its best judgement and stated the assumption.
 function writePlanDraftRun(dir: string, rootDir: string): void {
   const taskId = 't-9b2d14';
   const taskTitle = 'Add address autocomplete';
@@ -925,8 +910,8 @@ export function clearRunHistory(rootDir: string, home: string): void {
  * Seeds this clone's run history under `$DISPATCH_HOME/.dispatch/runs/<key>/`
  * — the six runs ported from the marketing-screenshot fixture plus one of
  * every additional run kind the demo narrative needs (review, a three-round
- * fix loop, verify, a granted scope request, unanswered questions, and a
- * graceful stop) — and this clone's actor identity file. Every run is
+ * fix loop, verify, a granted scope gate, unanswered `msg_send` questions, and
+ * a graceful stop) — and this clone's actor identity file. Every run is
  * terminal (see TERMINAL_STATES): `reconcileOnBoot` force-fails anything
  * left non-terminal on boot, since a static fixture never has a live process
  * behind it.

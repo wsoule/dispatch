@@ -619,7 +619,7 @@ export interface StartReviewInput {
 export interface CreateLedgerInput {
   epicId?: string | null;
   sourceTaskId?: string | null;
-  kind: LedgerKind;
+  kind: Exclude<LedgerKind, 'handoff'>;
   title: string;
   detail: string;
   appliesTo?: string[];
