@@ -263,6 +263,28 @@ export function project(f: TaskFacts, view: ProjectionView): TaskJson {
   return json;
 }
 
+// An answer that matched none of the offered choices: the task's status says so.
+export function withReask(
+  task: TaskJson,
+  reask: string | null,
+  view: ProjectionView
+): TaskJson {
+  if (reask === null) return task;
+  return {
+    ...task,
+    status: {
+      ...task.status,
+      message: {
+        messageId: `${task.id}~reask`,
+        contextId: task.contextId,
+        taskId: task.id,
+        role: 'ROLE_AGENT',
+        parts: [{ text: reask, mediaType: view.textMediaType }],
+      },
+    },
+  };
+}
+
 // A sha256 of what a watcher must see change: the decision, the scope's ids,
 // the work artifacts and the linked task.
 export function projectionKey(f: TaskFacts): string {

@@ -1,8 +1,10 @@
 import {
   A2A_VERSION_HEADER,
   AgentCard,
+  formatSSEEvent,
   HTTP_EXTENSION_HEADER,
   SendMessageRequest,
+  SSE_HEADERS,
 } from '@a2a-js/sdk';
 import { MessagingError } from '@dispatch/protocol';
 import type { JsonValue } from '@dispatch/protocol';
@@ -25,13 +27,15 @@ import type {
   OpenResult,
   TaskFacts,
 } from '../port.js';
-import { decideState, project } from '../projection.js';
+import { decideState, project, withReask } from '../projection.js';
 import type { ProjectionView } from '../projection.js';
 import { stateFromWire, TERMINAL_STATES } from '../states.js';
 import { ENVELOPE_URI } from '../uris.js';
 import type { ExtensionUri } from '../uris.js';
 import type { MessageJson, PartJson, TaskJson } from '../wire.js';
 import type { IpLimiter } from './limits.js';
+import { taskEventStream } from './sse.js';
+import { waitForSettled } from './wait.js';
 
 export interface HandleOptions {
   basePath: '/a2a/v1';
@@ -100,13 +104,24 @@ export function matchRoute(method: string, path: string): Route | null {
   return ['GET', 'POST', 'DELETE'].includes(method) ? { op: 'push', id } : null;
 }
 
-function json(body: unknown, extensions: ReadonlySet<string>): Response {
-  const headers: Record<string, string> = {
-    'content-type': 'application/json',
-  };
+// Names the activated extensions on a response, as A2A-Extensions.
+function withExtensions(
+  res: Response,
+  extensions: ReadonlySet<string>
+): Response {
   if (extensions.size > 0)
-    headers[HTTP_EXTENSION_HEADER] = [...extensions].join(', ');
-  return new Response(JSON.stringify(body), { status: 200, headers });
+    res.headers.set(HTTP_EXTENSION_HEADER, [...extensions].join(', '));
+  return res;
+}
+
+function json(body: unknown, extensions: ReadonlySet<string>): Response {
+  return withExtensions(
+    new Response(JSON.stringify(body), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    }),
+    extensions
+  );
 }
 
 // An empty header or query value counts as absent.
@@ -279,31 +294,53 @@ function directReply(
   return out;
 }
 
-// An answer that matched none of the offered choices: the task's status says so.
-function withReask(
-  task: TaskJson,
-  reask: string | null,
-  view: ProjectionView
-): TaskJson {
-  if (reask === null) return task;
-  return {
-    ...task,
-    status: {
-      ...task.status,
-      message: {
-        messageId: `${task.id}~reask`,
-        contextId: task.contextId,
-        taskId: task.id,
-        role: 'ROLE_AGENT',
-        parts: [{ text: reask, mediaType: view.textMediaType }],
-      },
-    },
-  };
+// A blocking send waits for a settled task, at most blockingWaitSec, and
+// keeps the request alive a little past that.
+async function settle(op: Op, taskId: string): Promise<TaskFacts> {
+  const waitSec = op.options.policy.blockingWaitSec;
+  op.options.setRequestTimeout?.(waitSec + 5);
+  const facts = await waitForSettled(op.port, op.caller, taskId, {
+    maxMs: waitSec * 1000,
+    signal: op.req.signal,
+  });
+  if (facts === null) throw new A2AError('TASK_NOT_FOUND', 'task not found');
+  return facts;
 }
 
-// SendMessage: a taskId continues that open task, anything else opens one.
-// Every send answers with the current snapshot, as with returnImmediately.
-async function send(op: Op): Promise<Response> {
+// Takes one of the caller's stream slots; the function it returns frees it.
+async function admitStream(op: Op): Promise<(() => void) | Response> {
+  const admitted = await op.port.admit(op.caller, 'stream');
+  if (!admitted.ok) return rateLimited(admitted.retryAfterSec);
+  return admitted.release ?? (() => {});
+}
+
+// Hands the admitted slot to an SSE stream of the task, which releases it.
+function openStream(
+  op: Op,
+  release: () => void,
+  taskId: string,
+  view: ProjectionView,
+  reask: string | null
+): Response {
+  op.options.setRequestTimeout?.(0);
+  return withExtensions(
+    taskEventStream({
+      port: op.port,
+      caller: op.caller,
+      bearer: op.bearer,
+      taskId,
+      view,
+      reask,
+      release,
+      signal: op.req.signal,
+    }),
+    view.extensions
+  );
+}
+
+// SendMessage and SendStreamingMessage: a taskId continues that open task,
+// anything else opens one. A stream is admitted before anything is sent.
+async function send(op: Op, streaming: boolean): Promise<Response> {
   const request = parseSendRequest(await readJson(op.req));
   if (request.message === undefined)
     throw new MessagingError('invalid', 'message: required', 'message');
@@ -319,38 +356,83 @@ async function send(op: Op): Promise<Response> {
     outputTextType(request.configuration?.acceptedOutputModes ?? [])
   );
   const inbound = decodeInbound(request.message);
+  let release: (() => void) | null = null;
+  if (streaming) {
+    const admitted = await admitStream(op);
+    if (admitted instanceof Response) return admitted;
+    release = admitted;
+  }
   let taskId: string;
   let reask: string | null = null;
-  if (inbound.kind === 'continue') {
-    const before = await mustFacts(op, inbound.input.taskId);
-    if (TERMINAL_STATES.has(decideState(before).state)) {
-      throw new A2AError(
-        'UNSUPPORTED_OPERATION',
-        'this task is finished; start a new one'
-      );
+  try {
+    if (inbound.kind === 'continue') {
+      const before = await mustFacts(op, inbound.input.taskId);
+      if (TERMINAL_STATES.has(decideState(before).state)) {
+        throw new A2AError(
+          'UNSUPPORTED_OPERATION',
+          'this task is finished; start a new one'
+        );
+      }
+      if (
+        inbound.input.contextId !== null &&
+        inbound.input.contextId !== before.contextId
+      ) {
+        throw new MessagingError(
+          'invalid',
+          'unknown contextId',
+          'message.contextId'
+        );
+      }
+      reask = (await op.port.continue(op.caller, inbound.input)).reask;
+      taskId = inbound.input.taskId;
+    } else {
+      const opened = await op.port.open(op.caller, inbound.input);
+      if (opened.kind === 'reply') {
+        const message = directReply(opened, view);
+        if (release === null) return json({ message }, extensions);
+        release();
+        return withExtensions(
+          new Response(formatSSEEvent({ message }), { headers: SSE_HEADERS }),
+          extensions
+        );
+      }
+      taskId = opened.taskId;
     }
-    if (
-      inbound.input.contextId !== null &&
-      inbound.input.contextId !== before.contextId
-    ) {
-      throw new MessagingError(
-        'invalid',
-        'unknown contextId',
-        'message.contextId'
-      );
-    }
-    reask = (await op.port.continue(op.caller, inbound.input)).reask;
-    taskId = inbound.input.taskId;
-  } else {
-    const opened = await op.port.open(op.caller, inbound.input);
-    if (opened.kind === 'reply')
-      return json({ message: directReply(opened, view) }, extensions);
-    taskId = opened.taskId;
+  } catch (err) {
+    release?.();
+    throw err;
   }
-  const facts = await mustFacts(op, taskId);
+  if (release !== null) return openStream(op, release, taskId, view, reask);
+  const facts =
+    request.configuration?.returnImmediately === true
+      ? await mustFacts(op, taskId)
+      : await settle(op, taskId);
   return json(
     { task: withReask(project(facts, view), reask, view) },
     extensions
+  );
+}
+
+// SubscribeToTask, by GET or POST: a stream of an unfinished task.
+async function subscribe(op: Op, id: string): Promise<Response> {
+  const facts = await mustFacts(op, id);
+  if (TERMINAL_STATES.has(decideState(facts).state)) {
+    throw new A2AError(
+      'UNSUPPORTED_OPERATION',
+      'this task is finished; there is nothing to subscribe to'
+    );
+  }
+  const extensions = activatedExtensions(
+    op.req.headers.get(HTTP_EXTENSION_HEADER)
+  );
+  const admitted = await admitStream(op);
+  if (admitted instanceof Response) return admitted;
+  return openStream(
+    op,
+    admitted,
+    id,
+    taskView(op, extensions, null, true),
+    null
   );
 }
 
@@ -499,7 +581,11 @@ export async function handleA2A(
     };
     switch (route.op) {
       case 'send':
-        return await send(op);
+        return await send(op, false);
+      case 'stream':
+        return await send(op, true);
+      case 'subscribe':
+        return await subscribe(op, route.id);
       case 'get':
         return await getTask(op, route.id);
       case 'list':
@@ -515,12 +601,6 @@ export async function handleA2A(
         throw new A2AError(
           'UNSUPPORTED_OPERATION',
           'this agent has no extended card'
-        );
-      case 'stream':
-      case 'subscribe':
-        throw new A2AError(
-          'UNSUPPORTED_OPERATION',
-          'streaming is not available'
         );
     }
   } catch (err) {

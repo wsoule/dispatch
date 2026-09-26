@@ -215,6 +215,7 @@ jaccard
 jridgewell
 jsonpointer
 katex
+keepalives
 keepme
 keycap
 keycaps

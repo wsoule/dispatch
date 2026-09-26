@@ -98,6 +98,8 @@ export { handleA2A, matchRoute } from './server/handle.js';
 export type { HandleOptions, Route } from './server/handle.js';
 export { IpLimiter } from './server/limits.js';
 export { decodePageToken, encodePageToken } from './server/paging.js';
+export { taskEventStream } from './server/sse.js';
+export type { StreamOptions } from './server/sse.js';
 export {
   INTERRUPTED_STATES,
   stateFromWire,
