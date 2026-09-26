@@ -1,7 +1,7 @@
 import type { AddLedgerInput, LedgerEntry, TaskRisk } from '@dispatch/core';
 import type { JsonValue, Message } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -644,7 +644,7 @@ describe('the approval gate', () => {
     h.stop();
   });
 
-  it('records nothing when a human answered first', async () => {
+  it('records nothing, and logs nothing, when a human answered first', async () => {
     const h = harness({
       pending,
       approvalFloor: () => false,
@@ -655,12 +655,15 @@ describe('the approval gate', () => {
       ),
     });
     h.setPolicy('policy:\n  rung: 3\n');
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
     h.events.broadcast({
       type: 'message.new',
       message: approvalGate({ command: 'pnpm install' }),
     });
     await settle();
+    errors.mockRestore();
     expect(h.ledger).toEqual([]);
+    expect(errors).not.toHaveBeenCalled();
     h.stop();
   });
 

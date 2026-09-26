@@ -18,7 +18,11 @@ const project = useTempProject();
 
 describe('outgoing run messages', () => {
   it("logs a run's message to a human on the run's own transcript", async () => {
-    const { orchestrator, store } = makeOrchestrator(project.root());
+    const { orchestrator, store, events } = makeOrchestrator(project.root());
+    const logged: unknown[] = [];
+    events.subscribe((e) => {
+      if (e.type === 'run.log') logged.push(e.entry);
+    });
     orchestrator.registerExecutor('stalling', new StallingExecutor());
     const messaging = await openRecovered(project.root(), orchestrator, store);
     const task = store.create({ title: 'Schema work' });
@@ -39,6 +43,11 @@ describe('outgoing run messages', () => {
       text: 'Heads up: the schema moved',
       messageId: message.id,
       fromLabel: `Schema work (${meta.id})`,
+    });
+    // A connected Session tab hears it live, too.
+    expect(logged.at(-1)).toMatchObject({
+      kind: 'message',
+      messageId: message.id,
     });
     // A well-formed task id; nothing needs to exist there.
     await messaging.engine.send(

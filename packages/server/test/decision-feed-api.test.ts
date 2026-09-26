@@ -280,9 +280,8 @@ describe('GET /api/decisions', () => {
     expect(await decisions()).toEqual([]);
   });
 
-  // The floor at this gate: a request reaching into .git/ parks for a human
-  // even though the rung would auto-grant it, and the feed lists it as
-  // blocking rather than as a recorded auto-decision.
+  // A request into .git/ is the floor at this gate: it parks for a human at
+  // any rung, and the feed lists it as blocking, not recorded.
   it('lists a rung-2 scope gate into .git as blocking and never auto-grants it', async () => {
     mkdirSync(join(root, '.dispatch'), { recursive: true });
     writeFileSync(
@@ -335,6 +334,32 @@ describe('GET /api/decisions', () => {
     expect(bad.status).toBe(400);
     expect(await json(bad)).toMatchObject({
       error: expect.stringContaining('disposition'),
+    });
+  });
+});
+
+describe('tool approvals under policy rung 3', () => {
+  it('Dispatch answers the gate itself and the parked call runs', async () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'policy:\n  rung: 3\n'
+    );
+    await liveRun('Needs a shell', 'parking');
+    parking.park('req-1', 'Bash', { command: 'pnpm install' });
+    await waitFor(() => parking.decisions.length === 1);
+    expect(parking.decisions[0]).toEqual({
+      requestId: 'req-1',
+      decision: { allow: true, scope: 'once' },
+    });
+    const [item] = await decisions('?resolved=1');
+    const gateId = item?.id.slice('approval:'.length) ?? '';
+    const answer: {
+      answer: { from: string; data?: { type?: string } } | null;
+    } = await json(await fetch(`${baseUrl}/api/messages/${gateId}/answer`));
+    expect(answer.answer).toMatchObject({
+      from: 'agent:dispatch',
+      data: { type: 'x-policy' },
     });
   });
 });
