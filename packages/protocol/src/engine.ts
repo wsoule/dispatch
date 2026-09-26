@@ -121,8 +121,13 @@ export class DeliveryEngine {
   }
 
   // Expands channels, de-duplicates (direct beats channel) and drops the
-  // sender itself, including a run's own task.
-  private resolveTargets(to: Address[], sender: Address): Target[] {
+  // sender itself, including a run's own task. `fields` names each address's
+  // entry in the caller's own `to`, for errors.
+  private resolveTargets(
+    to: Address[],
+    sender: Address,
+    fields: Map<Address, string>
+  ): Target[] {
     const senderTask = sender.startsWith('run:')
       ? this.host.taskOfRun(sender.slice(4))
       : null;
@@ -140,9 +145,13 @@ export class DeliveryEngine {
       )
         byRecipient.set(recipient, { recipient, via });
     };
-    to.forEach((addr, i) => {
-      const parsed = parseAddress(addr, `to[${i}]`);
-      if (parsed.kind !== 'channel') return add(addr, 'direct');
+    for (const addr of to) {
+      const field = fields.get(addr) ?? 'to';
+      const parsed = parseAddress(addr, field);
+      if (parsed.kind !== 'channel') {
+        add(addr, 'direct');
+        continue;
+      }
       const explicit = this.store.members(parsed.name);
       const implicit = this.host.implicitMembers(parsed.name);
       const known = this.store.channels().some((c) => c.name === parsed.name);
@@ -150,10 +159,10 @@ export class DeliveryEngine {
         throw new MessagingError(
           'not-found',
           `no channel ${parsed.name}`,
-          `to[${i}]`
+          field
         );
       for (const member of [...explicit, ...implicit]) add(member, 'channel');
-    });
+    }
     return [...byRecipient.values()];
   }
 
@@ -256,7 +265,7 @@ export class DeliveryEngine {
     if (input.choice !== undefined) message.choice = input.choice;
 
     const fields = this.recipientFields(input.to, replyTarget);
-    const targets = this.resolveTargets(message.to, sender.address);
+    const targets = this.resolveTargets(message.to, sender.address, fields);
     const wakesRuns = wakesEndedRuns(message);
     const deliveries: Delivery[] = [];
     for (const t of targets) {
