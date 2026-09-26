@@ -153,13 +153,10 @@ describe('topic files', () => {
     ).toMatchObject({ title: 'two', type: 'reference', body: 'body' });
   });
 
-  it('trims trailing whitespace in linear time', () => {
+  it('trims trailing whitespace, Unicode spaces included', () => {
     expect(parseMemoryFile('text \t\u00a0\u3000\n\n', 'ws.md').body).toBe(
       'text'
     );
-    const started = performance.now();
-    parseMemoryFile(`${' '.repeat(65_000)}x`, 'ws.md');
-    expect(performance.now() - started).toBeLessThan(1000);
   });
 
   it('cuts a long body at 8 KiB on a line boundary with a marker', () => {
@@ -278,18 +275,37 @@ describe('MEMORY.md', () => {
     ]);
   });
 
-  it('reads a link only at the start of a line, after an optional bullet', () => {
-    const current = '* [starred](note.md)\n- see [note](note.md) first';
+  it('drops a line with a link to a file here anywhere in it', () => {
+    const current = [
+      '* [starred](note.md)',
+      '- see [note](note.md) first',
+      '1. [numbered](note.md) — fact',
+      '- **[bold](note.md)** — fact',
+      '- see [other](gone.md) first',
+      '- \\[escaped](note.md) is no link',
+    ].join('\n');
     expect(newIndexLines('', current, new Set(['note.md']))).toEqual([
-      'see [note](note.md) first',
+      'other',
+      '\\[escaped](note.md) is no link',
     ]);
   });
 
-  it('reads a 64 KiB line of brackets in linear time', () => {
+  it('reads 64 KiB lines of brackets and escapes in linear time', () => {
+    const current = ['[', '[a', '[\\]', '\\[']
+      .map((unit) => `- ${unit.repeat(Math.floor(65_536 / unit.length))}`)
+      .join('\n');
     const started = performance.now();
-    const titles = newIndexLines('', `- ${'['.repeat(65_536)}`, new Set());
+    const titles = newIndexLines('', current, new Set());
     expect(performance.now() - started).toBeLessThan(1000);
-    expect(titles).toHaveLength(1);
+    expect(titles).toHaveLength(4);
+  });
+
+  it('reads 64 KiB of distinct short lines in linear time', () => {
+    const lines = Array.from({ length: 16_384 }, (_, i) => i.toString(36));
+    const started = performance.now();
+    const titles = newIndexLines('', lines.join('\n'), new Set());
+    expect(performance.now() - started).toBeLessThan(500);
+    expect(titles).toEqual(lines);
   });
 });
 

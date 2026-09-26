@@ -62,8 +62,9 @@ const PROVENANCE = /^> Dispatch memory #[0-9A-Z]{8} /;
 // A heading or fence line behind backslashes: parse strips one, so render adds
 // one to a body line already shaped like this and the round trip is exact.
 const ESCAPED_STRUCTURE = /^\\+\s*(?:#{1,6}[ \t]|~{4,})/;
-// Anchored to the line start, so a line of many `[` is scanned once.
-const LINK = /^(?:[-*+][ \t]+)?\[((?:\\.|[^\\\]])*)\]\(([^()\s]*)\)/;
+// A `[text](target)` link anywhere in a line. A `[` behind a backslash opens no
+// link and link text holds no bare `[`, so no scan crosses another's start.
+const LINK = /(?<!\\)\[((?:\\.|[^\\\][])*)\]\(([^()\s]*)\)/;
 const HEADER_LINES = new Set(CLAUDE_INDEX_HEADER.split('\n'));
 
 // user and feedback notes become preferences; project and anything unknown are facts.
@@ -270,7 +271,7 @@ export function newIndexLines(
       .split('\n')
       .map((line) => line.trim());
   const known = new Set(split(written));
-  const titles: string[] = [];
+  const titles = new Set<string>();
   for (const line of split(current)) {
     if (line === '' || known.has(line) || HEADER_LINES.has(line)) continue;
     const link = LINK.exec(line);
@@ -280,9 +281,9 @@ export function newIndexLines(
         ? line.replace(/^[-*+][ \t]+/, '')
         : link[1].replace(/\\([\\[\]])/g, '$1');
     const title = cutUtf8(untrustedInline(text), MEMORY_LIMITS.titleBytes);
-    if (title !== '' && !titles.includes(title)) titles.push(title);
+    if (title !== '') titles.add(title);
   }
-  return titles;
+  return [...titles];
 }
 
 // Manifest rows against a scan: a missing file whose parsed hash reappears
