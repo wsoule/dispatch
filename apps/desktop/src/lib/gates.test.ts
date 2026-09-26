@@ -110,7 +110,14 @@ describe('gate adapters', () => {
 
   it('keeps only awaiting-approval runs once runs have loaded', () => {
     expect(pendingApprovalsFromGates([approval], undefined).get('r-1')).toEqual(
-      { requestId: 'req-1', toolName: 'Bash', input: { command: 'ls' } }
+      [
+        {
+          requestId: 'req-1',
+          toolName: 'Bash',
+          input: { command: 'ls' },
+          truncated: false,
+        },
+      ]
     );
     expect(
       pendingApprovalsFromGates(

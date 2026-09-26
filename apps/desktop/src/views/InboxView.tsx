@@ -732,25 +732,28 @@ function DetailBody({
         }
       }
       if (row.state === 'approve') {
-        const pending = project.pendingApprovals?.get(row.runId);
-        if (pending !== undefined) {
+        const calls = project.pendingApprovals?.get(row.runId) ?? [];
+        if (calls.length > 0) {
           return (
-            <div className="p-4">
-              <ApprovalCard
-                toolName={pending.toolName}
-                toolInput={pending.input}
-                frozenSince={row.since}
-                onDecide={(allow, opts) =>
-                  project.handleApprove(
-                    row.runId,
-                    pending.requestId,
-                    allow,
-                    opts
-                  )
-                }
-                availability={project.scopeDecide}
-                onRestartDaemon={project.handleRestartDaemon}
-              />
+            <div className="flex flex-col gap-3 p-4">
+              {calls.map((call) => (
+                <ApprovalCard
+                  key={call.requestId}
+                  toolName={call.toolName}
+                  toolInput={call.input}
+                  frozenSince={row.since}
+                  onDecide={(allow, opts) =>
+                    project.handleApprove(
+                      row.runId,
+                      call.requestId,
+                      allow,
+                      opts
+                    )
+                  }
+                  availability={project.scopeDecide}
+                  onRestartDaemon={project.handleRestartDaemon}
+                />
+              ))}
             </div>
           );
         }

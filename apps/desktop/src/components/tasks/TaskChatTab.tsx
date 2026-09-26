@@ -5,14 +5,16 @@ import { MessageSquare } from 'lucide-react';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useScopeRequest } from '../../hooks/useScopeRequest';
 import type { RunQuestion } from '../../lib/gates';
+import type { PendingApproval } from '../../lib/pendingApprovals';
 import { isTerminalRunState } from '../../lib/runState';
 import { RunLogView } from '../runs/RunLogView';
 import { TabSkeleton } from './TabSkeleton';
 import { EmptyState } from '@/ui/chrome';
 
-// Shared empty array so a run with no open questions keeps the same prop
-// identity across renders.
+// Shared empty arrays so a run with nothing open keeps the same prop identity
+// across renders.
 const NO_QUESTIONS: RunQuestion[] = [];
+const NO_APPROVALS: PendingApproval[] = [];
 
 export interface TaskChatTabProps {
   data: DispatchProjectData;
@@ -76,7 +78,9 @@ export function TaskChatTab({
       <RunLogView
         meta={data.runDetail.meta}
         entries={data.runDetail.entries}
-        pendingApproval={data.pendingApprovals.get(selectedRun.id) ?? null}
+        pendingApprovals={
+          data.pendingApprovals.get(selectedRun.id) ?? NO_APPROVALS
+        }
         onApprove={(requestId, allow, opts) =>
           data.handleApprove(selectedRun.id, requestId, allow, opts)
         }

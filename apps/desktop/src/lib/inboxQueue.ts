@@ -26,7 +26,7 @@ export interface InboxInput {
   epics: TaskDoc[];
   repoPrs: RepoPr[];
   mergeQueue: MergeQueueSnapshot | null;
-  pendingApprovals: ReadonlyMap<string, { toolName: string }>;
+  pendingApprovals: ReadonlyMap<string, readonly { toolName: string }[]>;
   openQuestions: ReadonlyMap<string, RunQuestion[]>;
   fixLoops: ReadonlyMap<string, FixLoopState>;
   /** This window's ActorRef. When set, asks on runs someone else dispatched are

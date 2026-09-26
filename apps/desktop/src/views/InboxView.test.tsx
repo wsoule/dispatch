@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, expect, test } from 'bun:test';
 import { type ReactNode, useState } from 'react';
 
@@ -460,6 +460,65 @@ test('an answer row shows its question card with the indigo Answer button on the
   fireEvent.click(screen.getByRole('radio', { name: 'Left' }));
   expect(answers).toEqual(['Left']);
   expect(screen.getByRole('button', { name: 'Answer' })).toBeDefined();
+});
+
+// Each parked call is its own gate, so the detail pane shows one card per call.
+test('an approve row shows a card per parked call, each answering its own', async () => {
+  const answered: string[] = [];
+  const { container } = renderInbox(
+    dataWith([
+      {
+        state: 'approve',
+        rows: [
+          row({
+            taskId: 't-a',
+            runId: 'r-a',
+            state: 'approve',
+            title: 'Parks',
+          }),
+        ],
+      },
+    ]),
+    {
+      project: projectWith({
+        pendingApprovals: new Map([
+          [
+            'r-a',
+            [
+              {
+                requestId: 'req-1',
+                toolName: 'Bash',
+                input: { command: 'ls' },
+                truncated: false,
+              },
+              {
+                requestId: 'req-2',
+                toolName: 'Write',
+                input: { file_path: 'a.ts' },
+                truncated: false,
+              },
+            ],
+          ],
+        ]),
+        handleApprove: (_run: string, requestId: string) => {
+          answered.push(requestId);
+          return Promise.resolve();
+        },
+      } as unknown as Partial<DispatchProjectData>),
+    }
+  );
+  fireEvent.click(rowOf('Parks'));
+  const cards = container.querySelectorAll('[data-slot="tool-approval-card"]');
+  expect(cards).toHaveLength(2);
+  await act(async () => {
+    fireEvent.click(
+      within(cards[0] as HTMLElement).getByRole('radio', {
+        name: /Approve once/,
+      })
+    );
+    await Promise.resolve();
+  });
+  expect(answered).toEqual(['req-1']);
 });
 
 function liveAndPast() {

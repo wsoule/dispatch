@@ -280,7 +280,7 @@ describe('row content', () => {
     const model = buildFeed(
       input({
         runs: [run({ id: 'r-a', state: 'awaiting-approval' })],
-        pendingApprovals: new Map([['r-a', { toolName: 'Bash' }]]),
+        pendingApprovals: new Map([['r-a', [{ toolName: 'Bash' }]]]),
       })
     );
     expect(model.groups[0]?.rows[0]?.attention).toEqual({
@@ -288,6 +288,24 @@ describe('row content', () => {
       detail: null,
     });
     expect(model.groups[0]?.rows[0]?.state).toBe('approve');
+  });
+
+  test('a run parked on several calls counts them and names their tools', () => {
+    const model = buildFeed(
+      input({
+        runs: [run({ id: 'r-a', state: 'awaiting-approval' })],
+        pendingApprovals: new Map([
+          [
+            'r-a',
+            [{ toolName: 'Bash' }, { toolName: 'Write' }, { toolName: 'Bash' }],
+          ],
+        ]),
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.attention).toEqual({
+      reason: 'Wants to run 3 tool calls',
+      detail: 'Bash, Write',
+    });
   });
 
   test('a running run with an open question moves to answer and quotes it', () => {

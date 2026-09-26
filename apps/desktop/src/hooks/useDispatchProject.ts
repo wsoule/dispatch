@@ -484,8 +484,8 @@ export interface DispatchProjectData {
   notePlanId: string | null;
   setNotePlanId: (planId: string | null) => void;
   notePlanRecord: PlanRecord | undefined;
-  /** Run id -> the tool approval it is parked on, from the open gates. */
-  pendingApprovals: Map<string, PendingApproval>;
+  /** Run id -> each tool call it is parked on, oldest first, from the open gates. */
+  pendingApprovals: Map<string, PendingApproval[]>;
   /** Run id -> the newest scope gate its agent is waiting on. */
   pendingScopeRequests: Map<string, PendingScopeRequest>;
   handleDecideScopeRequest: (

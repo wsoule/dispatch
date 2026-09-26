@@ -399,11 +399,14 @@ function resetGateFixtures() {
 test('open gates fill the approval, scope and question maps', async () => {
   const result = await mountWithGates([approvalGate, scopeGate, questionGate]);
 
-  expect(result.current.pendingApprovals.get('r-1')).toEqual({
-    requestId: 'req-1',
-    toolName: 'Bash',
-    input: { command: 'ls' },
-  });
+  expect(result.current.pendingApprovals.get('r-1')).toEqual([
+    {
+      requestId: 'req-1',
+      toolName: 'Bash',
+      input: { command: 'ls' },
+      truncated: false,
+    },
+  ]);
   expect(result.current.pendingScopeRequests.get('r-1')?.requestId).toBe('m-s');
   expect(result.current.openQuestions.get('r-1')?.[0].id).toBe('m-q');
   resetGateFixtures();

@@ -87,8 +87,8 @@ export interface BuildFeedInput {
   readyIds: ReadonlySet<string>;
   blockedIds: ReadonlySet<string>;
   mergeQueue: MergeQueueSnapshot | null;
-  /** Run id -> the tool name a run is paused on, when this window saw the request. */
-  pendingApprovals: ReadonlyMap<string, { toolName: string }>;
+  /** Run id -> each tool call the run is parked on, oldest first, from its open gates. */
+  pendingApprovals: ReadonlyMap<string, readonly { toolName: string }[]>;
   /** Run id -> the questions its agent is blocked on, oldest first. */
   openQuestions: ReadonlyMap<string, readonly { question: string }[]>;
   /** Task id -> its fix-loop state, for the per-row loop annotations. */
@@ -177,12 +177,19 @@ function attentionFor(
     };
   }
   if (state === 'approve') {
-    const pending = pendingApprovals.get(run.id);
+    const calls = pendingApprovals.get(run.id) ?? [];
+    if (calls.length <= 1) {
+      return {
+        reason:
+          calls[0] !== undefined
+            ? `Wants to run ${calls[0].toolName}`
+            : 'Waiting for your approval',
+        detail: null,
+      };
+    }
     return {
-      reason: pending
-        ? `Wants to run ${pending.toolName}`
-        : 'Waiting for your approval',
-      detail: null,
+      reason: `Wants to run ${calls.length} tool calls`,
+      detail: [...new Set(calls.map((c) => c.toolName))].join(', '),
     };
   }
   if (state === 'ruling') {
