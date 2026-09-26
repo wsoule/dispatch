@@ -61,6 +61,8 @@ export interface SendInput {
   replyTo?: string | null;
   wake?: 'none' | 'request';
   session?: string;
+  /** The sender's own dedupe key; a repeat returns the first message (A2A §3.3.1). */
+  idempotencyKey?: string;
 }
 
 export const GATE_TYPES = [
@@ -146,6 +148,12 @@ function singleLine(
     invalid(field, `at most ${maxBytes} bytes (UTF-8)`);
 }
 
+// A sender-chosen dedupe key: one line, 1..200 UTF-8 bytes, like `session`.
+export function checkIdempotencyKey(key: string): void {
+  if (key === '') invalid('idempotencyKey', 'must not be empty');
+  singleLine(key, 'idempotencyKey', MAX_LABEL_BYTES);
+}
+
 // Checks a gate payload's shape and who may send it: runs raise scope gates;
 // every other gate is minted by the daemon (system) or a deciding human.
 function validateGate(
@@ -228,6 +236,8 @@ export function validateSendInput(
   )
     invalid('data', `at most ${MAX_DATA_BYTES} bytes as JSON`);
   singleLine(input.session, 'session', MAX_LABEL_BYTES);
+  if (input.idempotencyKey !== undefined)
+    checkIdempotencyKey(input.idempotencyKey);
 
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);

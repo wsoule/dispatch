@@ -1,6 +1,6 @@
 import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
-import { gateOf, validateSendInput } from './envelope.js';
+import { checkIdempotencyKey, gateOf, validateSendInput } from './envelope.js';
 import type { JsonValue, Message, Ref, SendInput } from './envelope.js';
 import { MessagingError } from './errors.js';
 import type { MessagingHost, WakeResult } from './host.js';
@@ -34,6 +34,8 @@ export interface SendResult {
   deliveries: Delivery[];
   /** True when `urgent` was dropped because the sender hit its quota. */
   downgraded: boolean;
+  /** Set when `idempotencyKey` matched an earlier send from the same sender. */
+  replayed?: true;
 }
 
 export type EngineEvent =
@@ -202,6 +204,14 @@ export class DeliveryEngine {
 
   async send(input: SendInput, sender: Sender): Promise<SendResult> {
     const { muted } = this.authorize(sender);
+    // A repeated key replays before any other check, so a retried answer or a
+    // retry after the breaker trips gets the first result.
+    const key = input.idempotencyKey;
+    if (key !== undefined) {
+      checkIdempotencyKey(key);
+      const prior = this.replay(sender.address, key);
+      if (prior !== null) return prior;
+    }
     const replyTarget = input.replyTo
       ? this.store.getMessage(input.replyTo)
       : null;
@@ -268,14 +278,19 @@ export class DeliveryEngine {
     }
 
     const question = message.kind === 'answer' ? replyTarget : null;
-    const answered = this.store.transaction(() => {
-      // Re-checked inside the write: the breaker await lets a second answer race in.
+    const written = this.store.transaction((): Delivery[] | SendResult => {
+      // Re-checked inside the write: the breaker await lets a duplicate key or
+      // a second answer race in, and the duplicate replays.
+      const prior = key === undefined ? null : this.replay(sender.address, key);
+      if (prior !== null) return prior;
       if (question !== null && this.store.answersTo(question.id).length > 0)
         throw alreadyAnswered(question.id);
-      this.store.insertMessage(message);
+      this.store.insertMessage(message, key);
       for (const d of deliveries) this.store.insertDelivery(d);
       return question === null ? [] : this.markAnswered(question.id);
     });
+    if (!Array.isArray(written)) return written;
+    const answered = written;
     // A gate's effect lands before anyone hears of the answer.
     if (question !== null && gateOf(question) !== null && !isClose(message))
       await this.applyGate(question, message);
@@ -296,6 +311,18 @@ export class DeliveryEngine {
     }
 
     return { message, deliveries: settled, downgraded };
+  }
+
+  // The first send under (from, key) as send() would return it now, or null.
+  private replay(from: Address, key: string): SendResult | null {
+    const message = this.store.byIdemKey(from, key);
+    if (message === null) return null;
+    return {
+      message,
+      deliveries: this.store.deliveries({ messageId: message.id }),
+      downgraded: false,
+      replayed: true,
+    };
   }
 
   // The address a reply actually goes to: an ended run's task (see deliverableAddress).
