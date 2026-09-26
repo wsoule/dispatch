@@ -15,7 +15,7 @@ import {
 import { singleFlight } from '../singleFlight.js';
 import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenClient, optionalAppToken } from './appToken.js';
 import { ensureDaemon } from './daemon.js';
 import { requireInitialized } from './task.js';
 
@@ -464,11 +464,10 @@ export function registerOrchestrateCommands(
         `${meta.id}  task=${meta.taskId}  state=${meta.state}  executor=${meta.executor}  branch=${meta.branch}`
       );
       if (meta.state === 'awaiting-approval') {
-        const appToken = (opts.token ?? process.env.DISPATCH_APP_TOKEN)?.trim();
         const parked = await describeParkedApproval(
           baseUrl,
           meta.id,
-          appToken === '' ? undefined : appToken
+          optionalAppToken(opts.token)
         );
         for (const line of parked) ctx.log(line);
       }
@@ -545,9 +544,11 @@ export function registerOrchestrateCommands(
         }
         // Approving answers a gate, which the daemon takes only from a human:
         // a client on the app token, never a daemon this command started.
-        const appToken = resolveAppToken(opts.token, 'dispatch approve');
-        const { baseUrl } = await attachToRunningDaemon(ctx);
-        const client = createApiClient(baseUrl, appToken);
+        const client = await appTokenClient(
+          ctx,
+          opts.token,
+          'dispatch approve'
+        );
         const { items } = await client.openDecisions();
         const found = pickRunGate(findRunGates(items, runId), runId, requestId);
         await client.replyToMessage(found.gate.id, {
@@ -578,9 +579,11 @@ export function registerOrchestrateCommands(
         opts: { resume?: boolean; token?: string }
       ) => {
         // Messages go out as a human, so they need the app token too.
-        const appToken = resolveAppToken(opts.token, 'dispatch message');
-        const { baseUrl } = await attachToRunningDaemon(ctx);
-        const client = createApiClient(baseUrl, appToken);
+        const client = await appTokenClient(
+          ctx,
+          opts.token,
+          'dispatch message'
+        );
         const body = text.join(' ');
         if (opts.resume !== true) {
           await client.sendMessage({
