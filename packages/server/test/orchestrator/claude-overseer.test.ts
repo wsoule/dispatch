@@ -160,6 +160,11 @@ describe('ClaudeOverseer session wiring', () => {
       })
     ).toBe('deny');
     expect(captured?.settings).toEqual(floorGuard('deny').settings);
+    // The overseer keeps Claude's native auto memory, as a run does.
+    expect(
+      (captured?.settings as { autoMemoryEnabled?: boolean } | undefined)
+        ?.autoMemoryEnabled
+    ).toBeUndefined();
   });
 
   // The hook holds a floor command through the same authorizeTool gate

@@ -70,4 +70,13 @@ and \`channel:<name>\`.
 - **Tell someone**: \`kind: "notice"\` (FYI) or \`"message"\`, no blocking.
 - **Hear back**: messages arrive in your session. Answer with \`msg_reply\`,
   catch up with \`inbox_read\`, and read a whole conversation with \`thread_read\`.
+
+## Memory
+
+Dispatch remembers lessons, conventions and preferences from earlier work. A
+dispatched run's prompt carries the top ones as a \`## Memory\` index, one line
+each with a \`#handle\`. Open one with \`memory_read("#handle")\` for its body,
+author and revisions, and use \`memory_search\` to find entries the index left
+out. A line marked \`unreviewed\` was written by an agent and no human has
+checked it yet.
 `;

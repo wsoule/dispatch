@@ -18,7 +18,10 @@ import {
   loadConfig,
   queueWeights,
 } from '../src/config.js';
-import { MAX_CONCURRENCY_HARD_CAP } from '../src/configTypes.js';
+import {
+  DEFAULT_MEMORY,
+  MAX_CONCURRENCY_HARD_CAP,
+} from '../src/configTypes.js';
 import { DEFAULT_POLICY } from '../src/policy.js';
 import { DEFAULT_QUEUE_WEIGHTS } from '../src/scoring.js';
 
@@ -69,6 +72,7 @@ describe('loadConfig', () => {
       repoDigest: DEFAULT_REPO_DIGEST,
       notifications: DEFAULT_NOTIFICATIONS,
       messaging: DEFAULT_MESSAGING,
+      memory: DEFAULT_MEMORY,
       receipts: DEFAULT_RECEIPTS,
       sync: DEFAULT_SYNC,
       policy: DEFAULT_POLICY,

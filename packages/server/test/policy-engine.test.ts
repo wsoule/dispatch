@@ -186,6 +186,7 @@ function harness(
         return { ...input, id: 'l-000001' } as unknown as LedgerEntry;
       },
       list: () => [],
+      listSafe: () => ({ records: [], errors: [] }),
       entriesFor: () => [],
     },
     actorContext: { humanRef: 'human:test' },

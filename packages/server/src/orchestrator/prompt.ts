@@ -49,7 +49,10 @@ export function buildTaskPrompt(
   // their prompt must not send the agent after tools it does not have.
   dispatchTools = true,
   // The address the agent asks (the project owner); null names a placeholder.
-  human: string | null = null
+  human: string | null = null,
+  // Undefined: memory is not in use, so the ledger section renders. Null: in
+  // use with nothing to show. A string is the rendered `## Memory` section.
+  memorySection?: string | null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -72,8 +75,12 @@ export function buildTaskPrompt(
     );
   }
 
-  const ledgerSection = renderLedgerSection(ledgerEntries);
-  if (ledgerSection !== null) sections.push(ledgerSection);
+  if (memorySection !== undefined) {
+    if (memorySection !== null) sections.push(memorySection);
+  } else {
+    const ledgerSection = renderLedgerSection(ledgerEntries);
+    if (ledgerSection !== null) sections.push(ledgerSection);
+  }
 
   // The orientation section answers the questions the two instructions below
   // would otherwise send the agent off to answer for itself, so when it is

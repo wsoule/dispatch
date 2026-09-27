@@ -84,6 +84,8 @@ import type {
   ExecutorProfile,
   ExecutorRun,
   ExecutorStartOptions,
+  MemoryPromptPort,
+  MemoryPromptSection,
   NormalizedEntry,
   ReviewFailure,
   RunKind,
@@ -98,6 +100,8 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
   runKind,
+  runLineage,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './types.js';
 import type { RunUsage } from './usage.js';
@@ -174,6 +178,9 @@ export interface OrchestratorContext {
   // The TypeSafe judgment client, or null/absent when none is configured —
   // only the fresh-dispatch model tier consults it (see modelForFreshRun).
   judgments?: JudgmentClient | null;
+  // Whether a task came in over A2A; such a task's runs act for no one.
+  // Absent means no task did.
+  isA2ATask?: (taskId: string) => boolean;
 }
 
 // The name api.ts's createRun falls back to when a caller omits `executor`
@@ -380,6 +387,8 @@ export class Orchestrator {
   private mintRunToken: ((runId: string) => string) | null = null;
   // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
   private approvalGate: ApprovalGatePort | null = null;
+  // Renders each dispatch prompt's memory section (see setMemoryPort); null keeps the ledger section.
+  private memoryPort: MemoryPromptPort | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -463,6 +472,11 @@ export class Orchestrator {
   // Installed by messaging at boot: raises and settles the gate a parked tool call waits on.
   setApprovalGate(port: ApprovalGatePort | null): void {
     this.approvalGate = port;
+  }
+
+  // Installed by the memory service at boot; until then prompts carry the ledger section.
+  setMemoryPort(port: MemoryPromptPort | null): void {
+    this.memoryPort = port;
   }
 
   // Subscribes to "a run just became live" (its ExecutorRun is registered), so
@@ -776,8 +790,14 @@ export class Orchestrator {
     // `actor` credits who caused this dispatch: omitted (the API's manual
     // dispatch) defaults to the daemon's human, but an automatic caller
     // (EpicEngine's auto-fill) passes 'none' explicitly — no human pressed
-    // dispatch for that specific task.
-    opts: { model?: string; effort?: EffortLevel; actor?: string } = {}
+    // dispatch for that specific task. `operator` is who the run acts for;
+    // absent means no one, never the actor or the daemon's human.
+    opts: {
+      model?: string;
+      effort?: EffortLevel;
+      actor?: string;
+      operator?: string | null;
+    } = {}
   ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task === null) {
@@ -833,6 +853,8 @@ export class Orchestrator {
       // nobody pressed dispatch for this task, and crediting that to anyone
       // would be inventing an owner.
       ...(dispatchedBy === undefined ? {} : { dispatchedBy }),
+      operator: this.a2a(taskId) ? null : (opts.operator ?? null),
+      memoryLineage: runId,
       // Seeded from the task's own declared write-set — see RunMeta.claims.
       claims: [...task.meta.writes],
       // Spread in only for a genuinely stacked run, so an unblocked run's
@@ -868,7 +890,7 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task, executorName),
+        prompt: this.promptForTask(task, executorName, runId),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
@@ -933,6 +955,11 @@ export class Orchestrator {
       model: opts.model,
       ...this.effortField(opts.effort),
       kind: opts.kind,
+      // Acts for whoever the run it reviews, verifies or replaces acted for.
+      operator: this.a2a(opts.taskId)
+        ? null
+        : this.operatorForTask(opts.taskId),
+      memoryLineage: runId,
       claims: [...task.meta.writes],
     };
     this.registry.create(meta);
@@ -2040,6 +2067,8 @@ export class Orchestrator {
       effort?: EffortLevel;
       fresh?: boolean;
       actor?: string;
+      // Who a fresh run acts for; a resume keeps its predecessor's.
+      operator?: string | null;
       defaults?: { executor?: string; model?: string };
     } = {}
   ): Promise<RunMeta> {
@@ -2062,6 +2091,7 @@ export class Orchestrator {
       model,
       effort: request.effort,
       actor: request.actor,
+      operator: request.operator,
     });
     if (reason !== null) {
       // Logged on the task so a run on the cheaper tier is explainable from
@@ -2096,7 +2126,24 @@ export class Orchestrator {
     ) {
       return this.requestChanges(latest, WAKE_PROMPT, opts.actor);
     }
-    return this.dispatchOrResume(taskId, { actor: opts.actor });
+    return this.dispatchOrResume(taskId, {
+      actor: opts.actor,
+      operator: this.operatorForTask(taskId),
+    });
+  }
+
+  // Whether a task came in over A2A; its runs act for no one.
+  private a2a(taskId: string): boolean {
+    return this.ctx.isA2ATask?.(taskId) ?? false;
+  }
+
+  // Who the task's latest execute run acts for: the operator of a wake, review,
+  // verify or fix-loop run of the same task.
+  operatorForTask(taskId: string): string | null {
+    const latest = this.registry
+      .list()
+      .find((r) => r.taskId === taskId && runKind(r) === 'execute');
+    return latest === undefined ? null : runOperator(latest);
   }
 
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
@@ -4462,12 +4509,10 @@ export class Orchestrator {
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.sessionId === sessionId) return;
     if (TERMINAL_RUN_STATES.has(meta.state)) return;
-    // A resumed run is born holding the session it was told to continue, so
-    // an executor reporting a DIFFERENT one has opened a conversation with
-    // none of the history this run claims. ClaudeExecutor fails the run
-    // itself before this can happen; for any executor that does not, the
-    // Session log at least says so, rather than letting the successor pass
-    // as a continuation while the agent underneath it starts from nothing.
+    // A resumed run is born holding the session it was told to continue, so a
+    // DIFFERENT one reported here has none of the history this run claims: an
+    // export fallback's fresh session, or a resume an executor did not refuse.
+    // The Session log says so rather than letting it pass as a continuation.
     if (meta.resumedFrom !== undefined && meta.sessionId !== undefined) {
       const notice: NormalizedEntry = {
         ts: new Date().toISOString(),
@@ -4677,6 +4722,9 @@ export class Orchestrator {
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
       resumedFrom: oldMeta.id,
+      // The session already holds its operator's memory, whoever typed this.
+      operator: this.a2a(oldMeta.taskId) ? null : runOperator(oldMeta),
+      memoryLineage: runLineage(oldMeta),
       // The resumed run inherits the same worktree and the same BRANCH, so it
       // inherits the branch's stacking facts too. Dropping them here was how a
       // still-running resume ended up invisible to the merge queue: with no
@@ -4828,6 +4876,9 @@ export class Orchestrator {
       // its predecessor had already claimed.
       claims: meta.claims,
       resumedFrom: meta.id,
+      // A fresh session starts its own lineage; the operator carries either way.
+      operator: this.a2a(meta.taskId) ? null : runOperator(meta),
+      memoryLineage: continuing ? runLineage(meta) : newRunId,
       ...(meta.stackParents !== undefined
         ? { stackParents: meta.stackParents }
         : {}),
@@ -4862,7 +4913,7 @@ export class Orchestrator {
 
     const prompt = continuing
       ? renderContinuationPrompt(meta, newRunId)
-      : `${this.promptForTask(task, executorName)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
+      : `${this.promptForTask(task, executorName, newRunId)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
 
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
@@ -4934,7 +4985,11 @@ export class Orchestrator {
   // exact text is unit-testable independent of the orchestrator. A corrupt
   // parent epic file degrades to "no epic context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  private promptForTask(task: TaskDoc, executorName: string): string {
+  private promptForTask(
+    task: TaskDoc,
+    executorName: string,
+    runId: string
+  ): string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
       try {
@@ -4943,18 +4998,40 @@ export class Orchestrator {
         if (!(err instanceof TaskParseError)) throw err;
       }
     }
-    const ledgerEntries = this.ledgerStore.entriesFor(
-      task.meta.id,
-      task.meta.parent
-    );
+    const dispatchTools =
+      this.executorProfile(executorName).dispatchMcp !== false;
+    const memory = this.memorySection(task.meta.id, runId, dispatchTools);
+    const ledgerEntries =
+      memory.source === 'ledger'
+        ? this.ledgerStore.entriesFor(task.meta.id, task.meta.parent)
+        : [];
     return buildTaskPrompt(
       task,
       parentEpic,
       ledgerEntries,
       this.orientationFor(task.meta.id),
-      this.executorProfile(executorName).dispatchMcp !== false,
-      this.ctx.actorContext?.humanRef ?? null
+      dispatchTools,
+      this.ctx.actorContext?.humanRef ?? null,
+      memory.source === 'memory' ? memory.text : undefined
     );
+  }
+
+  // Never throws: a broken memory store costs the section, never the dispatch.
+  private memorySection(
+    taskId: string,
+    runId: string,
+    dispatchTools: boolean
+  ): MemoryPromptSection {
+    if (this.memoryPort === null) return { source: 'ledger' };
+    try {
+      return this.memoryPort.promptSection({ runId, taskId, dispatchTools });
+    } catch (err) {
+      console.error(
+        `dispatchd: memory index for run ${runId} failed; using the ledger section`,
+        err
+      );
+      return { source: 'ledger' };
+    }
   }
 
   // The repo facts injected into this task's prompt (see orientation.ts): the

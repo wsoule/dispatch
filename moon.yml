@@ -6,6 +6,8 @@ language: 'typescript'
 # so the root project depends on every dist-producing project.
 dependsOn:
   - 'core'
+  - 'protocol'
+  - 'memory'
   - 'client'
   - 'cli'
   - 'mcp'

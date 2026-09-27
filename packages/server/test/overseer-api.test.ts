@@ -334,9 +334,12 @@ describe('overseer action gates', () => {
     return { ready, gate };
   }
 
-  async function listRuns(): Promise<{ taskId: string }[]> {
+  async function listRuns(): Promise<
+    { taskId: string; operator?: string | null }[]
+  > {
     return (await json(await fetch(`${baseUrl}/api/runs`))) as {
       taskId: string;
+      operator?: string | null;
     }[];
   }
 
@@ -354,7 +357,10 @@ describe('overseer action gates', () => {
         outcome: 'applied',
       })
     );
-    expect(await listRuns()).toHaveLength(1);
+    const runs = await listRuns();
+    expect(runs).toHaveLength(1);
+    // The overseer acts for the daemon's owner.
+    expect(runs[0].operator).toBe('human:test');
     expect(await openGates()).toEqual([]);
   });
 

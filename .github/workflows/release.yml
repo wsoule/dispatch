@@ -126,7 +126,9 @@ jobs:
       # the sidecar `bun build --compile` step resolves @dispatch/* imports
       # through each package.json's `exports`, which point at dist/*.
       - name: Build workspace packages
-        run: moon run core:build client:build cli:build mcp:build
+        run:
+          moon run core:build client:build cli:build mcp:build protocol:build
+          memory:build
 
       # The signing certificate must be importable BEFORE the build: the
       # sidecar build script codesigns during tauri's beforeBuildCommand,

@@ -12,6 +12,7 @@ import { LedgerStore } from '../../src/ledger.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
 import { Orchestrator } from '../../src/orchestrator/orchestrator.js';
+import type { OrchestratorContext } from '../../src/orchestrator/orchestrator.js';
 import type {
   ApprovalDecision,
   Executor,
@@ -72,8 +73,14 @@ export function useTempProject(): { root(): string } {
   };
 }
 
-// A bare orchestrator over `root`'s task store, with no executors registered.
-export function makeOrchestrator(root: string): {
+// A bare orchestrator over `root`'s task store, with no executors registered;
+// `extra` adds context fields such as an actorContext or an isA2ATask hook.
+export function makeOrchestrator(
+  root: string,
+  extra: Partial<
+    Omit<OrchestratorContext, 'rootDir' | 'store' | 'cache' | 'events'>
+  > = {}
+): {
   orchestrator: Orchestrator;
   store: TaskStore;
   events: EventBus;
@@ -83,6 +90,7 @@ export function makeOrchestrator(root: string): {
   cache.rebuild(store);
   const events = new EventBus();
   const orchestrator = new Orchestrator({
+    ...extra,
     rootDir: root,
     store,
     cache,

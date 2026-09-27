@@ -33,6 +33,7 @@ export type {
   WakeResult,
 } from './host.js';
 export { renderDigestLine, renderForAgent } from './render.js';
+export { LINE_BREAK } from './lines.js';
 export {
   MESSAGES_DB_VERSION,
   openMessagesDb,

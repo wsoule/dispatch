@@ -24,6 +24,10 @@ export type { AddLedgerInput, LedgerListFilter } from '@dispatch/core';
 export interface LedgerStorePort {
   add(input: AddLedgerInput): LedgerEntry;
   list(filter?: LedgerListFilter): LedgerEntry[];
+  listSafe(filter?: LedgerListFilter): {
+    records: LedgerEntry[];
+    errors: readonly unknown[];
+  };
   entriesFor(taskId: string, epicId: string | null): LedgerEntry[];
 }
 
@@ -120,6 +124,24 @@ export class LedgerStore implements LedgerStorePort {
   list(filter: LedgerListFilter = {}): LedgerEntry[] {
     if (filter.epicId === undefined) return this.read();
     return this.read().filter((e) => e.epicId === filter.epicId);
+  }
+
+  // Every record plus the lines that would not read, so an import can count
+  // damage instead of silently dropping it.
+  listSafe(filter: LedgerListFilter = {}): {
+    records: LedgerEntry[];
+    errors: string[];
+  } {
+    if (!existsSync(this.file)) return { records: [], errors: [] };
+    const scan = scanLedgerJsonl(readFileSync(this.file, 'utf8'));
+    const records =
+      filter.epicId === undefined
+        ? scan.records
+        : scan.records.filter((e) => e.epicId === filter.epicId);
+    return {
+      records,
+      errors: [...scan.unparseableLines, ...scan.invalidLines],
+    };
   }
 
   // What a dispatched task should see: entries aimed at it directly, plus

@@ -78,9 +78,10 @@ test('re-clicking the current stop does not save', () => {
 
 test('gate rows show the effective mode consultPolicy derives from the rung', () => {
   render(<PolicySection config={configAt(3)} onSave={noSave} client={null} />);
-  // Rung 3: scope, approval, verify-retry and wake auto-decide, merge still blocks.
+  // Rung 3: scope, approval, verify-retry and wake auto-decide; merge and
+  // memory still block.
   expect(screen.getAllByText('Automatic')).toHaveLength(4);
-  expect(screen.getAllByText('Waits for you')).toHaveLength(1);
+  expect(screen.getAllByText('Waits for you')).toHaveLength(2);
 });
 
 test('a pinned gate reads as pinned and a pin change saves key-by-key', () => {
@@ -109,9 +110,20 @@ test('the irreversibility floor renders fixed rows with no control', () => {
   expect(screen.getAllByText('Always waits')).toHaveLength(6);
   expect(screen.getByText(/Force-push/)).toBeDefined();
   expect(screen.getByText(/Publishing packages/)).toBeDefined();
-  // Even at the top rung the floor never gains a select: only the five
+  // Even at the top rung the floor never gains a select: only the six
   // policy gates have overrides.
-  expect(screen.getAllByRole('combobox')).toHaveLength(5);
+  expect(screen.getAllByRole('combobox')).toHaveLength(6);
+});
+
+test("the top stop says it accepts agents' shared memory, and memory has its own row", () => {
+  render(<PolicySection config={configAt(4)} onSave={noSave} client={null} />);
+  expect(
+    screen.getByRole('button', { name: 'Merge and accept memory on their own' })
+  ).toBeDefined();
+  expect(screen.getByText('Shared memory from agents')).toBeDefined();
+  expect(
+    screen.getByRole('combobox', { name: 'Shared memory from agents override' })
+  ).toBeDefined();
 });
 
 test('receipts list only policy auto-decisions and click through to the task', async () => {

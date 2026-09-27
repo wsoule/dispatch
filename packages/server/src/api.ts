@@ -30,9 +30,10 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
+import { MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
@@ -56,7 +57,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor } from './api/caller.js';
+import { humanActor, humanCredentialRef } from './api/caller.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
@@ -122,7 +123,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
-import { expiredTokenMessage } from './identity.js';
+import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
@@ -148,6 +149,16 @@ import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
+import {
+  getMemory,
+  importLedgerRoute,
+  listMemory,
+  memoryHealthRoute,
+  memoryIndexRoute,
+  memoryRecallsRoute,
+  searchMemory,
+} from './memory/routes.js';
+import type { MemoryService } from './memory/service.js';
 import type { Principal } from './messaging/principal.js';
 import { resolvePrincipal } from './messaging/principal.js';
 import {
@@ -260,6 +271,8 @@ export interface ApiContext {
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
+  /** The memory store and engine (memory/service.ts). */
+  memory: MemoryService;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by
   // PrManager's poll, listed here for GET /api/landing's worktree column.
@@ -372,6 +385,9 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
+  /** True when the request presented the shared agentToken: `caller` names
+   *  the owner, but no human is behind it. Set per request by handleApi. */
+  viaAgentToken?: boolean;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -764,6 +780,9 @@ async function createRun(
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
     actor: humanActor(ctx),
+    // Who the run acts for: the credential's own human, never the shared
+    // agentToken, which humanActor credits to the owner.
+    operator: humanCredentialRef(ctx),
   });
   return jsonResponse(meta, 201);
 }
@@ -1162,6 +1181,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'receipts',
     'sync',
     'preview',
+    'memory',
   ] as const) {
     if (!(key in body)) continue;
     const field = objectField(body, key);
@@ -3543,7 +3563,12 @@ async function startEpic(
   if (!parsed.ok) return parsed.response;
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
-  const session = await ctx.epicEngine.start(epicId, checked.body);
+  // Only a human credential starts a session its auto-fill runs act for.
+  const startedBy = humanCredentialRef(ctx);
+  const session = await ctx.epicEngine.start(epicId, {
+    ...checked.body,
+    ...(startedBy === null ? {} : { startedBy }),
+  });
   return jsonResponse(session, 201);
 }
 
@@ -4350,6 +4375,9 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'DELETE', segments: ['channels', '*', 'members'] },
   { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
   { method: 'GET', segments: ['decisions', 'open'] },
+  { method: 'GET', segments: ['memory'] },
+  { method: 'GET', segments: ['memory', '*'] },
+  { method: 'POST', segments: ['memory', 'import', 'ledger'] },
 ];
 
 /** Whether `/api/<segments>` is a messaging route that authenticates by
@@ -4537,8 +4565,13 @@ export async function handleApi(
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
   const caller = daemonCtx.tokens.registry.resolve(presented);
+  // The shared agentToken resolves to the owner but is never a human; a
+  // constant-time digest compare, as resolvePrincipal does.
+  const viaAgentToken =
+    presented !== null &&
+    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
   let ctx: ApiContext = daemonCtx;
-  if (caller !== null) ctx = { ...ctx, caller };
+  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken };
   if (principal !== undefined) ctx = { ...ctx, principal };
 
   try {
@@ -5426,6 +5459,28 @@ export async function handleApi(
       }
     }
 
+    // Memory routes read ctx.principal, like messaging's (memory/routes.ts).
+    if (segments[0] === 'memory') {
+      if (segments.length === 1 && method === 'GET') {
+        return listMemory(ctx, url);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        if (segments[1] === 'search') return searchMemory(ctx, url);
+        if (segments[1] === 'health') return memoryHealthRoute(ctx);
+        if (segments[1] === 'index') return memoryIndexRoute(ctx, url);
+        if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
+        return getMemory(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'import' &&
+        segments[2] === 'ledger' &&
+        method === 'POST'
+      ) {
+        return importLedgerRoute(ctx, url);
+      }
+    }
+
     if (
       segments[0] === 'decisions' &&
       segments.length === 2 &&
@@ -6123,6 +6178,12 @@ export async function handleApi(
       const body: { error: string; field?: string } = { error: err.message };
       if (err.field !== undefined) body.field = err.field;
       return jsonResponse(body, status[err.code]);
+    }
+    // Memory routes do the same with MemoryError, which also has `unavailable` (503).
+    if (err instanceof MemoryError) {
+      const body: { error: string; field?: string } = { error: err.message };
+      if (err.field !== undefined) body.field = err.field;
+      return jsonResponse(body, err.status);
     }
     throw err;
   }

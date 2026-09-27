@@ -4,6 +4,7 @@ ACMR
 acodex
 addext
 affordances
+allowbuilds
 analysability
 analysable
 analyse
@@ -80,6 +81,7 @@ coverable
 cpushed
 CRDT
 CRDT's
+crockford
 cutover
 daemonfile
 Dami
@@ -195,6 +197,7 @@ headerless
 headlessly
 hexdigit
 HIDEABLE
+hjkmnp
 hookable
 hookified
 hostable

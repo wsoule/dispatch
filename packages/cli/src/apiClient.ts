@@ -676,6 +676,11 @@ export interface ApiClient {
   getLicense(): Promise<LicenseStatus>;
   /** Installs a license key (operator tier). */
   installLicense(key: string): Promise<LicenseStatus>;
+  /** Decide-tier: imports ledger lessons into memory and reports count
+   *  parity; `dryRun` reports without writing. */
+  importLedger(
+    dryRun: boolean
+  ): Promise<{ report: { outcome: string }; text: string }>;
 }
 
 /** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts.
@@ -866,5 +871,9 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         method: 'DELETE',
       });
     },
+    importLedger: (dryRun) =>
+      request(target, `/api/memory/import/ledger${dryRun ? '?dryRun=1' : ''}`, {
+        method: 'POST',
+      }),
   };
 }
