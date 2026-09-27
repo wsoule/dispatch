@@ -1,6 +1,10 @@
+// The largest counter an op's clock may carry: nine digits, far below 2^53,
+// so counters compare exactly. A clock at the bound must tick into the next ms.
+export const MAX_HLC_COUNTER = 999_999_999;
+
 // `<ms>.<counter>.<replica>`, compared numerically, since the counter can
-// outgrow its four-digit padding.
-const HLC = /^(\d{13})\.(\d{4,})\.(.+)$/;
+// outgrow its four-digit padding; nine digits at most, per MAX_HLC_COUNTER.
+const HLC = /^(\d{13})\.(\d{4,9})\.(.+)$/;
 
 export interface ParsedHlc {
   ms: number;

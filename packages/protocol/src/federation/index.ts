@@ -4,7 +4,7 @@ export { buildOp, verifyEntry } from './chain.js';
 export type { ChainHead } from './chain.js';
 export { b64u, crockford32, fromB64u, sha256Hex } from './encoding.js';
 export { fingerprint } from './fingerprint.js';
-export { compareHlc, hlcWallMs, parseOpHlc } from './hlc.js';
+export { compareHlc, hlcWallMs, MAX_HLC_COUNTER, parseOpHlc } from './hlc.js';
 export type { ParsedHlc } from './hlc.js';
 export { canonicalize } from './jcs.js';
 export {

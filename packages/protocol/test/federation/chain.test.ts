@@ -4,16 +4,20 @@ import type { JsonValue } from '../../src/envelope.js';
 import { buildOp, verifyEntry } from '../../src/federation/chain.js';
 import type { ChainHead } from '../../src/federation/chain.js';
 import { fingerprint } from '../../src/federation/fingerprint.js';
-import { generateReplicaKeys } from '../../src/federation/keys.js';
+import { MAX_HLC_COUNTER } from '../../src/federation/hlc.js';
+import { generateReplicaKeys, signText } from '../../src/federation/keys.js';
 import {
+  contentHash,
   MAX_OP_BYTES,
   opHash,
+  signingInput,
   stubOf,
   ZERO_HASH,
 } from '../../src/federation/ops.js';
 import type {
   FederatedOp,
   LogEntry,
+  OpHeader,
   Sealed,
 } from '../../src/federation/ops.js';
 import { sealPayload } from '../../src/federation/seal.js';
@@ -23,6 +27,31 @@ const keys = generateReplicaKeys();
 const peer = generateReplicaKeys();
 const hlc = (ms: number, counter = 0, replica = R) =>
   `${String(ms).padStart(13, '0')}.${String(counter).padStart(4, '0')}.${replica}`;
+
+type OpFields = Parameters<typeof buildOp>[0];
+
+// Signs any header, as a buggy or hostile publisher could; buildOp refuses to.
+function forge(fields: OpFields): FederatedOp {
+  const content: { body?: JsonValue; sealed?: Sealed } = {};
+  if (fields.body !== undefined) content.body = fields.body;
+  if (fields.sealed !== undefined) content.sealed = fields.sealed;
+  const { replica, seq, prev, hlc: at, type } = fields;
+  const header: OpHeader = {
+    v: 2,
+    replica,
+    seq,
+    prev,
+    hlc: at,
+    type,
+    bodyHash: contentHash(content),
+  };
+  if (fields.to !== undefined) header.to = fields.to;
+  return {
+    ...header,
+    ...content,
+    sig: signText(keys.signPriv, signingInput(header)),
+  };
+}
 
 function chain(): [FederatedOp, FederatedOp, FederatedOp, FederatedOp] {
   const key = buildOp(
@@ -111,10 +140,7 @@ describe('verifyEntry along a chain', () => {
   it('refuses each way a log can be forged or broken', () => {
     const [key, task, mail, presence] = chain();
     const next = (seq: number, at: string, type = 'task') =>
-      buildOp(
-        { replica: R, seq, prev: opHash(key), hlc: at, type, body: {} },
-        keys.signPriv
-      );
+      forge({ replica: R, seq, prev: opHash(key), hlc: at, type, body: {} });
     const cases: [string, LogEntry[]][] = [
       ['a log must start with its key op', [task]],
       ['prev does not match', [key, mail]],
@@ -199,10 +225,13 @@ describe('verifyEntry along a chain', () => {
       to?: string[];
       sealed?: Sealed;
     }) =>
-      buildOp(
-        { replica: R, seq: 7, prev: opHash(task), hlc: hlc(1001), ...fields },
-        keys.signPriv
-      );
+      forge({
+        replica: R,
+        seq: 7,
+        prev: opHash(task),
+        hlc: hlc(1001),
+        ...fields,
+      });
     const cases: [string, LogEntry][] = [
       [
         'bad recipient list',
@@ -325,6 +354,71 @@ describe('verifyEntry along a chain', () => {
     ];
     for (const entries of cases)
       expect(run(entries).failure).toBe('malformed op');
+  });
+
+  it('refuses a counter past MAX_HLC_COUNTER, and orders counters up to it exactly', () => {
+    const [key, task] = chain();
+    const at = (counter: string) => `0000000001001.${counter}.${R}`;
+    const after = (prev: FederatedOp, seq: number, clock: string) =>
+      forge({
+        replica: R,
+        seq,
+        prev: opHash(prev),
+        hlc: clock,
+        type: 'task',
+        body: {},
+      });
+    for (const over of [
+      String(MAX_HLC_COUNTER + 1),
+      '9007199254740993',
+      '1000000000000000000000',
+    ])
+      expect(run([key, task, after(task, 7, at(over))]).failure).toBe(
+        'hlc outside the grammar'
+      );
+    const below = after(task, 7, at(String(MAX_HLC_COUNTER - 1)));
+    const top = after(below, 8, at(String(MAX_HLC_COUNTER)));
+    expect(run([key, task, below, top]).failure).toBeNull();
+    const again = after(below, 8, at(String(MAX_HLC_COUNTER - 1)));
+    expect(run([key, task, below, again]).failure).toBe('hlc must rise');
+  });
+
+  // Every peer would refuse such an op, halting this replica's log for good.
+  it('buildOp refuses to sign a header outside the grammar', () => {
+    const [key] = chain();
+    const base: OpFields = {
+      replica: R,
+      seq: 5,
+      prev: opHash(key),
+      hlc: hlc(2000),
+      type: 'task',
+      body: {},
+    };
+    const cases: [string, Partial<OpFields>][] = [
+      [
+        'replica id outside the grammar',
+        { replica: 'ada', hlc: hlc(2000, 0, 'ada') },
+      ],
+      ['not a v2 op', { type: 'Task' }],
+      ['seq must rise', { seq: 0 }],
+      ['malformed op', { prev: 'x' }],
+      [
+        'hlc outside the grammar',
+        { hlc: `0000000002000.${String(MAX_HLC_COUNTER + 1)}.${R}` },
+      ],
+      ['hlc must name its own replica', { hlc: hlc(2000, 0, 'bob-0000000b') }],
+      [
+        'bad recipient list',
+        { type: 'mail', to: ['cy-0000000c', 'bob-0000000b'] },
+      ],
+      ['bad recipient list', { type: 'mail', to: ['bob'] }],
+      ['bad recipient list', { type: 'mail', to: [] }],
+    ];
+    for (const [reason, change] of cases)
+      expect(() => buildOp({ ...base, ...change }, keys.signPriv)).toThrow(
+        `cannot sign: ${reason}`
+      );
+    expect(run([key, buildOp(base, keys.signPriv)]).failure).toBeNull();
   });
 
   it('pins the fingerprint over both public keys', () => {

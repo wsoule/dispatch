@@ -27,7 +27,8 @@ export interface ChainHead {
 }
 
 // Signs a new op: the signature covers the header, which commits to the
-// content through `bodyHash`.
+// content through `bodyHash`. Throws a RangeError for a header every peer
+// would refuse.
 export function buildOp(
   fields: {
     replica: string;
@@ -41,6 +42,8 @@ export function buildOp(
   },
   signPriv: string
 ): FederatedOp {
+  const problem = headerProblem(fields);
+  if (problem !== null) throw new RangeError(`cannot sign: ${problem}`);
   const content: { body?: JsonValue; sealed?: Sealed } = {};
   if (fields.body !== undefined) content.body = fields.body;
   if (fields.sealed !== undefined) content.sealed = fields.sealed;
@@ -84,6 +87,30 @@ function sameKeys(sorted: readonly string[], keys: string[]): boolean {
 
 const isHex64 = (v: unknown) => typeof v === 'string' && HEX64.test(v);
 
+// The header rules that need no chain: what buildOp checks before signing and
+// verifyEntry after. Null when the fields pass.
+function headerProblem(h: {
+  replica: unknown;
+  seq: unknown;
+  prev: unknown;
+  hlc: unknown;
+  type: unknown;
+  to?: unknown;
+}): string | null {
+  if (typeof h.replica !== 'string' || !REPLICA_ID.test(h.replica))
+    return 'replica id outside the grammar';
+  if (typeof h.type !== 'string' || !TYPE.test(h.type)) return 'not a v2 op';
+  if (!Number.isSafeInteger(h.seq) || (h.seq as number) < 1)
+    return 'seq must rise';
+  if (!isHex64(h.prev)) return 'malformed op';
+  const clock = typeof h.hlc === 'string' ? parseOpHlc(h.hlc) : null;
+  if (clock === null) return 'hlc outside the grammar';
+  if (clock.replica !== h.replica) return 'hlc must name its own replica';
+  if (h.to !== undefined && !sortedUnique(h.to, MAX_SEALED_RECIPIENTS))
+    return 'bad recipient list';
+  return null;
+}
+
 // What JCS and the checks below need of an entry parsed off the branch: an
 // object with a string `sig` and hex hashes.
 function wellFormed(e: unknown): boolean {
@@ -110,19 +137,14 @@ export function verifyEntry(
   signPub: string
 ): { ok: true; head: ChainHead } | { ok: false; reason: string } {
   if (!wellFormed(e)) return fail('malformed op');
-  if (typeof e.replica !== 'string' || !REPLICA_ID.test(e.replica))
-    return fail('replica id outside the grammar');
-  if (e.v !== 2 || typeof e.type !== 'string' || !TYPE.test(e.type))
-    return fail('not a v2 op');
-  if (!Number.isSafeInteger(e.seq) || e.seq < 1) return fail('seq must rise');
+  if (e.v !== 2) return fail('not a v2 op');
+  const problem = headerProblem(e);
+  if (problem !== null) return fail(problem);
   // JCS writes JSON.stringify's bytes in another key order, and fails fast on
   // deep nesting where the native stringify spends seconds.
   const bytes = orNull(() => Buffer.byteLength(canonicalize(e)));
   if (bytes === null) return fail('malformed op');
   if (bytes > MAX_OP_BYTES) return fail('over MAX_OP_BYTES');
-  const clock = typeof e.hlc === 'string' ? parseOpHlc(e.hlc) : null;
-  if (clock === null || clock.replica !== e.replica)
-    return fail('hlc must name its own replica');
   if (head === null) {
     if (isStub(e) || e.type !== 'key' || e.prev !== ZERO_HASH)
       return fail('a log must start with its key op');
@@ -130,12 +152,11 @@ export function verifyEntry(
     if (e.type === 'key') return fail('a second key op');
     if (e.prev !== head.hash) return fail('prev does not match');
     if (e.seq <= head.seq) return fail('seq must rise');
+    const clock = parseOpHlc(e.hlc);
     const before = parseOpHlc(head.hlc);
-    if (before !== null && compareHlc(clock, before) <= 0)
+    if (clock !== null && before !== null && compareHlc(clock, before) <= 0)
       return fail('hlc must rise');
   }
-  if (e.to !== undefined && !sortedUnique(e.to, MAX_SEALED_RECIPIENTS))
-    return fail('bad recipient list');
   if (!verifyText(signPub, signingInput(headerOf(e)), e.sig))
     return fail('bad signature');
   if (isStub(e)) {
