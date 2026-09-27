@@ -726,6 +726,48 @@ describe('messaging queries', () => {
     ]);
   });
 
+  it('tries a thread read again after a network blip or a daemon error', async () => {
+    const failures = [
+      new TypeError('Failed to fetch'),
+      new ApiError('daemon busy', 503),
+    ];
+    const calls: string[] = [];
+    const client = {
+      getMessage: (id: string) => {
+        calls.push(`message ${id}`);
+        return calls.length === 1
+          ? Promise.reject(failures[0])
+          : Promise.resolve(msg(id, { thread: 'm-01' }));
+      },
+      getThread: (id: string) => {
+        calls.push(`thread ${id}`);
+        return calls.length === 3
+          ? Promise.reject(failures[1])
+          : Promise.resolve({ messages: [msg('m-01')], deliveries: [] });
+      },
+    } as unknown as ApiClient;
+    const qc = new QueryClient({
+      defaultOptions: { queries: { retryDelay: 0 } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useThread(client, PORT, 'm-02', TEAMMATE),
+      { wrapper }
+    );
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.id)).toEqual(['m-01']);
+    });
+    expect(result.current.error).toBeNull();
+    expect(calls).toEqual([
+      'message m-02',
+      'message m-02',
+      'thread m-01',
+      'thread m-01',
+    ]);
+  });
+
   it('opens no thread for an agent window, even with a focus from a link', async () => {
     const { calls, client } = readingClient();
     const agent = mount(() => useThread(client, PORT, 'm-02', AGENT_WINDOW));

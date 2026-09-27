@@ -14,6 +14,7 @@ import type {
   ServerEvent,
   ThreadDetail,
 } from '@dispatch/client';
+import { ApiError } from '@dispatch/client';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
@@ -55,6 +56,13 @@ export function threadListsKey(port: number | undefined) {
 
 export function threadKey(port: number | undefined, thread: string) {
   return ['dispatch-threads', port, 'thread', thread] as const;
+}
+
+// Tries a read again when it may pass next time (a network blip, a daemon
+// error), never when the daemon refused it or has no such thread.
+function retryTransient(failures: number, error: Error): boolean {
+  if (error instanceof ApiError && error.status < 500) return false;
+  return failures < 3;
 }
 
 function ready(client: ApiClient | null): ApiClient {
@@ -267,14 +275,14 @@ export function useThread(
     staleTime: Infinity, // a message never changes
     select: (message) => message.thread,
     // A link to a thread this window cannot read, or one gone, says so at once.
-    retry: false,
+    retry: retryTransient,
   });
   const thread = enabled ? (resolved.data ?? null) : null;
   const detail = useQuery({
     queryKey: threadKey(port, thread ?? ''),
     queryFn: () => ready(client).getThread(thread ?? ''),
     enabled: client !== null && thread !== null,
-    retry: false,
+    retry: retryTransient,
   });
   return {
     thread,

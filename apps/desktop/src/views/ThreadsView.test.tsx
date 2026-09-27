@@ -1,4 +1,5 @@
 import type { ApiClient, Message } from '@dispatch/client';
+import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   fireEvent,
@@ -176,7 +177,7 @@ test('a focus that names no message says the thread did not load', async () => {
     listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
     openDecisions: mock(() => Promise.resolve({ items: [] })),
     getMessage: mock(() =>
-      Promise.reject(new Error('message m-gone not found'))
+      Promise.reject(new ApiError('no message m-gone', 404))
     ),
     listChannels: mock(() => Promise.resolve({ channels: [] })),
     listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
@@ -207,5 +208,5 @@ test('a focus that names no message says the thread did not load', async () => {
     </QueryClientProvider>
   );
   expect(await screen.findByText('This thread did not load')).toBeTruthy();
-  expect(screen.getByText('message m-gone not found')).toBeTruthy();
+  expect(screen.getByText('no message m-gone')).toBeTruthy();
 });
