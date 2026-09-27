@@ -48,6 +48,11 @@ export function memoryDbPath(rootDir: string): string {
   return join(runsDir(rootDir), 'memory.db');
 }
 
+// Personal memory is cross-project, so it lives under DISPATCH_HOME, not a project's run-state.
+export function personalMemoryDir(): string {
+  return join(dispatchHome(), '.dispatch', 'memory');
+}
+
 // Where a run's diff snapshot (see Orchestrator.persistDiffSnapshot) lives —
 // written right before the run's worktree is removed on every review path
 // (local merge, discard, PR merge) so GET .../diff still has something to
