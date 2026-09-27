@@ -328,7 +328,14 @@ describe('the A2A listener', () => {
       const res = await rawFetch(`http://127.0.0.1:${port}/a2a/v1/tasks`);
       expect(res.status).toBe(500);
       expect(res.headers.get('content-type')).toContain('application/json');
-      expect(await res.json()).toEqual({ error: 'internal error' });
+      expect(await res.json()).toEqual({
+        error: {
+          code: 500,
+          status: 'INTERNAL',
+          message: 'internal error',
+          details: [],
+        },
+      });
     } finally {
       spy.mockRestore();
       await listener.close();
