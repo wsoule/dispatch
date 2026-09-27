@@ -290,15 +290,15 @@ describe('verifyEntry along a chain', () => {
       'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
     const last = alphabet.indexOf(task.sig.charAt(task.sig.length - 1));
     // An 86-character signature leaves four bits of its last character unused.
-    const reencoded = {
+    const respelled = {
       ...task,
       sig: `${task.sig.slice(0, -1)}${alphabet.charAt(last ^ 1)}`,
     };
-    expect(Buffer.from(reencoded.sig, 'base64url')).toEqual(
+    expect(Buffer.from(respelled.sig, 'base64url')).toEqual(
       Buffer.from(task.sig, 'base64url')
     );
-    expect(opHash(reencoded)).not.toBe(opHash(task));
-    expect(run([key, reencoded]).failure).toBe('bad signature');
+    expect(opHash(respelled)).not.toBe(opHash(task));
+    expect(run([key, respelled]).failure).toBe('bad signature');
   });
 
   it('refuses hostile entries parsed off a branch instead of throwing', () => {
