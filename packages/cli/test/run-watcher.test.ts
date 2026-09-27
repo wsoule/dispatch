@@ -124,6 +124,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     syncNow: () => Promise.reject(new Error('not used')),
     getLicense: () => Promise.reject(new Error('not used')),
     installLicense: () => Promise.reject(new Error('not used')),
+    importLedger: () => Promise.reject(new Error('not used')),
   };
 }
 

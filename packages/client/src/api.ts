@@ -775,6 +775,116 @@ export type GateData =
       summary: string;
     };
 
+// Structural mirrors of @dispatch/memory's views and the memory routes'
+// bodies (packages/server/src/memory/routes.ts).
+export type MemoryKind =
+  | 'preference'
+  | 'convention'
+  | 'constraint'
+  | 'hazard'
+  | 'decision'
+  | 'fact'
+  | 'reference';
+export type MemoryScope = 'personal' | 'project' | 'team';
+export type MemoryTrust = 'human' | 'confirmed' | 'agent';
+/** Retired when retired or expired; what agents and the UI see. */
+export type MemoryState = 'active' | 'stale' | 'retired';
+
+export interface MemoryEntryView {
+  id: string;
+  handle: string;
+  scope: MemoryScope;
+  kind: MemoryKind;
+  title: string;
+  body: string;
+  refs: Ref[];
+  epic: string | null;
+  appliesTo: string[];
+  projectKey: string | null;
+  author: string;
+  trust: MemoryTrust;
+  status: 'active' | 'retired';
+  statusReason: 'forgotten' | 'superseded' | 'undone' | null;
+  decay: 'fresh' | 'stale' | 'expired';
+  pinned: boolean;
+  supersedes: string | null;
+  supersededBy: string | null;
+  origin: string | null;
+  proposal: string | null;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  rev: number;
+  createdAt: string;
+  updatedAt: string;
+  lastRecalledAt: string | null;
+  recallCount: number;
+  state: MemoryState;
+}
+
+export interface MemorySearchHit {
+  id: string;
+  handle: string;
+  title: string;
+  kind: MemoryKind;
+  scope: MemoryScope;
+  trust: MemoryTrust;
+  state: MemoryState;
+  updatedAt: string;
+  snippet: string;
+}
+
+export interface MemoryReadResult {
+  entry: MemoryEntryView;
+  revisions: {
+    memoryId: string;
+    rev: number;
+    by: string;
+    cause: string;
+    at: string;
+  }[];
+  recallCount: number;
+}
+
+export interface MemoryIndexResult {
+  text: string | null;
+  /** Handles of the entries the index shows, in rank order. */
+  included: string[];
+  omitted: number;
+  pinnedOverflow: boolean;
+}
+
+export interface LedgerImportReport {
+  outcome: 'ok' | 'MISMATCH' | 'dry-run';
+  read: number;
+  byKind: Record<string, number>;
+  memory: {
+    total: number;
+    imported: number;
+    proposed: number;
+    truncated: number;
+    alreadyImported: number;
+    alreadyDeleted: number;
+  };
+  audit: Record<string, number>;
+  damaged: number;
+  memoryRows: { before: number; after: number };
+  openProposals: { before: number; after: number };
+  mismatches: string[];
+  at: string;
+}
+
+export interface MemoryHealth {
+  available: boolean;
+  /** Why memory.db would not open, when it did not. */
+  reason: string | null;
+  search: 'fts5' | 'like' | null;
+  entries: number;
+  openProposals: number;
+  ledgerImport: LedgerImportReport | null;
+  configWarnings: { key: string; message: string }[];
+  lastDecayAt: string | null;
+}
+
 export type AgentStatus = 'pending' | 'approved' | 'revoked';
 
 // An agent roster entry with its token hash stripped — structural mirror of
@@ -2089,6 +2199,22 @@ function reviewTargetPath(reviewTarget: ReviewTarget): string {
     : `/api/prs/${reviewTarget.number}`;
 }
 
+// `?k=v&…` from the defined values in insertion order, booleans as 1/0;
+// '' when none is defined.
+function queryString(
+  params: Record<string, string | number | boolean | undefined>
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    search.set(
+      key,
+      typeof value === 'boolean' ? (value ? '1' : '0') : String(value)
+    );
+  }
+  return search.size > 0 ? `?${search.toString()}` : '';
+}
+
 // Pure helper (no fetch involved) so the query-string shape is unit
 // testable without a network layer: `?` + params when any filter is set, ''
 // otherwise, in the same status/kind/parent order the server accepts.
@@ -2931,6 +3057,42 @@ export interface ApiClient {
   muteAgent(address: string, muted: boolean): Promise<AgentSummary>;
   /** Open blocking questions addressed to a human (deciding humans only). */
   openDecisions(): Promise<{ items: Message[] }>;
+  /** The caller's visible entries; `state` defaults to active and stale. */
+  listMemory(q?: {
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    state?: MemoryState | 'all';
+    taskId?: string;
+    limit?: number;
+  }): Promise<{ entries: MemoryEntryView[] }>;
+  searchMemory(q: {
+    query: string;
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    includeStale?: boolean;
+    includeRetired?: boolean;
+    limit?: number;
+  }): Promise<{ hits: MemorySearchHit[]; search: 'fts5' | 'like' }>;
+  /** `ref` is an entry id or a `#handle`. */
+  getMemory(ref: string): Promise<MemoryReadResult>;
+  /** The caller's index for a task, or the index a run got (the run itself
+   *  or a deciding human only). */
+  memoryIndex(
+    q: { taskId: string } | { runId: string }
+  ): Promise<MemoryIndexResult>;
+  memoryRecalls(runId: string): Promise<{
+    recalls: {
+      memoryId: string;
+      handle: string | null;
+      via: string;
+      at: string;
+    }[];
+  }>;
+  memoryHealth(): Promise<MemoryHealth>;
+  /** Deciding humans only; `dryRun` reports without writing. */
+  importLedger(opts?: {
+    dryRun?: boolean;
+  }): Promise<{ report: LedgerImportReport; text: string }>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -3673,6 +3835,32 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         { method: 'POST' }
       ),
     openDecisions: () => request(target, '/api/decisions/open'),
+    listMemory: (q = {}) =>
+      request(
+        target,
+        `/api/memory${queryString({ scope: q.scope, kind: q.kind, state: q.state, taskId: q.taskId, limit: q.limit })}`
+      ),
+    searchMemory: (q) =>
+      request(
+        target,
+        `/api/memory/search${queryString({ q: q.query, scope: q.scope, kind: q.kind, includeStale: q.includeStale, includeRetired: q.includeRetired, limit: q.limit })}`
+      ),
+    getMemory: (ref) =>
+      request(target, `/api/memory/${encodeURIComponent(ref)}`),
+    memoryIndex: (q) =>
+      request(
+        target,
+        `/api/memory/index${queryString('taskId' in q ? { taskId: q.taskId } : { runId: q.runId })}`
+      ),
+    memoryRecalls: (runId) =>
+      request(target, `/api/memory/recalls${queryString({ runId })}`),
+    memoryHealth: () => request(target, '/api/memory/health'),
+    importLedger: (opts = {}) =>
+      request(
+        target,
+        `/api/memory/import/ledger${opts.dryRun === true ? '?dryRun=1' : ''}`,
+        { method: 'POST' }
+      ),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

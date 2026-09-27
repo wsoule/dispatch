@@ -1,9 +1,8 @@
 import type { Command } from 'commander';
 
 import type { ApiClient, Message } from '../apiClient.js';
-import { createApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenClient } from './appToken.js';
 
 interface ScopeGate {
   message: Message;
@@ -32,18 +31,6 @@ async function readScopeGate(
   return { message, paths: data.paths as string[], reason: data.reason };
 }
 
-// Both subcommands read and answer gates, which the daemon takes only from a
-// human: a client on the app token, never on the daemon file's agent token.
-async function appClient(
-  ctx: CliContext,
-  token: string | undefined,
-  command: string
-): Promise<ApiClient> {
-  const appToken = resolveAppToken(token, command);
-  const { baseUrl } = await attachToRunningDaemon(ctx);
-  return createApiClient(baseUrl, appToken);
-}
-
 export function registerScopeCommands(program: Command, ctx: CliContext): void {
   const scope = program
     .command('scope')
@@ -58,7 +45,11 @@ export function registerScopeCommands(program: Command, ctx: CliContext): void {
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(
       async (messageId: string, opts: { json?: boolean; token?: string }) => {
-        const client = await appClient(ctx, opts.token, 'dispatch scope show');
+        const client = await appTokenClient(
+          ctx,
+          opts.token,
+          'dispatch scope show'
+        );
         const gate = await readScopeGate(client, messageId);
         const { answer } = await client.getAnswer(messageId);
         if (opts.json === true) {
@@ -94,7 +85,7 @@ export function registerScopeCommands(program: Command, ctx: CliContext): void {
         messageId: string,
         opts: { deny?: boolean; reason?: string; token?: string }
       ) => {
-        const client = await appClient(
+        const client = await appTokenClient(
           ctx,
           opts.token,
           'dispatch scope decide'

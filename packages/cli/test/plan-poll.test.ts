@@ -50,6 +50,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     syncNow: () => Promise.reject(new Error('not used')),
     getLicense: () => Promise.reject(new Error('not used')),
     installLicense: () => Promise.reject(new Error('not used')),
+    importLedger: () => Promise.reject(new Error('not used')),
   };
 }
 

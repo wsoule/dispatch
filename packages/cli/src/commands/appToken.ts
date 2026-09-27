@@ -1,3 +1,5 @@
+import type { ApiClient } from '../apiClient.js';
+import { createApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
 import { findRunningDaemon } from './daemon.js';
 import { requireInitialized } from './task.js';
@@ -43,4 +45,16 @@ export async function attachToRunningDaemon(
     baseUrl: `http://127.0.0.1:${daemon.port}`,
     agentToken: daemon.agentToken,
   };
+}
+
+// A client on a human's app token for commands the daemon takes only from a
+// human, never falling back to the daemon file's agent token.
+export async function appTokenClient(
+  ctx: CliContext,
+  token: string | undefined,
+  command: string
+): Promise<ApiClient> {
+  const appToken = resolveAppToken(token, command);
+  const { baseUrl } = await attachToRunningDaemon(ctx);
+  return createApiClient(baseUrl, appToken);
 }
