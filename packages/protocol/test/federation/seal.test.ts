@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'bun:test';
 
+import { b64u } from '../../src/federation/encoding.js';
 import { generateReplicaKeys } from '../../src/federation/keys.js';
 import type { FederatedOp } from '../../src/federation/ops.js';
-import { openPayload, sealPayload } from '../../src/federation/seal.js';
+import {
+  canSealTo,
+  openPayload,
+  sealPayload,
+} from '../../src/federation/seal.js';
 
 const alice = generateReplicaKeys();
 const bob = generateReplicaKeys();
@@ -72,5 +77,25 @@ describe('sealing', () => {
     ];
     for (const v of variants)
       expect(openPayload(v, 'bob-0000000b', bob.sealPriv)).toBeNull();
+  });
+
+  it('refuses, by name, a recipient whose sealPub nobody can seal to', () => {
+    // All-zero and one are low-order X25519 points: their shared secret is zero.
+    const lowOrder = [Buffer.alloc(32), Buffer.from([1, ...Buffer.alloc(31)])];
+    expect(canSealTo(bob.sealPub)).toBe(true);
+    for (const bad of [...lowOrder.map(b64u), b64u(Buffer.alloc(31, 9)), ''])
+      expect(canSealTo(bad)).toBe(false);
+    expect(() =>
+      sealPayload({
+        replica: 'alice-0000000a',
+        seq: 7,
+        type: 'mail',
+        payload: {},
+        recipients: new Map([
+          ['bob-0000000b', bob.sealPub],
+          ['eve-0000000e', b64u(Buffer.alloc(32))],
+        ]),
+      })
+    ).toThrow('eve-0000000e');
   });
 });

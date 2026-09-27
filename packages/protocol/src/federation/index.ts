@@ -52,6 +52,7 @@ export type {
   StatePayload,
 } from './ops.js';
 export {
+  canSealTo,
   openPayload,
   openWithKey,
   sealedAad,

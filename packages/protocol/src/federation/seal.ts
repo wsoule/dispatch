@@ -2,7 +2,7 @@ import { randomBytes } from 'node:crypto';
 
 import type { JsonValue } from '../envelope.js';
 import { b64u, fromB64u } from './encoding.js';
-import { aeadOpen, aeadSeal, openBase, sealBase } from './hpke.js';
+import { aeadOpen, aeadSeal, encap, openBase, sealBase } from './hpke.js';
 import { canonicalize } from './jcs.js';
 import { privateKeyOf, publicOfPrivate } from './keys.js';
 import { MAX_SEALED_RECIPIENTS, TAG } from './ops.js';
@@ -10,6 +10,7 @@ import type { FederatedOp, Sealed } from './ops.js';
 
 const CONTENT_KEY_BYTES = 32;
 const NONCE_BYTES = 12;
+const X25519_PUBLIC_BYTES = 32;
 
 // Binds a ciphertext to its op, so it cannot be moved into another one.
 export function sealedAad(replica: string, seq: number, type: string): string {
@@ -40,9 +41,29 @@ export function sealPayload(input: {
     Buffer.from(canonicalize(input.payload))
   );
   const keys: Sealed['keys'] = {};
-  for (const r of to)
-    keys[r] = wrapContentKey(key, aad, r, input.recipients.get(r) ?? '');
+  for (const r of to) {
+    try {
+      keys[r] = wrapContentKey(key, aad, r, input.recipients.get(r) ?? '');
+    } catch (cause) {
+      throw new RangeError(`cannot seal to ${r}: its sealPub is unusable`, {
+        cause,
+      });
+    }
+  }
   return { to, sealed: { nonce: b64u(nonce), ct: b64u(ct), keys }, key };
+}
+
+// True for 32 bytes HPKE can seal to, so never a low-order X25519 point. Pin
+// only keys it accepts: sealPayload fails the whole op on one it refuses.
+export function canSealTo(sealPub: string): boolean {
+  try {
+    const raw = fromB64u(sealPub);
+    if (raw.length !== X25519_PUBLIC_BYTES) return false;
+    encap(raw);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function wrapContentKey(
