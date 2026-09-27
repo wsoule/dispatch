@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { compare } from '../src/compare.js';
+import { bindSymbols, compare } from '../src/compare.js';
 import { checkRender } from '../src/renderCheck.js';
 import type {
   CallRecord,
@@ -291,6 +291,80 @@ describe('compare', () => {
     const channels = [{ name: 'auth', members: ['run:r-1', 'human:ada'] }];
     expect(compare(v, obs({ channels }), hello).failures).toEqual([]);
     expect(compare(v, obs({ channels: [] }), hello).ok).toBe(false);
+  });
+});
+
+describe('bindSymbols', () => {
+  const G1 = 'm-01k0000000000000000000000c';
+  const N1 = 'm-01k0000000000000000000000d';
+  const X1 = 'm-01k0000000000000000000000e';
+  const G2 = 'm-01k0000000000000000000000f';
+  const N2 = 'm-01k0000000000000000000000g';
+  const system = { from: 'agent:dispatch' };
+  // Step 1 raises a system question itself; the store seeds another.
+  const raised: Vector = {
+    ...send,
+    given: {
+      store: { messages: [{ id: 'm-seeded', from: 'agent:dispatch' }] },
+    },
+    when: [
+      {
+        op: 'send',
+        as: { address: 'agent:dispatch', canDecide: true },
+        input: { to: ['human:wyat'], kind: 'question', body: 'Wake?' },
+      },
+      { op: 'inbox', recipient: 'human:wyat' },
+    ],
+    then: {},
+  };
+  const observed = obs({
+    steps: [
+      { ok: true, result: { message: M1, downgraded: false } },
+      { ok: true, result: { messages: [] } },
+    ],
+    messages: [
+      msg('m-seeded', { ...system, kind: 'question' }),
+      msg(M1, { ...system, kind: 'question' }),
+      msg(G1, { ...system, kind: 'question' }),
+      msg(N1, { ...system, kind: 'notice' }),
+      msg(X1, { kind: 'question' }),
+      msg(G2, { ...system, kind: 'question' }),
+      msg(N2, { ...system, kind: 'notice' }),
+    ],
+  });
+
+  it('binds $gateN and $noticeN to the system questions and notices no step created or the store seeded', () => {
+    expect(Object.fromEntries(bindSymbols(raised, observed, hello))).toEqual({
+      $system: 'agent:dispatch',
+      $s1: M1,
+      $gate1: G1,
+      $notice1: N1,
+      $gate2: G2,
+      $notice2: N2,
+    });
+  });
+
+  it('lets then name a gate and a notice by role', () => {
+    const v: Vector = {
+      ...raised,
+      then: {
+        messages: [
+          { id: '$gate1', kind: 'question', from: '$system' },
+          { id: '$notice2', kind: 'notice' },
+        ],
+      },
+    };
+    expect(compare(v, observed, hello).failures).toEqual([]);
+    expect(
+      compare(
+        v,
+        { ...observed, messages: observed.messages.slice(0, 2) },
+        hello
+      ).failures
+    ).toEqual([
+      'message $gate1 was not created',
+      'message $notice2 was not created',
+    ]);
   });
 });
 
