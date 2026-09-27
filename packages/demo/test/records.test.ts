@@ -101,7 +101,7 @@ test('raisedBy round-trips through the real ActorRef parser', () => {
   }
 });
 
-// A handoff is a message now, so the seeded ledger holds none.
+// Handoffs are messages, never ledger entries, so the seeded ledger holds none.
 test('the ledger covers every writable kind and holds no handoff', () => {
   const ledger = lines(build(), 'ledger.jsonl');
   expect(new Set(ledger.map((l) => l.kind))).toEqual(
