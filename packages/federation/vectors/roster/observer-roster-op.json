@@ -1,0 +1,125 @@
+{
+  "name": "observer-roster-op",
+  "input": {
+    "founder": {
+      "replica": "ada-0000000a",
+      "seq": 1
+    },
+    "ops": [
+      {
+        "replica": "ada-0000000a",
+        "seq": 1,
+        "hlc": "1790380800000.0000.ada-0000000a",
+        "hash": "337864fcb4fc040ea3c81780466f6b0562ecc34d9107fd333e4ac9e5df35419a",
+        "body": {
+          "rv": 1,
+          "action": "found",
+          "name": "acme",
+          "legacy": [],
+          "recoveryPub": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 2,
+        "hlc": "1790380800100.0000.ada-0000000a",
+        "hash": "7214fd06da5f6c598df7b86b6d0f732f7167e82b50d00425b1eb4471172a2960",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "obs-00000010",
+          "handle": "obs",
+          "role": "member",
+          "fingerprint": "FP-obs-00000010",
+          "observer": true
+        }
+      },
+      {
+        "replica": "obs-00000010",
+        "seq": 2,
+        "hlc": "1790380800200.0000.obs-00000010",
+        "hash": "065c50ae3c69e3b2726fe1cb0bc4ca54dae7b1166db7e98f561d610c6d195474",
+        "body": {
+          "rv": 1,
+          "action": "invite",
+          "id": "i-obs",
+          "pub": "P",
+          "handle": "obs",
+          "expires": "2026-10-03T00:00:00.000Z"
+        }
+      }
+    ],
+    "keys": [
+      [
+        "ada-0000000a",
+        {
+          "replica": "ada-0000000a",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000a",
+          "fingerprint": "FP-ada-0000000a"
+        }
+      ],
+      [
+        "bob-0000000b",
+        {
+          "replica": "bob-0000000b",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000b",
+          "fingerprint": "FP-bob-0000000b"
+        }
+      ],
+      [
+        "cy-0000000c",
+        {
+          "replica": "cy-0000000c",
+          "handle": "cy",
+          "signPub": "sign-cy-0000000c",
+          "fingerprint": "FP-cy-0000000c"
+        }
+      ],
+      [
+        "dee-0000000d",
+        {
+          "replica": "dee-0000000d",
+          "handle": "dee",
+          "signPub": "sign-dee-0000000d",
+          "fingerprint": "FP-dee-0000000d"
+        }
+      ],
+      [
+        "bob-0000000f",
+        {
+          "replica": "bob-0000000f",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000f",
+          "fingerprint": "FP-bob-0000000f"
+        }
+      ],
+      [
+        "obs-00000010",
+        {
+          "replica": "obs-00000010",
+          "handle": "obs",
+          "signPub": "sign-obs-00000010",
+          "fingerprint": "FP-obs-00000010"
+        }
+      ]
+    ],
+    "now": "2026-09-27T00:00:00.000Z",
+    "licensePublicKey": null
+  },
+  "expect": {
+    "members": [
+      ["ada-0000000a", "admin", 0, [], false, false],
+      ["obs-00000010", "member", null, [], true, false]
+    ],
+    "revoked": [],
+    "seats": 3,
+    "covered": ["ada"],
+    "closedBy": null,
+    "transport": {
+      "kind": "git"
+    },
+    "unknown": true
+  }
+}

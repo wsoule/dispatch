@@ -1,5 +1,5 @@
-// The federation code every daemon and the relay share: the license check and
-// the log verification pipeline.
+// The federation code every daemon and the relay share: the license check,
+// the log verification pipeline and the roster fold.
 export {
   FREE_SEATS,
   LICENSE_PUBLIC_KEY,
@@ -7,5 +7,20 @@ export {
   signLicense,
 } from './license.js';
 export type { License, LicenseState } from './license.js';
+export { comparePositions } from './position.js';
+export type { Position } from './position.js';
+export {
+  foldRoster,
+  isCovered,
+  LEGACY_WINDOW_MS,
+  speaksForHandle,
+} from './roster.js';
+export type {
+  FoldInput,
+  KeyInfo,
+  RosterMember,
+  RosterOpRef,
+  RosterView,
+} from './roster.js';
 export { verifyLog } from './verify.js';
 export type { LogCursor, LogResult, PinnedKey } from './verify.js';

@@ -7,10 +7,19 @@ import {
   makeChainVectors,
 } from '../scripts/chain-vectors.js';
 import type { ChainVector } from '../scripts/chain-vectors.js';
+import {
+  fromVector,
+  makeRosterVectors,
+  normalize,
+  ROSTER_VECTORS_DIR,
+} from '../scripts/roster-vectors.js';
+import type { RosterVector } from '../scripts/roster-vectors.js';
+import { foldRoster } from '../src/roster.js';
 import { verifyLog } from '../src/verify.js';
 
 // The files the relay also runs: each log, verified from an empty cursor,
-// must accept exactly the seqs and halt exactly where the file says.
+// must accept exactly the seqs and halt exactly where the file says, and each
+// roster, folded, must give exactly the view the file says.
 
 const files = readdirSync(CHAIN_VECTORS_DIR)
   .filter((f) => f.endsWith('.json'))
@@ -48,6 +57,31 @@ describe('chain vectors', () => {
     for (const v of made) {
       const committed = JSON.parse(read(`${v.name}.json`)) as ChainVector;
       expect(canonicalize(committed)).toBe(canonicalize(v));
+    }
+  });
+});
+
+describe('roster vectors', () => {
+  const rosterFiles = readdirSync(ROSTER_VECTORS_DIR)
+    .filter((f) => f.endsWith('.json'))
+    .sort();
+  const readRoster = (file: string) =>
+    JSON.parse(
+      readFileSync(new URL(file, ROSTER_VECTORS_DIR), 'utf8')
+    ) as RosterVector;
+
+  for (const file of rosterFiles) {
+    it(`${file} folds as it expects`, () => {
+      const v = readRoster(file);
+      expect(normalize(foldRoster(fromVector(v.input)))).toEqual(v.expect);
+    });
+  }
+
+  it('regenerates every committed file exactly', () => {
+    const made = makeRosterVectors();
+    expect(made.map((v) => `${v.name}.json`).sort()).toEqual(rosterFiles);
+    for (const v of made) {
+      expect(canonicalize(readRoster(`${v.name}.json`))).toBe(canonicalize(v));
     }
   });
 });
