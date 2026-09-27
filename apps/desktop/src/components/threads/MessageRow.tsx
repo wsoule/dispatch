@@ -43,6 +43,8 @@ export interface MessageRowProps {
   onRestartDaemon: () => Promise<void>;
   onAnswer: (message: Message, reply: Reply) => Promise<void>;
   onOpen: (action: RefAction) => void;
+  /** Reads a parked run call's full input, for a tool-approval preview that was cut short. */
+  loadApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
 }
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
@@ -56,6 +58,7 @@ export const MessageRow = memo(function MessageRow({
   onRestartDaemon,
   onAnswer,
   onOpen,
+  loadApprovalInput,
 }: MessageRowProps) {
   const [error, setError] = useState<string | null>(null);
   const mine = message.from === me;
@@ -126,6 +129,7 @@ export const MessageRow = memo(function MessageRow({
             availability={availability}
             onRestartDaemon={onRestartDaemon}
             answer={answer}
+            loadApprovalInput={loadApprovalInput}
           />
           {error !== null && (
             <p role="alert" className="text-destructive text-[12px]">
@@ -144,11 +148,13 @@ function Control({
   availability,
   onRestartDaemon,
   answer,
+  loadApprovalInput,
 }: {
   control: RowControl;
   availability: DecideAvailability;
   onRestartDaemon: () => Promise<void>;
   answer: (reply: Reply) => Promise<void>;
+  loadApprovalInput: MessageRowProps['loadApprovalInput'];
 }) {
   switch (control.kind) {
     case 'none':
@@ -157,17 +163,24 @@ function Control({
       return (
         <p className="text-muted-foreground text-[12px]">{control.reason}</p>
       );
-    case 'tool-approval':
+    case 'tool-approval': {
+      const { runId, requestId } = control;
       return (
         <ApprovalCard
           toolName={control.tool}
           toolInput={control.input}
           truncated={control.truncated}
+          loadFullInput={
+            runId === null
+              ? undefined
+              : () => loadApprovalInput(runId, requestId)
+          }
           availability={availability}
           onRestartDaemon={onRestartDaemon}
           onDecide={(allow, opts) => answer(approvalReply(allow, opts))}
         />
       );
+    }
     case 'scope':
       return (
         <ScopeRequestCard

@@ -78,6 +78,11 @@ export function ThreadsView({
     () => latest.current.handleRestartDaemon(),
     []
   );
+  const loadApprovalInput = useCallback(
+    (runId: string, requestId: string) =>
+      latest.current.fetchApprovalInput(runId, requestId),
+    []
+  );
   const { markRead } = actions;
   useEffect(() => {
     markRead(open.deliveries);
@@ -162,6 +167,7 @@ export function ThreadsView({
               onRestartDaemon={onRestartDaemon}
               onAnswer={actions.answer}
               onOpen={onOpenRef}
+              loadApprovalInput={loadApprovalInput}
               route={replyRoute(open.messages, open.thread, overseer.thread)}
               onReply={actions.reply}
               onOverseerReply={overseer.submit}

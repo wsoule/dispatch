@@ -60,6 +60,7 @@ function renderPane(over: Partial<ThreadPaneProps> = {}) {
       onRestartDaemon={() => Promise.resolve()}
       onAnswer={() => Promise.resolve()}
       onOpen={() => {}}
+      loadApprovalInput={() => Promise.resolve(undefined)}
       route="bus"
       onReply={onReply}
       onOverseerReply={() => Promise.resolve()}

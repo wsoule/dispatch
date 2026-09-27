@@ -173,7 +173,7 @@ describe('rowControl', () => {
     ).toEqual({ kind: 'choices', choices: ['accept', 'decline'], gate: false });
   });
 
-  it('gives a decider the approval card, saying when the call preview was cut', () => {
+  it('gives a decider the approval card, saying when the call preview was cut and which call it is', () => {
     const approval = (truncated: boolean) =>
       msg('m-a', {
         from: 'agent:dispatch',
@@ -197,6 +197,8 @@ describe('rowControl', () => {
       tool: 'Bash',
       input: '{"command":"ls',
       truncated: true,
+      runId: 'r-000001',
+      requestId: 'req-1',
     });
     expect(
       rowControl(approval(false), { me: ME, open: true, access: DECIDER })
@@ -205,6 +207,8 @@ describe('rowControl', () => {
       tool: 'Bash',
       input: { command: 'ls' },
       truncated: false,
+      runId: 'r-000001',
+      requestId: 'req-1',
     });
   });
 

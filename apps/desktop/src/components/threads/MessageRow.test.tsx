@@ -71,6 +71,7 @@ function renderRow(message: Message, over: Partial<MessageRowProps> = {}) {
       onRestartDaemon={() => Promise.resolve()}
       onAnswer={onAnswer}
       onOpen={() => {}}
+      loadApprovalInput={() => Promise.resolve(undefined)}
       {...over}
     />
   );
@@ -106,6 +107,33 @@ test('shows a gate read-only, with the reason and no buttons, to a viewer who ca
     screen.getByText('Answering approvals needs the decide tier.')
   ).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+});
+
+test('a truncated tool call loads its full input for a decider', async () => {
+  const approval = msg('m-a', {
+    from: 'agent:dispatch',
+    kind: 'question',
+    blocking: true,
+    choices: ['approve', 'approve-session', 'deny'],
+    data: {
+      type: 'tool-approval',
+      requestId: 'req-1',
+      runId: 'r-000001',
+      tool: 'Bash',
+      input: '{"command":"rm -rf build/',
+      truncated: true,
+      floor: false,
+    },
+  });
+  const loadApprovalInput = mock((_runId: string, _requestId: string) =>
+    Promise.resolve({ command: 'rm -rf build/tmp' })
+  );
+  renderRow(approval, { loadApprovalInput });
+  await waitFor(() =>
+    expect(screen.getByText(/rm -rf build\/tmp/)).toBeTruthy()
+  );
+  expect(loadApprovalInput).toHaveBeenCalledWith('r-000001', 'req-1');
+  expect(screen.queryByText(/Preview truncated/)).toBeNull();
 });
 
 test("keeps a revoked agent's message readable, with a Revoked pill", () => {

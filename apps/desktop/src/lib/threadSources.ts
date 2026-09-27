@@ -114,7 +114,15 @@ export function knownAddresses(input: {
 export type RowControl =
   | { kind: 'none' }
   | { kind: 'read-only'; reason: string }
-  | { kind: 'tool-approval'; tool: string; input: unknown; truncated: boolean }
+  | {
+      kind: 'tool-approval';
+      tool: string;
+      input: unknown;
+      truncated: boolean;
+      /** The parked call, which a truncated preview reads in full; no run for an Assistant call. */
+      runId: string | null;
+      requestId: string;
+    }
   | { kind: 'scope'; paths: string[]; reason: string }
   | { kind: 'choices'; choices: string[]; gate: boolean };
 
@@ -140,6 +148,8 @@ export function rowControl(
         tool: gate.tool,
         input: gate.input,
         truncated: gate.truncated === true,
+        runId: gate.runId ?? null,
+        requestId: gate.requestId,
       };
     }
     if (gate.type === 'scope') {

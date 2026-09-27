@@ -26,6 +26,7 @@ export interface ThreadPaneProps {
   onRestartDaemon: () => Promise<void>;
   onAnswer: MessageRowProps['onAnswer'];
   onOpen: (action: RefAction) => void;
+  loadApprovalInput: MessageRowProps['loadApprovalInput'];
   route: ReplyRoute;
   onReply: (plan: ReplyPlan, body: string) => Promise<unknown>;
   onOverseerReply: (body: string) => Promise<void>;
@@ -50,6 +51,7 @@ export function ThreadPane(props: ThreadPaneProps) {
             onRestartDaemon={props.onRestartDaemon}
             onAnswer={props.onAnswer}
             onOpen={props.onOpen}
+            loadApprovalInput={props.loadApprovalInput}
           />
         ))}
       </div>
