@@ -219,12 +219,18 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     ) as { meta: { id: string } };
     const taskId = task.meta.id;
 
+    // The app token lets the watch name the gate; without it the banner
+    // gives only the run (the lost-connection suite below watches that way).
     const watch = spawn(
       'node',
       [CLI_BIN, 'run', taskId, '--executor', 'fake', '--watch'],
       {
         cwd: repo,
-        env: { ...process.env, DISPATCH_HOME: dispatchHome },
+        env: {
+          ...process.env,
+          DISPATCH_HOME: dispatchHome,
+          DISPATCH_APP_TOKEN: appToken,
+        },
       }
     );
     let stdout = '';

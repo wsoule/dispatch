@@ -71,10 +71,16 @@ tasks:
   # reaches through `build:app`.
   build-sidecars:
     command: 'bun scripts/build-sidecars.ts'
+    # The compile resolves these packages through their dist/ exports, and
+    # `^:build` alone does not build every one of them.
     deps:
       - '^:build'
+      - 'core:build'
+      - 'mcp:build'
+      - 'protocol:build'
+      - 'federation:build'
     # Cached by everything that changes the compiled binaries: the script,
-    # the four packages it compiles, and the signing identity plus the
+    # the packages it compiles, and the signing identity plus the
     # entitlements it signs with (a signed run must never hydrate unsigned
     # outputs). moon's hash carries no host OS or CPU field, so the cache is
     # valid only for the checkout and host that produced it; do not share
@@ -85,7 +91,9 @@ tasks:
       - '$APPLE_SIGNING_IDENTITY'
       - '/packages/cli/src/**/*'
       - '/packages/core/src/**/*'
+      - '/packages/federation/src/**/*'
       - '/packages/mcp/src/**/*'
+      - '/packages/protocol/src/**/*'
       - '/packages/server/src/**/*'
       - '/pnpm-lock.yaml'
     outputs:

@@ -51,11 +51,13 @@ categorise
 ccount
 cdylib
 Centralised
+CFRG
 cfworker
 checkpointed
 chev
 choiceless
 chrono
+ciphertext
 clippy
 closedsha
 clusterer
@@ -86,11 +88,14 @@ CRDT's
 Crockford
 cutover
 daemonfile
+Dagesh
+Dalet
 Dami
 deadbeefcafe
 deadbeefdeadbeef
 deadcode
 debouncer
+decap
 DECCKM
 dedup
 dedup'd
@@ -108,6 +113,7 @@ destructures
 desynced
 devlop
 dfaf
+DHKEM
 didn
 diffable
 diffgc
@@ -132,6 +138,7 @@ emnapi
 emphasised
 emphasises
 empt
+encap
 enqueueable
 entr
 entrancy
@@ -204,6 +211,7 @@ hookified
 hostable
 hotspot
 hotspots
+HPKE
 hstatus
 idempotently
 IDREF
@@ -231,6 +239,7 @@ landable
 lede
 Lesk
 libc
+libsodium
 libvips
 lifecycles
 lightningcss
@@ -322,6 +331,7 @@ pluralises
 pmirand
 posthog
 precheck
+precomposed
 preflighted
 prefs
 prerendered
@@ -445,6 +455,7 @@ stopwords
 stringifying
 strs
 stty
+stubbable
 stylelintignore
 SUBDIRS
 sublabel

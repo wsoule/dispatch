@@ -21,6 +21,7 @@
     "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@dispatch/a2a": "workspace:*",
     "@dispatch/core": "workspace:*",
+    "@dispatch/federation": "workspace:*",
     "@dispatch/mcp": "workspace:*",
     "@dispatch/protocol": "workspace:*",
     "@typesafe-ai/sdk": "catalog:",

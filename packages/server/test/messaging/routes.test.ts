@@ -1420,6 +1420,55 @@ describe('messaging HTTP routes', () => {
     expect(retried.status).toBe(201);
   });
 
+  it('replays an Idempotency-Key after the daemon restarts', async () => {
+    const headers = {
+      'content-type': 'application/json',
+      'idempotency-key': 'restart-1',
+    };
+    const body = JSON.stringify({
+      to: ['human:test'],
+      kind: 'message',
+      body: 'once',
+    });
+    const first = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(first.status).toBe(201);
+    const { message } = await json<{ message: { id: string } }>(first);
+
+    await handle.stop();
+    handle = await startTestServer();
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const again = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(again.status).toBe(200);
+    const replay = await json<{ message: { id: string }; replayed?: boolean }>(
+      again
+    );
+    expect(replay.message.id).toBe(message.id);
+    expect(replay.replayed).toBe(true);
+  });
+
+  it('refuses a key over 200 bytes as 400 on idempotencyKey', async () => {
+    const res = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'é'.repeat(101),
+      },
+      body: JSON.stringify({ to: ['human:test'], kind: 'message', body: 'x' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json<{ field?: string }>(res)).field).toBe('idempotencyKey');
+  });
+
   it('the old question, scope, approval and message routes are gone', async () => {
     // A live run, so a surviving route would answer 400, not 404.
     const { runId } = await liveRun('Old routes');

@@ -31,7 +31,7 @@ const entitlements = join(
   'sidecar.plist'
 );
 
-const SIDECARS = [
+export const SIDECARS = [
   {
     entry: join(repoRoot, 'packages', 'server', 'src', 'bin.ts'),
     name: 'dispatchd',
