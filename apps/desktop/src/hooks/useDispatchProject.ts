@@ -2216,8 +2216,12 @@ export function useDispatchProject(
         onRunDispatched?.(continued.id, continued.taskId);
         return;
       }
-      // A run that is still live simply got the message.
-      if (runs.some((r) => r.id === runId && !isTerminalRunState(r.state))) {
+      // A live run that took the message into its conversation simply got it.
+      if (
+        sent.deliveries.some(
+          (d) => d.recipient === `run:${runId}` && d.state === 'pushed'
+        )
+      ) {
         return;
       }
       throw new Error(

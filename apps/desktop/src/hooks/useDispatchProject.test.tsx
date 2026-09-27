@@ -1,5 +1,6 @@
 import type {
   ConnectEventsOptions,
+  Delivery,
   EpicProgress,
   EpicSessionOptions,
   Message,
@@ -66,6 +67,8 @@ const approvalReads: [string, string][] = [];
 let duringSend: (() => void) | null = null;
 // The caller's unread mail, where the daemon's notices land.
 let mailboxFixture: { delivery: unknown; message: Message }[] = [];
+// The deliveries the daemon reports for the next sends.
+let sendDeliveriesFixture: Partial<Delivery>[] = [];
 
 // The bulk epic-progress listing the daemon returns, how many times it was
 // asked for, and every `startEpic` body the hook sent — the fan-out tests
@@ -108,7 +111,7 @@ void mock.module('@dispatch/client', () => ({
       duringSend?.();
       return Promise.resolve({
         message: { id: 'm-sent' },
-        deliveries: [],
+        deliveries: sendDeliveriesFixture,
         downgraded: false,
       });
     },
@@ -483,6 +486,7 @@ function resetGateFixtures() {
   runsFixture = [];
   openGatesFixture = [];
   mailboxFixture = [];
+  sendDeliveriesFixture = [];
   window.localStorage.clear();
 }
 
@@ -739,6 +743,41 @@ test('request changes that continued nothing says why, from the daemon notice', 
       (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
     );
   expect(unexplained).toBe(
+    'The run did not continue. Your message is waiting for it.'
+  );
+  resetGateFixtures();
+});
+
+// A live run takes the message only when the daemon pushed it in; one that
+// cannot take mail (a CLI run, one winding down) leaves it held.
+test('request changes on a live run succeeds only when the run took the message', async () => {
+  runsFixture = [runFixture('r-1', 'running')];
+  openGatesFixture = [];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.runs).toHaveLength(1);
+  });
+  const outcome = () =>
+    result.current.handleRequestChanges('r-1', 'again').then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+
+  sendDeliveriesFixture = [
+    { recipient: 'run:r-1', runId: 'r-1', state: 'pushed' },
+  ];
+  expect(await outcome()).toBe('resolved');
+
+  sendDeliveriesFixture = [
+    { recipient: 'run:r-1', runId: null, state: 'held' },
+  ];
+  expect(await outcome()).toBe(
     'The run did not continue. Your message is waiting for it.'
   );
   resetGateFixtures();
