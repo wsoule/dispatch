@@ -1,11 +1,22 @@
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
 import { describe, expect, it } from 'bun:test';
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { ClaudeAiTaskFilter } from '../../src/aiTaskFilter.js';
 import { CommitMessageGenerator } from '../../src/git/commitMessage.js';
 import { InboxClusterer } from '../../src/inboxClusterer.js';
 import {
   openClaudeQuery,
+  resolveClaudeCli,
   withAutoMemoryOff,
 } from '../../src/orchestrator/claudeCli.js';
 import { generateRepoDigest } from '../../src/orchestrator/repoDigest.js';
@@ -116,6 +127,36 @@ describe('auto memory off by default', () => {
       await run(c.fn).catch(() => {});
       expect(c.options).toHaveLength(1);
       expectOff(c.options[0]);
+    }
+  });
+});
+
+describe('resolveClaudeCli', () => {
+  it('reads the override’s version once per path and mtime', async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), 'claude-cli-')));
+    const counter = join(dir, 'calls');
+    const exe = join(dir, 'claude');
+    writeFileSync(
+      exe,
+      `#!/bin/sh\necho call >> '${counter}'\necho '2.1.211 (Claude Code)'\n`
+    );
+    chmodSync(exe, 0o755);
+    const prev = process.env.DISPATCH_CLAUDE_BIN;
+    try {
+      process.env.DISPATCH_CLAUDE_BIN = exe;
+      expect(await resolveClaudeCli()).toEqual({
+        path: exe,
+        version: '2.1.211',
+      });
+      expect(await resolveClaudeCli()).toEqual({
+        path: exe,
+        version: '2.1.211',
+      });
+      expect(readFileSync(counter, 'utf8').trim().split('\n')).toHaveLength(1);
+    } finally {
+      if (prev === undefined) delete process.env.DISPATCH_CLAUDE_BIN;
+      else process.env.DISPATCH_CLAUDE_BIN = prev;
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

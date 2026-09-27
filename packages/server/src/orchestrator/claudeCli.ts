@@ -1,5 +1,9 @@
 import type { query } from '@anthropic-ai/claude-agent-sdk';
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 // The actionable message shown to the user when no Claude Code CLI can be
 // found anywhere. The native installer drops `claude` into a location
@@ -104,4 +108,96 @@ export function openClaudeQuery(
       throw new Error(rewriteMissingCliError((retryErr as Error).message));
     }
   }
+}
+
+const cliVersions = new Map<string, { mtimeMs: number; version: string }>();
+
+// Runs `<exe> --version` and keeps the first dotted version, or null.
+async function spawnVersion(exe: string): Promise<string | null> {
+  try {
+    const proc = Bun.spawn([exe, '--version'], {
+      stdin: 'ignore',
+      stdout: 'pipe',
+      stderr: 'ignore',
+      timeout: 10_000,
+    });
+    const [stdout, exitCode] = await Promise.all([
+      new Response(proc.stdout).text(),
+      proc.exited,
+    ]);
+    if (exitCode !== 0) return null;
+    return /\d+\.\d+\.\d+/.exec(stdout)?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+
+// A CLI's version, spawned only when its path or mtime is new to this process.
+async function cachedVersion(exe: string): Promise<string | null> {
+  let mtimeMs: number;
+  try {
+    mtimeMs = statSync(exe).mtimeMs;
+  } catch {
+    return null;
+  }
+  const hit = cliVersions.get(exe);
+  if (hit !== undefined && hit.mtimeMs === mtimeMs) return hit.version;
+  const version = await spawnVersion(exe);
+  if (version !== null) cliVersions.set(exe, { mtimeMs, version });
+  return version;
+}
+
+// The SDK's bundled per-platform CLI, found as the SDK finds it, with the
+// version the SDK's package.json records for it; null when it is absent.
+function bundledCli(): { path: string; version: string | null } | null {
+  try {
+    const sdkEntry = fileURLToPath(
+      import.meta.resolve('@anthropic-ai/claude-agent-sdk')
+    );
+    const { platform, arch } = process;
+    const targets =
+      platform === 'linux'
+        ? [`linux-${arch}`, `linux-${arch}-musl`]
+        : [`${platform}-${arch}`];
+    const suffix = platform === 'win32' ? '.exe' : '';
+    const sdkRequire = createRequire(sdkEntry);
+    for (const target of targets) {
+      let path: string;
+      try {
+        path = sdkRequire.resolve(
+          `@anthropic-ai/claude-agent-sdk-${target}/claude${suffix}`
+        );
+      } catch {
+        continue;
+      }
+      if (!existsSync(path)) continue;
+      const pkg = JSON.parse(
+        readFileSync(join(dirname(sdkEntry), 'package.json'), 'utf8')
+      ) as { claudeCodeVersion?: unknown };
+      const version =
+        typeof pkg.claudeCodeVersion === 'string'
+          ? pkg.claudeCodeVersion
+          : null;
+      return { path, version };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+// The CLI openClaudeQuery would run, in its order (override, bundled, PATH),
+// and that CLI's version; either is null when it cannot be found.
+export async function resolveClaudeCli(): Promise<{
+  path: string | null;
+  version: string | null;
+}> {
+  const override = process.env.DISPATCH_CLAUDE_BIN;
+  if (override !== undefined && override !== '')
+    return { path: override, version: await cachedVersion(override) };
+  const bundled = bundledCli();
+  if (bundled !== null) return bundled;
+  const onPath = Bun.which('claude');
+  if (onPath === null) return { path: null, version: null };
+  return { path: onPath, version: await cachedVersion(onPath) };
 }
