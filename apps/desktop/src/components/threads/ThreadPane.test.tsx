@@ -269,12 +269,14 @@ test('the Assistant reply box waits while the Assistant is answering', () => {
   expect(replyBox().placeholder).toBe('The Assistant is answering…');
 });
 
-test('an earlier Assistant conversation is read-only, with a way to the Assistant', () => {
+test('an Assistant conversation this pane cannot reply to is read-only, with a way to the Assistant', () => {
   const onOpenOverseer = mock(() => {});
   renderPane({ route: 'overseer-elsewhere', onOpenOverseer });
+  // The task tab routes even the live conversation here, so it is never called earlier.
   expect(
-    screen.getByText('This is an earlier Assistant conversation.')
+    screen.getByText('This Assistant conversation takes no replies here.')
   ).toBeTruthy();
+  expect(screen.queryByText(/earlier/)).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Open Assistant' }));
   expect(onOpenOverseer).toHaveBeenCalledTimes(1);
   expect(screen.queryByLabelText('Reply')).toBeNull();

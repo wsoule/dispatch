@@ -359,7 +359,8 @@ function asksMe(
 
 export type ReplyRoute = 'bus' | 'overseer' | 'overseer-elsewhere';
 
-/** Where a reply goes: the bus, the live overseer conversation, or nowhere (an older one). */
+/** Where a reply goes: the bus, the live overseer conversation, or nowhere
+ *  from here (another conversation, or any when the live one is not given). */
 export function replyRoute(
   messages: readonly Message[],
   thread: string,

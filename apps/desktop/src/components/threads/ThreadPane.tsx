@@ -113,7 +113,7 @@ function ReplyBox({
   if (route === 'overseer-elsewhere') {
     return (
       <p className="text-muted-foreground flex items-center gap-2 text-[12px]">
-        This is an earlier Assistant conversation.
+        This Assistant conversation takes no replies here.
         <Button size="sm" variant="ghost" onClick={onOpenOverseer}>
           Open Assistant
         </Button>
