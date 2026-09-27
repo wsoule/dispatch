@@ -141,9 +141,10 @@ report it privately as [`SECURITY.md`](.github/SECURITY.md) says.
 ## License and CLA
 
 Dispatch is open core — see [`LICENSING.md`](LICENSING.md). The integration
-packages (`packages/core`, `packages/client`, `packages/cli`, `packages/mcp`)
-are MIT; the rest of the repo is FSL-1.1-ALv2 (see [`LICENSE`](LICENSE)),
-source-available and converting to Apache 2.0 two years after each release.
+packages (`packages/core`, `packages/protocol`, `packages/client`,
+`packages/cli`, `packages/mcp`) are MIT; the rest of the repo is FSL-1.1-ALv2
+(see [`LICENSE`](LICENSE)), source-available and converting to Apache 2.0 two
+years after each release.
 
 Outside contributions require a signed contributor license agreement (CLA
 Assistant prompts on your first PR, once per contributor; the full text is

@@ -3,3 +3,14 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 language: 'typescript'
 layer: 'library'
 tags: ['tsdown']
+
+tasks:
+  # The official A2A TCK against handleA2A. Needs Python 3.11, uv and the
+  # network, so it is not part of moon ci; .github/workflows/a2a-tck.yml runs it.
+  tck:
+    command: 'bun test/tck/run.ts'
+    deps:
+      - '^:build'
+    options:
+      cache: false
+      runInCI: 'skip'

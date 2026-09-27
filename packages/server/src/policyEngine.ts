@@ -112,7 +112,11 @@ export function policyDecisionClassifier(
     if (item.state === 'open') return 'blocking';
     const gate = DECISION_KIND_GATES[item.kind];
     if (gate === undefined) return 'blocking';
-    if (gate === 'approval' && opts.approvalFloor === undefined) {
+    // Policy answers only tool approvals; a human decided every other approval.
+    if (
+      gate === 'approval' &&
+      (opts.approvalFloor === undefined || item.reason !== 'tool-approval')
+    ) {
       return 'blocking';
     }
     // A scope request outside the repo or into .git/ is the floor's own

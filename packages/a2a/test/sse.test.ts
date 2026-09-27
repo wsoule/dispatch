@@ -18,7 +18,8 @@ const view = {
   includeArtifacts: true,
 };
 
-// Reads SSE frames until `count` data events arrive or the stream ends.
+// Reads SSE frames until `count` data events arrive or the stream ends. A read
+// that outlasts one 50 ms poll is kept for the next, so no chunk is dropped.
 async function events(
   res: Response,
   count: number,
@@ -33,16 +34,18 @@ async function events(
   const data: Record<string, unknown>[] = [];
   let keepalives = 0;
   let buffer = '';
+  let pending: ReturnType<typeof reader.read> | null = null;
   const deadline = Date.now() + timeoutMs;
   while (data.length < count && Date.now() < deadline) {
-    const { value, done } = await Promise.race([
-      reader.read(),
-      new Promise<{ value: undefined; done: false }>((r) =>
-        setTimeout(() => r({ value: undefined, done: false }), 50)
-      ),
+    pending ??= reader.read();
+    const result = await Promise.race([
+      pending,
+      new Promise<null>((r) => setTimeout(() => r(null), 50)),
     ]);
+    if (result === null) continue;
+    pending = null;
+    const { value, done } = result;
     if (done) return { data, keepalives, ended: true };
-    if (value === undefined) continue;
     buffer += decoder.decode(value, { stream: true });
     let cut: number;
     while ((cut = buffer.indexOf('\n\n')) !== -1) {
@@ -144,6 +147,39 @@ describe('taskEventStream', () => {
       'statusUpdate',
     ]);
     expect(got.ended).toBe(true);
+  });
+
+  // SubscribeToTask ends only at a terminal state (§3.1.6; TCK STREAM-SUB-002).
+  it('runs through INPUT_REQUIRED to the terminal event when untilTerminal', async () => {
+    const port = new FakePort();
+    const question = msg({
+      id: 'm-q',
+      kind: 'question',
+      blocking: true,
+      replyTo: 'm-root',
+    });
+    port.tasks.set('m-root', facts({ openQuestions: [question] }));
+    const { res, released } = open(port, { untilTerminal: true });
+    setTimeout(
+      () =>
+        port.change(
+          'm-root',
+          facts({
+            answer: msg({ id: 'm-ans', kind: 'answer', replyTo: 'm-root' }),
+          })
+        ),
+      60
+    );
+    const got = await events(res, 5);
+    expect(got.data.map((e) => Object.keys(e)[0])).toEqual([
+      'task',
+      'artifactUpdate',
+      'statusUpdate',
+    ]);
+    expect(JSON.stringify(got.data[0])).toContain('TASK_STATE_INPUT_REQUIRED');
+    expect(JSON.stringify(got.data.at(-1))).toContain('TASK_STATE_COMPLETED');
+    expect(got.ended).toBe(true);
+    expect(released()).toBe(1);
   });
 
   it('sends keepalive comments', async () => {
@@ -284,6 +320,60 @@ describe('streams over HTTP', () => {
       expect((await events(res, 1)).data[0]).toHaveProperty('task');
       aborter.abort();
     }
+  });
+
+  it('keeps a subscription open through INPUT_REQUIRED until the task is terminal', async () => {
+    const question = msg({
+      id: 'm-q',
+      kind: 'question',
+      blocking: true,
+      replyTo: 'm-root',
+    });
+    port.tasks.set('m-iq', facts({ id: 'm-iq', openQuestions: [question] }));
+    const res = await fetch(`${base}/a2a/v1/tasks/m-iq:subscribe`, {
+      headers,
+    });
+    setTimeout(
+      () =>
+        port.change(
+          'm-iq',
+          facts({
+            id: 'm-iq',
+            answer: msg({ id: 'm-ans', kind: 'answer', replyTo: 'm-root' }),
+          })
+        ),
+      100
+    );
+    const got = await events(res, 5);
+    expect(JSON.stringify(got.data[0])).toContain('TASK_STATE_INPUT_REQUIRED');
+    expect(JSON.stringify(got.data.at(-1))).toContain('TASK_STATE_COMPLETED');
+    expect(got.ended).toBe(true);
+  });
+
+  it('ends a streamed send at INPUT_REQUIRED, where the client must answer', async () => {
+    const question = msg({
+      id: 'm-q',
+      kind: 'question',
+      blocking: true,
+      replyTo: 'm-root',
+    });
+    port.tasks.set('m-iq2', facts({ id: 'm-iq2', openQuestions: [question] }));
+    port.onOpen = () => ({ kind: 'task', taskId: 'm-iq2' });
+    const res = await fetch(`${base}/a2a/v1/message:stream`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        message: {
+          messageId: 'c-iq2',
+          role: 'ROLE_USER',
+          parts: [{ text: 'q?' }],
+        },
+      }),
+    });
+    port.onOpen = () => ({ kind: 'task', taskId: 'm-root' });
+    const got = await events(res, 5);
+    expect(got.data.map((e) => Object.keys(e)[0])).toEqual(['task']);
+    expect(got.ended).toBe(true);
   });
 
   it('refuses to subscribe to a terminal task', async () => {

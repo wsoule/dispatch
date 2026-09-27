@@ -594,9 +594,10 @@ wrap this daemon for end users.
 Dispatch is open core — see [`LICENSING.md`](LICENSING.md) for the
 plain-language map:
 
-- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/client`,
-  `@dispatch/cli`, `@dispatch/mcp`. Build on the task model, drive the daemon,
-  or embed the MCP tools without a license review.
+- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/protocol`,
+  `@dispatch/client`, `@dispatch/cli`, `@dispatch/mcp`. Build on the task model,
+  embed the message bus, drive the daemon, or embed the MCP tools without a
+  license review.
 - **[FSL-1.1-ALv2](LICENSE)** — the desktop app and the daemon/orchestrator.
   Source-available, not OSI open source: read, build, modify, self-host, and
   redistribute for any purpose except shipping a competing product or service.

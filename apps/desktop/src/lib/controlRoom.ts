@@ -220,6 +220,14 @@ function attentionFor(
   return null;
 }
 
+// Row states of a run in flight: while a task has one, its older settled rounds stay hidden.
+const IN_FLIGHT = new Set<FeedState>([
+  'working',
+  'fixing',
+  'checking',
+  'approve',
+]);
+
 export function buildFeed(input: BuildFeedInput): FeedModel {
   const {
     runs,
@@ -258,12 +266,13 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
       .map((r) => r.branch)
   );
 
-  // Every run that still has a place in the feed, with its state resolved once. `createdAt`
-  // and the kind travel alongside for the superseded-run pass below.
+  // Every run that still has a place in the feed, with its state resolved once. `createdAt`,
+  // the kind and whether the run is in flight travel along for the superseded-run pass below.
   const entries: {
     row: FeedRowModel;
     createdAt: string;
     isExecute: boolean;
+    live: boolean;
   }[] = [];
   for (const run of runs) {
     if (runKindOf(run) !== 'execute' && foldedInto.has(run.baseBranch))
@@ -321,9 +330,12 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
                 subagentActivity(run.subagents)
               : null;
 
+    // An ask on an ended run waits for an answer; only the run's own state is in flight.
+    const flight = state === 'answer' ? derived : state;
     entries.push({
       createdAt: run.createdAt,
       isExecute: runKindOf(run) === 'execute',
+      live: flight !== null && IN_FLIGHT.has(flight),
       row: {
         runId: run.id,
         taskId: run.taskId,
@@ -361,19 +373,10 @@ export function buildFeed(input: BuildFeedInput): FeedModel {
   // come back only if it settles without replacing them. Queue-backed rows (landing) always
   // survive.
   const SETTLED = new Set<FeedState>(['review', 'ruling', 'failed']);
-  const LIVE = new Set<FeedState>([
-    'working',
-    'fixing',
-    'checking',
-    'answer',
-    'approve',
-  ]);
   const settled = (entry: (typeof entries)[number]): boolean =>
     SETTLED.has(entry.row.state);
   const liveTasks = new Set(
-    entries
-      .filter((entry) => LIVE.has(entry.row.state))
-      .map((entry) => entry.row.taskId)
+    entries.filter((entry) => entry.live).map((entry) => entry.row.taskId)
   );
   const latestSettledByTask = new Map<string, string>();
   for (const entry of entries) {

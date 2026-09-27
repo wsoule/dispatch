@@ -22,23 +22,25 @@ exposes is a major change ([§14.1](14-versioning.md#s14.1)).
 
 **Initial state.** A delivery starts as follows:
 
-| Recipient                                                                            | Initial state and session                                                                             |
-| ------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------- |
-| any recipient, when the sender is muted                                              | `read`, no session                                                                                    |
-| `human:`                                                                             | `notified`, no session                                                                                |
-| `agent:`                                                                             | `held`, no session                                                                                    |
-| `task:` with a live session                                                          | `sending`, bound to that session                                                                      |
-| `task:` without one                                                                  | `held`, no session                                                                                    |
-| `run:` that is live                                                                  | `sending`, bound to it                                                                                |
-| `run:` that is not live, reached through a channel                                   | no delivery                                                                                           |
-| `run:` that is not live, being replied to                                            | `held`, no session ([§4.6](04-messages.md#s4.6))                                                      |
-| `run:` that is not live, named in a `wake: "request"` message from a `human:` sender | `held`, no session; the host is then asked to wake exactly that session ([§6.5](06-delivery.md#s6.5)) |
-| any other `run:` that is not live                                                    | the send fails `invalid` on the caller's `to[i]`                                                      |
+| Recipient                                                                                                       | Initial state and session                                                                             |
+| --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| any recipient, when the sender is muted                                                                         | `read`, no session                                                                                    |
+| `human:`                                                                                                        | `notified`, no session                                                                                |
+| `agent:`                                                                                                        | `held`, no session                                                                                    |
+| `task:` with a live session                                                                                     | `sending`, bound to that session                                                                      |
+| `task:` without one                                                                                             | `held`, no session                                                                                    |
+| `run:` that is live                                                                                             | `sending`, bound to it                                                                                |
+| `run:` that is not live, reached through a channel                                                              | no delivery                                                                                           |
+| `run:` that is not live, being replied to                                                                       | `held`, no session ([§4.6](04-messages.md#s4.6))                                                      |
+| `run:` that is not live and stands for a work item, named in a `wake: "request"` message from a `human:` sender | `held`, no session; the host is then asked to wake exactly that session ([§6.5](06-delivery.md#s6.5)) |
+| any other `run:` that is not live                                                                               | the send fails `invalid` on the caller's `to[i]`                                                      |
 
-The last row covers a wake request from an agent or a session, and a human's
-message that does not request a wake. A session is "being replied to" when it is
-the sender of the reply's target and [§4.6](04-messages.md#s4.6) did not rewrite
-it. A channel is never a recipient: it expands to its members, and it is never a
+The last row covers a wake request from an agent or a session, a human's wake
+request naming a session that stands for no work item, whose held mail no
+session start could claim ([§6.4](06-delivery.md#s6.4)), and a human's message
+that does not request a wake. A session is "being replied to" when it is the
+sender of the reply's target and [§4.6](04-messages.md#s4.6) did not rewrite it.
+A channel is never a recipient: it expands to its members, and it is never a
 member ([§7.3](07-mailboxes-and-channels.md#s7.3)). (pinned rule 3; vectors:
 `core.send.human-mail-is-notified`, `core.send.agent-mail-is-held`,
 `core.send.task-held-without-live-session`,
@@ -149,6 +151,7 @@ in [Appendix C](appendix-c-dispatch-profile.md#sC.8). (pinned rule 9; vectors:
 `core.wake.ask-raises-a-wake-gate-to-the-owner`,
 `core.wake.a-failed-wake-never-fails-the-send`,
 `core.wake.a-humans-wake-holds-mail-for-an-ended-session`,
+`core.wake.a-humans-wake-to-a-session-of-no-work-item-fails`,
 `core.wake.only-held-work-items-of-a-wake-request-are-considered`,
 `core.wake.a-failed-wake-tells-the-sender`, `core.wake.deny-tells-the-sender`,
 `core.wake.a-notice-to-an-ended-sender-goes-to-its-work-item`)

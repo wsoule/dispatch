@@ -1,3 +1,4 @@
+import { queryAll } from '@dispatch/core';
 import type { SqliteDatabase } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -340,6 +341,92 @@ describe('SqliteMessageStore', () => {
     store.insertMessage(msg({ id: 'm-03', thread: 'm-03' }));
 
     expect(store.recentThreads(1).map((t) => t.thread)).toEqual(['m-03']);
+  });
+
+  it('narrows recentThreads to threads a set of addresses took part in', () => {
+    store.insertMessage(
+      msg({
+        id: 'm-01',
+        thread: 'm-01',
+        from: 'run:r-000001',
+        to: ['human:wyat'],
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-02',
+        thread: 'm-02',
+        from: 'human:wyat',
+        to: ['task:t-000002'],
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-03',
+        thread: 'm-03',
+        from: 'human:wyat',
+        to: ['channel:general'],
+      })
+    );
+    store.insertDelivery({
+      id: 'd-03',
+      messageId: 'm-03',
+      recipient: 'task:t-000002',
+      runId: null,
+      via: 'channel',
+      state: 'held',
+      updatedAt: at,
+    });
+    store.insertMessage(
+      msg({
+        id: 'm-04',
+        thread: 'm-04',
+        from: 'human:wyat',
+        to: ['agent:wyat/x'],
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-05',
+        thread: 'm-05',
+        from: 'human:wyat',
+        to: ['task:t-000009'],
+      })
+    );
+    store.insertDelivery({
+      id: 'd-05',
+      messageId: 'm-05',
+      recipient: 'task:t-000009',
+      runId: 'r-000001',
+      via: 'direct',
+      state: 'pushed',
+      updatedAt: at,
+    });
+
+    expect(
+      store
+        .recentThreads(10, ['task:t-000002', 'run:r-000001'])
+        .map((t) => t.thread)
+    ).toEqual(['m-05', 'm-03', 'm-02', 'm-01']);
+    expect(store.recentThreads(10, [])).toEqual([]);
+    expect(store.recentThreads(10).map((t) => t.thread)).toEqual([
+      'm-05',
+      'm-04',
+      'm-03',
+      'm-02',
+      'm-01',
+    ]);
+  });
+
+  it('looks a recipient address up by index, so narrowing threads scans no whole table', () => {
+    const plan = queryAll<{ detail: string }>(
+      db,
+      'EXPLAIN QUERY PLAN SELECT message_id FROM recipients WHERE addr = ?',
+      ['task:t-000002']
+    );
+    expect(plan.map((row) => row.detail).join('\n')).toContain(
+      'INDEX recipients_addr'
+    );
   });
 
   it('refuses a messages.db written by a newer schema', () => {

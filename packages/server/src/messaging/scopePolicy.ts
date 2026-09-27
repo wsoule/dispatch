@@ -120,44 +120,85 @@ export function applyScopeAnswer(
   return 'applied';
 }
 
-// Grants a run's new scope gate as the system when the project's policy rung
-// covers it; anything else waits for a human.
-export function installScopePolicy(
+// Answers a run's scope gate as the system when the project's policy rung
+// covers it, resolving whether it did; never rejects, a failure is logged.
+async function grantByPolicy(
   engine: DeliveryEngine,
-  deps: ScopePolicyDeps
-): () => void {
-  return engine.subscribe((e) => {
-    if (e.type !== 'message') return;
-    const question = e.message;
-    const gate = gateOf(question);
-    if (
-      gate?.type !== 'scope' ||
-      question.kind !== 'question' ||
-      !question.from.startsWith('run:')
-    )
-      return;
+  deps: ScopePolicyDeps,
+  question: Message
+): Promise<boolean> {
+  const gate = gateOf(question);
+  if (
+    gate?.type !== 'scope' ||
+    question.kind !== 'question' ||
+    !question.from.startsWith('run:')
+  )
+    return false;
+  try {
     const ruling = scopeRulingFor(
       deps,
       question.from.slice('run:'.length),
       gate.paths
     );
-    if (ruling === null) return;
-    void engine
-      .reply(
-        question.id,
-        {
-          choice: 'grant',
-          body: describePolicyAuthorization(ruling),
-          data: { type: 'x-policy', gate: 'scope', rung: ruling.rung },
-        },
-        SYSTEM_SENDER
-      )
-      .catch((err: unknown) => {
-        // A conflict means someone answered first; theirs stands.
-        if (err instanceof MessagingError && err.code === 'conflict') return;
-        console.error('messaging: scope auto-grant failed', err);
-      });
+    if (ruling === null) return false;
+    await engine.reply(
+      question.id,
+      {
+        choice: 'grant',
+        body: describePolicyAuthorization(ruling),
+        data: { type: 'x-policy', gate: 'scope', rung: ruling.rung },
+      },
+      SYSTEM_SENDER
+    );
+    return true;
+  } catch (err) {
+    // A conflict means someone answered first; theirs stands.
+    if (!(err instanceof MessagingError && err.code === 'conflict'))
+      console.error('messaging: scope auto-grant failed', err);
+    return false;
+  }
+}
+
+// Grants a run's new scope gate as the system when policy covers it; anything
+// else waits for a human.
+export function installScopePolicy(
+  engine: DeliveryEngine,
+  deps: ScopePolicyDeps
+): () => void {
+  return engine.subscribe((e) => {
+    if (e.type === 'message') void grantByPolicy(engine, deps, e.message);
   });
+}
+
+// Grants every open scope gate policy covers, catching a live grant that
+// failed or that a crash cut off after the question was stored.
+async function grantScopeGatesByPolicy(
+  engine: DeliveryEngine,
+  deps: ScopePolicyDeps
+): Promise<number> {
+  let granted = 0;
+  for (const question of engine.openBlocking())
+    if (await grantByPolicy(engine, deps, question)) granted++;
+  return granted;
+}
+
+// One pass of the daemon's scope sweep: grants what policy covers, then
+// expires the rest, so a failing grant phase never stops the expiry.
+export async function sweepScopeGates(
+  engine: DeliveryEngine,
+  deps: ScopePolicyDeps,
+  nowMs: () => number
+): Promise<void> {
+  try {
+    await grantScopeGatesByPolicy(engine, deps);
+  } catch (err) {
+    console.error('messaging: scope grant sweep failed', err);
+  }
+  try {
+    await expireScopeGates(engine, nowMs());
+  } catch (err) {
+    console.error('messaging: scope expiry sweep failed', err);
+  }
 }
 
 // Denies, as the system, every open scope gate nobody decided within the TTL.

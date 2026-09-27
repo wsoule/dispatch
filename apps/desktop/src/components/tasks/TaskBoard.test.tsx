@@ -138,6 +138,7 @@ function shellWith(presets: CreateTaskPreset[]) {
   const noop = () => {};
   const actions = {
     openTask: noop,
+    openThread: noop,
     peekTask: noop,
     openCreateTask: (preset?: CreateTaskPreset) => {
       presets.push(preset ?? {});

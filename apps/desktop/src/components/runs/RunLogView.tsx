@@ -2,24 +2,27 @@ import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { foldSubagents } from '@dispatch/core/browser';
 import {
   Info,
+  Mail,
   Megaphone,
   MessageSquare,
   MessageSquarePlus,
   Play,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { PendingApproval } from '../../lib/pendingApprovals';
 import { groupLogEntries } from '../../lib/runLog';
+import { parseDeliveredText, parseDigestLine } from '../../lib/runMessages';
 import {
   continueMessage,
   deriveRunDisposition,
   isTerminalRunState,
   postFailWorkLabel,
 } from '../../lib/runState';
+import { kindLabel } from '../../lib/threadSources';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './QuestionCard';
@@ -28,6 +31,7 @@ import { SubagentTree } from './SubagentTree';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
 import { LoadingState } from '@/ui/ai/loading-state';
+import { Pill } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Alert, AlertDescription } from '@/ui/alert';
 import { Button } from '@/ui/button';
@@ -41,49 +45,150 @@ const SENDABLE_STATES = new Set<RunMeta['state']>([
   'awaiting-approval',
 ]);
 
-function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
+// The agent-facing prompt to answer with msg_reply; a person reading the chat has no use for it.
+const WAITING_NOTE = 'The sender is waiting.';
+
+// `about` names the message, so a list of these links reads apart for a screen reader.
+function OpenThread({
+  messageId,
+  about,
+  onOpen,
+}: {
+  messageId: string;
+  about: string | undefined;
+  onOpen: (messageId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={about === undefined ? undefined : `Open thread: ${about}`}
+      className="text-muted-foreground hover:text-foreground ml-auto text-[12px] font-normal hover:underline"
+      onClick={() => onOpen(messageId)}
+    >
+      Open thread
+    </button>
+  );
+}
+
+// Memoized so a run.log append re-renders only the new row; entries keep their identity.
+const ChatMessageBubble = memo(function ChatMessageBubble({
+  entry,
+  me,
+  onOpenMessage,
+  readsAllThreads,
+}: {
+  entry: NormalizedEntry;
+  me: string | null;
+  onOpenMessage: ((messageId: string) => void) | null;
+  readsAllThreads: boolean;
+}) {
+  const text = entry.text ?? '';
+  // Below decide a window reads only threads it took part in, and all the chat
+  // knows of a message is who sent it.
+  const link = (
+    messageId: string | undefined,
+    sender: string | undefined,
+    about?: string
+  ) =>
+    messageId !== undefined &&
+    onOpenMessage !== null &&
+    (readsAllThreads || (me !== null && sender === me)) ? (
+      <OpenThread messageId={messageId} about={about} onOpen={onOpenMessage} />
+    ) : null;
+
+  if (entry.digest === true) {
+    const digest = parseDigestLine(text);
+    const line =
+      digest === null
+        ? text
+        : `${digest.channel === null ? '' : `#${digest.channel} · `}${digest.kind} from ${digest.from}: ${digest.summary}`;
+    return (
+      <div className="text-muted-foreground font-book flex items-center gap-1.5 px-1 text-[12px]">
+        <Mail className="size-3 shrink-0" />
+        <span className="min-w-0 flex-1 truncate" title={line}>
+          {line}
+        </span>
+        {link(
+          entry.messageId ?? digest?.messageId,
+          digest?.from,
+          digest === null ? undefined : `${digest.kind} from ${digest.from}`
+        )}
+      </div>
+    );
+  }
+
   const fromUser = entry.from === 'user';
   const toUser = entry.from === 'agent' && entry.toUser === true;
 
   if (toUser) {
+    const sender = entry.fromLabel ?? 'an agent';
     return (
       <div className="bg-surface-quaternary border-border-strong rounded-card flex w-full flex-col gap-0.5 border-[0.5px] px-3 py-2">
         <div className="flex items-center gap-1.5 text-[12px] font-medium text-(--text-secondary)">
           <Megaphone className="size-3" />
           To you
-          <span className="text-muted-foreground font-book">
-            from {entry.fromLabel ?? 'an agent'}
-          </span>
+          <span className="text-muted-foreground font-book">from {sender}</span>
+          {link(entry.messageId, sender, `to you from ${sender}`)}
         </div>
-        <Markdown
-          content={entry.text ?? ''}
-          className="font-book text-[13px]"
-        />
+        <Markdown content={text} className="font-book text-[13px]" />
       </div>
     );
   }
 
+  // A pushed bus message is stored as the agent saw it; show its body, not the framing.
+  const delivered =
+    entry.messageId === undefined ? null : parseDeliveredText(text);
+  const notes =
+    delivered?.notes.filter((line) => !line.startsWith(WAITING_NOTE)) ?? [];
+  const kind = delivered?.kind;
+  const badge = kind === undefined ? undefined : kindLabel(kind);
+  const sender = entry.fromLabel ?? delivered?.from;
+  // Only the viewer's own line, or composer text with no sender, reads as "You" on the
+  // right; a teammate's sits on the left with the other senders.
+  const own = fromUser && (sender === undefined || sender === me);
+  const heading = own
+    ? 'You'
+    : fromUser
+      ? sender
+      : `↳ ${sender ?? 'another agent'}`;
   return (
     <div
       className={cn(
         'flex max-w-[90%] flex-col gap-0.5 rounded-card px-3 py-2',
-        fromUser
+        own
           ? 'bg-surface-quaternary self-end border-[0.5px] border-border-strong'
           : 'bg-state-waiting-surface self-start'
       )}
     >
       <div
         className={cn(
-          'text-[12px] font-medium',
-          fromUser ? 'text-muted-foreground' : 'text-state-waiting'
+          'flex items-center gap-1.5 text-[12px] font-medium',
+          own ? 'text-muted-foreground' : 'text-state-waiting'
         )}
       >
-        {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}
+        {heading}
+        {badge !== undefined && <Pill>{badge}</Pill>}
+        {delivered?.urgent === true && <Pill>Urgent</Pill>}
+        {link(
+          entry.messageId,
+          sender,
+          `${kind ?? 'message'} from ${sender ?? 'another agent'}`
+        )}
       </div>
-      <Markdown content={entry.text ?? ''} className="font-book text-[13px]" />
+      <Markdown
+        content={delivered?.body ?? text}
+        className="font-book text-[13px]"
+      />
+      {notes.length > 0 && (
+        <div className="text-muted-foreground font-book text-[12px]">
+          {notes.map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+        </div>
+      )}
     </div>
   );
-}
+});
 
 interface RunLogViewProps {
   meta: RunMeta;
@@ -116,6 +221,15 @@ interface RunLogViewProps {
    * works the same way (one composer, always in the same place) whether the run is still
    * going or already finished. */
   onRequestChanges: (text: string) => Promise<void>;
+  /** Opens the Threads view on a delivered message's thread; null in a window that
+   * cannot open threads, which then shows no links. */
+  onOpenMessage: ((messageId: string) => void) | null;
+  /** The viewer's address (`human:<handle>`): a human sender matching it reads as "You".
+   * While it is unknown, every addressed human sender shows its address. */
+  me: string | null;
+  /** Whether this window can read every thread (the decide tier); below it, only a
+   * message the viewer sent links to its thread. */
+  readsAllThreads: boolean;
 }
 
 /** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
@@ -137,6 +251,9 @@ export function RunLogView({
   scopeDecide,
   onRestartDaemon,
   onRequestChanges,
+  onOpenMessage,
+  me,
+  readsAllThreads,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -209,7 +326,12 @@ export function RunLogView({
       {subagents.length > 0 && (
         <SubagentTree nodes={subagents} className="mx-1 shrink-0" />
       )}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1">
+      <div
+        ref={scrollRef}
+        role="region"
+        aria-label="Run log"
+        className="min-h-0 flex-1 overflow-y-auto px-1"
+      >
         <div ref={contentRef} className="flex min-h-full flex-col gap-3">
           {meta.resumedFrom !== undefined && (
             <div className="text-muted-foreground font-book flex items-center justify-center gap-1.5 py-1 text-center text-[12px]">
@@ -252,7 +374,13 @@ export function RunLogView({
                 ))}
               </div>
             ) : group.entries[0].kind === 'message' ? (
-              <ChatMessageBubble key={i} entry={group.entries[0]} />
+              <ChatMessageBubble
+                key={i}
+                entry={group.entries[0]}
+                me={me}
+                onOpenMessage={onOpenMessage}
+                readsAllThreads={readsAllThreads}
+              />
             ) : (
               <TranscriptRow
                 key={i}

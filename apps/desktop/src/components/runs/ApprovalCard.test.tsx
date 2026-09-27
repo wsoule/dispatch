@@ -140,6 +140,31 @@ describe('ApprovalCard — a preview cut short of the full call', () => {
     expect(screen.getByText(/Preview truncated/)).toBeDefined();
   });
 
+  it('loads the full call again when asked after a failed load', async () => {
+    let attempts = 0;
+    const loadFullInput = mock(() => {
+      attempts++;
+      return attempts === 1
+        ? Promise.reject(new Error('daemon restarting'))
+        : Promise.resolve(FULL);
+    });
+    render(
+      <ApprovalCard
+        toolName="Bash"
+        toolInput={PREVIEW}
+        truncated
+        onDecide={() => Promise.resolve()}
+        loadFullInput={loadFullInput}
+      />
+    );
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Load the full call' })
+    );
+    expect(await screen.findByText(/evil\.example/)).toBeDefined();
+    expect(screen.queryByText(/Preview truncated/)).toBeNull();
+    expect(loadFullInput).toHaveBeenCalledTimes(2);
+  });
+
   it('shows no marker for a preview that holds the whole call', () => {
     render(
       <ApprovalCard

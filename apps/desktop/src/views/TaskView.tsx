@@ -2,14 +2,17 @@ import { useMemo } from 'react';
 
 import { RunStatePill } from '../components/runs/RunStatePill';
 import { ErrorBoundary } from '../components/shell/ErrorBoundary';
+import { useShellActions } from '../components/shell/ShellActionsContext';
 import type { TaskDetailPanelProps } from '../components/tasks/detail';
 import { TaskPage } from '../components/tasks/detail';
 import { TaskChatTab } from '../components/tasks/TaskChatTab';
 import { TaskDiffTab } from '../components/tasks/TaskDiffTab';
 import { TaskPreviewTab } from '../components/tasks/TaskPreviewTab';
+import { TaskThreadTab } from '../components/tasks/TaskThreadTab';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { ImpactSubjectRef, TaskTab } from '../lib/appNav';
 import { formatShortDate } from '../lib/taskDates';
+import { openRefWith } from '../lib/threadSources';
 import { ViewTabs } from '@/ui/ai/page-header';
 import { SelectPill } from '@/ui/ai/pill';
 import { EmptyState } from '@/ui/chrome/empty-state';
@@ -23,6 +26,7 @@ import {
 const TASK_TABS = [
   { id: 'details', label: 'Details' },
   { id: 'chat', label: 'Chat' },
+  { id: 'thread', label: 'Thread' },
   { id: 'diff', label: 'Diff' },
   { id: 'preview', label: 'Preview' },
 ];
@@ -52,8 +56,9 @@ export interface TaskViewProps {
 }
 
 /**
- * One task, full-window: `TaskPage` draws the crumb header with Details/Chat/Diff view
- * tabs; Details is the page's own body, Chat hosts `TaskChatTab`, Diff hosts `TaskDiffTab`.
+ * One task, full-window: `TaskPage` draws the crumb header with Details/Chat/Thread/Diff
+ * view tabs; Details is the page's own body, Chat hosts `TaskChatTab`, Thread hosts
+ * `TaskThreadTab`, Diff hosts `TaskDiffTab`.
  */
 export function TaskView({
   data,
@@ -78,6 +83,17 @@ export function TaskView({
     [data.runs, taskId]
   );
   const selectedRun = taskRuns.find((r) => r.id === activeRunId);
+  const shell = useShellActions();
+  // Where a thread's ref chips and sender names lead from inside the task page.
+  const openRef = useMemo(
+    () =>
+      openRefWith({
+        openTask: shell.openTask,
+        openThread: shell.openThread,
+        openImpact: onOpenImpact,
+      }),
+    [shell.openTask, shell.openThread, onOpenImpact]
+  );
   if (doc === null || panelProps === undefined)
     return (
       <EmptyState
@@ -88,9 +104,9 @@ export function TaskView({
       />
     );
 
-  // The session select: which run the Chat and Diff tabs read. Details has no session.
+  // The session select: which run the Chat and Diff tabs read. Details and Thread have none.
   const sessionSelect =
-    tab !== 'details' && taskRuns.length > 0 ? (
+    tab !== 'details' && tab !== 'thread' && taskRuns.length > 0 ? (
       <DropdownMenu>
         <DropdownMenuTrigger
           render={<SelectPill aria-label="Session" className="max-w-72" />}
@@ -144,6 +160,15 @@ export function TaskView({
             doc={doc}
             selectedRun={selectedRun}
             onDispatch={() => void data.handleDispatch(doc.meta.id)}
+          />
+        </ErrorBoundary>
+      ) : tab === 'thread' ? (
+        <ErrorBoundary label="this tab">
+          <TaskThreadTab
+            data={data}
+            taskId={doc.meta.id}
+            onOpenRef={openRef}
+            onOpenOverseer={() => shell.setGlobalView('overseer')}
           />
         </ErrorBoundary>
       ) : tab === 'diff' ? (

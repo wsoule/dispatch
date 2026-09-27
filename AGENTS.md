@@ -58,6 +58,9 @@ Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
   `packages/protocol`, `packages/a2a` are MIT.
 - `packages/protocol-spec` is Apache-2.0: the published protocol text and its
   conformance kit.
+- `packages/federation`, `packages/server/src/team/` and
+  `packages/server/test/team/` are Elastic-2.0 (their own `LICENSE` files): the
+  team tier.
 - Everything else (`packages/server`, `packages/ui`, `packages/web`,
   `packages/demo`, `apps/desktop`, `apps/demo`, `apps/site`) is `FSL-1.1-ALv2`
   (`LICENSE`), source-available and converting to Apache-2.0 two years after

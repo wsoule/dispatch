@@ -12,6 +12,7 @@ import {
   questionsOfRuns,
 } from '../../lib/taskAsks';
 import { RunLogView } from '../runs/RunLogView';
+import { useShellActions } from '../shell/ShellActionsContext';
 import { TabSkeleton } from './TabSkeleton';
 import { EmptyState } from '@/ui/chrome';
 
@@ -36,6 +37,7 @@ export function TaskChatTab({
   selectedRun,
   onDispatch,
 }: TaskChatTabProps) {
+  const { openThread } = useShellActions();
   // The selected run's open asks plus those of the task's ended execute runs,
   // which stay open for the task whatever run is shown.
   const askRunIds = useMemo(
@@ -117,6 +119,9 @@ export function TaskChatTab({
         onRequestChanges={(text) =>
           data.handleRequestChanges(selectedRun.id, text)
         }
+        onOpenMessage={data.messageAccess.canMessage ? openThread : null}
+        me={data.me}
+        readsAllThreads={data.messageAccess.canDecide}
       />
     </div>
   );

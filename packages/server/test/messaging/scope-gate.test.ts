@@ -8,6 +8,7 @@ import { closeOrphanedGates } from '../../src/messaging/gates.js';
 import {
   expireScopeGates,
   SCOPE_GATE_TTL_MS,
+  sweepScopeGates,
 } from '../../src/messaging/scopePolicy.js';
 import { StallingExecutor } from '../orchestrator/helpers.js';
 import {
@@ -113,6 +114,41 @@ describe('scope gates', () => {
     if (answer !== null) await messaging.gates.handle(gate, answer);
     expect(ledger()).toHaveLength(1);
     expect(activity).toHaveLength(1);
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  // The live grant can fail, or a crash can land between the question and
+  // it; the sweep grants what policy covers instead of leaving it to expire.
+  it("the daemon's sweep grants a scope gate whose policy grant did not land", async () => {
+    setPolicy('policy:\n  rung: 2\n');
+    const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
+      scopeExpiry: { sweepMs: 10 },
+    });
+    const reply = messaging.engine.reply.bind(messaging.engine);
+    let failures = 0;
+    const replies = spyOn(messaging.engine, 'reply').mockImplementation(
+      (id, input, sender) => {
+        if (failures > 0) return reply(id, input, sender);
+        failures++;
+        return Promise.reject(new Error('disk full'));
+      }
+    );
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { message: gate } = await askScope(messaging, run);
+      await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
+      expect(failures).toBe(1);
+      expect(messaging.engine.answerOf(gate.id)).toMatchObject({
+        from: 'agent:dispatch',
+        choice: 'grant',
+        data: { type: 'x-policy', gate: 'scope', rung: 2 },
+      });
+      expect(ledger()).toHaveLength(1);
+    } finally {
+      replies.mockRestore();
+      logged.mockRestore();
+    }
     await orchestrator.cancel(meta.id);
     messaging.close();
   });
@@ -263,6 +299,69 @@ describe('scope gates', () => {
     expect(messaging.engine.answerOf(gate.id)?.data).toEqual({
       type: 'x-expired',
     });
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it('a policy lookup that throws is logged, and the sweep still expires the gate', async () => {
+    setPolicy('policy:\n  rung: 2\n');
+    const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
+      scopeExpiry: {
+        sweepMs: 10,
+        now: () => Date.now() + SCOPE_GATE_TTL_MS + 1000,
+      },
+    });
+    const unhandled: unknown[] = [];
+    const onUnhandled = (err: unknown) => unhandled.push(err);
+    process.on('unhandledRejection', onUnhandled);
+    const lookups = spyOn(orchestrator, 'list').mockImplementation(() => {
+      throw new Error('run table unreadable');
+    });
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { message: gate } = await askScope(messaging, run);
+      await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
+      expect(messaging.engine.answerOf(gate.id)?.data).toEqual({
+        type: 'x-expired',
+      });
+      expect(unhandled).toEqual([]);
+      expect(logged).toHaveBeenCalled();
+    } finally {
+      process.off('unhandledRejection', onUnhandled);
+      lookups.mockRestore();
+      logged.mockRestore();
+    }
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it('a sweep whose grant phase throws still expires an overdue gate', async () => {
+    const { orchestrator, messaging, meta, run } = await liveRun();
+    const { message: gate } = await askScope(messaging, run);
+    const openBlocking = messaging.engine.openBlocking.bind(messaging.engine);
+    let reads = 0;
+    const reading = spyOn(messaging.engine, 'openBlocking').mockImplementation(
+      () => {
+        reads++;
+        if (reads === 1) throw new Error('database is locked');
+        return openBlocking();
+      }
+    );
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await sweepScopeGates(
+        messaging.engine,
+        { rootDir: project.root(), runOf: () => null, taskOf: () => null },
+        () => Date.parse(gate.createdAt) + SCOPE_GATE_TTL_MS + 1
+      );
+      expect(messaging.engine.answerOf(gate.id)?.data).toEqual({
+        type: 'x-expired',
+      });
+      expect(logged).toHaveBeenCalledTimes(1);
+    } finally {
+      reading.mockRestore();
+      logged.mockRestore();
+    }
     await orchestrator.cancel(meta.id);
     messaging.close();
   });

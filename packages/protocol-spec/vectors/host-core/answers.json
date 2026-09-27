@@ -317,6 +317,167 @@
       }
     },
     {
+      "id": "core.answers.a-reply-to-an-ended-recipient-goes-to-its-work-item",
+      "title": "A reply naming an ended session its target was sent to goes to that session's work item and waits there",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "try the cart first"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "still there?",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, { "ok": true }],
+        "messages": [{ "id": "$s3", "to": ["task:t-000001"] }],
+        "deliveries": [
+          {
+            "message": "$s3",
+            "recipient": "task:t-000001",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-to-an-ended-recipient-reaches-the-successor-session",
+      "title": "A reply naming an ended session its target was sent to reaches that work item's live successor session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "try the cart first"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000001",
+              "session": "run:r-000002"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "still there?",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, null, null, { "ok": true }],
+        "messages": [{ "id": "$s4", "to": ["task:t-000001"] }],
+        "deliveries": [
+          {
+            "message": "$s4",
+            "recipient": "task:t-000001",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ],
+        "callsInclude": [
+          { "hook": "push", "session": "run:r-000002", "message": "$s4" }
+        ]
+      }
+    },
+    {
+      "id": "core.answers.a-reply-naming-an-ended-session-its-target-never-reached-fails",
+      "title": "A reply naming an ended session that is neither its target's sender nor one of its recipients fails invalid on its to[] slot",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000001"],
+            "kind": "message",
+            "body": "try the cart first"
+          }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000002" } }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["run:r-000002"],
+            "kind": "message",
+            "body": "still there?",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          null,
+          { "ok": false, "error": { "code": "invalid", "field": "to[0]" } }
+        ],
+        "messages": [{ "id": "$s1", "to": ["run:r-000001"] }],
+        "noOtherMessages": true
+      }
+    },
+    {
       "id": "core.answers.only-a-deciding-principal-answers-a-gate",
       "title": "An answer to a gate from a principal that cannot decide is forbidden on replyTo; a deciding human answer applies the effect",
       "class": "host-core",

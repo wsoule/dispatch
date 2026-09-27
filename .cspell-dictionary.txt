@@ -51,6 +51,7 @@ categorise
 ccount
 cdylib
 Centralised
+CFRG
 cfworker
 checkpointed
 chev
@@ -87,11 +88,14 @@ CRDT's
 Crockford
 cutover
 daemonfile
+Dagesh
+Dalet
 Dami
 deadbeefcafe
 deadbeefdeadbeef
 deadcode
 debouncer
+decap
 DECCKM
 dedup
 dedup'd
@@ -134,6 +138,7 @@ emnapi
 emphasised
 emphasises
 empt
+encap
 enqueueable
 entr
 entrancy
@@ -234,6 +239,7 @@ landable
 lede
 Lesk
 libc
+libsodium
 libvips
 lifecycles
 lightningcss
@@ -325,6 +331,7 @@ pluralises
 pmirand
 posthog
 precheck
+precomposed
 preflighted
 prefs
 prerendered
@@ -448,6 +455,7 @@ stopwords
 stringifying
 strs
 stty
+stubbable
 stylelintignore
 SUBDIRS
 sublabel

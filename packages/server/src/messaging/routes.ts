@@ -1,3 +1,4 @@
+import { isClientAddress, isReservedName } from '@dispatch/a2a';
 import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
@@ -9,11 +10,16 @@ import type {
   MessageKind,
   Ref,
   SendInput,
-  SendResult,
 } from '@dispatch/protocol';
-import { DELIVERY_STATES, gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { createHash, randomBytes } from 'node:crypto';
+import {
+  DELIVERY_STATES,
+  gateOf,
+  parseAddress,
+  SYSTEM_ADDRESS,
+} from '@dispatch/protocol';
+import { randomBytes } from 'node:crypto';
 
+import { tokenHash } from '../a2a/auth.js';
 import type { ApiContext } from '../api.js';
 import { humanActor } from '../api/caller.js';
 import {
@@ -27,7 +33,6 @@ import { openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
-import type { Messaging } from './service.js';
 
 // Narrows ctx.principal (api.ts resolves it before every self-authenticated
 // route) instead of scattering `!` assertions.
@@ -310,44 +315,8 @@ function parseReplyInput(raw: unknown):
   return { ok: true, value };
 }
 
-// Sends by idempotency key, per Messaging instance. The promise is cached so
-// a concurrent retry awaits the first send instead of racing a second one.
-const idempotencyCaches = new WeakMap<
-  Messaging,
-  Map<string, Promise<SendResult>>
->();
-const MAX_IDEMPOTENCY_KEYS = 500;
-
-function idempotencyCacheFor(
-  messaging: Messaging
-): Map<string, Promise<SendResult>> {
-  let cache = idempotencyCaches.get(messaging);
-  if (cache === undefined) {
-    cache = new Map();
-    idempotencyCaches.set(messaging, cache);
-  }
-  return cache;
-}
-
-// Caches a send's promise, evicting the oldest key (Map keeps insertion order)
-// past the bound. A failed send drops its entry so a retry really retries.
-function rememberIdempotent(
-  cache: Map<string, Promise<SendResult>>,
-  key: string,
-  promise: Promise<SendResult>
-): void {
-  cache.set(key, promise);
-  if (cache.size > MAX_IDEMPOTENCY_KEYS) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  promise.catch(() => {
-    if (cache.get(key) === promise) cache.delete(key);
-  });
-}
-
 // POST /api/messages as the resolved principal. The same principal repeating
-// an `Idempotency-Key` gets the first attempt's result with 200, not 201.
+// an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
   req: Request,
   ctx: ApiContext
@@ -358,28 +327,16 @@ export async function sendMessage(
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
 
+  // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
+  // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
-  if (idemKey === null) {
-    const result = await ctx.messaging.engine.send(parsedInput.value, {
-      address: principal.address,
-      canDecide: principal.canDecide,
-    });
-    return jsonResponse(result, 201);
-  }
-
-  const cache = idempotencyCacheFor(ctx.messaging);
-  const cacheKey = `${principal.address}:${idemKey}`;
-  const existing = cache.get(cacheKey);
-  if (existing !== undefined) return jsonResponse(await existing, 200);
-
-  // No `await` between the cache miss above and this set: nothing yields the
-  // event loop in between, so a concurrent request can never also miss.
-  const sendPromise = ctx.messaging.engine.send(parsedInput.value, {
-    address: principal.address,
-    canDecide: principal.canDecide,
-  });
-  rememberIdempotent(cache, cacheKey, sendPromise);
-  return jsonResponse(await sendPromise, 201);
+  const result = await ctx.messaging.engine.send(
+    idemKey === null
+      ? parsedInput.value
+      : { ...parsedInput.value, idempotencyKey: idemKey },
+    { address: principal.address, canDecide: principal.canDecide }
+  );
+  return jsonResponse(result, result.replayed === true ? 200 : 201);
 }
 
 // GET /api/messages/:id
@@ -499,8 +456,7 @@ export function getThreadById(ctx: ApiContext, threadId: string): Response {
 const DEFAULT_RECENT_THREADS = 50;
 const MAX_RECENT_THREADS = 200;
 
-// GET /api/threads?limit=N — the most recently active threads project-wide,
-// so only a deciding human may list them.
+// GET /api/threads?limit=N[&about=task:<id>] — deciding humans only.
 export function listRecentThreads(ctx: ApiContext, url: URL): Response {
   const principal = requirePrincipal(ctx);
   if (principal.kind !== 'human' || !principal.canDecide) {
@@ -512,7 +468,25 @@ export function listRecentThreads(ctx: ApiContext, url: URL): Response {
     parsedLimit.value ?? DEFAULT_RECENT_THREADS,
     MAX_RECENT_THREADS
   );
-  return jsonResponse({ threads: ctx.messaging.store.recentThreads(limit) });
+  const about = url.searchParams.get('about');
+  if (about === null) {
+    return jsonResponse({ threads: ctx.messaging.store.recentThreads(limit) });
+  }
+  // A malformed address throws a MessagingError naming `about` (400).
+  const parsed = parseAddress(about, 'about');
+  if (parsed.kind !== 'task') {
+    return invalidField(
+      'about',
+      `invalid about ${JSON.stringify(about)}: expected task:<id>`
+    );
+  }
+  const runs = ctx.orchestrator
+    .list()
+    .filter((run) => run.taskId === parsed.id)
+    .map((run) => `run:${run.id}`);
+  return jsonResponse({
+    threads: ctx.messaging.store.recentThreads(limit, [about, ...runs]),
+  });
 }
 
 // A run's own mailbox: its address, its task, and deliveries bound to it by
@@ -737,28 +711,21 @@ export function normalizeAgentName(raw: string): string {
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
 // A required registration field with its unprintable characters removed, or
-// the 400 explaining why it is missing or too long.
-function registrationField(
+// why it is missing or too long.
+export function registrationField(
   value: unknown,
   field: 'name' | 'client'
-): { ok: true; value: string } | { ok: false; response: Response } {
+): { ok: true; value: string } | { ok: false; error: string } {
   const required = `invalid ${field}: ${field} is required`;
-  if (typeof value !== 'string') {
-    return { ok: false, response: errorResponse(400, required) };
-  }
+  if (typeof value !== 'string') return { ok: false, error: required };
   if (value.length > MAX_REGISTRATION_FIELD_LENGTH) {
     return {
       ok: false,
-      response: errorResponse(
-        400,
-        `invalid ${field}: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
-      ),
+      error: `invalid ${field}: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`,
     };
   }
   const printable = value.replace(UNPRINTABLE, '').trim();
-  if (printable === '') {
-    return { ok: false, response: errorResponse(400, required) };
-  }
+  if (printable === '') return { ok: false, error: required };
   return { ok: true, value: printable };
 }
 
@@ -772,10 +739,16 @@ export async function registerAgent(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { name?: unknown; client?: unknown };
   const displayName = registrationField(body.name, 'name');
-  if (!displayName.ok) return displayName.response;
+  if (!displayName.ok) return errorResponse(400, displayName.error);
   const client = registrationField(body.client, 'client');
-  if (!client.ok) return client.response;
+  if (!client.ok) return errorResponse(400, client.error);
   const name = normalizeAgentName(displayName.value);
+  if (isReservedName(name)) {
+    return errorResponse(
+      400,
+      'invalid name: names starting with "a2a." are reserved for A2A clients; add one with `dispatch a2a clients add`'
+    );
+  }
   if (!HANDLE_PATTERN.test(name)) {
     return errorResponse(
       400,
@@ -784,29 +757,81 @@ export async function registerAgent(
   }
   const requester = humanActor(ctx);
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
+  const reg = await registerAgentRow(ctx, {
+    name,
+    displayName: displayName.value,
+    client: client.value,
+    requester,
+    gateBody: `New agent ${address} (${client.value}) wants to join this project, requested by ${requester}.`,
+    refuseAnyExisting: false,
+  });
+  if (!reg.ok) return reg.response;
+  return jsonResponse(
+    { address: reg.address, token: reg.token, status: reg.record.status },
+    201
+  );
+}
+
+// A registration already checked for its name: the agent row, its token and
+// the owner gate that approves it.
+export interface AgentRegistration {
+  name: string;
+  displayName: string;
+  client: string;
+  requester: string;
+  gateBody: string;
+  // Refuse a name that was ever registered, revoked rows included.
+  refuseAnyExisting: boolean;
+}
+
+// Writes a pending agent:<requester's handle>/<name> row with a fresh token and
+// sends its approval gate; the row is revoked if the gate cannot be sent.
+export async function registerAgentRow(
+  ctx: ApiContext,
+  reg: AgentRegistration
+): Promise<
+  | { ok: true; address: string; token: string; record: AgentRecord }
+  | { ok: false; response: Response }
+> {
+  const address = `agent:${reg.requester.slice('human:'.length)}/${reg.name}`;
   const existing = ctx.messaging.store.getAgent(address);
   if (existing !== null && isInternalAgent(existing)) {
-    return errorResponse(
-      409,
-      `${address} is Dispatch's own agent; register under another name`
-    );
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} is Dispatch's own agent; register under another name`
+      ),
+    };
   }
   if (
     existing !== null &&
     (existing.status === 'approved' || existing.status === 'pending')
   ) {
-    return errorResponse(
-      409,
-      `${address} is already registered (${existing.status}) — ask a human to revoke it first`
-    );
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} is already registered (${existing.status}) — ask a human to revoke it first`
+      ),
+    };
+  }
+  if (existing !== null && reg.refuseAnyExisting) {
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} was registered before; choose a new name`
+      ),
+    };
   }
 
   const token = randomBytes(32).toString('hex');
   const record: AgentRecord = {
     address,
-    displayName: displayName.value,
-    client: client.value,
-    tokenHash: createHash('sha256').update(token).digest('hex'),
+    displayName: reg.displayName,
+    client: reg.client,
+    tokenHash: tokenHash(token),
     status: 'pending',
     muted: false,
     approvedBy: null,
@@ -821,12 +846,12 @@ export async function registerAgent(
         kind: 'question',
         blocking: true,
         choices: ['approve', 'deny'],
-        body: `New agent ${address} (${client.value}) wants to join this project, requested by ${requester}.`,
+        body: reg.gateBody,
         data: {
           type: 'agent-registration',
           agent: address,
-          client: client.value,
-          requestedBy: requester,
+          client: reg.client,
+          requestedBy: reg.requester,
         } satisfies GateData,
       },
       { address: SYSTEM_ADDRESS, canDecide: true }
@@ -835,13 +860,16 @@ export async function registerAgent(
     // Without its gate nobody can approve the row, so revoke it: a retry can
     // then re-register instead of hitting the 409 above forever.
     ctx.messaging.store.putAgent({ ...record, status: 'revoked' });
-    return errorResponse(
-      500,
-      `registration gate failed to send: ${(err as Error).message}`
-    );
+    return {
+      ok: false,
+      response: errorResponse(
+        500,
+        `registration gate failed to send: ${(err as Error).message}`
+      ),
+    };
   }
 
-  return jsonResponse({ address, token, status: record.status }, 201);
+  return { ok: true, address, token, record };
 }
 
 // The open (unanswered) agent-registration gate for `address`, if any.
@@ -898,12 +926,14 @@ export function approveAgent(
   return decideAgent(ctx, address, 'approve', 'approved');
 }
 
-// POST /api/agents/:addr/revoke
-export function revokeAgent(
+// POST /api/agents/:addr/revoke. A revoked A2A client's open asks are closed.
+export async function revokeAgent(
   ctx: ApiContext,
   address: string
 ): Promise<Response> {
-  return decideAgent(ctx, address, 'deny', 'revoked');
+  const res = await decideAgent(ctx, address, 'deny', 'revoked');
+  if (res.ok && isClientAddress(address)) ctx.a2a?.clientRevoked(address);
+  return res;
 }
 
 // Shared body for mute/unmute: these never touch a gate (there is no

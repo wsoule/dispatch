@@ -5,6 +5,7 @@ import {
   buildCard,
   buildCardJson,
   cardEtag,
+  cardJson,
   offeredSkills,
 } from '../src/card.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from '../src/uris.js';
@@ -78,6 +79,13 @@ describe('buildCardJson', () => {
       name: 'Acme API',
       securityRequirements: [{ schemes: { bearer: {} } }],
     });
+  });
+});
+
+describe('cardJson', () => {
+  it('is the card exactly as the listener serves it', () => {
+    const served = { ...inputs, skills: ['ask' as const] };
+    expect(cardJson(served)).toEqual(AgentCard.toJSON(buildCard(served)));
   });
 });
 

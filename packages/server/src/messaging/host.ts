@@ -5,10 +5,14 @@ import type {
 } from '@dispatch/core';
 import type {
   Address,
+  ExternalAdmission,
+  ExternalKind,
+  ExternalTarget,
   Message,
   MessagingHost,
   PolicyRequest,
   PolicyRuling,
+  Sender,
   WakeResult,
 } from '@dispatch/protocol';
 
@@ -52,10 +56,9 @@ export function implicitEpicMembers(
 
 // Runs a synchronous step as a Promise-returning hook, so anything it throws
 // reaches the caller as a rejection rather than a synchronous throw.
-export function settle(call: () => void): Promise<void> {
+export function settle<T>(call: () => T): Promise<T> {
   try {
-    call();
-    return Promise.resolve();
+    return Promise.resolve(call());
   } catch (err) {
     return Promise.reject(err);
   }
@@ -70,10 +73,42 @@ export function wakeRefusal(task: TaskDoc): string | null {
   return null;
 }
 
+// Who counts as external and what may reach them, as the A2A bridge decides.
+export type ExternalPolicy = Required<
+  Pick<MessagingHost, 'external' | 'admitExternal'>
+>;
+
 // dispatchd's MessagingHost: live runs and wakes from the orchestrator, policy
 // and epic membership from the task store, gate effects from GateHandlers.
 export class DaemonMessagingHost implements MessagingHost {
+  private externalPolicy: ExternalPolicy | null = null;
+
   constructor(private readonly deps: DaemonHostDeps) {}
+
+  // Installed by the A2A bridge; without one nothing is external.
+  setExternalPolicy(policy: ExternalPolicy | null): void {
+    this.externalPolicy = policy;
+  }
+
+  external(address: Address): ExternalKind | null {
+    return this.externalPolicy?.external(address) ?? null;
+  }
+
+  admitExternal(
+    target: ExternalTarget,
+    sender: Sender,
+    replyTarget: Message | null,
+    message: Message
+  ): ExternalAdmission {
+    return (
+      this.externalPolicy?.admitExternal(
+        target,
+        sender,
+        replyTarget,
+        message
+      ) ?? 'deliver'
+    );
+  }
 
   liveRunFor(taskId: string): string | null {
     return this.deps.orchestrator.liveRunIdForTask(taskId);
@@ -99,8 +134,10 @@ export class DaemonMessagingHost implements MessagingHost {
     );
   }
 
-  notify(runId: string, digest: string): Promise<void> {
-    return settle(() => this.deps.orchestrator.notifyRun(runId, digest));
+  notify(runId: string, digest: string, message: Message): Promise<void> {
+    return settle(() =>
+      this.deps.orchestrator.notifyRun(runId, digest, message.id)
+    );
   }
 
   notifyHuman(actor: Address, message: Message): void {

@@ -8,6 +8,8 @@ export interface PartJson {
   text?: string;
   data?: JsonValue;
   url?: string;
+  // File bytes, base64 as ProtoJSON writes a bytes field.
+  raw?: string;
   mediaType?: string;
   filename?: string;
   metadata?: Record<string, JsonValue>;

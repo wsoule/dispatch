@@ -1,5 +1,6 @@
 import type {
   ConnectEventsOptions,
+  Delivery,
   EpicProgress,
   EpicSessionOptions,
   Message,
@@ -7,6 +8,7 @@ import type {
   RunMeta,
   SendInput,
   ServerEvent,
+  ThreadDetail,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
@@ -66,6 +68,8 @@ const approvalReads: [string, string][] = [];
 let duringSend: (() => void) | null = null;
 // The caller's unread mail, where the daemon's notices land.
 let mailboxFixture: { delivery: unknown; message: Message }[] = [];
+// The deliveries the daemon reports for the next sends.
+let sendDeliveriesFixture: Partial<Delivery>[] = [];
 
 // The bulk epic-progress listing the daemon returns, how many times it was
 // asked for, and every `startEpic` body the hook sent — the fan-out tests
@@ -80,6 +84,9 @@ const epicStarts: [string, EpicSessionOptions | undefined][] = [];
 // it is still in flight — the interleaving a real browser hits.
 let presenceGate: Promise<void> | null = null;
 let presenceFetches = 0;
+// Who the daemon says this window is; null fails the read, as a daemon still
+// coming up would.
+let whoamiFixture: { handle: string; ref: string; tier: string } | null = null;
 
 void mock.module('@dispatch/client', () => ({
   ...dispatchClient,
@@ -108,7 +115,7 @@ void mock.module('@dispatch/client', () => ({
       duringSend?.();
       return Promise.resolve({
         message: { id: 'm-sent' },
-        deliveries: [],
+        deliveries: sendDeliveriesFixture,
         downgraded: false,
       });
     },
@@ -117,6 +124,19 @@ void mock.module('@dispatch/client', () => ({
       approvalReads.push([runId, requestId]);
       return Promise.resolve({ tool: 'Bash', input: { command: 'ls -la' } });
     },
+    getOverseer: (id: string) =>
+      Promise.resolve({
+        id,
+        pendingApprovals: [
+          {
+            requestId: 'req-9',
+            toolName: 'Bash',
+            input: { command: 'make clean' },
+            summary: 'Bash: make clean',
+            requestedAt: '2026-09-20T00:00:00Z',
+          },
+        ],
+      }),
     replyToMessage: (id: string, input: ReplyInput) => {
       replies.push([id, input]);
       return Promise.resolve({
@@ -157,6 +177,10 @@ void mock.module('@dispatch/client', () => ({
         updatedAt: '2026-09-20T00:00:00Z',
       }),
     confirmPlan: () => Promise.resolve({ epicId: 'e-1', taskIds: ['t-1'] }),
+    fetchWhoami: () =>
+      whoamiFixture === null
+        ? Promise.reject(new Error('dispatchd is still starting'))
+        : Promise.resolve(whoamiFixture),
     fetchPresence: async () => {
       presenceFetches += 1;
       const gate = presenceGate;
@@ -180,7 +204,9 @@ void mock.module('@dispatch/client', () => ({
 const { useDispatchProject } = await import('./useDispatchProject');
 const { ATTACHED_DAEMON_MESSAGING_EXPLANATION } =
   await import('../lib/daemonAuth');
+const { agentRosterKey } = await import('../lib/agentRoster');
 const { overseerKey } = await import('./useOverseerSession');
+const { threadKey } = await import('./useThreads');
 
 function wrapper(queryClient: QueryClient) {
   return ({ children }: { children: ReactNode }) => (
@@ -274,6 +300,52 @@ test('hello refetches presence, since a socket never hears its own arrival', asy
   ).toBe(true);
 });
 
+// A whoami that failed on connect would otherwise stay failed for the whole
+// session: its answer never goes stale, and nothing else asks again.
+test('hello asks the daemon who this window is again', async () => {
+  const queryClient = await mountConnected();
+  queryClient.setQueryData(['dispatch-whoami', PORT], {
+    handle: 'wyat',
+    ref: 'human:wyat',
+    tier: 'decide',
+  });
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+
+  expect(
+    queryClient.getQueryState(['dispatch-whoami', PORT])?.isInvalidated
+  ).toBe(true);
+});
+
+test('a failed whoami is exposed with a retry that asks again', async () => {
+  whoamiFixture = null;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.whoamiError?.message).toBe(
+      'dispatchd is still starting'
+    );
+  });
+  expect(result.current.me).toBeNull();
+
+  whoamiFixture = { handle: 'wyat', ref: 'human:wyat', tier: 'decide' };
+  act(() => {
+    result.current.retryWhoami();
+  });
+  await waitFor(() => {
+    expect(result.current.me).toBe('human:wyat');
+  });
+  expect(result.current.whoamiError).toBeNull();
+  whoamiFixture = null;
+});
+
 // The race itself, as a real browser hit it: the first presence fetch leaves
 // before the daemon has registered this socket, and `hello` arrives while it is
 // still in flight. react-query folds an invalidation during a query's first
@@ -300,6 +372,31 @@ test('a hello during the first presence fetch still gets a fresh one', async () 
   });
 });
 
+// A new message joins the open thread from the event itself, without a refetch.
+test('a new message lands in its cached thread through the event handler', async () => {
+  const queryClient = await mountConnected();
+  const root = gateMessage('m-01', {
+    kind: 'message',
+    blocking: false,
+    from: 'run:r-000001',
+  });
+  queryClient.setQueryData<ThreadDetail>(threadKey(PORT, 'm-01'), {
+    messages: [root],
+    deliveries: [],
+  });
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: { ...root, id: 'm-02', replyTo: 'm-01' },
+    });
+  });
+  expect(
+    queryClient
+      .getQueryData<ThreadDetail>(threadKey(PORT, 'm-01'))
+      ?.messages.map((m) => m.id)
+  ).toEqual(['m-01', 'm-02']);
+});
+
 // The regression this pairs with: the invalidation used to sit in the first
 // positional argument of `connectEvents`, which is `onChange` and fires only
 // for `task.changed`. That is a task-file write, not a connection — so a
@@ -317,6 +414,82 @@ test('a task change does not invalidate overseer records', async () => {
   expect(
     queryClient.getQueryState(overseerKey(PORT, 'w-1'))?.isInvalidated
   ).toBe(false);
+});
+
+// A registration is a gate message and approving it anywhere (Needs you, the
+// CLI) sends an answer; either may change a row the settings roster shows.
+test('a registration or an answer invalidates the agent roster', async () => {
+  const queryClient = await mountConnected();
+  const message = {
+    id: 'm-1',
+    thread: 'm-1',
+    replyTo: null,
+    from: 'system',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'New agent agent:wyat/cursor.macbook wants to join this project.',
+    refs: [],
+    data: {
+      type: 'agent-registration',
+      agent: 'agent:wyat/cursor.macbook',
+      client: 'cursor',
+      requestedBy: 'human:wyat',
+    },
+    urgent: false,
+    blocking: true,
+    choices: ['approve', 'deny'],
+    wake: 'none' as const,
+    createdAt: '2026-09-25T10:00:00.000Z',
+  };
+  const seed = () =>
+    queryClient.setQueryData(agentRosterKey(PORT), { agents: [] });
+  const invalidated = () =>
+    queryClient.getQueryState(agentRosterKey(PORT))?.isInvalidated;
+
+  seed();
+  act(() => {
+    sink?.onEvent({ type: 'message.new', message });
+  });
+  expect(invalidated()).toBe(true);
+
+  seed();
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: {
+        ...message,
+        id: 'm-2',
+        replyTo: 'm-1',
+        from: 'human:wyat',
+        to: ['system'],
+        kind: 'answer',
+        body: '',
+        data: undefined,
+        blocking: false,
+        choices: undefined,
+        choice: 'approve',
+      },
+    });
+  });
+  expect(invalidated()).toBe(true);
+
+  seed();
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: {
+        ...message,
+        id: 'm-3',
+        from: 'run:r-1',
+        kind: 'message',
+        body: 'done',
+        data: undefined,
+        blocking: false,
+        choices: undefined,
+      },
+    });
+  });
+  expect(invalidated()).toBe(false);
 });
 
 function runFixture(id: string, state: RunMeta['state']): RunMeta {
@@ -378,6 +551,9 @@ const questionGate = gateMessage('m-q', {
   choices: ['old', 'new'],
 });
 
+// The query client the last mountWithGates made, for a test to seed its cache.
+let gatesQueryClient: QueryClient | null = null;
+
 // Mounts the hook over `gates` with live run r-1 parked on an approval, and
 // waits until the open gates have been read into its three maps.
 async function mountWithGates(gates: Message[]) {
@@ -390,6 +566,7 @@ async function mountWithGates(gates: Message[]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  gatesQueryClient = queryClient;
   const rendered = renderHook(
     () => useDispatchProject('/repo', { selectedRunId: null }),
     { wrapper: wrapper(queryClient) }
@@ -406,6 +583,7 @@ function resetGateFixtures() {
   runsFixture = [];
   openGatesFixture = [];
   mailboxFixture = [];
+  sendDeliveriesFixture = [];
   window.localStorage.clear();
 }
 
@@ -466,6 +644,86 @@ test('a deciding window notifies one tool approval per waiting run', async () =>
 
   expect(notified).toEqual([
     { title: 'Approval needed', body: 'Bash · r-9', kind: 'approval' },
+  ]);
+  resetGateFixtures();
+});
+
+// Muting an agent promises it never interrupts anyone, so its questions
+// raise no OS notification; another agent's still do.
+test("a muted agent's question raises no notification", async () => {
+  await mountWithGates([approvalGate]);
+  gatesQueryClient?.setQueryData(agentRosterKey(PORT), {
+    agents: [
+      {
+        address: 'agent:wyat/quiet',
+        displayName: 'quiet',
+        client: 'codex',
+        status: 'approved',
+        muted: true,
+        approvedBy: 'human:wyat',
+        createdAt: '2026-09-25T10:00:00.000Z',
+      },
+    ],
+  });
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-quiet', {
+        from: 'agent:wyat/quiet',
+        body: 'Deploy now?',
+      }),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-loud', {
+        from: 'agent:wyat/loud',
+        body: 'Ship it?',
+      }),
+    });
+  });
+
+  expect(notified).toEqual([
+    { title: 'An agent has a question', body: 'Ship it?', kind: 'question' },
+  ]);
+  resetGateFixtures();
+});
+
+// The fold reads the cached gates, which follow each event at once: an
+// approval answered elsewhere no longer folds its run's next one, and two
+// approvals that land before any refetch notify once.
+test('folding tracks gates answered elsewhere and gates not yet refetched', async () => {
+  await mountWithGates([approvalGate]);
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-ans', {
+        from: 'human:ada',
+        to: ['agent:dispatch'],
+        kind: 'answer',
+        blocking: false,
+        replyTo: 'm-a',
+        choice: 'approve',
+      }),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-a2', 'r-1', 'req-2'),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-b', 'r-9', 'req-1'),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-b2', 'r-9', 'req-2'),
+    });
+  });
+
+  expect(notified.map((n) => n.body)).toEqual([
+    'Bash · Needs a shared export',
+    'Bash · r-9',
   ]);
   resetGateFixtures();
 });
@@ -558,6 +816,23 @@ test('a parked call is read in full by its run and request id', async () => {
 
   expect(input).toEqual({ command: 'ls -la' });
   expect(approvalReads).toEqual([['r-1', 'req-1']]);
+  resetGateFixtures();
+});
+
+// An Assistant call's gate carries a preview too; its conversation holds the call whole.
+test('a parked Assistant call is read in full from its conversation', async () => {
+  const result = await mountWithGates([approvalGate]);
+
+  const input = await result.current.fetchOverseerApprovalInput('o-1', 'req-9');
+  const gone = await result.current
+    .fetchOverseerApprovalInput('o-1', 'req-gone')
+    .then(
+      () => null,
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+
+  expect(input).toEqual({ command: 'make clean' });
+  expect(gone).toBe('The Assistant is no longer waiting on this call.');
   resetGateFixtures();
 });
 
@@ -662,6 +937,41 @@ test('request changes that continued nothing says why, from the daemon notice', 
       (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
     );
   expect(unexplained).toBe(
+    'The run did not continue. Your message is waiting for it.'
+  );
+  resetGateFixtures();
+});
+
+// A live run takes the message only when the daemon pushed it in; one that
+// cannot take mail (a CLI run, one winding down) leaves it held.
+test('request changes on a live run succeeds only when the run took the message', async () => {
+  runsFixture = [runFixture('r-1', 'running')];
+  openGatesFixture = [];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.runs).toHaveLength(1);
+  });
+  const outcome = () =>
+    result.current.handleRequestChanges('r-1', 'again').then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+
+  sendDeliveriesFixture = [
+    { recipient: 'run:r-1', runId: 'r-1', state: 'pushed' },
+  ];
+  expect(await outcome()).toBe('resolved');
+
+  sendDeliveriesFixture = [
+    { recipient: 'run:r-1', runId: null, state: 'held' },
+  ];
+  expect(await outcome()).toBe(
     'The run did not continue. Your message is waiting for it.'
   );
   resetGateFixtures();

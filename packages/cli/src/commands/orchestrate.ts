@@ -12,7 +12,6 @@ import {
   type ToolApproval,
   toolApprovalOf,
 } from '../orchestrateFormat.js';
-import { singleFlight } from '../singleFlight.js';
 import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
 import { appTokenClient, optionalAppToken } from './appToken.js';
@@ -49,11 +48,11 @@ function validateReviewAction(value: string): ReviewAction {
   return value as ReviewAction;
 }
 
-// Streams a single run's `run.log` events and tool-approval gates live and
-// resolves once it reaches a terminal state, with the matching exit code
-// (see exitCodeForRunState). `setRunId` is separate from construction
-// because the two call sites need it at different points: `run watch
-// <runId>` already knows the id when it starts listening, but `run
+// Streams a single run's `run.log` events live, announces each time it parks
+// on a tool approval, and resolves once it reaches a terminal state, with the
+// matching exit code (see exitCodeForRunState). `setRunId` is separate from
+// construction because the two call sites need it at different points: `run
+// watch <runId>` already knows the id when it starts listening, but `run
 // <taskId> --watch` opens the WS connection *before* calling createRun (so
 // no early log entries are missed) and only learns the run's id once that
 // call returns — every event that arrives before `setRunId` is buffered and
@@ -74,7 +73,7 @@ export function createRunWatcher(
   ctx: CliContext,
   client: ApiClient,
   baseUrl: string,
-  opts: { verbose?: boolean },
+  opts: { verbose?: boolean; appClient?: ApiClient },
   connectOptions: Pick<
     ConnectEventsOptions,
     'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures' | 'token'
@@ -112,16 +111,54 @@ export function createRunWatcher(
     rejectExit(err);
   }
 
-  // I2(a): the id-known refetch-and-check is exactly what runs on every
-  // reconnect (see `onOpen` below) AND on `run.changed`, both of which can
-  // fire close together — singleFlight collapses that into one HTTP call
-  // in flight at a time instead of racing several.
-  const refetchAndCheck = singleFlight(async () => {
+  // /ws carries gates only to deciding humans, so a park is read off the run's
+  // state; the app client, when given, names each parked call and its tool.
+  let parkAnnounced = false;
+  async function announcePark(id: string): Promise<void> {
+    let gates: RunGate[] = [];
+    if (opts.appClient !== undefined) {
+      try {
+        const { items } = await opts.appClient.openDecisions();
+        gates = findRunGates(items, id);
+      } catch (err) {
+        if (!(err instanceof CliError)) throw err;
+      }
+    }
+    if (gates.length === 0) ctx.log(formatApprovalRequest({ runId: id }));
+    for (const { approval } of gates) ctx.log(formatApprovalRequest(approval));
+  }
+
+  async function checkRun(): Promise<void> {
     if (runId === undefined) return;
     const detail = await client.getRun(runId);
+    const parked = detail.meta.state === 'awaiting-approval';
+    if (parked && !parkAnnounced) await announcePark(runId);
+    parkAnnounced = parked;
     const code = exitCodeForRunState(detail.meta.state);
     if (code !== null) finish(code);
-  });
+  }
+
+  // I2(a): the id-known refetch-and-check is exactly what runs on every
+  // reconnect (see `onOpen` below) AND on `run.changed`, both of which can
+  // fire close together — one HTTP call is in flight at a time, and a request
+  // that lands mid-flight runs once more after it, so a park is never missed.
+  let inFlight: Promise<void> | null = null;
+  let again = false;
+  function refetchAndCheck(): Promise<void> {
+    if (inFlight !== null) {
+      again = true;
+      return inFlight;
+    }
+    inFlight = (async () => {
+      do {
+        again = false;
+        await checkRun();
+      } while (again && !settled);
+    })().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  }
 
   // A refetch that failed because the CONNECTION died is not fatal — it is the
   // condition the socket layer's reconnect/give-up loop already exists to
@@ -159,9 +196,6 @@ export function createRunWatcher(
     if (event.type === 'run.log' && event.runId === runId) {
       const line = formatEntry(event.entry, opts);
       if (line !== null) ctx.log(line);
-    } else if (event.type === 'message.new') {
-      const approval = toolApprovalOf(event.message);
-      if (approval?.runId === runId) ctx.log(formatApprovalRequest(approval));
     } else if (event.type === 'run.changed') {
       // No payload on `run.changed` says WHICH run changed — cheapest
       // correct response is to refetch this one and check whether it just
@@ -211,6 +245,13 @@ function describeDispatch(meta: RunMeta, taskId: string): string {
     : `dispatched ${meta.id} (${meta.executor}) for ${taskId}`;
 }
 
+// A client on DISPATCH_APP_TOKEN when it is set: watching works without one,
+// but only the app token may read the gates a parked run waits on.
+function optionalAppClient(baseUrl: string): ApiClient | undefined {
+  const token = optionalAppToken(undefined);
+  return token === undefined ? undefined : createApiClient(baseUrl, token);
+}
+
 interface RunGate {
   gate: Message;
   approval: ToolApproval;
@@ -241,15 +282,16 @@ function pickRunGate(
         : undefined
       : gates.find((g) => g.approval.requestId === requestId);
   if (found !== undefined) return found;
-  if (requestId === undefined && gates.length > 1) {
-    const calls = gates
-      .map((g) => `${g.approval.requestId} (${g.approval.tool})`)
-      .join(', ');
-    throw new CliError(
-      `${runId} is parked on ${gates.length} calls: ${calls}; name one: dispatch approve ${runId} <requestId>`
-    );
-  }
-  throw new CliError(`${runId} is not awaiting an approval`);
+  if (gates.length === 0)
+    throw new CliError(`${runId} is not awaiting an approval`);
+  const calls = gates
+    .map((g) => `${g.approval.requestId} (${g.approval.tool})`)
+    .join(', ');
+  throw new CliError(
+    requestId === undefined
+      ? `${runId} is parked on ${gates.length} calls: ${calls}; name one: dispatch approve ${runId} <requestId>`
+      : `${runId} is not parked on ${requestId}; its parked calls: ${calls}`
+  );
 }
 
 // The `run show` lines for a parked run: each parked call's tool and request id
@@ -401,7 +443,7 @@ export function registerOrchestrateCommands(
           ctx,
           client,
           baseUrl,
-          { verbose: opts.verbose },
+          { verbose: opts.verbose, appClient: optionalAppClient(baseUrl) },
           { token }
         );
         // C1: `dispose()` must run even if `createRun` itself rejects (a
@@ -492,7 +534,13 @@ export function registerOrchestrateCommands(
         process.exitCode = immediate;
         return;
       }
-      const watcher = createRunWatcher(ctx, client, baseUrl, opts, { token });
+      const watcher = createRunWatcher(
+        ctx,
+        client,
+        baseUrl,
+        { ...opts, appClient: optionalAppClient(baseUrl) },
+        { token }
+      );
       try {
         watcher.setRunId(runId);
         process.exitCode = await watcher.waitForExit();
@@ -606,13 +654,11 @@ export function registerOrchestrateCommands(
         const continued = after.find(
           (r) => r.resumedFrom === runId && !before.has(r.id)
         );
-        const named = after.find((r) => r.id === runId);
-        if (
-          continued === undefined &&
-          named !== undefined &&
-          exitCodeForRunState(named.state) === null
-        ) {
-          // A run that is still live simply got the message.
+        // A live run that took the message into its conversation simply got it.
+        const pushed = sent.deliveries.some(
+          (d) => d.recipient === `run:${runId}` && d.state === 'pushed'
+        );
+        if (continued === undefined && pushed) {
           ctx.log(`sent message to ${runId}`);
           return;
         }

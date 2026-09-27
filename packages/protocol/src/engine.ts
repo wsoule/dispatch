@@ -332,7 +332,8 @@ export class DeliveryEngine {
         t,
         muted,
         fields.get(t.recipient) ?? 'to',
-        t.recipient === replyTarget?.from || wakesRuns
+        t.recipient === replyTarget?.from ||
+          (wakesRuns && this.hasTask(t.recipient))
       );
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
     }
@@ -380,6 +381,15 @@ export class DeliveryEngine {
     }
 
     return { message, deliveries: settled, downgraded };
+  }
+
+  // Whether `address` is a run the host places under a task: held mail to a run
+  // is delivered only through its task, so a wake may hold nothing for any other.
+  private hasTask(address: Address): boolean {
+    return (
+      address.startsWith('run:') &&
+      this.host.taskOfRun(address.slice('run:'.length)) !== null
+    );
   }
 
   // Refuses or drops A2A clients and peers before storing: gate data, sent or
@@ -443,14 +453,16 @@ export class DeliveryEngine {
     };
   }
 
-  // The address a reply actually goes to: an ended run's task (see deliverableAddress).
+  // The address a reply actually goes to: a party to the target that is an
+  // ended run is reached through its task (see deliverableAddress).
   private rewriteForReply(address: Address, target: Message | null): Address {
-    return target !== null && address === target.from
+    return target !== null &&
+      (address === target.from || target.to.includes(address))
       ? this.deliverableAddress(address)
       : address;
   }
 
-  // A reply's recipients, with the target's sender rewritten by
+  // A reply's recipients, with the target's sender and recipients rewritten by
   // deliverableAddress so an ended run's task (and live successor) hears it.
   private replyRecipients(to: Address[], target: Message | null): Address[] {
     if (target === null) return [...to];

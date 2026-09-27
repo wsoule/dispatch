@@ -10,7 +10,7 @@ import { existsSync, writeFileSync } from 'node:fs';
  *
  * The private key goes to the path given, 0600, and is never printed: keep it
  * off this repository and out of CI. The public key is printed, to paste into
- * LICENSE_PUBLIC_KEY in packages/server/src/team/license.ts — from then on
+ * LICENSE_PUBLIC_KEY in packages/federation/src/license.ts — from then on
  * builds verify keys signed with the private one.
  */
 
@@ -35,6 +35,6 @@ console.log(
   `Private key written to ${out}. Keep it safe; it is what makes a license real.\n`
 );
 console.log(
-  'Paste this as LICENSE_PUBLIC_KEY in packages/server/src/team/license.ts:\n'
+  'Paste this as LICENSE_PUBLIC_KEY in packages/federation/src/license.ts:\n'
 );
 console.log(publicKey.export({ type: 'spki', format: 'pem' }).toString());

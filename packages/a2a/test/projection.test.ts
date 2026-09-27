@@ -220,6 +220,38 @@ describe('project', () => {
     ).toEqual([]);
   });
 
+  // Clients, the TCK among them, read the first artifact as the result.
+  it('publishes host artifacts ahead of its own', () => {
+    const hosted = {
+      artifactId: 'output',
+      name: 'output.txt',
+      parts: [
+        {
+          url: 'https://example.com/output.txt',
+          mediaType: 'text/plain',
+          filename: 'output.txt',
+        },
+      ],
+    };
+    const json = project(facts({ answer, hostArtifacts: [hosted] }), view);
+    expect(json.artifacts?.map((a) => a.artifactId)).toEqual([
+      'output',
+      'answer',
+    ]);
+  });
+
+  it('writes a raw host part as base64 the SDK reads back', () => {
+    const raw = Buffer.from('TCK file content').toString('base64');
+    const hosted = {
+      artifactId: 'output',
+      parts: [{ raw, mediaType: 'text/plain', filename: 'output.txt' }],
+    };
+    const json = project(facts({ answer, hostArtifacts: [hosted] }), view);
+    expect(Task.toJSON(Task.fromJSON(json))).toMatchObject({
+      artifacts: [{ parts: [{ raw }] }, { artifactId: 'answer' }],
+    });
+  });
+
   it('omits artifacts when not asked for', () => {
     expect(
       project(facts({ answer }), { ...view, includeArtifacts: false }).artifacts
@@ -268,5 +300,17 @@ describe('project', () => {
         facts({ scope: [ROOT, msg({ id: 'm-new', replyTo: 'm-root' })] })
       )
     ).not.toBe(before);
+  });
+
+  it('changes its key when host artifacts change', () => {
+    const chunk = (text: string) => ({
+      artifactId: 'chunked',
+      parts: [{ text }],
+    });
+    const first = projectionKey(facts({ hostArtifacts: [chunk('chunk-1 ')] }));
+    expect(first).not.toBe(projectionKey(facts()));
+    expect(
+      projectionKey(facts({ hostArtifacts: [chunk('chunk-2')] }))
+    ).not.toBe(first);
   });
 });

@@ -103,6 +103,7 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
   const noop = () => {};
   const shell = {
     openTask: (taskId: string) => log.opened.push(taskId),
+    openThread: noop,
     peekTask: noop,
     openCreateTask: noop,
     createPreset: null,
