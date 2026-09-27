@@ -34,6 +34,17 @@ async function docsClient(
   return createDocsApi(baseUrl, appToken);
 }
 
+// A base-changed answer carries only the head's body, so text the caller typed
+// goes beside it as one marked block instead of being overwritten.
+function markedWhole(
+  head: { n: number; author: string; body: string },
+  mine: string
+): string {
+  const closed = (t: string): string =>
+    t === '' || t.endsWith('\n') ? t : `${t}\n`;
+  return `<<<<<<< head (rev ${head.n}, ${head.author})\n${closed(head.body)}=======\n${closed(mine)}>>>>>>> yours\n`;
+}
+
 // Opens the doc in an editor on a temp copy and saves it against the revision
 // it was read at; a conflict writes the marked text back and reopens the editor.
 export async function editLoop(
@@ -48,7 +59,9 @@ export async function editLoop(
   const read = await api.get(ref);
   let base = { rev: read.rev.id, hash: read.rev.hash };
   const file = join(deps.tmpDir, `${read.doc.handle}.md`);
-  writeFileSync(file, read.text);
+  // The text last put in the file, to tell whether the caller typed anything since.
+  let loaded = read.text;
+  writeFileSync(file, loaded);
   for (;;) {
     const code = deps.runEditor(file);
     if (code !== 0)
@@ -77,15 +90,25 @@ export async function editLoop(
     }
     const c = out.conflict;
     base = { rev: c.head.id, hash: c.head.hash };
+    const typed = edited !== loaded && edited !== c.head.body;
+    loaded =
+      c.reason === 'base-changed' && typed
+        ? markedWhole(c.head, edited)
+        : c.marked;
     writeFileSync(
       file,
-      `<!-- dispatch: resolve the marked blocks, then save; saving against rev ${c.head.n} (${c.head.id}) -->\n${c.marked}`
+      `<!-- dispatch: resolve the marked blocks, then save; saving against rev ${c.head.n} (${c.head.id}) -->\n${loaded}`
     );
-    deps.log(
-      c.reason === 'base-changed'
-        ? 'your base changed; the file now holds the newest text'
-        : `rev ${c.head.n} by ${c.head.author} changed the same lines; resolve the marked blocks and save`
-    );
+    if (c.reason === 'merge-conflict')
+      deps.log(
+        `rev ${c.head.n} by ${c.head.author} changed the same lines; resolve the marked blocks and save`
+      );
+    else
+      deps.log(
+        typed
+          ? 'your base changed; the file holds the newest text and yours as one marked block; resolve it and save'
+          : 'your base changed; the file now holds the newest text'
+      );
   }
 }
 

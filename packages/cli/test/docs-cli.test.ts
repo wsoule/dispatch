@@ -13,7 +13,9 @@ import { editLoop, importFiles } from '../src/commands/docs.js';
 import type { DocsApi } from '../src/docsApi.js';
 
 // A DocsApi whose saveBody answers a scripted sequence and records what it got.
-function fakeApi(outcomes: ('conflict' | 'saved' | 'proposed')[]) {
+function fakeApi(
+  outcomes: ('conflict' | 'base-changed' | 'saved' | 'proposed')[]
+) {
   const saves: { baseRev: string | number; baseHash?: string; body: string }[] =
     [];
   let seals = 0;
@@ -30,6 +32,26 @@ function fakeApi(outcomes: ('conflict' | 'saved' | 'proposed')[]) {
     ) => {
       saves.push(input);
       const next = outcomes.shift();
+      if (next === 'base-changed') {
+        // The head was amended in place, so only its body comes back.
+        return Promise.resolve({
+          ok: false as const,
+          conflict: {
+            code: 'conflict',
+            reason: 'base-changed',
+            head: {
+              id: 'rev-1',
+              n: 1,
+              hash: 'h1b',
+              body: 'original\ndesktop line\n',
+              author: 'human:wyat',
+            },
+            base: null,
+            hunks: [],
+            marked: 'original\ndesktop line\n',
+          },
+        });
+      }
       if (next === 'conflict') {
         return Promise.resolve({
           ok: false as const,
@@ -100,6 +122,58 @@ describe('dispatch docs edit', () => {
       ['rev-2', 'h2', 'resolved\n'],
     ]);
     expect(seals()).toBe(1);
+  });
+
+  it('keeps what was typed beside the amended head when the base changed', async () => {
+    const { api, saves } = fakeApi(['base-changed', 'saved']);
+    const seen: string[] = [];
+    const lines: string[] = [];
+    const result = await editLoop(api, 'spec', {
+      tmpDir,
+      runEditor: (path) => {
+        seen.push(readFileSync(path, 'utf8'));
+        if (seen.length === 1) writeFileSync(path, 'original\ncli line\n');
+        else writeFileSync(path, 'original\ndesktop line\ncli line\n');
+        return 0;
+      },
+      log: (l) => lines.push(l),
+    });
+    expect(result).toBe('saved');
+    expect(seen[1]).toBe(
+      [
+        '<!-- dispatch: resolve the marked blocks, then save; saving against rev 1 (rev-1) -->',
+        '<<<<<<< head (rev 1, human:wyat)',
+        'original',
+        'desktop line',
+        '=======',
+        'original',
+        'cli line',
+        '>>>>>>> yours',
+        '',
+      ].join('\n')
+    );
+    expect(lines[0]).toContain('marked block');
+    expect(saves.map((s) => [s.baseRev, s.baseHash])).toEqual([
+      ['rev-1', 'h1'],
+      ['rev-1', 'h1b'],
+    ]);
+  });
+
+  it('loads the head alone when the base changed and nothing was typed', async () => {
+    const { api } = fakeApi(['base-changed', 'saved']);
+    const seen: string[] = [];
+    await editLoop(api, 'spec', {
+      tmpDir,
+      runEditor: (path) => {
+        seen.push(readFileSync(path, 'utf8'));
+        if (seen.length === 2) writeFileSync(path, 'resolved\n');
+        return 0;
+      },
+      log: () => undefined,
+    });
+    expect(seen[1]).toBe(
+      '<!-- dispatch: resolve the marked blocks, then save; saving against rev 1 (rev-1) -->\noriginal\ndesktop line\n'
+    );
   });
 
   it('aborts on an empty file without saving', async () => {
