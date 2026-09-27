@@ -250,12 +250,14 @@ export function replyPlan(
   );
   const newestFirst = [...messages].reverse();
   const answered = answeredIds(messages);
-  // Text answers an open question put to me, whatever was said after it.
+  // Text answers the newest open question put to me, unless I wrote since it.
   const ask =
     channel === undefined
-      ? newestFirst.find((m) => asksMe(m, me, answered))
+      ? newestFirst.find((m) => m.from === me || asksMe(m, me, answered))
       : undefined;
-  if (ask !== undefined) return { kind: 'reply', target: ask };
+  if (ask !== undefined && ask.from !== me) {
+    return { kind: 'reply', target: ask };
+  }
   const target = newestFirst.find(
     (m) => m.from !== SYSTEM && !(openIds.has(m.id) && gateOf(m) !== null)
   );
@@ -278,6 +280,15 @@ export function replyPlan(
   const theirs = [...messages].reverse().filter((m) => to.includes(m.from));
   const anchor = theirs.find((m) => m.to.includes(me)) ?? theirs[0] ?? target;
   return { kind: 'send', to, replyTo: anchor.id };
+}
+
+/** Where a typed reply goes, as the reply box names it. */
+export function replyTarget(plan: ReplyPlan, lookups: ThreadLookups): string {
+  if (plan.kind === 'reply') {
+    return `Answering ${participantLabel(plan.target.from, lookups)}`;
+  }
+  const names = plan.to.map((address) => participantLabel(address, lookups));
+  return `To ${names.join(', ')}`;
 }
 
 /** The ids a thread's rows treat as open: `openIds` less any the thread already

@@ -14,6 +14,7 @@ import type {
 import {
   hasAnswerButtons,
   replyPlan,
+  replyTarget,
   threadOpenIds,
 } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
@@ -83,6 +84,7 @@ function ReplyBox({
   me,
   openIds,
   access,
+  lookups,
   route,
   plan,
   onReply,
@@ -123,15 +125,15 @@ function ReplyBox({
     );
   }
   const waiting = route === 'overseer' && overseerBusy;
+  const next = lost !== null && lost.body === body.trim() ? lost.plan : plan;
   const submit = async () => {
     if (waiting) return;
     const text = body.trim();
-    const sent = lost !== null && lost.body === text ? lost.plan : plan;
     setSending(true);
     setProblem(null);
     try {
       if (route === 'overseer') await onOverseerReply(text);
-      else if (sent !== null) await onReply(sent, text);
+      else if (next !== null) await onReply(next, text);
       setBody('');
       setLost(null);
     } catch (err) {
@@ -139,7 +141,7 @@ function ReplyBox({
       // The daemon answering with an error means nothing landed.
       const mayHaveLanded = route === 'bus' && !(err instanceof ApiError);
       setLost(
-        mayHaveLanded && sent !== null ? { plan: sent, body: text } : null
+        mayHaveLanded && next !== null ? { plan: next, body: text } : null
       );
     } finally {
       setSending(false);
@@ -147,6 +149,13 @@ function ReplyBox({
   };
   return (
     <div className="flex flex-col gap-1">
+      <p className="text-muted-foreground truncate text-[12px]">
+        {route === 'overseer'
+          ? 'To the Assistant'
+          : next === null
+            ? null
+            : replyTarget(next, lookups)}
+      </p>
       <PromptBar
         value={body}
         onChange={(value) => {

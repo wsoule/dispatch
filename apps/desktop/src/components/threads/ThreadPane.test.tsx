@@ -1,6 +1,12 @@
 import type { Message } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import type { MessageAccess } from '../../lib/daemonAuth';
@@ -74,6 +80,17 @@ function renderPane(over: Partial<ThreadPaneProps> = {}) {
 }
 
 const replyBox = () => screen.getByLabelText<HTMLTextAreaElement>('Reply');
+
+test('the reply box says where the text goes', () => {
+  renderPane();
+  expect(screen.getByText('Answering r-000001')).toBeTruthy();
+  cleanup();
+  renderPane({ messages: [msg('m-01', { to: ['channel:general'] })] });
+  expect(screen.getByText('To #general')).toBeTruthy();
+  cleanup();
+  renderPane({ route: 'overseer' });
+  expect(screen.getByText('To the Assistant')).toBeTruthy();
+});
 
 test('a typed reply answers the open question put to me', async () => {
   const onReply = renderPane();

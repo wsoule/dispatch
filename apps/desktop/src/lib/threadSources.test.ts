@@ -15,6 +15,7 @@ import {
   refAction,
   replyPlan,
   replyRoute,
+  replyTarget,
   rowControl,
   threadLookups,
   threadOpenIds,
@@ -325,6 +326,39 @@ describe('replyPlan', () => {
       kind: 'reply',
       target: q,
     });
+  });
+
+  it('writes a plain message, not an answer, once I have written since the question', () => {
+    const q = msg('m-01', { kind: 'question', blocking: true });
+    const mine = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+    });
+    expect(replyPlan([q, mine], ME, new Set(['m-01']))).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+    const again = msg('m-03', { thread: 'm-01', kind: 'question' });
+    expect(replyPlan([q, mine, again], ME, new Set(['m-01']))).toEqual({
+      kind: 'reply',
+      target: again,
+    });
+  });
+
+  it('names where a reply goes: who it answers, or who it is to', () => {
+    const q = msg('m-01', { kind: 'question' });
+    expect(replyTarget({ kind: 'reply', target: q }, lookups)).toBe(
+      'Answering t-000001 · Checkout · r-000001'
+    );
+    expect(
+      replyTarget(
+        { kind: 'send', to: ['channel:general', 'human:ada'], replyTo: 'm-01' },
+        lookups
+      )
+    ).toBe('To #general, ada');
   });
 
   it('answers a blocking question put to me by what the thread holds, even when no open list names it', () => {
