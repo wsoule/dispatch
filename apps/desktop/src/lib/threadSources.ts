@@ -18,8 +18,10 @@ const SYSTEM = 'agent:dispatch';
 const OVERSEER = /^agent:[a-z0-9][a-z0-9._-]*\/overseer$/;
 const TITLE_WIDTH = 80;
 
-/** My mailbox's messages plus the open gates, my deliveries, and the ids of
- *  open things put to me. */
+/** My mailbox's messages plus the open gates, and my deliveries. `openIds` is
+ *  every id still open that this window can see: each open decision, whoever
+ *  it asks, plus the unanswered asks in my mailbox. It is not "waiting on me";
+ *  summarizeThreads decides that. */
 export function mergeThreadSources(
   src: { mailbox: readonly MailboxItem[]; openGates: readonly Message[] },
   me: string
