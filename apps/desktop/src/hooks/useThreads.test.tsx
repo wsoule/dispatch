@@ -247,6 +247,25 @@ describe('useThreadActions.answer', () => {
     });
   });
 
+  it('denies a tool call on deny, and approves nothing without an approve choice', async () => {
+    const { handlers, actions } = setup(DECIDER);
+    await actions.answer(approval, { body: 'too broad', choice: 'deny' });
+    expect(handlers.handleApprove).toHaveBeenCalledWith('r-1', 'req-1', false, {
+      scope: 'once',
+      reason: 'too broad',
+    });
+    const failed = (choice?: string) =>
+      actions
+        .answer(approval, { body: '', ...(choice ? { choice } : {}) })
+        .then(
+          () => 'resolved',
+          () => 'rejected'
+        );
+    expect(await failed()).toBe('rejected');
+    expect(await failed('maybe')).toBe('rejected');
+    expect(handlers.handleApprove).toHaveBeenCalledTimes(1);
+  });
+
   it('refuses a gate answer without decide, and lets a teammate answer a question put to them', async () => {
     const { client, actions } = setup(TEAMMATE);
     const refused = await actions

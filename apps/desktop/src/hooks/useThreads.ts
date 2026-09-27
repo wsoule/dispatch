@@ -34,6 +34,7 @@ const UNREAD: ReadonlySet<DeliveryState> = new Set([
   'notified',
   'pushed',
 ]);
+const APPROVES: ReadonlySet<string> = new Set(['approve', 'approve-session']);
 const NO_ITEMS: readonly MailboxItem[] = [];
 const NO_MESSAGES: Message[] = [];
 const NO_DELIVERIES: Delivery[] = [];
@@ -375,10 +376,15 @@ export function useThreadActions(
       }
       const runId = runIdOf(message);
       if (gate?.type === 'tool-approval' && gate.runId !== undefined) {
+        // Fails closed: only an approve choice lets the call run.
+        const allow = APPROVES.has(answerInput.choice ?? '');
+        if (!allow && answerInput.choice !== 'deny') {
+          throw new Error('Choose approve, approve-session or deny.');
+        }
         await handlersRef.current.handleApprove(
           gate.runId,
           gate.requestId,
-          answerInput.choice !== 'deny',
+          allow,
           {
             scope:
               answerInput.choice === 'approve-session' ? 'session' : 'once',
