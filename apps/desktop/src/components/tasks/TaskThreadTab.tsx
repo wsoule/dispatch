@@ -145,7 +145,8 @@ function TaskThreads({
   }
   return (
     <ThreadList
-      summaries={list.summaries}
+      label="Threads"
+      sections={[{ key: 'task', summaries: list.summaries }]}
       selected={selected}
       onSelect={onSelect}
       lookups={lookups}

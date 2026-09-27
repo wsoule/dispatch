@@ -98,7 +98,7 @@ test("lists the task's threads, opens one, and sends to the task by default", as
   renderTab(client);
 
   fireEvent.click(
-    await screen.findByRole('button', { name: /Blocked on the cart schema/ })
+    await screen.findByRole('option', { name: /Blocked on the cart schema/ })
   );
   expect(client.listRecentThreads).toHaveBeenCalledWith(50, {
     about: 'task:t-000001',

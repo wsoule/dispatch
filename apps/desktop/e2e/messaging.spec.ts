@@ -117,8 +117,8 @@ test.describe('messaging end to end', () => {
     await rail.getByRole('button', { name: /^Threads/ }).click();
     // Scoped to this run: a question an earlier failed attempt left open stays in Needs you.
     const question = page
-      .getByRole('region', { name: 'Needs you' })
-      .getByRole('button', {
+      .getByRole('group', { name: 'Needs you' })
+      .getByRole('option', {
         name: new RegExp(
           String.raw`Which cart should the checkout read\?.*${runId}`
         ),

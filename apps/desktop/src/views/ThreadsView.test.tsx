@@ -108,9 +108,9 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
   );
   const { rerender } = render(view(null));
 
-  const needsYou = await screen.findByRole('region', { name: 'Needs you' });
+  const needsYou = await screen.findByRole('group', { name: 'Needs you' });
   fireEvent.click(
-    await within(needsYou).findByRole('button', {
+    await within(needsYou).findByRole('option', {
       name: /Which cart should the checkout read\?/,
     })
   );
