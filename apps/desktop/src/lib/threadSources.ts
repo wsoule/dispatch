@@ -67,6 +67,20 @@ export function threadLookups(
   };
 }
 
+/** Changes only when something `threadLookups` reads does: a task's title, a
+ *  run's task, an agent's status or mute. */
+export function lookupsKey(
+  tasks: readonly { meta: { id: string; title: string } }[],
+  runs: readonly { id: string; taskId: string }[],
+  agents: readonly AgentSummary[]
+): string {
+  return JSON.stringify([
+    tasks.map((t) => [t.meta.id, t.meta.title]),
+    runs.map((r) => [r.id, r.taskId]),
+    agents.map((a) => [a.address, a.status, a.muted]),
+  ]);
+}
+
 /** An address as a person reads it: a run as its task plus the run id, the daemon as Dispatch. */
 export function participantLabel(
   address: string,

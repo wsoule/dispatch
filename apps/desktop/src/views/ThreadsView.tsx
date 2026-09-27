@@ -1,3 +1,4 @@
+import type { AgentSummary } from '@dispatch/client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Composer } from '../components/threads/Composer';
@@ -13,8 +14,10 @@ import {
   useThreadRail,
 } from '../hooks/useThreads';
 import type { RefAction } from '../lib/threadSources';
+import type { ThreadLookups } from '../lib/threadSources';
 import {
   knownAddresses,
+  lookupsKey,
   participantLabel,
   replyRoute,
   threadLookups,
@@ -56,10 +59,7 @@ export function ThreadsView({
   const actions = useThreadActions(client, port, me, access, data);
   const agents = useAgentRoster(client, port);
   const channels = useChannels(client, port, access.canMessage);
-  const lookups = useMemo(
-    () => threadLookups(data.tasks, data.runs, agents),
-    [data.tasks, data.runs, agents]
-  );
+  const lookups = useLookups(data.tasks, data.runs, agents);
   const known = useMemo(
     () =>
       knownAddresses({
@@ -79,6 +79,14 @@ export function ThreadsView({
   }, [data]);
   const onRestartDaemon = useCallback(
     () => latest.current.handleRestartDaemon(),
+    []
+  );
+  const openRef = useRef(onOpenRef);
+  useEffect(() => {
+    openRef.current = onOpenRef;
+  }, [onOpenRef]);
+  const onOpen = useCallback(
+    (action: RefAction) => openRef.current(action),
     []
   );
   const loadApprovalInput = useCallback(
@@ -179,7 +187,7 @@ export function ThreadsView({
               availability={data.scopeDecide}
               onRestartDaemon={onRestartDaemon}
               onAnswer={actions.answer}
-              onOpen={onOpenRef}
+              onOpen={onOpen}
               loadApprovalInput={loadApprovalInput}
               route={replyRoute(open.messages, open.thread, overseer.thread)}
               onReply={actions.reply}
@@ -194,6 +202,24 @@ export function ThreadsView({
       </div>
     </div>
   );
+}
+
+// The label lookups, kept as the same object while nothing they read changed,
+// so memoised rows skip the run and board events that change no label.
+function useLookups(
+  tasks: DispatchProjectData['tasks'],
+  runs: DispatchProjectData['runs'],
+  agents: readonly AgentSummary[]
+): ThreadLookups {
+  const key = lookupsKey(tasks, runs, agents);
+  const [held, setHeld] = useState(() => ({
+    key,
+    lookups: threadLookups(tasks, runs, agents),
+  }));
+  if (held.key === key) return held.lookups;
+  const next = { key, lookups: threadLookups(tasks, runs, agents) };
+  setHeld(next);
+  return next.lookups;
 }
 
 // What the pane shows with no thread on screen: nothing while one loads, why

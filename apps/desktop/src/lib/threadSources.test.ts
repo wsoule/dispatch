@@ -5,6 +5,7 @@ import type { MessageAccess } from './daemonAuth';
 import {
   addressAction,
   knownAddresses,
+  lookupsKey,
   mergeThreadSources,
   openRefWith,
   participantLabel,
@@ -500,6 +501,38 @@ describe('refs and labels', () => {
     expect(
       threadTitle(msg('m-01', { body: `${'x'.repeat(90)}\nsecond line` }))
     ).toBe(`${'x'.repeat(79)}…`);
+  });
+
+  it('keys the lookups by what they read, so an event that changes no label keeps them', () => {
+    const task = (status: string) => ({
+      meta: { id: 't-000001', title: 'Checkout', status },
+    });
+    const run = (state: string) => ({
+      id: 'r-000001',
+      taskId: 't-000001',
+      state,
+    });
+    const tasks = [task('working')];
+    const runs = [run('running')];
+    const agents = [agent('agent:wyat/quiet', { muted: true })];
+    const key = lookupsKey(tasks, runs, agents);
+    // A run moving on, or a task changing status, touches no label.
+    expect(lookupsKey([task('review')], [run('finished')], [...agents])).toBe(
+      key
+    );
+    expect(
+      lookupsKey([{ meta: { id: 't-000001', title: 'Cart' } }], runs, agents)
+    ).not.toBe(key);
+    expect(
+      lookupsKey(
+        tasks,
+        [...runs, { id: 'r-000002', taskId: 't-000001' }],
+        agents
+      )
+    ).not.toBe(key);
+    expect(
+      lookupsKey(tasks, runs, [agent('agent:wyat/quiet', { muted: false })])
+    ).not.toBe(key);
   });
 
   it('completes from the board, the channels, approved agents and who is connected', () => {
