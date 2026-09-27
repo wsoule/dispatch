@@ -153,7 +153,7 @@ describe('applyThreadEvent', () => {
 
   it('marks the lists stale on a new message or a delivery change, and everything on reconnect', () => {
     const qc = new QueryClient();
-    const mailbox = [...threadListsKey(PORT), 'rail', 'human:wyat', 'mailbox'];
+    const mailbox = [...threadListsKey(PORT), 'mailbox', ME];
     qc.setQueryData(mailbox, { items: [] });
     qc.setQueryData(threadKey(PORT, 'm-01'), { messages: [], deliveries: [] });
     applyThreadEvent(qc, PORT, {
@@ -461,6 +461,43 @@ describe('messaging queries', () => {
       expect(decider.calls).toContain('recent 50 task:t-000001');
     });
     expect(teammate.calls).toEqual([]);
+  });
+
+  it("treats a handoff put to me in a task's thread as open, as the rail does", async () => {
+    const handoff = msg('m-h', {
+      kind: 'handoff',
+      choices: ['accept', 'decline'],
+    });
+    const elsewhere = msg('m-x', { kind: 'handoff' });
+    const mailbox: MailboxItem[] = [handoff, elsewhere].map((message) => ({
+      message,
+      delivery: {
+        id: `d-${message.id}`,
+        messageId: message.id,
+        recipient: ME,
+        runId: null,
+        via: 'direct',
+        state: 'notified',
+        updatedAt: message.createdAt,
+      },
+    }));
+    const client = {
+      getMailbox: () => Promise.resolve({ items: mailbox }),
+      listRecentThreads: () =>
+        Promise.resolve({
+          threads: [{ thread: 'm-h', root: handoff, last: handoff, count: 1 }],
+        }),
+      openDecisions: () => Promise.resolve({ items: [] }),
+    } as unknown as ApiClient;
+    const tab = mount(() =>
+      useTaskThreads(client, PORT, ME, DECIDER, 't-000001')
+    );
+    const rail = mount(() => useThreadRail(client, PORT, ME, DECIDER));
+    await waitFor(() => {
+      expect([...tab.result.current.openIds]).toEqual(['m-h']);
+      expect(rail.result.current.openIds.has('m-h')).toBe(true);
+    });
+    expect(tab.result.current.summaries.map((t) => t.thread)).toEqual(['m-h']);
   });
 
   it('opens the thread holding any of its messages', async () => {

@@ -117,6 +117,20 @@ function useOpenGates(
   });
 }
 
+// My mailbox, on one key the rail and a task's Thread tab share.
+function useMailbox(
+  client: ApiClient | null,
+  port: number | undefined,
+  me: string | null,
+  enabled: boolean
+) {
+  return useQuery({
+    queryKey: [...threadListsKey(port), 'mailbox', me],
+    queryFn: () => ready(client).getMailbox(me ?? undefined),
+    enabled: client !== null && me !== null && enabled,
+  });
+}
+
 export interface ThreadRail {
   summaries: ThreadSummary[];
   groups: Record<RailGroup, ThreadSummary[]>;
@@ -133,11 +147,7 @@ export function useThreadRail(
   access: MessageAccess
 ): ThreadRail {
   const enabled = client !== null && me !== null && access.canMessage;
-  const mailbox = useQuery({
-    queryKey: [...threadListsKey(port), 'rail', me, 'mailbox'],
-    queryFn: () => ready(client).getMailbox(me ?? undefined),
-    enabled,
-  });
+  const mailbox = useMailbox(client, port, me, access.canMessage);
   const recent = useQuery({
     queryKey: [...threadListsKey(port), 'rail', me, 'recent'],
     queryFn: () => ready(client).listRecentThreads(RECENT_THREADS),
@@ -180,7 +190,8 @@ export function useThreadRail(
   ]);
 }
 
-/** One task's threads: those the task or any of its runs took part in (deciding humans only). */
+/** One task's threads: those the task or any of its runs took part in
+ *  (deciding humans only), open where the rail would say so. */
 export function useTaskThreads(
   client: ApiClient | null,
   port: number | undefined,
@@ -201,23 +212,34 @@ export function useTaskThreads(
       }),
     enabled: client !== null && me !== null && access.canDecide,
   });
+  const mailbox = useMailbox(client, port, me, access.canDecide);
   const gates = useOpenGates(client, port, access);
   return useMemo(() => {
     const recent = about.data?.threads ?? NO_RECENT;
     const inTask = new Set(recent.map((t) => t.thread));
-    const open = (gates.data?.items ?? NO_MESSAGES).filter((g) =>
-      inTask.has(g.thread)
+    // The same sources as the rail, so a handoff put to me is open in both.
+    const merged = mergeThreadSources(
+      {
+        mailbox: mailbox.data?.items ?? NO_ITEMS,
+        openGates: gates.data?.items ?? NO_MESSAGES,
+      },
+      me ?? ''
     );
-    const openIds = new Set(open.map((g) => g.id));
+    const messages = merged.messages.filter((m) => inTask.has(m.thread));
+    const ids = new Set(messages.map((m) => m.id));
+    const openIds = new Set([...merged.openIds].filter((id) => ids.has(id)));
+    const deliveries = merged.deliveries.filter((d) => ids.has(d.messageId));
     const summaries =
-      me === null ? [] : summarizeThreads(open, [], me, openIds, { recent });
+      me === null
+        ? []
+        : summarizeThreads(messages, deliveries, me, openIds, { recent });
     return {
       summaries,
       openIds: me === null ? NO_OPEN : openIds,
       loading: about.isLoading,
       error: about.error ?? null,
     };
-  }, [me, about.data, about.isLoading, about.error, gates.data]);
+  }, [me, about.data, about.isLoading, about.error, mailbox.data, gates.data]);
 }
 
 export interface OpenThread {
