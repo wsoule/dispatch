@@ -29,6 +29,7 @@ import {
   requestDeadline,
   startDaemon,
 } from './daemon.js';
+import { registerMemoryTools } from './memory.js';
 import { registerMessagingTools } from './messaging.js';
 import type { MessageBlockingTiming, ToolOutcome } from './toolKit.js';
 import { projectRoot, toolError, toolResult } from './toolKit.js';
@@ -935,6 +936,7 @@ export function registerDispatchTools(
   registerMessagingTools(server, rootDir, {
     blockingTiming: opts.blockingTiming,
   });
+  registerMemoryTools(server, rootDir);
   server.registerTool(
     'task_list',
     {

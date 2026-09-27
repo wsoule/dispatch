@@ -6,6 +6,8 @@ export const DISPATCH_MCP_TOOLS = [
   'channel_list',
   'dispatch_note',
   'inbox_read',
+  'memory_read',
+  'memory_search',
   'msg_reply',
   'msg_send',
   'record_decision',

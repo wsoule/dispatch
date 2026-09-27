@@ -105,6 +105,11 @@ export const MESSAGING_TOOLS: ReadonlySet<string> = new Set(
   ].map((tool) => `mcp__dispatch__${tool}`)
 );
 
+// Read-only memory lookups; gating them would make the human approve a search.
+export const MEMORY_TOOLS: ReadonlySet<string> = new Set(
+  ['memory_search', 'memory_read'].map((tool) => `mcp__dispatch__${tool}`)
+);
+
 // Claude Code tools that cannot do their job inside a dispatched run, removed
 // from the agent's tool list. Each was exercised through this executor
 // against the bundled CLI (SDK 0.3.207) and its result recorded:
@@ -771,7 +776,8 @@ export class ClaudeExecutor implements Executor {
         if (
           opts.permissionMode === 'acceptEdits' &&
           (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) ||
-            MESSAGING_TOOLS.has(toolName))
+            MESSAGING_TOOLS.has(toolName) ||
+            MEMORY_TOOLS.has(toolName))
         ) {
           return { behavior: 'allow', updatedInput: input };
         }

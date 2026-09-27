@@ -18,6 +18,7 @@ import {
   buildCartoMcpServerConfig,
   cartoMcpServers,
   ClaudeExecutor,
+  MEMORY_TOOLS,
   MESSAGING_TOOLS,
   STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
@@ -933,7 +934,7 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
     expect(approvalRequested).toBe(false);
   });
 
-  it("auto-allows every messaging tool under 'acceptEdits'", async () => {
+  it("auto-allows every messaging and memory tool under 'acceptEdits'", async () => {
     let captured: Options | undefined;
     const executor = new ClaudeExecutor((args: { options?: Options }) => {
       captured = args.options;
@@ -955,7 +956,7 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
         onFinish: () => {},
       }
     );
-    for (const tool of MESSAGING_TOOLS) {
+    for (const tool of [...MESSAGING_TOOLS, ...MEMORY_TOOLS]) {
       const result = await captured?.canUseTool?.(
         tool,
         { to: ['human:wyat'] },
