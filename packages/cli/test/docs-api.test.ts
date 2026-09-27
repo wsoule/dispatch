@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
+import { CliError } from '../src/context.js';
 import { createDocsApi } from '../src/docsApi.js';
 
 let server: ReturnType<typeof Bun.serve>;
@@ -22,6 +23,16 @@ beforeEach(() => {
         auth: req.headers.get('authorization'),
         body: await req.text(),
       });
+      if (url.pathname === '/api/docs/archived/body') {
+        return Response.json(
+          {
+            error: 'archived; restore it first',
+            code: 'conflict',
+            field: 'doc',
+          },
+          { status: 409 }
+        );
+      }
       if (url.pathname.endsWith('/body')) {
         return Response.json(
           {
@@ -62,11 +73,25 @@ describe('createDocsApi', () => {
       baseHash: 'h1',
       body: 'mine',
     });
-    expect(out.ok).toBe(false);
+    expect(out).toMatchObject({
+      ok: false,
+      conflict: { reason: 'base-changed', head: { id: 'rev-2' } },
+    });
     expect(seen[0]).toMatchObject({
       method: 'PUT',
       path: '/api/docs/spec/body',
       auth: 'Bearer app-token',
+    });
+  });
+
+  it('throws a 409 that carries no merge conflict, such as an archived doc', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    const err: unknown = await api
+      .saveBody('archived', { baseRev: 'rev-1', body: 'mine' })
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(CliError);
+    expect(err).toMatchObject({
+      message: 'archived; restore it first (field: doc)',
     });
   });
 

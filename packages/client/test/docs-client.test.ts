@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { createApiClient } from '../src/api';
+import { ApiError, createApiClient } from '../src/api';
 
 const BASE = 'http://example.test';
 
@@ -65,12 +65,33 @@ describe('docs bindings', () => {
   it('still throws other failures', async () => {
     const s = stub(403, { error: 'no', code: 'forbidden' });
     try {
-      await expect(
-        createApiClient(BASE, 't').saveDocBody('spec', {
-          baseRev: 1,
-          body: 'x',
-        })
-      ).rejects.toThrow('no');
+      const err: unknown = await createApiClient(BASE, 't')
+        .saveDocBody('spec', { baseRev: 1, body: 'x' })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({ status: 403, code: 'forbidden' });
+    } finally {
+      s.restore();
+    }
+  });
+
+  it('throws a 409 that carries no merge conflict, such as an archived doc', async () => {
+    const s = stub(409, {
+      error: 'archived; restore it first',
+      code: 'conflict',
+      field: 'doc',
+    });
+    try {
+      const err: unknown = await createApiClient(BASE, 't')
+        .saveDocBody('spec', { baseRev: 1, body: 'x' })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect(err).toMatchObject({
+        message: 'archived; restore it first',
+        status: 409,
+        code: 'conflict',
+        field: 'doc',
+      });
     } finally {
       s.restore();
     }
@@ -90,6 +111,66 @@ describe('docs bindings', () => {
         `${BASE}/api/docs/links?target=task%3At-1`,
         `${BASE}/api/docs/spec/links/task/t-1`,
       ]);
+    } finally {
+      s.restore();
+    }
+  });
+
+  it('sends seal, reviewed, rename, revision and diff calls', async () => {
+    const s = stub(200, {});
+    try {
+      const c = createApiClient(BASE, 't');
+      await c.sealDoc('spec');
+      await c.markDocReviewed('spec');
+      await c.renameDoc('spec', 'new-spec');
+      await c.getDocRevision('spec', 'rev-2');
+      await c.diffDoc('spec', 1, 'rev-3');
+      expect(
+        s.calls.map((call) => ({
+          url: call.url,
+          method: call.init?.method ?? 'GET',
+          body: call.init?.body,
+        }))
+      ).toEqual([
+        { url: `${BASE}/api/docs/spec/seal`, method: 'POST', body: undefined },
+        {
+          url: `${BASE}/api/docs/spec/reviewed`,
+          method: 'POST',
+          body: undefined,
+        },
+        {
+          url: `${BASE}/api/docs/spec`,
+          method: 'PATCH',
+          body: '{"slug":"new-spec"}',
+        },
+        {
+          url: `${BASE}/api/docs/spec/revisions/rev-2`,
+          method: 'GET',
+          body: undefined,
+        },
+        {
+          url: `${BASE}/api/docs/spec/diff?from=1&to=rev-3`,
+          method: 'GET',
+          body: undefined,
+        },
+      ]);
+      // A body-less POST still declares JSON, so the server's content-type gate passes it.
+      expect(new Headers(s.calls[0].init?.headers).get('content-type')).toBe(
+        'application/json'
+      );
+    } finally {
+      s.restore();
+    }
+  });
+
+  it('deletes through a 204 that has no body', async () => {
+    const s = stub(204, null);
+    try {
+      expect(
+        await createApiClient(BASE, 't').deleteDoc('~notes')
+      ).toBeUndefined();
+      expect(s.calls[0].url).toBe(`${BASE}/api/docs/~notes`);
+      expect(s.calls[0].init?.method).toBe('DELETE');
     } finally {
       s.restore();
     }

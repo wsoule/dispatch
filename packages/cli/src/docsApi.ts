@@ -86,9 +86,25 @@ const withQuery = (path: string, q: URLSearchParams): string => {
   return qs === '' ? path : `${path}?${qs}`;
 };
 
+// The server's message for a failed response, with the field it names.
+function cliError(status: number, body: unknown): CliError {
+  const err = body as { error?: string; field?: string } | null;
+  const message = err?.error ?? `HTTP ${status}`;
+  return new CliError(
+    err?.field === undefined ? message : `${message} (field: ${err.field})`
+  );
+}
+
+// Only a whole-body save's merge conflict carries these reasons; other 409s,
+// such as an archived doc's, are a plain error body.
+function isDocConflict(body: unknown): body is DocConflict {
+  const reason = (body as { reason?: unknown } | null)?.reason;
+  return reason === 'merge-conflict' || reason === 'base-changed';
+}
+
 export function createDocsApi(baseUrl: string, token: string): DocsApi {
   // One request; a status in `allowed` returns instead of throwing, and any
-  // other failure throws the server's message with the field it names.
+  // other failure throws a cliError.
   const call = async (
     method: string,
     path: string,
@@ -104,14 +120,7 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     if (res.ok || allowed.includes(res.status)) return res;
-    const err = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      field?: string;
-    };
-    const message = err.error ?? `HTTP ${res.status}`;
-    throw new CliError(
-      err.field === undefined ? message : `${message} (field: ${err.field})`
-    );
+    throw cliError(res.status, await res.json().catch(() => null));
   };
   const json = async <T>(
     method: string,
@@ -136,10 +145,12 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
     create: (input) => json('POST', '/api/docs', input),
     saveBody: async (ref, input) => {
       const res = await call('PUT', `${docPath(ref)}/body`, input, [409]);
-      const body = await res.json();
-      return res.status === 409
-        ? { ok: false, conflict: body as DocConflict }
-        : { ok: true, result: body as DocSaveResult };
+      if (res.status !== 409) {
+        return { ok: true, result: (await res.json()) as DocSaveResult };
+      }
+      const body: unknown = await res.json().catch(() => null);
+      if (isDocConflict(body)) return { ok: false, conflict: body };
+      throw cliError(409, body);
     },
     edit: (ref, input) => json('POST', `${docPath(ref)}/edit`, input),
     seal: (ref) => json('POST', `${docPath(ref)}/seal`, {}),

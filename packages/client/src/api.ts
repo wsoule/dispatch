@@ -959,7 +959,7 @@ export type {
   DocsHealth,
 } from '@dispatch/core';
 
-/** A whole-body save: the new head, or the 409's conflict as a value. */
+/** A whole-body save: the new head, or the 409's merge conflict as a value. */
 export type DocSaveOutcome =
   | { ok: true; result: DocSaveResult }
   | { ok: false; conflict: DocConflict };
@@ -2229,19 +2229,27 @@ async function send(
   }
   const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
   if (!res.ok && !allowed.includes(res.status)) {
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      code?: string;
-      field?: string;
-    };
-    throw new ApiError(
-      body.error ?? `request failed: ${res.status}`,
-      res.status,
-      body.code,
-      body.field
-    );
+    throw apiError(res.status, await res.json().catch(() => null));
   }
   return res;
+}
+
+// The ApiError for a failed response's `{ error, code, field }` body.
+function apiError(status: number, body: unknown): ApiError {
+  const b = body as { error?: string; code?: string; field?: string } | null;
+  return new ApiError(
+    b?.error ?? `request failed: ${status}`,
+    status,
+    b?.code,
+    b?.field
+  );
+}
+
+// Only a whole-body save's merge conflict carries these reasons; other 409s,
+// such as an archived doc's, are a plain error body.
+function isDocConflict(body: unknown): body is DocConflict {
+  const reason = (body as { reason?: unknown } | null)?.reason;
+  return reason === 'merge-conflict' || reason === 'base-changed';
 }
 
 // request() for a binary body: same auth and error handling, the response
@@ -3195,7 +3203,8 @@ export interface ApiClient {
     scope?: DocScope;
     links?: { target: string; rel: LinkRel }[];
   }): Promise<DocSaveResult>;
-  /** A 409 comes back as `{ ok: false, conflict }`; other failures throw. */
+  /** A merge conflict comes back as `{ ok: false, conflict }`; other
+   *  failures throw, including a 409 such as an archived doc's. */
   saveDocBody(
     ref: string,
     input: {
@@ -4044,10 +4053,12 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         { method: 'PUT', ...jsonBody(input) },
         [409]
       );
-      const body = (await res.json()) as unknown;
-      return res.status === 409
-        ? { ok: false, conflict: body as DocConflict }
-        : { ok: true, result: body as DocSaveResult };
+      if (res.status !== 409) {
+        return { ok: true, result: (await res.json()) as DocSaveResult };
+      }
+      const body: unknown = await res.json().catch(() => null);
+      if (isDocConflict(body)) return { ok: false, conflict: body };
+      throw apiError(409, body);
     },
     editDoc: (ref, input) =>
       request(target, `${docPath(ref)}/edit`, {
