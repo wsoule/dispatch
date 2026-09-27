@@ -100,16 +100,19 @@ describe('Ed25519 through node:crypto', () => {
     for (const y of [0n, 1n, p - 1n, order8, p - order8, p, p + 1n])
       for (const sign of [0, 1]) {
         const raw = encode(y, sign);
+        for (const m of messages)
+          expect(verifyText(b64u(raw), m, b64u(sig))).toBe(false);
+        // RFC 8032 decoding refuses y >= p, and x = 0 (y = ±1) with the sign set.
+        const canonical = y < p && !(sign === 1 && (y === 1n || y === p - 1n));
+        if (!canonical) continue;
         const key = createPublicKey({
           key: { kty: 'OKP', crv: 'Ed25519', x: b64u(raw) },
           format: 'jwk',
         });
-        const forged = messages.filter((m) =>
-          verify(null, Buffer.from(m), key, sig)
-        );
-        expect(forged.length).toBeGreaterThan(0);
-        for (const m of forged)
-          expect(verifyText(b64u(raw), m, b64u(sig))).toBe(false);
+        // The forgery is real, so the refusal above is verifyText's own.
+        expect(
+          messages.some((m) => verify(null, Buffer.from(m), key, sig))
+        ).toBe(true);
       }
   });
 });
