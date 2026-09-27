@@ -14,7 +14,9 @@ export function checkRender(
   const hostLines = forms.hostLines.map((p) => new RegExp(p));
   const bodyLines = body.split(LINE_BREAK);
   const nonEmpty = bodyLines.filter((l) => l.trim() !== '');
-  const [first = '', ...rest] = text.split('\n');
+  // Lines in the §1.4 sense: a correct render holds no break but LF, so a
+  // separator left inside a quoted line starts a line of its own here.
+  const [first = '', ...rest] = text.split(LINE_BREAK);
   const holdsBody = (line: string): boolean =>
     nonEmpty.some((b) => line.includes(b));
   if (!header.test(first))
