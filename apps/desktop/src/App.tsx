@@ -518,7 +518,7 @@ function App() {
     []
   );
 
-  // The sidebar's Threads count: my mailbox and open gates, which the view shares.
+  // The sidebar's Threads count, from queries the Threads view shares.
   const threadsNeedsYou = useThreadsNeedsYouCount(
     rawData.client,
     rawData.port,

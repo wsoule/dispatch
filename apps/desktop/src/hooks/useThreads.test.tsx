@@ -575,6 +575,46 @@ function gatedThreadServer() {
   return server;
 }
 
+// A teammate's mailbox holding a gate they cannot answer and a muted agent's question.
+function quietMailboxClient(): ApiClient {
+  const gate = msg('m-g', {
+    kind: 'question',
+    blocking: true,
+    choices: ['grant', 'deny'],
+    data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
+  });
+  const muted = msg('m-m', {
+    from: 'agent:wyat/quiet',
+    kind: 'question',
+    blocking: true,
+  });
+  const mailbox: MailboxItem[] = [gate, muted].map((message) => ({
+    message,
+    delivery: {
+      id: `d-${message.id}`,
+      messageId: message.id,
+      recipient: ME,
+      runId: null,
+      via: 'direct',
+      state: 'notified',
+      updatedAt: message.createdAt,
+    },
+  }));
+  const quiet: AgentSummary = {
+    address: 'agent:wyat/quiet',
+    displayName: 'quiet',
+    client: 'codex',
+    status: 'approved',
+    muted: true,
+    approvedBy: ME,
+    createdAt: '2026-09-25T10:00:00.000Z',
+  };
+  return {
+    getMailbox: () => Promise.resolve({ items: mailbox }),
+    listAgentRoster: () => Promise.resolve({ agents: [quiet] }),
+  } as unknown as ApiClient;
+}
+
 function mount<T>(hook: () => T) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -596,42 +636,7 @@ describe('messaging queries', () => {
   });
 
   it("keeps a gate a teammate cannot answer and a muted agent's question out of Needs you, readable in Direct", async () => {
-    const gate = msg('m-g', {
-      kind: 'question',
-      blocking: true,
-      choices: ['grant', 'deny'],
-      data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
-    });
-    const muted = msg('m-m', {
-      from: 'agent:wyat/quiet',
-      kind: 'question',
-      blocking: true,
-    });
-    const mailbox: MailboxItem[] = [gate, muted].map((message) => ({
-      message,
-      delivery: {
-        id: `d-${message.id}`,
-        messageId: message.id,
-        recipient: ME,
-        runId: null,
-        via: 'direct',
-        state: 'notified',
-        updatedAt: message.createdAt,
-      },
-    }));
-    const quiet: AgentSummary = {
-      address: 'agent:wyat/quiet',
-      displayName: 'quiet',
-      client: 'codex',
-      status: 'approved',
-      muted: true,
-      approvedBy: ME,
-      createdAt: '2026-09-25T10:00:00.000Z',
-    };
-    const client = {
-      getMailbox: () => Promise.resolve({ items: mailbox }),
-      listAgentRoster: () => Promise.resolve({ agents: [quiet] }),
-    } as unknown as ApiClient;
+    const client = quietMailboxClient();
     const { result } = mount(() => useThreadRail(client, PORT, ME, TEAMMATE));
     await waitFor(() => {
       expect(result.current.groups.direct.map((t) => t.thread).sort()).toEqual([
@@ -642,6 +647,19 @@ describe('messaging queries', () => {
     expect(result.current.groups['needs-you']).toEqual([]);
     // Both rows still open, so the gate shows its reason and the question its answer.
     expect([...result.current.openIds].sort()).toEqual(['m-g', 'm-m']);
+  });
+
+  it("counts neither a gate a teammate cannot answer nor a muted agent's question, as the rail shows", async () => {
+    const client = quietMailboxClient();
+    // One cache, so the count has read everything once the rail shows both rows.
+    const { result } = mount(() => ({
+      count: useThreadsNeedsYouCount(client, PORT, ME, TEAMMATE),
+      rail: useThreadRail(client, PORT, ME, TEAMMATE),
+    }));
+    await waitFor(() => {
+      expect(result.current.rail.groups.direct).toHaveLength(2);
+    });
+    expect(result.current.count).toBe(0);
   });
 
   it('adds recent threads and the open gates for a decider, and asks nothing for an agent window', async () => {
@@ -664,7 +682,7 @@ describe('messaging queries', () => {
   });
 
   // The sidebar is on every screen, so its count must not keep the recent list alive.
-  it('counts Needs you for the sidebar from the mailbox and open gates alone', async () => {
+  it('counts Needs you for the sidebar without the recent threads', async () => {
     const decider = readingClient();
     const { result } = mount(() =>
       useThreadsNeedsYouCount(decider.client, PORT, ME, DECIDER)
@@ -672,7 +690,11 @@ describe('messaging queries', () => {
     await waitFor(() => {
       expect(result.current).toBe(1);
     });
-    expect([...decider.calls].sort()).toEqual([`mailbox ${ME}`, 'open gates']);
+    expect([...decider.calls].sort()).toEqual([
+      `mailbox ${ME}`,
+      'open gates',
+      'roster',
+    ]);
   });
 
   it('counts nothing and asks nothing in a window that cannot message', async () => {

@@ -228,9 +228,9 @@ export function useThreadRail(
 }
 
 /**
- * The sidebar's Needs you count, on every screen. It reads only my mailbox and
- * the open gates, which hold every ask waiting on me; recent threads add rows,
- * never asks, so it never fetches them.
+ * The sidebar's Needs you count, on every screen. It reads my mailbox and the
+ * open gates, which hold every ask waiting on me, and the roster for muted
+ * senders; recent threads add rows, never asks, so it never fetches them.
  */
 export function useThreadsNeedsYouCount(
   client: ApiClient | null,
@@ -240,15 +240,17 @@ export function useThreadsNeedsYouCount(
 ): number {
   const mailbox = useMailbox(client, port, me, access.canMessage);
   const gates = useOpenGates(client, port, access);
+  const agents = useAgentRoster(client, port, access.canMessage);
+  const { canDecide } = access;
   return useMemo(
     () =>
       railSummaries(
         mailbox.data?.items ?? NO_ITEMS,
         gates.data?.items ?? NO_MESSAGES,
         me,
-        {}
+        { canDecide, muted: mutedAddresses(agents) }
       ).summaries.filter((summary) => summary.needsYou).length,
-    [me, mailbox.data, gates.data]
+    [me, canDecide, agents, mailbox.data, gates.data]
   );
 }
 
