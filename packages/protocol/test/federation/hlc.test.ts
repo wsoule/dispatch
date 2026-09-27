@@ -4,6 +4,7 @@ import {
   compareHlc,
   hlcWallMs,
   MAX_HLC_COUNTER,
+  OpClock,
   parseOpHlc,
 } from '../../src/federation/hlc.js';
 
@@ -50,5 +51,56 @@ describe('op clocks', () => {
     const below = parsed(at(String(MAX_HLC_COUNTER - 1)));
     const top = parsed(at(String(MAX_HLC_COUNTER)));
     expect(compareHlc(below, top)).toBe(-1);
+  });
+});
+
+describe('OpClock', () => {
+  const WALL = 1_758_880_000_000;
+  const B = 'bob-0000000b';
+  const at = (ms: number, counter: number | string, replica = R) =>
+    `${String(ms)}.${String(counter).padStart(4, '0')}.${replica}`;
+
+  it('ticks past its last reading, taking the wall time when it moves ahead', () => {
+    let wall = WALL;
+    const clock = new OpClock(R, null, () => wall);
+    expect(clock.tick()).toBe(at(WALL, 0));
+    expect(clock.tick()).toBe(at(WALL, 1));
+    wall += 5;
+    expect(clock.tick()).toBe(at(WALL + 5, 0));
+    expect(clock.last).toBe(at(WALL + 5, 0));
+    expect(new OpClock(R, clock.last, () => WALL).tick()).toBe(at(WALL + 5, 1));
+  });
+
+  it('rolls into the next ms instead of passing MAX_HLC_COUNTER', () => {
+    const clock = new OpClock(R, at(WALL, MAX_HLC_COUNTER - 1), () => WALL);
+    expect(clock.tick()).toBe(at(WALL, MAX_HLC_COUNTER));
+    expect(clock.tick()).toBe(at(WALL + 1, 0));
+    expect(clock.tick()).toBe(at(WALL + 1, 1));
+  });
+
+  it("stays in the grammar after adopting a peer's reading at the bound", () => {
+    const clock = new OpClock(R, null, () => WALL);
+    const remote = at(WALL + 240_000, MAX_HLC_COUNTER, B);
+    clock.observe(remote);
+    const next = clock.tick();
+    expect(next).toBe(at(WALL + 240_001, 0));
+    expect(compareHlc(parsed(next), parsed(remote))).toBe(1);
+  });
+
+  it('clamps a wider counter it observes or restarts from, and still ticks past it', () => {
+    const wide = at(WALL, '99999999999', B);
+    const observer = new OpClock(R, null, () => WALL);
+    observer.observe(wide);
+    expect(observer.last).toBe(at(WALL, MAX_HLC_COUNTER));
+    expect(observer.tick()).toBe(at(WALL + 1, 0));
+    const restarted = new OpClock(R, at(WALL, '9'.repeat(400)), () => WALL);
+    expect(restarted.tick()).toBe(at(WALL + 1, 0));
+  });
+
+  it('never moves back for an earlier or unreadable reading', () => {
+    const clock = new OpClock(R, at(WALL, 7), () => WALL - 60_000);
+    for (const behind of [at(WALL, 6, B), at(WALL - 1, 99, B), 'x', ''])
+      clock.observe(behind);
+    expect(clock.tick()).toBe(at(WALL, 8));
   });
 });

@@ -4,7 +4,7 @@ import type { JsonValue } from '../../src/envelope.js';
 import { buildOp, verifyEntry } from '../../src/federation/chain.js';
 import type { ChainHead } from '../../src/federation/chain.js';
 import { fingerprint } from '../../src/federation/fingerprint.js';
-import { MAX_HLC_COUNTER } from '../../src/federation/hlc.js';
+import { MAX_HLC_COUNTER, OpClock } from '../../src/federation/hlc.js';
 import { CanonicalizeError } from '../../src/federation/jcs.js';
 import { generateReplicaKeys, signText } from '../../src/federation/keys.js';
 import {
@@ -382,6 +382,26 @@ describe('verifyEntry along a chain', () => {
     expect(run([key, task, below, top]).failure).toBeNull();
     const again = after(below, 8, at(String(MAX_HLC_COUNTER - 1)));
     expect(run([key, task, below, again]).failure).toBe('hlc must rise');
+  });
+
+  // A peer 4 minutes ahead passes the clock guard, so its reading is adopted.
+  it("signs the next op after adopting a peer's counter at the bound", () => {
+    const [key, task] = chain();
+    const clock = new OpClock(R, task.hlc, () => 1000);
+    clock.observe(`0000000241000.${String(MAX_HLC_COUNTER)}.bob-0000000b`);
+    const next = buildOp(
+      {
+        replica: R,
+        seq: 7,
+        prev: opHash(task),
+        hlc: clock.tick(),
+        type: 'task',
+        body: {},
+      },
+      keys.signPriv
+    );
+    expect(next.hlc).toBe(hlc(241_001));
+    expect(run([key, task, next]).failure).toBeNull();
   });
 
   // Its content is never hashed, so it could say anything under the op's hash.
