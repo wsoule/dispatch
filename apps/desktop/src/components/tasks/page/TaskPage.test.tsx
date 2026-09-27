@@ -144,6 +144,7 @@ function shellWith(log: Log): ShellActions {
   const noop = () => {};
   return {
     openTask: noop,
+    openThread: noop,
     peekTask: noop,
     openCreateTask: (preset) => log.presets.push(preset),
     createPreset: null,

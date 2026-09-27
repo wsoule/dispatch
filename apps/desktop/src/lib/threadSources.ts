@@ -114,7 +114,7 @@ export function knownAddresses(input: {
 export type RowControl =
   | { kind: 'none' }
   | { kind: 'read-only'; reason: string }
-  | { kind: 'tool-approval'; tool: string; input: unknown }
+  | { kind: 'tool-approval'; tool: string; input: unknown; truncated: boolean }
   | { kind: 'scope'; paths: string[]; reason: string }
   | { kind: 'choices'; choices: string[]; gate: boolean };
 
@@ -135,7 +135,12 @@ export function rowControl(
       };
     }
     if (gate.type === 'tool-approval') {
-      return { kind: 'tool-approval', tool: gate.tool, input: gate.input };
+      return {
+        kind: 'tool-approval',
+        tool: gate.tool,
+        input: gate.input,
+        truncated: gate.truncated === true,
+      };
     }
     if (gate.type === 'scope') {
       return { kind: 'scope', paths: gate.paths, reason: gate.reason };
@@ -183,7 +188,10 @@ export function replyPlan(
       ? { kind: 'reply', target }
       : { kind: 'send', to: [target.from], replyTo: target.id };
   }
-  const to = target.to.filter((address) => address !== me);
+  // The daemon reads no mail, so an answered gate of its own leaves no one to write to.
+  const to = target.to.filter(
+    (address) => address !== me && address !== SYSTEM
+  );
   if (to.length === 0) return null;
   // The daemon reroutes an ended run to its task only for the replied-to
   // message's writer, so reply to the newest message they sent me.

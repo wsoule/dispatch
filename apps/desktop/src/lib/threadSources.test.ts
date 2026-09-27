@@ -173,6 +173,41 @@ describe('rowControl', () => {
     ).toEqual({ kind: 'choices', choices: ['accept', 'decline'], gate: false });
   });
 
+  it('gives a decider the approval card, saying when the call preview was cut', () => {
+    const approval = (truncated: boolean) =>
+      msg('m-a', {
+        from: 'agent:dispatch',
+        kind: 'question',
+        blocking: true,
+        choices: ['approve', 'approve-session', 'deny'],
+        data: {
+          type: 'tool-approval',
+          requestId: 'req-1',
+          runId: 'r-000001',
+          tool: 'Bash',
+          input: truncated ? '{"command":"ls' : { command: 'ls' },
+          ...(truncated ? { truncated: true as const } : {}),
+          floor: false,
+        },
+      });
+    expect(
+      rowControl(approval(true), { me: ME, open: true, access: DECIDER })
+    ).toEqual({
+      kind: 'tool-approval',
+      tool: 'Bash',
+      input: '{"command":"ls',
+      truncated: true,
+    });
+    expect(
+      rowControl(approval(false), { me: ME, open: true, access: DECIDER })
+    ).toEqual({
+      kind: 'tool-approval',
+      tool: 'Bash',
+      input: { command: 'ls' },
+      truncated: false,
+    });
+  });
+
   it('offers nothing once answered or to someone else, and says why an agent window cannot answer', () => {
     const q = msg('m-q', {
       kind: 'question',
@@ -278,6 +313,25 @@ describe('replyPlan', () => {
 
   it('has nothing to reply to in a thread that is only an open gate', () => {
     expect(replyPlan([scopeGate], ME, new Set(['m-s']))).toBeNull();
+  });
+
+  it('never writes to the daemon itself after I answered one of its gates', () => {
+    const wake = msg('m-w', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'deny'],
+      data: { type: 'wake', target: 'task:t-000001', message: 'm-x' },
+    });
+    const answer = msg('m-a', {
+      thread: 'm-w',
+      replyTo: 'm-w',
+      from: ME,
+      to: ['agent:dispatch'],
+      kind: 'answer',
+      choice: 'approve',
+    });
+    expect(replyPlan([wake, answer], ME, new Set())).toBeNull();
   });
 });
 

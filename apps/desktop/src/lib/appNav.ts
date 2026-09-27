@@ -25,6 +25,9 @@ export type ProjectView =
   /** Slim list of everything waiting on a human — the surface that replaced
    * both retired pages. */
   | 'inbox'
+  /** Conversations on the message bus: Needs you, Channels, Direct.
+   * `threadFocus` says which thread is open. */
+  | 'threads'
   | 'brain-dump'
   /** Point at an element in a live browser and hand it to an agent. */
   | 'design'
@@ -112,6 +115,9 @@ export interface NavState {
    * nothing preselected — set by `openImpact`, the two entry points' way
    * of handing over "open in Impact" with a subject already chosen. */
   impactSubject: ImpactSubjectRef | null;
+  /** A message id whose thread the Threads view opens (a root id opens its own
+   * thread), or `null`. Not kept in history: the view keeps its own selection. */
+  threadFocus: string | null;
   /** Task id shown in the task full-window view, or `null` when it's not the current view. */
   activeTaskId: string | null;
   /** The current tab within the task view. */
@@ -166,6 +172,7 @@ export const initialNavState: NavState = {
   activeDraftId: null,
   activePrNumber: null,
   impactSubject: null,
+  threadFocus: null,
   activeTaskId: null,
   taskTab: 'details',
   newTaskReturnView: 'board',
@@ -230,6 +237,9 @@ export type NavAction =
   /** Routes to `ImpactView` with a subject preselected — the "open in Impact"
    * action on the Review case panel and the Git file pane. */
   | { type: 'openImpact'; subject: ImpactSubjectRef }
+  /** Routes to Threads with the thread holding `messageId` open — a run chat's
+   * message link, a ref chip, or a rail row. */
+  | { type: 'openThread'; messageId: string | null }
   /** Routes to the task full-window view with a specific task, tab, and optional run. */
   | { type: 'openTask'; taskId: string; tab?: TaskTab; runId?: string | null }
   /** Switches the tab within the task view without adding a history entry. */
@@ -383,6 +393,29 @@ export function navReducer(state: NavState, action: NavAction): NavState {
           activeRunId: state.activeRunId,
           activeDraftId: state.activeDraftId,
           activePrNumber: action.number,
+          impactSubject: state.impactSubject,
+          activeTaskId: state.activeTaskId,
+          taskTab: state.taskTab,
+        }
+      );
+    case 'openThread':
+      // One history entry per visit: entries carry no focus, so switching
+      // threads inside the view dedupes against the entry already there.
+      return pushHistory(
+        {
+          ...state,
+          section: 'project',
+          projectView: 'threads',
+          threadFocus: action.messageId,
+          peekTaskId: null,
+        },
+        {
+          section: 'project',
+          projectView: 'threads',
+          globalView: state.globalView,
+          activeRunId: state.activeRunId,
+          activeDraftId: state.activeDraftId,
+          activePrNumber: state.activePrNumber,
           impactSubject: state.impactSubject,
           activeTaskId: state.activeTaskId,
           taskTab: state.taskTab,
