@@ -14,6 +14,13 @@ const ID = /^[a-z0-9]+(\.[a-z0-9-]+){2}$/;
 const SECTION = /^([0-9]+(\.[0-9]+)*|[A-F](\.[0-9]+)+)$/;
 const SEMVER = /^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$/;
 const AREA = /^[a-z0-9-]+$/;
+// The id prefix each class's vectors carry (§12.4.1).
+const ID_PREFIX: Record<VectorClass, string> = {
+  envelope: 'env',
+  'host-core': 'core',
+  'a2a-binding': 'a2a',
+  federation: 'fed',
+};
 const SYMBOL = /\$(s|gate|notice)([0-9]+)\b/g;
 const CREATES: ReadonlySet<string> = new Set(CREATING_OPS);
 const REQUIRED: Record<Op, readonly string[]> = {
@@ -248,8 +255,11 @@ function parseVector(
   if (!isRecord(raw)) fail('is not an object');
   const v = raw;
   refuseUnknownKeys(v, VECTOR_KEYS, 'the vector', fail);
-  if (typeof v['id'] !== 'string' || !ID.test(v['id']))
-    fail(`id ${JSON.stringify(v['id'])} does not match ${String(ID)}`);
+  const id = v['id'];
+  if (typeof id !== 'string' || !ID.test(id))
+    fail(`id ${JSON.stringify(id)} does not match ${String(ID)}`);
+  if (!id.startsWith(`${ID_PREFIX[fileClass]}.`))
+    fail(`id prefix must be ${ID_PREFIX[fileClass]} in class ${fileClass}`);
   if (!isText(v['title'])) fail('title must be a non-empty string');
   if (v['class'] !== fileClass)
     fail(

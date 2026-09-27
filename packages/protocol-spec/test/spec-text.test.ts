@@ -2,7 +2,8 @@ import { describe, expect, it } from 'bun:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 import { loadVectors } from '../src/load.js';
-import { sectionsOf, SPEC_DIR } from '../src/sections.js';
+import { checkRender } from '../src/renderCheck.js';
+import { SECTION_NUMBER, sectionsOf, SPEC_DIR } from '../src/sections.js';
 
 const files = readdirSync(SPEC_DIR).filter(
   (f) => f.endsWith('.md') && !f.startsWith('.')
@@ -15,6 +16,25 @@ const text = new Map(
 const flat = (body: string): string => body.replace(/\s+/g, ' ');
 const all = flat([...text.values()].join('\n'));
 const ids = new Set(loadVectors().vectors.map((v) => v.id));
+
+// One section's own prose, up to the next numbered heading, flattened.
+function section(n: string): string {
+  for (const body of text.values()) {
+    const lines = body.split('\n');
+    const start = lines.findIndex((l) => SECTION_NUMBER.exec(l)?.[1] === n);
+    if (start === -1) continue;
+    const end = lines.findIndex((l, i) => i > start && SECTION_NUMBER.test(l));
+    return flat(lines.slice(start, end === -1 ? undefined : end).join('\n'));
+  }
+  throw new Error(`no section ${n}`);
+}
+
+// Render forms shaped like the reference adapter's: prefix patterns.
+const FORMS = {
+  header: '^\\[message from ',
+  quotePrefix: '│ ',
+  hostLines: ['^choice: '],
+};
 
 describe('the DMP text', () => {
   it('states BCP 14 in 1.4', () => {
@@ -89,5 +109,50 @@ describe('the DMP text', () => {
         }).toEqual({ file, target, ok: true });
       }
     }
+  });
+});
+
+describe('the DMP text and the kit', () => {
+  it('says declared render forms are searched, as checkRender tests them', () => {
+    // A prefix pattern passes on a longer first line only when searched.
+    const rendered = '[message from human:ada · message · m-1]\n│ hi';
+    expect(checkRender(rendered, 'hi', FORMS, false)).toEqual([]);
+    expect(section('1.4')).toContain(
+      'are searched instead, as `new RegExp(pattern).test(line)` does'
+    );
+    expect(section('6.8')).toContain('searched');
+    expect(section('12.4.7')).toContain('searched');
+  });
+
+  it('holds the render rules only on bodies that no host text repeats', () => {
+    // A host line may repeat an ordinary body by chance, which checkRender
+    // cannot tell from a body line left unquoted.
+    const rendered =
+      '[message from human:ada · answer · m-1]\n│ approve\nchoice: approve';
+    expect(checkRender(rendered, 'approve', FORMS, false)).toEqual([
+      'a body line is not quoted: choice: approve',
+    ]);
+    expect(section('6.8')).toContain(
+      'writes the text of the body only on lines that start with `quotePrefix`'
+    );
+    for (const n of ['6.8', '12.4.6'])
+      expect(section(n)).toContain('occur in no text the host writes');
+  });
+
+  it('defines a gate as a known type, or one the system or a human sent', () => {
+    const phrase =
+      'whose type the host knows, or whose sender is the system address or a `human:` address';
+    for (const n of ['2.5', '5.1']) expect(section(n)).toContain(phrase);
+  });
+
+  it('counts neither created nor seeded messages as $gateN or $noticeN', () => {
+    expect(section('12.4.4')).toContain(
+      'skipping messages a step created and rows `given.store` seeded'
+    );
+  });
+
+  it('says a session reached through a channel is notified, not pushed', () => {
+    const schemes = section('3.4');
+    expect(schemes.match(/pushed or notified/g)?.length).toBe(2);
   });
 });

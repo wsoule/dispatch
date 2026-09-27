@@ -160,26 +160,36 @@ start. Vectors that test muting are `MAY` vectors with the capability
 ## 6.8 Presenting messages to models
 
 A host that puts messages into a model's context MUST present each one so that
-no line of its body can pass for a header or for a line the host writes. The
-host declares the forms it uses ([§12.4](12-conformance.md#s12.4)):
+no line of its body can pass for a header or for a line the host writes: it
+writes the text of the body only on lines that start with `quotePrefix`, at
+least one such line for each line of the body, so no line of the body forms or
+starts the header or a host line. The host declares the forms it uses
+([§12.4](12-conformance.md#s12.4)); `header` and `hostLines` are patterns,
+searched in a line as [§1.4](01-introduction.md#s1.4) says:
 
 - `header`: a pattern that the first line of a pushed message matches;
 - `quotePrefix`: the prefix that starts every line carrying body text;
 - `hostLines`: patterns for the lines the host adds after the body, such as the
   message replied to, the choices, the choice, the refs and a prompt to answer.
 
-Splitting the rendered text and the body into lines at every line break of
-[§1.4](01-introduction.md#s1.4), a pushed message MUST meet all of these:
-
-1. its first line matches `header` and contains no line of the body;
-2. every line that contains a line of the body starts with `quotePrefix`;
-3. it has at least as many lines that start with `quotePrefix` as the body has
-   lines;
-4. every other line matches one of `hostLines` and contains no line of the body.
-
 For a message whose sender is external ([§2.1](02-terminology.md#s2.1)), every
 line after the header MUST start with `quotePrefix`, including the host lines,
 because an external sender's choices and refs are its text too.
+
+The host's own text may repeat a body by chance: an answer whose body is
+`approve` also carries the choice `approve`. So the `render` vectors
+([§12.4.6](12-conformance.md#s12.4.6)) test the requirement on bodies whose
+lines occur in no text the host writes for the message, such as a header naming
+another sender, where a line that contains a line of the body can only be
+carrying it. Splitting the rendered text and such a body into lines at every
+line break of [§1.4](01-introduction.md#s1.4), a pushed message MUST meet all of
+these:
+
+1. its first line matches `header` and contains no line of the body;
+2. every later line that contains a line of the body starts with `quotePrefix`;
+3. at least as many later lines start with `quotePrefix` as the body has lines;
+4. every other later line matches one of `hostLines` and contains no line of the
+   body.
 
 Blank lines of the body are left out of rules 1, 2 and 4, since every line would
 contain them. A digest is the host's own text followed by at most the first line

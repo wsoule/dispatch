@@ -54,6 +54,11 @@ describe('parseVectorFile', () => {
     expect(parse(withVector({ id: 'env.basic' }))).toThrow('id ');
   });
 
+  it("refuses an id whose prefix is not its class's", () => {
+    expect(parse(withVector({ id: 'core.basic.must' }))).toThrow('prefix');
+    expect(parse(withVector({ id: 'dmp.basic.must' }))).toThrow('prefix');
+  });
+
   it("refuses a vector whose class differs from the file's", () => {
     expect(parse(withVector({ class: 'host-core' }))).toThrow('class');
   });

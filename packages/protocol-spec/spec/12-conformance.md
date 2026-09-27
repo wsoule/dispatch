@@ -76,19 +76,19 @@ A vector file is `vectors/<class>/<area>.json`, holding
 version the file was written for, `class` is its directory, and `area` matches
 `[a-z0-9-]+`. A vector has these members, and no others:
 
-| Member       | Meaning                                                                                                                                           |
-| ------------ | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `id`         | `<prefix>.<area>.<case>`, matching `[a-z0-9]+(\.[a-z0-9-]+){2}`; the prefix is `env`, `core`, `a2a` or `fed`. Unique across the kit, never reused |
-| `title`      | one sentence stating what the vector checks                                                                                                       |
-| `class`      | `envelope`, `host-core`, `a2a-binding` or `federation` (reserved: no vectors yet); the same as its file's                                         |
-| `level`      | `MUST`, `SHOULD` or `MAY` ([§12.2](12-conformance.md#s12.2))                                                                                      |
-| `profile`    | `core` or `dispatch` ([§12.3](12-conformance.md#s12.3))                                                                                           |
-| `sections`   | the numbered sections of this document it tests; each exists                                                                                      |
-| `capability` | the capability a `MAY` vector needs; only a `MAY` vector has one, and every `MAY` vector does                                                     |
-| `tags`       | optional labels; `structural` marks a refused input whose fault a JSON Schema can express                                                         |
-| `given`      | the world the adapter scripts its host from ([§12.4.2](12-conformance.md#s12.4.2))                                                                |
-| `when`       | the steps to run, in order ([§12.4.3](12-conformance.md#s12.4.3))                                                                                 |
-| `then`       | what the runner expects ([§12.4.5](12-conformance.md#s12.4.5)); never sent to the adapter                                                         |
+| Member       | Meaning                                                                                                                                                                                                                                                                    |
+| ------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `id`         | `<prefix>.<topic>.<case>`, matching `[a-z0-9]+(\.[a-z0-9-]+){2}`; the prefix names the class: `env` for `envelope`, `core` for `host-core`, `a2a` for `a2a-binding`, `fed` for `federation`. The topic is free, often the file's area. Unique across the kit, never reused |
+| `title`      | one sentence stating what the vector checks                                                                                                                                                                                                                                |
+| `class`      | `envelope`, `host-core`, `a2a-binding` or `federation` (reserved: no vectors yet); the same as its file's                                                                                                                                                                  |
+| `level`      | `MUST`, `SHOULD` or `MAY` ([§12.2](12-conformance.md#s12.2))                                                                                                                                                                                                               |
+| `profile`    | `core` or `dispatch` ([§12.3](12-conformance.md#s12.3))                                                                                                                                                                                                                    |
+| `sections`   | the numbered sections of this document it tests; each exists                                                                                                                                                                                                               |
+| `capability` | the capability a `MAY` vector needs; only a `MAY` vector has one, and every `MAY` vector does                                                                                                                                                                              |
+| `tags`       | optional labels; `structural` marks a refused input whose fault a JSON Schema can express                                                                                                                                                                                  |
+| `given`      | the world the adapter scripts its host from ([§12.4.2](12-conformance.md#s12.4.2))                                                                                                                                                                                         |
+| `when`       | the steps to run, in order ([§12.4.3](12-conformance.md#s12.4.3))                                                                                                                                                                                                          |
+| `then`       | what the runner expects ([§12.4.5](12-conformance.md#s12.4.5)); never sent to the adapter                                                                                                                                                                                  |
 
 A vector retired from the kit moves to `vectors/retired.json`, as
 `{ "id", "reason" }`, so a report against an older kit stays readable, and its
@@ -176,7 +176,8 @@ required one:
 - `$sN` is the message that step N created (a successful `send`, `reply`,
   `close` or `a2a.inbound`). It may be used only after step N.
 - `$gateN` is the N-th question, and `$noticeN` the N-th notice, that the system
-  address sent and no step created, in creation order.
+  address sent, counted in creation order, skipping messages a step created and
+  rows `given.store` seeded.
 - `$system` is the system address the adapter declared.
 - `$unimplementedGateType` is the first gate type the registry lists as
   permanent or provisional that the adapter did not declare.
@@ -224,13 +225,14 @@ grammar.
 ### 12.4.6 Rendering in Core
 
 A `render` step renders a stored message as the host would push it (or, with
-`form: "digest"`, as a digest). Core vectors send a body with lines that look
-like headers and host lines, every line break of [§1.4](01-introduction.md#s1.4)
-and, for external senders, choices and refs, then check the rendered text
-against the forms the adapter declared ([§6.8](06-delivery.md#s6.8)): rules 1 to
-4 of that section and, with `external: true`, that every line after the header
-starts with `quotePrefix`. `dispatch`-profile vectors also compare the exact
-text.
+`form: "digest"`, as a digest). Core vectors send bodies whose lines occur in no
+text the host writes for the message ([§6.8](06-delivery.md#s6.8)): lines that
+imitate a header or a host line without repeating the host's own, every line
+break of [§1.4](01-introduction.md#s1.4) and, for external senders, choices and
+refs. They then check the rendered text against the forms the adapter declared:
+rules 1 to 4 of [§6.8](06-delivery.md#s6.8) and, with `external: true`, that
+every line after the header starts with `quotePrefix`. `dispatch`-profile
+vectors also compare the exact text.
 
 ### 12.4.7 Adapter messages
 
@@ -260,8 +262,9 @@ runner  → {"dmp":"bye"}                       the adapter exits 0
 
 - **Hello.** The adapter declares the classes and profiles it runs, its
   capabilities, its system address, its gate types (which include `wake`,
-  [§5.6](05-gates.md#s5.6)) and its render forms (patterns as strings). The
-  runner refuses a malformed hello.
+  [§5.6](05-gates.md#s5.6)) and its render forms (patterns as strings, searched
+  in a line as [§1.4](01-introduction.md#s1.4) says). The runner refuses a
+  malformed hello.
 - **Run.** The adapter builds a host scripted from `given`, so the host's
   synchronous questions (wake policy, owner, implicit members, live sessions)
   never cross the pipe and Core needs no network API. It drives the host's clock

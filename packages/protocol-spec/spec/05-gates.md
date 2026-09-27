@@ -9,8 +9,12 @@ rule below exists so that only a deciding principal's choice ever takes effect.
 
 A message has **gate data** when its `data` is a JSON object whose `type` member
 is a string that does not start with `x-`, whatever the message's kind. A
-message is a **gate** when it is a `question` or `handoff` with gate data, and
-its gate type is `data.type`.
+message is a **gate** when it is a `question` or `handoff` with gate data whose
+type the host knows, or whose sender is the system address or a `human:` address
+([§5.6](05-gates.md#s5.6)), and its gate type is `data.type`. A question or
+handoff with gate data of an unknown type from an agent or a session is not a
+gate; locality ([§5.8](05-gates.md#s5.8)) still applies to it, since it tests
+for gate data alone.
 
 Each gate type is registered ([§11.6](11-registries.md#s11.6)) with:
 
@@ -104,7 +108,7 @@ registry lists is not known to a host that does not implement it.
   answer it ([§5.4](05-gates.md#s5.4)), and the choice rule of
   [§4.7](04-messages.md#s4.7) applies to it. A question with gate data of an
   unknown type from an agent or a session could not have been raised as a gate,
-  and stays a plain question.
+  so it is not one ([§5.1](05-gates.md#s5.1)) and stays a plain question.
 - **No effect.** A host MUST NOT apply an effect for a type it does not know,
   and MUST NOT record such a gate as applied, so a host that does know the type
   applies it on its next recovery ([§6.3](06-delivery.md#s6.3)), subject to

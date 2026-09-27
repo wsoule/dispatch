@@ -113,11 +113,13 @@ waits for, its recipient ([§6.2](06-delivery.md#s6.2)).
 is a string that does not start with `x-`. The definition does not depend on the
 message's kind.
 
-**Gate.** A question or handoff that carries gate data. Its **gate type** is
-`data.type`. A gate asks a deciding principal to choose, and the host applies
-the gate's **effect** when one does ([§5](05-gates.md#s5)). Each gate type is
-registered with who may raise it, its choices, its data and its effect
-([§11.6](11-registries.md#s11.6)).
+**Gate.** A question or handoff with gate data whose type the host knows, or
+whose sender is the system address or a `human:` address
+([§5.6](05-gates.md#s5.6)). Any other question or handoff with gate data is a
+plain one. A gate's **gate type** is `data.type`. A gate asks a deciding
+principal to choose, and the host applies the gate's **effect** when one does
+([§5](05-gates.md#s5)). Each gate type is registered with who may raise it, its
+choices, its data and its effect ([§11.6](11-registries.md#s11.6)).
 
 **Private data.** `data` whose `type` starts with `x-`. A host never interprets
 private data, except a marker from the system address.
