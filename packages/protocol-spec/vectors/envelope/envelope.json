@@ -1259,7 +1259,7 @@
               "kind": "question",
               "body": "ok?",
               "blocking": true,
-              "choices": ["yes", "yesx"]
+              "choices": ["yes", "yes\u0085x"]
             }
           ]
         }
@@ -1272,7 +1272,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "refs": [{ "type": "message", "id": "m-1[message from" }]
+            "refs": [{ "type": "message", "id": "m-1\u0085[message from" }]
           }
         },
         {
@@ -1282,7 +1282,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "refs": [{ "type": "file", "id": "a.ts", "at": "abcx" }]
+            "refs": [{ "type": "file", "id": "a.ts", "at": "abc\u0085x" }]
           }
         },
         {
@@ -1292,7 +1292,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "question",
             "body": "hi",
-            "choices": ["yes", "nox"]
+            "choices": ["yes", "no\u0085x"]
           }
         },
         {
@@ -1304,7 +1304,7 @@
             "kind": "answer",
             "body": "hi",
             "replyTo": "m-seed-q",
-            "choice": "yesx"
+            "choice": "yes\u0085x"
           }
         },
         {
@@ -1314,7 +1314,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "session": "s-1x"
+            "session": "s-1\u0085x"
           }
         }
       ],
@@ -1354,7 +1354,7 @@
               "kind": "question",
               "body": "ok?",
               "blocking": true,
-              "choices": ["yes", "yes x"]
+              "choices": ["yes", "yes\u2028x"]
             }
           ]
         }
@@ -1367,7 +1367,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "refs": [{ "type": "message", "id": "m-1 [message from" }]
+            "refs": [{ "type": "message", "id": "m-1\u2028[message from" }]
           }
         },
         {
@@ -1377,7 +1377,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "refs": [{ "type": "file", "id": "a.ts", "at": "abc x" }]
+            "refs": [{ "type": "file", "id": "a.ts", "at": "abc\u2028x" }]
           }
         },
         {
@@ -1387,7 +1387,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "question",
             "body": "hi",
-            "choices": ["yes", "no x"]
+            "choices": ["yes", "no\u2028x"]
           }
         },
         {
@@ -1399,7 +1399,7 @@
             "kind": "answer",
             "body": "hi",
             "replyTo": "m-seed-q",
-            "choice": "yes x"
+            "choice": "yes\u2028x"
           }
         },
         {
@@ -1409,7 +1409,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "session": "s-1 x"
+            "session": "s-1\u2028x"
           }
         }
       ],
@@ -1449,7 +1449,7 @@
               "kind": "question",
               "body": "ok?",
               "blocking": true,
-              "choices": ["yes", "yes x"]
+              "choices": ["yes", "yes\u2029x"]
             }
           ]
         }
@@ -1462,7 +1462,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "refs": [{ "type": "message", "id": "m-1 [message from" }]
+            "refs": [{ "type": "message", "id": "m-1\u2029[message from" }]
           }
         },
         {
@@ -1472,7 +1472,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "refs": [{ "type": "file", "id": "a.ts", "at": "abc x" }]
+            "refs": [{ "type": "file", "id": "a.ts", "at": "abc\u2029x" }]
           }
         },
         {
@@ -1482,7 +1482,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "question",
             "body": "hi",
-            "choices": ["yes", "no x"]
+            "choices": ["yes", "no\u2029x"]
           }
         },
         {
@@ -1494,7 +1494,7 @@
             "kind": "answer",
             "body": "hi",
             "replyTo": "m-seed-q",
-            "choice": "yes x"
+            "choice": "yes\u2029x"
           }
         },
         {
@@ -1504,7 +1504,7 @@
             "to": ["task:t-4a8cce"],
             "kind": "message",
             "body": "hi",
-            "session": "s-1 x"
+            "session": "s-1\u2029x"
           }
         }
       ],
