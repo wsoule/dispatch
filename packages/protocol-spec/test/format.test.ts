@@ -136,6 +136,9 @@ describe('loadVectors', () => {
       'env.basic.should',
       'env.basic.may',
       'core.basic.must',
+      'core.basic.system',
+      'core.basic.gate',
+      'core.basic.dispatch-must',
       'a2a.basic.must',
       'a2a.basic.dispatch-must',
     ]);

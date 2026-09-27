@@ -83,7 +83,7 @@ function tally(results: readonly VectorResult[]): ClassTally {
 
 // A claim fails when a class it needs has no vector that ran, when a MUST
 // did not pass, or when its extra requirement (gate types, the TCK) is unmet.
-function claimOutcome(
+export function claimOutcome(
   claim: ClaimName,
   results: readonly VectorResult[],
   hello: Hello,

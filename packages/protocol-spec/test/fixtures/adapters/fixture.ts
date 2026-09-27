@@ -1,10 +1,14 @@
 // A scripted adapter for the runner tests: it answers each vector with the
 // observation the fixture's own `then` describes, bent by the mode in argv[2].
+// argv[3] is crash-once's state file, crash-always's start log, or the JSON
+// that patch-hello and patch-observation spread over their reply.
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
 import { createInterface } from 'node:readline';
 
 const mode = process.argv[2] ?? 'pass';
-const stateFile = process.argv[3] ?? '';
+const arg = process.argv[3] ?? '';
+// What the runner resolves before the pipe, so the adapter never sees it.
+const RUNNER_SYMBOL = /\$(?:system|unimplementedGateType)\b/;
 const root = new URL('../vectors/', import.meta.url);
 const expected = new Map<string, unknown[]>();
 for (const cls of readdirSync(root)) {
@@ -22,7 +26,7 @@ const write = (msg: unknown): void => {
 createInterface({ input: process.stdin }).on('line', (line) => {
   const msg = JSON.parse(line) as {
     dmp: string;
-    vector?: { id: string; level: string };
+    vector?: { id: string; level: string; then?: unknown };
   };
   if (msg.dmp === 'hello') {
     const hello = {
@@ -36,7 +40,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       systemAddress: 'agent:system',
       gateTypes: ['wake'],
       render: { quotePrefix: '> ', header: '^\\[from ', hostLines: [] },
+      ...(mode === 'patch-hello' ? (JSON.parse(arg) as object) : {}),
     };
+    if (mode === 'crash-always' && arg !== '') appendFileSync(arg, 'started\n');
     // Answers hello, then dies before the first vector: the runner must not
     // crash on the write that follows (EPIPE), only fail the vector.
     if (mode === 'exit-after-hello') {
@@ -50,8 +56,8 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const v = msg.vector;
   if (v === undefined) return;
   if (mode === 'crash-always') process.exit(3);
-  if (mode === 'crash-once' && !existsSync(stateFile)) {
-    appendFileSync(stateFile, 'crashed');
+  if (mode === 'crash-once' && !existsSync(arg)) {
+    appendFileSync(arg, 'crashed');
     process.exit(3);
   }
   if (mode === 'hang' && v.id === 'env.basic.must') return;
@@ -66,9 +72,19 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const failing =
     (mode === 'should-fail' && v.level === 'SHOULD') ||
     (mode === 'with-dispatch-fail' && v.id === 'a2a.basic.dispatch-must');
-  const steps = failing
-    ? [{ ok: false, error: { code: 'invalid' } }]
-    : expected.get(v.id);
+  // An expectation or a runner symbol on the pipe fails the vector loudly.
+  const leak =
+    'then' in v
+      ? 'saw-then'
+      : RUNNER_SYMBOL.test(JSON.stringify(v))
+        ? 'unresolved-symbol'
+        : null;
+  const steps =
+    leak !== null
+      ? [{ ok: false, error: { code: leak } }]
+      : failing
+        ? [{ ok: false, error: { code: 'invalid' } }]
+        : expected.get(v.id);
   write({
     dmp: 'observation',
     id: v.id,
@@ -80,5 +96,6 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     voided: [],
     channels: [],
     render: [],
+    ...(mode === 'patch-observation' ? (JSON.parse(arg) as object) : {}),
   });
 });

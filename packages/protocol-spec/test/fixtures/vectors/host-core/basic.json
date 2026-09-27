@@ -13,6 +13,54 @@
       "given": {},
       "when": [{ "op": "parseAddress", "input": "human:wyat" }],
       "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
+    },
+    {
+      "id": "core.basic.system",
+      "title": "A host-core MUST naming the system address",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "$system" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "agent" } }] }
+    },
+    {
+      "id": "core.basic.gate",
+      "title": "A host-core MUST raising an unimplemented gate type",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["5.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "Allow?",
+            "data": { "type": "$unimplementedGateType" }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "data.type" } }
+        ]
+      }
+    },
+    {
+      "id": "core.basic.dispatch-must",
+      "title": "A dispatch-profile host-core MUST",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["6.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:di" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
     }
   ]
 }
