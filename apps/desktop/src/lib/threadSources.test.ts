@@ -13,6 +13,7 @@ import {
   replyRoute,
   rowControl,
   threadLookups,
+  threadOpenIds,
   threadTitle,
 } from './threadSources';
 
@@ -392,6 +393,34 @@ describe('replyPlan', () => {
       choice: 'approve',
     });
     expect(replyPlan([wake, answer], ME, new Set())).toBeNull();
+  });
+});
+
+describe('threadOpenIds', () => {
+  it('adds an unanswered non-blocking question put to me, so its choices answer it', () => {
+    const q = msg('m-01', { kind: 'question', choices: ['yes', 'no'] });
+    const gate = msg('m-g', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      data: { type: 'wake', target: 'task:t-000002', message: 'm-x' },
+    });
+    const open = new Set(['m-g']);
+    expect([...threadOpenIds([gate, q], ME, open)].sort()).toEqual([
+      'm-01',
+      'm-g',
+    ]);
+    const answer = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+      kind: 'answer',
+      choice: 'yes',
+    });
+    expect(threadOpenIds([gate, q, answer], ME, open)).toBe(open);
+    const theirs = msg('m-03', { kind: 'question', to: ['human:ada'] });
+    expect(threadOpenIds([theirs], ME, open)).toBe(open);
   });
 });
 

@@ -1,5 +1,5 @@
 import type { Message } from '@dispatch/client';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 
 import type { ComposeProblem } from '../../lib/composer';
 import { problemText, sendProblem } from '../../lib/composer';
@@ -10,7 +10,7 @@ import type {
   ReplyRoute,
   ThreadLookups,
 } from '../../lib/threadSources';
-import { replyPlan } from '../../lib/threadSources';
+import { replyPlan, threadOpenIds } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
 import { MessageRow } from './MessageRow';
 import { PromptBar } from '@/ui/ai/prompt-bar';
@@ -37,7 +37,11 @@ export interface ThreadPaneProps {
 
 /** An open thread: its messages, then a reply box addressed by `replyPlan`. */
 export function ThreadPane(props: ThreadPaneProps) {
-  const { messages, me, openIds } = props;
+  const { messages, me } = props;
+  const openIds = useMemo(
+    () => threadOpenIds(messages, me, props.openIds),
+    [messages, me, props.openIds]
+  );
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
@@ -58,7 +62,11 @@ export function ThreadPane(props: ThreadPaneProps) {
         ))}
       </div>
       <div className="border-border border-t-[0.5px] p-2">
-        <ReplyBox {...props} plan={replyPlan(messages, me, openIds)} />
+        <ReplyBox
+          {...props}
+          openIds={openIds}
+          plan={replyPlan(messages, me, openIds)}
+        />
       </div>
     </div>
   );

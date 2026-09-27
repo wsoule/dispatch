@@ -211,6 +211,21 @@ export function replyPlan(
   return { kind: 'send', to, replyTo: anchor.id };
 }
 
+/** The ids a thread's rows treat as open: `openIds`, plus each unanswered
+ *  non-blocking question put to me, which its choices or typed text answer. */
+export function threadOpenIds(
+  messages: readonly Message[],
+  me: string,
+  openIds: ReadonlySet<string>
+): ReadonlySet<string> {
+  const answered = answeredIds(messages);
+  const asks = messages.filter(
+    (m) => !openIds.has(m.id) && asksMe(m, me, openIds, answered)
+  );
+  if (asks.length === 0) return openIds;
+  return new Set([...openIds, ...asks.map((m) => m.id)]);
+}
+
 // The ids of the questions and handoffs this thread already holds an answer to.
 function answeredIds(messages: readonly Message[]): Set<string> {
   const ids = new Set<string>();

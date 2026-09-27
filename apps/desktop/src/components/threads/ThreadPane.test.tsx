@@ -101,6 +101,18 @@ test('a failed reply says why and keeps the draft', async () => {
   expect(replyBox().value).toBe('the new cart');
 });
 
+test('a non-blocking question put to me offers its choices as answers', async () => {
+  const onAnswer = mock((_m: Message, _r: { body: string; choice?: string }) =>
+    Promise.resolve()
+  );
+  const q = msg('m-01', { kind: 'question', choices: ['yes', 'no'] });
+  renderPane({ messages: [q], openIds: new Set(), onAnswer });
+  fireEvent.click(screen.getByRole('button', { name: 'yes' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(q, { body: 'yes', choice: 'yes' })
+  );
+});
+
 test('an open gate is answered with its buttons, not a typed reply', () => {
   renderPane({ messages: [wake], openIds: new Set(['m-01']) });
   expect(screen.getByText('Answer with the buttons above.')).toBeTruthy();
