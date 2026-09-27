@@ -81,6 +81,7 @@ describe('checkReachClient', () => {
     expect(() =>
       checkReachClient(
         {},
+        null,
         { inClientScope: false, fromApprovedLinkedTask: false },
         'to[0]'
       )
@@ -96,10 +97,46 @@ describe('checkReachClient', () => {
     expect(() =>
       checkReachClient(
         { data: { type: 'scope', paths: ['a'], reason: 'r' } },
+        null,
         { inClientScope: true, fromApprovedLinkedTask: false },
         'to[0]'
       )
     ).toThrow(expect.objectContaining({ code: 'forbidden', field: 'data' }));
+  });
+
+  it('refuses an answer to a gate, and gate data of a type this build does not know', () => {
+    const inScope = { inClientScope: true, fromApprovedLinkedTask: false };
+    const forbidden = expect.objectContaining({
+      code: 'forbidden',
+      field: 'data',
+    });
+    expect(() =>
+      checkReachClient(
+        {},
+        { data: { type: 'wake', target: 'task:t-1', message: 'm' } },
+        inScope,
+        'to[0]'
+      )
+    ).toThrow(forbidden);
+    expect(() =>
+      checkReachClient({}, { data: { type: 'future-gate' } }, inScope, 'to[0]')
+    ).toThrow(forbidden);
+    expect(() =>
+      checkReachClient(
+        { data: { type: 'future-gate' } },
+        null,
+        inScope,
+        'to[0]'
+      )
+    ).toThrow(forbidden);
+    expect(() =>
+      checkReachClient(
+        { data: { type: 'x-note' } },
+        { data: { note: 'plain' } },
+        inScope,
+        'to[0]'
+      )
+    ).not.toThrow();
   });
 });
 
@@ -156,6 +193,52 @@ describe('scope', () => {
       link: null,
     });
     expect(scope.map((m) => m.id)).toEqual(['m-a', 'm-root'].sort());
+  });
+
+  it('withholds gate traffic the client could see: unknown gate types and answers to gates', () => {
+    const future = msg({
+      id: 'm-f',
+      replyTo: 'm-root',
+      from: 'agent:dispatch',
+      to: [CLIENT],
+      kind: 'question',
+      data: { type: 'future-gate', detail: 'SECRET' },
+    });
+    const futureAnswer = msg({
+      id: 'm-fa',
+      replyTo: 'm-f',
+      from: 'human:wyat',
+      to: [CLIENT],
+      kind: 'answer',
+    });
+    const gate = msg({
+      id: 'm-g',
+      replyTo: 'm-root',
+      from: 'agent:dispatch',
+      to: ['human:wyat'],
+      kind: 'question',
+      data: { type: 'wake', target: 'task:t-1', message: 'm' },
+    });
+    const gateAnswer = msg({
+      id: 'm-ga',
+      replyTo: 'm-g',
+      from: 'human:wyat',
+      to: [CLIENT],
+      kind: 'answer',
+      choice: 'approve',
+    });
+    const plain = msg({ id: 'm-p', replyTo: 'm-root', to: [CLIENT] });
+    const deliveries = new Map(
+      ['m-f', 'm-fa', 'm-ga', 'm-p'].map((id) => [id, [d(id, CLIENT)]])
+    );
+    const scope = scopeOf({
+      root: ROOT,
+      client: CLIENT,
+      candidates: [future, futureAnswer, gate, gateAnswer, plain],
+      deliveries,
+      link: null,
+    });
+    expect(scope.map((m) => m.id)).toEqual(['m-p', 'm-root']);
   });
 
   it('adds an approved handoff’s traffic between the client and the linked task', () => {

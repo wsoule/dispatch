@@ -1,5 +1,5 @@
 import type { Message as A2AMessage } from '@a2a-js/sdk';
-import { gateOf, isSystemMarker, MessagingError } from '@dispatch/protocol';
+import { isSystemMarker, MessagingError } from '@dispatch/protocol';
 import type { Address, JsonValue, Message, Ref } from '@dispatch/protocol';
 
 import { A2AError } from './errors.js';
@@ -10,6 +10,7 @@ import {
   utf8Bytes,
 } from './ext.js';
 import type { EnvelopeExtV1, WorkRequestV1 } from './ext.js';
+import { isGateTraffic } from './policy.js';
 import type { ContinueInput, OpenInput, OpenKind } from './port.js';
 import { sanitizeExternal, unwrapExternalData } from './sanitize.js';
 import { ENVELOPE_URI, WORK_URI } from './uris.js';
@@ -40,6 +41,8 @@ export interface MessageView {
   textMediaType: TextMediaType;
   extensions: ReadonlySet<ExtensionUri>;
   clientIds: Readonly<Record<string, string>>;
+  // Resolves a replyTo, so an answer to a gate keeps its data home.
+  lookup: (id: string) => Message | null;
   taskId?: string;
 }
 
@@ -192,13 +195,13 @@ export function decodeInbound(message: A2AMessage): Inbound {
 }
 
 // One Dispatch message as the client sees it: its own sends come back under
-// its messageId and data; gate and system-marker data never leave.
+// its messageId and data; data on gate traffic or a system marker never leaves.
 export function encodeMessage(m: Message, view: MessageView): MessageJson {
   const own = m.from === view.client;
   const parts: PartJson[] = [{ text: m.body, mediaType: view.textMediaType }];
   if (
     m.data !== undefined &&
-    gateOf(m) === null &&
+    !isGateTraffic(m, view.lookup) &&
     !isSystemMarker(m, 'x-closed') &&
     !isSystemMarker(m, 'x-breaker')
   ) {
