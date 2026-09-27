@@ -57,6 +57,7 @@
       "status": "reserved",
       "since": "1.0.0-draft.1",
       "section": "3.3",
+      "reference": "spec/03-addresses.md#s3.3",
       "note": "held for a federation authority qualifier",
       "vectors": []
     }
@@ -204,6 +205,7 @@
       "status": "appendix",
       "since": "1.0.0-draft.1",
       "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
       "vectors": []
     },
     {
@@ -212,6 +214,7 @@
       "status": "appendix",
       "since": "1.0.0-draft.1",
       "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
       "vectors": []
     }
   ],
@@ -304,6 +307,7 @@
       "status": "provisional",
       "since": "1.0.0-draft.1",
       "section": "4.3",
+      "reference": "spec/04-messages.md#s4.3",
       "note": "`at` names a section anchor",
       "vectors": []
     }
@@ -522,6 +526,7 @@
       "status": "appendix",
       "since": "1.0.0-draft.1",
       "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
       "internal": false,
       "note": "a remote row handed to the transport, no report yet",
       "vectors": []
@@ -532,6 +537,7 @@
       "status": "appendix",
       "since": "1.0.0-draft.1",
       "section": "F.4",
+      "reference": "spec/appendix-f-federation.md#sF.4",
       "internal": false,
       "note": "every home of a remote recipient refused the message",
       "vectors": []
@@ -589,6 +595,7 @@
       "status": "informative",
       "since": "1.0.0-draft.1",
       "section": "10.3",
+      "reference": "spec/10-errors.md#s10.3",
       "httpStatus": 503,
       "note": "raised by hosts and bindings, never by the engine",
       "vectors": []
@@ -601,6 +608,7 @@
       "status": "provisional",
       "since": "1.0.0-draft.1",
       "section": "8.4",
+      "reference": "spec/08-a2a-binding.md#s8.4",
       "vectors": []
     },
     {
@@ -609,6 +617,7 @@
       "status": "provisional",
       "since": "1.0.0-draft.1",
       "section": "8.5",
+      "reference": "spec/08-a2a-binding.md#s8.5",
       "vectors": []
     },
     {
@@ -617,6 +626,7 @@
       "status": "provisional",
       "since": "1.0.0-draft.1",
       "section": "8.6",
+      "reference": "spec/08-a2a-binding.md#s8.6",
       "vectors": []
     }
   ]

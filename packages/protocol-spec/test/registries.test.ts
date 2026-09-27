@@ -2,7 +2,9 @@ import { afterAll, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
 import {
   chmodSync,
+  existsSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -17,7 +19,7 @@ import {
   REGISTRY_NAMES,
   renderRegistries,
 } from '../src/registries.js';
-import { listSections, SPEC_DIR } from '../src/sections.js';
+import { listSections, sectionsOf, SPEC_DIR } from '../src/sections.js';
 
 const registry = loadRegistry();
 const sections = new Set(listSections(SPEC_DIR));
@@ -25,6 +27,17 @@ const pkgDir = fileURLToPath(new URL('..', import.meta.url));
 const script = fileURLToPath(
   new URL('../scripts/registries.ts', import.meta.url)
 );
+
+// Whether a reference is `spec/<file>#s<n>` for a section that file declares.
+function resolves(reference: string | undefined): boolean {
+  const m = /^spec\/([^#/]+\.md)#s(.+)$/.exec(reference ?? '');
+  if (m === null) return false;
+  const file = new URL(m[1] ?? '', SPEC_DIR);
+  return (
+    existsSync(file) &&
+    sectionsOf(readFileSync(file, 'utf8')).includes(m[2] ?? '')
+  );
+}
 
 describe('loadRegistry', () => {
   const dir = mkdtempSync(join(tmpdir(), 'dmp-registries-'));
@@ -127,6 +140,17 @@ describe('registries.json', () => {
         });
     });
   }
+
+  it('gives every non-core entry a reference to its defining section', () => {
+    for (const name of REGISTRY_NAMES) {
+      for (const e of registry[name].filter((r) => r.scope !== 'core'))
+        expect({ name, value: e.value, ok: resolves(e.reference) }).toEqual({
+          name,
+          value: e.value,
+          ok: true,
+        });
+    }
+  });
 
   it('gives every permanent entry a vector and no provisional entry any', () => {
     for (const name of REGISTRY_NAMES) {
