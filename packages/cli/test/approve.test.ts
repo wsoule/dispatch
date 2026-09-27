@@ -80,6 +80,8 @@ let openGates: (typeof GATE)[];
 let woke: boolean;
 // The human's unread mail, where the daemon says why a wake woke nothing.
 let mailbox: { delivery: unknown; message: unknown }[];
+// Whether live r-1 refuses pushed mail, as a CLI run does, so it is held.
+let r1RefusesMail: boolean;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 const originalAppToken = process.env.DISPATCH_APP_TOKEN;
 
@@ -128,10 +130,20 @@ function startFakeDaemon(): ReturnType<typeof Bun.serve> {
         if (body.to.includes('run:r-3') && body.wake === 'request') {
           woke = true;
         }
+        // Only live r-1 takes mail pushed into it; the rest is held.
+        const deliveries = body.to.map((to, i) => {
+          const pushed = to === 'run:r-1' && !r1RefusesMail;
+          return {
+            id: `d-${i}`,
+            recipient: to,
+            runId: pushed ? 'r-1' : null,
+            state: pushed ? 'pushed' : 'held',
+          };
+        });
         return Response.json(
           {
             message: { ...GATE, id: 'm-sent', kind: 'message' },
-            deliveries: [],
+            deliveries,
             downgraded: false,
           },
           { status: 201 }
@@ -169,6 +181,7 @@ beforeEach(async () => {
   openGates = [GATE];
   woke = false;
   mailbox = [];
+  r1RefusesMail = false;
   ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
   lines = [];
@@ -232,12 +245,19 @@ describe('dispatch approve', () => {
     );
   });
 
-  it('a request id that is not the open one is an error', async () => {
+  it('a request id that is not parked names the calls that are', async () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     await expect(run('approve', 'r-1', 'fake-approval-9')).rejects.toThrow(
-      'r-1 is not awaiting an approval'
+      'r-1 is not parked on fake-approval-9; its parked calls: fake-approval-1 (run_shell)'
     );
     expect(replies).toEqual([]);
+  });
+
+  it('a request id on a run with no open gate says the run is not waiting', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    await expect(run('approve', 'r-2', 'fake-approval-9')).rejects.toThrow(
+      'r-2 is not awaiting an approval'
+    );
   });
 
   // Each parked call has its own gate, and the daemon answers any of them.
@@ -361,6 +381,16 @@ describe('dispatch message', () => {
     process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
     await run('message', 'r-1', 'keep', 'going', '--resume');
     expect(lines).toContain('sent message to r-1');
+  });
+
+  // A live run that cannot take mail (a CLI run, say) leaves it held.
+  it('--resume on a live run that held the message says it is waiting', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    r1RefusesMail = true;
+    await expect(
+      run('message', 'r-1', 'keep', 'going', '--resume')
+    ).rejects.toThrow('r-1 did not continue; your message is waiting for it');
+    expect(lines).not.toContain('sent message to r-1');
   });
 
   it("--resume that continued nothing gives the daemon's reason", async () => {
