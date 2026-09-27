@@ -194,6 +194,21 @@ export function rowControl(
   return { kind: 'choices', choices: message.choices ?? fallback, gate: false };
 }
 
+/** Whether some open message in a thread gives this viewer buttons (or a
+ *  gate card) to answer it with, as `MessageRow` renders its control. */
+export function hasAnswerButtons(
+  messages: readonly Message[],
+  ctx: { me: string; openIds: ReadonlySet<string>; access: MessageAccess }
+): boolean {
+  return messages.some((message) => {
+    if (!ctx.openIds.has(message.id)) return false;
+    const { me, access } = ctx;
+    const control = rowControl(message, { me, open: true, access });
+    if (control.kind === 'choices') return control.choices.length > 0;
+    return control.kind === 'tool-approval' || control.kind === 'scope';
+  });
+}
+
 /** `reply` answers an open question; `send` writes a plain message beside `replyTo`. */
 export type ReplyPlan =
   | { kind: 'reply'; target: Message }

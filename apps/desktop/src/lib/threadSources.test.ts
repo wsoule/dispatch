@@ -4,6 +4,7 @@ import { describe, expect, it } from 'bun:test';
 import type { MessageAccess } from './daemonAuth';
 import {
   addressAction,
+  hasAnswerButtons,
   knownAddresses,
   lookupsKey,
   mergeThreadSources,
@@ -246,6 +247,34 @@ describe('rowControl', () => {
     expect(rowControl(q, { me: ME, open: true, access: AGENT_WINDOW })).toEqual(
       { kind: 'read-only', reason: 'cannot message' }
     );
+  });
+});
+
+describe('hasAnswerButtons', () => {
+  it('is true only when an open row gives this viewer buttons to answer with', () => {
+    const open = new Set(['m-s']);
+    expect(
+      hasAnswerButtons([scopeGate], { me: ME, openIds: open, access: DECIDER })
+    ).toBe(true);
+    // A gate the viewer cannot decide shows only its read-only reason.
+    expect(
+      hasAnswerButtons([scopeGate], { me: ME, openIds: open, access: TEAMMATE })
+    ).toBe(false);
+    expect(
+      hasAnswerButtons([scopeGate], {
+        me: ME,
+        openIds: new Set(),
+        access: DECIDER,
+      })
+    ).toBe(false);
+    const bare = msg('m-b', { kind: 'question', blocking: true });
+    expect(
+      hasAnswerButtons([bare], {
+        me: ME,
+        openIds: new Set(['m-b']),
+        access: TEAMMATE,
+      })
+    ).toBe(false);
   });
 });
 

@@ -11,7 +11,11 @@ import type {
   ReplyRoute,
   ThreadLookups,
 } from '../../lib/threadSources';
-import { replyPlan, threadOpenIds } from '../../lib/threadSources';
+import {
+  hasAnswerButtons,
+  replyPlan,
+  threadOpenIds,
+} from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
 import { MessageRow } from './MessageRow';
 import { PromptBar } from '@/ui/ai/prompt-bar';
@@ -76,6 +80,7 @@ export function ThreadPane(props: ThreadPaneProps) {
 // The typed reply under a thread, or why there is none.
 function ReplyBox({
   messages,
+  me,
   openIds,
   access,
   route,
@@ -111,7 +116,7 @@ function ReplyBox({
   if (route === 'bus' && plan === null && lost === null) {
     return (
       <p className="text-muted-foreground text-[12px]">
-        {messages.some((m) => openIds.has(m.id))
+        {hasAnswerButtons(messages, { me, openIds, access })
           ? 'Answer with the buttons above.'
           : 'Nothing in this thread takes a reply.'}
       </p>

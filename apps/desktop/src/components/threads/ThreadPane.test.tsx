@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import type { MessageAccess } from '../../lib/daemonAuth';
+import { DECIDE_TIER_EXPLANATION } from '../../lib/daemonAuth';
 import type { ReplyPlan } from '../../lib/threadSources';
 import { threadLookups } from '../../lib/threadSources';
 import type { ThreadPaneProps } from './ThreadPane';
@@ -165,6 +166,25 @@ test('resending after a lost response repeats the first plan, even once the answ
 test('an open gate is answered with its buttons, not a typed reply', () => {
   renderPane({ messages: [wake], openIds: new Set(['m-01']) });
   expect(screen.getByText('Answer with the buttons above.')).toBeTruthy();
+  expect(screen.queryByLabelText('Reply')).toBeNull();
+});
+
+test('an open gate a request-tier window cannot answer points at no buttons', () => {
+  renderPane({
+    messages: [wake],
+    openIds: new Set(['m-01']),
+    access: {
+      canDecide: false,
+      canMessage: true,
+      explanation: DECIDE_TIER_EXPLANATION,
+    },
+  });
+  expect(screen.getByText(DECIDE_TIER_EXPLANATION)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+  expect(screen.queryByText('Answer with the buttons above.')).toBeNull();
+  expect(
+    screen.getByText('Nothing in this thread takes a reply.')
+  ).toBeTruthy();
   expect(screen.queryByLabelText('Reply')).toBeNull();
 });
 
