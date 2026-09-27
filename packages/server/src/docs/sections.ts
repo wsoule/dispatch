@@ -55,55 +55,92 @@ export function splitLines(body: string): string[] {
   return lines;
 }
 
-const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
+// A fence run, after up to 8 list markers that open items on the same line. Each
+// marker takes all 1-4 spaces after it, so the pattern cannot backtrack widely.
+const FENCE_OPEN =
+  /^ {0,3}((?:(?:[-+*]|\d{1,9}[.)]) {1,4}(?! )){0,8})(`{3,}|~{3,})/;
 
-// A closing fence: up to three spaces, at least as many fence characters, then blanks.
-function closesFence(text: string, char: string, length: number): boolean {
-  const body = text.replace(/^ {0,3}/, '');
-  let n = 0;
-  while (n < body.length && body[n] === char) n++;
-  return n >= length && body.slice(n).trim() === '';
+// Columns of leading spaces and tabs (tab stops every 4) and the text after them.
+function indentOf(text: string): { columns: number; rest: string } {
+  let columns = 0;
+  let i = 0;
+  for (; i < text.length; i++) {
+    if (text[i] === ' ') columns += 1;
+    else if (text[i] === '\t') columns += 4 - (columns % 4);
+    else break;
+  }
+  return { columns, rest: text.slice(i) };
 }
 
-// Which lines sit inside fenced code, the fence lines themselves included.
+// A closing fence: at least as many fence characters, then only blanks.
+function closesFence(rest: string, char: string, length: number): boolean {
+  let n = 0;
+  while (n < rest.length && rest[n] === char) n++;
+  return n >= length && rest.slice(n).trim() === '';
+}
+
+// Which lines sit inside fenced code, the fence lines themselves included. A
+// fence opened in a list item also ends at the first line indented less than it.
 export function fencedLines(lines: readonly string[]): boolean[] {
   const fenced = new Array<boolean>(lines.length).fill(false);
-  let open: { char: string; length: number } | null = null;
+  let open: { char: string; length: number; indent: number } | null = null;
   for (let i = 0; i < lines.length; i++) {
     const text = lines[i].replace(/\n$/, '');
-    if (open === null) {
-      const match = FENCE_OPEN.exec(text);
-      if (match !== null) {
-        open = { char: match[1][0], length: match[1].length };
+    if (open !== null) {
+      const { columns, rest } = indentOf(text);
+      if (rest === '' || columns >= open.indent) {
         fenced[i] = true;
+        const closes =
+          columns - open.indent <= 3 &&
+          closesFence(rest, open.char, open.length);
+        if (closes) open = null;
+        continue;
       }
-      continue;
+      open = null;
     }
+    const match = FENCE_OPEN.exec(text);
+    if (match === null) continue;
+    const run = match[2];
+    const info = text.slice(match[0].length);
+    if (run[0] === '`' && info.includes('`')) continue;
+    const indent = match[1] === '' ? 0 : match[0].length - run.length;
+    open = { char: run[0], length: run.length, indent };
     fenced[i] = true;
-    if (closesFence(text, open.char, open.length)) open = null;
   }
   return fenced;
 }
 
-const ATX = /^ {0,3}(#{1,3})(?:[ \t]+(.*?))?[ \t]*$/;
+const ATX = /^ {0,3}(#{1,3})(?:[ \t]+(.*))?$/;
+const LINE_BREAK = /[\n\r\u2028\u2029]/;
 
-// An ATX h1-h3 heading line's level and text, or null.
+// An ATX h1-h3 heading line's level and text, or null. The closing # run is
+// found by a scan from the end, since a regex for it backtracks over blanks.
 function atxHeading(
   line: string
 ): { level: 1 | 2 | 3; heading: string } | null {
-  const match = ATX.exec(line.replace(/\n$/, ''));
+  const text = line.replace(/\n$/, '');
+  if (LINE_BREAK.test(text)) return null;
+  const match = ATX.exec(text);
   if (match === null) return null;
-  const heading = (match[2] ?? '').replace(/(?:^|[ \t]+)#+$/, '').trim();
+  const content = match[2] ?? '';
+  const isBlank = (at: number): boolean =>
+    content[at] === ' ' || content[at] === '\t';
+  let end = content.length;
+  while (end > 0 && isBlank(end - 1)) end--;
+  let hashes = end;
+  while (hashes > 0 && content[hashes - 1] === '#') hashes--;
+  if (hashes < end && (hashes === 0 || isBlank(hashes - 1))) end = hashes;
+  const heading = content.slice(0, end).trim();
   return { level: match[1].length as 1 | 2 | 3, heading };
 }
 
-// GitHub's anchor rule before de-duplication: lowercase, keep letters, digits,
-// spaces, '-' and '_', and turn each space into '-'.
+// GitHub's anchor rule before de-duplication: lowercase, keep letters, marks,
+// digits, connector punctuation, spaces and '-', and turn each space into '-'.
 function anchorBase(heading: string): string {
   return heading
     .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_-]/gu, '')
-    .replace(/\s/g, '-');
+    .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, '')
+    .replace(/ /g, '-');
 }
 
 export function outline(body: string): Section[] {
@@ -186,14 +223,14 @@ export function resolveSection(
   const candidates = sections.filter(
     (s) => s.ord > 0 && (byAnchor ? s.anchor === wanted : s.heading === wanted)
   );
-  if (candidates.length === 1) return candidates[0];
-  if (candidates.length === 0 || wanted === '') {
+  if (wanted === '' || candidates.length === 0) {
     throw new DocsError(
       'invalid',
       `${field}: section "${trimmed}" not found`,
       field
     );
   }
+  if (candidates.length === 1) return candidates[0];
   throw new DocsError(
     'invalid',
     `${field}: ambiguous: ${candidates.map((s) => `#${s.anchor}`).join(', ')}`,
@@ -253,6 +290,9 @@ function charStart(bytes: Uint8Array, at: number): number {
 // One page of `text` from byte `offset`, ending on a line boundary unless a
 // single line is longer than a page, which is cut on a character boundary.
 export function pageOf(text: string, offset: number, maxBytes: number): Page {
+  if (!Number.isInteger(maxBytes) || maxBytes < 4) {
+    throw new RangeError('maxBytes: a page must hold a 4-byte character');
+  }
   const bytes = Buffer.from(text, 'utf8');
   const total = bytes.byteLength;
   const insideChar = offset < total && (bytes[offset] & 0xc0) === 0x80;

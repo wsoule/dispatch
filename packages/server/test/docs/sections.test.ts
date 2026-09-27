@@ -100,6 +100,53 @@ describe('outline', () => {
       outline('## Überblick: Plan (v2)!\n## naïve café\n').map((s) => s.anchor)
     ).toEqual(['', 'überblick-plan-v2', 'naïve-café']);
   });
+
+  it('keeps combining marks and connector punctuation in anchors and drops tabs, as GitHub does', () => {
+    expect(
+      outline('# हिन्दी भाषा\n# nai\u0308ve\n# İ\n# a\tb\n# a‿b\n').map(
+        (s) => s.anchor
+      )
+    ).toEqual(['', 'हिन्दी-भाषा', 'nai\u0308ve', 'i\u0307', 'ab', 'a‿b']);
+  });
+
+  it('strips a closing # run only when a blank or nothing precedes it', () => {
+    expect(
+      outline('# foo #\t \n# foo#\n# #\n### bar \\###\n#\t#\n').map(
+        (s) => s.heading
+      )
+    ).toEqual(['', 'foo', 'foo#', '', 'bar \\###', '']);
+  });
+
+  it('review focus 2: outlines a 700 KB heading line of blanks quickly', () => {
+    const blanks = ' \t'.repeat(350_000);
+    const started = performance.now();
+    const sections = outline(`# a${blanks}b`);
+    expect(performance.now() - started).toBeLessThan(1000);
+    expect(sections.map((s) => s.heading)).toEqual(['', `a${blanks}b`]);
+  });
+
+  it('sees a fence opened on a list item line and ends it with the item', () => {
+    expect(
+      outline('# Steps\n1. ```bash\n   # install deps\n   ```\n# Next\n').map(
+        (s) => s.heading
+      )
+    ).toEqual(['', 'Steps', 'Next']);
+    expect(
+      outline('- ~~~\n  # inside\n\n  # still inside\n# Out\n').map(
+        (s) => s.heading
+      )
+    ).toEqual(['', 'Out']);
+  });
+
+  it('does not open a backtick fence whose info string holds a backtick', () => {
+    expect(outline('```js `x`\n# Real\n').map((s) => s.heading)).toEqual([
+      '',
+      'Real',
+    ]);
+    expect(
+      outline('~~~ `x`\n# code\n~~~\n# Real\n').map((s) => s.heading)
+    ).toEqual(['', 'Real']);
+  });
 });
 
 describe('resolveSection', () => {
@@ -130,6 +177,12 @@ describe('resolveSection', () => {
     expect((err as DocsError).field).toBe('section');
     expect(() => resolveSection(sections, '', 'section')).toThrow('not found');
   });
+
+  it('never resolves an empty reference, even to the one empty heading', () => {
+    expect(() => resolveSection(outline('#\ntext\n'), '', 'section')).toThrow(
+      'not found'
+    );
+  });
 });
 
 describe('mentionsOf', () => {
@@ -139,6 +192,12 @@ describe('mentionsOf', () => {
     expect(mentionsOf(body)).toEqual([
       { personal: false, slug: 'auth-refactor', anchor: null },
       { personal: true, slug: 'notes', anchor: null },
+    ]);
+  });
+
+  it('keeps the anchor of [[slug#anchor]]', () => {
+    expect(mentionsOf('[[a#sec]]')).toEqual([
+      { personal: false, slug: 'a', anchor: 'sec' },
     ]);
   });
 });
@@ -239,5 +298,16 @@ describe('pageOf', () => {
     expect(() => pageOf('é', 1, 10)).toThrow('offset');
     expect(() => pageOf('abc', 4, 10)).toThrow('offset');
     expect(() => pageOf('abc', -1, 10)).toThrow('offset');
+  });
+
+  it('refuses a page size that could not hold a whole character', () => {
+    expect(() => pageOf('éa', 0, 1)).toThrow('maxBytes');
+    expect(() => pageOf('a\nb\n', 0, 0)).toThrow('maxBytes');
+    expect(pageOf('😀😀', 0, 4)).toEqual({
+      text: '😀',
+      offset: 0,
+      nextOffset: 4,
+      total: 8,
+    });
   });
 });
