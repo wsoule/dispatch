@@ -42,13 +42,30 @@ export function checkRender(
   return failures;
 }
 
-// Checks a digest against §6.8's digest rule: one line, holding no body line
-// after the first unless the first line already holds it.
+// The longest leading part of `line`, in code points, that `text` contains,
+// so a first line the host cut short is still found where the digest holds it.
+function longestLead(text: string, line: string): string {
+  const chars = Array.from(line);
+  let low = 0;
+  let high = chars.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (text.includes(chars.slice(0, mid).join(''))) low = mid;
+    else high = mid - 1;
+  }
+  return chars.slice(0, low).join('');
+}
+
+// Checks a digest against §6.8's digest rule: one line that starts with host
+// text, holding no body line after the first unless the first already holds it.
 export function checkDigest(text: string, body: string): string[] {
   const failures: string[] = [];
   const lines = text.split(LINE_BREAK);
   if (lines.length > 1) failures.push(`the digest spans ${lines.length} lines`);
   const [first = '', ...later] = body.split(LINE_BREAK);
+  const lead = first.trim() === '' ? '' : longestLead(text, first);
+  if (lead !== '' && text.startsWith(lead))
+    failures.push(`the digest starts with body text: ${lead}`);
   for (const line of later)
     if (line.trim() !== '' && !first.includes(line) && text.includes(line))
       failures.push(`the digest carries a body line after the first: ${line}`);

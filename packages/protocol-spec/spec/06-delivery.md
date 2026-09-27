@@ -159,14 +159,18 @@ start. Vectors that test muting are `MAY` vectors with the capability
 
 ## 6.8 Presenting messages to models
 
-A host that pushes a message into a model's context MUST present it so that no
-line of its body can pass for a header or for a line the host writes: it writes
-the text of the body only on lines that start with `quotePrefix`, at least one
-such line for each line of the body, so no line of the body forms or starts the
-header or a host line. A host that notifies a session
-([§6.2](06-delivery.md#s6.2)) MUST give it a digest instead: the host's own text
-followed by at most the first line of the body, on one line, so the text of the
-body never starts a line. The host declares the forms of its pushes
+A host MUST present every message it puts into a model's context, in whatever
+form (a push, a digest, or what a read of a mailbox or thread returns
+([§7.1](07-mailboxes-and-channels.md#s7.1))), so that no line of its body can
+pass for a header or for a line the host writes, and so that every line after
+the header of an external sender's message ([§2.1](02-terminology.md#s2.1)) is
+quoted. A host that pushes a message into a model's context MUST do so with
+`quotePrefix`: it writes the text of the body only on lines that start with
+`quotePrefix`, at least one such line for each line of the body, so no line of
+the body forms or starts the header or a host line. A host that notifies a
+session ([§6.2](06-delivery.md#s6.2)) MUST give it a digest instead: the host's
+own text followed by at most the first line of the body, on one line, so the
+text of the body never starts a line. The host declares the forms of its pushes
 ([§12.4](12-conformance.md#s12.4)); `header` and `hostLines` are patterns,
 searched in a line as [§1.4](01-introduction.md#s1.4) says:
 
@@ -194,8 +198,11 @@ these:
 4. every other later line matches one of `hostLines` and contains no line of the
    body.
 
-Blank lines of the body are left out of rules 1, 2 and 4, since every line would
-contain them. On such a body, a digest MUST be one line, and each later line of
-the body that the digest contains MUST be blank or be contained in the body's
+Blank lines of the body are left out of rules 1, 2 and 4 and of the digest rule,
+since every line would contain them. On a body whose lines occur in no text the
+host writes, a digest MUST be one line that does not start with body text: it
+MUST NOT start with the longest leading part of the body's first line that it
+contains (the whole line, or what a host that cuts the line short keeps), and
+each later line of the body that it contains MUST be contained in the body's
 first line. The Dispatch profile's exact forms are in
 [Appendix C](appendix-c-dispatch-profile.md#sC.6).

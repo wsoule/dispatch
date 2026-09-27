@@ -120,7 +120,19 @@ function checkSteps(when: unknown, fail: Fail): void {
       if (step[field] === undefined)
         fail(`step ${i + 1} (${op}) needs ${JSON.stringify(field)}`);
     }
+    if (op === 'render') checkRenderStep(step, `step ${i + 1} (render)`, fail);
   });
+}
+
+// A render step's optional `form` and `external`, so a misspelled form fails
+// here instead of running the push rules on a digest.
+function checkRenderStep(step: Row, at: string, fail: Fail): void {
+  const form = step['form'];
+  if (form !== undefined && form !== 'push' && form !== 'digest')
+    fail(`${at} form must be "push" or "digest"`);
+  const external = step['external'];
+  if (external !== undefined && typeof external !== 'boolean')
+    fail(`${at} external must be a boolean`);
 }
 
 // Checks one expected step result, `{ ok: true, result? }` or

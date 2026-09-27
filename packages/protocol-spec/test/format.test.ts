@@ -77,6 +77,23 @@ describe('parseVectorFile', () => {
     expect(parse(withVector({ sections: [] }))).toThrow('section');
   });
 
+  it('refuses a render step whose form or external the kit does not know', () => {
+    const render = (extra: Record<string, unknown>) =>
+      withVector({ when: [{ op: 'render', message: 'm-x', ...extra }] });
+    expect(parse(render({ form: 'digests' }))).toThrow(
+      'step 1 (render) form must be "push" or "digest"'
+    );
+    expect(parse(render({ external: 'yes' }))).toThrow(
+      'step 1 (render) external must be a boolean'
+    );
+    for (const extra of [
+      {},
+      { form: 'push', external: true },
+      { form: 'digest' },
+    ])
+      expect(parse(render(extra))().vectors).toHaveLength(1);
+  });
+
   it('refuses an unknown op and a step missing a required field', () => {
     expect(parse(withVector({ when: [{ op: 'teleport' }] }))).toThrow('op');
     expect(
