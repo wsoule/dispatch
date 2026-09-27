@@ -76,6 +76,25 @@ describe('loadRegistry', () => {
       'registries.json: kinds[0] has unknown field raisedBy'
     );
   });
+
+  it('requires who raises a gate type, its choices, data and effect', () => {
+    const gate = {
+      ...kind,
+      value: 'wake',
+      section: '5.9',
+      raisedBy: 'system',
+      choices: ['approve', 'deny'],
+      data: { target: 'address' },
+      effect: 'wake the target',
+    };
+    const gates = (g: object) => ({ ...emptyRegistry(), 'gate-types': [g] });
+    expect(loadRegistry(fileOf(gates(gate)))['gate-types']).toHaveLength(1);
+    for (const field of ['raisedBy', 'choices', 'data', 'effect']) {
+      expect(() =>
+        loadRegistry(fileOf(gates({ ...gate, [field]: undefined })))
+      ).toThrow(`registries.json: gate-types[0] ${field} must`);
+    }
+  });
 });
 
 describe('renderRegistries', () => {
@@ -125,16 +144,6 @@ describe('registries.json', () => {
             vectors: [],
           });
       }
-    }
-  });
-
-  it('describes every gate type', () => {
-    for (const g of registry['gate-types']) {
-      expect(
-        g.raisedBy === undefined ||
-          g.choices === undefined ||
-          g.effect === undefined
-      ).toBe(false);
     }
   });
 

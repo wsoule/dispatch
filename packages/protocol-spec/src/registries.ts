@@ -92,6 +92,18 @@ const EXTRA_FIELDS: Partial<Record<RegistryName, readonly string[]>> = {
   'error-codes': ['httpStatus'],
 };
 
+// Why a gate entry lacks or garbles a gate field; every gate carries all four.
+function gateProblem(e: Record<string, unknown>): string | null {
+  if (!(RAISERS as readonly unknown[]).includes(e['raisedBy']))
+    return `raisedBy must be one of ${RAISERS.join(', ')}`;
+  if (!isStringArray(e['choices'])) return 'choices must be a string array';
+  const data = e['data'];
+  if (!(isRecord(data) && Object.values(data).every((v) => isText(v))))
+    return 'data must map field names to descriptions';
+  if (!isText(e['effect'])) return 'effect must be a non-empty string';
+  return null;
+}
+
 // Why one registry entry is malformed, or null when it is well formed.
 function entryProblem(name: RegistryName, e: unknown): string | null {
   if (!isRecord(e)) return 'is not an object';
@@ -106,23 +118,14 @@ function entryProblem(name: RegistryName, e: unknown): string | null {
   if (!isText(e['since'])) return 'since must be a non-empty string';
   if (!isText(e['section'])) return 'section must be a non-empty string';
   if (!isStringArray(e['vectors'])) return 'vectors must be a string array';
-  for (const key of ['reference', 'note', 'effect']) {
+  for (const key of ['reference', 'note']) {
     if (e[key] !== undefined && !isText(e[key]))
       return `${key} must be a non-empty string`;
   }
-  if (
-    e['raisedBy'] !== undefined &&
-    !(RAISERS as readonly unknown[]).includes(e['raisedBy'])
-  )
-    return `raisedBy must be one of ${RAISERS.join(', ')}`;
-  if (e['choices'] !== undefined && !isStringArray(e['choices']))
-    return 'choices must be a string array';
-  const data = e['data'];
-  if (
-    data !== undefined &&
-    !(isRecord(data) && Object.values(data).every((v) => isText(v)))
-  )
-    return 'data must map field names to descriptions';
+  if (name === 'gate-types') {
+    const why = gateProblem(e);
+    if (why !== null) return why;
+  }
   if (e['internal'] !== undefined && typeof e['internal'] !== 'boolean')
     return 'internal must be a boolean';
   if (e['httpStatus'] !== undefined && !Number.isInteger(e['httpStatus']))
