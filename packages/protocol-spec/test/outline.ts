@@ -2,12 +2,10 @@
 // in order. Numbers never change within a major version; titles may.
 export const OUTLINE: readonly {
   file: string;
-  by: string;
   headings: readonly string[];
 }[] = [
   {
     file: '00-front-matter.md',
-    by: 'Task 8',
     headings: [
       '# 0 Front matter',
       '## 0.1 Abstract',
@@ -17,7 +15,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '01-introduction.md',
-    by: 'Task 8',
     headings: [
       '# 1 Introduction',
       '## 1.1 Goals',
@@ -28,7 +25,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '02-terminology.md',
-    by: 'Task 8',
     headings: [
       '# 2 Terminology',
       '## 2.1 Hosts and principals',
@@ -40,7 +36,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '03-addresses.md',
-    by: 'Task 8',
     headings: [
       '# 3 Addresses',
       '## 3.1 Grammar',
@@ -54,7 +49,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '04-messages.md',
-    by: 'Task 8',
     headings: [
       '# 4 Messages',
       '## 4.1 Envelope',
@@ -70,7 +64,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '05-gates.md',
-    by: 'Task 8',
     headings: [
       '# 5 Gates',
       '## 5.1 Gate data',
@@ -86,7 +79,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '06-delivery.md',
-    by: 'Task 8',
     headings: [
       '# 6 Delivery',
       '## 6.1 States',
@@ -101,7 +93,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '07-mailboxes-and-channels.md',
-    by: 'Task 8',
     headings: [
       '# 7 Mailboxes and channels',
       '## 7.1 Mailboxes',
@@ -111,7 +102,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '08-a2a-binding.md',
-    by: 'Task 10',
     headings: [
       '# 8 A2A binding',
       '## 8.1 Agent and skills',
@@ -128,7 +118,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '09-identity-and-authorization.md',
-    by: 'Task 8',
     headings: [
       '# 9 Identity and authorization',
       '## 9.1 Principals',
@@ -138,7 +127,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '10-errors.md',
-    by: 'Task 8',
     headings: [
       '# 10 Errors',
       '## 10.1 Codes',
@@ -148,7 +136,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '11-registries.md',
-    by: 'Task 2',
     headings: [
       '# 11 Registries',
       '## 11.1 Address schemes',
@@ -166,7 +153,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '12-conformance.md',
-    by: 'Task 8',
     headings: [
       '# 12 Conformance',
       '## 12.1 Claims',
@@ -180,7 +166,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '13-security-and-privacy.md',
-    by: 'Task 8',
     headings: [
       '# 13 Security and privacy considerations',
       '## 13.1 The system address',
@@ -203,7 +188,6 @@ export const OUTLINE: readonly {
   },
   {
     file: '14-versioning.md',
-    by: 'Task 8',
     headings: [
       '# 14 Versioning, change process and security process',
       '## 14.1 Document versions',
@@ -215,7 +199,6 @@ export const OUTLINE: readonly {
   },
   {
     file: 'appendix-a-daemon-api.md',
-    by: 'Task 12',
     headings: [
       '# Appendix A Dispatch daemon HTTP and WebSocket API',
       '## A.1 Authentication and tiers',
@@ -225,7 +208,6 @@ export const OUTLINE: readonly {
   },
   {
     file: 'appendix-b-agent-tools.md',
-    by: 'Task 11',
     headings: [
       '# Appendix B Agent tools',
       '## B.1 Tools',
@@ -234,7 +216,6 @@ export const OUTLINE: readonly {
   },
   {
     file: 'appendix-c-dispatch-profile.md',
-    by: 'Task 11',
     headings: [
       '# Appendix C Dispatch profile',
       '## C.1 Identifiers',
@@ -249,7 +230,6 @@ export const OUTLINE: readonly {
   },
   {
     file: 'appendix-d-json-schemas.md',
-    by: 'Task 11',
     headings: [
       '# Appendix D JSON Schemas',
       '## D.1 Schemas',
@@ -258,12 +238,10 @@ export const OUTLINE: readonly {
   },
   {
     file: 'appendix-e-examples.md',
-    by: 'Task 11',
     headings: ['# Appendix E Examples', '## E.1 Examples'],
   },
   {
     file: 'appendix-f-federation.md',
-    by: 'Task 11',
     headings: [
       '# Appendix F Federation wire and receive',
       '## F.1 FederatedOp',
