@@ -84,6 +84,8 @@ import type {
   ExecutorProfile,
   ExecutorRun,
   ExecutorStartOptions,
+  MemoryPromptPort,
+  MemoryPromptSection,
   NormalizedEntry,
   ReviewFailure,
   RunKind,
@@ -380,6 +382,8 @@ export class Orchestrator {
   private mintRunToken: ((runId: string) => string) | null = null;
   // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
   private approvalGate: ApprovalGatePort | null = null;
+  // Renders each dispatch prompt's memory section (see setMemoryPort); null keeps the ledger section.
+  private memoryPort: MemoryPromptPort | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -463,6 +467,11 @@ export class Orchestrator {
   // Installed by messaging at boot: raises and settles the gate a parked tool call waits on.
   setApprovalGate(port: ApprovalGatePort | null): void {
     this.approvalGate = port;
+  }
+
+  // Installed by the memory service at boot; until then prompts carry the ledger section.
+  setMemoryPort(port: MemoryPromptPort | null): void {
+    this.memoryPort = port;
   }
 
   // Subscribes to "a run just became live" (its ExecutorRun is registered), so
@@ -868,7 +877,7 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task, executorName),
+        prompt: this.promptForTask(task, executorName, runId),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
@@ -4862,7 +4871,7 @@ export class Orchestrator {
 
     const prompt = continuing
       ? renderContinuationPrompt(meta, newRunId)
-      : `${this.promptForTask(task, executorName)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
+      : `${this.promptForTask(task, executorName, newRunId)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
 
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
@@ -4934,7 +4943,11 @@ export class Orchestrator {
   // exact text is unit-testable independent of the orchestrator. A corrupt
   // parent epic file degrades to "no epic context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  private promptForTask(task: TaskDoc, executorName: string): string {
+  private promptForTask(
+    task: TaskDoc,
+    executorName: string,
+    runId: string
+  ): string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
       try {
@@ -4943,18 +4956,40 @@ export class Orchestrator {
         if (!(err instanceof TaskParseError)) throw err;
       }
     }
-    const ledgerEntries = this.ledgerStore.entriesFor(
-      task.meta.id,
-      task.meta.parent
-    );
+    const dispatchTools =
+      this.executorProfile(executorName).dispatchMcp !== false;
+    const memory = this.memorySection(task.meta.id, runId, dispatchTools);
+    const ledgerEntries =
+      memory.source === 'ledger'
+        ? this.ledgerStore.entriesFor(task.meta.id, task.meta.parent)
+        : [];
     return buildTaskPrompt(
       task,
       parentEpic,
       ledgerEntries,
       this.orientationFor(task.meta.id),
-      this.executorProfile(executorName).dispatchMcp !== false,
-      this.ctx.actorContext?.humanRef ?? null
+      dispatchTools,
+      this.ctx.actorContext?.humanRef ?? null,
+      memory.source === 'memory' ? memory.text : undefined
     );
+  }
+
+  // Never throws: a broken memory store costs the section, never the dispatch.
+  private memorySection(
+    taskId: string,
+    runId: string,
+    dispatchTools: boolean
+  ): MemoryPromptSection {
+    if (this.memoryPort === null) return { source: 'ledger' };
+    try {
+      return this.memoryPort.promptSection({ runId, taskId, dispatchTools });
+    } catch (err) {
+      console.error(
+        `dispatchd: memory index for run ${runId} failed; using the ledger section`,
+        err
+      );
+      return { source: 'ledger' };
+    }
   }
 
   // The repo facts injected into this task's prompt (see orientation.ts): the

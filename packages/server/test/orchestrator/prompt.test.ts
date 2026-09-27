@@ -349,3 +349,41 @@ describe('buildTaskPrompt', () => {
     expect(prompt.match(/^## Amendments$/gm)).toBeNull();
   });
 });
+
+describe('buildTaskPrompt memory section', () => {
+  const ledger = [fixtureLedgerEntry({ title: 'old', detail: 'ledger' })];
+
+  it('renders the memory section instead of the ledger section', () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      ledger,
+      null,
+      true,
+      'human:wyat',
+      '## Memory\n- hazard: x (#AAAAAAAA)'
+    );
+    expect(prompt).toContain('## Memory\n- hazard: x (#AAAAAAAA)');
+    expect(prompt).not.toContain('## Findings and decisions from earlier work');
+  });
+
+  it('renders neither when memory is in use with nothing to show', () => {
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      ledger,
+      null,
+      true,
+      'human:wyat',
+      null
+    );
+    expect(prompt).not.toContain('## Memory');
+    expect(prompt).not.toContain('## Findings and decisions');
+  });
+
+  it('keeps the ledger section when memory is not in use', () => {
+    expect(buildTaskPrompt(fixtureTask(), fixtureEpic(), ledger)).toContain(
+      '## Findings and decisions from earlier work'
+    );
+  });
+});

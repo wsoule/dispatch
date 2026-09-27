@@ -14,6 +14,10 @@ import type { EventBus } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { memoryDbPath, projectKeyOf } from '../orchestrator/paths.js';
+import type {
+  MemoryPromptPort,
+  MemoryPromptSection,
+} from '../orchestrator/types.js';
 import { DaemonMemoryHost } from './host.js';
 import {
   importLedger as importLedgerRows,
@@ -32,7 +36,7 @@ interface MemoryHealth {
   lastDecayAt: string | null;
 }
 
-export interface MemoryService {
+export interface MemoryService extends MemoryPromptPort {
   /** Null when memory.db would not open. */
   readonly engine: MemoryEngine | null;
   readonly shared: SqliteMemoryStore | null;
@@ -152,6 +156,34 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       console.error('dispatchd: ledger import failed', err);
     }
   };
+  // The run's '## Memory' section, or 'ledger' while memory is unavailable or no import has succeeded.
+  const promptSection = (input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): MemoryPromptSection => {
+    if (engine === null || last?.outcome !== 'ok') return { source: 'ledger' };
+    try {
+      const out = engine.index({
+        principal: {
+          address: `run:${input.runId}`,
+          canDecide: false,
+          kind: 'run',
+        },
+        taskId: input.taskId,
+        runId: input.runId,
+        variant: input.dispatchTools ? 'tools' : 'no-tools',
+      });
+      return { source: 'memory', text: out.text };
+    } catch (err) {
+      console.error(
+        `dispatchd: memory index for run ${input.runId} failed`,
+        err
+      );
+      return { source: 'ledger' };
+    }
+  };
+
   const unsubscribe = deps.events.subscribe((event) => {
     if (event.type === 'ledger.changed') importQuietly();
   });
@@ -169,6 +201,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     },
     importLedger,
     lastLedgerImport: () => last,
+    promptSection,
     health: () => ({
       available: shared !== null,
       reason,

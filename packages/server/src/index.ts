@@ -1310,6 +1310,7 @@ async function bootServer(
   } catch (err) {
     console.error('dispatchd: boot ledger import failed', err);
   }
+  orchestrator.setMemoryPort(memory);
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -2067,6 +2068,7 @@ async function bootServer(
       // than let it finish. A no-op on the file backend.
       boardSync?.stop();
       syncLedger?.close();
+      orchestrator.setMemoryPort(null);
       memory.close();
       messaging.close();
       stores.close();

@@ -96,6 +96,20 @@ export interface ApprovalGatePort {
   settle(runId: string, requestId: string, reason: string): void;
 }
 
+/** A run's memory section: `text` null is memory in use with nothing to show; `ledger` asks for the old section. */
+export type MemoryPromptSection =
+  | { source: 'memory'; text: string | null }
+  | { source: 'ledger' };
+
+/** Renders a dispatched run's `## Memory` section; installed by the memory service at boot. */
+export interface MemoryPromptPort {
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): MemoryPromptSection;
+}
+
 export interface ExecutorRun {
   interrupt(): Promise<void>;
   /**
