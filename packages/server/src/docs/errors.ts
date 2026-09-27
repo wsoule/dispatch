@@ -1,3 +1,5 @@
+import type { DocConflict } from '@dispatch/core';
+
 // The one error every docs layer throws; `code` maps to an HTTP status the way
 // MessagingError's does, and `field` names the input an agent should fix.
 export type DocsErrorCode =
@@ -25,5 +27,20 @@ export class DocsError extends Error {
   ) {
     super(message);
     this.name = 'DocsError';
+  }
+}
+
+// A whole-body save that cannot be merged, or whose base hash is stale: 409
+// with the head and the hunks, and nothing stored.
+export class DocConflictError extends DocsError {
+  constructor(readonly conflict: DocConflict) {
+    super(
+      'conflict',
+      conflict.reason === 'base-changed'
+        ? 'your base changed: another editor of yours saved first'
+        : `rev ${conflict.head.n} by ${conflict.head.author} changed the same lines`,
+      'body'
+    );
+    this.name = 'DocConflictError';
   }
 }
