@@ -1,8 +1,8 @@
 # Messaging core
 
-Status: **design approved 2026-09-23; protocol, daemon host, MCP tools and
-replacements built; desktop UI not yet.** First of six sub-projects that turn
-Dispatch from a task tracker into an agent communication platform.
+Status: **design approved 2026-09-23; built (protocol, daemon host, MCP tools,
+replacements, desktop UI).** First of six sub-projects that turn Dispatch from a
+task tracker into an agent communication platform.
 
 ## Why
 
@@ -442,7 +442,8 @@ POST   /api/messages                        send; Idempotency-Key replays the fi
 GET    /api/messages/:id
 POST   /api/messages/:id/reply              answer if the target asks, else a message
 GET    /api/messages/:id/answer[?wait=1]    the answer or null; wait=1 long-polls 30 s
-GET    /api/threads?limit=N                 recent threads (default 50, at most 200)
+GET    /api/threads?limit=N[&about=task:<id>]  recent threads (default 50, at most 200),
+                                               or those a task or its runs took part in
 GET    /api/threads/:id                     thread with delivery states
 GET    /api/mailbox?address=&state=a,b      mailbox; the caller's own by default
 POST   /api/deliveries/:id/read
@@ -569,13 +570,14 @@ bus land together — no aliases.
   shows the thread with kind badges, clickable refs and choice buttons, built
   from `@dispatch/ui` `ai/` pieces (`ChatMessage`, `PromptBar`, `ApprovalCard`).
   The composer completes addresses on `@`.
-- **Task page** (`components/tasks/page/TaskPage.tsx`): a `thread` tab for
-  everything to or from `task:<id>`.
+- **Task page** (`views/TaskView.tsx`): a `thread` tab for everything to or from
+  `task:<id>`, listed through `GET /api/threads?about=task:<id>`.
 - **Run chat** (`TaskChatTab` → `RunLogView`): pushed and notified messages
-  render inline where the agent saw them; `QuestionCard`, `ApprovalCard` and
-  `ScopeRequestCard` render from open gate questions instead of the old
-  registries. `InboxView` does the same.
-- **Settings → Agents:** roster with status, mute and revoke.
+  render inline where the agent saw them, each with a link to its thread;
+  `QuestionCard`, `ApprovalCard` and `ScopeRequestCard` render from open gate
+  questions instead of the old registries. `InboxView` does the same.
+- **Settings → Connected agents:** roster with status, approve, mute and revoke
+  (the models page keeps the name Agents).
 
 The desktop's data layer (`hooks/useDispatchProject.ts`) swaps its question,
 approval, scope-request and decision state for one query over open blocking
