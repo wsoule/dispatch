@@ -290,6 +290,39 @@ describe('foldRoster', () => {
     expect(speaksForHandle(v, B, 'eve', 7)).toBe(false);
   });
 
+  it('lets a revoked replica speak, for its ops at or below the cut, for what it held', () => {
+    const v = fold([
+      admit(A, 2, 100, B, 'member', { hosts: ['eve'] }),
+      admit(A, 3, 150, OBS, 'member', { observer: true }),
+      revoke(A, 4, 300, B, 5),
+      revoke(A, 5, 310, OBS, 5),
+      revoke(A, 6, 320, C, 5),
+    ]);
+    expect(v.members.has(B)).toBe(false);
+    expect(v.revoked.get(B)).toMatchObject({ handle: 'bob', hosts: ['eve'] });
+    expect(speaksForHandle(v, B, 'bob', 5)).toBe(true);
+    expect(speaksForHandle(v, B, 'eve', 4)).toBe(true);
+    expect(speaksForHandle(v, B, 'bob', 6)).toBe(false);
+    expect(speaksForHandle(v, B, 'dee', 4)).toBe(false);
+    // An observer never spoke, and C was never admitted.
+    expect(speaksForHandle(v, OBS, 'obs', 1)).toBe(false);
+    expect(v.revoked.get(C)?.handle).toBeNull();
+    expect(speaksForHandle(v, C, 'cy', 1)).toBe(false);
+  });
+
+  it("gives a member's fight with their own stolen device to the earlier-admitted one, backdated or not", () => {
+    const base = [
+      admit(A, 2, 100, B),
+      admit(B, 2, 200, B2),
+      revoke(B, 3, 500, B2, 1),
+    ];
+    for (const ms of [250, 600]) {
+      const v = fold([...base, revoke(B2, 2, ms, B, 2)]);
+      expect(roles(v)).toEqual({ [A]: 'admin', [B]: 'member' });
+      expect(v.revoked.has(B2)).toBe(true);
+    }
+  });
+
   it('lets an observer speak for nobody and voids every roster op it publishes', () => {
     const v = fold([
       admit(A, 2, 100, OBS, 'member', { observer: true }),
@@ -318,6 +351,26 @@ describe('foldRoster', () => {
     expect(fold([admit(A, 2, 100, B, 'member', { rv: 2 })]).unknown?.seq).toBe(
       2
     );
+  });
+
+  it('ignores an unreadable op from a publisher without rights there instead of pausing', () => {
+    const base = [admit(A, 2, 100, B, 'admin'), revoke(A, 3, 300, B, 5)];
+    const above = fold([
+      ...base,
+      admit(B, 6, 400, C, 'member', { rv: 2 }),
+      op(B, 7, 150, { action: 'teleport' }),
+    ]);
+    expect(above.unknown).toBeNull();
+    expect(above.problems).toContainEqual({
+      subject: `op:${B}:6`,
+      message: `${B} lacks the right to publish roster ops at seq 6; ignored`,
+    });
+    // A pending replica was never admitted, so it cannot pause anyone either.
+    expect(fold([op(C, 2, 100, { action: 'teleport' })]).unknown).toBeNull();
+    // At or below the cut, B's op still pauses the fold.
+    expect(
+      fold([...base, op(B, 5, 200, { action: 'teleport' })]).unknown?.seq
+    ).toBe(5);
   });
 
   it('closes the legacy window: an admin any time, anyone admitted after the deadline, first valid wins', () => {

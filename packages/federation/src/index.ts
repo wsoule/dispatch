@@ -18,6 +18,7 @@ export {
 export type {
   FoldInput,
   KeyInfo,
+  RevokedReplica,
   RosterMember,
   RosterOpRef,
   RosterView,

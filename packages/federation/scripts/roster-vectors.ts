@@ -221,8 +221,20 @@ export const SCENARIOS: readonly RosterScenario[] = [
       expires: '2026-10-03T00:00:00.000Z',
     }),
   ]),
+  scenario('stolen-device', [
+    admit(A, 2, 100, B),
+    admit(B, 2, 200, B2),
+    revoke(B, 3, 500, B2, 1),
+    revoke(B2, 2, 250, B, 2),
+  ]),
   scenario('unknown-action', [op(A, 2, 100, { action: 'teleport' })]),
   scenario('unknown-rv', [admit(A, 2, 100, B, 'member', { rv: 2 })]),
+  scenario('unknown-above-cut', [
+    admit(A, 2, 100, B, 'admin'),
+    revoke(A, 3, 300, B, 5),
+    admit(B, 6, 400, C, 'member', { rv: 2 }),
+    op(B, 7, 150, { action: 'teleport' }),
+  ]),
   scenario(
     'legacy-close-early',
     [

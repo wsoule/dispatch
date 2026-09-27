@@ -54,6 +54,16 @@ export interface RosterMember {
   since: Position;
 }
 
+/** A revoked replica's cut, and what it held, which its ops at or below afterSeq still speak for. */
+export interface RevokedReplica {
+  afterSeq: number;
+  afterHash: string;
+  /** Null when it was never admitted. */
+  handle: string | null;
+  hosts: readonly string[];
+  observer: boolean;
+}
+
 type Transport = { kind: 'git' | 'relay'; url?: string };
 type Invite = { pub: string; handle: string; expires: string; by: string };
 type Closed = { by: string; entries: readonly LegacyAttestation[] };
@@ -65,7 +75,7 @@ export interface RosterView {
   name: string;
   founder: string;
   members: ReadonlyMap<string, RosterMember>;
-  revoked: ReadonlyMap<string, { afterSeq: number; afterHash: string }>;
+  revoked: ReadonlyMap<string, RevokedReplica>;
   /** Per replica, the hosts each accepted hosts removal took away. */
   hostCuts: ReadonlyMap<string, HostCut[]>;
   /** Pinned keys neither admitted nor revoked, sorted. */
@@ -222,13 +232,25 @@ export function speaksForHandle(
   handle: string,
   seq: number
 ): boolean {
-  const m = view.members.get(replica);
-  if (m === undefined || m.observer) return false;
+  const m = heldAt(view, replica, seq);
+  if (m === null || m.handle === null || m.observer) return false;
   if (m.handle === handle || m.hosts.includes(handle)) return true;
   // A host a removal took away still counts for ops at or below its afterSeq.
   return (view.hostCuts.get(replica) ?? []).some(
     (c) => c.afterSeq >= seq && c.hosts.includes(handle)
   );
+}
+
+// What `replica` held for its op `seq`: a member's standing, or a revoked
+// replica's for ops at or below its cut.
+function heldAt(
+  view: RosterView,
+  replica: string,
+  seq: number
+): RosterMember | RevokedReplica | null {
+  const cut = view.revoked.get(replica);
+  if (cut === undefined) return view.members.get(replica) ?? null;
+  return seq <= cut.afterSeq ? cut : null;
 }
 
 /** Whether `replica` is within the seats. Observers count for nothing, so always are. */
@@ -406,7 +428,9 @@ function personOf(replica: string): string {
 interface Rights {
   member: boolean;
   admin: boolean;
-  /** The earliest admin grant still standing, which sets the rank. */
+  /** The earliest grant still standing: a non-admin's rank. */
+  firstGrant: Grant | null;
+  /** The earliest admin grant still standing, which sets an admin's rank. */
   firstAdmin: Grant | null;
 }
 
@@ -427,11 +451,12 @@ function rightsAt(
   const before = (ev.grants.get(replica) ?? []).filter(
     (g) => pos === null || comparePositions(g.pos, pos) < 0
   );
-  const member = before.some((g) => !killed(g, ['all']));
+  const firstGrant = before.find((g) => !killed(g, ['all'])) ?? null;
+  const member = firstGrant !== null;
   const firstAdmin = member
     ? (before.find((g) => g.admin && !killed(g, ['all', 'admin'])) ?? null)
     : null;
-  return { member, admin: firstAdmin !== null, firstAdmin };
+  return { member, admin: firstAdmin !== null, firstGrant, firstAdmin };
 }
 
 function revokedBefore(
@@ -508,6 +533,14 @@ function step(
     return;
   }
   if (body === 'unknown') {
+    // Only a publisher with rights at the op pauses the fold, so a revoked or
+    // pending replica cannot stop every daemon with one junk op.
+    if (!rightsAt(ev, op.replica, op.seq, op).member) {
+      refuse(
+        `${op.replica} lacks the right to publish roster ops at seq ${op.seq}; ignored`
+      );
+      return;
+    }
     ev.unknown ??= positionOf(op);
     refuse(NEWER_ROSTER);
     return;
@@ -787,22 +820,32 @@ function needsAdmin(ctx: Context, ev: Evaluation, r: Removal): boolean {
 }
 
 const TIER = { found: 0, grant: 1, recover: 2 } as const;
-const NOT_ADMIN = 3;
+const MEMBER = 3;
+const NO_RIGHTS = 4;
 
-// Admin rank at an op: the founder, then admins by their first standing admin
-// grant, then recovered admins, then everyone else.
-function compareRank(
+type RankAt = { replica: string; seq: number; pos: Position | null };
+
+// A publisher's tier at an op and the grant that orders it within the tier.
+function rankOf(
   ev: Evaluation,
-  a: { replica: string; seq: number; pos: Position | null },
-  b: { replica: string; seq: number; pos: Position | null }
-): number {
-  const ga = rightsAt(ev, a.replica, a.seq, a.pos).firstAdmin;
-  const gb = rightsAt(ev, b.replica, b.seq, b.pos).firstAdmin;
-  const ta = ga === null ? NOT_ADMIN : TIER[ga.source];
-  const tb = gb === null ? NOT_ADMIN : TIER[gb.source];
-  if (ta !== tb) return ta - tb;
-  if (ga === null || gb === null) return 0;
-  return comparePositions(ga.pos, gb.pos);
+  at: RankAt
+): { tier: number; by: Grant | null } {
+  const rights = rightsAt(ev, at.replica, at.seq, at.pos);
+  if (rights.firstAdmin !== null)
+    return { tier: TIER[rights.firstAdmin.source], by: rights.firstAdmin };
+  if (rights.firstGrant !== null)
+    return { tier: MEMBER, by: rights.firstGrant };
+  return { tier: NO_RIGHTS, by: null };
+}
+
+// Rank at an op: the founder, admins by their first standing admin grant,
+// recovered admins, then members by admission, which none can backdate.
+function compareRank(ev: Evaluation, a: RankAt, b: RankAt): number {
+  const ra = rankOf(ev, a);
+  const rb = rankOf(ev, b);
+  if (ra.tier !== rb.tier) return ra.tier - rb.tier;
+  if (ra.by === null || rb.by === null) return 0;
+  return comparePositions(ra.by.pos, rb.by.pos);
 }
 
 // Removals by their publishers' rank at each removal, then by position.
@@ -825,12 +868,19 @@ function adminsOf(ev: Evaluation): string[] {
 
 function viewOf(ctx: Context, ev: Evaluation): RosterView {
   const { input } = ctx;
-  const revoked = new Map<string, { afterSeq: number; afterHash: string }>();
+  const revoked = new Map<string, RevokedReplica>();
   for (const c of ev.cuts) {
     if (c.kind !== 'all') continue;
     const seen = revoked.get(c.target);
-    if (seen === undefined || c.afterSeq < seen.afterSeq)
-      revoked.set(c.target, { afterSeq: c.afterSeq, afterHash: c.afterHash });
+    if (seen !== undefined && seen.afterSeq <= c.afterSeq) continue;
+    const held = ev.holders.get(c.target);
+    revoked.set(c.target, {
+      afterSeq: c.afterSeq,
+      afterHash: c.afterHash,
+      handle: held?.handle ?? null,
+      hosts: [...(held?.hosts ?? [])],
+      observer: held?.observer ?? false,
+    });
   }
   const standing = (replica: string) => ({ replica, seq: Infinity, pos: null });
   const admins = adminsOf(ev).sort((a, b) =>
