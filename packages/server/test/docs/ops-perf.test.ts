@@ -18,17 +18,23 @@ function timed(fn: () => unknown): number {
 const sectionAppends = (n: number, section: string): DocOp[] =>
   Array.from({ length: n }, () => ({ op: 'append', section, text: 'x' }));
 
-// '# a' and then copies of `line`, up to 4 KiB short of the body cap.
-function capBody(line: string): string {
-  const copies = Math.floor((768 * 1024 - 4096) / Buffer.byteLength(line));
-  return `# a\n${line.repeat(copies)}`;
+// `head` and then copies of `line`, up to 4 KiB short of the body cap.
+function capBody(head: string, line: string): string {
+  const room = 768 * 1024 - 4096 - Buffer.byteLength(head);
+  return head + line.repeat(Math.floor(room / Buffer.byteLength(line)));
 }
 
-// Heading text whose anchor costs far more per byte than prose does.
-const COSTLY_HEADINGS: readonly [string, string][] = [
-  ['two-byte letters', 'İ'.repeat(1500)],
-  ['a long run of blanks', `x${' '.repeat(3000)}x`],
-  ['alternating blanks and hashes', ' #'.repeat(1500)],
+// Lines that cost far more to outline than prose does, after the head they need.
+const COSTLY_LINES: readonly [string, string, string][] = [
+  ['heading text of two-byte letters', '# a\n', `## ${'İ'.repeat(1500)}\n`],
+  [
+    'heading text of a long run of blanks',
+    '# a\n',
+    `## x${' '.repeat(3000)}x\n`,
+  ],
+  ['heading text of blanks and hashes', '# a\n', `## ${' #'.repeat(1500)}\n`],
+  ['lines that could open a fence', '# a\n', '- ```\n'],
+  ['short lines inside fenced code', '# a\n```\n', '  x\n'],
 ];
 
 describe('review focus 2: one ops call stays bounded at the cap', () => {
@@ -83,21 +89,14 @@ describe('review focus 2: one ops call stays bounded at the cap', () => {
     expect(timed(() => applyOps(doc, ops))).toBeLessThan(1000);
   });
 
-  for (const [shape, text] of COSTLY_HEADINGS) {
-    it(`prices heading text by its length: ${shape}`, () => {
-      const doc = { title: 'a', body: capBody(`## ${text}\n`) };
+  for (const [shape, head, line] of COSTLY_LINES) {
+    it(`prices ${shape} at the cap`, () => {
+      const doc = { title: 'a', body: capBody(head, line) };
       const ops = sectionAppends(50, '#a');
       expect(() => applyOps(doc, ops)).toThrow('these ops scan');
       expect(timed(() => applyOps(doc, ops))).toBeLessThan(1000);
     });
   }
-
-  it('prices lines that could open a fence', () => {
-    const doc = { title: 'a', body: capBody('- ```\n') };
-    const ops = sectionAppends(50, '#a');
-    expect(() => applyOps(doc, ops)).toThrow('these ops scan');
-    expect(timed(() => applyOps(doc, ops))).toBeLessThan(1000);
-  });
 
   it('finds text in linear time however the body repeats', () => {
     const find = `${'ab'.repeat(2047)}ba${'ab'.repeat(2048)}`;
@@ -113,12 +112,5 @@ describe('review focus 2: one ops call stays bounded at the cap', () => {
     });
     expect(result).toBe(body);
     expect(ms).toBeLessThan(1000);
-  });
-
-  it('prices short lines inside fenced code', () => {
-    const body = capBody('  x\n').replace('# a\n', '# a\n```\n');
-    const ops = sectionAppends(50, '#a');
-    expect(() => applyOps({ title: 'a', body }, ops)).toThrow('these ops scan');
-    expect(timed(() => applyOps({ title: 'a', body }, ops))).toBeLessThan(1000);
   });
 });
