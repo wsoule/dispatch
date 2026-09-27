@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { canonicalize, canonicalizeLenient } from '../../src/federation/jcs.js';
+import {
+  canonicalize,
+  CanonicalizeError,
+  canonicalizeLenient,
+} from '../../src/federation/jcs.js';
 
 describe('canonicalize (RFC 8785)', () => {
   // Escapes keep the RFC's code points; a precomposed U+FB33 would not survive NFC.
@@ -37,8 +41,11 @@ describe('canonicalize (RFC 8785)', () => {
   });
 
   it('refuses non-finite numbers and drops undefined members', () => {
-    expect(() => canonicalize(Number.NaN)).toThrow();
-    expect(() => canonicalize({ a: Number.POSITIVE_INFINITY })).toThrow();
+    expect(() => canonicalize(Number.NaN)).toThrow(CanonicalizeError);
+    expect(() => canonicalize({ a: Number.POSITIVE_INFINITY })).toThrow(
+      CanonicalizeError
+    );
+    expect(() => canonicalize({ a: 1n })).toThrow(CanonicalizeError);
     expect(canonicalize({ b: 1, a: undefined })).toBe('{"b":1}');
     expect(canonicalize({ b: [1, { d: 1, c: 2 }], a: 'x' })).toBe(
       '{"a":"x","b":[1,{"c":2,"d":1}]}'
@@ -50,6 +57,7 @@ describe('canonicalize (RFC 8785)', () => {
     expect(() => canonicalize('a\ud800')).toThrow('lone surrogate');
     expect(() => canonicalize(['\udc00b'])).toThrow('lone surrogate');
     expect(() => canonicalize({ '\ud83d': 1 })).toThrow('lone surrogate');
+    expect(() => canonicalize({ a: ['\ud800'] })).toThrow(CanonicalizeError);
     expect(canonicalize({ '\u{1f600}': '\u{1f600}' })).toBe(
       '{"\u{1f600}":"\u{1f600}"}'
     );

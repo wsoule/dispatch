@@ -1,10 +1,16 @@
+// What canonicalize throws for a value JCS cannot write: a lone surrogate, a
+// non-finite number, or a type JSON lacks. Callers catch it by class.
+export class CanonicalizeError extends TypeError {
+  override name = 'CanonicalizeError';
+}
+
 // Under the u flag a pair reads as one code point, so this matches only a
 // lone surrogate, which I-JSON (RFC 8785's input) forbids.
 const LONE_SURROGATE = /\p{Cs}/u;
 
 function iJsonString(s: string): string {
   if (LONE_SURROGATE.test(s))
-    throw new TypeError('JCS refuses a lone surrogate');
+    throw new CanonicalizeError('JCS refuses a lone surrogate');
   return JSON.stringify(s);
 }
 
@@ -16,7 +22,7 @@ function write(value: unknown, str: (s: string) => string): string {
       return value ? 'true' : 'false';
     case 'number':
       if (!Number.isFinite(value))
-        throw new TypeError('JCS refuses non-finite numbers');
+        throw new CanonicalizeError('JCS refuses non-finite numbers');
       return JSON.stringify(value);
     case 'string':
       return str(value);
@@ -31,7 +37,7 @@ function write(value: unknown, str: (s: string) => string): string {
       return `{${keys.map((k) => `${str(k)}:${write(obj[k], str)}`).join(',')}}`;
     }
     default:
-      throw new TypeError(`JCS cannot serialize a ${typeof value}`);
+      throw new CanonicalizeError(`JCS cannot serialize a ${typeof value}`);
   }
 }
 

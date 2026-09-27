@@ -27,8 +27,8 @@ export interface ChainHead {
 }
 
 // Signs a new op: the signature covers the header, which commits to the
-// content through `bodyHash`. Throws a RangeError for a header every peer
-// would refuse.
+// content through `bodyHash`. Throws CanonicalizeError for content JCS
+// refuses, and a RangeError for a header every peer would refuse.
 export function buildOp(
   fields: {
     replica: string;

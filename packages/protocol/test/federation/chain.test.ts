@@ -5,6 +5,7 @@ import { buildOp, verifyEntry } from '../../src/federation/chain.js';
 import type { ChainHead } from '../../src/federation/chain.js';
 import { fingerprint } from '../../src/federation/fingerprint.js';
 import { MAX_HLC_COUNTER } from '../../src/federation/hlc.js';
+import { CanonicalizeError } from '../../src/federation/jcs.js';
 import { generateReplicaKeys, signText } from '../../src/federation/keys.js';
 import {
   contentHash,
@@ -432,6 +433,24 @@ describe('verifyEntry along a chain', () => {
         `cannot sign: ${reason}`
       );
     expect(run([key, buildOp(base, keys.signPriv)]).failure).toBeNull();
+  });
+
+  it('buildOp throws a CanonicalizeError for content JCS cannot write', () => {
+    const [key] = chain();
+    const signing = (body: JsonValue) => () =>
+      buildOp(
+        {
+          replica: R,
+          seq: 5,
+          prev: opHash(key),
+          hlc: hlc(2000),
+          type: 'task',
+          body,
+        },
+        keys.signPriv
+      );
+    const bodies: JsonValue[] = [{ title: 'a\ud800' }, { n: Number.NaN }];
+    for (const body of bodies) expect(signing(body)).toThrow(CanonicalizeError);
   });
 
   it('pins the fingerprint over both public keys', () => {
