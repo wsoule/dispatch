@@ -514,6 +514,95 @@ describe('foldRoster', () => {
     expect(v.resolution.get(byA2.hash)).toBe('accepted');
   });
 
+  it('holds a removal back while one still waiting for its right cuts the publisher', () => {
+    const byA = revoke(A, 6, 400, C, 1);
+    const byB = revoke(B, 2, 500, D, 1);
+    const byA2 = revoke(A2, 2, 600, B, 1);
+    const ops = [
+      admit(A, 2, 100, C, 'admin'),
+      admit(A, 3, 110, B, 'admin'),
+      admit(A, 4, 120, D),
+      // C's admit comes first, so A2 is a member until A's revocation cuts it.
+      admit(C, 2, 200, A2),
+      admit(A, 5, 300, A2, 'admin'),
+      byA,
+      byB,
+      byA2,
+    ];
+    const v = fold(ops);
+    expect(roles(v)).toEqual({ [A]: 'admin', [A2]: 'admin', [D]: 'member' });
+    expect([...v.revoked.keys()].sort()).toEqual([B, C]);
+    expect(v.resolution.get(byA2.hash)).toBe('accepted');
+    expect(v.resolution.get(byB.hash)).toBe('void');
+    // Publishing a removal of its own does not shield B.
+    const without = fold(ops.filter((o) => o !== byB));
+    expect([...without.revoked.keys()].sort()).toEqual([B, C]);
+  });
+
+  it('keeps the earlier admin winning a fight that decides whether another removal has its right', () => {
+    const [X, U, Y, Z, P, V] = [C, B, D, OBS, A2, B2];
+    const byY = revoke(Y, 2, 310, U, 1);
+    const byU = revoke(U, 3, 320, Y, 1);
+    const byP = revoke(P, 2, 330, Z, 1);
+    const ops = (first: string, second: string) => [
+      admit(A, 2, 100, X, 'admin'),
+      admit(A, 3, 101, first, 'admin'),
+      admit(A, 4, 102, second, 'admin'),
+      admit(A, 5, 103, Z, 'admin'),
+      admit(A, 6, 104, P),
+      op(X, 2, 200, { action: 'role', replica: P, role: 'admin' }),
+      // U's admit comes first, so V is an admin only if Y's revocation stands.
+      admit(U, 2, 210, V),
+      admit(A, 7, 220, V, 'admin'),
+      op(V, 2, 230, { action: 'role', replica: P, role: 'admin' }),
+      revoke(A, 8, 300, X, 1),
+      byY,
+      byU,
+      byP,
+    ];
+    const uWins = fold(ops(U, Y));
+    expect(uWins.resolution.get(byU.hash)).toBe('accepted');
+    expect(uWins.resolution.get(byY.hash)).toBe('void');
+    expect(uWins.resolution.get(byP.hash)).toBe('void');
+    expect(roles(uWins)).toEqual({
+      [A]: 'admin',
+      [U]: 'admin',
+      [Z]: 'admin',
+      [P]: 'member',
+      [V]: 'member',
+    });
+    // Were Y the earlier admin, its win would make V, and so P, an admin.
+    const yWins = fold(ops(Y, U));
+    expect(yWins.resolution.get(byY.hash)).toBe('accepted');
+    expect(yWins.resolution.get(byU.hash)).toBe('void');
+    expect(yWins.resolution.get(byP.hash)).toBe('accepted');
+    expect([...yWins.revoked.keys()].sort()).toEqual([U, X, Z].sort());
+  });
+
+  it('never lets a removal whose publisher cannot gain the right stall another', () => {
+    const byC = revoke(C, 2, 200, B, 2);
+    const byB = revoke(B, 3, 300, D, 1);
+    const byA2 = revoke(A2, 2, 250, C, 1);
+    const v = fold([
+      admit(A, 2, 100, B, 'admin'),
+      admit(A, 3, 110, C, 'admin'),
+      admit(A, 4, 120, D),
+      admit(A, 5, 130, A2),
+      byC,
+      byB,
+      byA2,
+    ]);
+    expect(v.resolution.get(byC.hash)).toBe('accepted');
+    expect(v.resolution.get(byB.hash)).toBe('void');
+    expect(v.resolution.get(byA2.hash)).toBe('void');
+    expect(roles(v)).toEqual({
+      [A]: 'admin',
+      [C]: 'admin',
+      [D]: 'member',
+      [A2]: 'member',
+    });
+  });
+
   it('never makes an observer an admin, so the last admin cannot hand the team to one', () => {
     const v = fold([
       admit(A, 2, 100, OBS, 'admin', { observer: true }),

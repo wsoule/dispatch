@@ -181,14 +181,20 @@ export function foldRoster(input: FoldInput): RosterView {
   const status = new Map<Removal, Status>(removals.map((r) => [r, 'open']));
   const having = (...wanted: Status[]) =>
     removals.filter((r) => wanted.includes(status.get(r) ?? 'void'));
-  // Whether accepting r would take the right from a removal already accepted.
-  const undoes = (r: Removal, accepted: readonly Removal[]) => {
-    if (accepted.length === 0) return false;
-    const withIt = evaluate(ctx, [...accepted, r]);
-    return accepted.some((a) => !hadRight(ctx, withIt, a));
-  };
+  // Fight winners, which stand, and removals once sent back to waiting.
+  const won = new Set<Removal>();
+  const demoted = new Set<Removal>();
 
   for (;;) {
+    // Rights can grow with accepted removals, so one accepted on a worst case
+    // that failed can lose its right: it waits again; a second loss voids it.
+    for (const s of having('accepted')) {
+      if (won.has(s)) continue;
+      const others = having('accepted').filter((o) => o !== s);
+      if (hadRight(ctx, evaluate(ctx, others), s)) continue;
+      status.set(s, demoted.has(s) ? 'void' : 'waiting');
+      demoted.add(s);
+    }
     const accepted = having('accepted');
     const ev = evaluate(ctx, accepted);
     // A removal whose publisher lacks the right waits: accepting another can
@@ -198,25 +204,33 @@ export function foldRoster(input: FoldInput): RosterView {
     const open = having('open');
     if (open.length === 0) break;
     let progress = false;
-    // Accepted removals stand, so one that would undo them is void,
+    // A fight's winner stands, so a removal that would undo it is void,
+    const winners = accepted.filter((s) => won.has(s));
     for (const r of open) {
-      if (!undoes(r, accepted)) continue;
+      if (!undoes(ctx, accepted, winners, r)) continue;
       status.set(r, 'void');
       progress = true;
     }
     if (progress) continue;
-    // and one held even were every other open removal accepted is accepted.
+    // and one held even were every undecided removal that could cut it
+    // accepted is accepted.
+    const cutters = [
+      ...accepted,
+      ...open,
+      ...couldCut(ctx, [...accepted, ...open], having('waiting')),
+    ];
     for (const r of open) {
-      const worst = having('open', 'accepted').filter((o) => o !== r);
+      const worst = cutters.filter((o) => o !== r);
       if (!hadRight(ctx, evaluate(ctx, worst), r)) continue;
       status.set(r, 'accepted');
       progress = true;
     }
     if (progress) continue;
     // Only removals that cut each other remain: the earliest-ranked publisher's
-    // is accepted, and each removal that would undo it ends void.
+    // is accepted and wins the fight.
     const pick = open.reduce((best, r) => (byRank(ev, r, best) < 0 ? r : best));
     status.set(pick, 'accepted');
+    won.add(pick);
   }
   for (const r of having('waiting')) status.set(r, 'void');
 
@@ -832,6 +846,30 @@ function hadRight(ctx: Context, ev: Evaluation, r: Removal): boolean {
   if (ev.holders.get(r.op.replica)?.observer === true) return false;
   const rights = rightsAt(ev, r.op.replica, r.op.seq, r.op);
   return rights.admin || (rights.member && !needsAdmin(ctx, ev, r));
+}
+
+// Whether accepting r would take the right from one of the fight winners.
+function undoes(
+  ctx: Context,
+  accepted: readonly Removal[],
+  winners: readonly Removal[],
+  r: Removal
+): boolean {
+  if (winners.length === 0) return false;
+  const withIt = evaluate(ctx, [...accepted, r]);
+  return winners.some((w) => !hadRight(ctx, withIt, w));
+}
+
+// The waiting removals that would hold their right were every undecided one
+// accepted; any other is taken never to gain it, so it holds no removal back.
+function couldCut(
+  ctx: Context,
+  others: readonly Removal[],
+  waiting: readonly Removal[]
+): Removal[] {
+  if (waiting.length === 0) return [];
+  const all = evaluate(ctx, [...others, ...waiting]);
+  return waiting.filter((w) => hadRight(ctx, all, w));
 }
 
 // A member may revoke replicas with their own handle; every other removal

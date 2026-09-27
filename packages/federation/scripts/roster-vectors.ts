@@ -136,6 +136,26 @@ function scenario(
   };
 }
 
+// B and D fight. A2 has the right to its removal only if D wins: that cuts B's
+// admit of B2, so A's admin admit of B2 stands and B2's promotion of A2 counts.
+function fightGrantsRight(first: string, second: string): RosterOpRef[] {
+  return [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 101, first, 'admin'),
+    admit(A, 4, 102, second, 'admin'),
+    admit(A, 5, 103, OBS, 'admin'),
+    admit(A, 6, 104, A2),
+    op(C, 2, 200, { action: 'role', replica: A2, role: 'admin' }),
+    admit(B, 2, 210, B2),
+    admit(A, 7, 220, B2, 'admin'),
+    op(B2, 2, 230, { action: 'role', replica: A2, role: 'admin' }),
+    revoke(A, 8, 300, C, 1),
+    revoke(D, 2, 310, B, 1),
+    revoke(B, 3, 320, D, 1),
+    revoke(A2, 2, 330, OBS, 1),
+  ];
+}
+
 export const SCENARIOS: readonly RosterScenario[] = [
   scenario('founding', []),
   scenario('fingerprint-mismatch', [
@@ -203,6 +223,27 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(A2, 2, 400, D, 1),
     revoke(C, 2, 500, B, 1),
     revoke(B, 3, 500, C, 1),
+  ]),
+  scenario('waiting-cutter', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 110, B, 'admin'),
+    admit(A, 4, 120, D),
+    admit(C, 2, 200, A2),
+    admit(A, 5, 300, A2, 'admin'),
+    revoke(A, 6, 400, C, 1),
+    revoke(B, 2, 500, D, 1),
+    revoke(A2, 2, 600, B, 1),
+  ]),
+  scenario('fight-grants-right', fightGrantsRight(B, D)),
+  scenario('fight-grants-right-reversed', fightGrantsRight(D, B)),
+  scenario('hopeless-removal', [
+    admit(A, 2, 100, B, 'admin'),
+    admit(A, 3, 110, C, 'admin'),
+    admit(A, 4, 120, D),
+    admit(A, 5, 130, A2),
+    revoke(C, 2, 200, B, 2),
+    revoke(B, 3, 300, D, 1),
+    revoke(A2, 2, 250, C, 1),
   ]),
   scenario('demotion-then-promotion', [
     admit(A, 2, 100, B, 'admin'),
