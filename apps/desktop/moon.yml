@@ -78,6 +78,7 @@ tasks:
       - 'core:build'
       - 'mcp:build'
       - 'protocol:build'
+      - 'memory:build'
       - 'federation:build'
       - 'a2a:build'
     # Cached by everything that changes the compiled binaries: the script,
@@ -95,6 +96,7 @@ tasks:
       - '/packages/core/src/**/*'
       - '/packages/federation/src/**/*'
       - '/packages/mcp/src/**/*'
+      - '/packages/memory/src/**/*'
       - '/packages/protocol/src/**/*'
       - '/packages/server/src/**/*'
       - '/pnpm-lock.yaml'
