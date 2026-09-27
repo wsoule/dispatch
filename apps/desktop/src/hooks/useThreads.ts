@@ -266,12 +266,15 @@ export function useThread(
     enabled,
     staleTime: Infinity, // a message never changes
     select: (message) => message.thread,
+    // A link to a thread this window cannot read, or one gone, says so at once.
+    retry: false,
   });
   const thread = enabled ? (resolved.data ?? null) : null;
   const detail = useQuery({
     queryKey: threadKey(port, thread ?? ''),
     queryFn: () => ready(client).getThread(thread ?? ''),
     enabled: client !== null && thread !== null,
+    retry: false,
   });
   return {
     thread,

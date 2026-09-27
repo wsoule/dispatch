@@ -8,6 +8,7 @@ import type {
   SendInput,
   ThreadDetail,
 } from '@dispatch/client';
+import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it, mock } from 'bun:test';
@@ -684,6 +685,45 @@ describe('messaging queries', () => {
     });
     expect(result.current.thread).toBe('m-01');
     expect(calls).toEqual(['message m-02', 'thread m-01']);
+  });
+
+  it('says at once when a linked thread cannot be read or is gone, without retrying', async () => {
+    const calls: string[] = [];
+    const client = {
+      getMessage: (id: string) => {
+        calls.push(`message ${id}`);
+        return id === 'm-gone'
+          ? Promise.resolve(msg(id))
+          : Promise.reject(new ApiError(`cannot read message ${id}`, 403));
+      },
+      getThread: (id: string) => {
+        calls.push(`thread ${id}`);
+        return Promise.reject(new ApiError(`no thread ${id}`, 404));
+      },
+    } as unknown as ApiClient;
+    // The app's client keeps TanStack's default of three retries.
+    const qc = new QueryClient();
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={qc}>{children}</QueryClientProvider>
+    );
+    const hidden = renderHook(
+      () => useThread(client, PORT, 'm-hidden', TEAMMATE),
+      { wrapper }
+    );
+    const gone = renderHook(() => useThread(client, PORT, 'm-gone', TEAMMATE), {
+      wrapper,
+    });
+    await waitFor(() => {
+      expect(hidden.result.current.error?.message).toBe(
+        'cannot read message m-hidden'
+      );
+      expect(gone.result.current.error?.message).toBe('no thread m-gone');
+    });
+    expect([...calls].sort()).toEqual([
+      'message m-gone',
+      'message m-hidden',
+      'thread m-gone',
+    ]);
   });
 
   it('opens no thread for an agent window, even with a focus from a link', async () => {
