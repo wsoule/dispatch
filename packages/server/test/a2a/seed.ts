@@ -24,3 +24,15 @@ export function seedAgent(
   });
   db.close();
 }
+
+// A port nothing listens on right now, for a listener a test is about to open.
+export async function freePort(): Promise<number> {
+  const probe = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch: () => new Response(''),
+  });
+  const port = probe.port ?? 0;
+  await probe.stop(true);
+  return port;
+}

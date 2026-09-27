@@ -490,6 +490,34 @@ if (
   );
   process.exit(2);
 }
+// One-boot overrides of <runsDir>/a2a-listener.json for headless servers; any
+// of them turns the A2A listener on for this boot.
+const a2aHost = readFlag(args, '--a2a-host');
+const a2aPortArg = readFlag(args, '--a2a-port');
+const a2aPublicUrl = readFlag(args, '--a2a-public-url');
+const a2aTlsCert = readFlag(args, '--a2a-tls-cert');
+const a2aTlsKey = readFlag(args, '--a2a-tls-key');
+const a2aPort = a2aPortArg === undefined ? undefined : Number(a2aPortArg);
+if (
+  a2aPort !== undefined &&
+  (!Number.isInteger(a2aPort) || a2aPort < 1 || a2aPort > 65535)
+) {
+  console.error(
+    `dispatchd: --a2a-port must be a port number, not "${a2aPortArg}"`
+  );
+  process.exit(2);
+}
+if ((a2aTlsCert === undefined) !== (a2aTlsKey === undefined)) {
+  console.error('dispatchd: --a2a-tls-cert and --a2a-tls-key go together');
+  process.exit(2);
+}
+const a2aOverrides = {
+  ...(a2aHost === undefined ? {} : { host: a2aHost }),
+  ...(a2aPort === undefined ? {} : { port: a2aPort }),
+  ...(a2aPublicUrl === undefined ? {} : { publicUrl: a2aPublicUrl }),
+  ...(a2aTlsCert === undefined ? {} : { tlsCert: resolve(a2aTlsCert) }),
+  ...(a2aTlsKey === undefined ? {} : { tlsKey: resolve(a2aTlsKey) }),
+};
 
 const handle = await startServer({
   rootDir,
@@ -507,6 +535,7 @@ const handle = await startServer({
           ...(tlsPort === undefined ? {} : { port: tlsPort }),
         },
       }),
+  ...(Object.keys(a2aOverrides).length === 0 ? {} : { a2a: a2aOverrides }),
   // `--init` is the desktop's add-project spawn, which deliberately replaces
   // whatever daemon predates the project's tracker; `--replace` is the
   // explicit operator override.

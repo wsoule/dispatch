@@ -36,6 +36,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { isA2AClientToken } from './a2a/auth.js';
+import type { A2ABridge } from './a2a/bridge.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
@@ -261,6 +262,8 @@ export interface ApiContext {
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
+  /** The A2A bridge; absent in hand-built test contexts. */
+  a2a?: A2ABridge;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by
   // PrManager's poll, listed here for GET /api/landing's worktree column.
