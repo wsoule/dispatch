@@ -583,7 +583,7 @@ export class Orchestrator {
 
   // deliverToRun for a non-interrupting channel digest: logged the same way,
   // handed to the executor's notify() for the agent's next step.
-  notifyRun(runId: string, digest: string): void {
+  notifyRun(runId: string, digest: string, messageId?: string): void {
     const { executorRun } = this.requireDeliverableRun(runId);
     const entry: NormalizedEntry = {
       ts: new Date().toISOString(),
@@ -592,6 +592,7 @@ export class Orchestrator {
       fromLabel: 'dispatch',
       text: digest,
       digest: true,
+      ...(messageId !== undefined ? { messageId } : {}),
     };
     this.transcriptFor(runId).appendEntry(entry);
     this.ctx.events.broadcast({ type: 'run.log', runId, entry });

@@ -99,8 +99,10 @@ export class DaemonMessagingHost implements MessagingHost {
     );
   }
 
-  notify(runId: string, digest: string): Promise<void> {
-    return settle(() => this.deps.orchestrator.notifyRun(runId, digest));
+  notify(runId: string, digest: string, message: Message): Promise<void> {
+    return settle(() =>
+      this.deps.orchestrator.notifyRun(runId, digest, message.id)
+    );
   }
 
   notifyHuman(actor: Address, message: Message): void {

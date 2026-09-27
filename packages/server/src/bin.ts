@@ -38,7 +38,8 @@ import { FakePlanner } from './orchestrator/planners/fake.js';
 // CodexExecutor when the codex CLI is installed, ClaudePlanner, and
 // ClaudeOverseer — see index.ts's own defaults. Setting `DISPATCH_ENABLE_FAKES=1` in this process's environment
 // additionally registers a FakeExecutor, FakePlanner, and FakeOverseer, all
-// under the name 'fake', alongside the real ones — never replacing 'claude'.
+// under the name 'fake' (plus a 'fake-ask' executor that waits for a message),
+// alongside the real ones — never replacing 'claude'.
 // This exists purely so the CLI's headless integration tests (and any other e2e script)
 // can drive a REAL spawned daemon through a full run/plan lifecycle without
 // spending real Claude budget: `dispatch run <id> --executor fake` and
@@ -277,6 +278,28 @@ function buildDefaultFakeScript(): FakeExecutorScript {
   };
 }
 
+// The 'fake-ask' executor parks after one note until a message is pushed into
+// the run, so an e2e can ask a question as the run and watch the answer resume it.
+function buildAskFakeScript(): FakeExecutorScript {
+  const ts = new Date().toISOString();
+  return {
+    steps: [
+      {
+        entry: {
+          ts,
+          kind: 'assistant',
+          text: 'I need a decision from you before I go on.',
+        },
+      },
+      { awaitMessage: true },
+      {
+        entry: { ts, kind: 'assistant', text: 'Got the answer. Carrying on.' },
+      },
+    ],
+    finish: { state: 'finished', costUsd: 0.01, turns: 2 },
+  };
+}
+
 // The one default proposal every DISPATCH_ENABLE_FAKES daemon's 'fake'
 // planner returns, regardless of the prompt it's given — an epic with two
 // tasks, the second blocked on the first, so `dispatch plan --planner fake`
@@ -498,6 +521,10 @@ const handle = await startServer({
         orchestrator.registerExecutor(
           'fake',
           new FakeExecutor(buildDefaultFakeScript())
+        );
+        orchestrator.registerExecutor(
+          'fake-ask',
+          new FakeExecutor(buildAskFakeScript())
         );
       }
     : undefined,
