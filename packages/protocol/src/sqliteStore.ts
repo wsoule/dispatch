@@ -488,9 +488,30 @@ export class SqliteMessageStore implements MessageStore {
     ).map((r) => this.toAgent(r));
   }
 
-  // Most recently active threads, newest first. Ids are time-sortable ulids,
-  // so MIN/MAX(id) per thread gives root and last with no self-join.
-  recentThreads(limit: number): ThreadSummary[] {
+  // Most recently active threads, newest first (ulid ids: MIN/MAX are root and last).
+  // `about` keeps threads with a message from, to or delivered to one of those addresses.
+  recentThreads(limit: number, about?: readonly Address[]): ThreadSummary[] {
+    if (about !== undefined && about.length === 0) return [];
+    const params: SqlValue[] = [];
+    let where = '';
+    if (about !== undefined) {
+      const marks = about.map(() => '?').join(', ');
+      // Held mail rebound to a run keeps its task recipient; match it by run id.
+      const runIds = about
+        .filter((a) => a.startsWith('run:'))
+        .map((a) => a.slice('run:'.length));
+      const byRun =
+        runIds.length === 0
+          ? ''
+          : ` OR d.run_id IN (${runIds.map(() => '?').join(', ')})`;
+      where = `WHERE thread IN (
+        SELECT thread FROM messages WHERE from_addr IN (${marks})
+        UNION SELECT m.thread FROM messages m JOIN recipients r ON r.message_id = m.id WHERE r.addr IN (${marks})
+        UNION SELECT m.thread FROM messages m JOIN deliveries d ON d.message_id = m.id
+          WHERE d.recipient IN (${marks})${byRun})`;
+      params.push(...about, ...about, ...about, ...runIds);
+    }
+    params.push(limit);
     const rows = queryAll<{
       thread: string;
       root_id: string;
@@ -499,8 +520,8 @@ export class SqliteMessageStore implements MessageStore {
     }>(
       this.db,
       `SELECT thread, MIN(id) AS root_id, MAX(id) AS last_id, COUNT(*) AS count
-       FROM messages GROUP BY thread ORDER BY last_id DESC LIMIT ?`,
-      [limit]
+       FROM messages ${where} GROUP BY thread ORDER BY last_id DESC LIMIT ?`,
+      params
     );
     return rows.flatMap((r) => {
       const root = this.getMessage(r.root_id);

@@ -59,8 +59,8 @@ function makeHost(
     deliverToRun: (runId, text, from) => {
       calls.deliverToRun.push([runId, text, from]);
     },
-    notifyRun: (runId, digest) => {
-      calls.notifyRun.push([runId, digest]);
+    notifyRun: (runId, digest, messageId) => {
+      calls.notifyRun.push([runId, digest, messageId]);
     },
     wakeTask: (taskId, opts) => {
       calls.wakeTask.push([taskId, opts]);
@@ -124,10 +124,16 @@ describe('DaemonMessagingHost.push', () => {
     let notified: Promise<void> | undefined;
     expect(() => {
       pushed = host.push('r-000001', 'rendered text', stubMessage());
-      notified = host.notify('r-000001', 'digest');
+      notified = host.notify('r-000001', 'digest', stubMessage());
     }).not.toThrow();
     await expect(pushed).rejects.toBe(refused);
     await expect(notified).rejects.toBe(refused);
+  });
+
+  it('passes the message id with a digest, so the transcript entry can link its thread', async () => {
+    const { host, calls } = makeHost();
+    await host.notify('r-000001', '📬 digest', stubMessage({ id: 'm-333' }));
+    expect(calls.notifyRun).toEqual([['r-000001', '📬 digest', 'm-333']]);
   });
 });
 
