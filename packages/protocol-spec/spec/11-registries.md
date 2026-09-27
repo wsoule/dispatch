@@ -6,78 +6,78 @@ This section is generated from `registries/registries.json` by
 
 ## 11.1 Address schemes
 
-| Value     | Scope | Status      | Since         | Defined in                     | Vectors |
-| --------- | ----- | ----------- | ------------- | ------------------------------ | ------- |
-| `human`   | core  | provisional | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | none    |
-| `agent`   | core  | provisional | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | none    |
-| `task`    | core  | provisional | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | none    |
-| `run`     | core  | provisional | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | none    |
-| `channel` | core  | provisional | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | none    |
-| `a2a`     | a2a   | provisional | 1.0.0-draft.1 | [§8.9](08-a2a-binding.md#s8.9) | none    |
+| Value     | Scope | Status      | Since         | Defined in                     | Vectors                                                                                      |
+| --------- | ----- | ----------- | ------------- | ------------------------------ | -------------------------------------------------------------------------------------------- |
+| `human`   | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-operator-on-a-human`               |
+| `agent`   | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.parses-an-agent-without-an-operator`          |
+| `task`    | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-id-outside-the-identifier-grammar` |
+| `run`     | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`                                                             |
+| `channel` | core  | permanent   | 1.0.0-draft.1 | [§3.4](03-addresses.md#s3.4)   | `env.address.parses-each-scheme`, `env.address.refuses-an-empty-channel-segment`             |
+| `a2a`     | a2a   | provisional | 1.0.0-draft.1 | [§8.9](08-a2a-binding.md#s8.9) | none                                                                                         |
 
 ## 11.2 Address characters
 
-| Value | Scope      | Status   | Since         | Defined in                   | Vectors |
-| ----- | ---------- | -------- | ------------- | ---------------------------- | ------- |
-| `@`   | federation | reserved | 1.0.0-draft.1 | [§3.3](03-addresses.md#s3.3) | none    |
+| Value | Scope      | Status   | Since         | Defined in                   | Vectors                                    |
+| ----- | ---------- | -------- | ------------- | ---------------------------- | ------------------------------------------ |
+| `@`   | federation | reserved | 1.0.0-draft.1 | [§3.3](03-addresses.md#s3.3) | `env.address.refuses-the-reserved-at-sign` |
 
 ## 11.3 Envelope fields
 
-| Value            | Scope      | Status      | Since         | Defined in                            | Vectors |
-| ---------------- | ---------- | ----------- | ------------- | ------------------------------------- | ------- |
-| `id`             | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `thread`         | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `replyTo`        | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `from`           | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `session`        | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `to`             | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `kind`           | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `body`           | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `refs`           | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `data`           | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `urgent`         | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `blocking`       | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `choices`        | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `choice`         | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `wake`           | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `createdAt`      | core       | provisional | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | none    |
-| `idempotencyKey` | core       | provisional | 1.0.0-draft.1 | [§4.9](04-messages.md#s4.9)           | none    |
-| `origin`         | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none    |
-| `hlc`            | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none    |
+| Value            | Scope      | Status      | Since         | Defined in                            | Vectors                                                                                          |
+| ---------------- | ---------- | ----------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `id`             | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `core.render.dispatch-push-format`             |
+| `thread`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
+| `replyTo`        | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.an-answer-needs-reply-to`, `env.envelope.a-reply-to-no-message-is-not-found`       |
+| `from`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `env.envelope.only-sessions-raise-scope-gates` |
+| `session`        | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-session-is-at-most-200-bytes`                                                    |
+| `to`             | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.to-is-a-non-empty-list`, `env.envelope.names-the-bad-recipient-index`              |
+| `kind`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.unknown-kind-refused-x-kind-accepted`                                              |
+| `body`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.body-is-required-unless-an-answer-chooses`, `env.envelope.body-is-at-most-64-kib`  |
+| `refs`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-local-ref-type-must-be-registered`, `env.envelope.refs-hold-at-most-50-entries`  |
+| `data`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.data-is-at-most-64-kib-as-jcs`                                                     |
+| `urgent`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `core.render.dispatch-push-format`             |
+| `blocking`       | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.blocking-only-on-questions-and-handoffs`                                           |
+| `choices`        | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.choices-only-on-questions-and-handoffs`, `env.envelope.choices-are-distinct`       |
+| `choice`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-choice-must-be-one-of-the-questions`                                             |
+| `wake`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
+| `createdAt`      | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
+| `idempotencyKey` | core       | provisional | 1.0.0-draft.1 | [§4.9](04-messages.md#s4.9)           | none                                                                                             |
+| `origin`         | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none                                                                                             |
+| `hlc`            | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none                                                                                             |
 
 ## 11.4 Kinds
 
-| Value      | Scope | Status      | Since         | Defined in                  | Vectors |
-| ---------- | ----- | ----------- | ------------- | --------------------------- | ------- |
-| `message`  | core  | provisional | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | none    |
-| `question` | core  | provisional | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | none    |
-| `answer`   | core  | provisional | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | none    |
-| `handoff`  | core  | provisional | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | none    |
-| `notice`   | core  | provisional | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | none    |
+| Value      | Scope | Status    | Since         | Defined in                  | Vectors                                                |
+| ---------- | ----- | --------- | ------------- | --------------------------- | ------------------------------------------------------ |
+| `message`  | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.accepts-a-plain-message`                 |
+| `question` | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.blocking-only-on-questions-and-handoffs` |
+| `answer`   | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.an-answer-needs-reply-to`                |
+| `handoff`  | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.blocking-only-on-questions-and-handoffs` |
+| `notice`   | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.choices-only-on-questions-and-handoffs`  |
 
 ## 11.5 Ref types
 
-| Value     | Scope | Status      | Since         | Defined in                  | Vectors |
-| --------- | ----- | ----------- | ------------- | --------------------------- | ------- |
-| `task`    | core  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none    |
-| `run`     | core  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none    |
-| `file`    | core  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none    |
-| `commit`  | core  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none    |
-| `message` | core  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none    |
-| `doc`     | docs  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none    |
+| Value     | Scope | Status      | Since         | Defined in                  | Vectors                                            |
+| --------- | ----- | ----------- | ------------- | --------------------------- | -------------------------------------------------- |
+| `task`    | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `run`     | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `file`    | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `commit`  | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `message` | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `doc`     | docs  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none                                               |
 
 ## 11.6 Gate types
 
-| Value                | Scope    | Status      | Since         | Defined in                                  | Raised by         | Choices                        | Effect                                              | Vectors |
-| -------------------- | -------- | ----------- | ------------- | ------------------------------------------- | ----------------- | ------------------------------ | --------------------------------------------------- | ------- |
-| `wake`               | core     | provisional | 1.0.0-draft.1 | [§5.9](05-gates.md#s5.9)                    | system            | approve, deny                  | wake the target unless it no longer qualifies (5.9) | none    |
-| `tool-approval`      | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, approve-session, deny | release or refuse the parked tool call (C.3)        | none    |
-| `scope`              | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | session           | grant, deny                    | widen the session's writes (C.3)                    | none    |
-| `agent-registration` | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, deny                  | approve or refuse the agent (C.3)                   | none    |
-| `overseer-action`    | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | confirm, cancel                | run or drop the overseer's action (C.3)             | none    |
-| `memory`             | memory   | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system-or-decider | approve, reject                | apply or reject the memory proposal (C.3)           | none    |
-| `task-proposal`      | a2a      | provisional | 1.0.0-draft.1 | [§8.6](08-a2a-binding.md#s8.6)              | system            | approve, decline               | promote or drop the drafted work item (8.6)         | none    |
-| `doc`                | docs     | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, reject                | apply or reject the document change (C.3)           | none    |
+| Value                | Scope    | Status      | Since         | Defined in                                  | Raised by         | Choices                        | Effect                                              | Vectors                                                                                       |
+| -------------------- | -------- | ----------- | ------------- | ------------------------------------------- | ----------------- | ------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `wake`               | core     | provisional | 1.0.0-draft.1 | [§5.9](05-gates.md#s5.9)                    | system            | approve, deny                  | wake the target unless it no longer qualifies (5.9) | none                                                                                          |
+| `tool-approval`      | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, approve-session, deny | release or refuse the parked tool call (C.3)        | `env.envelope.agents-may-not-forge-tool-approval-gates`                                       |
+| `scope`              | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | session           | grant, deny                    | widen the session's writes (C.3)                    | `env.envelope.only-sessions-raise-scope-gates`, `env.envelope.scope-gates-have-a-fixed-shape` |
+| `agent-registration` | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, deny                  | approve or refuse the agent (C.3)                   | none                                                                                          |
+| `overseer-action`    | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | confirm, cancel                | run or drop the overseer's action (C.3)             | none                                                                                          |
+| `memory`             | memory   | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system-or-decider | approve, reject                | apply or reject the memory proposal (C.3)           | none                                                                                          |
+| `task-proposal`      | a2a      | provisional | 1.0.0-draft.1 | [§8.6](08-a2a-binding.md#s8.6)              | system            | approve, decline               | promote or drop the drafted work item (8.6)         | none                                                                                          |
+| `doc`                | docs     | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, reject                | apply or reject the document change (C.3)           | none                                                                                          |
 
 ## 11.7 System markers
 
@@ -101,14 +101,14 @@ This section is generated from `registries/registries.json` by
 
 ## 11.9 Error codes
 
-| Value         | Scope  | Status      | Since         | Defined in                  | HTTP status | Vectors |
-| ------------- | ------ | ----------- | ------------- | --------------------------- | ----------- | ------- |
-| `invalid`     | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 400         | none    |
-| `forbidden`   | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 403         | none    |
-| `not-found`   | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 404         | none    |
-| `conflict`    | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 409         | none    |
-| `limited`     | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 429         | none    |
-| `unavailable` | memory | informative | 1.0.0-draft.1 | [§10.3](10-errors.md#s10.3) | 503         | none    |
+| Value         | Scope  | Status      | Since         | Defined in                  | HTTP status | Vectors                                                 |
+| ------------- | ------ | ----------- | ------------- | --------------------------- | ----------- | ------------------------------------------------------- |
+| `invalid`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 400         | `env.envelope.unknown-kind-refused-x-kind-accepted`     |
+| `forbidden`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 403         | `env.envelope.a-gate-answer-needs-a-deciding-principal` |
+| `not-found`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 404         | `env.envelope.a-reply-to-no-message-is-not-found`       |
+| `conflict`    | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 409         | none                                                    |
+| `limited`     | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 429         | none                                                    |
+| `unavailable` | memory | informative | 1.0.0-draft.1 | [§10.3](10-errors.md#s10.3) | 503         | none                                                    |
 
 ## 11.10 Extension URIs
 

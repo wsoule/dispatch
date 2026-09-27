@@ -175,7 +175,11 @@ carrying a `choice` may have a blank body. An answer to a gate or a handoff MUST
 carry one of the question's `choices` when the question has any, and MUST carry
 none when it has none. An answer to any other question MAY carry a `choice`,
 which MUST be one of the question's `choices`; it may instead answer in its body
-alone. A choice that breaks this fails `invalid` on `choice`. (pinned rule 6)
+alone. A choice that breaks this fails `invalid` on `choice`. (pinned rule 6;
+vectors: `env.envelope.body-is-required-unless-an-answer-chooses`,
+`env.envelope.a-gate-answer-must-choose`,
+`env.envelope.a-choice-must-be-one-of-the-questions`,
+`env.envelope.free-text-may-answer-a-plain-question`)
 
 Answering a gate needs a deciding principal ([§5.4](05-gates.md#s5.4)).
 

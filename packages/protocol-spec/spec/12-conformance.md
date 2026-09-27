@@ -151,8 +151,12 @@ that fails fails only itself: later steps still run. Each step's outcome is
 | `world`        | `change`: exactly one of the changes below                                                                   | no result                                                 |
 
 `validate` runs [§4.5](04-messages.md#s4.5) alone, stores nothing and needs no
-delivery. `send`, `reply`, `close` and `a2a.inbound` create a message. A `world`
-step changes the world between steps:
+delivery. Its reply target is the message `replyTarget` names, and an input
+whose `replyTo` names no such message fails `not-found` on `replyTo`, as
+[§4.6](04-messages.md#s4.6) says. `parseAddress` refuses an address as `invalid`
+([§3.1](03-addresses.md#s3.1)); no input field carries it, so no vector names
+the error's field. `send`, `reply`, `close` and `a2a.inbound` create a message.
+A `world` step changes the world between steps:
 
 | Change           | Value                                                                         |
 | ---------------- | ----------------------------------------------------------------------------- |

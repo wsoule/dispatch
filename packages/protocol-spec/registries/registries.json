@@ -3,42 +3,54 @@
     {
       "value": "human",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "3.4",
-      "vectors": []
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.refuses-an-operator-on-a-human"
+      ]
     },
     {
       "value": "agent",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "3.4",
-      "vectors": []
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.parses-an-agent-without-an-operator"
+      ]
     },
     {
       "value": "task",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "3.4",
-      "vectors": []
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.refuses-an-id-outside-the-identifier-grammar"
+      ]
     },
     {
       "value": "run",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "3.4",
-      "vectors": []
+      "vectors": ["env.address.parses-each-scheme"]
     },
     {
       "value": "channel",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "3.4",
-      "vectors": []
+      "vectors": [
+        "env.address.parses-each-scheme",
+        "env.address.refuses-an-empty-channel-segment"
+      ]
     },
     {
       "value": "a2a",
@@ -59,137 +71,161 @@
       "section": "3.3",
       "reference": "spec/03-addresses.md#s3.3",
       "note": "held for a federation authority qualifier",
-      "vectors": []
+      "vectors": ["env.address.refuses-the-reserved-at-sign"]
     }
   ],
   "envelope-fields": [
     {
       "value": "id",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "core.render.body-lines-never-pass-for-a-header",
+        "core.render.dispatch-push-format"
+      ]
     },
     {
       "value": "thread",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["core.render.body-lines-never-pass-for-a-header"]
     },
     {
       "value": "replyTo",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "env.envelope.an-answer-needs-reply-to",
+        "env.envelope.a-reply-to-no-message-is-not-found"
+      ]
     },
     {
       "value": "from",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "core.render.body-lines-never-pass-for-a-header",
+        "env.envelope.only-sessions-raise-scope-gates"
+      ]
     },
     {
       "value": "session",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["env.envelope.a-session-is-at-most-200-bytes"]
     },
     {
       "value": "to",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "env.envelope.to-is-a-non-empty-list",
+        "env.envelope.names-the-bad-recipient-index"
+      ]
     },
     {
       "value": "kind",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["env.envelope.unknown-kind-refused-x-kind-accepted"]
     },
     {
       "value": "body",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "env.envelope.body-is-required-unless-an-answer-chooses",
+        "env.envelope.body-is-at-most-64-kib"
+      ]
     },
     {
       "value": "refs",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "env.envelope.a-local-ref-type-must-be-registered",
+        "env.envelope.refs-hold-at-most-50-entries"
+      ]
     },
     {
       "value": "data",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["env.envelope.data-is-at-most-64-kib-as-jcs"]
     },
     {
       "value": "urgent",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "core.render.body-lines-never-pass-for-a-header",
+        "core.render.dispatch-push-format"
+      ]
     },
     {
       "value": "blocking",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["env.envelope.blocking-only-on-questions-and-handoffs"]
     },
     {
       "value": "choices",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": [
+        "env.envelope.choices-only-on-questions-and-handoffs",
+        "env.envelope.choices-are-distinct"
+      ]
     },
     {
       "value": "choice",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["env.envelope.a-choice-must-be-one-of-the-questions"]
     },
     {
       "value": "wake",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["core.render.body-lines-never-pass-for-a-header"]
     },
     {
       "value": "createdAt",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": []
+      "vectors": ["core.render.body-lines-never-pass-for-a-header"]
     },
     {
       "value": "idempotencyKey",
@@ -222,84 +258,84 @@
     {
       "value": "message",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.2",
-      "vectors": []
+      "vectors": ["env.envelope.accepts-a-plain-message"]
     },
     {
       "value": "question",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.2",
-      "vectors": []
+      "vectors": ["env.envelope.blocking-only-on-questions-and-handoffs"]
     },
     {
       "value": "answer",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.2",
-      "vectors": []
+      "vectors": ["env.envelope.an-answer-needs-reply-to"]
     },
     {
       "value": "handoff",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.2",
-      "vectors": []
+      "vectors": ["env.envelope.blocking-only-on-questions-and-handoffs"]
     },
     {
       "value": "notice",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.2",
-      "vectors": []
+      "vectors": ["env.envelope.choices-only-on-questions-and-handoffs"]
     }
   ],
   "ref-types": [
     {
       "value": "task",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.3",
-      "vectors": []
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
     },
     {
       "value": "run",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.3",
-      "vectors": []
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
     },
     {
       "value": "file",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.3",
-      "vectors": []
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
     },
     {
       "value": "commit",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.3",
-      "vectors": []
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
     },
     {
       "value": "message",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.3",
-      "vectors": []
+      "vectors": ["env.envelope.a-local-ref-type-must-be-registered"]
     },
     {
       "value": "doc",
@@ -328,7 +364,7 @@
     {
       "value": "tool-approval",
       "scope": "dispatch",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -344,12 +380,12 @@
         "floor": "boolean"
       },
       "effect": "release or refuse the parked tool call (C.3)",
-      "vectors": []
+      "vectors": ["env.envelope.agents-may-not-forge-tool-approval-gates"]
     },
     {
       "value": "scope",
       "scope": "dispatch",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -357,7 +393,10 @@
       "choices": ["grant", "deny"],
       "data": { "paths": "string[]", "reason": "string" },
       "effect": "widen the session's writes (C.3)",
-      "vectors": []
+      "vectors": [
+        "env.envelope.only-sessions-raise-scope-gates",
+        "env.envelope.scope-gates-have-a-fixed-shape"
+      ]
     },
     {
       "value": "agent-registration",
@@ -547,29 +586,29 @@
     {
       "value": "invalid",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "10.1",
       "httpStatus": 400,
-      "vectors": []
+      "vectors": ["env.envelope.unknown-kind-refused-x-kind-accepted"]
     },
     {
       "value": "forbidden",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "10.1",
       "httpStatus": 403,
-      "vectors": []
+      "vectors": ["env.envelope.a-gate-answer-needs-a-deciding-principal"]
     },
     {
       "value": "not-found",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "10.1",
       "httpStatus": 404,
-      "vectors": []
+      "vectors": ["env.envelope.a-reply-to-no-message-is-not-found"]
     },
     {
       "value": "conflict",

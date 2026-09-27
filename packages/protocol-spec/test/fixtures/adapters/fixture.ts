@@ -11,14 +11,29 @@ import {
 
 const mode = process.argv[2] ?? 'pass';
 const arg = process.argv[3] ?? '';
+const withDispatch = mode.startsWith('with-dispatch');
+// A Dispatch-profile adapter declares every gate type the live registry makes
+// permanent, as the dispatch-profile claim requires.
+const permanentGateTypes = (
+  JSON.parse(
+    readFileSync(
+      new URL('../../../registries/registries.json', import.meta.url),
+      'utf8'
+    )
+  ) as { 'gate-types': { value: string; status: string }[] }
+)['gate-types']
+  .filter((g) => g.status === 'permanent')
+  .map((g) => g.value);
 const hello = {
   dmp: 'hello',
   implementation: { name: 'fixture', version: '0.0.0' },
   classes: ['envelope', 'host-core', 'a2a-binding'],
-  profiles: mode.startsWith('with-dispatch') ? ['core', 'dispatch'] : ['core'],
+  profiles: withDispatch ? ['core', 'dispatch'] : ['core'],
   capabilities: mode === 'with-cap' ? ['x-cap'] : [],
   systemAddress: 'agent:system',
-  gateTypes: ['wake'],
+  gateTypes: withDispatch
+    ? [...new Set(['wake', ...permanentGateTypes])]
+    : ['wake'],
   render: {
     quotePrefix: '> ',
     header: '^\\[from ',
