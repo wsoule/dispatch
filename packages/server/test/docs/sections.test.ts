@@ -138,6 +138,17 @@ describe('outline', () => {
     ).toEqual(['', 'Out']);
   });
 
+  it('keeps a fence open past a fence run indented 4 or more columns in', () => {
+    expect(
+      outline('```\n\t\t```\n# inside\n```\n# Out\n').map((s) => s.heading)
+    ).toEqual(['', 'Out']);
+    expect(
+      outline('- ```\n      ```\n  # inside\n  ```\n# Out\n').map(
+        (s) => s.heading
+      )
+    ).toEqual(['', 'Out']);
+  });
+
   it('does not open a backtick fence whose info string holds a backtick', () => {
     expect(outline('```js `x`\n# Real\n').map((s) => s.heading)).toEqual([
       '',

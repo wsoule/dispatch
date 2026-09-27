@@ -18,6 +18,19 @@ function timed(fn: () => unknown): number {
 const sectionAppends = (n: number, section: string): DocOp[] =>
   Array.from({ length: n }, () => ({ op: 'append', section, text: 'x' }));
 
+// '# a' and then copies of `line`, up to 4 KiB short of the body cap.
+function capBody(line: string): string {
+  const copies = Math.floor((768 * 1024 - 4096) / Buffer.byteLength(line));
+  return `# a\n${line.repeat(copies)}`;
+}
+
+// Heading text whose anchor costs far more per byte than prose does.
+const COSTLY_HEADINGS: readonly [string, string][] = [
+  ['two-byte letters', 'İ'.repeat(1500)],
+  ['a long run of blanks', `x${' '.repeat(3000)}x`],
+  ['alternating blanks and hashes', ' #'.repeat(1500)],
+];
+
 describe('review focus 2: one ops call stays bounded at the cap', () => {
   it('refuses a body grown past the cap before running the ops after it', () => {
     const doc = { title: 'x', body: '# x\n' };
@@ -61,15 +74,35 @@ describe('review focus 2: one ops call stays bounded at the cap', () => {
     );
   });
 
-  it('spends at most the budget on section ops over a cap-sized prose doc', () => {
+  it('runs all 50 section ops over a cap-sized prose doc', () => {
     const doc = { title: 'Corpus', body: corpusLines().join('') };
     const ops = sectionAppends(50, '#section-0');
+    expect(
+      applyOps(doc, ops).body.includes(`${'x\n'.repeat(50)}## Section 1\n`)
+    ).toBe(true);
+    expect(timed(() => applyOps(doc, ops))).toBeLessThan(1000);
+  });
+
+  for (const [shape, text] of COSTLY_HEADINGS) {
+    it(`prices heading text by its length: ${shape}`, () => {
+      const doc = { title: 'a', body: capBody(`## ${text}\n`) };
+      const ops = sectionAppends(50, '#a');
+      expect(() => applyOps(doc, ops)).toThrow('these ops scan');
+      expect(timed(() => applyOps(doc, ops))).toBeLessThan(1000);
+    });
+  }
+
+  it('prices lines that could open a fence', () => {
+    const doc = { title: 'a', body: capBody('- ```\n') };
+    const ops = sectionAppends(50, '#a');
     expect(() => applyOps(doc, ops)).toThrow('these ops scan');
     expect(timed(() => applyOps(doc, ops))).toBeLessThan(1000);
-    expect(
-      applyOps(doc, sectionAppends(5, '#section-0')).body.includes(
-        `${'x\n'.repeat(5)}## Section 1\n`
-      )
-    ).toBe(true);
+  });
+
+  it('prices short lines inside fenced code', () => {
+    const body = capBody('  x\n').replace('# a\n', '# a\n```\n');
+    const ops = sectionAppends(50, '#a');
+    expect(() => applyOps({ title: 'a', body }, ops)).toThrow('these ops scan');
+    expect(timed(() => applyOps({ title: 'a', body }, ops))).toBeLessThan(1000);
   });
 });

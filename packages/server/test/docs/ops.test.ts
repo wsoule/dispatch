@@ -155,7 +155,7 @@ describe('applyOps', () => {
   });
 
   it('refuses section ops once a call has outlined too many lines', () => {
-    const body = `# a\n${'\n'.repeat(600_000)}`;
+    const body = `# a\n${'\n'.repeat(700_000)}`;
     const once = applyOps({ title: 'a', body }, [
       { op: 'append', section: 'a', text: 'one' },
     ]);

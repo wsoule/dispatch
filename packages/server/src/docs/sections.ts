@@ -47,12 +47,20 @@ export function cutUtf8(text: string, maxBytes: number): string {
 }
 
 // Lines of `body`, each keeping its '\n'; the last may lack one. '' has none.
+// Slicing shares the body's storage instead of copying each line.
 export function splitLines(body: string): string[] {
-  if (body === '') return [];
-  const lines = body.split('\n').map((line) => `${line}\n`);
-  if (body.endsWith('\n')) lines.pop();
-  else lines[lines.length - 1] = lines[lines.length - 1].slice(0, -1);
+  const lines: string[] = [];
+  for (let start = 0; start < body.length; ) {
+    const newline = body.indexOf('\n', start);
+    const end = newline === -1 ? body.length : newline + 1;
+    lines.push(body.slice(start, end));
+    start = end;
+  }
   return lines;
+}
+
+function withoutNewline(line: string): string {
+  return line.endsWith('\n') ? line.slice(0, -1) : line;
 }
 
 // A fence run, after up to 8 list markers that open items on the same line. Each
@@ -60,11 +68,20 @@ export function splitLines(body: string): string[] {
 const FENCE_OPEN =
   /^ {0,3}((?:(?:[-+*]|\d{1,9}[.)]) {1,4}(?! )){0,8})(`{3,}|~{3,})/;
 
-// Columns of leading spaces and tabs (tab stops every 4) and the text after them.
-function indentOf(text: string): { columns: number; rest: string } {
+// What every line FENCE_OPEN or an ATX heading could match starts with. Both
+// are tested first, so other lines skip the costlier patterns.
+export const FENCE_START = /^ {0,3}(?:[-+*`~]|\d{1,9}[.)])/;
+export const HEADING_START = /^ {0,3}#/;
+
+// Columns of leading spaces and tabs (tab stops every 4) and the text after
+// them, counting no further than `limit` columns.
+function indentOf(
+  text: string,
+  limit: number
+): { columns: number; rest: string } {
   let columns = 0;
   let i = 0;
-  for (; i < text.length; i++) {
+  for (; i < text.length && columns < limit; i++) {
     if (text[i] === ' ') columns += 1;
     else if (text[i] === '\t') columns += 4 - (columns % 4);
     else break;
@@ -85,9 +102,10 @@ export function fencedLines(lines: readonly string[]): boolean[] {
   const fenced = new Array<boolean>(lines.length).fill(false);
   let open: { char: string; length: number; indent: number } | null = null;
   for (let i = 0; i < lines.length; i++) {
-    const text = lines[i].replace(/\n$/, '');
+    const text = withoutNewline(lines[i]);
     if (open !== null) {
-      const { columns, rest } = indentOf(text);
+      // Past indent + 3 columns a line is fenced and cannot close the fence.
+      const { columns, rest } = indentOf(text, open.indent + 4);
       if (rest === '' || columns >= open.indent) {
         fenced[i] = true;
         const closes =
@@ -98,6 +116,7 @@ export function fencedLines(lines: readonly string[]): boolean[] {
       }
       open = null;
     }
+    if (!FENCE_START.test(text)) continue;
     const match = FENCE_OPEN.exec(text);
     if (match === null) continue;
     const run = match[2];
@@ -118,7 +137,8 @@ const LINE_BREAK = /[\n\r\u2028\u2029]/;
 function atxHeading(
   line: string
 ): { level: 1 | 2 | 3; heading: string } | null {
-  const text = line.replace(/\n$/, '');
+  if (!HEADING_START.test(line)) return null;
+  const text = withoutNewline(line);
   if (LINE_BREAK.test(text)) return null;
   const match = ATX.exec(text);
   if (match === null) return null;
@@ -143,8 +163,11 @@ function anchorBase(heading: string): string {
     .replace(/ /g, '-');
 }
 
-export function outline(body: string): Section[] {
-  const lines = splitLines(body);
+// The outline of `body`, whose lines a caller that already split it may pass.
+export function outline(
+  body: string,
+  lines: readonly string[] = splitLines(body)
+): Section[] {
   const fenced = fencedLines(lines);
   const heads: { line: number; level: 1 | 2 | 3; heading: string }[] = [];
   for (let i = 0; i < lines.length; i++) {

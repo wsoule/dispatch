@@ -4,6 +4,8 @@ import { DOCS_LIMITS, docTitleProblem, normalizeDocText } from '@dispatch/core';
 import { DocsError } from './errors.js';
 import {
   cutUtf8,
+  FENCE_START,
+  HEADING_START,
   outline,
   resolveSection,
   splitLines,
@@ -19,12 +21,13 @@ export interface OpsResult {
   summary: string;
 }
 
-// Outline work one call may spend, in units of about half a microsecond, so a
-// call stays well under a second on the daemon's one thread.
-const OPS_WORK = 1_000_000;
-const HEADING_WORK = 5;
-const CHARS_PER_WORK = 32;
-const HEADING_START = /^ {0,3}#/;
+// Outline work one call may spend, in units of about 100 ns: 50 section ops on
+// a cap-sized prose doc, and about half a second on the daemon's one thread.
+const OPS_WORK = 5_000_000;
+const LINE_WORK = 4;
+const CHARS_PER_WORK = 64;
+const FENCE_WORK = 5;
+const HEADING_WORK = 30;
 
 const OP_FIELDS: Record<DocOp['op'], readonly string[]> = {
   replace_section: ['section', 'text'],
@@ -111,11 +114,16 @@ function occurrences(body: string, find: string, cap: number): number[] {
   return at;
 }
 
-// What outlining `body` costs against OPS_WORK: one per line, HEADING_WORK
-// more per heading-shaped line, and one per CHARS_PER_WORK characters.
+// Prices outlining and splicing `body` against OPS_WORK: LINE_WORK per line and
+// one per CHARS_PER_WORK characters, FENCE_WORK more for a line that could open
+// a fence, and HEADING_WORK plus one per character more for a heading-shaped
+// line, since anchoring costs far more per character than prose does.
 function outlineWork(body: string, lines: readonly string[]): number {
-  let work = lines.length + Math.ceil(body.length / CHARS_PER_WORK);
-  for (const line of lines) if (HEADING_START.test(line)) work += HEADING_WORK;
+  let work = lines.length * LINE_WORK + Math.ceil(body.length / CHARS_PER_WORK);
+  for (const line of lines) {
+    if (HEADING_START.test(line)) work += HEADING_WORK + line.length;
+    else if (FENCE_START.test(line)) work += FENCE_WORK;
+  }
   return work;
 }
 
@@ -149,7 +157,7 @@ export function applyOps(
     switch (op.op) {
       case 'replace_section': {
         const lines = outlined();
-        const s = resolveSection(outline(body), op.section, field);
+        const s = resolveSection(outline(body, lines), op.section, field);
         body = splice(
           lines.slice(0, s.line + 1).join(''),
           wholeLines(op.text),
@@ -185,7 +193,7 @@ export function applyOps(
       }
       case 'insert': {
         const lines = outlined();
-        const s = resolveSection(outline(body), op.before, field);
+        const s = resolveSection(outline(body, lines), op.before, field);
         body = splice(
           lines.slice(0, s.line).join(''),
           wholeLines(op.text),
@@ -201,7 +209,7 @@ export function applyOps(
           break;
         }
         const lines = outlined();
-        const s = resolveSection(outline(body), op.section, field);
+        const s = resolveSection(outline(body, lines), op.section, field);
         body = splice(
           lines.slice(0, s.end).join(''),
           wholeLines(op.text),
