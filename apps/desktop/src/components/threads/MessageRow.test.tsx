@@ -158,6 +158,13 @@ test('a truncated tool call loads its full input for a decider, from its run or 
   expect(screen.queryByText(/Preview truncated/)).toBeNull();
 });
 
+test('badges a custom kind by its name, as the run chat does', () => {
+  renderRow(msg('m-x', { kind: 'x-review', body: 'looks fine' }), {
+    open: false,
+  });
+  expect(screen.getByText('x-review')).toBeTruthy();
+});
+
 test("keeps a revoked agent's message readable, with a Revoked pill", () => {
   renderRow(msg('m-r', { from: 'agent:wyat/old', body: 'still here' }), {
     open: false,

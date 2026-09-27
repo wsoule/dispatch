@@ -5,6 +5,7 @@ import type { MessageAccess } from './daemonAuth';
 import {
   addressAction,
   hasAnswerButtons,
+  kindLabel,
   knownAddresses,
   lookupsKey,
   mergeThreadSources,
@@ -547,6 +548,15 @@ describe('refs and labels', () => {
     expect(
       threadTitle(msg('m-01', { body: `${'x'.repeat(90)}\nsecond line` }))
     ).toBe(`${'x'.repeat(79)}…`);
+  });
+
+  it('badges every kind but a plain message, a custom kind by its own name', () => {
+    expect(kindLabel('question')).toBe('Question');
+    expect(kindLabel('handoff')).toBe('Handoff');
+    expect(kindLabel('notice')).toBe('Notice');
+    expect(kindLabel('answer')).toBe('Answer');
+    expect(kindLabel('x-review')).toBe('x-review');
+    expect(kindLabel('message')).toBeUndefined();
   });
 
   it('keys the lookups by what they read, so an event that changes no label keeps them', () => {

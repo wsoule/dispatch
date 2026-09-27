@@ -97,6 +97,19 @@ export function participantLabel(
   return addressLabel(address, lookups);
 }
 
+const KIND_LABELS: Record<string, string> = {
+  question: 'Question',
+  handoff: 'Handoff',
+  notice: 'Notice',
+  answer: 'Answer',
+};
+
+/** The badge a message kind shows: a built-in kind's name, a custom `x-` kind
+ *  as written, and none for a plain message. */
+export function kindLabel(kind: string): string | undefined {
+  return kind === 'message' ? undefined : (KIND_LABELS[kind] ?? kind);
+}
+
 /** A thread's one-line title: its root's first line, cut to 80 characters. */
 export function threadTitle(root: Message): string {
   const first = Array.from(root.body.split('\n', 1)[0] ?? '');

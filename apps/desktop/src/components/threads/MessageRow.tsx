@@ -12,6 +12,7 @@ import type {
 } from '../../lib/threadSources';
 import {
   addressAction,
+  kindLabel,
   participantLabel,
   refAction,
   rowControl,
@@ -23,13 +24,6 @@ import { ChatMessage } from '@/ui/ai/chat';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 import { Pill, PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
-
-const KIND_BADGE: Partial<Record<Message['kind'], string>> = {
-  question: 'Question',
-  handoff: 'Handoff',
-  notice: 'Notice',
-  answer: 'Answer',
-};
 
 type Reply = { body: string; choice?: string };
 
@@ -66,7 +60,7 @@ export const MessageRow = memo(function MessageRow({
   const sender = participantLabel(message.from, lookups);
   const senderAction = addressAction(message.from, lookups);
   const status = lookups.agentStatus(message.from);
-  const badge = KIND_BADGE[message.kind];
+  const badge = kindLabel(message.kind);
   const answer = async (reply: Reply): Promise<void> => {
     setError(null);
     try {
