@@ -244,6 +244,24 @@ describe('proposals', () => {
     ).toBe(`conflict: origin: ${first.proposal} already holds ledger:l-6@t`);
   });
 
+  it('refuses a direct write claiming an origin an open proposal holds, so approval still applies', async () => {
+    const t = setup();
+    const origin = 'amendment:t-1a2b3c@2026-09-25T10:00:00.000Z';
+    const p = (await t.engine.submitProposal(RUN, {
+      action: 'add',
+      scope: 'team',
+      content: valid('amended by the run'),
+      origin,
+    })) as Gated;
+    expect(
+      await conflictOf(
+        t.engine.save(OWNER, { ...team, title: 'amended by the owner', origin })
+      )
+    ).toBe(`conflict: origin: ${p.proposal} already holds ${origin}`);
+    expect(approve(t, p).outcome).toBe('applied');
+    expect(t.shared.entryByOrigin(origin)?.title).toBe('amended by the run');
+  });
+
   it('limits proposals per hour and open proposals per project, but not ledger imports', async () => {
     const t = setup({ proposalsPerHour: 1, maxOpenProposals: 2 });
     await t.engine.save(RUN, { ...team, title: 'a' });

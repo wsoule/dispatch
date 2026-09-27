@@ -282,8 +282,9 @@ function checkOrigin(store: MemoryStore, origin: string | null): void {
     );
 }
 
-// A proposal's origin must be free among entries and proposals alike.
-function checkProposalOrigin(store: MemoryStore, origin: string | null): void {
+// A shared write's origin must be free among entries and proposals alike, or
+// approving the proposal that holds it would collide with the entry.
+function checkSharedOrigin(store: MemoryStore, origin: string | null): void {
   checkOrigin(store, origin);
   if (origin === null) return;
   const existing = store.proposalByOrigin(origin);
@@ -1062,7 +1063,7 @@ export class MemoryEngine {
     const { principal } = viewer;
     const store = this.deps.stores.shared();
     const origin = input.origin ?? null;
-    checkOrigin(store, origin);
+    checkSharedOrigin(store, origin);
     const now = this.now();
     const entry = store.transaction(() => {
       const created = insertFresh(
@@ -1132,7 +1133,7 @@ export class MemoryEngine {
       this.ids.proposal(Date.parse(now)),
       now
     );
-    checkProposalOrigin(store, origin);
+    checkSharedOrigin(store, origin);
     this.checkDuplicate(store, draft, now);
     if (!isExemptOrigin(origin))
       this.checkProposalLimits(store, principal, now);
