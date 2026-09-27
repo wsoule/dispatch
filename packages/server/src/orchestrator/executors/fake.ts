@@ -72,7 +72,11 @@ export class FakeExecutor implements Executor {
   start(
     opts: ExecutorStartOptions,
     events: ExecutorEvents
-  ): ExecutorRun & { notified: string[]; received: string[] } {
+  ): ExecutorRun & {
+    notified: string[];
+    received: string[];
+    settled: Promise<void>;
+  } {
     let cancelled = false;
     // A graceful stop, as a scripted executor can express one: the step already
     // in flight runs to completion (including its commit), no further step
@@ -180,7 +184,7 @@ export class FakeExecutor implements Executor {
     // Fire-and-forget: `start()` must return the ExecutorRun handle
     // synchronously so the orchestrator can register it before any events
     // land, exactly like a real streaming executor would.
-    void playScript();
+    const settled = playScript();
 
     return {
       interrupt(): Promise<void> {
@@ -219,6 +223,8 @@ export class FakeExecutor implements Executor {
       },
       notified,
       received,
+      // A test seam: resolves once the script stops, finished or cancelled.
+      settled,
     };
   }
 }
