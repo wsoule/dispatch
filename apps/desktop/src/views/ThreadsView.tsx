@@ -92,6 +92,19 @@ export function ThreadsView({
       </div>
     );
   }
+  if (me === null && data.whoamiError !== null) {
+    return (
+      <div className="flex h-full flex-col">
+        {header}
+        <EmptyState
+          className="flex-1"
+          heading="The daemon did not say who you are"
+          description={data.whoamiError.message}
+          secondary={{ label: 'Retry', onClick: data.retryWhoami }}
+        />
+      </div>
+    );
+  }
   if (me === null) {
     return (
       <div aria-busy="true" className="flex h-full flex-col">

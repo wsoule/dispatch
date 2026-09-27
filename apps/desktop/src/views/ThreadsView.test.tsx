@@ -302,6 +302,55 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
   ).toBe(true);
 });
 
+test('a failed whoami says so and asks again from Retry, instead of loading for good', () => {
+  const client = {
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  };
+  const retryWhoami = mock(() => {});
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ThreadsView
+        data={dataWith({
+          client: client as unknown as ApiClient,
+          port: 4000,
+          me: null,
+          whoamiError: new Error('dispatchd is still starting'),
+          retryWhoami,
+          messageAccess: {
+            canDecide: true,
+            canMessage: true,
+            explanation: null,
+          },
+          scopeDecide: DECIDES,
+          tasks: [],
+          runs: [],
+          presence: [],
+        })}
+        projectName="storefront"
+        focus={null}
+        onFocus={() => {}}
+        onOpenRef={() => {}}
+        overseer={OVERSEER}
+      />
+    </QueryClientProvider>
+  );
+  expect(screen.getByText('dispatchd is still starting')).toBeTruthy();
+  expect(
+    screen.queryByText('Waiting for the daemon to say who you are.')
+      ?.textContent
+  ).toBeUndefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(retryWhoami).toHaveBeenCalledTimes(1);
+});
+
 test('a run moving on re-renders no row of the open thread until what a row offers changes', async () => {
   // A row reads its message's timestamp each time it renders, and nothing else reads it.
   let timestampReads = 0;
