@@ -4,6 +4,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import { withAutoMemoryOff } from '../../src/orchestrator/claudeCli.js';
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import {
   generateRepoDigest,
@@ -495,6 +496,8 @@ describe('generateRepoDigest', () => {
         command: 'git push --tags',
       })
     ).toBe('deny');
-    expect(seen.options?.settings).toEqual(floorGuard('deny').settings);
+    expect(seen.options?.settings).toEqual(
+      withAutoMemoryOff(floorGuard('deny')).settings
+    );
   });
 });

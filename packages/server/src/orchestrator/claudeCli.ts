@@ -28,6 +28,24 @@ export function rewriteMissingCliError(message: string): string {
   return isMissingCliError(message) ? CLAUDE_INSTALL_HINT : message;
 }
 
+// Auto memory loads from every settings scope and ignores settingSources, so a
+// session that is not a run or the overseer switches it off explicitly.
+export function withAutoMemoryOff(options: Options): Options {
+  if (typeof options.settings === 'string')
+    throw new Error(
+      'openClaudeQuery: a settings file path cannot carry the auto-memory switch'
+    );
+  const base = options.settings ?? {};
+  return {
+    ...options,
+    settings: {
+      ...base,
+      autoMemoryEnabled: false,
+      env: { ...(base.env ?? {}), CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+    },
+  };
+}
+
 // Opens an Agent SDK `query()`, resolving the Claude Code CLI the SDK spawns
 // robustly. `query()` resolves that CLI *synchronously* and throws right here
 // when it can't find one — both the executor's run path and the planner's
@@ -48,13 +66,19 @@ export function rewriteMissingCliError(message: string): string {
 // runPlanner catch) — both already carry the thrown message straight to the
 // user, so the rewrite happening here is what makes that surfaced text
 // actionable instead of opaque.
+//
+// Auto memory is off unless the caller passes `memory: 'managed'`, which only
+// runs and the overseer do.
 export function openClaudeQuery(
   queryFn: typeof query,
   prompt: Parameters<typeof query>[0]['prompt'],
-  options: Options
+  options: Options,
+  opts: { memory?: 'off' | 'managed' } = {}
 ): Query {
+  const resolved =
+    opts.memory === 'managed' ? options : withAutoMemoryOff(options);
   const withExecutable = (exe: string): Options => ({
-    ...options,
+    ...resolved,
     pathToClaudeCodeExecutable: exe,
   });
 
@@ -68,7 +92,7 @@ export function openClaudeQuery(
   }
 
   try {
-    return queryFn({ prompt, options });
+    return queryFn({ prompt, options: resolved });
   } catch (err) {
     const message = (err as Error).message;
     if (!isMissingCliError(message)) throw err;

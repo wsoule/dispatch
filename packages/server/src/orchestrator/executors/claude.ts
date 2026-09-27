@@ -669,7 +669,9 @@ export class ClaudeExecutor implements Executor {
   // failed carrying exactly that text, which the UI surfaces on the run
   // instead of hanging on 'running'.
   private openQuery(prompt: MessageQueue, options: Options): Query {
-    return openClaudeQuery(this.queryFn, prompt, options);
+    return openClaudeQuery(this.queryFn, prompt, options, {
+      memory: 'managed',
+    });
   }
 
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {

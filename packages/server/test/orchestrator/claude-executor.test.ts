@@ -399,6 +399,11 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       ).toBeUndefined();
       expect(requests).toHaveLength(2);
       expect(captured?.settings).toEqual(floorGuard('deny').settings);
+      // A run's session keeps Claude's native auto memory.
+      expect(
+        (captured?.settings as { autoMemoryEnabled?: boolean } | undefined)
+          ?.autoMemoryEnabled
+      ).toBeUndefined();
     }
   });
 
