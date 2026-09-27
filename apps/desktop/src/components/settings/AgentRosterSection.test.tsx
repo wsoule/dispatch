@@ -205,6 +205,19 @@ describe('AgentRosterSection', () => {
     expect(screen.getByLabelText(NEEDS_DECIDE)).toBeTruthy();
   });
 
+  // A disabled button takes no focus, so its tooltip never reaches a keyboard.
+  test('without decide, the reason is written on the page, not only in tooltips', async () => {
+    mount(rosterClient(), 'request');
+    await row(PENDING);
+    expect(screen.queryByText(NEEDS_DECIDE)?.textContent).toBe(NEEDS_DECIDE);
+  });
+
+  test('with decide, no reason is written out', async () => {
+    mount(rosterClient());
+    await row(PENDING);
+    expect(screen.queryByText(NEEDS_DECIDE)?.textContent).toBeUndefined();
+  });
+
   test('a refused action says why beside the roster', async () => {
     const client = rosterClient();
     client.approveAgent.mockImplementation(() =>

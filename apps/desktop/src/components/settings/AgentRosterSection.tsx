@@ -83,7 +83,7 @@ function RosterAction({
  * Settings → Connected agents: every agent outside Dispatch that registered
  * through `dispatch mcp`, with approve (while pending), mute and revoke.
  * Anyone can read the roster; changing it needs the decide tier, below which
- * the actions stay visible but disabled with the reason.
+ * the actions stay visible but disabled, with the reason written above them.
  */
 export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   const { client, port } = data;
@@ -248,7 +248,15 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
         title="Agents"
         hint="A new agent waits as pending until someone approves it. A muted agent's messages stay readable but never interrupt anyone."
         keywords="roster connected external mcp approve mute revoke"
+        requires="none"
       >
+        {!canDecide && (
+          <SettingsRow
+            title="Approving, muting and revoking"
+            subtitle={decideReason}
+            locked={decideReason}
+          />
+        )}
         {roster.isError ? (
           <SettingsRow
             title="Couldn't load agents"
