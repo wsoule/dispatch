@@ -2,6 +2,7 @@ import type { SqliteDatabase } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { DeliveryEngine } from '../src/engine.js';
+import { GATE_TYPES } from '../src/envelope.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
 import { FakeHost } from './fakeHost.js';
 
@@ -55,6 +56,7 @@ describe('recover', () => {
       retried: 1,
       reverted: 0,
       replayed: 0,
+      voided: 0,
     });
     expect(store.getDelivery('d-1')?.state).toBe('pushed');
   });
@@ -66,6 +68,7 @@ describe('recover', () => {
       retried: 0,
       reverted: 1,
       replayed: 0,
+      voided: 0,
     });
     expect(store.getDelivery('d-2')).toMatchObject({
       state: 'held',
@@ -81,6 +84,7 @@ describe('recover', () => {
       retried: 0,
       reverted: 0,
       replayed: 0,
+      voided: 0,
     });
   });
 
@@ -99,6 +103,7 @@ describe('recover', () => {
       retried: 0,
       reverted: 0,
       replayed: 0,
+      voided: 0,
     });
     expect(store.getDelivery('d-4')?.state).toBe('held');
   });
@@ -132,7 +137,7 @@ describe('recover gate replay', () => {
     const originalError = console.error;
     console.error = () => {};
     try {
-      const engine = new DeliveryEngine({ store, host });
+      const engine = new DeliveryEngine({ store, host, gateTypes: GATE_TYPES });
       const gate = await sendGate(engine);
       host.failOnAnswered = true;
       await engine.reply(gate.id, { body: '', choice: 'approve' }, human);
@@ -141,6 +146,7 @@ describe('recover gate replay', () => {
         retried: 0,
         reverted: 0,
         replayed: 1,
+        voided: 0,
       });
       expect(host.hooks('onAnswered')).toEqual([
         [gate.id, 'approve'],
@@ -150,6 +156,7 @@ describe('recover gate replay', () => {
         retried: 0,
         reverted: 0,
         replayed: 0,
+        voided: 0,
       });
     } finally {
       console.error = originalError;
@@ -157,7 +164,7 @@ describe('recover gate replay', () => {
   });
 
   it('does not replay an applied or closed gate', async () => {
-    const engine = new DeliveryEngine({ store, host });
+    const engine = new DeliveryEngine({ store, host, gateTypes: GATE_TYPES });
     const applied = await sendGate(engine);
     await engine.reply(applied.id, { body: '', choice: 'approve' }, human);
     const closed = await sendGate(engine);
@@ -166,6 +173,7 @@ describe('recover gate replay', () => {
       retried: 0,
       reverted: 0,
       replayed: 0,
+      voided: 0,
     });
     expect(host.hooks('onAnswered')).toEqual([[applied.id, 'approve']]);
   });

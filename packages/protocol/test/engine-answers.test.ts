@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SYSTEM_ADDRESS } from '../src/address.js';
 import { DeliveryEngine } from '../src/engine.js';
+import { GATE_TYPES } from '../src/envelope.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
 import { FakeHost } from './fakeHost.js';
 
@@ -19,7 +20,7 @@ beforeEach(() => {
   store = new SqliteMessageStore(db);
   host = new FakeHost();
   host.startRun('t-000001', 'r-000001');
-  engine = new DeliveryEngine({ store, host });
+  engine = new DeliveryEngine({ store, host, gateTypes: GATE_TYPES });
 });
 afterEach(() => db.close());
 

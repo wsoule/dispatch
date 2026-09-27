@@ -47,6 +47,16 @@ import {
   toolApprovalDecision,
 } from './toolApproval.js';
 
+// Gate types dispatchd implements a handler for; a sub-project adds its type
+// here with its handler.
+const DISPATCH_GATE_TYPES = [
+  'tool-approval',
+  'scope',
+  'wake',
+  'agent-registration',
+  'overseer-action',
+] as const;
+
 // What overseer gate answers apply to: the OverseerManager, once it exists.
 interface OverseerGateTarget {
   confirmAction(
@@ -141,7 +151,12 @@ export function openMessaging(deps: {
     );
     limits = { ...DEFAULT_MESSAGING };
   }
-  const engine = new DeliveryEngine({ store, host, limits });
+  const engine = new DeliveryEngine({
+    store,
+    host,
+    limits,
+    gateTypes: DISPATCH_GATE_TYPES,
+  });
 
   // Tells the sender of `about` why its wake did not happen, through its task
   // if its run has ended. Never throws: the gate's effect is already decided.

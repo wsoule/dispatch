@@ -53,6 +53,7 @@ Centralised
 cfworker
 checkpointed
 chev
+choiceless
 chrono
 clippy
 closedsha

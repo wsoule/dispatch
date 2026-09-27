@@ -96,6 +96,8 @@ export interface MessageStore {
     expected?: DeliveryState
   ): boolean;
   markGateApplied(questionId: string, at: string): void;
+  /** Turns an answer back into a message and records it voided, which reopens its question. */
+  voidAnswer(answerId: string, questionId: string, at: string): boolean;
   /** Answered gate questions (closes excluded) whose host effect is not yet recorded. */
   unappliedAnsweredGates(): { question: Message; answer: Message }[];
   countFrom(from: Address, sinceIso: string, urgentOnly: boolean): number;
