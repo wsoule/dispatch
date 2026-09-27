@@ -44,9 +44,8 @@ export function untrustedFenced(label: string, text: string): string {
   return [fence, body, fence].join('\n');
 }
 
-// An untrusted block between labelled fences with every line unaltered, so a
-// doc read and saved back whole, or a `find` copied from it, still matches.
-// The bar is widened past the text's longest tilde run, so no line can close it.
+// Untrusted text between labelled fences, every line unaltered so a `find`
+// copied from it still matches; the bar outruns the text's longest tilde run.
 export function untrustedVerbatim(label: string, text: string): string {
   let longest = 0;
   for (const run of text.match(/~+/g) ?? [])

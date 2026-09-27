@@ -226,6 +226,8 @@ export const RESERVED_DOC_SLUGS: readonly string[] = [
 ];
 
 const LINE_BREAK = /[\r\n\v\f\u0085\u2028\u2029]/;
+// Control characters (C0, DEL, C1) other than tab, which a terminal would act on.
+const CONTROL = /(?!\t)\p{Cc}/u;
 const SLUG = /^[a-z0-9][a-z0-9-]*$/;
 const encoder = new TextEncoder();
 
@@ -240,11 +242,13 @@ export function jsonEscapedBytes(text: string): number {
   return encoder.encode(JSON.stringify(text)).byteLength - 2;
 }
 
-// Why a title is refused, or null: one non-blank line of at most 200 UTF-8 bytes.
+// Why a title is refused, or null: one non-blank line of at most 200 UTF-8
+// bytes, free of control characters other than tab.
 export function docTitleProblem(title: unknown): string | null {
   if (typeof title !== 'string') return 'title must be a string';
   if (title.trim() === '') return 'title must not be empty';
   if (LINE_BREAK.test(title)) return 'title must be one line';
+  if (CONTROL.test(title)) return 'title must not contain control characters';
   if (encoder.encode(title).byteLength > DOCS_LIMITS.titleBytes)
     return 'title must be at most 200 bytes (UTF-8)';
   return null;

@@ -70,6 +70,14 @@ describe('input checks', () => {
     expect(docTitleProblem(3)).toBe('title must be a string');
   });
 
+  it('refuses NUL and control characters in titles but keeps tabs', () => {
+    for (const title of ['a\u0000b', 'a\u001b[31mb', 'a\u007fb', 'a\u009bb'])
+      expect(docTitleProblem(title)).toBe(
+        'title must not contain control characters'
+      );
+    expect(docTitleProblem('a\tb')).toBeNull();
+  });
+
   it('holds slugs to the grammar and away from ids and route words', () => {
     expect(docSlugProblem('auth-refactor')).toBeNull();
     expect(docSlugProblem('Auth')).toContain('[a-z0-9-]');
