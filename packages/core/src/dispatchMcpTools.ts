@@ -21,3 +21,15 @@ export const DISPATCH_MCP_TOOLS = [
   'task_save',
   'thread_read',
 ] as const;
+
+// The messaging subset of DISPATCH_MCP_TOOLS. Executors auto-allow these:
+// gating one would make a human approve a question before seeing it.
+export const DISPATCH_MESSAGING_TOOLS = [
+  'channel_join',
+  'channel_leave',
+  'channel_list',
+  'inbox_read',
+  'msg_reply',
+  'msg_send',
+  'thread_read',
+] as const satisfies readonly (typeof DISPATCH_MCP_TOOLS)[number][];

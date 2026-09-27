@@ -36,6 +36,9 @@ import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { isA2AClientToken } from './a2a/auth.js';
+import type { A2ABridge } from './a2a/bridge.js';
+import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
@@ -273,6 +276,8 @@ export interface ApiContext {
   messaging: Messaging;
   /** The memory store and engine (memory/service.ts). */
   memory: MemoryService;
+  /** The A2A bridge; absent in hand-built test contexts. */
+  a2a?: A2ABridge;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by
   // PrManager's poll, listed here for GET /api/landing's worktree column.
@@ -4241,6 +4246,13 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // run, not a command of the caller's choosing.
   { method: 'POST', segments: ['runs', '*', 'preview'], tier: 'decide' },
   { method: 'DELETE', segments: ['runs', '*', 'preview'], tier: 'decide' },
+  // A parked call's full input is what its approval gate previews; only a
+  // human who may answer that gate reads it whole.
+  {
+    method: 'GET',
+    segments: ['runs', '*', 'approvals', '*'],
+    tier: 'decide',
+  },
   // Handing out a credential is an adjudication: on the request tier an agent
   // holding the on-disk agent token could mint itself a second identity, and
   // listing holders tells it whose to go looking for. team/routes.ts further
@@ -4266,12 +4278,29 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['agents', '*', 'revoke'], tier: 'decide' },
   { method: 'POST', segments: ['agents', '*', 'mute'], tier: 'decide' },
   { method: 'POST', segments: ['agents', '*', 'unmute'], tier: 'decide' },
+  // A fresh A2A client token is a credential handed out; an A2A task list
+  // names every client's questions, and declining one answers it.
+  {
+    method: 'POST',
+    segments: ['a2a', 'clients', '*', 'rotate'],
+    tier: 'decide',
+  },
+  { method: 'GET', segments: ['a2a', 'tasks'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'tasks', '*', 'decline'],
+    tier: 'decide',
+  },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
   // holds a run's edits to the task's declared `writes` and records them.
   // Reads stay on the request tier with the rest of the read surface.
   { method: 'POST', segments: ['files', 'write'], tier: 'operator' },
+  // Opening the A2A listener exposes this machine on a network port and
+  // points the daemon at TLS files on disk; closing it is paired.
+  { method: 'PUT', segments: ['a2a', 'listener'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
   // whose account, and which workspace, the board is sent to — the same call
@@ -4534,6 +4563,20 @@ export async function handleApi(
   if (untrusted !== null) return untrusted;
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
+
+  // An A2A client's bearer never works on /api, open routes included. Only a
+  // token the registry does not know reaches the messages.db lookup.
+  if (
+    presented !== null &&
+    daemonCtx.tokens.registry.lookup(presented).kind === 'unknown' &&
+    isA2AClientToken(daemonCtx.messaging.store, presented)
+  ) {
+    return authErrorResponse(
+      403,
+      'A2A client tokens work only on the A2A listener',
+      'auth_a2a_client'
+    );
+  }
 
   // Resolves and enforces the principal here, before dispatch, so every
   // self-authenticated route fails closed even with no handler behind it.
@@ -5216,6 +5259,24 @@ export async function handleApi(
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
       }
+      // GET /api/runs/:id/approvals/:requestId — the full input of a call the
+      // run is parked on; its gate carries only a preview.
+      if (
+        segments.length === 4 &&
+        segments[2] === 'approvals' &&
+        method === 'GET'
+      ) {
+        const parked = ctx.orchestrator.pendingApprovalFor(
+          segments[1],
+          segments[3]
+        );
+        return parked === undefined
+          ? errorResponse(
+              404,
+              `run ${segments[1]} is not parked on ${segments[3]}`
+            )
+          : jsonResponse({ tool: parked.toolName, input: parked.input });
+      }
       // GET /api/runs/:id/checklist — the run's requirement checklist; 404
       // until the finish hook has written one (or ever, without a client).
       if (
@@ -5433,6 +5494,11 @@ export async function handleApi(
           segments.length === 4 ? decodeURIComponent(segments[3]) : undefined
         );
       }
+    }
+
+    if (segments[0] === 'a2a') {
+      const handled = await handleA2ARoute(req, ctx, segments.slice(1), method);
+      if (handled !== null) return handled;
     }
 
     if (segments[0] === 'agents') {

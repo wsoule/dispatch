@@ -22,12 +22,16 @@ import type {
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
+import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
+import type { A2ABridge } from './a2a/bridge.js';
+import { openA2ABridge } from './a2a/bridge.js';
+import type { ListenerOverrides } from './a2a/settings.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
   bearerToken,
@@ -54,12 +58,13 @@ import {
   isSkippedPath,
 } from './depmap.js';
 import { EventBus } from './events.js';
+import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
 import { resolvePushTarget } from './gitTarget.js';
-import { TokenRegistry } from './identity.js';
+import { sha256, TokenRegistry } from './identity.js';
 import { IdleShutdown } from './idleShutdown.js';
 import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
@@ -88,6 +93,7 @@ import {
   ensureOverseerActor,
   overseerToolMessaging,
 } from './messaging/overseerBus.js';
+import type { Messaging } from './messaging/service.js';
 import { openMessaging } from './messaging/service.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
@@ -176,6 +182,10 @@ export interface ServerHandle {
   // store is the backend-selected one the API writes through, which is what
   // its blocked-finding merge gate reads.
   orchestrator: Orchestrator;
+  // Exposed the same way, so a test can mint a run token or seed a message.
+  messaging: Messaging;
+  // The A2A bridge: its listener status, store and port.
+  a2a: A2ABridge;
   // Exposed for introspection/tests — e.g. calling pollOnce() directly to
   // populate cachedPrs() deterministically instead of racing its internal
   // poll timer (started/stopped by startServer itself below).
@@ -310,6 +320,8 @@ export interface StartServerOptions {
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   onIdle?: () => void;
+  // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
+  a2a?: ListenerOverrides;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -498,10 +510,11 @@ function withCors(
     // `authorization` must stay listed: every guarded route needs the bearer
     // header, and the desktop webview and dev harness are both cross-origin to
     // this daemon, so dropping it makes the browser discard their requests at
-    // the preflight before the daemon ever sees them.
+    // the preflight before the daemon ever sees them. The same holds for the
+    // `idempotency-key` a message send carries.
     res.headers.set(
       'access-control-allow-headers',
-      'content-type, authorization'
+      'content-type, authorization, idempotency-key'
     );
     // The allowed origin is request-dependent, so caches must key on it.
     res.headers.set('vary', 'origin');
@@ -571,10 +584,16 @@ async function serveIndexHtml(
  *  leaving. `handle` is null only for a socket whose credential resolved to
  *  nobody, which the upgrade guard already refuses — kept nullable so the
  *  type does not promise more than the guard does. */
-interface SocketData {
+interface SocketData extends SocketAudience {
   handle: string | null;
-  ref: string | null;
   release?: () => boolean;
+}
+
+// Constant-time, like principal.ts: /ws must tell the shared agent token
+// apart from the owner's app token, since both resolve to the owner.
+function isAgentToken(presented: string | null, agentToken: string): boolean {
+  if (presented === null) return false;
+  return timingSafeEqual(sha256(presented), sha256(agentToken));
 }
 
 // How often the idle sweep runs. Well under the shortest sensible
@@ -1311,6 +1330,24 @@ async function bootServer(
     console.error('dispatchd: boot ledger import failed', err);
   }
   orchestrator.setMemoryPort(memory);
+  // After recovery, so the bridge reconciles against settled messaging state;
+  // its listener opens only once the daemon's own ports are known (below).
+  const a2a = openA2ABridge({
+    rootDir,
+    messaging,
+    tasks: store,
+    orchestrator,
+    events,
+    ownerRef: actorContext.humanRef,
+    version: packageJson.version,
+    daemonPorts: () => [
+      server.port ?? 0,
+      ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
+    ],
+    ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    mark: (label) => watchdog.mark(label),
+    track: (fn) => (idle === null ? fn() : idle.track(fn)),
+  });
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -1642,6 +1679,11 @@ async function bootServer(
     fixLoopStore,
     cache,
     events,
+    conversationApprovalInput: (conversation, requestId) =>
+      overseerManager
+        .list()
+        .find((record) => record.id === conversation)
+        ?.pendingApprovals.find((a) => a.requestId === requestId)?.input,
     // The policy engine's classifier: a gate the project's rung auto-decides
     // shows up as `recorded` rather than `blocking`.
     policy: policyDecisionClassifier(rootDir, {
@@ -1732,6 +1774,7 @@ async function bootServer(
     epicEngine,
     messaging,
     memory,
+    a2a,
     prManager,
     prWorktrees,
     mergeQueue,
@@ -1797,7 +1840,9 @@ async function bootServer(
             planManager.listDrafts().some((d) => d.state === 'running') ||
             overseerManager.list().some((o) => o.state === 'running') ||
             terminals.list().some((t) => t.state === 'running') ||
-            browsers.list().length > 0,
+            browsers.list().length > 0 ||
+            // An exposed agent must stay up to answer.
+            a2a.listening(),
         })
       : null;
 
@@ -1852,11 +1897,17 @@ async function bootServer(
             return withCors(unauthorized, origin, ownOriginSet);
           // Carry who connected onto the socket: presence is read off open
           // sockets, and the credential was just checked above, so resolving it
-          // again cannot fail here.
+          // again cannot fail here. The tier and the agent-token flag scope
+          // which sockets hear message events.
           const who = tokens.registry.resolve(wsToken);
           if (
             srv.upgrade(req, {
-              data: { handle: who?.handle ?? null, ref: who?.ref ?? null },
+              data: {
+                handle: who?.handle ?? null,
+                ref: who?.ref ?? null,
+                tier: who?.tier ?? null,
+                agentToken: isAgentToken(wsToken, tokens.agentToken),
+              },
             })
           ) {
             return undefined;
@@ -1991,6 +2042,7 @@ async function bootServer(
   // assertion.
   const port = server.port ?? 0;
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
+  await a2a.start();
   if (shared) {
     for (const origin of tlsPort === undefined
       ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)
@@ -2022,6 +2074,8 @@ async function bootServer(
     team,
     mergeQueue,
     orchestrator,
+    messaging,
+    a2a,
     prManager,
     prWorktrees,
     memory,
@@ -2063,6 +2117,7 @@ async function bootServer(
       // EventBus for why we don't also close each socket ourselves first.
       await server.stop(true);
       await tlsServer?.stop(true);
+      await a2a.close();
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather

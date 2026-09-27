@@ -6,6 +6,7 @@ import type {
   Message,
 } from '@dispatch/protocol';
 
+import { floorCheckForToolInput } from '../floor.js';
 import { untrustedInline } from '../orchestrator/prompt.js';
 import type {
   ApprovalDecision,
@@ -58,27 +59,36 @@ export function previewToolInput(input: unknown): {
   return { input: out, truncated: true };
 }
 
+// The gate payload for one parked call of a run or an overseer conversation:
+// the input's preview, and whether the floor holds the call on its FULL input.
+export function toolApprovalGateData(
+  parkedOn: { runId: string } | { conversation: string },
+  call: { requestId: string; toolName: string; input: unknown }
+): GateData {
+  return {
+    type: 'tool-approval',
+    requestId: call.requestId,
+    ...parkedOn,
+    tool: call.toolName,
+    ...previewToolInput(call.input),
+    floor: floorCheckForToolInput(call.input) !== null,
+  };
+}
+
 // Asks the project owner about one parked tool call.
 export async function raiseToolApproval(
   engine: DeliveryEngine,
   owner: Address,
   request: ApprovalGateRequest
 ): Promise<Message> {
-  const preview = previewToolInput(request.input);
-  const data = {
-    type: 'tool-approval',
-    requestId: request.requestId,
-    runId: request.runId,
-    tool: request.toolName,
-    ...preview,
-  } satisfies GateData;
+  const data = toolApprovalGateData({ runId: request.runId }, request);
   const { message } = await engine.send(
     {
       to: [owner],
       kind: 'question',
       blocking: true,
       choices: [...TOOL_APPROVAL_CHOICES],
-      body: `${untrustedInline(request.taskTitle)} wants to run ${request.toolName}: ${describeToolInput(preview.input)}`,
+      body: `${untrustedInline(request.taskTitle)} wants to run ${request.toolName}: ${describeToolInput(request.input)}`,
       refs: [
         { type: 'run', id: request.runId },
         { type: 'task', id: request.taskId },

@@ -3,6 +3,8 @@ import { dirname, join } from 'node:path';
 import YAML from 'yaml';
 
 import type {
+  A2AConfig,
+  A2ASkill,
   CartoConfig,
   CartoMode,
   ConfigPatch,
@@ -29,7 +31,9 @@ import type {
   VerifyConfig,
 } from './configTypes.js';
 import {
+  A2A_SKILLS,
   CARTO_MODES,
+  DEFAULT_A2A,
   DEFAULT_CARTO,
   DEFAULT_EXECUTOR_NAME,
   DEFAULT_FIX_LOOP,
@@ -353,6 +357,80 @@ export function parseMemoryConfig(raw: unknown): {
         key: 'memory.claudeAutoMemory',
         message: `memory.claudeAutoMemory must be export or off; using ${DEFAULT_MEMORY.claudeAutoMemory}`,
       });
+    }
+  }
+  return { config, warnings };
+}
+
+const A2A_LIMIT_KEYS = [
+  'blockingWaitSec',
+  'requestsPerMinute',
+  'sendsPerHour',
+  'handoffsPerDay',
+  'openTasksPerClient',
+  'streamsPerClient',
+  'outboundPerHour',
+] as const;
+type A2ALimitKey = (typeof A2A_LIMIT_KEYS)[number];
+const A2A_LIMIT_MAX: Partial<Record<A2ALimitKey, number>> = {
+  blockingWaitSec: 600,
+};
+const A2A_TEXT_MAX = { name: 100, description: 500 } as const;
+
+// Unlike `messaging:`, a bad `a2a:` key falls back to its default with a
+// warning, so a typo there never breaks every loadConfig caller.
+function parseA2AConfig(raw: unknown): {
+  config: A2AConfig;
+  warnings: string[];
+} {
+  const config: A2AConfig = { ...DEFAULT_A2A };
+  if (raw === undefined || raw === null) return { config, warnings: [] };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return { config, warnings: ['a2a must be a mapping; using the defaults'] };
+  }
+  const warnings: string[] = [];
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (key === 'name' || key === 'description') {
+      const max = A2A_TEXT_MAX[key];
+      const text = typeof value === 'string' ? value.trim() : '';
+      if (text !== '' && text.length <= max) {
+        config[key] = text;
+      } else {
+        warnings.push(
+          `a2a.${key} must be text of at most ${max} characters; using the default`
+        );
+      }
+    } else if (key === 'skills') {
+      const ok =
+        Array.isArray(value) &&
+        value.length > 0 &&
+        value.every((s) => (A2A_SKILLS as readonly unknown[]).includes(s));
+      if (ok) {
+        config.skills = [...new Set(value as A2ASkill[])];
+      } else {
+        warnings.push(
+          'a2a.skills must be a list of ask, handoff, status; using every skill built'
+        );
+      }
+    } else if ((A2A_LIMIT_KEYS as readonly string[]).includes(key)) {
+      const k = key as A2ALimitKey;
+      const max = A2A_LIMIT_MAX[k];
+      const ok =
+        typeof value === 'number' &&
+        Number.isInteger(value) &&
+        value > 0 &&
+        (max === undefined || value <= max);
+      if (ok) {
+        config[k] = value;
+      } else {
+        warnings.push(
+          max === undefined
+            ? `a2a.${k} must be a positive integer; using ${DEFAULT_A2A[k]}`
+            : `a2a.${k} must be an integer from 1 to ${max}; using ${DEFAULT_A2A[k]}`
+        );
+      }
+    } else {
+      warnings.push(`a2a.${key} is not a setting; ignored`);
     }
   }
   return { config, warnings };
@@ -1428,6 +1506,8 @@ export function loadConfig(rootDir: string): DispatchConfig {
       policy: { ...DEFAULT_POLICY, gates: {} },
       preview: { ...DEFAULT_PREVIEW },
       queue: defaultQueue(),
+      a2a: { ...DEFAULT_A2A },
+      a2aWarnings: [],
     };
   }
   let parsed: unknown;
@@ -1500,6 +1580,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
       'invalid .dispatch/config.yml: prWorktreeDir must be a non-empty string'
     );
   }
+  const a2a = parseA2AConfig(raw.a2a);
   return {
     // Old config files list the pre-rename names; canonicalize (and dedupe,
     // in case a file lists both an old name and its successor) on load.
@@ -1528,6 +1609,8 @@ function parseConfig(parsed: unknown): DispatchConfig {
     preview: parsePreviewConfig(raw.preview),
     queue: parseQueueConfig(raw.queue),
     prWorktreeDir: raw.prWorktreeDir,
+    a2a: a2a.config,
+    a2aWarnings: a2a.warnings,
   };
 }
 

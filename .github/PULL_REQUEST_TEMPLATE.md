@@ -15,6 +15,8 @@
 - [ ] I ran relevant typechecks (`moonx <project>:typecheck`)
 - [ ] I added or updated tests where useful
 - [ ] I updated documentation where useful
+- [ ] Protocol change: text, vectors and reference in this PR (or not a protocol
+      change)
 
 ## Related issues
 

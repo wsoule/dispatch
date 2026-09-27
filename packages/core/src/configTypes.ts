@@ -190,6 +190,10 @@ export interface DispatchConfig {
   /** Optional only so hand-built fixtures stay valid; `loadConfig` always
    *  sets it. */
   memory?: MemoryConfig;
+  /** The A2A bridge's policy; `loadConfig` always sets it, optional for hand-built fixtures. */
+  a2a?: A2AConfig;
+  /** One line per `a2a:` key that fell back to its default. */
+  a2aWarnings?: string[];
   /**
    * The git receipt log. `loadConfig` always populates this, so a config it
    * returns can be read without a fallback; it is optional only so callers
@@ -456,6 +460,41 @@ export const DEFAULT_MEMORY: MemoryConfig = {
   staleAfterDays: 60,
   retireAfterDays: 180,
   claudeAutoMemory: 'off',
+};
+
+/** The skills an A2A agent card may offer. */
+export const A2A_SKILLS = ['ask', 'handoff', 'status'] as const;
+export type A2ASkill = (typeof A2A_SKILLS)[number];
+
+/** Project policy for the A2A bridge. Holds no listener setting: those are machine-local. */
+export interface A2AConfig {
+  /** The card's name; null means the basename of the project root. */
+  name: string | null;
+  /** The card's description; null means the default description. */
+  description: string | null;
+  /** The skills the card offers; null means every skill built. */
+  skills: A2ASkill[] | null;
+  /** How long a blocking send waits for its answer, 1 to 600 seconds. */
+  blockingWaitSec: number;
+  requestsPerMinute: number;
+  sendsPerHour: number;
+  handoffsPerDay: number;
+  openTasksPerClient: number;
+  streamsPerClient: number;
+  outboundPerHour: number;
+}
+
+export const DEFAULT_A2A: A2AConfig = {
+  name: null,
+  description: null,
+  skills: null,
+  blockingWaitSec: 60,
+  requestsPerMinute: 120,
+  sendsPerHour: 60,
+  handoffsPerDay: 10,
+  openTasksPerClient: 20,
+  streamsPerClient: 5,
+  outboundPerHour: 60,
 };
 
 /** Linear sync settings. Holds no secret — the API key lives in `~/.dispatch/credentials.json`. */

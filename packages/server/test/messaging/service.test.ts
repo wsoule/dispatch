@@ -13,6 +13,7 @@ import type { ServerEvent } from '../../src/events.js';
 import { EventBus } from '../../src/events.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { SYSTEM_SENDER } from '../../src/messaging/gates.js';
 import { createRunTokens } from '../../src/messaging/runTokens.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
@@ -389,6 +390,36 @@ describe('openMessaging', () => {
     expect(sent.message.body).toBe('still up');
     messaging.close();
   });
+
+  it("the daemon's engine knows exactly Dispatch's gate types", async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    const messaging = openMessaging({
+      rootDir: project.root(),
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(project.root(), 'messages.db'),
+    });
+    await messaging.recover();
+    const gate = (type: string) => ({
+      to: ['human:wyat'],
+      kind: 'question' as const,
+      blocking: true,
+      choices: ['approve', 'decline'],
+      body: 'x',
+      data: {
+        type,
+        task: 't-000001',
+        proposedBy: 'agent:wyat/a2a.x',
+        message: 'm-x',
+      },
+    });
+    await expect(
+      messaging.engine.send(gate('task-proposal'), SYSTEM_SENDER)
+    ).rejects.toMatchObject({ code: 'invalid', field: 'data.type' });
+    messaging.close();
+  });
 });
 
 describe('wake gate handler', () => {
@@ -573,6 +604,55 @@ describe('wake gate handler', () => {
     expect(executor.started).toHaveLength(1);
     await orchestrator.cancel(run.id);
     await waitFor(() => executor.sent.some((s) => s.includes('wake up')));
+    await cancelLiveRuns(orchestrator);
+    messaging.close();
+  });
+
+  // A wake that blocks while a retry awaits its own records itself; the retry
+  // must keep it, so a human's message still leads the next retry.
+  it('a wake blocked while a retry is waking the task keeps its place', async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    orchestrator.registerExecutor('claude', new NoMessagesExecutor());
+    const task = store.create({ title: 'Busy' });
+    const messaging = await openRecovered(project.root(), orchestrator, store);
+    const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    await approveWake(messaging, task.meta.id);
+
+    const wakeTask = orchestrator.wakeTask.bind(orchestrator);
+    const actors: string[] = [];
+    let review: { id: string } | null = null;
+    // Runs inside the retry's wake: a review run keeps the task busy, so a
+    // human's wake sent now blocks as well.
+    let duringRetry: (() => Promise<void>) | null = async () => {
+      review = await orchestrator.dispatchAuxRun({
+        taskId: task.meta.id,
+        kind: 'review',
+        head: 'main',
+        buildPrompt: () => 'review this',
+      });
+      await messaging.engine.send(
+        {
+          to: [`task:${task.meta.id}`],
+          kind: 'message',
+          body: 'from a human',
+          wake: 'request',
+        },
+        { address: 'human:wyat', canDecide: true }
+      );
+    };
+    orchestrator.wakeTask = async (taskId, opts) => {
+      actors.push(opts.actor);
+      const during = duringRetry;
+      duringRetry = null;
+      if (during !== null) await during();
+      return wakeTask(taskId, opts);
+    };
+
+    await orchestrator.cancel(run.id);
+    await waitFor(() => actors.length === 2 && review !== null);
+    await orchestrator.cancel((review as unknown as { id: string }).id);
+    await waitFor(() => actors.length === 3);
+    expect(actors).toEqual(['agent:dispatch', 'human:wyat', 'human:wyat']);
     await cancelLiveRuns(orchestrator);
     messaging.close();
   });

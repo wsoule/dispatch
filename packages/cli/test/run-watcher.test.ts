@@ -103,6 +103,7 @@ function makeClient(getRun: (id: string) => Promise<RunDetail>): ApiClient {
     getAnswer: () => Promise.reject(new Error('not used')),
     replyToMessage: () => Promise.reject(new Error('not used')),
     sendMessage: () => Promise.reject(new Error('not used')),
+    getMailbox: () => Promise.reject(new Error('not used')),
     fanoutTask: () => Promise.reject(new Error('not used')),
     launchBrowser: () => Promise.reject(new Error('not used')),
     listBrowsers: () => Promise.reject(new Error('not used')),
@@ -165,17 +166,155 @@ describe('createRunWatcher', () => {
     watcher.dispose();
   });
 
-  it("renders the approval banner for this run's tool-approval gate only", () => {
+  // /ws carries gates only to deciding humans, and this watcher's socket holds
+  // the agent token, so a parked run is announced from its own state.
+  const gate: Message = {
+    id: 'm-gate01',
+    thread: 'm-gate01',
+    replyTo: null,
+    from: 'agent:dispatch',
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'Checkout wants to run run_shell',
+    refs: [],
+    urgent: false,
+    blocking: true,
+    choices: ['approve', 'approve-session', 'deny'],
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00Z',
+    data: {
+      type: 'tool-approval',
+      requestId: 'fake-approval-1',
+      runId: 'r-1',
+      tool: 'run_shell',
+      input: {},
+    },
+  };
+
+  function parkedWatcher(appClient?: ApiClient) {
     const lines: string[] = [];
     const created: FakeSocket[] = [];
+    let state: RunMeta['state'] = 'awaiting-approval';
     const client = makeClient(() =>
       Promise.resolve({
-        meta: makeRunMeta({ state: 'awaiting-approval' }),
+        meta: makeRunMeta({ state }),
         entries: [],
         evidence: [],
         mutations: [],
       })
     );
+    const watcher = createRunWatcher(
+      { cwd: '/tmp', log: (l) => lines.push(l) },
+      client,
+      'http://127.0.0.1:1',
+      appClient === undefined ? {} : { appClient },
+      {
+        createSocket: () => {
+          const s = new FakeSocket();
+          created.push(s);
+          return s;
+        },
+      }
+    );
+    return {
+      watcher,
+      socket: () => created[0],
+      banners: () =>
+        lines.join('\n').split('=== approval requested ===').length - 1,
+      text: () => lines.join('\n'),
+      setState: (next: RunMeta['state']) => {
+        state = next;
+      },
+    };
+  }
+
+  it('names the gate a parked run waits on through the app client, once per park', async () => {
+    const other = {
+      ...gate,
+      id: 'm-other',
+      data: { ...(gate.data as object), runId: 'r-2' },
+    };
+    const appClient: ApiClient = {
+      ...makeClient(() => Promise.reject(new Error('not used'))),
+      openDecisions: () => Promise.resolve({ items: [other, gate] }),
+    };
+    const w = parkedWatcher(appClient);
+
+    w.watcher.setRunId('r-1');
+    await sleep(10);
+    expect(w.text()).toContain('tool:    run_shell');
+    expect(w.text()).toContain('approve: dispatch approve r-1 fake-approval-1');
+    expect(w.banners()).toBe(1);
+
+    w.socket().emitMessage({ type: 'message.new', message: gate });
+    w.socket().emitMessage({ type: 'run.changed' });
+    await sleep(10);
+    expect(w.banners()).toBe(1);
+
+    w.setState('running');
+    w.socket().emitMessage({ type: 'run.changed' });
+    await sleep(10);
+    w.setState('awaiting-approval');
+    w.socket().emitMessage({ type: 'run.changed' });
+    await sleep(10);
+    expect(w.banners()).toBe(2);
+    w.watcher.dispose();
+  });
+
+  it('names every call a parked run waits on, one banner each', async () => {
+    const second = {
+      ...gate,
+      id: 'm-second',
+      data: {
+        ...(gate.data as object),
+        requestId: 'fake-approval-2',
+        tool: 'write_file',
+      },
+    };
+    const appClient: ApiClient = {
+      ...makeClient(() => Promise.reject(new Error('not used'))),
+      openDecisions: () => Promise.resolve({ items: [gate, second] }),
+    };
+    const w = parkedWatcher(appClient);
+
+    w.watcher.setRunId('r-1');
+    await sleep(10);
+    expect(w.banners()).toBe(2);
+    expect(w.text()).toContain('approve: dispatch approve r-1 fake-approval-1');
+    expect(w.text()).toContain('approve: dispatch approve r-1 fake-approval-2');
+    expect(w.text()).toContain('tool:    write_file');
+    w.watcher.dispose();
+  });
+
+  it('announces a parked run without its gate when there is no app token', async () => {
+    const w = parkedWatcher();
+
+    w.watcher.setRunId('r-1');
+    await sleep(10);
+    expect(w.banners()).toBe(1);
+    expect(w.text()).toContain('approve: dispatch approve r-1\n');
+    expect(w.text()).toContain('deny:    dispatch approve r-1 --deny');
+    expect(w.text()).not.toContain('tool:');
+    w.watcher.dispose();
+  });
+
+  it('announces a park that lands while a refetch is in flight', async () => {
+    const lines: string[] = [];
+    const created: FakeSocket[] = [];
+    let state: RunMeta['state'] = 'running';
+    let release: () => void = () => {};
+    const client = makeClient(async () => {
+      const seen = state;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return {
+        meta: makeRunMeta({ state: seen }),
+        entries: [],
+        evidence: [],
+        mutations: [],
+      };
+    });
     const watcher = createRunWatcher(
       { cwd: '/tmp', log: (l) => lines.push(l) },
       client,
@@ -189,44 +328,15 @@ describe('createRunWatcher', () => {
         },
       }
     );
-    const gate: Message = {
-      id: 'm-gate01',
-      thread: 'm-gate01',
-      replyTo: null,
-      from: 'agent:dispatch',
-      to: ['human:wyat'],
-      kind: 'question',
-      body: 'Checkout wants to run run_shell',
-      refs: [],
-      urgent: false,
-      blocking: true,
-      choices: ['approve', 'approve-session', 'deny'],
-      wake: 'none',
-      createdAt: '2026-09-25T10:00:00Z',
-      data: {
-        type: 'tool-approval',
-        requestId: 'fake-approval-1',
-        runId: 'r-1',
-        tool: 'run_shell',
-        input: {},
-      },
-    };
 
     watcher.setRunId('r-1');
-    created[0].emitMessage({
-      type: 'message.new',
-      message: {
-        ...gate,
-        id: 'm-other',
-        data: { ...(gate.data as object), runId: 'r-2' },
-      },
-    });
-    expect(lines.join('\n')).not.toContain('approval requested');
-
-    created[0].emitMessage({ type: 'message.new', message: gate });
-    const banner = lines.join('\n');
-    expect(banner).toContain('=== approval requested ===');
-    expect(banner).toContain('approve: dispatch approve r-1 fake-approval-1');
+    state = 'awaiting-approval';
+    created[0].emitMessage({ type: 'run.changed' });
+    release();
+    await sleep(10);
+    release();
+    await sleep(10);
+    expect(lines.join('\n')).toContain('=== approval requested ===');
     watcher.dispose();
   });
 

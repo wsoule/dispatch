@@ -3,6 +3,7 @@ import type {
   Options,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
+import { DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
 import { describe, expect, it, spyOn, test } from 'bun:test';
 import {
   chmodSync,
@@ -19,7 +20,6 @@ import {
   cartoMcpServers,
   ClaudeExecutor,
   MEMORY_TOOLS,
-  MESSAGING_TOOLS,
   STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
@@ -956,7 +956,9 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
         onFinish: () => {},
       }
     );
-    for (const tool of [...MESSAGING_TOOLS, ...MEMORY_TOOLS]) {
+    const tools = DISPATCH_MESSAGING_TOOLS.map((t) => `mcp__dispatch__${t}`);
+    expect(tools).toContain('mcp__dispatch__msg_send');
+    for (const tool of [...tools, ...MEMORY_TOOLS]) {
       const result = await captured?.canUseTool?.(
         tool,
         { to: ['human:wyat'] },

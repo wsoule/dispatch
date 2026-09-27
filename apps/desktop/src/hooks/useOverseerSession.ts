@@ -82,6 +82,9 @@ export interface OverseerSession {
    * the outcome is readable on `sending` and `sendError`.
    */
   submit: (text: string) => Promise<void>;
+  /** Posts `text` for a surface with its own draft (a Threads reply): raises
+   *  `sending`, leaves `draft` and `sendError` alone, and rejects on failure. */
+  reply: (text: string) => Promise<void>;
   /**
    * A submit is in flight. Session-held for the same reason `draft` is: the
    * rail unmounts the chat's whole panel on a tab flip, and a component-local
@@ -351,6 +354,18 @@ export function useOverseerSession(
     [conversationId, sendMessage, start]
   );
 
+  const reply = useCallback(
+    async (text: string) => {
+      setSending(true);
+      try {
+        await sendMessage(text);
+      } finally {
+        setSending(false);
+      }
+    },
+    [sendMessage]
+  );
+
   // The open gates, read fresh rather than from cache: a gate answered
   // elsewhere (another window, the CLI) must not be answered twice.
   const fetchOpenGates = useCallback(async () => {
@@ -486,6 +501,7 @@ export function useOverseerSession(
     record: recordGone ? undefined : record,
     recordError: error instanceof Error ? error.message : null,
     submit,
+    reply,
     sending,
     sendError,
     confirmAction,

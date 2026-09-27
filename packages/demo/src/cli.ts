@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 
 import { writeBoard } from './board.js';
 import { git } from './git.js';
+import { writeMessages } from './messages.js';
 import { DEMO, OWNER, TEAMMATE } from './paths.js';
 import { runPreflight } from './preflight.js';
 import { writeRecords } from './records.js';
@@ -78,6 +79,8 @@ function reset(): void {
   // `rootDir`.
   console.log('demo: writing run history for both clones');
   writeRuns(DEMO.root, DEMO.home, OWNER.handle);
+  // Threads only for the owner's clone: every seeded ask is addressed to them.
+  writeMessages(DEMO.root, DEMO.home, OWNER.handle);
   writeRuns(DEMO.teammateRoot, DEMO.teammateHome, TEAMMATE.handle);
 
   console.log('demo: reset complete');

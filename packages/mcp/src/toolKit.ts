@@ -10,13 +10,20 @@ export interface ToolOutcome {
   isError?: boolean;
 }
 
+// The line breaks JSON.stringify leaves raw inside a string: NEL and the
+// Unicode line and paragraph separators.
+const RAW_JSON_LINE_BREAK = /[\u0085\u2028\u2029]/g;
+
+// A tool's JSON result, with every line break escaped so no string value, such
+// as a message body, can start a line of its own in the model's context.
 export function toolResult(
   structuredContent: Record<string, unknown>
 ): ToolOutcome {
-  return {
-    content: [{ type: 'text', text: JSON.stringify(structuredContent) }],
-    structuredContent,
-  };
+  const text = JSON.stringify(structuredContent).replace(
+    RAW_JSON_LINE_BREAK,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+  return { content: [{ type: 'text', text }], structuredContent };
 }
 
 export function toolError(message: string): ToolOutcome {

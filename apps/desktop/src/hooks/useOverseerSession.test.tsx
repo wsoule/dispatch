@@ -415,6 +415,48 @@ test('a failed submit leaves a newly typed draft alone', async () => {
   expect(result.current.sendError).toBe('daemon unreachable');
 });
 
+// A Threads reply keeps its own draft: the session raises `sending` so the
+// Assistant composer locks too, but the failure goes back to the caller.
+test('a reply from another surface rejects on failure and leaves the draft alone', async () => {
+  let reject: ((err: Error) => void) | undefined;
+  const client = {
+    baseUrl: `http://127.0.0.1:${PORT}`,
+    startOverseer: () => Promise.resolve(overseerRecord()),
+    getOverseer: () => Promise.resolve(overseerRecord()),
+    sendOverseerMessage: () =>
+      new Promise<OverseerRecord>((_resolve, rej) => {
+        reject = rej;
+      }),
+  } as unknown as ApiClient;
+  const { result } = renderHook(
+    () => useOverseerSession(client, PORT, '/repo'),
+    { wrapper }
+  );
+  await act(async () => {
+    await result.current.submit('what is going on?');
+  });
+  act(() => {
+    result.current.setDraft('half typed');
+  });
+
+  let replied: Promise<string> | undefined;
+  act(() => {
+    replied = result.current.reply('from a thread').then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+  });
+  expect(result.current.sending).toBe(true);
+  await act(async () => {
+    reject?.(new ApiError('overseer w-1 is still answering', 409));
+    expect(await replied).toBe('overseer w-1 is still answering');
+  });
+
+  expect(result.current.sending).toBe(false);
+  expect(result.current.sendError).toBeNull();
+  expect(result.current.draft).toBe('half typed');
+});
+
 // The decide failure belongs to the session for exactly the reason the send
 // failure does. While an approval is queued the Runs tab shows a waiting
 // overseer row, so flipping there is the path the rail encourages — and the rail

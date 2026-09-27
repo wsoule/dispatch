@@ -661,3 +661,39 @@ describe('task view teardown', () => {
     expect(escaped).toEqual(inSettings);
   });
 });
+
+describe('threads navigation', () => {
+  test('openThread routes to Threads with that message in focus, and back returns', () => {
+    let state = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'board',
+    });
+    state = navReducer(state, { type: 'openThread', messageId: 'm-01' });
+    expect(state.section).toBe('project');
+    expect(state.projectView).toBe('threads');
+    expect(state.threadFocus).toBe('m-01');
+    state = navReducer(state, { type: 'back' });
+    expect(state.projectView).toBe('board');
+  });
+
+  test('picking another thread inside the view adds no history entry', () => {
+    let state = navReducer(initialNavState, {
+      type: 'openThread',
+      messageId: 'm-01',
+    });
+    const depth = state.history.length;
+    state = navReducer(state, { type: 'openThread', messageId: 'm-02' });
+    expect(state.threadFocus).toBe('m-02');
+    expect(state.history).toHaveLength(depth);
+  });
+
+  test("switching projects drops the open thread, which belongs to the old project's daemon", () => {
+    let state = navReducer(initialNavState, {
+      type: 'openThread',
+      messageId: 'm-01',
+    });
+    state = navReducer(state, { type: 'selectProject', projectId: 'other' });
+    state = navReducer(state, { type: 'setProjectView', view: 'threads' });
+    expect(state.threadFocus).toBeNull();
+  });
+});

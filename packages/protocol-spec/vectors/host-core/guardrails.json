@@ -1,0 +1,337 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "guardrails",
+  "vectors": [
+    {
+      "id": "core.guardrails.urgent-over-the-quota-is-downgraded",
+      "title": "A session's urgent message over the hourly quota is sent without urgent and reported as downgraded",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.6"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 2, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "message": "$s1", "downgraded": false } },
+          { "ok": true, "result": { "message": "$s2", "downgraded": false } },
+          { "ok": true, "result": { "message": "$s3", "downgraded": true } }
+        ],
+        "messages": [
+          { "id": "$s1", "urgent": true },
+          { "id": "$s2", "urgent": true },
+          { "id": "$s3", "urgent": false }
+        ]
+      }
+    },
+    {
+      "id": "core.guardrails.the-urgent-quota-window-slides",
+      "title": "Urgent messages older than an hour no longer count toward the quota",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.6"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 2, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        },
+        { "op": "world", "change": { "advanceMs": 3660000 } },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          null,
+          { "ok": true, "result": { "message": "$s4", "downgraded": false } }
+        ],
+        "messages": [{ "id": "$s4", "urgent": true }]
+      }
+    },
+    {
+      "id": "core.guardrails.humans-have-no-urgent-quota",
+      "title": "A human is never downgraded by the urgent quota",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.6"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 2, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "notice",
+            "body": "x",
+            "urgent": true
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "downgraded": false } },
+          { "ok": true, "result": { "downgraded": false } },
+          { "ok": true, "result": { "message": "$s3", "downgraded": false } }
+        ],
+        "messages": [{ "id": "$s3", "urgent": true }]
+      }
+    },
+    {
+      "id": "core.guardrails.breaker-refuses-the-next-agent-turn",
+      "title": "At the per-thread agent-turn limit an agent reply is limited on replyTo",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.6"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 2 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "message",
+            "body": "ping"
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000002", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "pong" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "message": "$s2",
+          "input": { "body": "ping again" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "limited", "field": "replyTo" } }
+        ],
+        "messages": [{ "id": "$s1" }, { "id": "$s2", "replyTo": "$s1" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.guardrails.breaker-tells-the-owner-once-per-window",
+      "title": "The breaker sends the owner one x-breaker notice per window",
+      "class": "host-core",
+      "level": "SHOULD",
+      "profile": "core",
+      "sections": ["6.6"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 2 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "message",
+            "body": "ping"
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000002", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "pong" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "message": "$s2",
+          "input": { "body": "again" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "message": "$s2",
+          "input": { "body": "and again" }
+        },
+        { "op": "thread", "thread": "$s1" }
+      ],
+      "then": {
+        "steps": [
+          null,
+          null,
+          null,
+          null,
+          { "ok": true, "result": { "messages": ["$s1", "$s2", "$notice1"] } }
+        ],
+        "messages": [
+          {
+            "id": "$notice1",
+            "from": "$system",
+            "to": ["human:wyat"],
+            "kind": "notice",
+            "replyTo": "$s2",
+            "data": { "type": "x-breaker", "thread": "$s1" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.guardrails.a-human-is-not-limited",
+      "title": "A human may reply in a thread past the agent-turn limit",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.6"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 2 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "message",
+            "body": "ping"
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000002", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "a" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "b" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }, { "ok": true }],
+        "messages": [{ "id": "$s3", "from": "human:wyat", "replyTo": "$s1" }]
+      }
+    }
+  ]
+}

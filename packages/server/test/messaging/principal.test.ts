@@ -329,6 +329,29 @@ describe('resolvePrincipal', () => {
       code: 'auth_agent_revoked',
     });
   });
+
+  it.each(['approved', 'pending', 'revoked'] as const)(
+    'an A2A client row that is %s is refused: its token works only on the listener (403)',
+    (status) => {
+      const { ctx, messaging } = makeHarness();
+      const raw = `a2a-${status}-token`;
+      messaging.store.putAgent(
+        stubAgent({
+          address: `agent:wyat/a2a.${status}`,
+          client: 'a2a',
+          tokenHash: tokenHash(raw),
+          status,
+        })
+      );
+
+      expect(resolvePrincipal(ctx, raw)).toEqual({
+        ok: false,
+        status: 403,
+        error: 'A2A client tokens work only on the A2A listener',
+        code: 'auth_a2a_client',
+      });
+    }
+  );
 });
 
 // The self-authenticated route table, each with a placeholder id/name/addr —

@@ -8,10 +8,16 @@
   "include": ["src/**/*.ts", "test/**/*.ts", "package.json"],
   "references": [
     {
+      "path": "../a2a/tsconfig.json"
+    },
+    {
       "path": "../core/tsconfig.json"
     },
     {
       "path": "../memory/tsconfig.json"
+    },
+    {
+      "path": "../federation/tsconfig.json"
     },
     {
       "path": "../protocol/tsconfig.json"

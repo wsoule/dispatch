@@ -1,0 +1,95 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "channels",
+  "vectors": [
+    {
+      "id": "core.channels.join-creates-and-leave-removes",
+      "title": "Joining creates a channel; leaving removes the member and reports whether one was removed",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["7.2", "7.3"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        { "op": "join", "channel": "auth", "member": "task:t-000009" },
+        { "op": "join", "channel": "auth", "member": "human:wyat" },
+        { "op": "leave", "channel": "auth", "member": "task:t-000009" },
+        { "op": "leave", "channel": "auth", "member": "task:t-000009" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": true, "result": { "removed": true } },
+          { "ok": true, "result": { "removed": false } }
+        ],
+        "channels": [{ "name": "auth", "members": ["human:wyat"] }]
+      }
+    },
+    {
+      "id": "core.channels.a-session-cannot-join",
+      "title": "A session cannot join a channel, since membership outlives sessions; the channel is not created",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["7.3"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [{ "op": "join", "channel": "auth", "member": "run:r-000001" }],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "member" } }
+        ],
+        "channels": []
+      }
+    },
+    {
+      "id": "core.channels.implicit-members-are-notified",
+      "title": "A channel's implicit members are reached through the channel, except the sender's own work item",
+      "class": "host-core",
+      "level": "MAY",
+      "profile": "core",
+      "sections": ["3.5", "3.6", "6.2"],
+      "capability": "implicit-members",
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "implicit": { "eng/web": ["task:t-000001", "task:t-000002"] },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["channel:eng/web"],
+            "kind": "notice",
+            "body": "api changed"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "via": "channel",
+            "state": "notified",
+            "session": "run:r-000002"
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notify", "session": "run:r-000002", "message": "$s1" }
+        ]
+      }
+    }
+  ]
+}

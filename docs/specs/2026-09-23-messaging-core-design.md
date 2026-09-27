@@ -1,8 +1,8 @@
 # Messaging core
 
-Status: **design approved 2026-09-23; protocol, daemon host, MCP tools and
-replacements built; desktop UI not yet.** First of six sub-projects that turn
-Dispatch from a task tracker into an agent communication platform.
+Status: **design approved 2026-09-23; built (protocol, daemon host, MCP tools,
+replacements, desktop UI).** First of six sub-projects that turn Dispatch from a
+task tracker into an agent communication platform.
 
 ## Why
 
@@ -290,12 +290,13 @@ agent. The effect is awaited before the answer is published or its deliveries
 are dispatched, then recorded in `gate_effects`. Handlers must be idempotent:
 `recover()` replays every answered gate with no record.
 
-**Wake.** Only held `task:` recipients of a `wake: 'request'` message are woken.
-`host.decide` denies anything but a task that exists and is not an epic, landed
-or dropped. A human sender's wake is then allowed at every rung, with no gate:
-waking a task is their own call, as `/message {resume: true}` was. Any other
-wake consults the autonomy ladder's `wake` gate, which stops blocking at rung 3
-and is capped by the task's risk: `auto` → `allow`, otherwise `ask`.
+**Wake.** Only held `task:` recipients of a `wake: 'request'` message are woken,
+plus a held `run:` recipient of a human's. `host.decide` denies anything but a
+task that exists and is not an epic, landed or dropped, or a run a human names.
+A human sender's wake is then allowed at every rung, with no gate: waking a task
+is their own call. Any other wake consults the autonomy ladder's `wake` gate,
+which stops blocking at rung 3 and is capped by the task's risk: `auto` →
+`allow`, otherwise `ask`.
 
 - `allow` → `host.wake` calls the orchestrator's `wakeTask`, acting as the human
   sender or as `agent:dispatch`. A human's wake continues the task's latest
@@ -306,6 +307,11 @@ and is capped by the task's risk: `auto` → `allow`, otherwise `ask`.
   agent's wake never continues a finished run. Nothing is pushed into a finished
   run — Claude runs end at their first `result` and Codex runs have one turn. On
   failure the sender gets "Could not wake …".
+- A human's wake of `run:<id>` (Request changes or Continue on that run) calls
+  the orchestrator's `wakeRun`, which continues exactly that run when it has
+  ended unreviewed with a session and a worktree and nothing has continued it
+  yet. Otherwise the sender gets "Could not wake …" with the reason, and the
+  message waits on the run.
 - `deny` → stays held; the sender gets a `notice`.
 - `ask` → the engine sends a blocking `question` with
   `GateData { type: 'wake' }` and choices approve/deny to `host.owner(target)`,
@@ -436,7 +442,8 @@ POST   /api/messages                        send; Idempotency-Key replays the fi
 GET    /api/messages/:id
 POST   /api/messages/:id/reply              answer if the target asks, else a message
 GET    /api/messages/:id/answer[?wait=1]    the answer or null; wait=1 long-polls 30 s
-GET    /api/threads?limit=N                 recent threads (default 50, at most 200)
+GET    /api/threads?limit=N[&about=task:<id>]  recent threads (default 50, at most 200),
+                                               or those a task or its runs took part in
 GET    /api/threads/:id                     thread with delivery states
 GET    /api/mailbox?address=&state=a,b      mailbox; the caller's own by default
 POST   /api/deliveries/:id/read
@@ -523,7 +530,7 @@ reply, and send.
 | Today                                                   | After                                                                                                                                        |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `POST /api/runs/:id/inject`, `agent_message`            | Removed. Injection survives only as the daemon's internal `push` hook.                                                                       |
-| `POST /api/runs/:id/message`                            | `msg_send` from `human:<owner>` to `run:<id>`; `{resume: true}` is a human's `wake: 'request'` message to `task:<id>`                        |
+| `POST /api/runs/:id/message`                            | `msg_send` from `human:<owner>` to `run:<id>`; `{resume: true}` is a human's `wake: 'request'` message to `run:<id>`                         |
 | `message_user`                                          | `message`/`notice` to a human                                                                                                                |
 | `ask_user`, `QuestionRegistry`                          | blocking `question` to a human                                                                                                               |
 | tool approvals, `awaiting-approval` flag                | blocking `question`, `GateData tool-approval`, choices approve, approve-session, deny                                                        |
@@ -563,13 +570,16 @@ bus land together — no aliases.
   shows the thread with kind badges, clickable refs and choice buttons, built
   from `@dispatch/ui` `ai/` pieces (`ChatMessage`, `PromptBar`, `ApprovalCard`).
   The composer completes addresses on `@`.
-- **Task page** (`components/tasks/page/TaskPage.tsx`): a `thread` tab for
-  everything to or from `task:<id>`.
+- **Task page** (`views/TaskView.tsx`, which the task page rewrite replaces with
+  `components/tasks/page/TaskPage.tsx`, a Thread toggle beside Preview): a
+  `thread` tab for everything to or from `task:<id>`, listed through
+  `GET /api/threads?about=task:<id>`.
 - **Run chat** (`TaskChatTab` → `RunLogView`): pushed and notified messages
-  render inline where the agent saw them; `QuestionCard`, `ApprovalCard` and
-  `ScopeRequestCard` render from open gate questions instead of the old
-  registries. `InboxView` does the same.
-- **Settings → Agents:** roster with status, mute and revoke.
+  render inline where the agent saw them, each with a link to its thread;
+  `QuestionCard`, `ApprovalCard` and `ScopeRequestCard` render from open gate
+  questions instead of the old registries. `InboxView` does the same.
+- **Settings → Connected agents:** roster with status, approve, mute and revoke
+  (the models page keeps the name Agents).
 
 The desktop's data layer (`hooks/useDispatchProject.ts`) swaps its question,
 approval, scope-request and decision state for one query over open blocking

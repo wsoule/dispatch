@@ -1,7 +1,7 @@
 import type { AddLedgerInput, LedgerEntry, TaskRisk } from '@dispatch/core';
 import type { JsonValue, Message } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
-import { afterEach, describe, expect, it } from 'bun:test';
+import { afterEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -149,8 +149,10 @@ function harness(
         terminalCallbacks.push(cb);
         return () => {};
       },
-      pendingApprovalFor: (runId) =>
-        opts.pending?.find((p) => p.runId === runId),
+      pendingApprovalFor: (runId, requestId) =>
+        opts.pending?.find(
+          (p) => p.runId === runId && p.requestId === requestId
+        ),
       diff: (runId) => {
         if (opts.diffThrows !== undefined) throw opts.diffThrows;
         return { files: diffs.get(runId) ?? [] };
@@ -284,6 +286,28 @@ describe('policyDecisionClassifier', () => {
       'run-stalled',
     ]) {
       expect(classify(item(kind))).toBe('blocking');
+    }
+    h.stop();
+  });
+
+  // Policy only ever answers tool approvals; the other approval gates were
+  // decided by a human, so a resolved one never reads as auto-decided.
+  it('records only resolved tool approvals under the approval gate', () => {
+    const h = harness();
+    h.setPolicy('policy:\n  rung: 4\n');
+    const classify = policyDecisionClassifier(h.root, {
+      approvalFloor: () => false,
+    });
+    const approval = (reason: string) =>
+      ({ kind: 'approval', state: 'resolved', reason }) as Parameters<
+        typeof classify
+      >[0];
+    expect(classify(approval('tool-approval'))).toBe('recorded');
+    for (const reason of ['agent-registration', 'overseer-action', 'wake']) {
+      expect([reason, classify(approval(reason))]).toEqual([
+        reason,
+        'blocking',
+      ]);
     }
     h.stop();
   });
@@ -643,7 +667,7 @@ describe('the approval gate', () => {
     h.stop();
   });
 
-  it('records nothing when a human answered first', async () => {
+  it('records nothing, and logs nothing, when a human answered first', async () => {
     const h = harness({
       pending,
       approvalFloor: () => false,
@@ -654,12 +678,15 @@ describe('the approval gate', () => {
       ),
     });
     h.setPolicy('policy:\n  rung: 3\n');
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
     h.events.broadcast({
       type: 'message.new',
       message: approvalGate({ command: 'pnpm install' }),
     });
     await settle();
+    errors.mockRestore();
     expect(h.ledger).toEqual([]);
+    expect(errors).not.toHaveBeenCalled();
     h.stop();
   });
 

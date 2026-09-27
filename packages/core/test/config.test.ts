@@ -19,6 +19,7 @@ import {
   queueWeights,
 } from '../src/config.js';
 import {
+  DEFAULT_A2A,
   DEFAULT_MEMORY,
   MAX_CONCURRENCY_HARD_CAP,
 } from '../src/configTypes.js';
@@ -78,6 +79,8 @@ describe('loadConfig', () => {
       policy: DEFAULT_POLICY,
       preview: DEFAULT_PREVIEW,
       queue: { weights: DEFAULT_QUEUE_WEIGHTS },
+      a2a: DEFAULT_A2A,
+      a2aWarnings: [],
     });
   });
   it('merges file values over defaults', () => {

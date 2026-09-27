@@ -1,6 +1,9 @@
 import { ActorRefError, parseActorRef, TASK_ID_PATTERN } from '@dispatch/core';
 
+import { SYSTEM_ADDRESS } from './constants.js';
 import { MessagingError } from './errors.js';
+
+export { SYSTEM_ADDRESS };
 
 export type Address = string;
 
@@ -10,9 +13,6 @@ export type ParsedAddress =
   | { kind: 'task'; id: string; address: Address }
   | { kind: 'run'; id: string; address: Address }
   | { kind: 'channel'; name: string; address: Address };
-
-/** The daemon's own identity: sender of gates, notices and breaker flags. */
-export const SYSTEM_ADDRESS: Address = 'agent:dispatch';
 
 const RUN_ID = /^r-[0-9a-f]{6,12}$/;
 const CHANNEL_NAME = /^[a-z0-9][a-z0-9._-]*(\/[a-z0-9][a-z0-9._-]*)*$/;

@@ -1,6 +1,10 @@
 import type { Address } from '../src/address.js';
+import type { Sender } from '../src/engine.js';
 import type { Message } from '../src/envelope.js';
 import type {
+  ExternalAdmission,
+  ExternalKind,
+  ExternalTarget,
   MessagingHost,
   PolicyRequest,
   PolicyRuling,
@@ -22,6 +26,15 @@ export class FakeHost implements MessagingHost {
   ownerAddress: Address = 'human:wyat';
   clock = new Date('2026-09-23T10:00:00.000Z');
   calls: { hook: string; args: unknown[] }[] = [];
+  externals = new Map<Address, ExternalKind>();
+  admit:
+    | ((
+        target: ExternalTarget,
+        sender: Sender,
+        replyTarget: Message | null,
+        message: Message
+      ) => ExternalAdmission)
+    | null = null;
 
   startRun(taskId: string, runId: string): void {
     this.liveRuns.set(taskId, runId);
@@ -80,5 +93,22 @@ export class FakeHost implements MessagingHost {
   }
   now(): Date {
     return this.clock;
+  }
+  external(address: Address): ExternalKind | null {
+    return this.externals.get(address) ?? null;
+  }
+  admitExternal(
+    target: ExternalTarget,
+    sender: Sender,
+    replyTarget: Message | null,
+    message: Message
+  ): ExternalAdmission {
+    this.calls.push({
+      hook: 'admitExternal',
+      args: [target.recipient, target.via, target.field],
+    });
+    return this.admit === null
+      ? 'deliver'
+      : this.admit(target, sender, replyTarget, message);
   }
 }

@@ -11,6 +11,7 @@ import {
   LayoutDashboard,
   Link2,
   ListChecks,
+  MessagesSquare,
   NotebookPen,
   Play,
   Radar,
@@ -49,7 +50,7 @@ type ViewRow<Id> = { id: Id; label: string; icon: typeof Inbox };
 /**
  * Work: what you are building, in the order it moves — where things stand, the
  * tasks themselves, the plans behind them, and the notes that have not become
- * either yet. Inbox is not here; it leads the fixed top group above.
+ * either yet. Inbox and Threads are not here; they lead the fixed top group above.
  *
  * Labels are the plain word for what the page does. "Control room" and "Brain
  * dump" were names this team knew and nobody else could parse, and a first run
@@ -94,11 +95,12 @@ const RUN_GLOBAL_VIEWS: ViewRow<GlobalView>[] = [
   { id: 'all-agents', label: 'All agents', icon: Radar },
 ];
 
-/** Every project destination in rail order — Inbox first, then the sections as
- * they are rendered — which is also the ⌘N order: ⌘1 is the first row, and so
- * on. App indexes into this for `goto-N`. */
+/** Every project destination in rail order — Inbox and Threads first, then the
+ * sections as they are rendered — which is also the ⌘N order: ⌘1 is the first
+ * row, and so on. App indexes into this for `goto-N`. */
 export const PROJECT_NAV_VIEWS: PaletteView[] = [
   { id: 'inbox', label: 'Inbox' },
+  { id: 'threads', label: 'Threads' },
   ...[...WORK_VIEWS, ...RUN_PROJECT_VIEWS, ...CODE_VIEWS].map(
     ({ id, label }) => ({ id, label })
   ),
@@ -270,6 +272,8 @@ interface SidebarProps {
   onNewTask: () => void;
   /** Everything waiting on a human — the Inbox row's count and attention dot. */
   inboxCount: number;
+  /** Open questions and handoffs waiting on me, from the Threads rail. */
+  threadsNeedsYouCount?: number;
   /** Overseer tool calls and queued actions waiting on the human — the Overseer row's count. */
   overseerPendingCount?: number;
   /** Count of non-terminal runs for this project — the All agents row's count. */
@@ -302,8 +306,8 @@ interface SidebarProps {
 
 /**
  * Linear's rail on the `#08080a` frame: a top strip holding the project switcher plus
- * search and new-task icon buttons, a fixed heading-less group (Inbox, Drafts, Overseer),
- * then the collapsible `Favorites ▾` (when anything is starred), `Workspace ▾` — with the
+ * search and new-task icon buttons, a fixed heading-less group (Inbox, Threads, Drafts,
+ * Overseer), then the collapsible `Favorites ▾` (when anything is starred), `Workspace ▾` — with the
  * saved views nested under Tasks — `Fleet ▾`, `Live agents ▾` and `Try ▾` sections. Built
  * on `SidebarNav` (`ui/ai/sidebar-nav.tsx`) inside the `Sidebar` shell that App's
  * `SidebarProvider` hides entirely on `[`. Settings is not a row: it lives in the
@@ -321,6 +325,7 @@ export function Sidebar({
   onOpenPalette,
   onNewTask,
   inboxCount,
+  threadsNeedsYouCount = 0,
   overseerPendingCount = 0,
   liveAgentCount,
   drafts,
@@ -362,6 +367,14 @@ export function Sidebar({
         count: inboxCount > 0 ? inboxCount : undefined,
         // The one row whose count is "needs a human" — it earns the dot, not just a number.
         state: inboxCount > 0 ? 'attention' : undefined,
+        disabled: !hasActiveProject,
+      },
+      {
+        id: 'threads',
+        label: 'Threads',
+        icon: <MessagesSquare strokeWidth={2} />,
+        count: threadsNeedsYouCount > 0 ? threadsNeedsYouCount : undefined,
+        state: threadsNeedsYouCount > 0 ? 'attention' : undefined,
         disabled: !hasActiveProject,
       },
       {

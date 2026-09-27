@@ -470,6 +470,7 @@ describe('overseer tool-approval gates', () => {
       conversation: record.id,
       tool: 'Bash',
       input: { command: 'git status' },
+      floor: false,
     });
     expect(gate.choices).toEqual(['approve', 'approve-session', 'deny']);
     await answerGate(gate.id, 'deny');
@@ -581,6 +582,25 @@ describe('overseer lines on the bus', () => {
     );
     expect(ready.thread).toBeUndefined();
     expect(await threads()).toEqual([]);
+  });
+});
+
+describe("the overseer's name", () => {
+  it('cannot be registered by another agent while the overseer holds it', async () => {
+    await startWithOverseer(new FakeOverseer({ ok: true, reply: 'all quiet' }));
+    const register = await fetch(`${baseUrl}/api/agents/register`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${handle.tokens.agentToken}`,
+      },
+      body: JSON.stringify({ name: 'overseer', client: 'probe' }),
+    });
+    expect(register.status).toBe(409);
+    const { error } = (await json(register)) as { error: string };
+    expect(error).toEndWith(
+      "is Dispatch's own agent; register under another name"
+    );
   });
 });
 

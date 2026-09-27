@@ -1,6 +1,6 @@
 import type { MessagingConfig, TaskStorePort } from '@dispatch/core';
 import { DEFAULT_MESSAGING, loadConfig } from '@dispatch/core';
-import type { Message } from '@dispatch/protocol';
+import type { Message, MessageStore } from '@dispatch/protocol';
 import {
   DeliveryEngine,
   gateOf,
@@ -11,7 +11,7 @@ import {
 import { randomBytes } from 'node:crypto';
 import { join } from 'node:path';
 
-import type { EventBus } from '../events.js';
+import type { EventBus, SocketAudience } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';
 import { LedgerStore } from '../ledger.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
@@ -25,6 +25,7 @@ import {
   runKind,
   TERMINAL_RUN_STATES,
 } from '../orchestrator/types.js';
+import { tierAllows } from '../tiers.js';
 import {
   closeGate,
   closeRunGates,
@@ -32,20 +33,31 @@ import {
   openToolApprovalGate,
   SYSTEM_SENDER,
 } from './gates.js';
+import type { ExternalPolicy } from './host.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 import {
   applyScopeAnswer,
-  expireScopeGates,
   installScopePolicy,
   SCOPE_EXPIRY_SWEEP_MS,
+  sweepScopeGates,
 } from './scopePolicy.js';
 import {
   isStaleApproval,
   raiseToolApproval,
   toolApprovalDecision,
 } from './toolApproval.js';
+
+// Gate types dispatchd implements a handler for; a sub-project adds its type
+// here with its handler.
+const DISPATCH_GATE_TYPES = [
+  'tool-approval',
+  'scope',
+  'wake',
+  'agent-registration',
+  'overseer-action',
+] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.
 interface OverseerGateTarget {
@@ -74,7 +86,31 @@ export interface Messaging {
   // Replays crash-interrupted deliveries and gate effects; must run after
   // orchestrator.reconcileOnBoot() (index.ts says why).
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
+  // Installs (or with null removes) the A2A bridge's say on external recipients.
+  setExternalPolicy(policy: ExternalPolicy | null): void;
   close(): void;
+}
+
+// Who hears a message's events over /ws: deciding humans and participants
+// (sender, `to` addresses, delivery recipients), never the shared agent token.
+function messageAudience(
+  store: MessageStore,
+  message: Message
+): (who: SocketAudience | undefined) => boolean {
+  const participants = new Set<string>([message.from, ...message.to]);
+  for (const d of store.deliveries({ messageId: message.id }))
+    participants.add(d.recipient);
+  return (who) => {
+    if (who === undefined || who.agentToken) return false;
+    if (
+      who.tier !== null &&
+      who.ref !== null &&
+      who.ref.startsWith('human:') &&
+      tierAllows(who.tier, 'decide')
+    )
+      return true;
+    return who.ref !== null && participants.has(who.ref);
+  };
 }
 
 // Opens messages.db, wires the daemon host and gate handlers, and bridges the
@@ -90,6 +126,8 @@ export function openMessaging(deps: {
   ledgerStore?: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
   // The task Activity line a policy grant writes; defaults to none.
   appendPolicyActivity?: (taskId: string, text: string) => void;
+  // How often the scope-gate sweep runs, and its clock; tests shorten both.
+  scopeExpiry?: { sweepMs?: number; now?: () => number };
 }): Messaging {
   const db = openMessagesDb(
     deps.dbPath ?? join(runsDir(deps.rootDir), 'messages.db')
@@ -139,7 +177,12 @@ export function openMessaging(deps: {
     );
     limits = { ...DEFAULT_MESSAGING };
   }
-  const engine = new DeliveryEngine({ store, host, limits });
+  const engine = new DeliveryEngine({
+    store,
+    host,
+    limits,
+    gateTypes: DISPATCH_GATE_TYPES,
+  });
 
   // Tells the sender of `about` why its wake did not happen, through its task
   // if its run has ended. Never throws: the gate's effect is already decided.
@@ -249,7 +292,10 @@ export function openMessaging(deps: {
     const result = await host.wake(target, first);
     if (result.ok) return;
     if (hasActiveRun(taskId)) {
-      blockedWakes.set(taskId, held);
+      // Kept beside, never over, wakes that blocked during the await.
+      const waiting = blockedWakes.get(taskId) ?? [];
+      const newer = waiting.filter((m) => !held.some((h) => h.id === m.id));
+      blockedWakes.set(taskId, [...held, ...newer]);
       return;
     }
     for (const m of held)
@@ -301,11 +347,15 @@ export function openMessaging(deps: {
     raise: (request) => {
       raiseToolApproval(engine, deps.ownerRef, request)
         .then((gate) => {
-          // The run ended, or its call was settled, while the gate was being written.
-          const pending = deps.orchestrator.pendingApprovalFor(request.runId);
+          // The run ended, or this call was settled, while the gate was being written.
           if (!deps.orchestrator.isRunLive(request.runId))
             closeGate(engine, gate.id, 'the run ended');
-          else if (pending?.requestId !== request.requestId)
+          else if (
+            deps.orchestrator.pendingApprovalFor(
+              request.runId,
+              request.requestId
+            ) === undefined
+          )
             closeGate(engine, gate.id, 'the call was already settled');
         })
         .catch((err: unknown) => {
@@ -436,12 +486,15 @@ export function openMessaging(deps: {
     );
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
-  const expiry = setInterval(() => {
-    expireScopeGates(engine, Date.now()).catch((err: unknown) =>
-      console.error('messaging: scope expiry failed', err)
+  // Grants what policy covers before expiring, so a covered gate is never denied.
+  const scopeSweep = setInterval(() => {
+    void sweepScopeGates(
+      engine,
+      scopeDeps,
+      () => deps.scopeExpiry?.now?.() ?? Date.now()
     );
-  }, SCOPE_EXPIRY_SWEEP_MS);
-  expiry.unref();
+  }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
+  scopeSweep.unref();
 
   // A run's end closes the gates nobody can act on any more, and retries (a
   // tick later, after its other end-of-run hooks) the wakes it blocked.
@@ -461,15 +514,24 @@ export function openMessaging(deps: {
 
   // Bridging must be live before recover() runs, so a notice recover()
   // produces while replaying (e.g. a wake failure) still reaches the bus.
-  const unsubscribeEngine = engine.subscribe((e) =>
-    e.type === 'message'
-      ? deps.events.broadcast({ type: 'message.new', message: e.message })
-      : deps.events.broadcast({
-          type: 'delivery.changed',
-          deliveryId: e.delivery.id,
-          messageId: e.delivery.messageId,
-        })
-  );
+  const unsubscribeEngine = engine.subscribe((e) => {
+    if (e.type === 'message') {
+      deps.events.broadcast(
+        { type: 'message.new', message: e.message },
+        messageAudience(store, e.message)
+      );
+      return;
+    }
+    const message = store.getMessage(e.delivery.messageId);
+    deps.events.broadcast(
+      {
+        type: 'delivery.changed',
+        deliveryId: e.delivery.id,
+        messageId: e.delivery.messageId,
+      },
+      message === null ? () => false : messageAudience(store, message)
+    );
+  });
 
   // A run's message to a human lands on the run's transcript.
   const unsubscribeOutgoing = engine.subscribe((e) => {
@@ -499,9 +561,13 @@ export function openMessaging(deps: {
       overseer = target;
     },
     recover: () => engine.recover(),
+    setExternalPolicy(policy) {
+      host.setExternalPolicy(policy);
+    },
     close() {
       overseer = null;
-      clearInterval(expiry);
+      host.setExternalPolicy(null);
+      clearInterval(scopeSweep);
       uninstallScopePolicy();
       unsubscribeRunStarted();
       unsubscribeRunTerminal();

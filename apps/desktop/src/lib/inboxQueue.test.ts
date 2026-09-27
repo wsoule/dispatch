@@ -59,6 +59,7 @@ function input(over: Partial<InboxInput> = {}): InboxInput {
     mergeQueue: null,
     pendingApprovals: new Map(),
     openQuestions: new Map(),
+    openScopeRequests: new Map(),
     fixLoops: new Map(),
     ...over,
   };
@@ -88,6 +89,26 @@ describe('buildInbox', () => {
       input({
         runs: [run({ state: 'running' })],
         openQuestions: new Map([['r-1', [question()]]]),
+      })
+    );
+    expect(sectionStates(data)).toEqual(['answer']);
+  });
+
+  test("an ended run's open question still lands in answer", () => {
+    const data = buildInbox(
+      input({
+        runs: [run({ state: 'failed' })],
+        openQuestions: new Map([['r-1', [question()]]]),
+      })
+    );
+    expect(sectionStates(data)).toEqual(['answer']);
+  });
+
+  test("an ended run's open scope gate lands in answer", () => {
+    const data = buildInbox(
+      input({
+        runs: [run()],
+        openScopeRequests: new Map([['r-1', { paths: ['a.ts'] }]]),
       })
     );
     expect(sectionStates(data)).toEqual(['answer']);

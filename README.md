@@ -493,14 +493,16 @@ and `docs/specs/2026-09-23-messaging-core-design.md` for the messaging tools.
 The desktop app shows a run's tool approvals, questions and scope requests as
 cards. From a terminal:
 
-    dispatch approve <runId>              # --deny, or --session for the rest of the run
+    dispatch approve <runId> [requestId]  # --deny, or --session for the rest of the run
     dispatch scope decide <messageId>     # --deny to refuse
     dispatch message <runId> <text>       # --resume requests changes on a finished run
 
-These act as a human, so each needs the daemon's app token: pass `--token` or
-set `DISPATCH_APP_TOKEN` to the value `dispatch serve` prints at startup. The
-agent token in the daemon file is refused. A daemon that another command started
-in the background printed its app token to `/dev/null`; stop it and run
+A run can park several tool calls at once, each its own gate: name the one to
+answer by the request id `dispatch run show <runId>` lists. These act as a
+human, so each needs the daemon's app token: pass `--token` or set
+`DISPATCH_APP_TOKEN` to the value `dispatch serve` prints at startup. The agent
+token in the daemon file is refused. A daemon that another command started in
+the background printed its app token to `/dev/null`; stop it and run
 `dispatch serve` instead.
 
 ## Dependency graph with Carto (optional)
@@ -592,9 +594,10 @@ wrap this daemon for end users.
 Dispatch is open core — see [`LICENSING.md`](LICENSING.md) for the
 plain-language map:
 
-- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/client`,
-  `@dispatch/cli`, `@dispatch/mcp`. Build on the task model, drive the daemon,
-  or embed the MCP tools without a license review.
+- **MIT** — the integration surface: `@dispatch/core`, `@dispatch/protocol`,
+  `@dispatch/client`, `@dispatch/cli`, `@dispatch/mcp`. Build on the task model,
+  embed the message bus, drive the daemon, or embed the MCP tools without a
+  license review.
 - **[FSL-1.1-ALv2](LICENSE)** — the desktop app and the daemon/orchestrator.
   Source-available, not OSI open source: read, build, modify, self-host, and
   redistribute for any purpose except shipping a competing product or service.

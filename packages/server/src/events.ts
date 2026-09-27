@@ -6,6 +6,7 @@ import type { FixLoopStop } from './orchestrator/fixLoop.js';
 import type { NormalizedEntry, RunSurvey } from './orchestrator/types.js';
 import type { ReceiptsResult } from './receipts/exporter.js';
 import type { SyncResult } from './sync/boardSyncer.js';
+import type { AuthTier } from './tiers.js';
 
 // Single WS message shape the server ever sends. `hello` greets a freshly
 // opened socket; `task.changed` tells every connected client "something
@@ -73,7 +74,7 @@ export type ServerEvent =
   | { type: 'git.changed' }
   // A finding's verdict/ruling changed, or a review run raised a new one.
   | { type: 'finding.changed' }
-  // A decision/hazard/constraint/handoff was added to the ledger.
+  // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
   // Memory changed. A bare refetch signal; a personal change carries no id,
   // since every request-tier client hears it.
@@ -148,12 +149,23 @@ export type ServerEvent =
   // A message was stored. Carries it inline: every client renders it at once.
   | { type: 'message.new'; message: Message }
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
-  | { type: 'delivery.changed'; deliveryId: string; messageId: string };
+  | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // The A2A bridge's clients, tasks or listener changed; go refetch.
+  | { type: 'a2a.changed' };
+
+/** Who an event socket belongs to, as index.ts resolved its credential. */
+export interface SocketAudience {
+  ref: string | null;
+  tier: AuthTier | null;
+  /** The credential is the shared on-disk agent token. */
+  agentToken: boolean;
+}
 
 // The subset of Bun's ServerWebSocket used here, kept minimal so tests can
 // pass plain mock objects instead of real sockets.
 export interface BroadcastClient {
   send(data: string): void;
+  readonly data?: SocketAudience;
 }
 
 // Fan-out hub for connected WS clients. The watcher (external file edits) and
@@ -188,9 +200,16 @@ export class EventBus {
     return () => this.listeners.delete(listener);
   }
 
-  broadcast(event: ServerEvent): void {
+  // With an audience, only sockets it accepts get the frame; in-process
+  // listeners always get every event.
+  broadcast(
+    event: ServerEvent,
+    audience?: (who: SocketAudience | undefined) => boolean
+  ): void {
     const payload = JSON.stringify(event);
-    for (const client of this.clients) client.send(payload);
+    for (const client of this.clients) {
+      if (audience === undefined || audience(client.data)) client.send(payload);
+    }
     for (const listener of this.listeners) listener(event);
   }
 }

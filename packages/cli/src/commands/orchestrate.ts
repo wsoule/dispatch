@@ -12,10 +12,9 @@ import {
   type ToolApproval,
   toolApprovalOf,
 } from '../orchestrateFormat.js';
-import { singleFlight } from '../singleFlight.js';
 import type { ConnectEventsOptions } from '../watch.js';
 import { connectEvents } from '../watch.js';
-import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
+import { appTokenClient, optionalAppToken } from './appToken.js';
 import { ensureDaemon } from './daemon.js';
 import { requireInitialized } from './task.js';
 
@@ -49,11 +48,11 @@ function validateReviewAction(value: string): ReviewAction {
   return value as ReviewAction;
 }
 
-// Streams a single run's `run.log` events and tool-approval gates live and
-// resolves once it reaches a terminal state, with the matching exit code
-// (see exitCodeForRunState). `setRunId` is separate from construction
-// because the two call sites need it at different points: `run watch
-// <runId>` already knows the id when it starts listening, but `run
+// Streams a single run's `run.log` events live, announces each time it parks
+// on a tool approval, and resolves once it reaches a terminal state, with the
+// matching exit code (see exitCodeForRunState). `setRunId` is separate from
+// construction because the two call sites need it at different points: `run
+// watch <runId>` already knows the id when it starts listening, but `run
 // <taskId> --watch` opens the WS connection *before* calling createRun (so
 // no early log entries are missed) and only learns the run's id once that
 // call returns — every event that arrives before `setRunId` is buffered and
@@ -74,7 +73,7 @@ export function createRunWatcher(
   ctx: CliContext,
   client: ApiClient,
   baseUrl: string,
-  opts: { verbose?: boolean },
+  opts: { verbose?: boolean; appClient?: ApiClient },
   connectOptions: Pick<
     ConnectEventsOptions,
     'createSocket' | 'reconnectDelayMs' | 'maxConsecutiveFailures' | 'token'
@@ -112,16 +111,54 @@ export function createRunWatcher(
     rejectExit(err);
   }
 
-  // I2(a): the id-known refetch-and-check is exactly what runs on every
-  // reconnect (see `onOpen` below) AND on `run.changed`, both of which can
-  // fire close together — singleFlight collapses that into one HTTP call
-  // in flight at a time instead of racing several.
-  const refetchAndCheck = singleFlight(async () => {
+  // /ws carries gates only to deciding humans, so a park is read off the run's
+  // state; the app client, when given, names each parked call and its tool.
+  let parkAnnounced = false;
+  async function announcePark(id: string): Promise<void> {
+    let gates: RunGate[] = [];
+    if (opts.appClient !== undefined) {
+      try {
+        const { items } = await opts.appClient.openDecisions();
+        gates = findRunGates(items, id);
+      } catch (err) {
+        if (!(err instanceof CliError)) throw err;
+      }
+    }
+    if (gates.length === 0) ctx.log(formatApprovalRequest({ runId: id }));
+    for (const { approval } of gates) ctx.log(formatApprovalRequest(approval));
+  }
+
+  async function checkRun(): Promise<void> {
     if (runId === undefined) return;
     const detail = await client.getRun(runId);
+    const parked = detail.meta.state === 'awaiting-approval';
+    if (parked && !parkAnnounced) await announcePark(runId);
+    parkAnnounced = parked;
     const code = exitCodeForRunState(detail.meta.state);
     if (code !== null) finish(code);
-  });
+  }
+
+  // I2(a): the id-known refetch-and-check is exactly what runs on every
+  // reconnect (see `onOpen` below) AND on `run.changed`, both of which can
+  // fire close together — one HTTP call is in flight at a time, and a request
+  // that lands mid-flight runs once more after it, so a park is never missed.
+  let inFlight: Promise<void> | null = null;
+  let again = false;
+  function refetchAndCheck(): Promise<void> {
+    if (inFlight !== null) {
+      again = true;
+      return inFlight;
+    }
+    inFlight = (async () => {
+      do {
+        again = false;
+        await checkRun();
+      } while (again && !settled);
+    })().finally(() => {
+      inFlight = null;
+    });
+    return inFlight;
+  }
 
   // A refetch that failed because the CONNECTION died is not fatal — it is the
   // condition the socket layer's reconnect/give-up loop already exists to
@@ -159,9 +196,6 @@ export function createRunWatcher(
     if (event.type === 'run.log' && event.runId === runId) {
       const line = formatEntry(event.entry, opts);
       if (line !== null) ctx.log(line);
-    } else if (event.type === 'message.new') {
-      const approval = toolApprovalOf(event.message);
-      if (approval?.runId === runId) ctx.log(formatApprovalRequest(approval));
     } else if (event.type === 'run.changed') {
       // No payload on `run.changed` says WHICH run changed — cheapest
       // correct response is to refetch this one and check whether it just
@@ -211,46 +245,106 @@ function describeDispatch(meta: RunMeta, taskId: string): string {
     : `dispatched ${meta.id} (${meta.executor}) for ${taskId}`;
 }
 
-// The open gate a run's parked tool call waits on, pinned to `requestId` when
-// one is given; null when the run is parked on nothing open.
-function findRunGate(
-  items: Message[],
-  runId: string,
-  requestId?: string
-): { gate: Message; approval: ToolApproval } | null {
-  for (const gate of items) {
-    const approval = toolApprovalOf(gate);
-    if (
-      approval?.runId === runId &&
-      (requestId === undefined || approval.requestId === requestId)
-    ) {
-      return { gate, approval };
-    }
-  }
-  return null;
+// A client on DISPATCH_APP_TOKEN when it is set: watching works without one,
+// but only the app token may read the gates a parked run waits on.
+function optionalAppClient(baseUrl: string): ApiClient | undefined {
+  const token = optionalAppToken(undefined);
+  return token === undefined ? undefined : createApiClient(baseUrl, token);
 }
 
-// The `run show` line for a parked run. An app token names the gate's tool and
-// request id; without one, or when it cannot read the gates, the line omits them.
+interface RunGate {
+  gate: Message;
+  approval: ToolApproval;
+}
+
+// The open gates of every tool call a run is parked on, in the listing's
+// oldest-first order: one gate per call.
+function findRunGates(items: Message[], runId: string): RunGate[] {
+  const found: RunGate[] = [];
+  for (const gate of items) {
+    const approval = toolApprovalOf(gate);
+    if (approval?.runId === runId) found.push({ gate, approval });
+  }
+  return found;
+}
+
+// The gate `dispatch approve` answers: the named call, or the run's only one.
+// Several parked calls need a request id, since each has its own gate.
+function pickRunGate(
+  gates: RunGate[],
+  runId: string,
+  requestId: string | undefined
+): RunGate {
+  const found =
+    requestId === undefined
+      ? gates.length === 1
+        ? gates[0]
+        : undefined
+      : gates.find((g) => g.approval.requestId === requestId);
+  if (found !== undefined) return found;
+  if (gates.length === 0)
+    throw new CliError(`${runId} is not awaiting an approval`);
+  const calls = gates
+    .map((g) => `${g.approval.requestId} (${g.approval.tool})`)
+    .join(', ');
+  throw new CliError(
+    requestId === undefined
+      ? `${runId} is parked on ${gates.length} calls: ${calls}; name one: dispatch approve ${runId} <requestId>`
+      : `${runId} is not parked on ${requestId}; its parked calls: ${calls}`
+  );
+}
+
+// The `run show` lines for a parked run: each parked call's tool and request id
+// with an app token, else just how to answer, naming a refused token's error.
 async function describeParkedApproval(
   baseUrl: string,
   runId: string,
   token?: string
-): Promise<string> {
-  const answer = `answer with: dispatch approve ${runId} [--deny] (needs the app token: --token or DISPATCH_APP_TOKEN)`;
-  if (token !== undefined) {
-    try {
-      const { items } = await createApiClient(baseUrl, token).openDecisions();
-      const found = findRunGate(items, runId);
-      if (found !== null) {
-        const { tool, requestId } = found.approval;
-        return `awaiting approval: ${tool} (${requestId}) — ${answer}`;
-      }
-    } catch (err) {
-      if (!(err instanceof CliError)) throw err;
+): Promise<string[]> {
+  const needs = '(needs the app token: --token or DISPATCH_APP_TOKEN)';
+  const answer = `answer with: dispatch approve ${runId} [--deny] ${needs}`;
+  if (token === undefined) return [`awaiting approval — ${answer}`];
+  try {
+    const { items } = await createApiClient(baseUrl, token).openDecisions();
+    const gates = findRunGates(items, runId);
+    if (gates.length === 1) {
+      const { tool, requestId } = gates[0].approval;
+      return [`awaiting approval: ${tool} (${requestId}) — ${answer}`];
     }
+    if (gates.length > 1) {
+      return [
+        `awaiting approval on ${gates.length} calls — answer each with: dispatch approve ${runId} <requestId> [--deny] ${needs}`,
+        ...gates.map((g) => `  ${g.approval.tool} (${g.approval.requestId})`),
+      ];
+    }
+    return [`awaiting approval — ${answer}`];
+  } catch (err) {
+    if (!(err instanceof CliError)) throw err;
+    return [
+      `awaiting approval — ${answer}`,
+      `  could not read its gates with that token: ${err.message}`,
+    ];
   }
-  return `awaiting approval — ${answer}`;
+}
+
+// The daemon's notice saying why a wake-requesting message woke nothing, read
+// from the sender's unread mail; null when there is none or it cannot be read.
+async function wakeNoticeFor(
+  client: ApiClient,
+  messageId: string
+): Promise<string | null> {
+  try {
+    const { items } = await client.getMailbox(['held', 'notified', 'pushed']);
+    const notice = items.findLast(
+      ({ message }) =>
+        message.kind === 'notice' &&
+        message.refs.some((r) => r.type === 'message' && r.id === messageId)
+    );
+    return notice?.message.body ?? null;
+  } catch (err) {
+    if (err instanceof CliError) return null;
+    throw err;
+  }
 }
 
 export function registerOrchestrateCommands(
@@ -349,7 +443,7 @@ export function registerOrchestrateCommands(
           ctx,
           client,
           baseUrl,
-          { verbose: opts.verbose },
+          { verbose: opts.verbose, appClient: optionalAppClient(baseUrl) },
           { token }
         );
         // C1: `dispose()` must run even if `createRun` itself rejects (a
@@ -411,14 +505,12 @@ export function registerOrchestrateCommands(
         `${meta.id}  task=${meta.taskId}  state=${meta.state}  executor=${meta.executor}  branch=${meta.branch}`
       );
       if (meta.state === 'awaiting-approval') {
-        const appToken = (opts.token ?? process.env.DISPATCH_APP_TOKEN)?.trim();
-        ctx.log(
-          await describeParkedApproval(
-            baseUrl,
-            meta.id,
-            appToken === '' ? undefined : appToken
-          )
+        const parked = await describeParkedApproval(
+          baseUrl,
+          meta.id,
+          optionalAppToken(opts.token)
         );
+        for (const line of parked) ctx.log(line);
       }
       const last20 = detail.entries.slice(-20);
       for (const entry of last20) {
@@ -442,7 +534,13 @@ export function registerOrchestrateCommands(
         process.exitCode = immediate;
         return;
       }
-      const watcher = createRunWatcher(ctx, client, baseUrl, opts, { token });
+      const watcher = createRunWatcher(
+        ctx,
+        client,
+        baseUrl,
+        { ...opts, appClient: optionalAppClient(baseUrl) },
+        { token }
+      );
       try {
         watcher.setRunId(runId);
         process.exitCode = await watcher.waitForExit();
@@ -468,7 +566,7 @@ export function registerOrchestrateCommands(
   program
     .command('approve <runId> [requestId]')
     .description(
-      'Approve or deny a run awaiting an approval decision (needs the daemon app token)'
+      'Approve or deny a tool call a run is parked on; name its requestId when the run parked several (needs the daemon app token)'
     )
     .option('--deny', 'deny the request instead of approving it')
     .option('--session', 'also approve this tool for the rest of the run')
@@ -485,17 +583,21 @@ export function registerOrchestrateCommands(
           token?: string;
         }
       ) => {
+        const deny = opts.deny === true;
+        if (!deny && opts.reason !== undefined) {
+          throw new CliError(
+            '--reason goes with --deny: an approval has no reason'
+          );
+        }
         // Approving answers a gate, which the daemon takes only from a human:
         // a client on the app token, never a daemon this command started.
-        const appToken = resolveAppToken(opts.token, 'dispatch approve');
-        const { baseUrl } = await attachToRunningDaemon(ctx);
-        const client = createApiClient(baseUrl, appToken);
+        const client = await appTokenClient(
+          ctx,
+          opts.token,
+          'dispatch approve'
+        );
         const { items } = await client.openDecisions();
-        const found = findRunGate(items, runId, requestId);
-        if (found === null) {
-          throw new CliError(`${runId} is not awaiting an approval`);
-        }
-        const deny = opts.deny === true;
+        const found = pickRunGate(findRunGates(items, runId), runId, requestId);
         await client.replyToMessage(found.gate.id, {
           body: deny ? (opts.reason ?? '') : '',
           choice: deny
@@ -515,10 +617,7 @@ export function registerOrchestrateCommands(
     .description(
       'Send a message to a live run, or request changes on a finished one (needs the daemon app token)'
     )
-    .option(
-      '--resume',
-      "request changes on a finished run (wakes the run's task)"
-    )
+    .option('--resume', 'request changes on a finished run (continues it)')
     .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
     .action(
       async (
@@ -527,9 +626,11 @@ export function registerOrchestrateCommands(
         opts: { resume?: boolean; token?: string }
       ) => {
         // Messages go out as a human, so they need the app token too.
-        const appToken = resolveAppToken(opts.token, 'dispatch message');
-        const { baseUrl } = await attachToRunningDaemon(ctx);
-        const client = createApiClient(baseUrl, appToken);
+        const client = await appTokenClient(
+          ctx,
+          opts.token,
+          'dispatch message'
+        );
         const body = text.join(' ');
         if (opts.resume !== true) {
           await client.sendMessage({
@@ -540,24 +641,34 @@ export function registerOrchestrateCommands(
           ctx.log(`sent message to ${runId}`);
           return;
         }
-        // A wake-requesting send to the task starts (or continues) its run
-        // before it returns, so the run it woke is live by now.
-        const { taskId } = (await client.getRun(runId)).meta;
-        await client.sendMessage({
-          to: [`task:${taskId}`],
+        // A human's wake of an ended run continues exactly that run before the
+        // send returns, so its continuation is already listed after it.
+        const before = new Set((await client.listRuns()).map((r) => r.id));
+        const sent = await client.sendMessage({
+          to: [`run:${runId}`],
           kind: 'message',
           body,
           wake: 'request',
         });
-        const live = (await client.listRuns()).find(
-          (r) => r.taskId === taskId && exitCodeForRunState(r.state) === null
+        const after = await client.listRuns();
+        const continued = after.find(
+          (r) => r.resumedFrom === runId && !before.has(r.id)
         );
-        if (live === undefined) {
+        // A live run that took the message into its conversation simply got it.
+        const pushed = sent.deliveries.some(
+          (d) => d.recipient === `run:${runId}` && d.state === 'pushed'
+        );
+        if (continued === undefined && pushed) {
+          ctx.log(`sent message to ${runId}`);
+          return;
+        }
+        if (continued === undefined) {
           throw new CliError(
-            `${taskId} did not wake; your message is waiting for its next run`
+            (await wakeNoticeFor(client, sent.message.id)) ??
+              `${runId} did not continue; your message is waiting for it`
           );
         }
-        ctx.log(`requested changes on ${runId} — new run ${live.id}`);
+        ctx.log(`requested changes on ${runId} — new run ${continued.id}`);
       }
     );
 
