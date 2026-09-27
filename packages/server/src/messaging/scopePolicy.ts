@@ -13,8 +13,7 @@ import { SYSTEM_SENDER } from './gates.js';
 export const SCOPE_GATE_TTL_MS = 29 * 60_000;
 export const SCOPE_EXPIRY_SWEEP_MS = 30_000;
 
-const SCOPE_EXPIRED_BODY =
-  'Expired: no one decided within 29 minutes. Treat this as denied: proceed within your original fence, and report the blocker in your final summary and in a task_comment.';
+const SCOPE_EXPIRED_BODY = `Expired: no one decided within ${SCOPE_GATE_TTL_MS / 60_000} minutes. Treat this as denied: proceed within your original fence, and report the blocker in your final summary and in a task_comment.`;
 
 /**
  * Whether every path an agent asked to edit lies inside one of the given
@@ -62,9 +61,8 @@ interface ScopeEffectDeps extends ScopePolicyDeps {
   broadcastLedgerChanged(): void;
 }
 
-// The auto-grant ruling for a run's scope request, or null when a human must
-// decide: a path leaving the repo or into .git/, a critical task, or a run or
-// task the daemon cannot find all fail closed.
+// The auto-grant ruling for a run's scope request, or null for a human: a path
+// out of the repo or into .git/, a critical task, or an unknown run or task.
 function scopeRulingFor(
   deps: ScopePolicyDeps,
   runId: string,
@@ -163,6 +161,7 @@ export function installScopePolicy(
 }
 
 // Denies, as the system, every open scope gate nobody decided within the TTL.
+// One that cannot be denied is logged and left for the next sweep.
 export async function expireScopeGates(
   engine: DeliveryEngine,
   nowMs: number
@@ -184,7 +183,10 @@ export async function expireScopeGates(
       expired++;
     } catch (err) {
       if (!(err instanceof MessagingError && err.code === 'conflict'))
-        throw err;
+        console.error(
+          `messaging: could not expire scope gate ${question.id}`,
+          err
+        );
     }
   }
   return expired;

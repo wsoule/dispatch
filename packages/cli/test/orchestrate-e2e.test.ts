@@ -177,8 +177,7 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
   let appToken: string;
 
   // Every call carries the app token in the environment, the way an operator
-  // who started `dispatch serve` would have it exported: only `approve` reads
-  // it, and it refuses without one.
+  // who started `dispatch serve` would have it exported.
   function cli(...args: string[]): string {
     const result = runCli(args, {
       cwd: repo,
@@ -251,8 +250,8 @@ describe('headless dispatcher loop (real daemon, built CLI subprocess)', () => {
     // watch surfaces them too.
     expect(stdout).toContain('[tool');
 
-    // A caller who was not watching can still find the gate: the run read
-    // names the request, so `approve` needs no id.
+    // A caller who was not watching can still find the gate through the open
+    // decisions, and a run parked on one call needs no request id.
     expect(cli('run', 'show', runId)).toContain(
       `awaiting approval: run_shell (fake-approval-1) — answer with: dispatch approve ${runId}`
     );

@@ -21,7 +21,7 @@ const PATCHABLE_VERDICTS: readonly string[] = ['open', 'addressed'];
 const ADJUDICATED_ERROR =
   'through POST /api/tasks/:id/findings/:fid/adjudicate, which requires a ruling';
 const RECOMMENDATIONS: readonly string[] = ['blocks', 'park'];
-// No `handoff`: a handoff is a message now, never a new ledger entry.
+// No `handoff`: handoffs are messages, never ledger entries.
 const LEDGER_KINDS: readonly string[] = ['constraint', 'hazard', 'decision'];
 
 // GET /api/findings?taskId=&verdict=&severity=

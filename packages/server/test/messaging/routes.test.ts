@@ -1333,7 +1333,7 @@ describe('messaging HTTP routes', () => {
   });
 
   it('the old question, scope, approval and message routes are gone', async () => {
-    // A real live run, so each old route reaches its handler today instead of 404ing on an unknown run.
+    // A live run, so a surviving route would answer 400, not 404.
     const { runId } = await liveRun('Old routes');
     const run = `/api/runs/${runId}`;
     for (const [method, path] of [

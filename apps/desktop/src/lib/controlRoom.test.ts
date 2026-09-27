@@ -57,6 +57,7 @@ function input(over: Partial<BuildFeedInput> = {}): BuildFeedInput {
     mergeQueue: null,
     pendingApprovals: new Map(),
     openQuestions: new Map(),
+    openScopeRequests: new Map(),
     fixLoops: new Map(),
     query: '',
     activeStates: new Set(),
@@ -280,7 +281,7 @@ describe('row content', () => {
     const model = buildFeed(
       input({
         runs: [run({ id: 'r-a', state: 'awaiting-approval' })],
-        pendingApprovals: new Map([['r-a', { toolName: 'Bash' }]]),
+        pendingApprovals: new Map([['r-a', [{ toolName: 'Bash' }]]]),
       })
     );
     expect(model.groups[0]?.rows[0]?.attention).toEqual({
@@ -288,6 +289,24 @@ describe('row content', () => {
       detail: null,
     });
     expect(model.groups[0]?.rows[0]?.state).toBe('approve');
+  });
+
+  test('a run parked on several calls counts them and names their tools', () => {
+    const model = buildFeed(
+      input({
+        runs: [run({ id: 'r-a', state: 'awaiting-approval' })],
+        pendingApprovals: new Map([
+          [
+            'r-a',
+            [{ toolName: 'Bash' }, { toolName: 'Write' }, { toolName: 'Bash' }],
+          ],
+        ]),
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.attention).toEqual({
+      reason: 'Wants to run 3 tool calls',
+      detail: 'Bash, Write',
+    });
   });
 
   test('a running run with an open question moves to answer and quotes it', () => {
@@ -325,15 +344,77 @@ describe('row content', () => {
     });
   });
 
-  test('an open question on a finished run does not drag it back to waiting', () => {
+  // An execute run's question stays open after it ends, and the answer reaches
+  // the task's next run, so it still asks for one.
+  test('an open question on an ended run still asks you to answer it', () => {
     const model = buildFeed(
       input({
         runs: [run({ id: 'r-a', state: 'finished' })],
         openQuestions: new Map([['r-a', [{ question: 'Which database?' }]]]),
       })
     );
-    expect(model.groups[0]?.rows[0]?.state).toBe('review');
-    expect(model.groups[0]?.rows[0]?.attention).toBeNull();
+    expect(model.groups[0]?.rows[0]?.state).toBe('answer');
+    expect(model.groups[0]?.rows[0]?.attention).toEqual({
+      reason: 'Asked you a question',
+      detail: 'Which database?',
+    });
+  });
+
+  test('a closed-out run with an open question still gets its row', () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({
+            id: 'r-a',
+            state: 'finished',
+            reviewedAt: '2026-08-05T00:00:00.000Z',
+          }),
+        ],
+        openQuestions: new Map([['r-a', [{ question: 'Which database?' }]]]),
+      })
+    );
+    expect(model.groups.map((g) => g.state)).toEqual(['answer']);
+  });
+
+  test("an ended run's question and its live successor each get a row", () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({ id: 'r-new', state: 'running' }),
+          run({ id: 'r-old', state: 'failed' }),
+        ],
+        openQuestions: new Map([['r-old', [{ question: 'Which database?' }]]]),
+      })
+    );
+    expect(
+      model.groups.flatMap((g) => g.rows.map((r) => `${r.state}:${r.runId}`))
+    ).toEqual(['answer:r-old', 'working:r-new']);
+  });
+
+  test('an open scope gate asks you to answer and names the paths', () => {
+    const model = buildFeed(
+      input({
+        runs: [run({ id: 'r-a', state: 'running' })],
+        openScopeRequests: new Map([
+          ['r-a', { paths: ['src/a.ts', 'src/b.ts'] }],
+        ]),
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.state).toBe('answer');
+    expect(model.groups[0]?.rows[0]?.attention).toEqual({
+      reason: 'Asks to edit outside its fence',
+      detail: 'src/a.ts, src/b.ts',
+    });
+  });
+
+  test('a parked approval outranks an open question', () => {
+    const model = buildFeed(
+      input({
+        runs: [run({ id: 'r-a', state: 'awaiting-approval' })],
+        openQuestions: new Map([['r-a', [{ question: 'Which database?' }]]]),
+      })
+    );
+    expect(model.groups[0]?.rows[0]?.state).toBe('approve');
   });
 
   // After a reload this window never saw the approval.requested event, so the tool name is

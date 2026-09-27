@@ -758,6 +758,7 @@ export type GateData =
       tool: string;
       input: unknown;
       truncated?: true; // set when `input` was cut to fit
+      floor: boolean; // the irreversibility floor holds the call, judged on its full input
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: string; message: string }
@@ -867,7 +868,7 @@ export type ServerEvent =
   | { type: 'git.changed' }
   // A finding's verdict/ruling changed, or a review run raised a new one.
   | { type: 'finding.changed' }
-  // A decision/hazard/constraint/handoff was added to the ledger.
+  // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
   // A task's fix loop moved between states, or stopped. Mirrors
   // packages/server/src/events.ts exactly.
@@ -2153,12 +2154,8 @@ export interface ConnectEventsOptions {
   // Defaults to 1000ms. Overridden in tests so reconnect assertions don't
   // have to wait a full second.
   reconnectDelayMs?: number;
-  // Called for every successfully parsed ServerEvent, including
-  // `task.changed` and `hello` — the orchestrator UI (Phase 4 Slice O3) needs
-  // `run.changed`/`run.log`/`message.new` too, which `onChange` alone
-  // can't carry (it fires only for `task.changed`, unchanged from Phase 2R,
-  // so existing callers keep their exact behavior). A malformed frame never
-  // reaches this callback — see the `try/catch` around `JSON.parse` below.
+  // Called for every parsed ServerEvent, where `onChange` hears only
+  // `task.changed`; a malformed frame never reaches it (see JSON.parse below).
   onEvent?: (event: ServerEvent) => void;
   // Daemon token for the upgrade, since the guard covers `/ws` too. Defaults
   // to whatever the daemon injected into the page it served.
@@ -2492,6 +2489,12 @@ export interface ApiClient {
   stopRunPreview(runId: string): Promise<void>;
   /** The run's requirement checklist; 404s until the finish hook wrote one. */
   fetchRunChecklist(runId: string): Promise<RunChecklist>;
+  /** The full input of a call the run is parked on, which its tool-approval
+   *  gate may carry only a preview of. Decide-tier; 404s once it is settled. */
+  fetchRunApproval(
+    runId: string,
+    requestId: string
+  ): Promise<{ tool: string; input: unknown }>;
   reviewRun(
     runId: string,
     action: 'merge' | 'discard' | 'pr'
@@ -3133,6 +3136,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     },
     fetchRunChecklist: (runId) =>
       request(target, `/api/runs/${runId}/checklist`),
+    fetchRunApproval: (runId, requestId) =>
+      request(target, `/api/runs/${runId}/approvals/${requestId}`),
     reviewRun: (runId, action) =>
       request(target, `/api/runs/${runId}/review`, {
         method: 'POST',

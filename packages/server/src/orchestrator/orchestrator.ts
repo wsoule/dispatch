@@ -692,12 +692,21 @@ export class Orchestrator {
       }));
   }
 
-  // The approval one run is parked on, if any. Only an `awaiting-approval` run
+  // One call a run is parked on, by requestId. Only an `awaiting-approval` run
   // counts: a record left on a cancelled run is not an answerable request.
-  pendingApprovalFor(runId: string): PendingApproval | undefined {
-    const meta = this.registry.get(runId);
-    if (meta?.state !== 'awaiting-approval') return undefined;
-    return this.registry.getPendingApproval(runId);
+  pendingApprovalFor(
+    runId: string,
+    requestId: string
+  ): PendingApproval | undefined {
+    if (this.registry.get(runId)?.state !== 'awaiting-approval')
+      return undefined;
+    return this.registry.getPendingApproval(runId, requestId);
+  }
+
+  // Every call a run is parked on, oldest first.
+  pendingApprovalsFor(runId: string): PendingApproval[] {
+    if (this.registry.get(runId)?.state !== 'awaiting-approval') return [];
+    return this.registry.pendingApprovals(runId);
   }
 
   // Adds `pushedToOrigin` to each merged run, computed fresh per request (never
@@ -1306,10 +1315,8 @@ export class Orchestrator {
     return candidates[0]?.branch ?? null;
   }
 
-  // Answers a pending approval request. Only valid while the run is
-  // `awaiting-approval` and `requestId` matches the one it's actually
-  // waiting on — both mismatches are 400s, not 404s, since the run itself
-  // does exist.
+  // Answers one parked call (a 400 when the run or call is not parked); the run
+  // stays awaiting-approval while any other call is.
   approve(
     runId: string,
     requestId: string,
@@ -1325,8 +1332,7 @@ export class Orchestrator {
         `run is not awaiting approval: ${runId}`
       );
     }
-    const pending = this.registry.getPendingApproval(runId);
-    if (pending === undefined || pending.requestId !== requestId) {
+    if (this.registry.getPendingApproval(runId, requestId) === undefined) {
       throw new OrchestratorClientError(
         `unknown approval request: ${requestId}`
       );
@@ -1341,9 +1347,10 @@ export class Orchestrator {
     if (executorRun === undefined) {
       this.healZombieRun(meta);
     }
-    this.registry.setPendingApproval(runId, undefined);
+    this.registry.removePendingApproval(runId, requestId);
     executorRun.approve(requestId, resolved);
-    this.transition(runId, 'running');
+    if (this.registry.pendingApprovals(runId).length === 0)
+      this.transition(runId, 'running');
     this.approvalGate?.settle(runId, requestId, 'answered');
   }
 
@@ -1528,7 +1535,7 @@ export class Orchestrator {
 
     if (meta.stopRequestedAt !== undefined) {
       executorRun.requestStop();
-      this.releaseParkedApproval(runId, 'the run is stopping');
+      this.releaseParkedApprovals(runId, 'the run is stopping');
       return this.registry.get(runId)!;
     }
 
@@ -1555,7 +1562,7 @@ export class Orchestrator {
     this.ctx.events.broadcast({ type: 'run.changed' });
 
     executorRun.requestStop();
-    this.releaseParkedApproval(runId, 'the run is stopping');
+    this.releaseParkedApprovals(runId, 'the run is stopping');
 
     // Same rule as cancel(): a task file this can't write costs the Activity
     // line, never the stop itself.
@@ -1577,15 +1584,15 @@ export class Orchestrator {
     return this.registry.get(runId)!;
   }
 
-  // The executor answers a parked call itself when the run stops or winds
-  // down, so the run is running again and its gate closes.
-  private releaseParkedApproval(runId: string, reason: string): void {
-    const meta = this.registry.get(runId);
-    const pending = this.registry.getPendingApproval(runId);
-    if (meta?.state !== 'awaiting-approval' || pending === undefined) return;
-    this.registry.setPendingApproval(runId, undefined);
-    this.transition(runId, 'running');
-    this.approvalGate?.settle(runId, pending.requestId, reason);
+  // The executor answers every parked call itself when the run stops or winds
+  // down, so the run is running again and each call's own gate closes.
+  private releaseParkedApprovals(runId: string, reason: string): void {
+    const parked = this.registry.clearPendingApprovals(runId);
+    if (parked.length === 0) return;
+    if (this.registry.get(runId)?.state === 'awaiting-approval')
+      this.transition(runId, 'running');
+    for (const { requestId } of parked)
+      this.approvalGate?.settle(runId, requestId, reason);
   }
 
   /**
@@ -1978,6 +1985,22 @@ export class Orchestrator {
     if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
     if (meta.prUrl !== undefined) return 'run has an open PR';
     if (meta.baseDiscarded === true) return "run's base needs a human";
+    return this.pickUpBlockReason(meta);
+  }
+
+  // Why a human cannot continue exactly this run, or null. A finished run, an
+  // open PR or a flagged base pass: the human chose it, and asking is the review.
+  continueBlockReason(meta: RunMeta): string | null {
+    if (!TERMINAL_RUN_STATES.has(meta.state)) {
+      return `run is ${meta.state}, not ended`;
+    }
+    if (runKind(meta) !== 'execute') return 'run is not an execute run';
+    if (meta.reviewedAt !== undefined) return alreadyReviewedReason(meta);
+    return this.pickUpBlockReason(meta);
+  }
+
+  // What stops any ended execute run being picked up in its own worktree.
+  private pickUpBlockReason(meta: RunMeta): string | null {
     if (meta.sessionId === undefined) return 'run never started a session';
     if (!existsSync(meta.worktreePath)) return 'run has no worktree left';
     if (this.registry.list().some((r) => r.resumedFrom === meta.id)) {
@@ -2097,6 +2120,14 @@ export class Orchestrator {
       return this.requestChanges(latest, WAKE_PROMPT, opts.actor);
     }
     return this.dispatchOrResume(taskId, { actor: opts.actor });
+  }
+
+  // A human's wake of one ended execute run continues exactly that run.
+  wakeRun(runId: string, opts: { actor: string }): RunMeta {
+    const meta = this.requireRun(runId);
+    const reason = this.continueBlockReason(meta);
+    if (reason !== null) throw new OrchestratorConflictError(reason);
+    return this.requestChanges(meta, WAKE_PROMPT, opts.actor);
   }
 
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
@@ -4284,6 +4315,7 @@ export class Orchestrator {
       this.clearStopEscalation(runId);
       this.stoppingRuns.delete(runId);
       this.removeRunToken(runId);
+      this.registry.clearPendingApprovals(runId);
     }
     // A finish that reports no session must not erase the one recordSession
     // already stored: spreading `sessionId: undefined` over the meta did
@@ -4400,8 +4432,9 @@ export class Orchestrator {
         this.scheduleClaimsRefresh(runId);
       },
       onApprovalRequest: (request) => {
-        this.registry.setPendingApproval(runId, request);
-        this.transition(runId, 'awaiting-approval');
+        this.registry.addPendingApproval(runId, request);
+        if (this.registry.get(runId)?.state !== 'awaiting-approval')
+          this.transition(runId, 'awaiting-approval');
         const meta = this.registry.get(runId);
         if (meta !== undefined) {
           this.approvalGate?.raise({
@@ -4420,7 +4453,7 @@ export class Orchestrator {
       onSession: (sessionId) => this.recordSession(runId, sessionId),
       onEnding: () => {
         this.stoppingRuns.add(runId);
-        this.releaseParkedApproval(runId, 'the run ended');
+        this.releaseParkedApprovals(runId, 'the run ended');
       },
       onFinish: (finish) => this.handleFinish(runId, finish),
     };
