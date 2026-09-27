@@ -100,25 +100,18 @@ describe('memory read routes', () => {
       headers: { authorization: `Bearer ${handle.tokens.agentToken}` },
     });
     expect(res.status).toBe(403);
-    const reg = await json<{ address: string; token: string }>(
-      await rawFetch(`${base}/api/agents/register`, {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${handle.tokens.agentToken}`,
-        },
-        body: JSON.stringify({ name: 'a2a.acme', client: 'a2a' }),
-      })
-    );
-    const approved = await fetch(
-      `${base}/api/agents/${encodeURIComponent(reg.address)}/approve`,
-      { method: 'POST' }
-    );
-    expect(approved.status).toBe(200);
+    const added = await fetch(`${base}/api/a2a/clients`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'acme', approve: true }),
+    });
+    expect(added.status).toBe(201);
+    const client = await json<{ token: string }>(added);
     const a2a = await rawFetch(`${base}/api/memory`, {
-      headers: { authorization: `Bearer ${reg.token}` },
+      headers: { authorization: `Bearer ${client.token}` },
     });
     expect(a2a.status).toBe(403);
+    expect((await json<{ code: string }>(a2a)).code).toBe('auth_a2a_client');
   });
 
   it('dry-runs the ledger import for a decider only', async () => {
