@@ -188,6 +188,7 @@
       "kind": "relay",
       "url": "https://relay.test"
     },
+    "dismissed": [],
     "unknown": null
   }
 }

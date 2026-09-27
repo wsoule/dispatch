@@ -159,11 +159,18 @@
     "licensePublicKey": null
   },
   "expect": {
-    "members": [
-      ["ada-0000000a", "admin", 0, [], false, false],
-      ["cy-0000000c", "admin", 1, [], false, false]
-    ],
+    "members": [["cy-0000000c", "admin", 0, [], false, false]],
     "revoked": [
+      [
+        "ada-0000000a",
+        {
+          "afterSeq": 3,
+          "afterHash": "h-ada-0000000a-3",
+          "handle": "ada",
+          "hosts": [],
+          "observer": false
+        }
+      ],
       [
         "bob-0000000b",
         {
@@ -179,7 +186,7 @@
     "resolution": [
       [
         "0b79fb9b9a12476a567c10fcdf701c630e8155f0d29fa014591cabe1e39d2d86",
-        "void"
+        "accepted"
       ],
       [
         "55c1821a0da7bce4de37327f12d6f0a5cdd60c541484950697120b89a6874183",
@@ -194,12 +201,13 @@
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "cy"],
-    "covered": ["ada", "cy"],
+    "people": ["cy"],
+    "covered": ["cy"],
     "closedBy": null,
     "transport": {
       "kind": "git"
     },
+    "dismissed": [],
     "unknown": null
   }
 }

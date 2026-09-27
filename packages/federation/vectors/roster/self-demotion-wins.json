@@ -218,10 +218,19 @@
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
       ["ada-0000000e", "admin", 2, [], false, false],
-      ["bob-0000000b", "member", null, [], false, false],
       ["cy-0000000c", "admin", 1, [], false, false]
     ],
     "revoked": [
+      [
+        "bob-0000000b",
+        {
+          "afterSeq": 1,
+          "afterHash": "h-bob-0000000b-1",
+          "handle": "bob",
+          "hosts": [],
+          "observer": false
+        }
+      ],
       [
         "dee-0000000d",
         {
@@ -241,7 +250,7 @@
       ],
       [
         "26a5e0e50784a031ba70a75dda547c0255b0d736f248097c355f51dbca0da145",
-        "void"
+        "accepted"
       ],
       [
         "3499cd1dcf6dfd2ccc800e0fe139464394c53e8b4ad2c40dc12e5f2812a8cbc3",
@@ -260,12 +269,13 @@
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "bob", "cy"],
-    "covered": ["ada", "bob", "cy"],
+    "people": ["ada", "cy"],
+    "covered": ["ada", "cy"],
     "closedBy": null,
     "transport": {
       "kind": "git"
     },
+    "dismissed": [],
     "unknown": null
   }
 }

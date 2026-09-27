@@ -1,5 +1,5 @@
 {
-  "name": "seq-cut",
+  "name": "dismiss-unknown-id",
   "input": {
     "founder": {
       "replica": "ada-0000000a",
@@ -23,56 +23,50 @@
         "replica": "ada-0000000a",
         "seq": 2,
         "hlc": "1790380800100.0000.ada-0000000a",
-        "hash": "106b56a79a67b057eaecfdaef2705e58e63f4b65cf92a1729760a6f662577c08",
-        "body": {
-          "rv": 1,
-          "action": "admit",
-          "replica": "bob-0000000b",
-          "handle": "bob",
-          "role": "admin",
-          "fingerprint": "FP-bob-0000000b"
-        }
-      },
-      {
-        "replica": "bob-0000000b",
-        "seq": 4,
-        "hlc": "1790380800120.0000.bob-0000000b",
-        "hash": "6e9723907b8a3aded6353bd862b82af6046c022b47b5eceb3071d34150a2339f",
-        "body": {
-          "rv": 1,
-          "action": "admit",
-          "replica": "dee-0000000d",
-          "handle": "dee",
-          "role": "member",
-          "fingerprint": "FP-dee-0000000d"
-        }
-      },
-      {
-        "replica": "bob-0000000b",
-        "seq": 7,
-        "hlc": "1790380800150.0000.bob-0000000b",
-        "hash": "064761906c54b32e57e949f5406841325b93a8b0567ccd75911e032c5981aa2f",
+        "hash": "82c7e82c0e0f4028717e01808a2b8cb21f0f42de88c47f48f4feb4c07d05653e",
         "body": {
           "rv": 1,
           "action": "admit",
           "replica": "cy-0000000c",
           "handle": "cy",
-          "role": "member",
+          "role": "admin",
           "fingerprint": "FP-cy-0000000c"
+        }
+      },
+      {
+        "replica": "cy-0000000c",
+        "seq": 2,
+        "hlc": "1790380800200.0000.cy-0000000c",
+        "hash": "1ba25186e964970af37a1f4a62f05914ad1080b0954aca4c9e6cce53eb75bce6",
+        "body": {
+          "rv": 1,
+          "action": "teleport"
         }
       },
       {
         "replica": "ada-0000000a",
         "seq": 3,
         "hlc": "1790380800300.0000.ada-0000000a",
-        "hash": "38bb71d1cbe1fc04c200487c836914963b4cc45e44a1521d13e2174acf005fa5",
+        "hash": "f3f3592b3ac0350facaec89aa7a8db05d74d8228bf460f8e3f40c7c3eee5eb6b",
         "body": {
           "rv": 1,
-          "action": "revoke",
-          "replica": "bob-0000000b",
-          "afterSeq": 5,
-          "afterHash": "h-bob-0000000b-5",
-          "reason": "test"
+          "action": "dismiss",
+          "replica": "cy-0000000c",
+          "seq": 2,
+          "hash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 4,
+        "hlc": "1790380800310.0000.ada-0000000a",
+        "hash": "167a9c0e6fa35969a5e0f02579fdba35c833e3a0b422debfc21e7bb689380a12",
+        "body": {
+          "rv": 1,
+          "action": "dismiss",
+          "replica": "dee-0000000d",
+          "seq": 9,
+          "hash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         }
       }
     ],
@@ -147,38 +141,33 @@
   "expect": {
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
-      ["dee-0000000d", "member", null, [], false, false]
+      ["cy-0000000c", "admin", 1, [], false, false]
     ],
-    "revoked": [
-      [
-        "bob-0000000b",
-        {
-          "afterSeq": 5,
-          "afterHash": "h-bob-0000000b-5",
-          "handle": "bob",
-          "hosts": [],
-          "observer": false
-        }
-      ]
-    ],
+    "revoked": [],
     "hostCuts": [],
-    "resolution": [
-      [
-        "38bb71d1cbe1fc04c200487c836914963b4cc45e44a1521d13e2174acf005fa5",
-        "accepted"
-      ]
+    "resolution": [],
+    "pending": [
+      "ada-0000000e",
+      "bob-0000000b",
+      "bob-0000000f",
+      "dee-0000000d",
+      "obs-00000010"
     ],
-    "pending": ["ada-0000000e", "bob-0000000f", "cy-0000000c", "obs-00000010"],
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "dee"],
-    "covered": ["ada", "dee"],
+    "people": ["ada", "cy"],
+    "covered": ["ada", "cy"],
     "closedBy": null,
     "transport": {
       "kind": "git"
     },
     "dismissed": [],
-    "unknown": null
+    "unknown": {
+      "hlc": "1790380800200.0000.cy-0000000c",
+      "replica": "cy-0000000c",
+      "seq": 2,
+      "hash": "1ba25186e964970af37a1f4a62f05914ad1080b0954aca4c9e6cce53eb75bce6"
+    }
   }
 }

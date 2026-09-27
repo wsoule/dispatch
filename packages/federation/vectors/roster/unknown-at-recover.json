@@ -142,10 +142,12 @@
     "transport": {
       "kind": "git"
     },
+    "dismissed": [],
     "unknown": {
       "hlc": "1790380800100.0000.cy-0000000c",
       "replica": "cy-0000000c",
-      "seq": 2
+      "seq": 2,
+      "hash": "07804fa19432dbec74dc8f43fe2a98ad92d7366a140ad4a784d54c76c96c1579"
     }
   }
 }

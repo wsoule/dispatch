@@ -118,6 +118,43 @@ const recoveryProof = (replica: string) =>
   );
 const roles = (v: ReturnType<typeof fold>) =>
   Object.fromEntries([...v.members.values()].map((m) => [m.replica, m.role]));
+// The same op, as a build that does not know its rv reads it.
+const unreadable = (o: RosterOpRef): RosterOpRef => ({
+  ...o,
+  body: { ...o.body, rv: 2 } as unknown as RosterBody,
+});
+const dismiss = (
+  by: string,
+  seq: number,
+  ms: number,
+  target: { replica: string; seq: number; hash: string }
+) =>
+  op(by, seq, ms, {
+    action: 'dismiss',
+    replica: target.replica,
+    seq: target.seq,
+    hash: target.hash,
+  });
+const pausedAt = (o: RosterOpRef) => ({
+  hlc: o.hlc,
+  replica: o.replica,
+  seq: o.seq,
+  hash: o.hash,
+});
+const pauseProblem = (o: RosterOpRef) => ({
+  subject: `op:${o.replica}:${o.seq}`,
+  message: `a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue, or an admin can dismiss ${o.replica}'s roster op at seq ${o.seq} (${o.hash})`,
+});
+// The roster itself, leaving out what only a build that reads every op can report.
+const rosterOf = (v: ReturnType<typeof fold>) => ({
+  members: [...v.members.values()].sort((a, b) =>
+    a.replica < b.replica ? -1 : 1
+  ),
+  revoked: [...v.revoked.entries()].sort(([a], [b]) => (a < b ? -1 : 1)),
+  people: v.people,
+  pending: v.pending,
+  dismissed: v.dismissed,
+});
 
 describe('foldRoster', () => {
   it('admits the founder as admin rank 0, derives the team id and lists the rest as pending', () => {
@@ -192,15 +229,23 @@ describe('foldRoster', () => {
     expect(roles(v)).toEqual({ [A]: 'admin' });
   });
 
-  it('resolves a three-admin cycle by rank and keeps the admins it does not cut', () => {
+  it('resolves a three-admin cycle by rank, then accepts what the winner left uncut', () => {
+    const byA = revoke(A, 4, 300, B, 1);
+    const byB = revoke(B, 2, 300, C, 1);
+    const byC = revoke(C, 2, 300, A, 3);
     const v = fold([
       admit(A, 2, 100, B, 'admin'),
       admit(A, 3, 110, C, 'admin'),
-      revoke(A, 4, 300, B, 1),
-      revoke(B, 2, 300, C, 1),
-      revoke(C, 2, 300, A, 3),
+      byA,
+      byB,
+      byC,
     ]);
-    expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin' });
+    // A's revocation wins the pick and cuts B's, so nothing cuts C's any more.
+    expect(v.resolution.get(byA.hash)).toBe('accepted');
+    expect(v.resolution.get(byB.hash)).toBe('void');
+    expect(v.resolution.get(byC.hash)).toBe('accepted');
+    expect(roles(v)).toEqual({ [C]: 'admin' });
+    expect([...v.revoked.keys()].sort()).toEqual([A, B].sort());
   });
 
   it("voids a removal whose publisher's own admission a revocation cuts", () => {
@@ -295,18 +340,11 @@ describe('foldRoster', () => {
     expect(v.revoked.get(C)?.handle).toBeNull();
     // C never used the code, so D's recover admits D.
     expect(v.members.get(D)).toMatchObject({ role: 'admin', recovered: true });
-    // A build that cannot read C's recover reaches the same roster.
-    const older = fold([
-      op(C, 2, 100, { action: 'recover', proof: 'p', rv: 2 }),
-      cut,
-      byD,
-    ]);
-    expect(older.unknown).toBeNull();
-    expect([...older.members.keys()].sort()).toEqual(
-      [...v.members.keys()].sort()
+    // A build that cannot read C's recover pauses rather than guess.
+    const unread = unreadable(
+      op(C, 2, 100, { action: 'recover', proof: recoveryProof(C) })
     );
-    expect(older.revoked).toEqual(v.revoked);
-    expect(older.people).toEqual(v.people);
+    expect(fold([unread, cut, byD]).unknown).toEqual(pausedAt(unread));
   });
 
   it('takes seats from the roster license and counts people and hosts, not observers', () => {
@@ -408,46 +446,225 @@ describe('foldRoster', () => {
     ).toBe(true);
   });
 
-  it('pauses on an action or rv this build cannot read', () => {
-    expect(fold([op(A, 2, 100, { action: 'teleport' })]).unknown?.seq).toBe(2);
-    expect(fold([admit(A, 2, 100, B, 'member', { rv: 2 })]).unknown?.seq).toBe(
-      2
+  it('pauses on an action or rv this build cannot read, naming the op an admin can dismiss', () => {
+    const teleport = op(A, 2, 100, { action: 'teleport' });
+    const v = fold([teleport]);
+    expect(v.unknown).toEqual(pausedAt(teleport));
+    expect(v.problems).toContainEqual(pauseProblem(teleport));
+    const newer = unreadable(admit(A, 2, 100, B));
+    expect(fold([newer]).unknown).toEqual(pausedAt(newer));
+  });
+
+  it("pauses on a revoked replica's unreadable op, above its cut or not", () => {
+    const base = [admit(A, 2, 100, B, 'admin'), revoke(A, 3, 300, B, 5)];
+    const above = unreadable(admit(B, 6, 400, C));
+    const backdated = op(B, 7, 150, { action: 'teleport' });
+    const v = fold([...base, above, backdated]);
+    expect(v.unknown).toEqual(pausedAt(backdated));
+    expect(v.problems).toContainEqual(pauseProblem(above));
+    const below = op(B, 5, 200, { action: 'teleport' });
+    expect(fold([...base, below]).unknown).toEqual(pausedAt(below));
+  });
+
+  it("pauses on an observer's unreadable op", () => {
+    const newer = op(OBS, 2, 200, { action: 'teleport' });
+    const v = fold([
+      admit(A, 2, 100, OBS, 'member', { observer: true }),
+      newer,
+    ]);
+    expect(v.unknown).toEqual(pausedAt(newer));
+  });
+
+  it("pauses on a pending replica's unreadable op, first or not, cut or not", () => {
+    const newer = unreadable(
+      op(C, 2, 100, { action: 'recover', proof: recoveryProof(C) })
+    );
+    expect(fold([newer]).unknown).toEqual(pausedAt(newer));
+    const teleport = op(C, 3, 150, { action: 'teleport' });
+    const later = fold([
+      op(C, 2, 100, { action: 'recover', proof: 'p' }),
+      teleport,
+    ]);
+    expect(later.unknown).toEqual(pausedAt(teleport));
+    // A revocation below it cuts the op, which still pauses.
+    expect(fold([newer, revoke(A, 2, 200, C, 1)]).unknown).toEqual(
+      pausedAt(newer)
     );
   });
 
-  it('ignores an unreadable op from a publisher without rights there instead of pausing', () => {
-    const base = [admit(A, 2, 100, B, 'admin'), revoke(A, 3, 300, B, 5)];
-    const above = fold([
-      ...base,
-      admit(B, 6, 400, C, 'member', { rv: 2 }),
-      op(B, 7, 150, { action: 'teleport' }),
-    ]);
-    expect(above.unknown).toBeNull();
-    expect(above.problems).toContainEqual({
-      subject: `op:${B}:6`,
-      message: `${B} lacks the right to publish roster ops at seq 6; ignored`,
+  it("never makes a later op a pending replica's first when its first is dismissed", () => {
+    const junk = op(C, 2, 100, { action: 'teleport' });
+    const recover = op(C, 3, 150, {
+      action: 'recover',
+      proof: recoveryProof(C),
     });
-    // At or below the cut, B's op still pauses the fold.
-    expect(
-      fold([...base, op(B, 5, 200, { action: 'teleport' })]).unknown?.seq
-    ).toBe(5);
+    const v = fold([junk, recover, dismiss(A, 2, 200, junk)]);
+    expect(v.unknown).toBeNull();
+    expect(v.members.has(C)).toBe(false);
+    expect(v.problems).toContainEqual({
+      subject: `op:${C}:3`,
+      message: `${C}'s recover is not its first roster op; ignored`,
+    });
   });
 
-  it("pauses on a pending replica's unreadable op only where its recover goes", () => {
-    // A pending replica's first roster op is where its recover goes.
-    const newer = op(C, 2, 100, { action: 'recover', proof: 'p', rv: 2 });
-    expect(fold([newer]).unknown?.seq).toBe(2);
-    const later = fold([
-      op(C, 2, 100, { action: 'recover', proof: 'p' }),
-      op(C, 3, 150, { action: 'teleport' }),
-    ]);
-    expect(later.unknown).toBeNull();
-    expect(later.problems).toContainEqual({
-      subject: `op:${C}:3`,
-      message: `${C} lacks the right to publish roster ops at seq 3; ignored`,
+  it('pauses instead of diverging when an unreadable recover would decide the fight that cuts it', () => {
+    const recover = op(B2, 2, 200, {
+      action: 'recover',
+      proof: recoveryProof(B2),
     });
-    // Revoking the pending replica below that op lifts the pause.
-    expect(fold([newer, revoke(A, 2, 200, C, 1)]).unknown).toBeNull();
+    const rest = [
+      admit(A, 2, 100, B),
+      revoke(B, 2, 300, B2, 1),
+      revoke(B2, 3, 310, B, 1),
+    ];
+    const newer = fold([recover, ...rest]);
+    expect(roles(newer)).toEqual({ [A]: 'admin', [B2]: 'admin' });
+    expect([...newer.revoked.keys()]).toEqual([B]);
+    expect(fold([unreadable(recover), ...rest]).unknown).toEqual(
+      pausedAt(recover)
+    );
+  });
+
+  it("pauses on an admitted replica's unreadable grant whose publisher a later admission would revoke", () => {
+    const promote = op(C, 2, 200, {
+      action: 'role',
+      replica: D,
+      role: 'admin',
+    });
+    const rest = [
+      admit(A, 2, 100, C, 'admin'),
+      admit(A, 3, 110, D),
+      admit(A, 4, 300, B, 'admin'),
+      revoke(B, 2, 400, C, 1),
+      revoke(D, 2, 410, B, 1),
+    ];
+    const newer = fold([promote, ...rest]);
+    expect(roles(newer)).toEqual({ [A]: 'admin', [C]: 'admin', [D]: 'admin' });
+    expect(fold([unreadable(promote), ...rest]).unknown).toEqual(
+      pausedAt(promote)
+    );
+  });
+
+  it('lifts a pause when an admin dismisses the unreadable op, and a newer build agrees', () => {
+    const promote = op(C, 2, 200, {
+      action: 'role',
+      replica: D,
+      role: 'admin',
+    });
+    const base = [admit(A, 2, 100, C, 'admin'), admit(A, 3, 110, D)];
+    const byA = dismiss(A, 4, 500, promote);
+    const older = fold([...base, unreadable(promote), byA]);
+    expect(older.unknown).toBeNull();
+    expect(older.dismissed).toEqual([
+      { replica: C, seq: 2, hash: promote.hash, by: A },
+    ]);
+    expect(older.problems).toContainEqual({
+      subject: `op:${A}:4`,
+      message: `${A} dismissed ${C}'s roster op at seq 2, so no build applies it`,
+    });
+    const newer = fold([...base, promote, byA]);
+    expect(rosterOf(newer)).toEqual(rosterOf(older));
+    expect(roles(newer)).toEqual({ [A]: 'admin', [C]: 'admin', [D]: 'member' });
+    // Without the dismiss, the newer build applies the promotion.
+    expect(roles(fold([...base, promote]))[D]).toBe('admin');
+  });
+
+  it("lifts a revoked replica's unreadable op's pause once an admin dismisses it", () => {
+    const junk = op(B, 6, 400, { action: 'teleport' });
+    const base = [admit(A, 2, 100, B, 'admin'), revoke(A, 3, 300, B, 5), junk];
+    expect(fold(base).unknown).toEqual(pausedAt(junk));
+    const v = fold([...base, dismiss(A, 4, 500, junk)]);
+    expect(v.unknown).toBeNull();
+    expect(v.revoked.has(B)).toBe(true);
+  });
+
+  it("keeps the pause when a non-admin dismisses, or an admin outranked by the op's publisher", () => {
+    const junk = op(C, 2, 200, { action: 'teleport' });
+    const base = [admit(A, 2, 100, C, 'admin'), admit(A, 3, 110, D), junk];
+    const byMember = dismiss(D, 2, 300, junk);
+    const member = fold([...base, byMember]);
+    expect(member.unknown).toEqual(pausedAt(junk));
+    expect(member.dismissed).toEqual([]);
+    expect(member.problems).toContainEqual({
+      subject: `op:${D}:2`,
+      message: `${D} may not dismiss ${C}'s roster op at seq 2; ignored`,
+    });
+    // C ranks after the founder, so it may not dismiss the founder's op.
+    const founders = op(A, 4, 150, { action: 'teleport' });
+    const outranked = fold([...base, founders, dismiss(C, 3, 400, founders)]);
+    expect(outranked.unknown).toEqual(pausedAt(founders));
+    expect(outranked.dismissed).toEqual([]);
+    // An admin may dismiss its own op.
+    const own = fold([...base, dismiss(C, 3, 400, junk)]);
+    expect(own.unknown).toBeNull();
+  });
+
+  it('treats a dismiss of an op this daemon does not hold as a no-op', () => {
+    const junk = op(C, 2, 200, { action: 'teleport' });
+    const base = [admit(A, 2, 100, C, 'admin'), junk];
+    const v = fold([
+      ...base,
+      dismiss(A, 3, 300, { replica: C, seq: 2, hash: 'f'.repeat(64) }),
+      dismiss(A, 4, 310, { replica: D, seq: 9, hash: 'e'.repeat(64) }),
+    ]);
+    expect(v.unknown).toEqual(pausedAt(junk));
+    expect(v.dismissed).toEqual([]);
+    expect(rosterOf(v)).toEqual(rosterOf(fold(base)));
+  });
+
+  it('never dismisses the founding, and dismissing a dismiss restores what it named', () => {
+    const junk = op(C, 2, 200, { action: 'teleport' });
+    const byA = dismiss(A, 3, 300, junk);
+    const base = [
+      admit(A, 2, 100, C, 'admin'),
+      junk,
+      byA,
+      dismiss(A, 4, 310, FOUND),
+    ];
+    const v = fold(base);
+    expect(v.teamId).toBe(FOUND.hash.slice(0, 32));
+    expect(v.unknown).toBeNull();
+    expect(v.dismissed.map((d) => d.hash)).toEqual([junk.hash]);
+    expect(v.problems).toContainEqual({
+      subject: `op:${A}:4`,
+      message: 'the founding cannot be dismissed; ignored',
+    });
+    const restored = fold([...base, dismiss(A, 5, 320, byA)]);
+    expect(restored.dismissed.map((d) => d.hash)).toEqual([byA.hash]);
+    expect(restored.unknown).toEqual(pausedAt(junk));
+  });
+
+  it('never lets a revoked admin escape its revocation by dismissing it', () => {
+    const cut = revoke(A, 3, 300, B, 1);
+    const v = fold([
+      admit(A, 2, 100, B, 'admin'),
+      cut,
+      dismiss(B, 2, 400, cut),
+    ]);
+    expect(v.revoked.has(B)).toBe(true);
+    expect(v.dismissed).toEqual([]);
+  });
+
+  it('counts a dismiss only while its publisher stays an admin once the ops it names are gone', () => {
+    const cut = revoke(A, 5, 300, B, 1);
+    const promote = op(C, 2, 200, {
+      action: 'role',
+      replica: D,
+      role: 'admin',
+    });
+    const v = fold([
+      admit(A, 2, 100, B, 'admin'),
+      admit(A, 3, 110, C, 'admin'),
+      admit(A, 4, 120, D),
+      cut,
+      promote,
+      // B outranks C, but only a fold without A's revocation of B shows it an admin.
+      dismiss(B, 2, 400, promote),
+      dismiss(D, 2, 410, cut),
+    ]);
+    expect(v.dismissed).toEqual([]);
+    expect(v.revoked.has(B)).toBe(true);
+    expect(roles(v)[D]).toBe('admin');
   });
 
   it('closes the legacy window: an admin any time, anyone admitted after the deadline, first valid wins', () => {
@@ -701,7 +918,7 @@ describe('foldRoster', () => {
     expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin', [A2]: 'admin' });
   });
 
-  it('keeps unrelated revocations standing when a self-demotion wins a fight', () => {
+  it('accepts a revocation of a self-demotion that won a fight once nothing left cuts it', () => {
     const selfDemotion = demote(B, 2, 200, B, 1);
     const byC = revoke(C, 2, 210, B, 1);
     const byBofC = revoke(B, 3, 220, C, 1);
@@ -718,18 +935,28 @@ describe('foldRoster', () => {
       byBofA2,
       byA2,
     ]);
+    // B's self-demotion wins the pick and voids B's revocations, so nothing
+    // cuts C's revocation of B any more.
     expect(v.resolution.get(selfDemotion.hash)).toBe('accepted');
-    expect(v.resolution.get(byC.hash)).toBe('void');
     expect(v.resolution.get(byBofC.hash)).toBe('void');
     expect(v.resolution.get(byBofA2.hash)).toBe('void');
+    expect(v.resolution.get(byC.hash)).toBe('accepted');
     // Nothing cuts A2, so its revocation of D stands.
     expect(v.resolution.get(byA2.hash)).toBe('accepted');
-    expect(roles(v)).toEqual({
-      [A]: 'admin',
-      [B]: 'member',
-      [C]: 'admin',
-      [A2]: 'admin',
-    });
+    expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin', [A2]: 'admin' });
+    expect([...v.revoked.keys()].sort()).toEqual([B, D].sort());
+    // B's void revocation of C changes nothing: without it, B is revoked too.
+    const without = fold([
+      admit(A, 2, 100, B, 'admin'),
+      admit(A, 3, 110, C, 'admin'),
+      admit(A, 4, 120, D),
+      admit(A, 5, 130, A2, 'admin'),
+      selfDemotion,
+      byC,
+      byBofA2,
+      byA2,
+    ]);
+    expect(rosterOf(without)).toEqual(rosterOf(v));
   });
 
   it('voids a removal that would undo the accepted removal its own right rests on', () => {

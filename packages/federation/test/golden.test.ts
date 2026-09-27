@@ -77,6 +77,14 @@ describe('roster vectors', () => {
     });
   }
 
+  // A dismissed op is gone before folding, so reading it changes nothing.
+  it('folds a dismissed op the same whether or not the build reads it', () => {
+    const older = readRoster('dismiss-unreadable.json');
+    const newer = readRoster('dismiss-unreadable-newer.json');
+    expect(older.expect).toEqual(newer.expect);
+    expect(older.input.ops).not.toEqual(newer.input.ops);
+  });
+
   it('regenerates every committed file exactly', () => {
     const made = makeRosterVectors();
     expect(made.map((v) => `${v.name}.json`).sort()).toEqual(rosterFiles);

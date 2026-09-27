@@ -16,8 +16,10 @@ export {
   speaksForHandle,
 } from './roster.js';
 export type {
+  Dismissal,
   FoldInput,
   KeyInfo,
+  Paused,
   RevokedReplica,
   RosterMember,
   RosterOpRef,

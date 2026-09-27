@@ -193,6 +193,8 @@ export type RosterBody = { rv: 1 } & (
   | { action: 'recover'; proof: string }
   | { action: 'recovery-key'; pub: string } // a new recovery code replaces the last
   | { action: 'transport'; kind: 'git' | 'relay'; url?: string }
+  // Drops the named roster op from every build's fold, as if never published.
+  | { action: 'dismiss'; replica: string; seq: number; hash: string }
 );
 
 export interface LegacyAttestation {

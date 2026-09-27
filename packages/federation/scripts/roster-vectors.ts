@@ -129,6 +129,29 @@ const demote = (
     afterHash: `h-${target}-${afterSeq}`,
   });
 
+// The same op, as a build that does not know its rv reads it.
+const unreadable = (o: RosterOpRef): RosterOpRef => ({
+  ...o,
+  body: { ...o.body, rv: 2 } as unknown as RosterBody,
+});
+
+const dismiss = (by: string, seq: number, ms: number, target: RosterOpRef) =>
+  op(by, seq, ms, {
+    action: 'dismiss',
+    replica: target.replica,
+    seq: target.seq,
+    hash: target.hash,
+  });
+
+// C promotes D, which only a newer build reads; the founder dismisses it.
+const PROMOTE = op(C, 2, 200, { action: 'role', replica: D, role: 'admin' });
+const DISMISSED = [
+  admit(A, 2, 100, C, 'admin'),
+  admit(A, 3, 110, D),
+  dismiss(A, 4, 500, PROMOTE),
+];
+const JUNK = op(C, 2, 200, { action: 'teleport' });
+
 const ATTEST = [
   { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },
 ];
@@ -415,6 +438,64 @@ export const SCENARIOS: readonly RosterScenario[] = [
     admit(B, 6, 400, C, 'member', { rv: 2 }),
     op(B, 7, 150, { action: 'teleport' }),
   ]),
+  // A newer build admits B2 by its recover, and B2 wins the fight with B.
+  scenario('unknown-cut-recover', [
+    admit(A, 2, 100, B),
+    op(B2, 2, 200, { action: 'recover', proof: 'p', rv: 2 }),
+    revoke(B, 2, 300, B2, 1),
+    revoke(B2, 3, 310, B, 1),
+  ]),
+  // A newer build reads C's promotion of D, which wins D the fight with B.
+  scenario('unknown-admitted-grant', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 110, D),
+    unreadable(PROMOTE),
+    admit(A, 4, 300, B, 'admin'),
+    revoke(B, 2, 400, C, 1),
+    revoke(D, 2, 410, B, 1),
+  ]),
+  scenario('dismiss-unreadable', [...DISMISSED, unreadable(PROMOTE)]),
+  scenario('dismiss-unreadable-newer', [...DISMISSED, PROMOTE]),
+  scenario('dismiss-revoked-junk', [
+    admit(A, 2, 100, B, 'admin'),
+    revoke(A, 3, 300, B, 5),
+    op(B, 6, 400, { action: 'teleport' }),
+    dismiss(A, 4, 500, op(B, 6, 400, { action: 'teleport' })),
+  ]),
+  scenario('dismiss-by-member', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 110, D),
+    JUNK,
+    dismiss(D, 2, 300, JUNK),
+  ]),
+  // Dismissing A's dismiss of C's junk brings the junk, and the pause, back.
+  scenario('dismiss-a-dismiss', [
+    admit(A, 2, 100, C, 'admin'),
+    JUNK,
+    dismiss(A, 3, 300, JUNK),
+    dismiss(A, 4, 310, dismiss(A, 3, 300, JUNK)),
+  ]),
+  scenario('dismiss-outranked', [
+    admit(A, 2, 100, C, 'admin'),
+    op(A, 3, 150, { action: 'teleport' }),
+    dismiss(C, 2, 400, op(A, 3, 150, { action: 'teleport' })),
+  ]),
+  scenario('dismiss-unknown-id', [
+    admit(A, 2, 100, C, 'admin'),
+    JUNK,
+    op(A, 3, 300, {
+      action: 'dismiss',
+      replica: C,
+      seq: 2,
+      hash: 'f'.repeat(64),
+    }),
+    op(A, 4, 310, {
+      action: 'dismiss',
+      replica: D,
+      seq: 9,
+      hash: 'e'.repeat(64),
+    }),
+  ]),
   scenario(
     'legacy-close-early',
     [
@@ -479,6 +560,7 @@ export function normalize(v: RosterView): unknown {
     covered: [...v.covered].sort(),
     closedBy: v.legacy.closed?.by ?? null,
     transport: v.transport,
+    dismissed: v.dismissed,
     unknown: v.unknown,
   };
 }
