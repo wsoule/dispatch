@@ -48,7 +48,8 @@ let created: { runId: string; taskId: string } | null = null;
 test.describe('messaging end to end', () => {
   test.afterEach(async ({ request }) => {
     // overseer.spec.ts's undo, plus a cancel for a run a failure left parked, so the
-    // screenshot suite's counts hold.
+    // screenshot suite's counts hold. No route closes the run's question, so a failed
+    // attempt leaves it open under Needs you in every decide-tier window of the fixture.
     if (created === null) return;
     const { runId, taskId } = created;
     await request.post(`${DAEMON}/api/runs/${runId}/cancel`, { headers: APP });
@@ -147,6 +148,23 @@ test.describe('messaging end to end', () => {
       .first()
       .click();
     await expect(page.getByText('Got the answer. Carrying on.')).toBeVisible();
-    await expect(page.getByText('new cart').first()).toBeVisible();
+    // The link's name carries the kind parsed from the text the agent read, and
+    // its bubble shows the body without that framing.
+    const answerLink = page.getByRole('button', {
+      name: `Open thread: answer from ${me}`,
+    });
+    const answer = answerLink.locator('xpath=../..');
+    await expect(answer.getByText('new cart', { exact: true })).toBeVisible();
+    await expect(answer).not.toContainText('[message from');
+
+    // The link returns to Threads on the question it answered.
+    await answerLink.click();
+    const thread = page.getByRole('region', { name: 'Thread' });
+    await expect(
+      thread.getByText('Which cart should the checkout read?')
+    ).toBeVisible();
+    await expect(
+      thread.locator('article').filter({ hasText: 'Chose new cart' })
+    ).toHaveCount(1);
   });
 });
