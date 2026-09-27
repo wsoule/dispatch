@@ -1,6 +1,12 @@
 import { afterAll, describe, expect, it } from 'bun:test';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdtempSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -144,14 +150,21 @@ describe('registries.json', () => {
     ]);
   });
 
-  it('regenerating §11 changes nothing', () => {
-    const run = spawnSync('bun', [script, '--check'], {
-      cwd: pkgDir,
-      encoding: 'utf8',
-    });
-    expect({ code: run.status, err: run.stderr }).toEqual({
-      code: 0,
-      err: '',
-    });
+  it('regenerating §11 changes nothing and writes no file into spec/', () => {
+    const specDir = fileURLToPath(SPEC_DIR);
+    const mode = statSync(specDir).mode;
+    chmodSync(specDir, 0o555);
+    try {
+      const run = spawnSync('bun', [script, '--check'], {
+        cwd: pkgDir,
+        encoding: 'utf8',
+      });
+      expect({ code: run.status, err: run.stderr }).toEqual({
+        code: 0,
+        err: '',
+      });
+    } finally {
+      chmodSync(specDir, mode);
+    }
   });
 });
