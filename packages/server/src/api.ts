@@ -108,6 +108,8 @@ import { isSnippet, isSubjectRef } from './conversations.js';
 import { checkDaemonIdentity } from './daemonfile.js';
 import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
+import { handleDocsRoute } from './docs/routes.js';
+import type { DocsService } from './docs/service.js';
 import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
 import {
@@ -271,6 +273,8 @@ export interface ApiContext {
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
+  // The docs service (docs/service.ts); unavailable when docs.db did not open.
+  docs: DocsService;
   /** The memory store and engine (memory/service.ts). */
   memory: MemoryService;
   prManager: PrManager;
@@ -4387,12 +4391,18 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['memory', 'import', 'ledger'] },
 ];
 
+// Route families that authenticate by principal throughout, every method.
+const SELF_AUTHENTICATED_PREFIXES: ReadonlySet<string> = new Set(['docs']);
+
 /** Whether `/api/<segments>` is a messaging route that authenticates by
  *  principal, not tier: requiredTier skips it and handleApi resolves it. */
 export function isSelfAuthenticated(
   segments: readonly string[],
   method: string
 ): boolean {
+  if (segments.length > 0 && SELF_AUTHENTICATED_PREFIXES.has(segments[0])) {
+    return true;
+  }
   return SELF_AUTHENTICATED_ROUTES.some(
     (route) => route.method === method && matchesRoute(route.segments, segments)
   );
@@ -5482,6 +5492,12 @@ export async function handleApi(
         if (segments[2] === 'mute') return muteAgent(ctx, address);
         if (segments[2] === 'unmute') return unmuteAgent(ctx, address);
       }
+    }
+
+    // Docs routes read ctx.principal and map their own errors (docs/routes.ts).
+    if (segments[0] === 'docs') {
+      const res = await handleDocsRoute(req, ctx, segments.slice(1), url);
+      if (res !== null) return res;
     }
 
     // Memory routes read ctx.principal, like messaging's (memory/routes.ts).

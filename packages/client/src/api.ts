@@ -1047,7 +1047,10 @@ export type ServerEvent =
   | { type: 'message.new'; message: Message }
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   // Mirrors packages/server/src/events.ts exactly.
-  | { type: 'delivery.changed'; deliveryId: string; messageId: string };
+  | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // A doc changed; a bare refetch signal, never an id for personal docs.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string };
 
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {
