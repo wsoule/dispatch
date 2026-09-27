@@ -18,7 +18,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef } from 'react';
 
-import { agentRosterKey } from '../lib/agentRoster';
+import { agentRosterKey, mutedAddresses } from '../lib/agentRoster';
 import type { ComposeState } from '../lib/composer';
 import { toSendInput } from '../lib/composer';
 import type { MessageAccess } from '../lib/daemonAuth';
@@ -165,6 +165,8 @@ export function useThreadRail(
     enabled: enabled && access.canDecide,
   });
   const gates = useOpenGates(client, port, access);
+  const agents = useAgentRoster(client, port, access.canMessage);
+  const { canDecide } = access;
   return useMemo(() => {
     const merged = mergeThreadSources(
       {
@@ -181,7 +183,11 @@ export function useThreadRail(
             merged.deliveries,
             me,
             merged.openIds,
-            { recent: recent.data?.threads ?? NO_RECENT }
+            {
+              recent: recent.data?.threads ?? NO_RECENT,
+              canDecide,
+              muted: mutedAddresses(agents),
+            }
           );
     return {
       summaries,
@@ -192,6 +198,8 @@ export function useThreadRail(
     };
   }, [
     me,
+    canDecide,
+    agents,
     mailbox.data,
     mailbox.isLoading,
     mailbox.error,
@@ -225,6 +233,7 @@ export function useTaskThreads(
   });
   const mailbox = useMailbox(client, port, me, access.canDecide);
   const gates = useOpenGates(client, port, access);
+  const agents = useAgentRoster(client, port, access.canDecide);
   return useMemo(() => {
     const recent = about.data?.threads ?? NO_RECENT;
     const inTask = new Set(recent.map((t) => t.thread));
@@ -243,14 +252,25 @@ export function useTaskThreads(
     const summaries =
       me === null
         ? []
-        : summarizeThreads(messages, deliveries, me, openIds, { recent });
+        : summarizeThreads(messages, deliveries, me, openIds, {
+            recent,
+            muted: mutedAddresses(agents),
+          });
     return {
       summaries,
       openIds: me === null ? NO_OPEN : openIds,
       loading: about.isLoading,
       error: about.error ?? null,
     };
-  }, [me, about.data, about.isLoading, about.error, mailbox.data, gates.data]);
+  }, [
+    me,
+    agents,
+    about.data,
+    about.isLoading,
+    about.error,
+    mailbox.data,
+    gates.data,
+  ]);
 }
 
 export interface OpenThread {
@@ -298,12 +318,13 @@ export function useThread(
 /** The agent roster, on the key Settings → Connected agents uses, so both share it. */
 export function useAgentRoster(
   client: ApiClient | null,
-  port: number | undefined
+  port: number | undefined,
+  enabled = true
 ): AgentSummary[] {
   const roster = useQuery({
     queryKey: agentRosterKey(port),
     queryFn: () => ready(client).listAgentRoster(),
-    enabled: client !== null,
+    enabled: client !== null && enabled,
   });
   return roster.data?.agents ?? NO_AGENTS;
 }

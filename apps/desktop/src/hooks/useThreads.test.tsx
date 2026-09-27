@@ -613,7 +613,7 @@ function mount<T>(hook: () => T) {
 }
 
 describe('messaging queries', () => {
-  it('reads only the mailbox for a teammate below decide, and finds their open question there', async () => {
+  it('reads only the mailbox and roster for a teammate below decide, and finds their open question there', async () => {
     const { calls, client } = readingClient();
     const { result } = mount(() => useThreadRail(client, PORT, ME, TEAMMATE));
     await waitFor(() => {
@@ -621,7 +621,56 @@ describe('messaging queries', () => {
         'm-q',
       ]);
     });
-    expect(calls).toEqual([`mailbox ${ME}`]);
+    expect([...calls].sort()).toEqual([`mailbox ${ME}`, 'roster']);
+  });
+
+  it("keeps a gate a teammate cannot answer and a muted agent's question out of Needs you, readable in Direct", async () => {
+    const gate = msg('m-g', {
+      kind: 'question',
+      blocking: true,
+      choices: ['grant', 'deny'],
+      data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
+    });
+    const muted = msg('m-m', {
+      from: 'agent:wyat/quiet',
+      kind: 'question',
+      blocking: true,
+    });
+    const mailbox: MailboxItem[] = [gate, muted].map((message) => ({
+      message,
+      delivery: {
+        id: `d-${message.id}`,
+        messageId: message.id,
+        recipient: ME,
+        runId: null,
+        via: 'direct',
+        state: 'notified',
+        updatedAt: message.createdAt,
+      },
+    }));
+    const quiet: AgentSummary = {
+      address: 'agent:wyat/quiet',
+      displayName: 'quiet',
+      client: 'codex',
+      status: 'approved',
+      muted: true,
+      approvedBy: ME,
+      createdAt: '2026-09-25T10:00:00.000Z',
+    };
+    const client = {
+      getMailbox: () => Promise.resolve({ items: mailbox }),
+      listAgentRoster: () => Promise.resolve({ agents: [quiet] }),
+    } as unknown as ApiClient;
+    const { result } = mount(() => useThreadRail(client, PORT, ME, TEAMMATE));
+    await waitFor(() => {
+      expect(result.current.groups.direct.map((t) => t.thread).sort()).toEqual([
+        'm-g',
+        'm-m',
+      ]);
+    });
+    expect(result.current.groups['needs-you']).toEqual([]);
+    // Both rows still open, so the gate shows its reason and the question its answer.
+    expect([...result.current.openIds].sort()).toEqual(['m-g', 'm-m']);
   });
 
   it('adds recent threads and the open gates for a decider, and asks nothing for an agent window', async () => {
@@ -636,6 +685,7 @@ describe('messaging queries', () => {
         `mailbox ${ME}`,
         'open gates',
         'recent 100',
+        'roster',
       ]);
     });
     expect(agent.calls).toEqual([]);
