@@ -209,7 +209,7 @@ One longer than 80 code points is cut to its first 79 and `…` (U+2026).
     "^refs: ",
     "^The sender is waiting\\. "
   ],
-  "digestLead": "^📬(?: #[^ ]+ ·)? [^ ]+ from [^ ]+: "
+  "digestLead": "^📬(?: #[^ ]+ ·)? [^ ]+ from [^ ]+(?: \\(external\\))?: "
 }
 ```
 

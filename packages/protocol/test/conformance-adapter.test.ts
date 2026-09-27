@@ -367,4 +367,26 @@ describe('REFERENCE_HELLO', () => {
     expect(text.startsWith('📬 #epic/e-000001 · question from')).toBe(true);
     expect(checkDigest(text, m.body, REFERENCE_HELLO.render)).toEqual([]);
   });
+
+  it("declares a digest lead that covers an external sender's digest", () => {
+    const m: Message = {
+      id: 'm-01abd',
+      thread: 'm-01abd',
+      replyTo: null,
+      from: 'agent:wyat/peer',
+      to: ['human:wyat'],
+      kind: 'question',
+      body: 'hello',
+      refs: [],
+      urgent: false,
+      blocking: false,
+      wake: 'none',
+      createdAt: '2026-09-23T10:00:00.000Z',
+    };
+    const text = renderDigestLine(m, true);
+    expect(text).toBe(
+      '📬 question from agent:wyat/peer (external): hello (m-01abd)'
+    );
+    expect(checkDigest(text, m.body, REFERENCE_HELLO.render)).toEqual([]);
+  });
 });

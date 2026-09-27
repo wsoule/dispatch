@@ -76,9 +76,8 @@ const AGENT_STATUSES: readonly AgentStatus[] = [
   'revoked',
 ];
 
-// What the reference adapter declares: both profiles, every gate type the
-// engine raises and applies, and the forms `renderForAgent` and
-// `renderDigestLine` produce.
+// What the reference declares: both profiles, every gate type the engine
+// raises and applies, and the forms renderForAgent and renderDigestLine write.
 export const REFERENCE_HELLO: Hello = {
   dmp: 'hello',
   implementation: { name: 'dispatch-reference', version: PROTOCOL_VERSION },
@@ -97,7 +96,7 @@ export const REFERENCE_HELLO: Hello = {
       '^refs: ',
       '^The sender is waiting\\. ',
     ],
-    digestLead: '^📬(?: #[^ ]+ ·)? [^ ]+ from [^ ]+: ',
+    digestLead: '^📬(?: #[^ ]+ ·)? [^ ]+ from [^ ]+(?: \\(external\\))?: ',
   },
 };
 
