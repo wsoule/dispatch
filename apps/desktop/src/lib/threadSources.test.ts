@@ -200,7 +200,19 @@ describe('replyPlan', () => {
     });
   });
 
-  it('after my own last message, writes to whoever I wrote to, never to myself', () => {
+  it('writes beside an open handoff to its sender, since answering one needs accept or decline', () => {
+    const handoff = msg('m-01', {
+      kind: 'handoff',
+      choices: ['accept', 'decline'],
+    });
+    expect(replyPlan([handoff], ME, new Set(['m-01']))).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+  });
+
+  it('after my own last message, writes to whoever I wrote to, never to myself, replying to their message', () => {
     const theirs = msg('m-01');
     const mine = msg('m-02', {
       thread: 'm-01',
@@ -211,7 +223,31 @@ describe('replyPlan', () => {
     expect(replyPlan([theirs, mine], ME, new Set())).toEqual({
       kind: 'send',
       to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+  });
+
+  it("after my own last message, replies to the other party's newest message to me, so a run that ended since reaches its task", () => {
+    // The daemon reroutes an ended run to its task only when that run wrote the replied-to message.
+    const first = msg('m-01');
+    const theirs = msg('m-02', { thread: 'm-01', replyTo: 'm-01' });
+    const aside = msg('m-03', { thread: 'm-01', to: ['human:ada'] });
+    const mine = msg('m-04', {
+      thread: 'm-01',
       replyTo: 'm-02',
+      from: ME,
+      to: ['run:r-000001'],
+    });
+    expect(replyPlan([first, theirs, aside, mine], ME, new Set())).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-02',
+    });
+    const started = msg('m-05', { from: ME, to: ['task:t-000001'] });
+    expect(replyPlan([started], ME, new Set())).toEqual({
+      kind: 'send',
+      to: ['task:t-000001'],
+      replyTo: 'm-05',
     });
   });
 

@@ -172,15 +172,24 @@ export function replyPlan(
   if (channel !== undefined) {
     return { kind: 'send', to: [channel], replyTo: target.id };
   }
-  const asks = target.kind === 'question' || target.kind === 'handoff';
-  if (target.from !== me && (!asks || openIds.has(target.id))) {
-    return { kind: 'reply', target };
+  if (target.from !== me) {
+    // Text answers an open question; a handoff's answer must be accept or
+    // decline, so text goes beside it, as it does after a closed ask.
+    const answerable =
+      target.kind === 'question'
+        ? openIds.has(target.id)
+        : target.kind !== 'handoff';
+    return answerable
+      ? { kind: 'reply', target }
+      : { kind: 'send', to: [target.from], replyTo: target.id };
   }
-  const to =
-    target.from !== me
-      ? [target.from]
-      : target.to.filter((address) => address !== me);
-  return to.length === 0 ? null : { kind: 'send', to, replyTo: target.id };
+  const to = target.to.filter((address) => address !== me);
+  if (to.length === 0) return null;
+  // The daemon reroutes an ended run to its task only for the replied-to
+  // message's writer, so reply to the newest message they sent me.
+  const theirs = [...messages].reverse().filter((m) => to.includes(m.from));
+  const anchor = theirs.find((m) => m.to.includes(me)) ?? theirs[0] ?? target;
+  return { kind: 'send', to, replyTo: anchor.id };
 }
 
 export type ReplyRoute = 'bus' | 'overseer' | 'overseer-elsewhere';
