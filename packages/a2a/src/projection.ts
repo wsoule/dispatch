@@ -238,6 +238,7 @@ export function project(f: TaskFacts, view: ProjectionView): TaskJson {
         ? [answerArtifact(f.answer, view)]
         : []),
       ...workArtifacts(f.work, view),
+      ...(f.hostArtifacts ?? []),
     ];
     if (artifacts.length > 0) json.artifacts = artifacts;
   }
@@ -286,7 +287,7 @@ export function withReask(
 }
 
 // A sha256 of what a watcher must see change: the decision, the scope's ids,
-// the work artifacts and the linked task.
+// the work and host artifacts and the linked task.
 export function projectionKey(f: TaskFacts): string {
   const d = decideState(f);
   const statusId =
@@ -301,6 +302,7 @@ export function projectionKey(f: TaskFacts): string {
         f.scope.map((m) => m.id),
         f.work,
         f.task,
+        f.hostArtifacts ?? [],
       ])
     )
     .digest('hex');

@@ -12,6 +12,7 @@
   },
   "scripts": {
     "build": "tsdown --clean",
+    "tck": "bun test/tck/run.ts",
     "test": "bun test",
     "tsc": "tsgo --noEmit --pretty"
   },
