@@ -20,6 +20,9 @@ export interface StreamOptions {
   signal: AbortSignal;
   // Replaces the first event's status message, as on a unary send.
   reask?: string | null;
+  // Stay open through INPUT_REQUIRED until a terminal state, as
+  // SubscribeToTask must (§3.1.6); a streamed send ends there instead.
+  untilTerminal?: boolean;
   tickMs?: number;
   keepaliveMs?: number;
   maxMs?: number;
@@ -84,7 +87,8 @@ function diff(last: Snapshot | null, next: Snapshot): StreamResponseJson[] {
 }
 
 // One A2A task as an SSE stream: re-projected on watch signals, coalesced per
-// tick, closed on a terminal or INPUT_REQUIRED state, revocation, overflow or maxMs.
+// tick, closed on a terminal state (or INPUT_REQUIRED unless untilTerminal),
+// revocation, overflow or maxMs.
 export function taskEventStream(o: StreamOptions): Response {
   const tickMs = o.tickMs ?? 1000;
   const keepaliveMs = o.keepaliveMs ?? 15_000;
@@ -140,8 +144,9 @@ export function taskEventStream(o: StreamOptions): Response {
               );
               for (const event of diff(last, next)) send(formatSSEEvent(event));
               last = next;
-              if (TERMINAL_STATES.has(state) || state === 'INPUT_REQUIRED')
-                return close();
+              const interrupted =
+                state === 'INPUT_REQUIRED' && o.untilTerminal !== true;
+              if (TERMINAL_STATES.has(state) || interrupted) return close();
             }
             if (Date.now() - lastKeepalive >= keepaliveMs) {
               send(': keepalive\n\n');

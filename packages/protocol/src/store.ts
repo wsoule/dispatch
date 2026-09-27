@@ -149,6 +149,8 @@ export interface MessageStore {
     expected?: DeliveryState
   ): boolean;
   markGateApplied(questionId: string, at: string): void;
+  /** Turns an answer back into a message and records it voided, which reopens its question. */
+  voidAnswer(answerId: string, questionId: string, at: string): boolean;
   /** Answered gate questions (closes excluded) whose host effect is not yet recorded. */
   unappliedAnsweredGates(): { question: Message; answer: Message }[];
   /** Messages from `from` that arrived at or after `sinceIso`; `origin` narrows to one replica's. */

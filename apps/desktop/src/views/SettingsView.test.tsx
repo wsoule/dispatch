@@ -722,11 +722,14 @@ describe('Connected agents', () => {
       ),
     }));
 
+  // The reason is written out, since disabled buttons never show their tooltips.
   test('below decide, the roster shows with its actions locked and the reason', async () => {
     renderAt(tierData({ myTier: 'request' }), 'connected-agents');
     expect(await screen.findByText(PENDING)).toBeDefined();
     expect(screen.queryByRole('note')).toBeNull();
-    expect(headingLock('Agents')).toBe(NEEDS_DECIDE);
+    expect(headingLock('Agents')).toBeNull();
+    expect(rowLock('Approving, muting and revoking')).toBe(NEEDS_DECIDE);
+    expect(screen.getByText(NEEDS_DECIDE)).toBeDefined();
     expect(actions().every((a) => a.disabled)).toBe(true);
   });
 

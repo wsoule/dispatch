@@ -331,6 +331,25 @@ describe('TaskPage', () => {
     expect(dispatched).toEqual([{ executor: 'codex', model: undefined }]);
   });
 
+  test('every test-only fake executor stays out of the picker', () => {
+    const executor = (name: string) => ({
+      name,
+      reportsCost: true,
+      reportsTurns: true,
+      enforcesCaps: true,
+    });
+    mountPage(undefined, {
+      executors: {
+        executors: [executor('claude'), executor('fake'), executor('fake-ask')],
+        default: 'claude',
+      },
+    });
+    // Read as text: a failed match on a DOM node never finishes printing it.
+    expect(
+      screen.queryByRole('button', { name: 'Executor' })?.textContent
+    ).toBeUndefined();
+  });
+
   test('a single real executor shows no picker and dispatches with the Claude model', async () => {
     const dispatched: { executor?: string; model?: string }[] = [];
     mountPage(undefined, {

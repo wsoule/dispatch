@@ -1,0 +1,20 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "envelope",
+  "area": "separators",
+  "vectors": [
+    {
+      "id": "env.separators.echo",
+      "title": "U+2028 and U+2029 cross the pipe both ways inside one line",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:a\u2028b\u2029c" }],
+      "then": {
+        "steps": [{ "ok": true, "result": "human:a\u2028b\u2029c" }]
+      }
+    }
+  ]
+}

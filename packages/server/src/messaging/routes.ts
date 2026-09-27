@@ -1,3 +1,4 @@
+import { isClientAddress, isReservedName } from '@dispatch/a2a';
 import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
@@ -16,8 +17,9 @@ import {
   parseAddress,
   SYSTEM_ADDRESS,
 } from '@dispatch/protocol';
-import { createHash, randomBytes } from 'node:crypto';
+import { randomBytes } from 'node:crypto';
 
+import { tokenHash } from '../a2a/auth.js';
 import type { ApiContext } from '../api.js';
 import { humanActor } from '../api/caller.js';
 import {
@@ -709,28 +711,21 @@ export function normalizeAgentName(raw: string): string {
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
 // A required registration field with its unprintable characters removed, or
-// the 400 explaining why it is missing or too long.
-function registrationField(
+// why it is missing or too long.
+export function registrationField(
   value: unknown,
   field: 'name' | 'client'
-): { ok: true; value: string } | { ok: false; response: Response } {
+): { ok: true; value: string } | { ok: false; error: string } {
   const required = `invalid ${field}: ${field} is required`;
-  if (typeof value !== 'string') {
-    return { ok: false, response: errorResponse(400, required) };
-  }
+  if (typeof value !== 'string') return { ok: false, error: required };
   if (value.length > MAX_REGISTRATION_FIELD_LENGTH) {
     return {
       ok: false,
-      response: errorResponse(
-        400,
-        `invalid ${field}: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
-      ),
+      error: `invalid ${field}: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`,
     };
   }
   const printable = value.replace(UNPRINTABLE, '').trim();
-  if (printable === '') {
-    return { ok: false, response: errorResponse(400, required) };
-  }
+  if (printable === '') return { ok: false, error: required };
   return { ok: true, value: printable };
 }
 
@@ -744,10 +739,16 @@ export async function registerAgent(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { name?: unknown; client?: unknown };
   const displayName = registrationField(body.name, 'name');
-  if (!displayName.ok) return displayName.response;
+  if (!displayName.ok) return errorResponse(400, displayName.error);
   const client = registrationField(body.client, 'client');
-  if (!client.ok) return client.response;
+  if (!client.ok) return errorResponse(400, client.error);
   const name = normalizeAgentName(displayName.value);
+  if (isReservedName(name)) {
+    return errorResponse(
+      400,
+      'invalid name: names starting with "a2a." are reserved for A2A clients; add one with `dispatch a2a clients add`'
+    );
+  }
   if (!HANDLE_PATTERN.test(name)) {
     return errorResponse(
       400,
@@ -756,29 +757,81 @@ export async function registerAgent(
   }
   const requester = humanActor(ctx);
   const address = `agent:${requester.slice('human:'.length)}/${name}`;
+  const reg = await registerAgentRow(ctx, {
+    name,
+    displayName: displayName.value,
+    client: client.value,
+    requester,
+    gateBody: `New agent ${address} (${client.value}) wants to join this project, requested by ${requester}.`,
+    refuseAnyExisting: false,
+  });
+  if (!reg.ok) return reg.response;
+  return jsonResponse(
+    { address: reg.address, token: reg.token, status: reg.record.status },
+    201
+  );
+}
+
+// A registration already checked for its name: the agent row, its token and
+// the owner gate that approves it.
+export interface AgentRegistration {
+  name: string;
+  displayName: string;
+  client: string;
+  requester: string;
+  gateBody: string;
+  // Refuse a name that was ever registered, revoked rows included.
+  refuseAnyExisting: boolean;
+}
+
+// Writes a pending agent:<requester's handle>/<name> row with a fresh token and
+// sends its approval gate; the row is revoked if the gate cannot be sent.
+export async function registerAgentRow(
+  ctx: ApiContext,
+  reg: AgentRegistration
+): Promise<
+  | { ok: true; address: string; token: string; record: AgentRecord }
+  | { ok: false; response: Response }
+> {
+  const address = `agent:${reg.requester.slice('human:'.length)}/${reg.name}`;
   const existing = ctx.messaging.store.getAgent(address);
   if (existing !== null && isInternalAgent(existing)) {
-    return errorResponse(
-      409,
-      `${address} is Dispatch's own agent; register under another name`
-    );
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} is Dispatch's own agent; register under another name`
+      ),
+    };
   }
   if (
     existing !== null &&
     (existing.status === 'approved' || existing.status === 'pending')
   ) {
-    return errorResponse(
-      409,
-      `${address} is already registered (${existing.status}) — ask a human to revoke it first`
-    );
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} is already registered (${existing.status}) — ask a human to revoke it first`
+      ),
+    };
+  }
+  if (existing !== null && reg.refuseAnyExisting) {
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} was registered before; choose a new name`
+      ),
+    };
   }
 
   const token = randomBytes(32).toString('hex');
   const record: AgentRecord = {
     address,
-    displayName: displayName.value,
-    client: client.value,
-    tokenHash: createHash('sha256').update(token).digest('hex'),
+    displayName: reg.displayName,
+    client: reg.client,
+    tokenHash: tokenHash(token),
     status: 'pending',
     muted: false,
     approvedBy: null,
@@ -793,12 +846,12 @@ export async function registerAgent(
         kind: 'question',
         blocking: true,
         choices: ['approve', 'deny'],
-        body: `New agent ${address} (${client.value}) wants to join this project, requested by ${requester}.`,
+        body: reg.gateBody,
         data: {
           type: 'agent-registration',
           agent: address,
-          client: client.value,
-          requestedBy: requester,
+          client: reg.client,
+          requestedBy: reg.requester,
         } satisfies GateData,
       },
       { address: SYSTEM_ADDRESS, canDecide: true }
@@ -807,13 +860,16 @@ export async function registerAgent(
     // Without its gate nobody can approve the row, so revoke it: a retry can
     // then re-register instead of hitting the 409 above forever.
     ctx.messaging.store.putAgent({ ...record, status: 'revoked' });
-    return errorResponse(
-      500,
-      `registration gate failed to send: ${(err as Error).message}`
-    );
+    return {
+      ok: false,
+      response: errorResponse(
+        500,
+        `registration gate failed to send: ${(err as Error).message}`
+      ),
+    };
   }
 
-  return jsonResponse({ address, token, status: record.status }, 201);
+  return { ok: true, address, token, record };
 }
 
 // The open (unanswered) agent-registration gate for `address`, if any.
@@ -870,12 +926,14 @@ export function approveAgent(
   return decideAgent(ctx, address, 'approve', 'approved');
 }
 
-// POST /api/agents/:addr/revoke
-export function revokeAgent(
+// POST /api/agents/:addr/revoke. A revoked A2A client's open asks are closed.
+export async function revokeAgent(
   ctx: ApiContext,
   address: string
 ): Promise<Response> {
-  return decideAgent(ctx, address, 'deny', 'revoked');
+  const res = await decideAgent(ctx, address, 'deny', 'revoked');
+  if (res.ok && isClientAddress(address)) ctx.a2a?.clientRevoked(address);
+  return res;
 }
 
 // Shared body for mute/unmute: these never touch a gate (there is no

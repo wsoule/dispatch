@@ -39,6 +39,7 @@ braindump
 browserslistrc
 bunfig
 bunx
+bytewise
 cacheinfo
 callsites
 capitalised
@@ -54,6 +55,7 @@ CFRG
 cfworker
 checkpointed
 chev
+choiceless
 chrono
 ciphertext
 clippy

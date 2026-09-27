@@ -1,0 +1,615 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "send",
+  "vectors": [
+    {
+      "id": "core.send.task-held-without-live-session",
+      "title": "A work item with no live session holds its mail",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "6.2"],
+      "given": {
+        "workItems": [{ "id": "t-4a8cce" }],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": { "to": ["task:t-4a8cce"], "kind": "message", "body": "hi" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "message": "$s1", "downgraded": false } }
+        ],
+        "messages": [
+          {
+            "id": "$s1",
+            "thread": "$s1",
+            "from": "human:wyat",
+            "to": ["task:t-4a8cce"]
+          }
+        ],
+        "noOtherMessages": true,
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-4a8cce",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          }
+        ],
+        "calls": [{ "hook": "published", "message": "$s1" }]
+      }
+    },
+    {
+      "id": "core.send.direct-mail-pushes-to-the-live-session",
+      "title": "Direct mail to a work item with a live session is pushed to it and starts its own thread",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.6", "6.1", "6.2"],
+      "given": {
+        "workItems": [{ "id": "t-4a8cce", "liveSession": "run:r-9f2c01" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": { "to": ["task:t-4a8cce"], "kind": "message", "body": "hi" }
+        }
+      ],
+      "then": {
+        "messages": [{ "id": "$s1", "thread": "$s1" }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-4a8cce",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-9f2c01"
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "push", "session": "run:r-9f2c01", "message": "$s1" }
+        ]
+      }
+    },
+    {
+      "id": "core.send.channel-mail-notifies-the-live-session",
+      "title": "Mail through a channel is notified, not pushed, unless urgent",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.2", "7.2"],
+      "given": {
+        "workItems": [{ "id": "t-4a8cce", "liveSession": "run:r-9f2c01" }],
+        "channels": [{ "name": "auth", "members": ["task:t-4a8cce"] }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["channel:auth"],
+            "kind": "message",
+            "body": "heads up"
+          }
+        }
+      ],
+      "then": {
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-4a8cce",
+            "via": "channel",
+            "state": "notified",
+            "session": "run:r-9f2c01"
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notify", "session": "run:r-9f2c01", "message": "$s1" }
+        ]
+      }
+    },
+    {
+      "id": "core.send.urgent-channel-mail-is-pushed",
+      "title": "An urgent message through a channel is pushed to a member with a live session",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.2", "7.2"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "channels": [{ "name": "auth", "members": ["task:t-000002"] }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["channel:auth"],
+            "kind": "notice",
+            "body": "stop",
+            "urgent": true
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "message": "$s1", "downgraded": false } }
+        ],
+        "messages": [{ "id": "$s1", "urgent": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "via": "channel",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "push", "session": "run:r-000002", "message": "$s1" }
+        ]
+      }
+    },
+    {
+      "id": "core.send.direct-beats-channel",
+      "title": "A recipient named directly and through a channel gets one direct delivery",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.5", "3.7"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "channels": [{ "name": "auth", "members": ["task:t-000002"] }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["channel:auth", "task:t-000002"],
+            "kind": "message",
+            "body": "x"
+          }
+        }
+      ],
+      "then": {
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.send.human-mail-is-notified",
+      "title": "Mail to a human is notified at once and calls the host's notifier",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "6.2"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "notice", "body": "fyi" }
+        }
+      ],
+      "then": {
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "human:wyat",
+            "via": "direct",
+            "state": "notified",
+            "session": null
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notifyHuman", "actor": "human:wyat", "message": "$s1" }
+        ]
+      }
+    },
+    {
+      "id": "core.send.agent-mail-is-held",
+      "title": "Mail to an agent waits in the agent's mailbox",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "7.1"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["agent:wyat/claude-code.macbook"],
+            "kind": "message",
+            "body": "x"
+          }
+        }
+      ],
+      "then": {
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "agent:wyat/claude-code.macbook",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          }
+        ],
+        "calls": [{ "hook": "published", "message": "$s1" }]
+      }
+    },
+    {
+      "id": "core.send.never-delivers-to-the-senders-own-work-item",
+      "title": "A session never gets a delivery for itself or its own work item, directly or through a channel",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.5"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "channels": [{ "name": "auth", "members": ["task:t-000001"] }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["channel:auth"], "kind": "notice", "body": "x" }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000001", "run:r-000001", "human:wyat"],
+            "kind": "message",
+            "body": "y"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "noDeliveries": ["$s1"],
+        "deliveries": [
+          { "message": "$s2", "recipient": "human:wyat", "state": "notified" }
+        ]
+      }
+    },
+    {
+      "id": "core.send.a-session-that-is-not-live-is-invalid",
+      "title": "A plain message to a session that is not live fails invalid on its to[] slot and stores nothing",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": { "to": ["run:r-0000aa"], "kind": "message", "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "to[0]" } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.send.an-ended-session-error-names-the-callers-own-slot",
+      "title": "After a reply rewrites and collapses recipients, the error about a session that is not live names the caller's own to[] slot",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.5", "4.6", "6.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "question", "body": "ok?" }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000001", "run:r-000001", "run:r-0000aa"],
+            "kind": "message",
+            "body": "see above",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          null,
+          { "ok": false, "error": { "code": "invalid", "field": "to[2]" } }
+        ],
+        "messages": [{ "id": "$s1" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.send.unknown-channel-is-not-found",
+      "title": "An unknown channel with no implicit members fails on its to[] slot",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.5"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["human:ada", "channel:nowhere"],
+            "kind": "message",
+            "body": "x"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "not-found", "field": "to[1]" } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.send.unknown-channel-names-the-callers-own-slot",
+      "title": "An unknown channel fails on the caller's own to[] slot even after a reply rewrote and collapsed the other recipients",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.5", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "question", "body": "ok?" }
+        },
+        {
+          "op": "world",
+          "change": { "endSession": { "workItem": "t-000001" } }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000001", "run:r-000001", "channel:nope"],
+            "kind": "message",
+            "body": "see above",
+            "replyTo": "$s1"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          null,
+          { "ok": false, "error": { "code": "not-found", "field": "to[2]" } }
+        ],
+        "messages": [{ "id": "$s1" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.send.a-failed-push-returns-to-held",
+      "title": "When the push fails the delivery returns to held and is unbound",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "6.2"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "failPush": ["run:r-000002"],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["task:t-000002"], "kind": "message", "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "via": "direct",
+            "state": "held",
+            "session": null
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "push", "session": "run:r-000002", "message": "$s1" }
+        ]
+      }
+    },
+    {
+      "id": "core.send.a-failed-notify-returns-to-held",
+      "title": "When notifying a session fails the channel delivery returns to held and is unbound",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "6.2"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "channels": [{ "name": "auth", "members": ["task:t-000002"] }],
+        "failPush": ["run:r-000002"],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["channel:auth"], "kind": "notice", "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "via": "channel",
+            "state": "held",
+            "session": null
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "notify", "session": "run:r-000002", "message": "$s1" }
+        ]
+      }
+    },
+    {
+      "id": "core.send.only-approved-agents-send",
+      "title": "An unregistered, pending or revoked agent is forbidden on from; an approved agent sends",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.5", "9.1"],
+      "given": {
+        "agents": [
+          { "address": "agent:wyat/pending-bot", "status": "pending" },
+          { "address": "agent:wyat/old-bot", "status": "revoked" },
+          { "address": "agent:wyat/claude-code.macbook", "status": "approved" }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/stranger", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "x" }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/pending-bot", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "x" }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/old-bot", "canDecide": false },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "x" }
+        },
+        {
+          "op": "send",
+          "as": {
+            "address": "agent:wyat/claude-code.macbook",
+            "canDecide": false
+          },
+          "input": { "to": ["human:wyat"], "kind": "message", "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": true, "result": { "message": "$s4", "downgraded": false } }
+        ],
+        "messages": [{ "id": "$s4", "from": "agent:wyat/claude-code.macbook" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.send.an-ended-session-reached-through-a-channel-gets-nothing",
+      "title": "A session that is not live and is reached only through a channel gets no delivery; the live members still do",
+      "class": "host-core",
+      "level": "MAY",
+      "profile": "core",
+      "sections": ["3.6", "6.1"],
+      "capability": "implicit-members",
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002", "liveSession": "run:r-000002" }
+        ],
+        "implicit": { "auth": ["run:r-0000dd", "task:t-000002"] },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": { "to": ["channel:auth"], "kind": "notice", "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "via": "channel",
+            "state": "notified"
+          }
+        ]
+      }
+    }
+  ]
+}

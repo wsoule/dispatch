@@ -2,6 +2,7 @@ import type { SendResult } from '@dispatch/client';
 import type { KeyboardEvent } from 'react';
 import { useId, useMemo, useState } from 'react';
 
+import { useDraftKey } from '../../hooks/useThreads';
 import type {
   ComposeKind,
   ComposeProblem,
@@ -15,6 +16,7 @@ import {
   sendProblem,
   trailingMention,
   wakeDefault,
+  withoutRecipient,
 } from '../../lib/composer';
 import type { KnownAddresses } from '../../lib/threads';
 import { completeAddress } from '../../lib/threads';
@@ -22,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { SegmentedControl } from '@/ui/ai/segmented';
 import { Switch } from '@/ui/ai/switch';
+import { Button } from '@/ui/button';
 
 const KINDS: { id: ComposeKind; label: string }[] = [
   { id: 'message', label: 'Message' },
@@ -36,10 +39,14 @@ export interface ComposerProps {
   initialTo?: readonly string[];
   /** Recipients that cannot be removed, such as a task tab's own task. */
   locked?: readonly string[];
-  disabledReason: string | null;
   label: (address: string) => string;
-  onSend: (state: ComposeState) => Promise<SendResult>;
+  /** Sends the draft under its idempotency key, kept until a send or an edit. */
+  onSend: (state: ComposeState, idempotencyKey: string) => Promise<SendResult>;
   onSent?: (result: SendResult) => void;
+  /** Closes the draft: a Cancel button, and Escape with no @token to drop. */
+  onCancel?: () => void;
+  /** Puts the caret in the message box on mount. */
+  focusOnMount?: boolean;
 }
 
 /** A new message: `@` completes recipients, and every problem shows inline with its field. */
@@ -47,19 +54,22 @@ export function Composer({
   known,
   initialTo = NONE,
   locked = NONE,
-  disabledReason,
   label,
   onSend,
   onSent,
+  onCancel,
+  focusOnMount = false,
 }: ComposerProps) {
   const [to, setTo] = useState<string[]>(() => [...initialTo]);
   const [body, setBody] = useState('');
   const [kind, setKind] = useState<ComposeKind>('message');
   const [urgent, setUrgent] = useState(false);
   const [wakeChoice, setWakeChoice] = useState<boolean | null>(null);
-  const [highlight, setHighlight] = useState(0);
+  // Null until arrow keys move it: Enter then takes an address typed in full.
+  const [highlight, setHighlight] = useState<number | null>(null);
   const [problem, setProblem] = useState<ComposeProblem | null>(null);
   const [sending, setSending] = useState(false);
+  const [draftKey, renewKey] = useDraftKey();
 
   const mention = trailingMention(body);
   const query = mention?.query ?? null;
@@ -73,9 +83,9 @@ export function Composer({
   const listed = query !== null && matches.length > 0;
   const noMatch = query !== null && !listed;
   // The list can shrink under the highlight when the known addresses change.
-  const active = Math.min(highlight, Math.max(matches.length - 1, 0));
+  const active = Math.min(highlight ?? 0, Math.max(matches.length - 1, 0));
 
-  const pick = (index: number) => {
+  const pick = (index: number | null) => {
     if (query === null) return;
     const outcome = resolveMention(query, matches, index);
     if (outcome.kind === 'problem') {
@@ -85,20 +95,30 @@ export function Composer({
     setTo((prev) =>
       prev.includes(outcome.address) ? prev : [...prev, outcome.address]
     );
+    renewKey();
     setBody(dropTrailingMention(body));
-    setHighlight(0);
+    setHighlight(null);
     setProblem(null);
   };
 
   // Runs before the PromptBar's own Enter handling, so Enter picks a recipient while completing.
   const onKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (query === null) return;
+    if (query === null) {
+      if (event.key === 'Escape' && onCancel !== undefined) {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      }
+      return;
+    }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
       const step = event.key === 'ArrowDown' ? 1 : -1;
-      setHighlight((h) =>
-        matches.length === 0 ? 0 : (h + step + matches.length) % matches.length
+      setHighlight(
+        matches.length === 0
+          ? null
+          : (active + step + matches.length) % matches.length
       );
     } else if (
       event.key === 'Enter' ||
@@ -107,7 +127,7 @@ export function Composer({
     ) {
       event.preventDefault();
       event.stopPropagation();
-      pick(active);
+      pick(highlight === null ? null : active);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -125,7 +145,8 @@ export function Composer({
     setSending(true);
     setProblem(null);
     try {
-      const result = await onSend(state);
+      const result = await onSend(state, draftKey);
+      renewKey();
       setBody('');
       setTo([...initialTo]);
       setWakeChoice(null);
@@ -186,8 +207,9 @@ export function Composer({
         value={body}
         onChange={(value) => {
           setBody(value);
+          renewKey();
           setProblem(null);
-          setHighlight(0);
+          setHighlight(null);
         }}
         onSubmit={() => void submit()}
         references={to.map((address) => ({
@@ -195,39 +217,59 @@ export function Composer({
           label: label(address),
           locked: locked.includes(address),
         }))}
-        onRemoveReference={(id) =>
-          setTo((prev) => prev.filter((a) => a !== id))
-        }
-        disabled={disabledReason !== null || sending}
+        onRemoveReference={(id) => {
+          setTo((prev) => withoutRecipient(prev, id, locked));
+          renewKey();
+        }}
+        disabled={sending}
         placeholder="Write a message… type @ to add a recipient"
         ariaLabel="New message"
         completion={
           listed ? { listId, activeOptionId: optionId(active) } : undefined
         }
+        focusOnMount={focusOnMount}
       />
       <div className="flex flex-wrap items-center gap-3">
         <SegmentedControl
           label="Kind"
           options={KINDS}
           value={kind}
-          onChange={(id) =>
-            setKind(KINDS.find((k) => k.id === id)?.id ?? 'message')
-          }
+          onChange={(id) => {
+            setKind(KINDS.find((k) => k.id === id)?.id ?? 'message');
+            renewKey();
+          }}
         />
-        <Switch label="Urgent" checked={urgent} onCheckedChange={setUrgent} />
+        <Switch
+          label="Urgent"
+          checked={urgent}
+          onCheckedChange={(on) => {
+            setUrgent(on);
+            renewKey();
+          }}
+        />
         <Switch
           label="Wake if asleep"
           checked={wake}
-          onCheckedChange={setWakeChoice}
+          onCheckedChange={(on) => {
+            setWakeChoice(on);
+            renewKey();
+          }}
         />
+        {onCancel !== undefined && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        )}
       </div>
       {problem !== null && (
         <p role="alert" className="text-destructive text-[12px]">
           {problemText(problem)}
         </p>
-      )}
-      {disabledReason !== null && (
-        <p className="text-muted-foreground text-[12px]">{disabledReason}</p>
       )}
     </div>
   );

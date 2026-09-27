@@ -1,3 +1,4 @@
+import { queryAll } from '@dispatch/core';
 import type { SqliteDatabase } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -415,6 +416,17 @@ describe('SqliteMessageStore', () => {
       'm-02',
       'm-01',
     ]);
+  });
+
+  it('looks a recipient address up by index, so narrowing threads scans no whole table', () => {
+    const plan = queryAll<{ detail: string }>(
+      db,
+      'EXPLAIN QUERY PLAN SELECT message_id FROM recipients WHERE addr = ?',
+      ['task:t-000002']
+    );
+    expect(plan.map((row) => row.detail).join('\n')).toContain(
+      'INDEX recipients_addr'
+    );
   });
 
   it('refuses a messages.db written by a newer schema', () => {

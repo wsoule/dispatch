@@ -142,7 +142,9 @@ export type ServerEvent =
   // A message was stored. Carries it inline: every client renders it at once.
   | { type: 'message.new'; message: Message }
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
-  | { type: 'delivery.changed'; deliveryId: string; messageId: string };
+  | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // The A2A bridge's clients, tasks or listener changed; go refetch.
+  | { type: 'a2a.changed' };
 
 /** Who an event socket belongs to, as index.ts resolved its credential. */
 export interface SocketAudience {

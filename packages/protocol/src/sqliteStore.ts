@@ -2,7 +2,8 @@ import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 
 import type { Address } from './address.js';
-import { gateOf, isSystemMarker } from './envelope.js';
+import { hasGateData } from './constants.js';
+import { isSystemMarker } from './envelope.js';
 import type { JsonValue, Message, MessageKind, Ref } from './envelope.js';
 import { DELIVERY_STATES, REMOTE_STATES } from './store.js';
 import type {
@@ -39,6 +40,7 @@ CREATE TABLE IF NOT EXISTS recipients (
   message_id TEXT NOT NULL, position INTEGER NOT NULL, addr TEXT NOT NULL,
   PRIMARY KEY (message_id, position)
 );
+CREATE INDEX IF NOT EXISTS recipients_addr ON recipients (addr);
 CREATE TABLE IF NOT EXISTS deliveries (
   id TEXT PRIMARY KEY, message_id TEXT NOT NULL, recipient TEXT NOT NULL,
   run_id TEXT, via TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL
@@ -60,6 +62,9 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 CREATE TABLE IF NOT EXISTS gate_effects (
   question_id TEXT PRIMARY KEY, applied_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS voided_answers (
+  answer_id TEXT PRIMARY KEY, question_id TEXT NOT NULL, at TEXT NOT NULL
 );
 `;
 
@@ -492,8 +497,27 @@ export class SqliteMessageStore implements MessageStore {
       .run(questionId, at);
   }
 
-  // SQL narrows to answered questions carrying typed data with no recorded
-  // effect; gateOf and the x-closed check then keep real, non-closed gates.
+  // Voids by kind, so the one-answer index frees and the question reopens; an
+  // older build that ignores the table still reads the row as a plain message.
+  voidAnswer(answerId: string, questionId: string, at: string): boolean {
+    return this.transaction(() => {
+      const changed = this.db
+        .prepare(
+          "UPDATE messages SET kind = 'message' WHERE id = ? AND reply_to = ? AND kind = 'answer'"
+        )
+        .run(answerId, questionId);
+      if (Number(changed.changes) === 0) return false;
+      this.db
+        .prepare(
+          'INSERT INTO voided_answers (answer_id, question_id, at) VALUES (?,?,?) ON CONFLICT (answer_id) DO NOTHING'
+        )
+        .run(answerId, questionId, at);
+      return true;
+    });
+  }
+
+  // SQL narrows to answered questions with gate data and no recorded effect;
+  // the engine keeps the types it implements, and system closes are dropped.
   unappliedAnsweredGates(): { question: Message; answer: Message }[] {
     const rows = queryAll<{ question_id: string; answer_id: string }>(
       this.db,
@@ -506,7 +530,7 @@ export class SqliteMessageStore implements MessageStore {
     return rows.flatMap((r) => {
       const question = this.getMessage(r.question_id);
       const answer = this.getMessage(r.answer_id);
-      if (question === null || answer === null || gateOf(question) === null)
+      if (question === null || answer === null || !hasGateData(question))
         return [];
       return isSystemMarker(answer, 'x-closed') ? [] : [{ question, answer }];
     });

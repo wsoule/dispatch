@@ -233,7 +233,9 @@ export function project(f: TaskFacts, view: ProjectionView): TaskJson {
     status: { state: wireState(decision.state), message: status },
   };
   if (view.includeArtifacts) {
+    // A host's own artifacts lead, since clients read the first as the result.
     const artifacts: ArtifactJson[] = [
+      ...(f.hostArtifacts ?? []),
       ...(decision.row === 5 && f.answer !== null
         ? [answerArtifact(f.answer, view)]
         : []),
@@ -286,7 +288,7 @@ export function withReask(
 }
 
 // A sha256 of what a watcher must see change: the decision, the scope's ids,
-// the work artifacts and the linked task.
+// the work and host artifacts and the linked task.
 export function projectionKey(f: TaskFacts): string {
   const d = decideState(f);
   const statusId =
@@ -301,6 +303,7 @@ export function projectionKey(f: TaskFacts): string {
         f.scope.map((m) => m.id),
         f.work,
         f.task,
+        f.hostArtifacts ?? [],
       ])
     )
     .digest('hex');

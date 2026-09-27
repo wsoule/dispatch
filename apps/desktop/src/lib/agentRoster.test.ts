@@ -5,6 +5,7 @@ import {
   agentRosterKey,
   handleOf,
   mayChangeAgentRoster,
+  mutedAddresses,
   rosterActions,
   sortRoster,
 } from './agentRoster';
@@ -78,6 +79,18 @@ describe('rosterActions', () => {
       mute: false,
       revoke: false,
     });
+  });
+});
+
+describe('mutedAddresses', () => {
+  test('lists the agents a decider muted, and nobody else', () => {
+    const muted = mutedAddresses([
+      agent({ address: 'agent:a/quiet', muted: true }),
+      agent({ address: 'agent:a/loud' }),
+      agent({ address: 'agent:a/gone', status: 'revoked', muted: true }),
+    ]);
+    expect([...muted].sort()).toEqual(['agent:a/gone', 'agent:a/quiet']);
+    expect(mutedAddresses([]).size).toBe(0);
   });
 });
 

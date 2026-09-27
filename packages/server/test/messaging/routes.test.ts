@@ -255,6 +255,42 @@ describe('messaging HTTP routes', () => {
     );
   });
 
+  it('a reply to my own message to a run that has since ended is held for its task', async () => {
+    const { runId, taskId } = await liveRun('Ends without writing back');
+    const mine = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`run:${runId}`],
+        kind: 'message',
+        body: 'try the cart first',
+      }),
+    });
+    expect(mine.status).toBe(201);
+    const { message } = await json<{ message: { id: string } }>(mine);
+    await handle.orchestrator.cancel(runId);
+
+    const reply = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`run:${runId}`],
+        kind: 'message',
+        body: 'still there?',
+        replyTo: message.id,
+      }),
+    });
+    expect(reply.status).toBe(201);
+    const sent = await json<{
+      message: { to: string[] };
+      deliveries: { recipient: string; state: string }[];
+    }>(reply);
+    expect(sent.message.to).toEqual([`task:${taskId}`]);
+    expect(sent.deliveries).toEqual([
+      expect.objectContaining({ recipient: `task:${taskId}`, state: 'held' }),
+    ]);
+  });
+
   it('a run joins a channel as its task; the channel list shows epic children implicitly', async () => {
     const { taskId } = await liveRun('Join a channel');
     const runToken = executor.lastRunToken;

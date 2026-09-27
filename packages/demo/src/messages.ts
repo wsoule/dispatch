@@ -1,5 +1,5 @@
 // Seeds the demo's message bus beside its run history, so Threads opens on a
-// granted scope gate, an open question, an accepted handoff and an epic notice.
+// granted scope gate, open questions, an accepted handoff and an epic notice.
 import {
   createUlidFactory,
   openMessagesDb,
@@ -32,9 +32,8 @@ const SCOPE_REASON =
 type MessageFields = Partial<Message> &
   Pick<Message, 'from' | 'to' | 'kind' | 'body' | 'createdAt'>;
 
-// Ids in the daemon's own shape (`m-`/`d-` plus a lowercase ulid of the
-// timestamp), with zeroed randomness so every reseed writes the same ids.
-// Build each kind in time order: the ulid factory never goes backwards.
+// Ids in the daemon's shape with zeroed randomness, so a reseed repeats them;
+// build each kind in time order, since the ulid factory never goes backwards.
 function seedIds(): (prefix: 'm' | 'd', at: string) => string {
   const zeros = (n: number): Uint8Array => new Uint8Array(n);
   const next = { m: createUlidFactory(zeros), d: createUlidFactory(zeros) };
@@ -42,24 +41,21 @@ function seedIds(): (prefix: 'm' | 'd', at: string) => string {
     `${prefix}-${next[prefix](Date.parse(at)).toLowerCase()}`;
 }
 
-/**
- * Replaces `<runsDir>/messages.db` with threads for `human:<handle>`, each
- * inside the seeded run that sent it (see runs.ts). Nothing is left `held` or
- * `sending`, so the daemon never pushes this history into a new run.
- */
-export function writeMessages(
-  rootDir: string,
-  home: string,
-  handle: string
-): void {
-  const human = `human:${handle}`;
-  const dir = runsDir(rootDir, home);
-  mkdirSync(dir, { recursive: true });
-  const path = join(dir, 'messages.db');
-  assertSafeToDelete(path);
-  for (const file of [path, `${path}-wal`, `${path}-shm`])
-    rmSync(file, { force: true });
+/** The seeded threads by role, each message sent inside its run in runs.ts. */
+export interface SeededMessages {
+  question: Message;
+  keyQuestion: Message;
+  scope: Message;
+  granted: Message;
+  notice: Message;
+  handoff: Message;
+  accepted: Message;
+  deliveries: Delivery[];
+}
 
+/** Builds the seeded threads for `human:<handle>`; the same ids every call. */
+export function seedMessages(handle: string): SeededMessages {
+  const human = `human:${handle}`;
   const id = seedIds();
   const message = (fields: MessageFields): Message => {
     const mid = id('m', fields.createdAt);
@@ -116,6 +112,15 @@ export function writeMessages(
     body: 'Which geocoding provider should this use — no default is specified in the task?',
     createdAt: ago(120, 30),
   });
+  const keyQuestion = message({
+    from: 'run:r-88bf02',
+    to: [human],
+    kind: 'question',
+    blocking: true,
+    choices: ['Reuse an existing key', 'Add a new one'],
+    body: 'Should the API key live in an env var already used elsewhere, or a new one?',
+    createdAt: ago(120, 20),
+  });
   const scope = message({
     from: 'run:r-1e6a4f',
     to: [human],
@@ -156,6 +161,7 @@ export function writeMessages(
 
   const deliveries = [
     delivery(question, human, 'notified'),
+    delivery(keyQuestion, human, 'notified'),
     delivery(scope, human, 'answered', { updatedAt: granted.createdAt }),
     // Each answer reached its run while it was live.
     delivery(granted, 'run:r-1e6a4f', 'pushed', { runId: 'r-1e6a4f' }),
@@ -166,13 +172,48 @@ export function writeMessages(
     delivery(handoff, human, 'answered', { updatedAt: accepted.createdAt }),
     delivery(accepted, 'run:r-f30c76', 'pushed', { runId: 'r-f30c76' }),
   ];
+  return {
+    question,
+    keyQuestion,
+    scope,
+    granted,
+    notice,
+    handoff,
+    accepted,
+    deliveries,
+  };
+}
 
+/** Replaces `<runsDir>/messages.db` with seedMessages' threads; nothing is left
+ *  `held` or `sending`, so the daemon never pushes this history into a run. */
+export function writeMessages(
+  rootDir: string,
+  home: string,
+  handle: string
+): void {
+  const dir = runsDir(rootDir, home);
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, 'messages.db');
+  assertSafeToDelete(path);
+  for (const file of [path, `${path}-wal`, `${path}-shm`])
+    rmSync(file, { force: true });
+
+  const seeded = seedMessages(handle);
+  const { deliveries, scope, granted } = seeded;
+  const messages = [
+    seeded.question,
+    seeded.keyQuestion,
+    scope,
+    granted,
+    seeded.notice,
+    seeded.handoff,
+    seeded.accepted,
+  ];
   const db = openMessagesDb(path);
   try {
     const store = new SqliteMessageStore(db);
     store.transaction(() => {
-      for (const m of [question, scope, granted, notice, handoff, accepted])
-        store.insertMessage(m);
+      for (const m of messages) store.insertMessage(m);
       for (const d of deliveries) store.insertDelivery(d);
       // The grant's effect is history: without this row, recover() would replay it at boot.
       store.markGateApplied(scope.id, granted.createdAt);

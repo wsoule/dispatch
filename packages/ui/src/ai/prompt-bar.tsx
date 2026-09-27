@@ -59,6 +59,8 @@ export type PromptBarProps = {
   /** A completion list the caller renders for what is being typed: the text box
    *  names it and its highlighted option, so screen readers announce moves. */
   completion?: { listId: string; activeOptionId?: string };
+  /** Puts the caret in the text box on mount, for a composer the user just opened. */
+  focusOnMount?: boolean;
 };
 
 const MIN_ROWS = 1;
@@ -115,8 +117,13 @@ export function PromptBar({
   placeholder = 'Write a message…',
   ariaLabel = 'Prompt',
   completion,
+  focusOnMount = false,
 }: PromptBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (focusOnMount) textareaRef.current?.focus();
+  }, [focusOnMount]);
 
   useEffect(() => {
     if (textareaRef.current) autosize(textareaRef.current);

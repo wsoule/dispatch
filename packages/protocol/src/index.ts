@@ -1,6 +1,12 @@
-export const PROTOCOL_VERSION = '0.1.0';
 export { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 export type { Address, ParsedAddress } from './address.js';
+export {
+  GATE_RAISERS,
+  gateTypeOf,
+  hasGateData,
+  raiserOf,
+} from './constants.js';
+export type { GateRaiser } from './constants.js';
 export { DEFAULT_LIMITS, DeliveryEngine } from './engine.js';
 export type {
   EngineEvent,
@@ -25,6 +31,7 @@ export type {
   MessageKind,
   Ref,
   SendInput,
+  ValidateOptions,
 } from './envelope.js';
 export { MessagingError } from './errors.js';
 export type { MessagingErrorCode } from './errors.js';
@@ -61,3 +68,4 @@ export type {
   ThreadSummary,
 } from './store.js';
 export { createUlidFactory } from './ulid.js';
+export { PROTOCOL_VERSION } from './version.js';

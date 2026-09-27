@@ -29,6 +29,9 @@ import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import packageJson from '../package.json';
+import type { A2ABridge } from './a2a/bridge.js';
+import { openA2ABridge } from './a2a/bridge.js';
+import type { ListenerOverrides } from './a2a/settings.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
   bearerToken,
@@ -88,6 +91,7 @@ import {
   ensureOverseerActor,
   overseerToolMessaging,
 } from './messaging/overseerBus.js';
+import type { Messaging } from './messaging/service.js';
 import { openMessaging } from './messaging/service.js';
 import { NoteStore } from './notes.js';
 import { EpicEngine } from './orchestrator/epic.js';
@@ -176,6 +180,10 @@ export interface ServerHandle {
   // store is the backend-selected one the API writes through, which is what
   // its blocked-finding merge gate reads.
   orchestrator: Orchestrator;
+  // Exposed the same way, so a test can mint a run token or seed a message.
+  messaging: Messaging;
+  // The A2A bridge: its listener status, store and port.
+  a2a: A2ABridge;
   // Exposed for introspection/tests — e.g. calling pollOnce() directly to
   // populate cachedPrs() deterministically instead of racing its internal
   // poll timer (started/stopped by startServer itself below).
@@ -308,6 +316,8 @@ export interface StartServerOptions {
   idleTimeoutMs?: number;
   idleCheckIntervalMs?: number;
   onIdle?: () => void;
+  // One-boot A2A listener overrides from dispatchd's `--a2a-*` flags.
+  a2a?: ListenerOverrides;
 }
 
 const moduleDir = dirname(fileURLToPath(import.meta.url));
@@ -1297,6 +1307,24 @@ async function bootServer(
   await messaging.recover();
   // Runs force-failed above left their gates open; nobody can act on them now.
   closeOrphanedGates(messaging.engine, orchestrator);
+  // After recovery, so the bridge reconciles against settled messaging state;
+  // its listener opens only once the daemon's own ports are known (below).
+  const a2a = openA2ABridge({
+    rootDir,
+    messaging,
+    tasks: store,
+    orchestrator,
+    events,
+    ownerRef: actorContext.humanRef,
+    version: packageJson.version,
+    daemonPorts: () => [
+      server.port ?? 0,
+      ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
+    ],
+    ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    mark: (label) => watchdog.mark(label),
+    track: (fn) => (idle === null ? fn() : idle.track(fn)),
+  });
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -1721,6 +1749,7 @@ async function bootServer(
     overseerManager,
     epicEngine,
     messaging,
+    a2a,
     prManager,
     prWorktrees,
     mergeQueue,
@@ -1786,7 +1815,9 @@ async function bootServer(
             planManager.listDrafts().some((d) => d.state === 'running') ||
             overseerManager.list().some((o) => o.state === 'running') ||
             terminals.list().some((t) => t.state === 'running') ||
-            browsers.list().length > 0,
+            browsers.list().length > 0 ||
+            // An exposed agent must stay up to answer.
+            a2a.listening(),
         })
       : null;
 
@@ -1986,6 +2017,7 @@ async function bootServer(
   // assertion.
   const port = server.port ?? 0;
   const tlsPort = tlsServer === null ? undefined : (tlsServer.port ?? 0);
+  await a2a.start();
   if (shared) {
     for (const origin of tlsPort === undefined
       ? ownOrigins(port, networkInterfaces(), opts.publicOrigins)
@@ -2017,6 +2049,8 @@ async function bootServer(
     team,
     mergeQueue,
     orchestrator,
+    messaging,
+    a2a,
     prManager,
     prWorktrees,
     async stop() {
@@ -2057,6 +2091,7 @@ async function bootServer(
       // EventBus for why we don't also close each socket ourselves first.
       await server.stop(true);
       await tlsServer?.stop(true);
+      await a2a.close();
       if (shouldWriteDaemonFile) removeDaemonFile(rootDir);
       // Last: the database handle outlives every reader above, and closing it
       // while a request is still in flight would fail that request rather

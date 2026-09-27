@@ -59,7 +59,7 @@ import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
-import { useThreadRail } from './hooks/useThreads';
+import { useThreadsNeedsYouCount } from './hooks/useThreads';
 import { withActionFeedback } from './lib/actionFeedback';
 import type {
   GlobalView,
@@ -518,8 +518,8 @@ function App() {
     []
   );
 
-  // The Threads rail count; the view reads the same queries, so this adds no fetch.
-  const threadRail = useThreadRail(
+  // The sidebar's Threads count, from queries the Threads view shares.
+  const threadsNeedsYou = useThreadsNeedsYouCount(
     rawData.client,
     rawData.port,
     rawData.me,
@@ -1089,9 +1089,7 @@ function App() {
                       onOpenPalette={() => dispatchNav({ type: 'openPalette' })}
                       onNewTask={() => openCreateTask()}
                       inboxCount={inboxData.total}
-                      threadsNeedsYouCount={
-                        threadRail.groups['needs-you'].length
-                      }
+                      threadsNeedsYouCount={threadsNeedsYou}
                       overseerPendingCount={
                         (overseer.record?.pendingActions.length ?? 0) +
                         (overseer.record?.pendingApprovals.length ?? 0)

@@ -33,21 +33,31 @@ import {
   openToolApprovalGate,
   SYSTEM_SENDER,
 } from './gates.js';
+import type { ExternalPolicy } from './host.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 import {
   applyScopeAnswer,
-  expireScopeGates,
-  grantScopeGatesByPolicy,
   installScopePolicy,
   SCOPE_EXPIRY_SWEEP_MS,
+  sweepScopeGates,
 } from './scopePolicy.js';
 import {
   isStaleApproval,
   raiseToolApproval,
   toolApprovalDecision,
 } from './toolApproval.js';
+
+// Gate types dispatchd implements a handler for; a sub-project adds its type
+// here with its handler.
+const DISPATCH_GATE_TYPES = [
+  'tool-approval',
+  'scope',
+  'wake',
+  'agent-registration',
+  'overseer-action',
+] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.
 interface OverseerGateTarget {
@@ -76,6 +86,8 @@ export interface Messaging {
   // Replays crash-interrupted deliveries and gate effects; must run after
   // orchestrator.reconcileOnBoot() (index.ts says why).
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
+  // Installs (or with null removes) the A2A bridge's say on external recipients.
+  setExternalPolicy(policy: ExternalPolicy | null): void;
   close(): void;
 }
 
@@ -165,7 +177,12 @@ export function openMessaging(deps: {
     );
     limits = { ...DEFAULT_MESSAGING };
   }
-  const engine = new DeliveryEngine({ store, host, limits });
+  const engine = new DeliveryEngine({
+    store,
+    host,
+    limits,
+    gateTypes: DISPATCH_GATE_TYPES,
+  });
 
   // Tells the sender of `about` why its wake did not happen, through its task
   // if its run has ended. Never throws: the gate's effect is already decided.
@@ -471,13 +488,11 @@ export function openMessaging(deps: {
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
   // Grants what policy covers before expiring, so a covered gate is never denied.
   const scopeSweep = setInterval(() => {
-    grantScopeGatesByPolicy(engine, scopeDeps)
-      .then(() =>
-        expireScopeGates(engine, deps.scopeExpiry?.now?.() ?? Date.now())
-      )
-      .catch((err: unknown) =>
-        console.error('messaging: scope sweep failed', err)
-      );
+    void sweepScopeGates(
+      engine,
+      scopeDeps,
+      () => deps.scopeExpiry?.now?.() ?? Date.now()
+    );
   }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
   scopeSweep.unref();
 
@@ -546,8 +561,12 @@ export function openMessaging(deps: {
       overseer = target;
     },
     recover: () => engine.recover(),
+    setExternalPolicy(policy) {
+      host.setExternalPolicy(policy);
+    },
     close() {
       overseer = null;
+      host.setExternalPolicy(null);
       clearInterval(scopeSweep);
       uninstallScopePolicy();
       unsubscribeRunStarted();
