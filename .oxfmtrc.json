@@ -46,6 +46,7 @@
     "README",
     ".dispatch",
     ".mcp.json",
-    "packages/demo/storefront-src"
+    "packages/demo/storefront-src",
+    "packages/protocol-spec/versions"
   ]
 }

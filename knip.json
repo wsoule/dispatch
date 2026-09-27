@@ -30,6 +30,11 @@
         "test/fixtures/watchdogTeardown.ts"
       ]
     },
+    "packages/protocol-spec": {
+      // Scripts run from moon tasks; fixture adapters are spawned by the
+      // runner tests, never imported.
+      "entry": ["scripts/*.ts", "test/fixtures/adapters/*.ts"]
+    },
     "packages/demo": {
       // storefront-src is a template copied into the generated demo repo
       // (see src/paths.ts's `template`), so nothing in this workspace ever

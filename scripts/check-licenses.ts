@@ -21,6 +21,7 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/cli': 'MIT',
   '@dispatch/mcp': 'MIT',
   '@dispatch/protocol': 'MIT',
+  '@dispatch/protocol-spec': 'Apache-2.0',
   // The daemon is FSL, except its team features (see LICENSED_DIRS).
   '@dispatch/server': 'FSL-1.1-ALv2 AND Elastic-2.0',
   '@dispatch/tokens': 'FSL-1.1-ALv2',
@@ -99,10 +100,20 @@ function isElasticLicense(text: string): boolean {
   );
 }
 
+// True when the text is the Apache License 2.0 (the published protocol's
+// text and kit, packages/protocol-spec).
+function isApacheLicense(text: string): boolean {
+  return (
+    text.includes('Apache License') &&
+    text.includes('Version 2.0, January 2004')
+  );
+}
+
 const LICENSE_VALIDATORS: Record<string, (text: string) => boolean> = {
   MIT: isMitLicense,
   'FSL-1.1-ALv2': isFslLicense,
   'Elastic-2.0': isElasticLicense,
+  'Apache-2.0': isApacheLicense,
 };
 
 const problems: string[] = [];

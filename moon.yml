@@ -9,6 +9,8 @@ dependsOn:
   - 'client'
   - 'cli'
   - 'mcp'
+  - 'protocol'
+  - 'protocol-spec'
   - 'desktop'
 
 # Every repo-wide lane below scans from the root, and every one of them has to

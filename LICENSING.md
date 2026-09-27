@@ -8,13 +8,14 @@ the Elastic License 2.0, on 2026-09-23.
 
 ## The split
 
-| Code                                                                                       | License                                  |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`                         | MIT                                      |
-| Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site) | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
-| Team features: `packages/server/src/team/` and `packages/server/test/team/`                | Elastic-2.0 (their own `LICENSE` files)  |
+| Code                                                                                                          | License                                  |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`, `packages/protocol`                       | MIT                                      |
+| `packages/protocol-spec` (the published protocol: DMP text, registries, schemas, vectors, conformance runner) | Apache-2.0 (its own `LICENSE`)           |
+| Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site)                    | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
+| Team features: `packages/server/src/team/` and `packages/server/test/team/`                                   | Elastic-2.0 (their own `LICENSE` files)  |
 
-Three tiers, one rule each:
+Four tiers, one rule each:
 
 - **MIT — the interop surface.** The task model and types (`core`), the daemon
   API client (`client`), the CLI, and the MCP server are how other tools,
@@ -36,6 +37,9 @@ Three tiers, one rule each:
   and not offering the software as a hosted service — the two things the FSL's
   "internal use" grant could not rule out, which is why this code is not FSL.
   See "The team tier, plainly" below.
+- **Apache-2.0: the published protocol.** Text and tests anyone may implement,
+  under Apache-2.0. It makes no patent promise to implementers; that waits for
+  the Community Specification License step.
 
 ## The team tier, plainly
 
@@ -85,4 +89,8 @@ Three tiers, one rule each:
   proves provenance but does not permit relicensing.
 - **The name.** "Dispatch" the mark is claimed by the project regardless of what
   the licenses permit you to do with the code. A fork must not present itself as
-  Dispatch.
+  Dispatch. An implementation holding a passing DMP conformance report may say
+  it "implements the Dispatch Messaging Protocol (DMP) 1.0 (Core)" (or its other
+  claims). That nominative use of the protocol's title is the only use of the
+  Dispatch mark the protocol grants; it does not license "Dispatch" in a
+  product, package or service name.
