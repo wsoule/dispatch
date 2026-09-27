@@ -21,15 +21,16 @@ export function carriesUnreviewed(p: ParentState): boolean {
   return p.unreviewed && !p.reviewed;
 }
 
-// Whether this revision itself brings text no human vouches for. Merges and
-// sync folds are mechanical, so they add none of their own.
+// Whether this revision itself brings text no human vouches for. Sync folds are
+// mechanical and add none; a merge adds none unless its author is unverified.
 export function isTainted(
   f: Pick<NewRevisionFacts, 'author' | 'cause' | 'approval' | 'unverifiedVia'>
 ): boolean {
-  if (f.cause === 'merge' || f.cause === 'sync') return false;
+  if (f.cause === 'sync') return false;
   if (f.cause === 'restore') return true;
   if (f.approval?.policy !== undefined) return true;
   if (f.unverifiedVia) return true;
+  if (f.cause === 'merge') return false;
   return !f.author.startsWith('human:');
 }
 
