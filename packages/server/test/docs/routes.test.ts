@@ -198,7 +198,7 @@ describe('docs routes', () => {
     expect(res.status).toBe(413);
   });
 
-  it('takes import contents only as application/octet-stream (P6)', async () => {
+  it('takes import contents only as application/octet-stream', async () => {
     const bytes = new TextEncoder().encode('# A\n');
     const hash = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
     const opened = await json<{ id: string; need: string[] }>(

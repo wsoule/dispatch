@@ -18,7 +18,12 @@ export interface ImportFile {
   hash: string;
 }
 
-type ImportErrorReason = 'invalid' | 'too-large' | 'not UTF-8' | 'missing';
+type ImportErrorReason =
+  | 'invalid'
+  | 'too-large'
+  | 'not UTF-8'
+  | 'missing'
+  | 'archived';
 export type ImportText =
   | { text: string }
   | { error: ImportErrorReason; detail: string };
@@ -44,6 +49,9 @@ export interface ImportReport {
 }
 
 export interface NamePlan {
+  // The file name without `.md`, which keys the name's origin and `imported` rows.
+  key: string;
+  // The handle the name's doc is created with, before collisions.
   slug: string;
   title: string;
   state: 'new' | 'existing' | 'tombstoned' | 'failed';
@@ -51,10 +59,11 @@ export interface NamePlan {
 }
 
 export interface ImportPlanState {
-  imported(slug: string, hash: string): boolean;
-  tombstoned(slug: string): boolean;
-  exists(slug: string): boolean;
-  partExists(slug: string, k: number): boolean;
+  imported(key: string, hash: string): boolean;
+  tombstoned(key: string): boolean;
+  archived(key: string): boolean;
+  exists(key: string): boolean;
+  partExists(key: string, k: number): boolean;
 }
 
 // Orders strings by code unit, the order ISO timestamps and hashes sort in.
@@ -63,8 +72,13 @@ function byText(a: string, b: string): number {
   return a < b ? -1 : 1;
 }
 
+// Files group by this key, so names that share a slug stay distinct docs.
+export function nameKey(fileName: string): string {
+  return fileName.replace(/\.md$/i, '');
+}
+
 export function nameSlug(fileName: string): string {
-  return docSlug(fileName.replace(/\.md$/i, ''));
+  return docSlug(nameKey(fileName));
 }
 
 // The first `# ` heading outside fenced code, cut to the title limit; the slug
@@ -120,9 +134,8 @@ function fittingLines(lines: readonly string[]): number {
   return fits;
 }
 
-// Splits text that is over the body limits: before the last `## ` heading
-// outside fences that keeps the part within them, else the last `### `, else
-// after the last blank line, else at the last line break. Nothing is added.
+// Cuts over-cap text before the last fitting `## ` outside fences, else `### `,
+// else after a blank line, else at a line break; nothing is added.
 export function splitForCap(text: string): string[] {
   const parts: string[] = [];
   let rest = text;
@@ -178,9 +191,9 @@ export function planImport(
   };
   const groups = new Map<string, ImportFile[]>();
   for (const f of files) {
-    const slug = nameSlug(f.name);
-    const group = groups.get(slug);
-    if (group === undefined) groups.set(slug, [f]);
+    const key = nameKey(f.name);
+    const group = groups.get(key);
+    if (group === undefined) groups.set(key, [f]);
     else group.push(f);
   }
   const distinct = new Set<string>();
@@ -190,21 +203,24 @@ export function planImport(
     if (t === undefined || 'error' in t) throw new Error(`no text for ${hash}`);
     return t.text;
   };
-  for (const [slug, group] of [...groups.entries()].sort(([a], [b]) =>
+  for (const [key, group] of [...groups.entries()].sort(([a], [b]) =>
     byText(a, b)
   )) {
+    const slug = nameSlug(group[0].name);
     const ordered = [...group].sort((a, b) => {
       const byMtime = byText(a.mtime, b.mtime);
       return byMtime !== 0 ? byMtime : byText(a.path, b.path);
     });
-    const tombstoned = state.tombstoned(slug);
+    const tombstoned = state.tombstoned(key);
+    // An archived doc is read-only, so its new contents are errors, as a save's would be.
+    const archived = !tombstoned && state.archived(key);
     // Each content's newest mtime among the files that import it.
     const newest = new Map<string, string>();
     let failed = 0;
     for (const f of ordered) {
       const t = texts.get(f.hash);
       // Already-imported content is never asked for, so its text is not needed.
-      const present = state.imported(slug, f.hash);
+      const present = state.imported(key, f.hash);
       const fail = (reason: ImportErrorReason, detail: string): void => {
         report.errors.push({ path: f.path, reason, detail });
         failed++;
@@ -215,6 +231,8 @@ export function planImport(
         fail('missing', 'the content was never uploaded');
       } else if (t !== undefined && 'error' in t) {
         fail(t.error, t.detail);
+      } else if (archived && !present) {
+        fail('archived', 'the doc is archived; restore it first');
       } else {
         distinct.add(f.hash);
         if (tombstoned) report.tombstoned++;
@@ -227,7 +245,7 @@ export function planImport(
     let stateOf: NamePlan['state'] = 'new';
     if (failed === ordered.length) stateOf = 'failed';
     else if (tombstoned) stateOf = 'tombstoned';
-    else if (state.exists(slug)) stateOf = 'existing';
+    else if (state.exists(key)) stateOf = 'existing';
     if (stateOf === 'failed') report.failedNames++;
     else if (stateOf === 'tombstoned') report.tombstonedNames++;
     else if (stateOf === 'existing') report.docsExisting++;
@@ -247,11 +265,11 @@ export function planImport(
       });
     const maxParts = Math.max(1, ...contents.map((c) => c.parts.length));
     for (let k = 2; k <= maxParts; k++)
-      if (!state.partExists(slug, k)) report.partDocsCreated++;
+      if (!state.partExists(key, k)) report.partDocsCreated++;
     const last = contents.at(-1);
     const title =
       last === undefined ? slug : importTitle(textOf(last.hash), slug);
-    names.push({ slug, title, state: stateOf, contents });
+    names.push({ key, slug, title, state: stateOf, contents });
   }
   report.names = groups.size;
   report.distinctContents = distinct.size;

@@ -48,7 +48,7 @@ export interface ImportReportInfo {
   failedNames: number;
   errors: {
     path: string;
-    reason: 'invalid' | 'too-large' | 'not UTF-8' | 'missing';
+    reason: 'invalid' | 'too-large' | 'not UTF-8' | 'missing' | 'archived';
     detail: string;
   }[];
   parity: { files: boolean; names: boolean };

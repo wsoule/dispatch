@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'bun:test';
 import { createHash } from 'node:crypto';
 
+import type { ApiContext } from '../../src/api.js';
 import type { DocsError } from '../../src/docs/errors.js';
+import { handleDocsRoute } from '../../src/docs/routes.js';
 import type { ImportFile, ImportText } from '../../src/docs/transfer.js';
 import {
   importTitle,
@@ -9,6 +11,7 @@ import {
   planImport,
   splitForCap,
 } from '../../src/docs/transfer.js';
+import type { Principal } from '../../src/messaging/principal.js';
 import { DECIDER, makeService, OWNER, TEAMMATE } from './fakeHost.js';
 
 const sha = (s: string | Uint8Array) =>
@@ -120,6 +123,7 @@ describe('pure planning', () => {
       {
         imported: () => false,
         tombstoned: () => false,
+        archived: () => false,
         exists: () => false,
         partExists: () => false,
       }
@@ -137,6 +141,37 @@ describe('pure planning', () => {
     expect(xPlan?.contents.map((c) => c.hash)).toEqual([
       x.meta.hash,
       xDrift.meta.hash,
+    ]);
+  });
+});
+
+describe('names that share a slug', () => {
+  it('stay distinct names in the plan', () => {
+    const a = file('p/Design Notes.md', '# A\n', '2026-09-20T00:00:00.000Z');
+    const b = file('q/design-notes.md', '# B\n', '2026-09-21T00:00:00.000Z');
+    const texts = new Map<string, ImportText>(
+      [a, b].map((f) => [
+        f.meta.hash,
+        { text: new TextDecoder().decode(f.bytes) },
+      ])
+    );
+    const { names, report } = planImport([a.meta, b.meta], texts, {
+      imported: () => false,
+      tombstoned: () => false,
+      archived: () => false,
+      exists: () => false,
+      partExists: () => false,
+    });
+    expect(report).toMatchObject({
+      names: 2,
+      docsCreated: 2,
+      contentsImported: 2,
+      duplicates: 0,
+      parity: { files: true, names: true },
+    });
+    expect(names.map((n) => [n.key, n.slug])).toEqual([
+      ['Design Notes', 'design-notes'],
+      ['design-notes', 'design-notes'],
     ]);
   });
 });
@@ -282,6 +317,38 @@ describe('the staged import', () => {
     ).toThrow('not in this import');
   });
 
+  it('refuses an upload it will not take before reading the body', async () => {
+    const { service } = makeService();
+    const { id } = service.openImport(service.actorFor(OWNER), {
+      files: [],
+      link: null,
+    });
+    const hash = sha('x');
+    // The body never ends, so a route that read it first would never answer.
+    const put = (principal: Principal) =>
+      handleDocsRoute(
+        new Request(
+          `http://docs.test/api/docs/imports/${id}/contents/${hash}`,
+          {
+            method: 'PUT',
+            headers: { 'content-type': 'application/octet-stream' },
+            body: new ReadableStream<Uint8Array>({
+              pull: () => new Promise<void>(() => undefined),
+            }),
+          }
+        ),
+        { principal, docs: service } as unknown as ApiContext,
+        ['imports', id, 'contents', hash],
+        new URL(`http://docs.test/api/docs/imports/${id}/contents/${hash}`)
+      );
+    const status = async (principal: Principal) =>
+      (await Promise.race([put(principal), Bun.sleep(1000).then(() => null)]))
+        ?.status;
+    expect(await status(TEAMMATE)).toBe(403);
+    expect(await status(DECIDER)).toBe(404);
+    expect(await status(OWNER)).toBe(400);
+  });
+
   it('needs a decide-tier human', () => {
     const { service } = makeService();
     const code = (() => {
@@ -351,6 +418,84 @@ describe('the staged import', () => {
     );
     expect(again).toMatchObject({ docsExisting: 1, contentsImported: 1 });
     expect(rels()).toEqual([['t-1', 'spec']]);
+  });
+
+  it('imports names that share a slug as distinct docs and knows each again', () => {
+    const { service } = makeService();
+    const owner = service.actorFor(OWNER);
+    const a = file('p/Design Notes.md', '# A\n', '2026-09-20T00:00:00.000Z');
+    const b = file('q/design-notes.md', '# B\n', '2026-09-21T00:00:00.000Z');
+    expect(stage(service, [a, b]).report).toMatchObject({
+      names: 2,
+      docsCreated: 2,
+      revisionsCreated: 2,
+    });
+    expect(service.read(owner, 'design-notes').text).toBe('# A\n');
+    expect(service.read(owner, 'design-notes-2').text).toBe('# B\n');
+    expect(stage(service, [a, b]).report).toMatchObject({
+      alreadyPresent: 2,
+      docsExisting: 2,
+      revisionsCreated: 0,
+    });
+  });
+
+  it('refuses a manifest name with a directory part', () => {
+    const { service } = makeService();
+    const good = file('p/good.md', '# Good\n', '2026-09-20T00:00:00.000Z');
+    expect(() =>
+      service.openImport(service.actorFor(OWNER), {
+        files: [{ ...good.meta, name: 'x/part-2.md' }],
+        link: null,
+      })
+    ).toThrow('file name');
+  });
+
+  it('reports the files of an archived doc and writes nothing to it', () => {
+    const { service } = makeService();
+    const owner = service.actorFor(OWNER);
+    stage(service, [file('p/x.md', '# X\nv1\n', '2026-09-20T00:00:00.000Z')]);
+    service.setStatus(owner, 'x', 'archived');
+    const again = stage(service, [
+      file('q/x.md', '# X\nv2\n', '2026-09-21T00:00:00.000Z'),
+      file('p/y.md', '# Y\n', '2026-09-21T00:00:00.000Z'),
+    ]).report;
+    expect(again.errors.map((e) => [e.path, e.reason])).toEqual([
+      ['q/x.md', 'archived'],
+    ]);
+    expect(again).toMatchObject({
+      failedNames: 1,
+      docsCreated: 1,
+      revisionsCreated: 1,
+      parity: { files: true, names: true },
+    });
+    expect(service.read(owner, 'x').text).toBe('# X\nv1\n');
+  });
+
+  it('archives part docs a shorter copy leaves over and restores one it fills again', () => {
+    const { service } = makeService();
+    const owner = service.actorFor(OWNER);
+    stage(service, [
+      file('p/plan.md', bigDoc(80, 600), '2026-09-20T00:00:00.000Z'),
+    ]);
+    const part2 = service.read(owner, 'plan-part-2').doc.id;
+    stage(service, [
+      file('q/plan.md', '# Big plan\nshort\n', '2026-09-21T00:00:00.000Z'),
+    ]);
+    expect(service.read(owner, 'plan-part-2').doc.status).toBe('archived');
+    expect(service.read(owner, 'plan').links).toEqual([]);
+    stage(service, [
+      file(
+        'r/plan.md',
+        `${bigDoc(80, 600)}again\n`,
+        '2026-09-22T00:00:00.000Z'
+      ),
+    ]);
+    const back = service.read(owner, 'plan-part-2');
+    expect(back.doc.status).toBe('draft');
+    expect(back.text.endsWith('again\n')).toBe(true);
+    expect(service.read(owner, 'plan').links.map((l) => l.target.id)).toEqual([
+      part2,
+    ]);
   });
 
   it('seals an open head before a re-import builds on it', () => {

@@ -197,9 +197,11 @@ async function importRoute(
         'expected content-type: application/octet-stream'
       );
     }
+    const hash = decode(rest[3], 'hash');
+    docs.admitImportContent(actor, id, hash);
     const bytes = await readBoundedBytes(req, DOCS_LIMITS.importContentBytes);
     if (bytes instanceof Response) return bytes;
-    docs.putImportContent(actor, id, decode(rest[3], 'hash'), bytes);
+    docs.putImportContent(actor, id, hash, bytes);
     return new Response(null, { status: 204 });
   }
   if (rest.length === 3 && rest[2] === 'commit' && method === 'POST') {

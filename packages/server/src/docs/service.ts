@@ -67,7 +67,7 @@ import type {
   ImportText,
   NamePlan,
 } from './transfer.js';
-import { nameSlug, planImport } from './transfer.js';
+import { nameKey, planImport } from './transfer.js';
 
 // Every docs rule in one place: who may do what, the write path with open
 // revisions and three-way merges, links, lifecycle, reads, lists and search.
@@ -248,8 +248,8 @@ function toInfo(r: RevisionMeta): DocRevisionInfo {
 }
 
 // The origin an imported name's part k carries; part 1 is the name itself.
-function importOrigin(slug: string, k: number): string {
-  return k === 1 ? `import:${slug}` : `import:${slug}/part-${k}`;
+function importOrigin(key: string, k: number): string {
+  return k === 1 ? `import:${key}` : `import:${key}/part-${k}`;
 }
 
 // Part k's slug, `<slug>-part-<k>`, with the slug cut so the whole fits 64 characters.
@@ -1215,26 +1215,36 @@ export class DocsService {
     if (status === doc.status) return this.record(doc);
     const at = this.nowIso();
     return this.write(() => {
-      this.sealInTx(doc, this.headOf(doc));
-      if (status === 'archived') {
-        doc.archivedFrom = doc.status === 'accepted' ? 'accepted' : 'draft';
-        doc.status = 'archived';
-      } else {
-        doc.status = status;
-        doc.archivedFrom = null;
-      }
-      doc.updatedBy = actor.address;
-      doc.updatedAt = at;
-      this.store().putDoc(doc);
-      this.outbox.push({
-        doc: doc.id,
-        scope: doc.scope,
-        kind: 'meta',
-        author: actor.address,
-        rev: null,
-        summary: `status ${status}`,
-      });
+      this.applyStatus(actor, doc, status, at);
       return this.record(doc);
+    });
+  }
+
+  // Seals the head and moves the doc to `status`, remembering what archive left.
+  private applyStatus(
+    actor: DocsActor,
+    doc: DocRow,
+    status: DocStatus,
+    at: string
+  ): void {
+    this.sealInTx(doc, this.headOf(doc));
+    if (status === 'archived') {
+      doc.archivedFrom = doc.status === 'accepted' ? 'accepted' : 'draft';
+      doc.status = 'archived';
+    } else {
+      doc.status = status;
+      doc.archivedFrom = null;
+    }
+    doc.updatedBy = actor.address;
+    doc.updatedAt = at;
+    this.store().putDoc(doc);
+    this.outbox.push({
+      doc: doc.id,
+      scope: doc.scope,
+      kind: 'meta',
+      author: actor.address,
+      rev: null,
+      summary: `status ${status}`,
     });
   }
 
@@ -1632,6 +1642,15 @@ export class DocsService {
   ): { id: string; need: string[] } {
     this.requireImporter(actor);
     const store = this.store();
+    // A name keys its docs' origins, so it may not look like a path or a part.
+    input.files.forEach((f, i) => {
+      if (f.name === '' || f.name.includes('/'))
+        throw new DocsError(
+          'invalid',
+          'expected a file name without a directory part',
+          `files[${i}].name`
+        );
+    });
     const link =
       input.link === null ? null : this.checkImportLink(actor, input.link);
     const at = this.nowIso();
@@ -1651,7 +1670,7 @@ export class DocsService {
     const need = new Set<string>();
     for (const f of input.files) {
       const fits = f.bytes <= DOCS_LIMITS.importContentBytes;
-      if (fits && !store.isImported('team', nameSlug(f.name), f.hash))
+      if (fits && !store.isImported('team', nameKey(f.name), f.hash))
         need.add(f.hash);
     }
     return { id, need: [...need] };
@@ -1669,14 +1688,10 @@ export class DocsService {
     return s;
   }
 
-  putImportContent(
-    actor: DocsActor,
-    id: string,
-    hash: string,
-    bytes: Uint8Array
-  ): void {
+  // Refuses an upload by who sends it and what it names, so the route can
+  // answer before it reads the body.
+  admitImportContent(actor: DocsActor, id: string, hash: string): void {
     this.requireImporter(actor);
-    const store = this.store();
     const s = this.importSessionOf(actor, id);
     const files = JSON.parse(s.manifest) as ImportFile[];
     if (!files.some((f) => f.hash === hash)) {
@@ -1686,6 +1701,16 @@ export class DocsService {
         'hash'
       );
     }
+  }
+
+  putImportContent(
+    actor: DocsActor,
+    id: string,
+    hash: string,
+    bytes: Uint8Array
+  ): void {
+    this.admitImportContent(actor, id, hash);
+    const store = this.store();
     if (createHash('sha256').update(bytes).digest('hex') !== hash)
       throw new DocsError(
         'invalid',
@@ -1741,11 +1766,12 @@ export class DocsService {
       );
     }
     const { names, report } = planImport(files, texts, {
-      imported: (slug, hash) => store.isImported('team', slug, hash),
-      tombstoned: (slug) => store.tombstonedOrigin(importOrigin(slug, 1)),
-      exists: (slug) => store.docByOrigin(importOrigin(slug, 1)) !== null,
-      partExists: (slug, k) =>
-        store.docByOrigin(importOrigin(slug, k)) !== null,
+      imported: (key, hash) => store.isImported('team', key, hash),
+      tombstoned: (key) => store.tombstonedOrigin(importOrigin(key, 1)),
+      archived: (key) =>
+        store.docByOrigin(importOrigin(key, 1))?.status === 'archived',
+      exists: (key) => store.docByOrigin(importOrigin(key, 1)) !== null,
+      partExists: (key, k) => store.docByOrigin(importOrigin(key, k)) !== null,
     });
     report.dryRun = dryRun;
     if (!report.parity.files || !report.parity.names) {
@@ -1770,8 +1796,8 @@ export class DocsService {
     return report;
   }
 
-  // One name's contents as revisions of its part docs, oldest first, each part
-  // linked to its neighbours and the session's link. Runs in commitImport's transaction.
+  // One name's contents as revisions of its part docs, oldest first. The parts the
+  // newest content fills are live and linked; any past them are archived.
   private writeImported(
     actor: DocsActor,
     name: NamePlan,
@@ -1779,9 +1805,10 @@ export class DocsService {
   ): void {
     const store = this.store();
     const total = Math.max(...name.contents.map((c) => c.parts.length));
+    const live = name.contents[name.contents.length - 1].parts.length;
     const parts: { doc: DocRow; created: boolean }[] = [];
     for (let k = 1; k <= total; k++) {
-      const origin = importOrigin(name.slug, k);
+      const origin = importOrigin(name.key, k);
       const found = store.docByOrigin(origin);
       if (found !== null) {
         // An open head the import builds on seals first, as any new head's parent does.
@@ -1823,23 +1850,40 @@ export class DocsService {
       });
       store.markImported(
         'team',
-        name.slug,
+        name.key,
         content.hash,
         parts[0].doc.id,
         this.nowIso()
       );
     }
     const at = this.nowIso();
+    // Parts an earlier, longer content made that this import did not reach.
+    const leftovers = parts.slice(live).map((p) => p.doc);
+    for (let k = total + 1; ; k++) {
+      const extra = store.docByOrigin(importOrigin(name.key, k));
+      if (extra === null) break;
+      leftovers.push(extra);
+    }
+    for (const { doc } of parts.slice(0, live)) {
+      if (doc.status === 'archived')
+        this.applyStatus(actor, doc, doc.archivedFrom ?? 'draft', at);
+    }
+    for (const doc of leftovers) {
+      if (doc.status !== 'archived')
+        this.applyStatus(actor, doc, 'archived', at);
+    }
+    if (leftovers.length > 0)
+      store.removeLink(parts[live - 1].doc.id, 'doc', leftovers[0].id);
     parts.forEach(({ doc, created }, i) => {
       const head = this.headOf(doc);
       this.reindex(doc, head);
       this.rebuildMentions(doc, head);
       const targets: LinkTarget[] = [];
-      if (i > 0) targets.push({ type: 'doc', id: parts[i - 1].doc.id });
-      if (i + 1 < parts.length)
-        targets.push({ type: 'doc', id: parts[i + 1].doc.id });
-      if (link !== null && !(link.type === 'doc' && link.id === doc.id))
-        targets.push(link);
+      if (i > 0 && i < live)
+        targets.push({ type: 'doc', id: parts[i - 1].doc.id });
+      if (i + 1 < live) targets.push({ type: 'doc', id: parts[i + 1].doc.id });
+      const own = link !== null && link.type === 'doc' && link.id === doc.id;
+      if (link !== null && i < live && !own) targets.push(link);
       // A link that already exists keeps its rel, so a re-import never demotes a spec.
       const linked = store.links({ docId: doc.id });
       for (const target of targets) {
