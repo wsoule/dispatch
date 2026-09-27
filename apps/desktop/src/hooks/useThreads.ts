@@ -5,7 +5,6 @@ import type {
   ApiClient,
   ChannelSummary,
   Delivery,
-  DeliveryState,
   MailboxItem,
   Message,
   ThreadSummary as RecentThread,
@@ -25,17 +24,17 @@ import { toSendInput } from '../lib/composer';
 import type { MessageAccess } from '../lib/daemonAuth';
 import { gateOf, openGatesKey, runIdOf } from '../lib/gates';
 import type { RailGroup, ThreadSummary } from '../lib/threads';
-import { appendToThread, groupRail, summarizeThreads } from '../lib/threads';
+import {
+  appendToThread,
+  groupRail,
+  isUnread,
+  summarizeThreads,
+} from '../lib/threads';
 import type { ReplyPlan } from '../lib/threadSources';
 import { mergeThreadSources } from '../lib/threadSources';
 
 const RECENT_THREADS = 100;
 const TASK_THREADS = 50;
-const UNREAD: ReadonlySet<DeliveryState> = new Set([
-  'held',
-  'notified',
-  'pushed',
-]);
 const APPROVES: ReadonlySet<string> = new Set(['approve', 'approve-session']);
 const NO_ITEMS: readonly MailboxItem[] = [];
 const NO_MESSAGES: Message[] = [];
@@ -465,8 +464,7 @@ export function useThreadActions(
     (deliveries: readonly Delivery[]): void => {
       if (client === null || me === null || !access.canMessage) return;
       const unread = deliveries.filter(
-        (d) =>
-          d.recipient === me && UNREAD.has(d.state) && !marked.current.has(d.id)
+        (d) => isUnread(d, me) && !marked.current.has(d.id)
       );
       if (unread.length === 0) return;
       for (const d of unread) marked.current.add(d.id);

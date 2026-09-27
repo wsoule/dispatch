@@ -49,6 +49,11 @@ const UNREAD_STATES: ReadonlySet<DeliveryState> = new Set([
   'pushed',
 ]);
 const CHANNEL = 'channel:';
+
+/** A delivery to `me` not read yet: what the rail counts and opening a thread marks read. */
+export function isUnread(delivery: Delivery, me: string): boolean {
+  return delivery.recipient === me && UNREAD_STATES.has(delivery.state);
+}
 const TASK = 'task:';
 const NO_TASKS: ReadonlySet<string> = new Set();
 
@@ -96,7 +101,7 @@ export function summarizeThreads(
   const unreadByMessage = new Map<string, number>();
   for (const d of latestDeliveries.values()) {
     if (d.state === 'answered') answered.add(d.messageId);
-    if (d.recipient === me && UNREAD_STATES.has(d.state)) {
+    if (isUnread(d, me)) {
       unreadByMessage.set(
         d.messageId,
         (unreadByMessage.get(d.messageId) ?? 0) + 1

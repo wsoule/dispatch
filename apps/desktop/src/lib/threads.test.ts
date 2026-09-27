@@ -11,6 +11,7 @@ import {
   appendToThread,
   completeAddress,
   groupRail,
+  isUnread,
   summarizeThreads,
   type ThreadSummary,
 } from './threads';
@@ -115,6 +116,21 @@ describe('summarizeThreads', () => {
     ];
     const summary = only(summarizeThreads(messages, deliveries, ME, NO_GATES));
     expect(summary.unread).toBe(3);
+  });
+
+  test('counts as unread exactly what marking read clears', () => {
+    const states: DeliveryState[] = [
+      'held',
+      'notified',
+      'pushed',
+      'read',
+      'answered',
+      'sending',
+    ];
+    expect(
+      states.filter((state) => isUnread(delivery('m-001', state), ME))
+    ).toEqual(['held', 'notified', 'pushed']);
+    expect(isUnread(delivery('m-001', 'held', 'human:ada'), ME)).toBe(false);
   });
 
   test('ignores deliveries for messages it was not given', () => {
