@@ -88,6 +88,22 @@ describe('MemoryService.promptSection', () => {
     memory.close();
   });
 
+  // A busy database costs the run's recall rows, never its index.
+  it('keeps the index when recording its recalls fails', () => {
+    const { memory, shared, task } = setup();
+    const e = saveHazard(shared, 'pnpm 11 ignores onlyBuiltDependencies', 'x');
+    shared.recordRecall = () => {
+      throw new Error('SQLITE_BUSY: database is locked');
+    };
+    const out = memory.promptSection({
+      runId: 'r-000008',
+      taskId: task.meta.id,
+      dispatchTools: true,
+    });
+    expect(textOf(out)).toContain(`(${e.handle})`);
+    memory.close();
+  });
+
   // A title that smuggles a line break in any form stays on its line.
   it('keeps hostile titles on their line', () => {
     const { memory, shared, task } = setup();

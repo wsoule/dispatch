@@ -173,6 +173,11 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
         taskId: input.taskId,
         runId: input.runId,
         variant: input.dispatchTools ? 'tools' : 'no-tools',
+        onRecallError: (err) =>
+          console.error(
+            `dispatchd: recording index recalls for run ${input.runId} failed`,
+            err
+          ),
       });
       return { source: 'memory', text: out.text };
     } catch (err) {

@@ -230,4 +230,28 @@ describe('MemoryEngine reads', () => {
       }).text
     ).toContain('(personal memory unavailable)');
   });
+
+  it('keeps the rendered index when a recall write fails, reporting it to onRecallError', () => {
+    const t = setup();
+    const e = put(t.shared);
+    t.shared.recordRecall = () => {
+      throw new Error('SQLITE_BUSY: database is locked');
+    };
+    const req = {
+      principal: RUN,
+      taskId: 't-1a2b3c',
+      runId: 'r-9f2c01',
+      variant: 'tools',
+    } as const;
+    expect(() => t.engine.index(req)).toThrow('SQLITE_BUSY');
+    const errors: unknown[] = [];
+    const out = t.engine.index({
+      ...req,
+      onRecallError: (err) => errors.push(err),
+    });
+    expect(out.text).toContain(e.handle);
+    expect(errors.map((err) => String(err))).toEqual([
+      'Error: SQLITE_BUSY: database is locked',
+    ]);
+  });
 });

@@ -98,6 +98,8 @@ export interface IndexRequest {
   runId: string | null;
   variant: IndexVariant;
   recordRecalls?: boolean;
+  // When set, a failed recall write is reported here and the index still returned.
+  onRecallError?: (err: unknown) => void;
 }
 
 export interface RankedIndex {
@@ -483,8 +485,13 @@ export class MemoryEngine {
         personalUnavailable: ranked.personalUnavailable,
       }
     );
-    if (req.runId !== null && req.recordRecalls !== false)
+    if (req.runId === null || req.recordRecalls === false) return out;
+    try {
       this.recordIndexRecalls(req.principal, req.runId, ranked, out.included);
+    } catch (err) {
+      if (req.onRecallError === undefined) throw err;
+      req.onRecallError(err);
+    }
     return out;
   }
 
