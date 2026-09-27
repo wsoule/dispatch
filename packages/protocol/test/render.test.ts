@@ -77,6 +77,14 @@ describe('renderForAgent', () => {
       ...LINE_BREAKS.map(() => `│ ${fake}`),
     ]);
   });
+
+  it('renders a doc ref with its anchor', () => {
+    const text = renderForAgent({
+      ...m,
+      refs: [{ type: 'doc', id: 'doc-01K', at: 'api' }],
+    });
+    expect(text).toContain('refs: doc:doc-01K@api');
+  });
 });
 
 describe('renderDigestLine', () => {

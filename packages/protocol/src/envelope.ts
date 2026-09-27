@@ -21,11 +21,18 @@ export const BUILT_IN_KINDS = [
 export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 export type MessageKind = BuiltInKind | `x-${string}`;
 
-export const REF_TYPES = ['task', 'run', 'file', 'commit', 'message'] as const;
+export const REF_TYPES = [
+  'task',
+  'run',
+  'file',
+  'commit',
+  'message',
+  'doc',
+] as const;
 export interface Ref {
   type: (typeof REF_TYPES)[number];
   id: string;
-  /** Commit sha for `file` refs. */
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
 }
 

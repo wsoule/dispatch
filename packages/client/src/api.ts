@@ -659,12 +659,12 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// A task, run, file, commit or message a message points at; mirrors
+// A task, run, file, commit, message or doc a message points at; mirrors
 // @dispatch/protocol's Ref.
 export interface Ref {
   type: string;
   id: string;
-  /** Commit sha for `file` refs. */
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
 }
 
