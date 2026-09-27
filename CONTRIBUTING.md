@@ -102,12 +102,49 @@ usually means a green PR.
   changes. Update docs when public APIs, setup, or workflows change.
 - Disclose any AI assistance according to the receiving project's policy.
 
+## Protocol changes
+
+The Dispatch Messaging Protocol (DMP) lives in `packages/protocol-spec`: the
+text under `spec/` and its conformance kit (registries, schemas, vectors and the
+`dmp-conformance` runner). A change to it follows
+[§14.2](packages/protocol-spec/spec/14-versioning.md) of the text:
+
+1. Open an issue from the **Protocol change** form
+   (`.github/ISSUE_TEMPLATE/protocol-change.yml`): the summary, the motivation,
+   the sections affected, the type (`editorial`, `clarification`, `additive` or
+   `breaking`), the vectors to add, change or retire, the implementation impact
+   and security notes.
+2. Send one pull request that changes the text, the vectors, the reference
+   implementation (`packages/protocol`) and the registries together. After
+   editing `registries/registries.json`, run `moonx protocol-spec:registries` to
+   regenerate §11. Add one entry per change to the "Unreleased" section of
+   `packages/protocol-spec/CHANGELOG.md`, tagged with its type and naming its
+   vector ids:
+
+   ```text
+   - [clarification] <what changed> (`core.<area>.<name>`, …).
+   ```
+
+   No normative change lands without a vector: `moonx protocol-spec:test` fails
+   an entry with no type, and a non-editorial entry that names no vector or a
+   vector the kit does not have. The editor approves.
+
+3. From `1.0.0`, a `clarification`, `additive` or `breaking` change gets a
+   `Last call: <date>` comment on its issue and merges no sooner than 14 days
+   later. Errata and editorial changes merge at once. Drafts change without
+   notice.
+4. The next release ships the change.
+
+A security flaw in the protocol never starts as a public issue or pull request;
+report it privately as [`SECURITY.md`](.github/SECURITY.md) says.
+
 ## License and CLA
 
 Dispatch is open core — see [`LICENSING.md`](LICENSING.md). The integration
-packages (`packages/core`, `packages/client`, `packages/cli`, `packages/mcp`)
-are MIT; the rest of the repo is FSL-1.1-ALv2 (see [`LICENSE`](LICENSE)),
-source-available and converting to Apache 2.0 two years after each release.
+packages (`packages/core`, `packages/protocol`, `packages/client`,
+`packages/cli`, `packages/mcp`) are MIT; the rest of the repo is FSL-1.1-ALv2
+(see [`LICENSE`](LICENSE)), source-available and converting to Apache 2.0 two
+years after each release.
 
 Outside contributions require a signed contributor license agreement (CLA
 Assistant prompts on your first PR, once per contributor; the full text is

@@ -1106,7 +1106,9 @@ export type ServerEvent =
   | { type: 'delivery.changed'; deliveryId: string; messageId: string }
   // A doc changed; a bare refetch signal, never an id for personal docs.
   // Mirrors packages/server/src/events.ts exactly.
-  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string };
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
+  // The A2A bridge's clients, tasks or listener changed; go refetch.
+  | { type: 'a2a.changed' };
 
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {

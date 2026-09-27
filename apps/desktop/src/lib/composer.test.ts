@@ -12,6 +12,7 @@ import {
   toSendInput,
   trailingMention,
   wakeDefault,
+  withoutRecipient,
 } from './composer';
 
 describe('mentions', () => {
@@ -32,15 +33,55 @@ describe('mentions', () => {
       kind: 'address',
       address: 'task:t-1a9999',
     });
-    expect(resolveMention('task:t-zzzzzz', [], 0)).toEqual({
+    expect(resolveMention('t-1a', matches, null)).toEqual({
+      kind: 'address',
+      address: 'task:t-1a2b3c',
+    });
+    expect(resolveMention('task:t-zzzzzz', [], null)).toEqual({
       kind: 'address',
       address: 'task:t-zzzzzz',
     });
-    const miss = resolveMention('bogus', [], 0);
+    const miss = resolveMention('bogus', [], null);
     expect(miss.kind === 'problem' ? miss.problem.field : null).toBe('to');
     expect(miss.kind === 'problem' ? miss.problem.message : '').toContain(
       '@bogus'
     );
+  });
+
+  it('takes a complete typed address that is listed over the first match, unless one was picked', () => {
+    const people = [{ address: 'human:adam' }, { address: 'human:ada' }];
+    expect(resolveMention('human:ada', people, null)).toEqual({
+      kind: 'address',
+      address: 'human:ada',
+    });
+    expect(resolveMention('Human:Ada', people, null)).toEqual({
+      kind: 'address',
+      address: 'human:ada',
+    });
+    expect(resolveMention('human:ada', people, 0)).toEqual({
+      kind: 'address',
+      address: 'human:adam',
+    });
+    const rooms = [
+      { address: 'channel:general-2' },
+      { address: 'channel:general' },
+    ];
+    expect(resolveMention('#general', rooms, null)).toEqual({
+      kind: 'address',
+      address: 'channel:general',
+    });
+  });
+});
+
+describe('recipients', () => {
+  it('removes a recipient, but never a locked one, whatever asked for it', () => {
+    const to = ['task:t-1a2b3c', 'human:wyat'];
+    const locked = ['task:t-1a2b3c'];
+    expect(withoutRecipient(to, 'human:wyat', locked)).toEqual([
+      'task:t-1a2b3c',
+    ]);
+    expect(withoutRecipient(to, 'task:t-1a2b3c', locked)).toBe(to);
+    expect(withoutRecipient(to, 'channel:general', locked)).toEqual(to);
   });
 });
 

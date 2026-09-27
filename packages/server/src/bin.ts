@@ -9,6 +9,7 @@ import {
 import { existsSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
+import { parseListenerFlags } from './a2a/settings.js';
 import { FakeAiTaskFilter } from './aiTaskFilter.js';
 import { mintDaemonTokens } from './api.js';
 import { makeFakeGhRunner } from './fakeGh.js';
@@ -490,6 +491,20 @@ if (
   );
   process.exit(2);
 }
+// One-boot overrides of <runsDir>/a2a-listener.json for headless servers; any
+// of them turns the A2A listener on for this boot.
+const a2aFlags = parseListenerFlags({
+  host: readFlag(args, '--a2a-host'),
+  port: readFlag(args, '--a2a-port'),
+  publicUrl: readFlag(args, '--a2a-public-url'),
+  tlsCert: readFlag(args, '--a2a-tls-cert'),
+  tlsKey: readFlag(args, '--a2a-tls-key'),
+});
+if (!a2aFlags.ok) {
+  console.error(`dispatchd: ${a2aFlags.error}`);
+  process.exit(2);
+}
+const a2aOverrides = a2aFlags.overrides;
 
 const handle = await startServer({
   rootDir,
@@ -507,6 +522,7 @@ const handle = await startServer({
           ...(tlsPort === undefined ? {} : { port: tlsPort }),
         },
       }),
+  ...(Object.keys(a2aOverrides).length === 0 ? {} : { a2a: a2aOverrides }),
   // `--init` is the desktop's add-project spawn, which deliberately replaces
   // whatever daemon predates the project's tracker; `--replace` is the
   // explicit operator override.

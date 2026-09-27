@@ -1,7 +1,14 @@
 import { defineConfig } from 'tsdown';
 
 export default defineConfig({
-  entry: ['src/index.ts'],
-  dts: true,
+  entry: {
+    index: 'src/index.ts',
+    conformance: 'src/conformance/index.ts',
+    'conformance-adapter': 'src/conformance/stdio.ts',
+    'federation/index': 'src/federation/index.ts',
+  },
+  // The ./conformance types name the kit's (Hello, Observation, Step, …); the
+  // kit is a devDependency, so its types are inlined, never imported.
+  dts: { resolve: ['@dispatch/protocol-spec'] },
   format: ['esm'],
 });

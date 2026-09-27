@@ -886,3 +886,102 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       }),
   };
 }
+
+// The A2A control surface. Mirrors packages/server/src/a2a/routes.ts and its
+// settings.ts; keep the two in step.
+interface A2AListenerSettings {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  publicUrl: string | null;
+  tls: { certPath: string; keyPath: string } | null;
+  trustForwardedFor: boolean;
+  standalone: boolean;
+}
+
+export interface A2AListenerStatus {
+  enabled: boolean;
+  listening: boolean;
+  url: string | null;
+  error: string | null;
+  warnings: string[];
+  legacyClients: string[];
+}
+
+export interface A2AClientSummary {
+  address: string;
+  name: string;
+  recipients: string[];
+  status: 'pending' | 'approved' | 'revoked';
+  createdBy: string;
+  createdAt: string;
+}
+
+interface A2ATaskSummary {
+  id: string;
+  client: string;
+  contextId: string;
+  skill: 'ask' | 'handoff';
+  state: string;
+  statusAt: string;
+  dispatchTask: string | null;
+}
+
+// Separate from ApiClient so its test fakes need not grow the A2A routes.
+export interface A2AApiClient {
+  listenerStatus(): Promise<A2AListenerStatus>;
+  setListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
+  disableListener(): Promise<A2AListenerStatus>;
+  card(): Promise<unknown>;
+  clients(): Promise<{ clients: A2AClientSummary[] }>;
+  addClient(input: {
+    name: string;
+    to?: string[];
+    approve?: boolean;
+  }): Promise<{ address: string; token: string; status: string }>;
+  rotateClient(name: string): Promise<{ token: string }>;
+  revokeAgent(address: string): Promise<unknown>;
+  tasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
+  declineTask(id: string, reason?: string): Promise<unknown>;
+}
+
+export function createA2AApiClient(
+  baseUrl: string,
+  token: string
+): A2AApiClient {
+  const target: ApiTarget = { baseUrl, token };
+  return {
+    listenerStatus: () => request(target, '/api/a2a/listener'),
+    setListener: (settings) =>
+      request(target, '/api/a2a/listener', {
+        ...jsonBody(settings),
+        method: 'PUT',
+      }),
+    disableListener: () =>
+      request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    card: () => request(target, '/api/a2a/card'),
+    clients: () => request(target, '/api/a2a/clients'),
+    addClient: (input) => request(target, '/api/a2a/clients', jsonBody(input)),
+    rotateClient: (name) =>
+      request(target, `/api/a2a/clients/${encodeURIComponent(name)}/rotate`, {
+        method: 'POST',
+      }),
+    revokeAgent: (address) =>
+      request(target, `/api/agents/${encodeURIComponent(address)}/revoke`, {
+        method: 'POST',
+      }),
+    tasks: (client) =>
+      request(
+        target,
+        client === undefined
+          ? '/api/a2a/tasks'
+          : `/api/a2a/tasks?${new URLSearchParams({ client }).toString()}`
+      ),
+    declineTask: (id, reason) =>
+      request(
+        target,
+        `/api/a2a/tasks/${encodeURIComponent(id)}/decline`,
+        jsonBody(reason === undefined ? {} : { reason })
+      ),
+  };
+}

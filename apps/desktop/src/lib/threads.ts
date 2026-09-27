@@ -7,11 +7,14 @@ import type {
   ThreadSummary as RecentThread,
 } from '@dispatch/client';
 
+import { gateOf } from './gates';
+
 /** One rail row: a thread's ends and size, plus what it holds for `me`. */
 export interface ThreadSummary extends RecentThread {
   /** My deliveries in the thread that are not yet read. */
   unread: number;
-  /** An open gate, or an unanswered handoff, is waiting on me. */
+  /** An open gate this window can answer, or an unanswered question or
+   *  handoff, is waiting on me from someone not muted. */
   needsYou: boolean;
   /** The channel name the root was sent to; null for a direct thread. */
   channel: string | null;
@@ -26,6 +29,10 @@ export interface SummarizeOptions {
   myTaskIds?: ReadonlySet<string>;
   /** `GET /api/threads` rows, whose ends and counts cover messages not given. */
   recent?: readonly RecentThread[];
+  /** Whether this window can answer gates; one that cannot is not waited on. Default true. */
+  canDecide?: boolean;
+  /** Muted senders, whose asks stay readable but never wait on me. */
+  muted?: ReadonlySet<string>;
 }
 
 export interface KnownAddresses {
@@ -51,6 +58,12 @@ const UNREAD_STATES: ReadonlySet<DeliveryState> = new Set([
 const CHANNEL = 'channel:';
 const TASK = 'task:';
 const NO_TASKS: ReadonlySet<string> = new Set();
+const NO_ADDRESSES: ReadonlySet<string> = new Set();
+
+/** A delivery to `me` not read yet: what the rail counts and opening a thread marks read. */
+export function isUnread(delivery: Delivery, me: string): boolean {
+  return delivery.recipient === me && UNREAD_STATES.has(delivery.state);
+}
 
 // Message ids are ulids, so comparing ids orders messages by time.
 function byIdAscending(a: Message, b: Message): number {
@@ -96,7 +109,7 @@ export function summarizeThreads(
   const unreadByMessage = new Map<string, number>();
   for (const d of latestDeliveries.values()) {
     if (d.state === 'answered') answered.add(d.messageId);
-    if (d.recipient === me && UNREAD_STATES.has(d.state)) {
+    if (isUnread(d, me)) {
       unreadByMessage.set(
         d.messageId,
         (unreadByMessage.get(d.messageId) ?? 0) + 1
@@ -107,8 +120,11 @@ export function summarizeThreads(
   const isMine = (address: string): boolean =>
     address === me ||
     (address.startsWith(TASK) && myTaskIds.has(address.slice(TASK.length)));
+  const canDecide = options.canDecide ?? true;
+  const muted = options.muted ?? NO_ADDRESSES;
   const waitsOnMe = (message: Message): boolean => {
-    if (answered.has(message.id)) return false;
+    if (answered.has(message.id) || muted.has(message.from)) return false;
+    if (!canDecide && gateOf(message) !== null) return false;
     const openGate = openGateIds.has(message.id) && message.to.includes(me);
     const handoff = message.kind === 'handoff' && message.to.some(isMine);
     return openGate || handoff;
@@ -253,8 +269,9 @@ function candidates(kind: CompletionKind, known: KnownAddresses): Candidate[] {
   }
 }
 
-// 0 when some key starts with the query, 1 when one only contains it.
+// -1 when some key is the query, 0 when one starts with it, 1 when one only contains it.
 function matchRank(keys: string[], query: string): number | null {
+  if (query !== '' && keys.includes(query)) return -1;
   if (keys.some((key) => key.startsWith(query))) return 0;
   if (keys.some((key) => key.includes(query))) return 1;
   return null;
@@ -263,7 +280,8 @@ function matchRank(keys: string[], query: string): number | null {
 /**
  * Suggests addresses for what follows an `@`. `#`, `channel:`, `task:`,
  * `agent:` and `human:` narrow to that kind (twenty at most); anything else
- * searches all kinds, five at most of each. Start-of-id or name matches lead.
+ * searches all kinds, five at most of each. An id or name typed in full leads
+ * every kind, then start-of-id or name matches.
  */
 export function completeAddress(
   prefix: string,
@@ -277,7 +295,8 @@ export function completeAddress(
   const query = scope === undefined ? typed : typed.slice(scope[0].length);
   const limit = scope === undefined ? BARE_LIMIT : SCOPED_LIMIT;
 
-  const out: AddressCompletion[] = [];
+  const exact: AddressCompletion[] = [];
+  const rest: AddressCompletion[] = [];
   for (const kind of kinds) {
     const ranked: { candidate: Candidate; rank: number }[] = [];
     for (const candidate of candidates(kind, known)) {
@@ -286,11 +305,12 @@ export function completeAddress(
     }
     // Array sort is stable, so equal ranks keep the order `known` gave.
     ranked.sort((a, b) => a.rank - b.rank);
-    for (const { candidate } of ranked.slice(0, limit)) {
-      out.push({ address: candidate.address, label: candidate.label });
+    for (const { candidate, rank } of ranked.slice(0, limit)) {
+      const { address, label } = candidate;
+      (rank < 0 ? exact : rest).push({ address, label });
     }
   }
-  return out;
+  return [...exact, ...rest];
 }
 
 /**

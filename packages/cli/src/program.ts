@@ -13,6 +13,7 @@ import { Command } from 'commander';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { registerA2ACommands } from './commands/a2a.js';
 import { registerBoardSyncCommands } from './commands/boardSync.js';
 import { registerBrowserCommands } from './commands/browser.js';
 import {
@@ -247,6 +248,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerDocsCommands(program, ctx);
   registerLicenseCommands(program, ctx);
   registerMigrateCommand(program, ctx);
+  registerA2ACommands(program, ctx);
 
   return program;
 }

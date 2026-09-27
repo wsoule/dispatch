@@ -18,7 +18,7 @@ export interface ThreadRailProps {
   lookups: ThreadLookups;
 }
 
-/** The Threads rail: Needs you, Channels and Direct, each collapsible. */
+/** The Threads rail: Needs you, Channels and Direct, each collapsible, in one listbox. */
 export function ThreadRail({
   groups,
   selected,
@@ -36,25 +36,25 @@ export function ThreadRail({
       return next;
     });
   return (
-    <nav aria-label="Threads" className="flex flex-col gap-1">
-      {GROUPS.map(({ key, name }) => (
-        <section key={key} aria-label={name} className="flex flex-col">
+    <ThreadList
+      label="Threads"
+      sections={GROUPS.map(({ key, name }) => ({
+        key,
+        name,
+        header: (
           <GroupHeader
             name={name}
             count={groups[key].length}
             collapsed={collapsed.has(key)}
             onToggle={() => toggle(key)}
           />
-          {!collapsed.has(key) && (
-            <ThreadList
-              summaries={groups[key]}
-              selected={selected}
-              onSelect={onSelect}
-              lookups={lookups}
-            />
-          )}
-        </section>
-      ))}
-    </nav>
+        ),
+        summaries: groups[key],
+        collapsed: collapsed.has(key),
+      }))}
+      selected={selected}
+      onSelect={onSelect}
+      lookups={lookups}
+    />
   );
 }

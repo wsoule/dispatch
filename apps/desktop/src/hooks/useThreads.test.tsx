@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 
 import { agentRosterKey } from '../lib/agentRoster';
 import type { MessageAccess } from '../lib/daemonAuth';
+import { openGatesKey } from '../lib/gates';
 import {
   applyThreadEvent,
   threadKey,
@@ -26,6 +27,7 @@ import {
   useThread,
   useThreadActions,
   useThreadRail,
+  useThreadsNeedsYouCount,
 } from './useThreads';
 
 const PORT = 4000;
@@ -172,6 +174,17 @@ describe('applyThreadEvent', () => {
     applyThreadEvent(qc, PORT, { type: 'hello', version: '0.0.1' });
     expect(stale(qc, threadKey(PORT, 'm-01'))).toBe(true);
   });
+
+  it('on reconnect also refetches the open gates and the roster, which a daemon restart may have changed unseen', () => {
+    const qc = new QueryClient();
+    qc.setQueryData(openGatesKey(PORT), { items: [] });
+    qc.setQueryData(agentRosterKey(PORT), { agents: [] });
+    qc.setQueryData(openGatesKey(PORT + 1), { items: [] });
+    applyThreadEvent(qc, PORT, { type: 'hello', version: '0.0.1' });
+    expect(stale(qc, openGatesKey(PORT))).toBe(true);
+    expect(stale(qc, agentRosterKey(PORT))).toBe(true);
+    expect(stale(qc, openGatesKey(PORT + 1))).toBe(false);
+  });
 });
 
 describe('useThreadActions', () => {
@@ -276,7 +289,7 @@ describe('useThreadActions', () => {
     expect(handlers.handleApprove).toHaveBeenCalledTimes(1);
   });
 
-  it('sends a draft as its send input, each with a fresh idempotency key', async () => {
+  it('sends a draft as its send input, under the idempotency key its draft holds', async () => {
     const { client, actions } = setup(DECIDER);
     const draft = {
       to: ['task:t-000001'],
@@ -285,8 +298,9 @@ describe('useThreadActions', () => {
       urgent: false,
       wake: true,
     };
-    await actions.send(draft);
-    await actions.send(draft);
+    await actions.send(draft, 'k-draft-1');
+    // The same text sent again as a new draft is a new message, not a replay.
+    await actions.send(draft, 'k-draft-2');
     const calls = client.sendMessage.mock.calls as unknown as [
       SendInput,
       { idempotencyKey: string },
@@ -298,52 +312,15 @@ describe('useThreadActions', () => {
       blocking: true,
       wake: 'request',
     });
-    const keys = calls.map(([, opts]) => opts.idempotencyKey);
-    expect(keys).toHaveLength(2);
-    expect(new Set(keys).size).toBe(2);
-  });
-
-  it('sends a draft again under its first idempotency key when the response was lost', async () => {
-    const { client, actions } = setup(DECIDER);
-    const lost = () => Promise.reject(new TypeError('Failed to fetch'));
-    const settled = (p: Promise<unknown>) =>
-      p.then(
-        () => 'sent',
-        () => 'failed'
-      );
-    const draft = {
-      to: ['task:t-000001'],
-      body: 'ship it',
-      kind: 'message' as const,
-      urgent: false,
-      wake: false,
-    };
-    client.sendMessage.mockImplementationOnce(lost);
-    expect(await settled(actions.send(draft))).toBe('failed');
-    expect(await settled(actions.send(draft))).toBe('sent');
-    const plan = {
-      kind: 'send' as const,
-      to: ['run:r-000001'],
-      replyTo: 'm-01',
-    };
-    client.sendMessage.mockImplementationOnce(lost);
-    expect(await settled(actions.reply(plan, 'noted'))).toBe('failed');
-    expect(await settled(actions.reply(plan, 'noted'))).toBe('sent');
-    const keys = (
-      client.sendMessage.mock.calls as unknown as [
-        SendInput,
-        { idempotencyKey: string },
-      ][]
-    ).map(([, opts]) => opts.idempotencyKey);
-    expect(keys).toHaveLength(4);
-    expect(keys[1]).toBe(keys[0]);
-    expect(keys[3]).toBe(keys[2]);
-    expect(keys[2]).not.toBe(keys[0]);
+    expect(calls.map(([, opts]) => opts.idempotencyKey)).toEqual([
+      'k-draft-1',
+      'k-draft-2',
+    ]);
   });
 
   it('answers the target of a reply plan, and sends a send plan as a plain message beside its replyTo, both keyed', async () => {
     const { client, actions } = setup(DECIDER);
-    await actions.reply({ kind: 'reply', target: msg('m-01') }, 'on it');
+    await actions.reply({ kind: 'reply', target: msg('m-01') }, 'on it', 'k-1');
     expect(client.sendMessage).toHaveBeenCalledWith(
       {
         to: ['run:r-000001'],
@@ -351,12 +328,13 @@ describe('useThreadActions', () => {
         body: 'on it',
         replyTo: 'm-01',
       },
-      { idempotencyKey: expect.any(String) }
+      { idempotencyKey: 'k-1' }
     );
     expect(client.replyToMessage).not.toHaveBeenCalled();
     await actions.reply(
       { kind: 'send', to: ['channel:general'], replyTo: 'm-01' },
-      'noted'
+      'noted',
+      'k-2'
     );
     expect(client.sendMessage).toHaveBeenCalledWith(
       {
@@ -365,7 +343,7 @@ describe('useThreadActions', () => {
         body: 'noted',
         replyTo: 'm-01',
       },
-      { idempotencyKey: expect.any(String) }
+      { idempotencyKey: 'k-2' }
     );
   });
 
@@ -378,17 +356,22 @@ describe('useThreadActions', () => {
       );
     expect(
       await outcome(
-        actions.send({
-          to: ['task:t-000001'],
-          body: 'hi',
-          kind: 'message',
-          urgent: false,
-          wake: false,
-        })
+        actions.send(
+          {
+            to: ['task:t-000001'],
+            body: 'hi',
+            kind: 'message',
+            urgent: false,
+            wake: false,
+          },
+          'k-1'
+        )
       )
     ).toBe('cannot message');
     expect(
-      await outcome(actions.reply({ kind: 'reply', target: msg('m-01') }, 'x'))
+      await outcome(
+        actions.reply({ kind: 'reply', target: msg('m-01') }, 'x', 'k-2')
+      )
     ).toBe('cannot message');
     expect(client.sendMessage).not.toHaveBeenCalled();
     expect(client.replyToMessage).not.toHaveBeenCalled();
@@ -592,6 +575,46 @@ function gatedThreadServer() {
   return server;
 }
 
+// A teammate's mailbox holding a gate they cannot answer and a muted agent's question.
+function quietMailboxClient(): ApiClient {
+  const gate = msg('m-g', {
+    kind: 'question',
+    blocking: true,
+    choices: ['grant', 'deny'],
+    data: { type: 'scope', paths: ['a.ts'], reason: 'needed' },
+  });
+  const muted = msg('m-m', {
+    from: 'agent:wyat/quiet',
+    kind: 'question',
+    blocking: true,
+  });
+  const mailbox: MailboxItem[] = [gate, muted].map((message) => ({
+    message,
+    delivery: {
+      id: `d-${message.id}`,
+      messageId: message.id,
+      recipient: ME,
+      runId: null,
+      via: 'direct',
+      state: 'notified',
+      updatedAt: message.createdAt,
+    },
+  }));
+  const quiet: AgentSummary = {
+    address: 'agent:wyat/quiet',
+    displayName: 'quiet',
+    client: 'codex',
+    status: 'approved',
+    muted: true,
+    approvedBy: ME,
+    createdAt: '2026-09-25T10:00:00.000Z',
+  };
+  return {
+    getMailbox: () => Promise.resolve({ items: mailbox }),
+    listAgentRoster: () => Promise.resolve({ agents: [quiet] }),
+  } as unknown as ApiClient;
+}
+
 function mount<T>(hook: () => T) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -601,7 +624,7 @@ function mount<T>(hook: () => T) {
 }
 
 describe('messaging queries', () => {
-  it('reads only the mailbox for a teammate below decide, and finds their open question there', async () => {
+  it('reads only the mailbox and roster for a teammate below decide, and finds their open question there', async () => {
     const { calls, client } = readingClient();
     const { result } = mount(() => useThreadRail(client, PORT, ME, TEAMMATE));
     await waitFor(() => {
@@ -609,7 +632,34 @@ describe('messaging queries', () => {
         'm-q',
       ]);
     });
-    expect(calls).toEqual([`mailbox ${ME}`]);
+    expect([...calls].sort()).toEqual([`mailbox ${ME}`, 'roster']);
+  });
+
+  it("keeps a gate a teammate cannot answer and a muted agent's question out of Needs you, readable in Direct", async () => {
+    const client = quietMailboxClient();
+    const { result } = mount(() => useThreadRail(client, PORT, ME, TEAMMATE));
+    await waitFor(() => {
+      expect(result.current.groups.direct.map((t) => t.thread).sort()).toEqual([
+        'm-g',
+        'm-m',
+      ]);
+    });
+    expect(result.current.groups['needs-you']).toEqual([]);
+    // Both rows still open, so the gate shows its reason and the question its answer.
+    expect([...result.current.openIds].sort()).toEqual(['m-g', 'm-m']);
+  });
+
+  it("counts neither a gate a teammate cannot answer nor a muted agent's question, as the rail shows", async () => {
+    const client = quietMailboxClient();
+    // One cache, so the count has read everything once the rail shows both rows.
+    const { result } = mount(() => ({
+      count: useThreadsNeedsYouCount(client, PORT, ME, TEAMMATE),
+      rail: useThreadRail(client, PORT, ME, TEAMMATE),
+    }));
+    await waitFor(() => {
+      expect(result.current.rail.groups.direct).toHaveLength(2);
+    });
+    expect(result.current.count).toBe(0);
   });
 
   it('adds recent threads and the open gates for a decider, and asks nothing for an agent window', async () => {
@@ -624,10 +674,37 @@ describe('messaging queries', () => {
         `mailbox ${ME}`,
         'open gates',
         'recent 100',
+        'roster',
       ]);
     });
     expect(agent.calls).toEqual([]);
     expect(idle.result.current.summaries).toEqual([]);
+  });
+
+  // The sidebar is on every screen, so its count must not keep the recent list alive.
+  it('counts Needs you for the sidebar without the recent threads', async () => {
+    const decider = readingClient();
+    const { result } = mount(() =>
+      useThreadsNeedsYouCount(decider.client, PORT, ME, DECIDER)
+    );
+    await waitFor(() => {
+      expect(result.current).toBe(1);
+    });
+    expect([...decider.calls].sort()).toEqual([
+      `mailbox ${ME}`,
+      'open gates',
+      'roster',
+    ]);
+  });
+
+  it('counts nothing and asks nothing in a window that cannot message', async () => {
+    const agent = readingClient();
+    const { result } = mount(() =>
+      useThreadsNeedsYouCount(agent.client, PORT, ME, AGENT_WINDOW)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(result.current).toBe(0);
+    expect(agent.calls).toEqual([]);
   });
 
   it("asks about a task's threads for a decider only", async () => {
@@ -725,31 +802,64 @@ describe('messaging queries', () => {
       );
       expect(gone.result.current.error?.message).toBe('no thread m-gone');
     });
+    // m-hidden is also tried as a thread id once, which fails the same way.
     expect([...calls].sort()).toEqual([
       'message m-gone',
       'message m-hidden',
       'thread m-gone',
+      'thread m-hidden',
     ]);
   });
 
-  it('tries a thread read again after a network blip or a daemon error', async () => {
-    const failures = [
-      new TypeError('Failed to fetch'),
-      new ApiError('daemon busy', 503),
-    ];
+  it('opens a thread by its root id when the root is one a teammate cannot read but the thread is', async () => {
+    // A rail row names its thread by the root, which a teammate pulled in
+    // by a later reply never held.
     const calls: string[] = [];
     const client = {
       getMessage: (id: string) => {
         calls.push(`message ${id}`);
-        return calls.length === 1
-          ? Promise.reject(failures[0])
-          : Promise.resolve(msg(id, { thread: 'm-01' }));
+        return Promise.reject(new ApiError(`cannot read message ${id}`, 403));
       },
       getThread: (id: string) => {
         calls.push(`thread ${id}`);
-        return calls.length === 3
-          ? Promise.reject(failures[1])
-          : Promise.resolve({ messages: [msg('m-01')], deliveries: [] });
+        return Promise.resolve({
+          messages: [msg('m-root'), msg('m-02', { thread: 'm-root' })],
+          deliveries: [],
+        });
+      },
+    } as unknown as ApiClient;
+    const { result } = mount(() => useThread(client, PORT, 'm-root', TEAMMATE));
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.id)).toEqual([
+        'm-root',
+        'm-02',
+      ]);
+    });
+    expect(result.current.thread).toBe('m-root');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('tries a thread read again after a network blip, a daemon error or any refusal but 403 and 404', async () => {
+    const messageFailures: Error[] = [
+      new TypeError('Failed to fetch'),
+      new ApiError('too many requests', 429),
+    ];
+    const threadFailures: Error[] = [new ApiError('daemon busy', 503)];
+    const calls: string[] = [];
+    const client = {
+      getMessage: (id: string) => {
+        calls.push(`message ${id}`);
+        const failure = messageFailures.shift();
+        return failure === undefined
+          ? Promise.resolve(msg(id, { thread: 'm-01' }))
+          : Promise.reject(failure);
+      },
+      getThread: (id: string) => {
+        calls.push(`thread ${id}`);
+        const failure = threadFailures.shift();
+        return failure === undefined
+          ? Promise.resolve({ messages: [msg('m-01')], deliveries: [] })
+          : Promise.reject(failure);
       },
     } as unknown as ApiClient;
     const qc = new QueryClient({
@@ -767,6 +877,7 @@ describe('messaging queries', () => {
     });
     expect(result.current.error).toBeNull();
     expect(calls).toEqual([
+      'message m-02',
       'message m-02',
       'message m-02',
       'thread m-01',

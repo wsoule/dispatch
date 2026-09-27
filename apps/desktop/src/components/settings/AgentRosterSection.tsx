@@ -2,7 +2,7 @@ import type { AgentStatus, AgentSummary, ApiClient } from '@dispatch/client';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Ban, Bell, BellOff, Check } from 'lucide-react';
 import type { ReactElement } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import {
@@ -51,6 +51,10 @@ const COLUMNS: RecordsColumn[] = [
   { key: 'createdAt', label: 'Added', kind: 'time' },
 ];
 
+function muteLabel(agent: AgentSummary): string {
+  return `${agent.muted ? 'Unmute' : 'Mute'} ${agent.address}`;
+}
+
 /** One row action: an icon button whose tooltip names it, or says why it is
  *  locked. The tooltip hangs off a wrapper because a disabled button gets no
  *  hover of its own. */
@@ -83,7 +87,7 @@ function RosterAction({
  * Settings → Connected agents: every agent outside Dispatch that registered
  * through `dispatch mcp`, with approve (while pending), mute and revoke.
  * Anyone can read the roster; changing it needs the decide tier, below which
- * the actions stay visible but disabled with the reason.
+ * the actions stay visible but disabled, with the reason written above them.
  */
 export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   const { client, port } = data;
@@ -94,6 +98,15 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
   const [busy, setBusy] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState<AgentSummary | null>(null);
+  // After a change, focus goes to the row's mute button, or to the table (label null)
+  // once the row offers nothing, so it never falls to the page with the pressed button.
+  const [refocus, setRefocus] = useState<{
+    agent: AgentSummary;
+    label: string | null;
+    /** What had focus when the change started. */
+    from: Element | null;
+  } | null>(null);
+  const tableRef = useRef<HTMLDivElement>(null);
 
   const roster = useQuery({
     queryKey: rosterKey,
@@ -111,10 +124,16 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
     change: (api: ApiClient) => Promise<AgentSummary>
   ): Promise<void> {
     if (client === null) return;
+    const from = document.activeElement;
     setBusy((prev) => new Set(prev).add(address));
     setError(null);
     try {
       const updated = await change(client);
+      setRefocus({
+        agent: updated,
+        label: rosterActions(updated).mute ? muteLabel(updated) : null,
+        from,
+      });
       queryClient.setQueryData<{ agents: AgentSummary[] }>(rosterKey, (prev) =>
         prev === undefined
           ? prev
@@ -141,6 +160,41 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
       });
     }
   }
+
+  // Waits until the row shows the change (a re-sort moves it, which drops focus)
+  // and the target is enabled, then refocuses unless the user moved focus meanwhile.
+  useEffect(() => {
+    const table = tableRef.current;
+    if (refocus === null || table === null) return;
+    const shown = roster.data?.agents.find(
+      (a) => a.address === refocus.agent.address
+    );
+    if (
+      shown?.status !== refocus.agent.status ||
+      shown.muted !== refocus.agent.muted
+    ) {
+      return;
+    }
+    const target =
+      refocus.label === null
+        ? table
+        : Array.from(table.querySelectorAll('button')).find(
+            (button) =>
+              button.getAttribute('aria-label') === refocus.label &&
+              !button.disabled
+          );
+    if (target === undefined) return;
+    setRefocus(null);
+    const active = document.activeElement;
+    if (
+      active === null ||
+      active === document.body ||
+      !active.isConnected ||
+      active === refocus.from
+    ) {
+      target.focus();
+    }
+  }, [refocus, roster.data, busy]);
 
   const agents = sortRoster(roster.data?.agents ?? []);
   const byAddress = new Map(agents.map((a) => [a.address, a]));
@@ -214,7 +268,7 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
         )}
         {offered.mute && (
           <RosterAction
-            label={`${agent.muted ? 'Unmute' : 'Mute'} ${agent.address}`}
+            label={muteLabel(agent)}
             hint={hint(agent.muted ? 'Unmute' : 'Mute')}
             icon={agent.muted ? <Bell aria-hidden /> : <BellOff aria-hidden />}
             disabled={disabled}
@@ -248,7 +302,15 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
         title="Agents"
         hint="A new agent waits as pending until someone approves it. A muted agent's messages stay readable but never interrupt anyone."
         keywords="roster connected external mcp approve mute revoke"
+        requires="none"
       >
+        {!canDecide && (
+          <SettingsRow
+            title="Approving, muting and revoking"
+            subtitle={decideReason}
+            locked={decideReason}
+          />
+        )}
         {roster.isError ? (
           <SettingsRow
             title="Couldn't load agents"
@@ -272,7 +334,13 @@ export function AgentRosterSection({ data }: AgentRosterSectionProps) {
           />
         ) : (
           <SettingsSearchable text={searchText}>
-            <div className="p-1">
+            <div
+              ref={tableRef}
+              role="group"
+              aria-label="Agents"
+              tabIndex={-1}
+              className="p-1 outline-none"
+            >
               <RecordsTable
                 columns={COLUMNS}
                 rows={agents.map((a) => ({

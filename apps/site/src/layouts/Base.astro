@@ -10,6 +10,11 @@ import '../styles/global.css';
 // re-emitted under the `data-theme` attribute the nav toggle sets. See
 // src/lib/themeTokens.ts.
 const tokens = themeAwareTokens(tokensCss);
+
+interface Props {
+  title?: string;
+}
+const { title = 'Dispatch: Linear, for agents' } = Astro.props;
 ---
 
 <!doctype html>
@@ -17,7 +22,7 @@ const tokens = themeAwareTokens(tokensCss);
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Dispatch: Linear, for agents</title>
+    <title>{title}</title>
     <meta
       name="description"
       content="Linear, for agents. A board, reviews, and a merge queue, all markdown in your repo."

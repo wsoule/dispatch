@@ -12,6 +12,15 @@
       "path": "packages/memory/tsconfig.json"
     },
     {
+      "path": "packages/protocol-spec/tsconfig.json"
+    },
+    {
+      "path": "packages/federation/tsconfig.json"
+    },
+    {
+      "path": "packages/a2a/tsconfig.json"
+    },
+    {
       "path": "packages/cli/tsconfig.json"
     },
     {
