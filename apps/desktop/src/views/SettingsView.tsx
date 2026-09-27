@@ -2,6 +2,7 @@ import type { LucideIcon } from 'lucide-react';
 import {
   Bell,
   Bot,
+  BotMessageSquare,
   Cpu,
   FileDiff,
   FolderSearch,
@@ -31,6 +32,7 @@ import {
   accessFor,
   SettingsAccessProvider,
 } from '../components/settings/access';
+import { AgentRosterSection } from '../components/settings/AgentRosterSection';
 import { AgentsSection } from '../components/settings/AgentsSection';
 import { BoardSyncGroup } from '../components/settings/BoardSyncGroup';
 import { ChecksSection } from '../components/settings/ChecksSection';
@@ -231,6 +233,15 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
         intro: "Who can work on this project's board.",
         savesConfig: false,
         render: (ctx) => <TeamSection data={ctx.data} />,
+      },
+      {
+        id: 'connected-agents',
+        label: 'Connected agents',
+        icon: BotMessageSquare,
+        intro:
+          'Agents outside Dispatch that asked to message this project, and whether they may.',
+        savesConfig: false,
+        render: (ctx) => <AgentRosterSection data={ctx.data} />,
       },
       {
         id: 'sync',

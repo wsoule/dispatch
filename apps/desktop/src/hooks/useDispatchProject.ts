@@ -45,6 +45,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { agentRosterKey, mayChangeAgentRoster } from '../lib/agentRoster';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
   configChangedQueryKeys,
@@ -52,13 +53,14 @@ import {
   linearStatusKey,
   syncStatusKey,
 } from '../lib/configEvents';
-import type { DecideAvailability } from '../lib/daemonAuth';
+import type { DecideAvailability, MessageAccess } from '../lib/daemonAuth';
 import {
   assertCanDecide,
   assertCanMessage,
   credentialTier,
   daemonBaseUrl,
   decideAvailability,
+  messageAccess,
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
@@ -73,6 +75,7 @@ import {
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  openGatesAfter,
   openGatesKey,
   questionsByRun,
   scopeRequestsByRun,
@@ -105,6 +108,7 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
+import { applyThreadEvent } from './useThreads';
 import { useTransitionNotifications } from './useTransitionNotifications';
 
 // Shared empty list, so the maps derived from the open gates keep their
@@ -532,6 +536,8 @@ export interface DispatchProjectData {
   /** Whether this window holds the app token that scope decisions require, plus the notice
    * and restart affordance to show when it does not. */
   scopeDecide: DecideAvailability;
+  /** What this window may do on the message bus (send; answer gates), and why not. */
+  messageAccess: MessageAccess;
   /** Replaces an attached daemon with one this app spawns, to regain decide tier. Ends any
    * run in flight — gate on `scopeDecide.restart.safe`. */
   handleRestartDaemon: () => Promise<void>;
@@ -589,6 +595,11 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   /** The full input of a call a run is parked on, which its gate may only preview. */
   fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
+  /** The same for a call an Assistant conversation is parked on. */
+  fetchOverseerApprovalInput: (
+    conversation: string,
+    requestId: string
+  ) => Promise<unknown>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
   handleCancelRun: (runId: string) => Promise<void>;
   /** Asks a live run to wind down: it finishes its current operation, then stops,
@@ -1360,6 +1371,7 @@ export function useDispatchProject(
       },
       {
         onEvent: (event) => {
+          applyThreadEvent(queryClient, port, event);
           // Checked structurally (see isDecisionsChanged): the client's
           // ServerEvent union predates this broadcast, so a literal comparison
           // here would not typecheck. First in the chain because no later
@@ -1439,10 +1451,17 @@ export function useDispatchProject(
           } else if (event.type === 'message.new') {
             const message = event.message;
             const openGatesKeyNow = openGatesKey(port);
-            // Read before the invalidation below, which refetches the list.
+            // The cached list follows the event at once, so the fold below sees
+            // gates answered elsewhere and gates the refetch has not brought.
             const openNow =
-              queryClient.getQueryData<{ items: Message[] }>(openGatesKeyNow)
-                ?.items ?? NO_GATES;
+              queryClient.setQueryData<{ items: Message[] }>(
+                openGatesKeyNow,
+                (prev) => {
+                  if (prev === undefined) return prev;
+                  const items = openGatesAfter(prev.items, message);
+                  return items === prev.items ? prev : { items };
+                }
+              )?.items ?? NO_GATES;
             // Only a new blocking question or an answer opens or closes a gate.
             if (message.blocking || message.kind === 'answer') {
               void queryClient.invalidateQueries({ queryKey: openGatesKeyNow });
@@ -1460,6 +1479,12 @@ export function useDispatchProject(
               : null;
             if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
               void notify(note.title, note.body, note.kind);
+            }
+            // A registration gate adds a pending agent; any answer may settle one.
+            if (mayChangeAgentRoster(message)) {
+              void queryClient.invalidateQueries({
+                queryKey: agentRosterKey(port),
+              });
             }
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
@@ -2070,6 +2095,20 @@ export function useDispatchProject(
     [client, auth]
   );
 
+  const fetchOverseerApprovalInput = useCallback(
+    async (conversation: string, requestId: string): Promise<unknown> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      assertCanDecide(auth);
+      const { pendingApprovals } = await client.getOverseer(conversation);
+      const parked = pendingApprovals.find((a) => a.requestId === requestId);
+      if (parked === undefined) {
+        throw new Error('The Assistant is no longer waiting on this call.');
+      }
+      return parked.input;
+    },
+    [client, auth]
+  );
+
   const handleDecideScopeRequest = useCallback(
     async (
       _runId: string,
@@ -2209,8 +2248,12 @@ export function useDispatchProject(
         onRunDispatched?.(continued.id, continued.taskId);
         return;
       }
-      // A run that is still live simply got the message.
-      if (runs.some((r) => r.id === runId && !isTerminalRunState(r.state))) {
+      // A live run that took the message into its conversation simply got it.
+      if (
+        sent.deliveries.some(
+          (d) => d.recipient === `run:${runId}` && d.state === 'pushed'
+        )
+      ) {
         return;
       }
       throw new Error(
@@ -2746,6 +2789,7 @@ export function useDispatchProject(
     () => decideAvailability(auth, runs ?? []),
     [auth, runs]
   );
+  const access = useMemo(() => messageAccess(auth), [auth]);
 
   return {
     client,
@@ -2812,6 +2856,7 @@ export function useDispatchProject(
     pendingScopeRequests,
     handleDecideScopeRequest,
     scopeDecide,
+    messageAccess: access,
     handleRestartDaemon,
     openQuestions,
     decisions: decisionList ?? [],
@@ -2833,6 +2878,7 @@ export function useDispatchProject(
     handleDispatch,
     handleApprove,
     fetchApprovalInput,
+    fetchOverseerApprovalInput,
     handleSendMessage,
     handleCancelRun,
     handleStopRun,

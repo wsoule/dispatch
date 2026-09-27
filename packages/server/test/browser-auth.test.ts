@@ -119,6 +119,24 @@ describe('the CORS preflight a browser sends before a bearer request', () => {
     ).toContain('authorization');
   });
 
+  it('allows the idempotency key a message send carries', async () => {
+    const res = await rawFetch(`${baseUrl}/api/messages`, {
+      method: 'OPTIONS',
+      headers: {
+        origin: 'http://localhost:5173',
+        'access-control-request-method': 'POST',
+        'access-control-request-headers':
+          'authorization,content-type,idempotency-key',
+      },
+    });
+    expect(
+      res.headers
+        .get('access-control-allow-headers')
+        ?.toLowerCase()
+        .split(/,\s*/)
+    ).toContain('idempotency-key');
+  });
+
   it('allows nothing at all for an untrusted origin', async () => {
     const res = await rawFetch(`${baseUrl}/api/tasks`, {
       method: 'OPTIONS',

@@ -9,6 +9,7 @@ import { ShellActionsProvider } from './ShellActionsContext';
 function shellActions(overrides: Partial<ShellActions> = {}): ShellActions {
   return {
     openTask: () => {},
+    openThread: () => {},
     peekTask: () => {},
     openCreateTask: () => {},
     createPreset: null,

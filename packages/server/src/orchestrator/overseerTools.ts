@@ -112,6 +112,9 @@ export interface OverseerMutatingTool<Input = unknown> {
   name: string;
   description: string;
   inputSchema: z.ZodType<Input>;
+  /** Fills in at call time what the input leaves to the live state, so
+   *  `apply` acts on exactly what `describe` showed the human. */
+  pin?(ctx: OverseerToolContext, input: Input): Input;
   describe(ctx: OverseerToolContext, input: Input): string;
   apply(
     ctx: OverseerToolContext,
@@ -488,8 +491,8 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
   },
 };
 
-// The call approve_run and deny_run answer when the human confirms: the named
-// one, else the run's oldest parked call at that moment.
+// The parked call approve_run and deny_run act on: the named one, else the
+// run's oldest, which `pin` then names so the confirm answers that call.
 function requireApproval(
   ctx: OverseerToolContext,
   runId: string,
@@ -508,6 +511,15 @@ function requireApproval(
     );
   }
   return { meta, pending };
+}
+
+// A proposal's parked call, named even when the overseer left it to default.
+function pinParkedCall<Input extends { runId: string; requestId?: string }>(
+  ctx: OverseerToolContext,
+  input: Input
+): Input {
+  const { pending } = requireApproval(ctx, input.runId, input.requestId);
+  return { ...input, requestId: pending.requestId };
 }
 
 const REQUEST_ID_INPUT = z
@@ -532,6 +544,7 @@ const approveRun: OverseerMutatingTool<z.infer<typeof approveInput>> = {
   name: 'approve_run',
   description: 'Allow a tool call a run is parked on, letting it continue.',
   inputSchema: approveInput,
+  pin: pinParkedCall,
   describe(ctx, input) {
     const { meta, pending } = requireApproval(
       ctx,
@@ -571,6 +584,7 @@ const denyRun: OverseerMutatingTool<z.infer<typeof denyInput>> = {
     'Refuse a tool call a run is parked on. This ends the run as ' +
     'failed — the reason, if given, is what it reports as the failure.',
   inputSchema: denyInput,
+  pin: pinParkedCall,
   describe(ctx, input) {
     const { meta, pending } = requireApproval(
       ctx,
@@ -761,7 +775,8 @@ export class OverseerToolRegistry {
     if (tool === undefined) {
       throw new OverseerToolError(`unknown mutating tool: ${name}`);
     }
-    const input = this.parse(tool, raw);
+    const parsed = this.parse(tool, raw);
+    const input = tool.pin?.(this.ctx, parsed) ?? parsed;
     // Throws on a target that doesn't exist or isn't in a state this tool can
     // act on, so the overseer finds out while it can still say something useful
     // — rather than the human confirming an action that was never going to work.

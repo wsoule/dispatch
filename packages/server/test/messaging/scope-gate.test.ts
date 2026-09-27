@@ -117,6 +117,41 @@ describe('scope gates', () => {
     messaging.close();
   });
 
+  // The live grant can fail, or a crash can land between the question and
+  // it; the sweep grants what policy covers instead of leaving it to expire.
+  it("the daemon's sweep grants a scope gate whose policy grant did not land", async () => {
+    setPolicy('policy:\n  rung: 2\n');
+    const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
+      scopeExpiry: { sweepMs: 10 },
+    });
+    const reply = messaging.engine.reply.bind(messaging.engine);
+    let failures = 0;
+    const replies = spyOn(messaging.engine, 'reply').mockImplementation(
+      (id, input, sender) => {
+        if (failures > 0) return reply(id, input, sender);
+        failures++;
+        return Promise.reject(new Error('disk full'));
+      }
+    );
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { message: gate } = await askScope(messaging, run);
+      await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
+      expect(failures).toBe(1);
+      expect(messaging.engine.answerOf(gate.id)).toMatchObject({
+        from: 'agent:dispatch',
+        choice: 'grant',
+        data: { type: 'x-policy', gate: 'scope', rung: 2 },
+      });
+      expect(ledger()).toHaveLength(1);
+    } finally {
+      replies.mockRestore();
+      logged.mockRestore();
+    }
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
   it('never auto-grants a path outside the repo or into .git', async () => {
     setPolicy('policy:\n  rung: 4\n');
     const { orchestrator, messaging, meta, run } = await liveRun();

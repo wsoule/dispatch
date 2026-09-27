@@ -29,6 +29,9 @@ interface FakeStep {
   // normally-instant fake run would finish before you could reach. Cancellation
   // still interrupts it promptly.
   delayMs?: number;
+  // Parks the script until send() has delivered one more message than earlier
+  // awaitMessage steps consumed: a scripted run waiting on an answer.
+  awaitMessage?: true;
 }
 
 interface FakeFinish {
@@ -69,7 +72,7 @@ export class FakeExecutor implements Executor {
   start(
     opts: ExecutorStartOptions,
     events: ExecutorEvents
-  ): ExecutorRun & { notified: string[] } {
+  ): ExecutorRun & { notified: string[]; received: string[] } {
     let cancelled = false;
     // A graceful stop, as a scripted executor can express one: the step already
     // in flight runs to completion (including its commit), no further step
@@ -83,6 +86,10 @@ export class FakeExecutor implements Executor {
     // Every notify() call this run received, in order — a test seam, since a
     // scripted run has nothing to do with a note beyond recording it.
     const notified: string[] = [];
+    // Every send() this run received, in order; awaitMessage steps consume them.
+    const received: string[] = [];
+    let consumed = 0;
+    let releaseMessageWait: (() => void) | null = null;
 
     // I6: a scripted step throwing (a bad `write` callback, a commit that
     // fails, etc.) must never leave this run silently hung mid-script — a
@@ -143,6 +150,20 @@ export class FakeExecutor implements Executor {
               return;
             }
           }
+
+          if (step.awaitMessage === true) {
+            await new Promise<void>((resolve) => {
+              if (received.length > consumed || cancelled || stopRequested) {
+                resolve();
+              } else {
+                releaseMessageWait = resolve;
+              }
+            });
+            releaseMessageWait = null;
+            if (cancelled) return;
+            if (stopRequested) break;
+            consumed += 1;
+          }
         }
         if (cancelled) return;
         events.onFinish(this.script.finish);
@@ -168,6 +189,7 @@ export class FakeExecutor implements Executor {
           resolve({ allow: false, reason: 'run cancelled' });
         }
         pendingApprovals.clear();
+        releaseMessageWait?.();
         return Promise.resolve();
       },
       requestStop(): void {
@@ -179,11 +201,12 @@ export class FakeExecutor implements Executor {
           resolve({ allow: false, reason: 'run stopped' });
         }
         pendingApprovals.clear();
+        releaseMessageWait?.();
       },
-      // Mid-run user messages aren't part of an O1 script — the seam exists
-      // so the interface matches the real executor; FakeExecutor has
-      // nothing useful to do with it.
-      send(): void {},
+      send(text: string): void {
+        received.push(text);
+        releaseMessageWait?.();
+      },
       approve(requestId: string, decision: ApprovalDecision): void {
         const resolve = pendingApprovals.get(requestId);
         if (resolve !== undefined) {
@@ -195,6 +218,7 @@ export class FakeExecutor implements Executor {
         notified.push(text);
       },
       notified,
+      received,
     };
   }
 }

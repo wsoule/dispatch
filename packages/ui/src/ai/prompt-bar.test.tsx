@@ -81,6 +81,26 @@ describe('PromptBar', () => {
     expect(send.disabled).toBe(true);
   });
 
+  test('a caller-owned completion list is tied to the text box, with its active option', () => {
+    const { rerender } = render(
+      <PromptBar value="@t" onChange={() => {}} onSubmit={() => {}} />
+    );
+    const textarea = screen.getByRole('textbox');
+    expect(textarea.getAttribute('aria-controls')).toBeNull();
+    expect(textarea.getAttribute('aria-autocomplete')).toBeNull();
+    rerender(
+      <PromptBar
+        value="@t"
+        onChange={() => {}}
+        onSubmit={() => {}}
+        completion={{ listId: 'recipients', activeOptionId: 'recipients-1' }}
+      />
+    );
+    expect(textarea.getAttribute('aria-controls')).toBe('recipients');
+    expect(textarea.getAttribute('aria-autocomplete')).toBe('list');
+    expect(textarea.getAttribute('aria-activedescendant')).toBe('recipients-1');
+  });
+
   test('removing a reference chip calls onRemoveReference with its id', () => {
     let removedId: string | undefined;
     render(
@@ -95,6 +115,29 @@ describe('PromptBar', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Remove boot.rs' }));
     expect(removedId).toBe('ref-1');
+  });
+
+  test('a locked reference chip offers no remove button', () => {
+    render(
+      <PromptBar
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        references={[
+          { id: 'task', label: 'Checkout', locked: true },
+          { id: 'ref-1', label: 'boot.rs' },
+        ]}
+        onRemoveReference={() => {}}
+      />
+    );
+
+    expect(screen.getByText('Checkout')).toBeDefined();
+    expect(
+      screen.queryByRole('button', { name: 'Remove Checkout' })
+    ).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Remove boot.rs' })
+    ).toBeDefined();
   });
 
   // The frame is the comment composer (quaternary card, half-pixel border), the

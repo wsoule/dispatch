@@ -46,8 +46,8 @@ export function openGatesKey(
   return ['dispatch-open-gates', port] as const;
 }
 
-// The message's gate payload, or null for a plain message or `x-` data.
-function gateOf(message: Message): GateData | null {
+/** A message's gate payload, or null for a plain message or `x-` data. */
+export function gateOf(message: Message): GateData | null {
   const data = message.data;
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return null;
@@ -244,6 +244,22 @@ export function gateNotification(
     body: firstLine(message.body),
     kind,
   };
+}
+
+/** The open gates once `message` lands (an answer closes its gate, a blocking
+ *  message to a human joins); `open` itself when nothing changes. */
+export function openGatesAfter(open: Message[], message: Message): Message[] {
+  if (message.kind === 'answer') {
+    const closed = message.replyTo;
+    return open.some((m) => m.id === closed)
+      ? open.filter((m) => m.id !== closed)
+      : open;
+  }
+  const asksHuman =
+    message.blocking && message.to.some((addr) => addr.startsWith('human:'));
+  return asksHuman && !open.some((m) => m.id === message.id)
+    ? [...open, message]
+    : open;
 }
 
 /** True when `message` is a tool approval for a run that already has another

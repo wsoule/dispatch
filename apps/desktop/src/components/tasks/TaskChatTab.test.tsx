@@ -1,10 +1,12 @@
-import type { RunMeta } from '@dispatch/client';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
+import type { ShellActions } from '../shell/ShellActionsContext';
+import { ShellActionsProvider } from '../shell/ShellActionsContext';
 import { TaskChatTab } from './TaskChatTab';
 
 function run(id: string, state: RunMeta['state']): RunMeta {
@@ -48,11 +50,13 @@ const SCOPE: RunScopeRequest = {
 function dataWith(
   runs: RunMeta[],
   selected: RunMeta,
-  log: string[]
+  log: string[],
+  entries: NormalizedEntry[] = []
 ): DispatchProjectData {
   return {
     runs,
-    runDetail: { meta: selected, entries: [] },
+    runDetail: { meta: selected, entries },
+    me: 'human:wyat',
     readyIds: new Set(),
     pendingApprovals: new Map(),
     openQuestions: new Map([['r-1', [QUESTION]]]),
@@ -87,14 +91,42 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
-function renderChat(runs: RunMeta[], selected: RunMeta, log: string[]) {
+// Only the thread link is exercised; it records where it led.
+function shellWith(log: string[]): ShellActions {
+  const noop = () => {};
+  return {
+    openTask: noop,
+    openThread: (messageId) => log.push(`thread:${messageId}`),
+    peekTask: noop,
+    openCreateTask: noop,
+    createPreset: null,
+    closeCreateTask: noop,
+    openPalette: noop,
+    toggleSidebar: noop,
+    sidebarHidden: false,
+    openOverseer: noop,
+    setProjectView: noop,
+    setGlobalView: noop,
+    openShortcuts: noop,
+    copyTaskId: noop,
+  };
+}
+
+function renderChat(
+  runs: RunMeta[],
+  selected: RunMeta,
+  log: string[],
+  entries: NormalizedEntry[] = []
+) {
   return render(
-    <TaskChatTab
-      data={dataWith(runs, selected, log)}
-      doc={{ meta: { id: 't-1' } } as TaskDoc}
-      selectedRun={selected}
-      onDispatch={() => {}}
-    />
+    <ShellActionsProvider value={shellWith(log)}>
+      <TaskChatTab
+        data={dataWith(runs, selected, log, entries)}
+        doc={{ meta: { id: 't-1' } } as TaskDoc}
+        selectedRun={selected}
+        onDispatch={() => {}}
+      />
+    </ShellActionsProvider>
   );
 }
 
@@ -127,4 +159,47 @@ test("a successor run's chat shows the ended run's open asks", async () => {
     await Promise.resolve();
   });
   expect(log).toEqual(['answer:r-1:q-1:new']);
+});
+
+// The composer sends through the bus, so the viewer's own lines come back
+// addressed from them.
+test("the viewer's own message in the chat reads as You", () => {
+  const live = run('r-1', 'running');
+  renderChat(
+    [live],
+    live,
+    [],
+    [
+      {
+        ts: '2026-09-26T00:03:00.000Z',
+        kind: 'message',
+        from: 'user',
+        fromLabel: 'human:wyat',
+        messageId: 'm-1',
+        text: '[message from human:wyat · message · m-1]\n│ use the new cart',
+      },
+    ]
+  );
+  expect(screen.getByText('use the new cart')).toBeDefined();
+  expect(screen.getByText('You')).toBeDefined();
+  expect(screen.queryByText('human:wyat')).toBeNull();
+});
+
+test('a message delivered to the run opens its thread', () => {
+  const log: string[] = [];
+  const live = run('r-1', 'running');
+  renderChat([live], live, log, [
+    {
+      ts: '2026-09-26T00:04:00.000Z',
+      kind: 'message',
+      from: 'agent',
+      fromLabel: 'run:r-9',
+      messageId: 'm-9',
+      text: '[message from run:r-9 · question · m-9]\n│ Is the cart schema final?',
+    },
+  ]);
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Open thread: question from run:r-9' })
+  );
+  expect(log).toEqual(['thread:m-9']);
 });

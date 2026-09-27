@@ -173,6 +173,24 @@ describe('waking one ended run', () => {
     expect(notice.message.body).toContain('run has been merged');
   });
 
+  // Held mail to a run is only ever delivered through its task, so a run the
+  // host cannot place would hold the message forever.
+  it("refuses a human's wake of a run that belongs to no task", async () => {
+    host.ruling = 'allow';
+    await expect(
+      engine.send(
+        {
+          to: ['task:t-000002', 'run:r-0000ff'],
+          kind: 'message',
+          body: 'rename foo',
+          wake: 'request',
+        },
+        human
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'to[1]' });
+    expect(host.hooks('wake')).toEqual([]);
+  });
+
   it("refuses an agent's wake or a human's plain message to it as not live", async () => {
     await expect(toEndedRun(run1, 'request')).rejects.toMatchObject({
       code: 'invalid',

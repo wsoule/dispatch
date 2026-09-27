@@ -640,6 +640,24 @@ describe('overseer mutating tools produce a pending action, never an effect', ()
     ).toThrow(`run ${runId} is not parked on req-nope`);
   });
 
+  // The human confirms the call the summary named; by then the run may have
+  // parked another, which the confirm must not answer instead.
+  it('approve_run and deny_run without a requestId pin the call they describe', async () => {
+    const h = makeHarness();
+    const { runId } = await dispatchUntil(
+      h,
+      'Gated',
+      'gated',
+      'awaiting-approval'
+    );
+    const [parked] = h.orchestrator.pendingApprovalsFor(runId);
+
+    const approve = h.registry.callMutatingTool('approve_run', { runId });
+    const deny = h.registry.callMutatingTool('deny_run', { runId });
+    expect(approve.input).toEqual({ runId, requestId: parked.requestId });
+    expect(deny.input).toEqual({ runId, requestId: parked.requestId });
+  });
+
   it('deny_run carries the reason into the summary without denying yet', async () => {
     const h = makeHarness();
     const { runId } = await dispatchUntil(

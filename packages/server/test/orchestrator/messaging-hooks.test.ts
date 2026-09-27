@@ -397,7 +397,7 @@ describe('Orchestrator messaging hooks', () => {
       '[message from human:wyat · message · m-1]\nhi',
       { label: 'human:wyat', messageId: 'm-1', human: true }
     );
-    orchestrator.notifyRun(meta.id, '📬 digest');
+    orchestrator.notifyRun(meta.id, '📬 digest', 'm-2');
 
     expect(executor.sent).toEqual([
       '[message from human:wyat · message · m-1]\nhi',
@@ -419,6 +419,7 @@ describe('Orchestrator messaging hooks', () => {
         fromLabel: 'dispatch',
         text: '📬 digest',
         digest: true,
+        messageId: 'm-2',
       },
     ];
     const transcript = orchestrator

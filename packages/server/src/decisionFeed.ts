@@ -60,7 +60,8 @@ export interface DecisionItem {
    *  that have no room to render the whole item. */
   summary: string;
   /** Which flavour of `kind` this is, when the kind alone is ambiguous: the
-   *  fix loop's stop reason, or why a run counts as stalled. */
+   *  fix loop's stop reason, why a run counts as stalled, or the gate type
+   *  behind an approval. */
   reason?: string;
   /** `scope-request` only: every path the agent asked for, untruncated, so a
    *  classifier can judge the request and a surface can list it in full. */
@@ -81,9 +82,10 @@ export interface DecisionItem {
    * Set when this item is held by the irreversibility floor (core/policy.ts).
    * A floor item is `blocking` unconditionally — `list()` never consults the
    * policy classifier for it, so no rung or override can demote it. Surfaces
-   * in both lenses render the hold from this field.
+   * in both lenses render the hold from this field. `'unknown'` is a gate
+   * raised as a floor hold whose check can no longer be named.
    */
-  floor?: FloorCheck;
+  floor?: FloorCheck | 'unknown';
   /** ActorRef of the human whose run this came from — see withOwner. Absent
    *  means nobody in particular, so everyone. */
   owner?: string;
@@ -458,6 +460,7 @@ export class DecisionFeed {
         since: message.createdAt,
         ageMs: ageSince(message.createdAt, nowMs),
         state: 'open' as const,
+        ...(kind === 'approval' && gate !== null ? { reason: gate.type } : {}),
       };
       if (gate?.type === 'tool-approval') {
         items.push({
@@ -487,7 +490,7 @@ export class DecisionFeed {
   // with; the check it names comes from the parked call's full input.
   private toolApprovalFloor(
     gate: Extract<GateData, { type: 'tool-approval' }>
-  ): FloorCheck | undefined {
+  ): DecisionItem['floor'] {
     if (gate.floor !== true) return undefined;
     const full =
       gate.runId !== undefined
@@ -504,7 +507,7 @@ export class DecisionFeed {
       (typeof gate.input === 'string'
         ? floorCheckForCommand(gate.input)
         : null) ??
-      undefined
+      'unknown'
     );
   }
 

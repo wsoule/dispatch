@@ -60,16 +60,18 @@ function formatPreview(toolInput: unknown, truncated: boolean): string {
 }
 
 // Loads a truncated call's full input once per mount (each card is keyed by
-// its request), so the human judges the whole call rather than its preview.
+// its request), and again on `retry`, so the human judges the whole call.
 function useFullInput(load: (() => Promise<unknown>) | undefined): {
   full: { input: unknown } | null;
   error: string | null;
+  retry: () => void;
 } {
   const loadRef = useRef(load);
   loadRef.current = load;
   const shouldLoad = load !== undefined;
   const [full, setFull] = useState<{ input: unknown } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
   useEffect(() => {
     const current = loadRef.current;
     if (!shouldLoad || current === undefined) return;
@@ -87,8 +89,12 @@ function useFullInput(load: (() => Promise<unknown>) | undefined): {
     return () => {
       cancelled = true;
     };
-  }, [shouldLoad]);
-  return { full, error };
+  }, [shouldLoad, attempt]);
+  const retry = () => {
+    setError(null);
+    setAttempt((n) => n + 1);
+  };
+  return { full, error, retry };
 }
 
 const DENY_ID = 'deny';
@@ -115,7 +121,11 @@ export function ApprovalCard({
   onRestartDaemon,
 }: ApprovalCardProps) {
   // Only a deciding window may read the full call; any other keeps the preview.
-  const { full, error: fullInputError } = useFullInput(
+  const {
+    full,
+    error: fullInputError,
+    retry: retryFullInput,
+  } = useFullInput(
     truncated && availability.enabled ? loadFullInput : undefined
   );
   const showsPreview = truncated && full === null;
@@ -216,8 +226,19 @@ export function ApprovalCard({
           className="text-state-waiting font-book text-[12px]"
         >
           Preview truncated: the full call is longer than shown.
-          {fullInputError !== null &&
-            ` The full call could not be loaded (${fullInputError}).`}
+          {fullInputError !== null && (
+            <>
+              {` The full call could not be loaded (${fullInputError}). `}
+              <Button
+                variant="link"
+                size="xs"
+                className="h-auto px-0 text-[12px]"
+                onClick={retryFullInput}
+              >
+                Load the full call
+              </Button>
+            </>
+          )}
         </div>
       )}
       {/* Same block the scope card shows: this window attached to a daemon it did not start,
