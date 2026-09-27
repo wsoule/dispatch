@@ -96,7 +96,7 @@ it('logs a task that cannot be recomputed and still recomputes the rest', async 
   if (opened.kind !== 'task') throw new Error('expected a task');
   const root = f.messaging.engine.getMessage(opened.taskId);
   if (root === null) throw new Error('no root message');
-  for (const id of ['m-0000lost', 'm-zzzzlost']) {
+  for (const id of ['m-0000lost', 'm-9999lost']) {
     f.store.insertTask(rowFor(f.caller.address, { ...root, id, thread: id }));
   }
   await f.messaging.engine.reply(opened.taskId, { body: 'yes' }, HUMAN);
