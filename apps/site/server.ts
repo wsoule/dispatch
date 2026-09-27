@@ -5,7 +5,7 @@
  * server package would be more moving parts than the thing it serves. Railway sets PORT; the
  * fallback is only for running it locally.
  */
-import { resolve, sep } from 'node:path';
+import { join, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const PORT = Number(process.env.PORT ?? 3000);
@@ -44,7 +44,9 @@ Bun.serve({
     const path = pathname === '/' ? INDEX : resolveInRoot(pathname);
 
     if (path !== null) {
-      const file = Bun.file(path);
+      // A directory path (a page such as /a2a/ext/envelope/v1) serves its index.html.
+      let file = Bun.file(path);
+      if (!(await file.exists())) file = Bun.file(join(path, 'index.html'));
       if (await file.exists()) {
         return new Response(file, {
           // Hashed _astro/ assets could take long cache lifetimes, but no-cache
