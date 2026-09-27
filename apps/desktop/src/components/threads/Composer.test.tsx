@@ -229,4 +229,61 @@ describe('Composer', () => {
     expect(box().value).toBe('hi ');
     expect(screen.queryByRole('listbox')).toBeNull();
   });
+
+  it('Escape with no @token cancels, after dropping one first', () => {
+    const onCancel = mock(() => {});
+    render(
+      <Composer
+        known={KNOWN}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+        onCancel={onCancel}
+      />
+    );
+    type('hi @t-1');
+    press('Escape');
+    expect(onCancel).not.toHaveBeenCalled();
+    press('Escape');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('Cancel is offered only with somewhere to go back to', () => {
+    const onCancel = mock(() => {});
+    const { rerender } = render(
+      <Composer
+        known={KNOWN}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+      />
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Cancel' })?.textContent
+    ).toBeUndefined();
+    rerender(
+      <Composer
+        known={KNOWN}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+        onCancel={onCancel}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('focusOnMount puts the caret in the message box', () => {
+    render(
+      <Composer
+        known={KNOWN}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+        focusOnMount
+      />
+    );
+    expect(document.activeElement === box()).toBe(true);
+  });
 });

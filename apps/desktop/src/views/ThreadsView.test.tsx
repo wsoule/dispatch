@@ -207,6 +207,55 @@ test('with no threads at all the rail says so and starts one', async () => {
   expect(screen.getByLabelText('New message')).toBeTruthy();
 });
 
+const QUESTION_CLIENT = () => ({
+  getMailbox: mock(() =>
+    Promise.resolve({
+      items: [
+        {
+          message: question,
+          delivery: {
+            id: 'd-1',
+            messageId: 'm-q',
+            recipient: 'human:wyat',
+            runId: null,
+            via: 'direct',
+            state: 'notified',
+            updatedAt: question.createdAt,
+          },
+        },
+      ],
+    })
+  ),
+  listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+  openDecisions: mock(() => Promise.resolve({ items: [question] })),
+  listChannels: mock(() => Promise.resolve({ channels: [] })),
+  listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+});
+
+// The rail sits between the header and the composer, so focus has to be put there.
+test('New thread puts the caret in the composer, and Escape closes it back to the button', async () => {
+  renderRail(QUESTION_CLIENT());
+  await screen.findByRole('group', { name: 'Needs you' });
+  const newThread = screen.getByRole('button', { name: 'New thread' });
+  fireEvent.click(newThread);
+  const box = screen.getByLabelText('New message');
+  expect(document.activeElement === box).toBe(true);
+
+  fireEvent.keyDown(box, { key: 'Escape' });
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+  expect(document.activeElement === newThread).toBe(true);
+});
+
+test('Cancel closes a new thread without sending', async () => {
+  renderRail(QUESTION_CLIENT());
+  await screen.findByRole('group', { name: 'Needs you' });
+  const newThread = screen.getByRole('button', { name: 'New thread' });
+  fireEvent.click(newThread);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+  expect(document.activeElement === newThread).toBe(true);
+});
+
 test("a cut-off Assistant call is read in full from the Assistant's conversation", async () => {
   const gate: Message = {
     ...question,

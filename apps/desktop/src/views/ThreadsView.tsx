@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Composer } from '../components/threads/Composer';
 import { ThreadPane } from '../components/threads/ThreadPane';
@@ -57,6 +57,7 @@ export function ThreadsView({
     loadApprovalInput,
   } = useThreadPaneProps(data, onOpenRef);
   const [composing, setComposing] = useState(false);
+  const newThreadRef = useRef<HTMLButtonElement>(null);
   const { markRead } = actions;
   useEffect(() => {
     markRead(open.deliveries);
@@ -74,6 +75,7 @@ export function ThreadsView({
       crumb={[projectName ?? 'Project', 'Threads']}
       actions={
         <Button
+          ref={newThreadRef}
           size="sm"
           variant="ghost"
           disabled={!access.canMessage || me === null}
@@ -169,6 +171,11 @@ export function ThreadsView({
                   setComposing(false);
                   onFocus(result.message.thread);
                 }}
+                onCancel={() => {
+                  setComposing(false);
+                  newThreadRef.current?.focus();
+                }}
+                focusOnMount
               />
             </div>
           ) : open.thread !== null && open.messages.length > 0 ? (
