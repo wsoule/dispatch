@@ -137,11 +137,13 @@ export interface VectorFile {
   vectors: Vector[];
 }
 
-// Regular expressions (as strings) describing how the adapter renders a push.
+// Regular expressions (as strings) describing how the adapter renders a push,
+// and `digestLead`, the host's own text that opens a digest.
 export interface RenderForms {
   quotePrefix: string;
   header: string;
   hostLines: string[];
+  digestLead: string;
 }
 
 export interface Hello {

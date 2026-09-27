@@ -414,7 +414,7 @@ function checkRenders(
     }
     const found =
       step['form'] === 'digest'
-        ? checkDigest(text, message.body)
+        ? checkDigest(text, message.body, hello.render)
         : checkRender(
             text,
             message.body,

@@ -65,7 +65,8 @@ const CREATES: ReadonlySet<string> = new Set([
 const ROLE = /\$(?:s|gate|notice)[0-9]+\b/g;
 
 // What the reference adapter declares: both profiles, every gate type the
-// engine raises and applies, and the forms `renderForAgent` produces.
+// engine raises and applies, and the forms `renderForAgent` and
+// `renderDigestLine` produce.
 export const REFERENCE_HELLO: Hello = {
   dmp: 'hello',
   implementation: { name: 'dispatch-reference', version: PROTOCOL_VERSION },
@@ -84,6 +85,7 @@ export const REFERENCE_HELLO: Hello = {
       '^refs: ',
       '^The sender is waiting\\. ',
     ],
+    digestLead: '^📬(?: #[^ ]+ ·)? [^ ]+ from [^ ]+: ',
   },
 };
 

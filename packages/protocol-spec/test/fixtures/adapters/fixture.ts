@@ -19,7 +19,12 @@ const hello = {
   capabilities: mode === 'with-cap' ? ['x-cap'] : [],
   systemAddress: 'agent:system',
   gateTypes: ['wake'],
-  render: { quotePrefix: '> ', header: '^\\[from ', hostLines: [] },
+  render: {
+    quotePrefix: '> ',
+    header: '^\\[from ',
+    hostLines: [],
+    digestLead: '^\\(from [^)]*\\) ',
+  },
   ...(mode === 'patch-hello' ? (JSON.parse(arg) as object) : {}),
 };
 // What the runner resolves before the pipe, so the adapter never sees it.

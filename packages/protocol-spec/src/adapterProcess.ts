@@ -92,10 +92,11 @@ function checkHello(raw: unknown): Hello {
     render['quotePrefix'] === '' ||
     !isPattern(render['header']) ||
     !Array.isArray(render['hostLines']) ||
-    !render['hostLines'].every(isPattern)
+    !render['hostLines'].every(isPattern) ||
+    !isPattern(render['digestLead'])
   )
     bad(
-      'render must be { quotePrefix, header, hostLines } with valid patterns'
+      'render must be { quotePrefix, header, hostLines, digestLead } with valid patterns'
     );
   return raw as unknown as Hello;
 }

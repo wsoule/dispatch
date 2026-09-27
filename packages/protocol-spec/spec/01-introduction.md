@@ -102,10 +102,10 @@ appear in all capitals, as shown here.
   RECOMMENDED, and is what the Dispatch profile uses.
   [§13.7](13-security-and-privacy.md#s13.7) sets their entropy.
 - **Patterns** are ECMAScript regular expressions. A pattern this document
-  writes matches a whole value. The render patterns a host declares (`header`
-  and `hostLines`, [§6.8](06-delivery.md#s6.8)) are searched instead, as
-  `new RegExp(pattern).test(line)` does: each matches anywhere in the line
-  unless it anchors itself with `^` or `$`.
+  writes matches a whole value. The render patterns a host declares (`header`,
+  `hostLines` and `digestLead`, [§6.8](06-delivery.md#s6.8)) are searched
+  instead, as `new RegExp(pattern).test(line)` does: each matches anywhere in
+  the line unless it anchors itself with `^` or `$`.
 - **Names of fields** are the JSON member names of [§4.1](04-messages.md#s4.1),
   written in `code`. A path such as `refs[0].type` names a member of a list
   entry ([§10.2](10-errors.md#s10.2)).

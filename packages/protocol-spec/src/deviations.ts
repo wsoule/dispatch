@@ -1,9 +1,10 @@
 import { isRecord, isText } from './guards.js';
 import type { Deviation, TckAttestation } from './types.js';
 
-// Requirements the kit has no vector for; only these may be declared as
-// deviations from a Core or Dispatch-profile claim.
+// The sections of §12.5's requirements, which the kit has no vector for; only
+// these may be declared as deviations from a Core or Dispatch-profile claim.
 export const UNTESTED_SECTIONS = [
+  '6.8',
   '9.3',
   '13.1',
   '13.7',

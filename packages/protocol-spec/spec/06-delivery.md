@@ -162,26 +162,41 @@ start. Vectors that test muting are `MAY` vectors with the capability
 A host MUST present every message it puts into a model's context, in whatever
 form (a push, a digest, or what a read of a mailbox or thread returns
 ([§7.1](07-mailboxes-and-channels.md#s7.1))), so that no line of its body can
-pass for a header or for a line the host writes, and so that every line after
-the header of an external sender's message ([§2.1](02-terminology.md#s2.1)) is
-quoted. A host that pushes a message into a model's context MUST do so with
+pass for a header or for a line the host writes, and so that the model can tell
+an external sender's message ([§2.1](02-terminology.md#s2.1)) from a local one.
+
+A host that pushes a message into a model's context MUST do so with
 `quotePrefix`: it writes the text of the body only on lines that start with
 `quotePrefix`, at least one such line for each line of the body, so no line of
 the body forms or starts the header or a host line. A host that notifies a
 session ([§6.2](06-delivery.md#s6.2)) MUST give it a digest instead: the host's
 own text followed by at most the first line of the body, on one line, so the
 text of the body never starts a line. The host declares the forms of its pushes
-([§12.4](12-conformance.md#s12.4)); `header` and `hostLines` are patterns,
-searched in a line as [§1.4](01-introduction.md#s1.4) says:
+and digests ([§12.4](12-conformance.md#s12.4)); `header`, `hostLines` and
+`digestLead` are patterns, searched in a line as [§1.4](01-introduction.md#s1.4)
+says:
 
 - `header`: a pattern that the first line of a pushed message matches;
 - `quotePrefix`: the prefix that starts every line carrying body text;
 - `hostLines`: patterns for the lines the host adds after the body, such as the
-  message replied to, the choices, the choice, the refs and a prompt to answer.
+  message replied to, the choices, the choice, the refs and a prompt to answer;
+- `digestLead`: a pattern for the host's own text that opens a digest, such as
+  the sender and the kind, up to where the body's first line would start.
 
 For a pushed message whose sender is external ([§2.1](02-terminology.md#s2.1)),
 every line after the header MUST start with `quotePrefix`, including the host
 lines, because an external sender's choices and refs are its text too.
+
+A read that returns messages as structured data, such as the JSON an agent's
+tool or a route returns, keeps each body inside its string value. It MUST write
+every line break of [§1.4](01-introduction.md#s1.4) inside a string value as an
+escape, so no raw line break reaches the model and no body text starts a line.
+JSON already escapes CR, LF, VT and FF but may leave NEL, U+2028 and U+2029 raw,
+so a JSON read writes them as `\u0085`, `\u2028` and `\u2029`. It MUST also mark
+each message whose sender is external, so a model reading it can tell it from a
+local one; a host with no binding has no external senders to mark. How a read
+presents messages is a property of each read surface, which no vector tests
+([§12.5](12-conformance.md#s12.5)).
 
 The host's own text may repeat a body by chance: an answer whose body is
 `approve` also carries the choice `approve`. So the `render` vectors
@@ -200,9 +215,11 @@ these:
 
 Blank lines of the body are left out of rules 1, 2 and 4 and of the digest rule,
 since every line would contain them. On a body whose lines occur in no text the
-host writes, a digest MUST be one line that does not start with body text: it
-MUST NOT start with the longest leading part of the body's first line that it
-contains (the whole line, or what a host that cuts the line short keeps), and
-each later line of the body that it contains MUST be contained in the body's
+host writes, a digest MUST be one line whose first match of `digestLead` starts
+it. That match is the host's own text: it MUST contain no line of the body and
+MUST NOT be the start of the body's first line, as it would be if the body
+forged it. Body text is judged only after the match ends, so what follows may be
+the body's first line, whole or cut short, or no body text at all; each later
+line of the body that the digest holds there MUST be contained in the body's
 first line. The Dispatch profile's exact forms are in
 [Appendix C](appendix-c-dispatch-profile.md#sC.6).

@@ -10,7 +10,7 @@ import { loadRegistry } from '../src/registries.js';
 import type { RegistryEntry } from '../src/registries.js';
 import { claimOutcome, runConformance } from '../src/runner.js';
 import type { RunOptions } from '../src/runner.js';
-import type { Hello, VectorResult } from '../src/types.js';
+import type { Hello, RenderForms, VectorResult } from '../src/types.js';
 
 const fixture = (p: string): string =>
   fileURLToPath(new URL(`fixtures/${p}`, import.meta.url));
@@ -19,6 +19,13 @@ const adapter = (mode: string, extra = ''): string =>
 // The fixture adapter in a patch mode, spreading `patch` over its reply.
 const patched = (mode: string, patch: object): string =>
   adapter(mode, `'${JSON.stringify(patch)}'`);
+// The fixture adapter's render forms, so each refusal case breaks one field.
+const RENDER: RenderForms = {
+  quotePrefix: '> ',
+  header: '^\\[from ',
+  hostLines: [],
+  digestLead: '^\\(from [^)]*\\) ',
+};
 const outcome = (
   report: Awaited<ReturnType<typeof runConformance>>,
   id: string
@@ -176,12 +183,11 @@ describe('runConformance', () => {
       [{ capabilities: [1] }, 'capabilities'],
       [{ systemAddress: '' }, 'systemAddress'],
       [{ gateTypes: 'wake' }, 'gateTypes'],
-      [{ render: { quotePrefix: '', header: '^x', hostLines: [] } }, 'render'],
-      [{ render: { quotePrefix: '> ', header: '[', hostLines: [] } }, 'render'],
-      [
-        { render: { quotePrefix: '> ', header: '^x', hostLines: ['('] } },
-        'render',
-      ],
+      [{ render: { ...RENDER, quotePrefix: '' } }, 'render'],
+      [{ render: { ...RENDER, header: '[' } }, 'render'],
+      [{ render: { ...RENDER, hostLines: ['('] } }, 'render'],
+      [{ render: { ...RENDER, digestLead: '(' } }, 'render'],
+      [{ render: { ...RENDER, digestLead: undefined } }, 'render'],
     ];
     const errors = await Promise.all(
       cases.map(([patch]) =>
@@ -365,6 +371,9 @@ describe('declared deviations', () => {
     expect(
       parseDeviations([{ section: '9.3', summary: '/ws until F0' }])
     ).toHaveLength(1);
+    expect(
+      parseDeviations([{ section: '6.8', summary: 'reads keep raw breaks' }])
+    ).toHaveLength(1);
     expect(() =>
       parseDeviations([{ section: '6.2', summary: 'mode selection' }])
     ).toThrow('6.2');
@@ -392,7 +401,7 @@ describe('claimOutcome', () => {
     capabilities: [],
     systemAddress: 'agent:dispatch',
     gateTypes: ['wake', 'tool-approval'],
-    render: { quotePrefix: '> ', header: '^\\[from ', hostLines: [] },
+    render: RENDER,
   };
   const gate = (
     value: string,

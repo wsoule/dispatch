@@ -64,7 +64,7 @@ export { KIT_NAME, KIT_VERSION } from './version.js';
 export { FormatError, parseVectorFile } from './format.js';
 export { loadVectors, VECTORS_DIR } from './load.js';
 export { prepareVector, stripThen, unimplementedGateType } from './prepare.js';
-export { checkRender } from './renderCheck.js';
+export { checkDigest, checkRender } from './renderCheck.js';
 export { bindSymbols, compare } from './compare.js';
 export {
   A2A_ALLOWED_DEVIATIONS,

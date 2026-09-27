@@ -233,8 +233,10 @@ refs. They then check a pushed rendering against rules 1 to 4 of
 [§6.8](06-delivery.md#s6.8), using the forms the adapter declared, and, with
 `external: true`, that every line after the header starts with `quotePrefix`;
 and they check a digest against the digest rule of [§6.8](06-delivery.md#s6.8)
-alone, since a correct digest holds the body's first line on its only line.
-`dispatch`-profile vectors also compare the exact text.
+alone, using the declared `digestLead`, since a correct digest holds the body's
+first line, if any, on its only line. `dispatch`-profile vectors also compare
+the exact text. No vector reads a mailbox or thread; how each read surface
+presents messages is listed in [§12.5](12-conformance.md#s12.5).
 
 ### 12.4.7 Adapter messages
 
@@ -253,7 +255,8 @@ adapter ← {"dmp":"hello","implementation":{"name":"…","version":"…"},
            "classes":["envelope","host-core"],"profiles":["core"],
            "capabilities":["implicit-members"],"systemAddress":"agent:…",
            "gateTypes":["wake"],
-           "render":{"quotePrefix":"…","header":"…","hostLines":["…"]}}
+           "render":{"quotePrefix":"…","header":"…","hostLines":["…"],
+                     "digestLead":"…"}}
 runner  → {"dmp":"run","vector":{…the vector without then…}}
 adapter ← {"dmp":"observation","id":"…","steps":[…],"messages":[…],
            "deliveries":[…],"calls":[…],"gateEffects":[…],"voided":[…],
@@ -264,9 +267,10 @@ runner  → {"dmp":"bye"}                       the adapter exits 0
 
 - **Hello.** The adapter declares the classes and profiles it runs, its
   capabilities, its system address, its gate types (which include `wake`,
-  [§5.6](05-gates.md#s5.6)) and its render forms (patterns as strings, searched
-  in a line as [§1.4](01-introduction.md#s1.4) says). The runner refuses a
-  malformed hello.
+  [§5.6](05-gates.md#s5.6)) and its render forms: `quotePrefix`, and the
+  patterns `header`, `hostLines` and `digestLead` of
+  [§6.8](06-delivery.md#s6.8), as strings, searched in a line as
+  [§1.4](01-introduction.md#s1.4) says. The runner refuses a malformed hello.
 - **Run.** The adapter builds a host scripted from `given`, so the host's
   synchronous questions (wake policy, owner, implicit members, live sessions)
   never cross the pipe and Core needs no network API. It drives the host's clock
@@ -370,17 +374,18 @@ These requirements have no vector, so a claim is honest about what passing
 means. An implementation that does not meet one lists it as a declared deviation
 ([§12.6](12-conformance.md#s12.6)).
 
-| Section                                      | Requirement                                             | Why no vector                                                                                                                                 |
-| -------------------------------------------- | ------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
-| [9.3](09-identity-and-authorization.md#s9.3) | every read surface applies the read rule                | the rule itself is tested through `canRead`; whether every HTTP, WebSocket or user interface surface calls it is a property of the deployment |
-| [13.1](13-security-and-privacy.md#s13.1)     | no principal sends as the system address                | authentication happens before the rules of this document; the A2A binding's vectors cover external senders                                    |
-| [13.7](13-security-and-privacy.md#s13.7)     | identifier entropy                                      | statistical                                                                                                                                   |
-| [13.8](13-security-and-privacy.md#s13.8)     | retention is documented, deletion offered               | documentary                                                                                                                                   |
-| [13.9](13-security-and-privacy.md#s13.9)     | gate data never leaves through a binding                | tested for A2A by `a2a-binding` vectors; another binding brings its own                                                                       |
-| [13.10](13-security-and-privacy.md#s13.10)   | logs hold no bearer tokens, message bodies or gate data | operational                                                                                                                                   |
-| [13.11](13-security-and-privacy.md#s13.11)   | gate data carries references, not content               | a design property of each gate type                                                                                                           |
-| [13.16](13-security-and-privacy.md#s13.16)   | local identity is attribution, not a boundary           | a property of the deployment                                                                                                                  |
-| [B.2](appendix-b-agent-tools.md#sB.2)        | blocking waits are bounded                              | a timeout in an agent's tool, outside the host's rules                                                                                        |
+| Section                                      | Requirement                                                                                                       | Why no vector                                                                                                                                 |
+| -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- |
+| [6.8](06-delivery.md#s6.8)                   | read presentation: a structured read escapes every line break inside its string values and marks external senders | a property of each read surface (an agent's tools, routes and user interfaces); no vector reads a mailbox or thread                           |
+| [9.3](09-identity-and-authorization.md#s9.3) | every read surface applies the read rule                                                                          | the rule itself is tested through `canRead`; whether every HTTP, WebSocket or user interface surface calls it is a property of the deployment |
+| [13.1](13-security-and-privacy.md#s13.1)     | no principal sends as the system address                                                                          | authentication happens before the rules of this document; the A2A binding's vectors cover external senders                                    |
+| [13.7](13-security-and-privacy.md#s13.7)     | identifier entropy                                                                                                | statistical                                                                                                                                   |
+| [13.8](13-security-and-privacy.md#s13.8)     | retention is documented, deletion offered                                                                         | documentary                                                                                                                                   |
+| [13.9](13-security-and-privacy.md#s13.9)     | gate data never leaves through a binding                                                                          | tested for A2A by `a2a-binding` vectors; another binding brings its own                                                                       |
+| [13.10](13-security-and-privacy.md#s13.10)   | logs hold no bearer tokens, message bodies or gate data                                                           | operational                                                                                                                                   |
+| [13.11](13-security-and-privacy.md#s13.11)   | gate data carries references, not content                                                                         | a design property of each gate type                                                                                                           |
+| [13.16](13-security-and-privacy.md#s13.16)   | local identity is attribution, not a boundary                                                                     | a property of the deployment                                                                                                                  |
+| [B.2](appendix-b-agent-tools.md#sB.2)        | blocking waits are bounded                                                                                        | a timeout in an agent's tool, outside the host's rules                                                                                        |
 
 ## 12.6 Declared deviations
 

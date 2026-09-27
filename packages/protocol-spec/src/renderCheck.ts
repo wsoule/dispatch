@@ -42,32 +42,36 @@ export function checkRender(
   return failures;
 }
 
-// The longest leading part of `line`, in code points, that `text` contains,
-// so a first line the host cut short is still found where the digest holds it.
-function longestLead(text: string, line: string): string {
-  const chars = Array.from(line);
-  let low = 0;
-  let high = chars.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (text.includes(chars.slice(0, mid).join(''))) low = mid;
-    else high = mid - 1;
-  }
-  return chars.slice(0, low).join('');
+// Whether a digest's lead is the body's own text: it holds a whole body line,
+// or it is the start of the first line, as when a body forges the lead.
+function leadIsBody(lead: string, lines: string[]): boolean {
+  const [first = ''] = lines;
+  if (first.trim() !== '' && first.startsWith(lead)) return true;
+  return lines.some((l) => l.trim() !== '' && lead.includes(l));
 }
 
-// Checks a digest against §6.8's digest rule: one line that starts with host
-// text, holding no body line after the first unless the first already holds it.
-export function checkDigest(text: string, body: string): string[] {
+// Checks a digest against §6.8's digest rule: one line that opens with a match
+// of the declared lead, then holds no body line after the first unless the
+// first already holds it. Body text is judged only after the lead ends.
+export function checkDigest(
+  text: string,
+  body: string,
+  forms: RenderForms
+): string[] {
   const failures: string[] = [];
   const lines = text.split(LINE_BREAK);
   if (lines.length > 1) failures.push(`the digest spans ${lines.length} lines`);
-  const [first = '', ...later] = body.split(LINE_BREAK);
-  const lead = first.trim() === '' ? '' : longestLead(text, first);
-  if (lead !== '' && text.startsWith(lead))
-    failures.push(`the digest starts with body text: ${lead}`);
+  const bodyLines = body.split(LINE_BREAK);
+  const [first = '', ...later] = bodyLines;
+  const found = new RegExp(forms.digestLead).exec(text);
+  const lead = found !== null && found.index === 0 ? found[0] : '';
+  if (lead === '')
+    failures.push('the digest does not start with its declared lead');
+  else if (leadIsBody(lead, bodyLines))
+    failures.push(`the digest's lead is body text: ${lead}`);
+  const rest = text.slice(lead.length);
   for (const line of later)
-    if (line.trim() !== '' && !first.includes(line) && text.includes(line))
+    if (line.trim() !== '' && !first.includes(line) && rest.includes(line))
       failures.push(`the digest carries a body line after the first: ${line}`);
   return failures;
 }

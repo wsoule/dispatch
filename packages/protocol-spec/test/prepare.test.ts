@@ -17,7 +17,12 @@ const hello: Hello = {
   capabilities: [],
   systemAddress: 'agent:dispatch',
   gateTypes: ['wake'],
-  render: { quotePrefix: '> ', header: '^\\[from ', hostLines: [] },
+  render: {
+    quotePrefix: '> ',
+    header: '^\\[from ',
+    hostLines: [],
+    digestLead: '^\\(from [^)]*\\) ',
+  },
 };
 
 function gate(value: string, status: RegistryEntry['status']): RegistryEntry {
