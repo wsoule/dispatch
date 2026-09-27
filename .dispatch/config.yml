@@ -70,6 +70,8 @@ verifySteps:
     command: moon run root:check-licenses
   - name: check-ci-targets
     command: moon run root:check-ci-targets
+  - name: test-scripts
+    command: moon run root:test-scripts
   - name: check-own-build-deps
     command: moon run root:check-own-build-deps
   - name: check-worker-entries
@@ -78,6 +80,11 @@ verifySteps:
     command: moon run root:audit
   - name: test
     command: moon run :test
+  # The published runner against the published reference adapter under
+  # Node; ci.yml runs the same target, and scripts/check-ci-targets.ts
+  # (REQUIRED_PROJECT_TARGETS) fails when either list drops it.
+  - name: conformance
+    command: moon run :conformance
 models:
   execute: claude-opus-5-5
   plan: claude-opus-5-5

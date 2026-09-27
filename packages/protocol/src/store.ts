@@ -1,5 +1,5 @@
 import type { Address } from './address.js';
-import type { Message } from './envelope.js';
+import type { Message, MessageKind } from './envelope.js';
 
 export type DeliveryState =
   | 'held'
@@ -68,9 +68,20 @@ export interface DeliveryFilter {
 
 export interface MessageStore {
   transaction<T>(fn: () => T): T;
-  insertMessage(message: Message): void;
+  /** `idemKey` is the sender's dedupe key, unique per sender when set. */
+  insertMessage(message: Message, idemKey?: string): void;
   insertDelivery(delivery: Delivery): void;
   getMessage(id: string): Message | null;
+  /** The message `from` sent under `key`, or null. */
+  byIdemKey(from: Address, key: string): Message | null;
+  /** Each given message's dedupe key; keyless and unknown ids are left out. */
+  idemKeysFor(messageIds: string[]): Map<string, string>;
+  /** What `address` sent at or after `sinceIso`, oldest first, optionally only these kinds. */
+  messagesFrom(
+    address: Address,
+    sinceIso: string,
+    kinds?: MessageKind[]
+  ): Message[];
   thread(threadId: string): Message[];
   answersTo(messageId: string): Message[];
   openBlocking(): Message[];
@@ -85,6 +96,8 @@ export interface MessageStore {
     expected?: DeliveryState
   ): boolean;
   markGateApplied(questionId: string, at: string): void;
+  /** Turns an answer back into a message and records it voided, which reopens its question. */
+  voidAnswer(answerId: string, questionId: string, at: string): boolean;
   /** Answered gate questions (closes excluded) whose host effect is not yet recorded. */
   unappliedAnsweredGates(): { question: Message; answer: Message }[];
   countFrom(from: Address, sinceIso: string, urgentOnly: boolean): number;

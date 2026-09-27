@@ -192,6 +192,8 @@ export {
   loadConfig,
   updateConfig,
   ConfigError,
+  A2A_SKILLS,
+  DEFAULT_A2A,
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
@@ -251,6 +253,8 @@ export type {
   PolicyRungDef,
 } from './policy.js';
 export type {
+  A2AConfig,
+  A2ASkill,
   CartoConfig,
   CartoMode,
   ConfigPatch,

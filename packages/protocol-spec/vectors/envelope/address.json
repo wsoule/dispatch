@@ -1,0 +1,276 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "envelope",
+  "area": "address",
+  "vectors": [
+    {
+      "id": "env.address.parses-each-scheme",
+      "title": "Each core scheme parses to its kind, its named parts and the address",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1", "3.4"],
+      "given": {},
+      "when": [
+        { "op": "parseAddress", "input": "human:wyat" },
+        { "op": "parseAddress", "input": "agent:wyat/claude-code.macbook" },
+        { "op": "parseAddress", "input": "task:t-4a8cce" },
+        { "op": "parseAddress", "input": "run:r-9f2c01" },
+        { "op": "parseAddress", "input": "channel:epic/e-c25f9c" }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "kind": "human",
+              "handle": "wyat",
+              "address": "human:wyat"
+            }
+          },
+          {
+            "ok": true,
+            "result": {
+              "kind": "agent",
+              "handle": "claude-code.macbook",
+              "operator": "wyat",
+              "address": "agent:wyat/claude-code.macbook"
+            }
+          },
+          {
+            "ok": true,
+            "result": {
+              "kind": "task",
+              "id": "t-4a8cce",
+              "address": "task:t-4a8cce"
+            }
+          },
+          {
+            "ok": true,
+            "result": {
+              "kind": "run",
+              "id": "r-9f2c01",
+              "address": "run:r-9f2c01"
+            }
+          },
+          {
+            "ok": true,
+            "result": {
+              "kind": "channel",
+              "name": "epic/e-c25f9c",
+              "address": "channel:epic/e-c25f9c"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "env.address.parses-an-agent-without-an-operator",
+      "title": "An agent address without an operator parses with a null operator",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "agent:claude-code" }],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "kind": "agent",
+              "handle": "claude-code",
+              "operator": null,
+              "address": "agent:claude-code"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "env.address.parses-a-single-segment-channel",
+      "title": "A channel name of one segment parses",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "channel:auth-refactor" }],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "kind": "channel",
+              "name": "auth-refactor",
+              "address": "channel:auth-refactor"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "env.address.dispatch-grammar-admits-epic-ids",
+      "title": "The Dispatch profile admits epic ids as work item ids",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["3.1", "C.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "task:e-c25f9c" }],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "kind": "task",
+              "id": "e-c25f9c",
+              "address": "task:e-c25f9c"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "env.address.refuses-a-string-without-a-scheme",
+      "title": "A string with no colon, or nothing before its first colon, is refused",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [
+        { "op": "parseAddress", "input": "" },
+        { "op": "parseAddress", "input": "human" },
+        { "op": "parseAddress", "input": "agent" },
+        { "op": "parseAddress", "input": ":wyat" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } }
+        ]
+      }
+    },
+    {
+      "id": "env.address.refuses-a-handle-outside-the-identifier-grammar",
+      "title": "A handle that is not an identifier is refused",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["1.4", "3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:Wyat" }],
+      "then": { "steps": [{ "ok": false, "error": { "code": "invalid" } }] }
+    },
+    {
+      "id": "env.address.refuses-an-operator-on-a-human",
+      "title": "A human address carries no operator",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:wyat/x" }],
+      "then": { "steps": [{ "ok": false, "error": { "code": "invalid" } }] }
+    },
+    {
+      "id": "env.address.refuses-an-id-outside-the-identifier-grammar",
+      "title": "A work item id that is not an identifier is refused",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["1.4", "3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "task:t-XYZ" }],
+      "then": { "steps": [{ "ok": false, "error": { "code": "invalid" } }] }
+    },
+    {
+      "id": "env.address.refuses-a-task-id-outside-the-dispatch-grammar",
+      "title": "The Dispatch profile narrows work item ids to [te]-hex",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["3.1", "C.1"],
+      "given": {},
+      "when": [
+        { "op": "parseAddress", "input": "task:4a8cce" },
+        { "op": "parseAddress", "input": "task:x-4a8cce" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } }
+        ]
+      }
+    },
+    {
+      "id": "env.address.refuses-a-run-id-outside-the-dispatch-grammar",
+      "title": "The Dispatch profile narrows session ids to r-hex",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["3.1", "C.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "run:9f2c01" }],
+      "then": { "steps": [{ "ok": false, "error": { "code": "invalid" } }] }
+    },
+    {
+      "id": "env.address.refuses-an-empty-channel-segment",
+      "title": "A channel name with an empty segment is refused",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [
+        { "op": "parseAddress", "input": "channel:" },
+        { "op": "parseAddress", "input": "channel:a//b" },
+        { "op": "parseAddress", "input": "channel:a/" },
+        { "op": "parseAddress", "input": "channel:/a" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } }
+        ]
+      }
+    },
+    {
+      "id": "env.address.refuses-an-unknown-scheme",
+      "title": "A scheme the host does not implement is refused",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1", "3.4"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "robot:x" }],
+      "then": { "steps": [{ "ok": false, "error": { "code": "invalid" } }] }
+    },
+    {
+      "id": "env.address.refuses-the-reserved-at-sign",
+      "title": "@ is reserved for a federation authority and refused",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.3"],
+      "given": {},
+      "when": [
+        { "op": "parseAddress", "input": "human:wyat@laptop" },
+        { "op": "parseAddress", "input": "agent:wyat/claude@host" },
+        { "op": "parseAddress", "input": "channel:ops@remote" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } }
+        ]
+      }
+    }
+  ]
+}

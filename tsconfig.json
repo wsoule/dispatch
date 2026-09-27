@@ -9,6 +9,12 @@
       "path": "packages/protocol/tsconfig.json"
     },
     {
+      "path": "packages/protocol-spec/tsconfig.json"
+    },
+    {
+      "path": "packages/a2a/tsconfig.json"
+    },
+    {
       "path": "packages/cli/tsconfig.json"
     },
     {

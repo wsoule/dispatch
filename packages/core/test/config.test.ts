@@ -18,7 +18,7 @@ import {
   loadConfig,
   queueWeights,
 } from '../src/config.js';
-import { MAX_CONCURRENCY_HARD_CAP } from '../src/configTypes.js';
+import { DEFAULT_A2A, MAX_CONCURRENCY_HARD_CAP } from '../src/configTypes.js';
 import { DEFAULT_POLICY } from '../src/policy.js';
 import { DEFAULT_QUEUE_WEIGHTS } from '../src/scoring.js';
 
@@ -74,6 +74,8 @@ describe('loadConfig', () => {
       policy: DEFAULT_POLICY,
       preview: DEFAULT_PREVIEW,
       queue: { weights: DEFAULT_QUEUE_WEIGHTS },
+      a2a: DEFAULT_A2A,
+      a2aWarnings: [],
     });
   });
   it('merges file values over defaults', () => {

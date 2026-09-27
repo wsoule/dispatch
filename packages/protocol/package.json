@@ -3,11 +3,18 @@
   "version": "0.1.0",
   "private": true,
   "license": "MIT",
+  "bin": {
+    "dmp-reference-adapter": "./dist/conformance-adapter.js"
+  },
   "type": "module",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/conformance.d.ts",
+      "import": "./dist/conformance.js"
     }
   },
   "scripts": {
@@ -19,6 +26,7 @@
     "@dispatch/core": "workspace:*"
   },
   "devDependencies": {
+    "@dispatch/protocol-spec": "workspace:*",
     "@types/bun": "catalog:",
     "tsdown": "catalog:",
     "typescript": "catalog:"

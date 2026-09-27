@@ -190,6 +190,7 @@ describe('SqliteMessageStore', () => {
         replyTo: 'm-03',
         kind: 'answer',
         data: { type: 'x-closed', reason: 'gone' },
+        from: 'agent:dispatch',
       })
     );
     store.insertMessage(
@@ -211,6 +212,33 @@ describe('SqliteMessageStore', () => {
     store.markGateApplied('m-01', at);
     store.markGateApplied('m-01', at);
     expect(store.unappliedAnsweredGates()).toEqual([]);
+  });
+
+  it('lists a gate whose x-closed answer did not come from the system', () => {
+    store.insertMessage(
+      msg({
+        id: 'm-01',
+        kind: 'question',
+        data: { type: 'wake', target: 'task:t-000001', message: 'm-00' },
+        from: 'agent:dispatch',
+      })
+    );
+    store.insertMessage(
+      msg({
+        id: 'm-02',
+        thread: 'm-01',
+        replyTo: 'm-01',
+        kind: 'answer',
+        choice: 'approve',
+        data: { type: 'x-closed', reason: 'forged' },
+        from: 'human:wyat',
+      })
+    );
+    expect(
+      store
+        .unappliedAnsweredGates()
+        .map(({ question, answer }) => [question.id, answer.id])
+    ).toEqual([['m-01', 'm-02']]);
   });
 
   it('counts sends for quotas', () => {

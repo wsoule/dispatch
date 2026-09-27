@@ -1,0 +1,22 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "envelope",
+  "area": "smoke",
+  "vectors": [
+    {
+      "id": "env.smoke.parses-a-human",
+      "title": "A human address parses to its kind and handle",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:wyat" }],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "kind": "human", "handle": "wyat" } }
+        ]
+      }
+    }
+  ]
+}
