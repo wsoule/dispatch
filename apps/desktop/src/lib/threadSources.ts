@@ -178,11 +178,11 @@ export function replyPlan(
     return { kind: 'send', to: [channel], replyTo: target.id };
   }
   if (target.from !== me) {
-    // Text answers an open question; a handoff's answer must be accept or
-    // decline, so text goes beside it, as it does after a closed ask.
+    // Text answers an open question put to me. It goes beside a handoff (whose
+    // answer is accept or decline), a closed ask, or one put to someone else.
     const answerable =
       target.kind === 'question'
-        ? openIds.has(target.id)
+        ? openIds.has(target.id) && target.to.includes(me)
         : target.kind !== 'handoff';
     return answerable
       ? { kind: 'reply', target }

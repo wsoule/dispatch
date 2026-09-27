@@ -235,6 +235,21 @@ describe('replyPlan', () => {
     });
   });
 
+  it('writes beside an open question put to someone else, never answering it for them', () => {
+    const q = msg('m-01', {
+      kind: 'question',
+      blocking: true,
+      to: ['human:ada'],
+    });
+    // A decider's open gates list every open blocking question put to any human.
+    const { openIds } = mergeThreadSources({ mailbox: [], openGates: [q] }, ME);
+    expect(replyPlan([q], ME, openIds)).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+  });
+
   it('writes beside an open handoff to its sender, since answering one needs accept or decline', () => {
     const handoff = msg('m-01', {
       kind: 'handoff',
