@@ -1,0 +1,196 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "received-refs",
+  "vectors": [
+    {
+      "id": "core.refs.received-unknown-type-is-kept",
+      "title": "A received ref of a type the host does not know is accepted and stored unchanged",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.4", "14.1"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "origin": "received",
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [{ "type": "wiki", "id": "handbook", "at": "s2" }]
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "messages": [
+          {
+            "id": "$s1",
+            "refs": [{ "type": "wiki", "id": "handbook", "at": "s2" }]
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.refs.local-unknown-type-is-refused",
+      "title": "A local send whose ref has a type the host does not know is refused on its refs[i].type",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.3", "4.5"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [{ "type": "wiki", "id": "handbook", "at": "s2" }]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "refs[0].type" }
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.refs.a-received-type-is-an-identifier",
+      "title": "A received ref type must be an identifier of at most 64 bytes, and its id still meets the one-line limit",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["1.4", "4.3", "4.4"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "origin": "received",
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [{ "type": "Wiki Page", "id": "handbook" }]
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "origin": "received",
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [
+              {
+                "type": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                "id": "handbook"
+              }
+            ]
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "origin": "received",
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [{ "type": "wiki", "id": "hand\nbook" }]
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "human:ada", "canDecide": false },
+          "origin": "received",
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [{ "type": "wiki", "id": "handbook" }]
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "human:ada", "canDecide": false },
+          "origin": "received",
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [{ "type": "wiki/page", "id": "handbook" }]
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "origin": "received",
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "message",
+            "body": "see the handbook",
+            "refs": [
+              {
+                "type": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                "id": "handbook"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "refs[0].type" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "refs[0].type" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "refs[0].id" }
+          },
+          { "ok": true },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "refs[0].type" }
+          },
+          { "ok": true }
+        ],
+        "messages": [
+          {
+            "id": "$s6",
+            "refs": [
+              {
+                "type": "wwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwwww",
+                "id": "handbook"
+              }
+            ]
+          }
+        ],
+        "noOtherMessages": true
+      }
+    }
+  ]
+}

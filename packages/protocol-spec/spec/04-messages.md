@@ -108,7 +108,12 @@ These limits are the same for every host, binding and receiver: a limit a host
 enforced more loosely would let one send exceed another host's ceiling.
 
 **The order of checks in a send.** A host checks a send in this order, and the
-first check that fails is the send's error (pinned rule 1):
+first check that fails is the send's error (pinned rule 1; vectors:
+`core.gates.only-humans-and-the-system-decide`,
+`core.idempotency.a-revoked-sender-gets-no-replay`,
+`core.idempotency.a-retried-answer-replays`,
+`core.participation.absent-and-foreign-look-alike`,
+`core.participation.comes-before-validation`):
 
 1. **Authorize the sender** ([§9](09-identity-and-authorization.md#s9)): refuse
    an agent that is not approved, and a sender that claims to decide from an
@@ -201,7 +206,13 @@ other message. Closing a question that already has an answer fails `conflict` on
 `replyTo`; closing a message that is not a question or handoff fails `invalid`
 on `replyTo`; closing a message that does not exist fails `not-found` on
 `replyTo`. `x-closed` data is a close only when the system address sent it
-([§13.14](13-security-and-privacy.md#s13.14)). (pinned rule 8)
+([§13.14](13-security-and-privacy.md#s13.14)). (pinned rule 8; vectors:
+`core.close.answers-without-effect-or-deliveries`,
+`core.close.moves-the-question-to-answered`,
+`core.close.an-absent-question-is-not-found`,
+`core.close.an-answered-question-conflicts`,
+`core.close.a-non-question-is-invalid`,
+`core.markers.close-is-honored-only-from-the-system`)
 
 ## 4.9 Idempotency and replay
 
@@ -218,4 +229,9 @@ replays instead of meeting `conflict`, and a retry after the breaker has tripped
 replays instead of meeting `limited`. Because it comes after authorization, a
 sender whose authorization was revoked gets no replay. A key reused with a
 different input still returns the first message; hosts are not required to
-detect it. (pinned rule 15)
+detect it. (pinned rule 15; vectors:
+`core.idempotency.replays-the-first-message`,
+`core.idempotency.keys-are-per-sender`,
+`core.idempotency.a-key-is-one-line-of-at-most-200-bytes`,
+`core.idempotency.a-revoked-sender-gets-no-replay`,
+`core.idempotency.a-retried-answer-replays`)

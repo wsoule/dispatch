@@ -1,3 +1,3 @@
-// The reference implementation's version, in its own module so the
-// conformance adapter can name it without importing the package index.
+// The DMP version this package implements (§14.5); set by each release PR.
+// Its own module, so the conformance adapter names it without the index.
 export const PROTOCOL_VERSION = '0.1.0';

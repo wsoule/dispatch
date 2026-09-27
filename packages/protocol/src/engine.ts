@@ -34,6 +34,11 @@ export interface Sender {
   canDecide: boolean;
 }
 
+/** How a send reached the engine: `received` when a binding delivered it. */
+export interface SendOptions {
+  origin?: 'local' | 'received';
+}
+
 export interface SendResult {
   message: Message;
   deliveries: Delivery[];
@@ -183,7 +188,9 @@ export class DeliveryEngine {
           `no channel ${parsed.name}`,
           field
         );
-      for (const member of [...explicit, ...implicit]) add(member, 'channel');
+      // A channel is never a member, so a stored or implicit one is skipped.
+      for (const member of [...explicit, ...implicit])
+        if (!member.startsWith('channel:')) add(member, 'channel');
     }
     return [...byRecipient.values()];
   }
@@ -231,7 +238,11 @@ export class DeliveryEngine {
     }
   }
 
-  async send(input: SendInput, sender: Sender): Promise<SendResult> {
+  async send(
+    input: SendInput,
+    sender: Sender,
+    options: SendOptions = {}
+  ): Promise<SendResult> {
     const { muted } = this.authorize(sender);
     // A repeated key replays before any other check, so a retried answer or a
     // retry after the breaker trips gets the first result.
@@ -241,13 +252,22 @@ export class DeliveryEngine {
       const prior = this.replay(sender.address, key);
       if (prior !== null) return prior;
     }
-    const replyTarget = input.replyTo
-      ? this.store.getMessage(input.replyTo)
-      : null;
-    // Participation first: a non-participant must learn nothing about the target.
-    if (replyTarget !== null) this.authorizeReply(replyTarget, sender);
+    const replyTo = input.replyTo ?? null;
+    const replyTarget =
+      replyTo === null || replyTo === ''
+        ? null
+        : this.store.getMessage(replyTo);
+    // A non-participant cannot tell an existing message from an absent one.
+    if (
+      replyTo !== null &&
+      replyTo !== '' &&
+      (replyTarget === null || !this.participates(replyTarget, sender))
+    ) {
+      throw new MessagingError('not-found', `no message ${replyTo}`, 'replyTo');
+    }
     validateSendInput(input, sender.address, sender.canDecide, replyTarget, {
       gateTypes: this.gateTypes,
+      origin: options.origin ?? 'local',
     });
     await this.checkBreaker(replyTarget, sender);
     // The breaker await lets a duplicate commit first, so look again before the
@@ -452,12 +472,10 @@ export class DeliveryEngine {
     return fields;
   }
 
-  // Only participants may reply: the target's sender or recipients, where a run
-  // also stands for its task, that task's other runs and deliveries bound to it.
-  private authorizeReply(target: Message, sender: Sender): void {
-    if (sender.address === SYSTEM_ADDRESS) return;
-    // authorize() already refused canDecide on anyone but a human or the system.
-    if (sender.canDecide) return;
+  // Participants may reply and read: the target's sender or recipients, where a
+  // run also stands for its task, that task's other runs and deliveries bound to it.
+  private participates(target: Message, sender: Sender): boolean {
+    if (decides(sender)) return true;
     const senderRunId = sender.address.startsWith('run:')
       ? sender.address.slice(4)
       : null;
@@ -469,20 +487,29 @@ export class DeliveryEngine {
         (address === `task:${senderTask}` ||
           (address.startsWith('run:') &&
             this.host.taskOfRun(address.slice(4)) === senderTask)));
-    if (actsFor(target.from)) return;
-    const addressed = this.store
+    if (actsFor(target.from)) return true;
+    return this.store
       .deliveries({ messageId: target.id })
       .some(
         (d) =>
           actsFor(d.recipient) ||
           (senderRunId !== null && d.runId === senderRunId)
       );
-    if (!addressed)
-      throw new MessagingError(
-        'forbidden',
-        'only a participant can reply in this thread',
-        'replyTo'
-      );
+  }
+
+  // The read rule: the system, a deciding human, or a participant; an absent
+  // id reads as unreadable, never as forbidden.
+  canRead(messageId: string, sender: Sender): boolean {
+    const message = this.store.getMessage(messageId);
+    return message !== null && this.participates(message, sender);
+  }
+
+  // A thread is readable when any of its messages is, and then all of it is.
+  canReadThread(threadId: string, sender: Sender): boolean {
+    if (decides(sender)) return true;
+    return this.store
+      .thread(threadId)
+      .some((m) => this.participates(m, sender));
   }
 
   // Runs the gate hook and marks it applied; a failure at either step is left
@@ -718,7 +745,8 @@ export class DeliveryEngine {
     return next;
   }
 
-  // Channels hold tasks and actors, not runs: membership must outlive a run.
+  // Channels hold tasks and actors, not runs or channels: membership must
+  // outlive a run, and no channel is ever a recipient.
   join(channel: string, member: Address): void {
     parseAddress(`channel:${channel}`, 'channel');
     const parsed = parseAddress(member, 'member');
@@ -726,6 +754,13 @@ export class DeliveryEngine {
       throw new MessagingError(
         'invalid',
         'channels hold tasks and actors, not runs — join as task:<id>',
+        'member'
+      );
+    }
+    if (parsed.kind === 'channel') {
+      throw new MessagingError(
+        'invalid',
+        'channels hold tasks and actors, not channels',
         'member'
       );
     }
@@ -1002,6 +1037,14 @@ function alreadyAnswered(questionId: string): MessagingError {
     'conflict',
     `${questionId} is already answered`,
     'replyTo'
+  );
+}
+
+// A deciding principal: the system, or a human the host lets decide.
+function decides(sender: Sender): boolean {
+  return (
+    sender.address === SYSTEM_ADDRESS ||
+    (sender.canDecide && sender.address.startsWith('human:'))
   );
 }
 
