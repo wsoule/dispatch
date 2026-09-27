@@ -54,6 +54,7 @@ function renderPane(over: Partial<ThreadPaneProps> = {}) {
   render(
     <ThreadPane
       messages={[msg('m-01', { kind: 'question', blocking: true })]}
+      deliveries={[]}
       me={ME}
       openIds={new Set(['m-01'])}
       access={DECIDER}
@@ -102,6 +103,30 @@ test('a typed reply answers the open question put to me', async () => {
   await waitFor(() => expect(replyBox().value).toBe(''));
 });
 
+test("a teammate's reply replies to a message they took part in, not to a note sent past them", async () => {
+  const question = msg('m-01', { kind: 'question' });
+  const answer = msg('m-02', {
+    from: ME,
+    to: ['run:r-000001'],
+    kind: 'answer',
+    replyTo: 'm-01',
+  });
+  const note = msg('m-03', { to: ['human:owner'], replyTo: 'm-02' });
+  const onReply = renderPane({
+    messages: [question, answer, note],
+    openIds: new Set(),
+    access: { canDecide: false, canMessage: true, explanation: 'no decide' },
+  });
+  fireEvent.change(replyBox(), { target: { value: 'one more thing' } });
+  fireEvent.keyDown(replyBox(), { key: 'Enter' });
+  await waitFor(() => expect(onReply).toHaveBeenCalledTimes(1));
+  expect(onReply.mock.calls[0]?.[0]).toEqual({
+    kind: 'send',
+    to: ['run:r-000001'],
+    replyTo: 'm-01',
+  });
+});
+
 test('a failed reply says why and keeps the draft', async () => {
   renderPane({
     onReply: () =>
@@ -140,6 +165,7 @@ test('resending after a lost response repeats the first plan, even once the answ
   const pane = (messages: Message[], openIds: ReadonlySet<string>) => (
     <ThreadPane
       messages={messages}
+      deliveries={[]}
       me={ME}
       openIds={openIds}
       access={DECIDER}

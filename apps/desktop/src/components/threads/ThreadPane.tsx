@@ -1,4 +1,4 @@
-import type { Message } from '@dispatch/client';
+import type { Delivery, Message } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { useMemo, useState } from 'react';
 
@@ -24,6 +24,8 @@ import { Button } from '@/ui/button';
 
 export interface ThreadPaneProps {
   messages: Message[];
+  /** The thread's deliveries: a teammate may reply only to what reached them. */
+  deliveries: readonly Delivery[];
   me: string;
   openIds: ReadonlySet<string>;
   access: MessageAccess;
@@ -71,7 +73,10 @@ export function ThreadPane(props: ThreadPaneProps) {
         <ReplyBox
           {...props}
           openIds={openIds}
-          plan={replyPlan(messages, me, openIds)}
+          plan={replyPlan(messages, me, openIds, {
+            canDecide: props.access.canDecide,
+            deliveries: props.deliveries,
+          })}
         />
       </div>
     </div>

@@ -239,16 +239,34 @@ export type ReplyPlan =
   | { kind: 'reply'; target: Message }
   | { kind: 'send'; to: string[]; replyTo: string };
 
+/** Who is replying: a deciding human may reply to any message; anyone else
+ *  only to one they sent, were sent, or were delivered (`deliveries`). */
+export interface Replier {
+  canDecide: boolean;
+  deliveries: readonly Delivery[];
+}
+
+const DECIDING: Replier = { canDecide: true, deliveries: [] };
+
 /** How a typed reply in an open thread is addressed; null when there is nothing to reply to. */
 export function replyPlan(
   messages: readonly Message[],
   me: string,
-  openIds: ReadonlySet<string>
+  openIds: ReadonlySet<string>,
+  replier: Replier = DECIDING
 ): ReplyPlan | null {
   const channel = messages[0]?.to.find((address) =>
     address.startsWith('channel:')
   );
-  const newestFirst = [...messages].reverse();
+  const delivered = new Set(
+    replier.deliveries.filter((d) => d.recipient === me).map((d) => d.messageId)
+  );
+  const tookPart = (m: Message): boolean =>
+    replier.canDecide ||
+    m.from === me ||
+    m.to.includes(me) ||
+    delivered.has(m.id);
+  const newestFirst = [...messages].reverse().filter(tookPart);
   const answered = answeredIds(messages);
   // Text answers the newest open question put to me, unless I wrote since it.
   const ask =
@@ -277,7 +295,7 @@ export function replyPlan(
   if (to.length === 0) return null;
   // The daemon reroutes an ended run to its task only for the replied-to
   // message's writer, so reply to the newest message they sent me.
-  const theirs = [...messages].reverse().filter((m) => to.includes(m.from));
+  const theirs = newestFirst.filter((m) => to.includes(m.from));
   const anchor = theirs.find((m) => m.to.includes(me)) ?? theirs[0] ?? target;
   return { kind: 'send', to, replyTo: anchor.id };
 }

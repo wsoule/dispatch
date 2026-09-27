@@ -523,6 +523,65 @@ describe('replyPlan', () => {
     });
     expect(replyPlan([wake, answer], ME, new Set())).toBeNull();
   });
+
+  it("anchors a teammate's reply on a message they took part in, which is all the daemon lets them reply to", () => {
+    const question = msg('m-01', { kind: 'question' });
+    const answer = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+      kind: 'answer',
+    });
+    const note = msg('m-03', {
+      thread: 'm-01',
+      replyTo: 'm-02',
+      to: ['human:owner'],
+    });
+    const thread = [question, answer, note];
+    const teammate = { canDecide: false, deliveries: [] };
+    expect(replyPlan(thread, ME, new Set(), teammate)).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+    // A decider may reply to anything, so they write beside the newest.
+    expect(replyPlan(thread, ME, new Set())).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-03',
+    });
+  });
+
+  it('counts a channel message delivered to a teammate as one they took part in', () => {
+    const root = msg('m-01', { to: ['channel:general'] });
+    const aside = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      to: ['human:owner'],
+    });
+    const delivered = {
+      id: 'd-01',
+      messageId: 'm-01',
+      recipient: ME,
+      runId: null,
+      via: 'channel' as const,
+      state: 'read' as const,
+      updatedAt: root.createdAt,
+    };
+    expect(
+      replyPlan([root, aside], ME, new Set(), {
+        canDecide: false,
+        deliveries: [delivered],
+      })
+    ).toEqual({ kind: 'send', to: ['channel:general'], replyTo: 'm-01' });
+    expect(
+      replyPlan([root, aside], ME, new Set(), {
+        canDecide: false,
+        deliveries: [],
+      })
+    ).toBeNull();
+  });
 });
 
 describe('threadOpenIds', () => {

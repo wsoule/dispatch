@@ -74,6 +74,7 @@ export function TaskThreadTab({
             // A fresh reply draft per thread.
             key={open.thread}
             messages={open.messages}
+            deliveries={open.deliveries}
             me={me}
             openIds={list.openIds}
             access={access}
