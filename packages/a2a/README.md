@@ -13,7 +13,8 @@ decides how a Dispatch project looks to an A2A client:
 A host implements one seam, `BridgePort`: it gathers facts about a task and
 applies the effects the handler asks for. dispatchd is one such host. An
 embedder can also publish artifacts of its own through
-`TaskFacts.hostArtifacts`; they follow Dispatch's own artifacts unchanged.
+`TaskFacts.hostArtifacts`. They are published unchanged and ahead of Dispatch's
+own artifacts, because clients read the first artifact as the result.
 
 It uses `@a2a-js/sdk` 1.2.0 for the wire types, ProtoJSON, SSE framing and the
 client, never for its server. The package never imports server code.

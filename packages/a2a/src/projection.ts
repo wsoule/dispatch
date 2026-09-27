@@ -233,12 +233,13 @@ export function project(f: TaskFacts, view: ProjectionView): TaskJson {
     status: { state: wireState(decision.state), message: status },
   };
   if (view.includeArtifacts) {
+    // A host's own artifacts lead, since clients read the first as the result.
     const artifacts: ArtifactJson[] = [
+      ...(f.hostArtifacts ?? []),
       ...(decision.row === 5 && f.answer !== null
         ? [answerArtifact(f.answer, view)]
         : []),
       ...workArtifacts(f.work, view),
-      ...(f.hostArtifacts ?? []),
     ];
     if (artifacts.length > 0) json.artifacts = artifacts;
   }

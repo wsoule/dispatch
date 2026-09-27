@@ -220,7 +220,8 @@ describe('project', () => {
     ).toEqual([]);
   });
 
-  it('publishes host artifacts after its own', () => {
+  // Clients, the TCK among them, read the first artifact as the result.
+  it('publishes host artifacts ahead of its own', () => {
     const hosted = {
       artifactId: 'output',
       name: 'output.txt',
@@ -234,8 +235,8 @@ describe('project', () => {
     };
     const json = project(facts({ answer, hostArtifacts: [hosted] }), view);
     expect(json.artifacts?.map((a) => a.artifactId)).toEqual([
-      'answer',
       'output',
+      'answer',
     ]);
   });
 
@@ -247,7 +248,7 @@ describe('project', () => {
     };
     const json = project(facts({ answer, hostArtifacts: [hosted] }), view);
     expect(Task.toJSON(Task.fromJSON(json))).toMatchObject({
-      artifacts: [{ artifactId: 'answer' }, { parts: [{ raw }] }],
+      artifacts: [{ parts: [{ raw }] }, { artifactId: 'answer' }],
     });
   });
 

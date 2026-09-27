@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, expect, it } from 'bun:test';
 
-import type { ArtifactJson, MessageJson, TaskJson } from '../../src/wire.js';
+import type { MessageJson, PartJson, TaskJson } from '../../src/wire.js';
 import { startSut } from './sut.js';
 
 let sut: ReturnType<typeof startSut>;
@@ -35,11 +35,9 @@ async function send(
   return (await res.json()) as { task?: TaskJson; message?: MessageJson };
 }
 
-function artifact(
-  task: TaskJson | undefined,
-  id: string
-): ArtifactJson | undefined {
-  return task?.artifacts?.find((a) => a.artifactId === id);
+// The first part of the first artifact: all the TCK's DM-ART-001 tests read.
+function firstPart(task: TaskJson | undefined): PartJson | undefined {
+  return task?.artifacts?.[0]?.parts[0];
 }
 
 it('serves a card whose interface is this SUT', async () => {
@@ -63,22 +61,25 @@ it('answers the core scenarios by messageId prefix', async () => {
   expect((await send('tck-reject-task-001')).task?.status.state).toBe(
     'TASK_STATE_REJECTED'
   );
-  expect(
-    artifact((await send('tck-artifact-text-001')).task, 'answer')?.parts[0]
-  ).toMatchObject({ text: 'Generated text content' });
-  expect(
-    artifact((await send('tck-artifact-file-001')).task, 'output')?.parts[0]
-  ).toEqual({
+});
+
+it("puts each artifact scenario's artifact first, where the TCK reads it", async () => {
+  expect(firstPart((await send('tck-artifact-text-001')).task)).toMatchObject({
+    text: 'Generated text content',
+  });
+  expect(firstPart((await send('tck-artifact-file-001')).task)).toEqual({
     raw: Buffer.from('TCK file content').toString('base64'),
     mediaType: 'text/plain',
     filename: 'output.txt',
   });
-  expect(
-    artifact((await send('tck-artifact-file-url-001')).task, 'output')?.parts[0]
-  ).toMatchObject({ url: 'https://example.com/output.txt' });
-  expect(
-    artifact((await send('tck-artifact-data-001')).task, 'data')?.parts[0]
-  ).toMatchObject({ data: { key: 'value', count: 42 } });
+  expect(firstPart((await send('tck-artifact-file-url-001')).task)).toEqual({
+    url: 'https://example.com/output.txt',
+    mediaType: 'text/plain',
+    filename: 'output.txt',
+  });
+  expect(firstPart((await send('tck-artifact-data-001')).task)).toMatchObject({
+    data: { key: 'value', count: 42 },
+  });
 });
 
 it('asks for input, then completes on the follow-up', async () => {

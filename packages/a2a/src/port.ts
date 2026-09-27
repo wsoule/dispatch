@@ -95,7 +95,8 @@ export interface TaskFacts {
     evidence?: WorkArtifactV1;
   };
   clientIds: Record<string, string>;
-  // Artifacts a host publishes as they are; dispatchd sets none.
+  // Artifacts a host publishes as they are, ahead of Dispatch's own;
+  // dispatchd sets none.
   hostArtifacts?: ArtifactJson[];
 }
 
