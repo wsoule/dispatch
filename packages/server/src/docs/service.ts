@@ -1784,6 +1784,8 @@ export class DocsService {
       const origin = importOrigin(name.slug, k);
       const found = store.docByOrigin(origin);
       if (found !== null) {
+        // An open head the import builds on seals first, as any new head's parent does.
+        this.sealInTx(found, this.headOf(found));
         parts.push({ doc: found, created: false });
         continue;
       }

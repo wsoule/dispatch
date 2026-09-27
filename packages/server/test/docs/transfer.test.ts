@@ -353,6 +353,31 @@ describe('the staged import', () => {
     expect(rels()).toEqual([['t-1', 'spec']]);
   });
 
+  it('seals an open head before a re-import builds on it', () => {
+    const { service, store, host } = makeService();
+    const owner = service.actorFor(OWNER);
+    stage(service, [file('p/x.md', '# X\nv1\n', '2026-09-20T00:00:00.000Z')]);
+    const head = service.read(owner, 'x').rev;
+    const saved = service.saveBody(owner, 'x', {
+      baseRev: head.id,
+      baseHash: head.hash,
+      body: '# X\nsaved\n',
+    });
+    expect(store.openHeads().map((r) => r.id)).toEqual([saved.rev.id]);
+    stage(service, [file('q/x.md', '# X\nv2\n', '2026-09-21T00:00:00.000Z')]);
+    expect(
+      service.revisions(owner, 'x', {}).map((r) => [r.n, r.cause, r.sealed])
+    ).toEqual([
+      [3, 'import', true],
+      [2, 'save', true],
+      [1, 'import', true],
+    ]);
+    expect(store.openHeads()).toEqual([]);
+    expect(
+      host.changes.some((c) => c.kind === 'sealed' && c.rev === saved.rev.id)
+    ).toBe(true);
+  });
+
   it('skips a tombstoned origin on re-import', () => {
     const { service } = makeService();
     const x = file('p/x.md', '# X\n', '2026-09-20T00:00:00.000Z');
