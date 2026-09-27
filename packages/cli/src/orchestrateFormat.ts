@@ -95,16 +95,21 @@ export function toolApprovalOf(message: Message): ToolApproval | null {
   return { runId: gate.runId, requestId: gate.requestId, tool: gate.tool };
 }
 
-// Renders a tool-approval gate prominently, with the exact commands to copy
-// rather than making the user reconstruct the run/request ids.
-export function formatApprovalRequest(approval: ToolApproval): string {
-  const { runId, requestId, tool } = approval;
+// Renders a tool-approval gate prominently, with the exact commands to copy.
+// Given only the run, the commands let `dispatch approve` find the gate itself.
+export function formatApprovalRequest(
+  approval: ToolApproval | { runId: string }
+): string {
+  const named = 'requestId' in approval;
+  const target = named
+    ? `${approval.runId} ${approval.requestId}`
+    : approval.runId;
   return [
     '',
     '=== approval requested ===',
-    `tool:    ${tool}`,
-    `approve: dispatch approve ${runId} ${requestId}`,
-    `deny:    dispatch approve ${runId} ${requestId} --deny`,
+    ...(named ? [`tool:    ${approval.tool}`] : []),
+    `approve: dispatch approve ${target}`,
+    `deny:    dispatch approve ${target} --deny`,
     'token:   needs the daemon app token (--token or DISPATCH_APP_TOKEN)',
     '===========================',
     '',
