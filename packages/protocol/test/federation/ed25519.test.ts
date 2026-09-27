@@ -74,6 +74,8 @@ describe('Ed25519 through node:crypto', () => {
     for (const left of ['I', 'L', 'O', 'U'])
       expect(printed).not.toContain(left);
     expect(printed).toBe(fingerprint(keys.signPub, keys.sealPub));
+    // Checked against an independent SHA-256 and Crockford base32.
+    expect(fingerprint('AAAA', 'BBBB')).toBe('RQ6S-W54Z-2QB2-056A-SAS0-1FK8');
   });
 
   // With R the identity and S zero, a small-order key verifies any message
