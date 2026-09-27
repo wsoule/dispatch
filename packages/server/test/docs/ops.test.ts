@@ -1,3 +1,4 @@
+import type { DocOp } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import { applyOps, parseOps } from '../../src/docs/ops.js';
@@ -72,14 +73,13 @@ describe('applyOps', () => {
   });
 
   it('applies ops in order and is atomic when a later op fails', () => {
-    const doc = { ...DOC };
+    // Frozen, so any write to the caller's doc would throw a TypeError instead.
     expect(() =>
-      applyOps(doc, [
+      applyOps(Object.freeze({ ...DOC }), [
         { op: 'replace', find: 'Intro.', text: 'Changed.' },
         { op: 'replace_section', section: 'Missing', text: 'x' },
       ])
     ).toThrow('ops[1]: section "Missing" not found');
-    expect(doc.body).toBe(DOC.body);
   });
 
   it('sets the title after checking it', () => {
@@ -106,6 +106,102 @@ describe('applyOps', () => {
       new TextEncoder().encode(applyOps(DOC, ops).summary).byteLength
     ).toBeLessThanOrEqual(200);
   });
+
+  it('never returns a body that starts with a BOM', () => {
+    expect(
+      applyOps({ title: 'T', body: '' }, [
+        { op: 'append', text: '\uFEFF\uFEFFx' },
+      ]).body
+    ).toBe('x\n');
+    expect(
+      applyOps({ title: 'T', body: '# T\n' }, [
+        { op: 'insert', before: 'T', text: '\uFEFF\uFEFFx' },
+      ]).body
+    ).toBe('x\n# T\n');
+    expect(
+      applyOps({ title: 'T', body: 'X\uFEFFabc\n' }, [
+        { op: 'replace', find: 'X', text: '' },
+      ]).body
+    ).toBe('abc\n');
+  });
+
+  it('matches find exactly, folding only line endings', () => {
+    const doc = { title: 'T', body: 'a\uFEFFbc\nd\n' };
+    expect(
+      applyOps(doc, [{ op: 'replace', find: '\uFEFFbc', text: 'Q' }]).body
+    ).toBe('aQ\nd\n');
+    expect(
+      applyOps(doc, [{ op: 'replace', find: '\uFEFF', text: '' }]).body
+    ).toBe('abc\nd\n');
+    expect(
+      applyOps(doc, [{ op: 'replace', find: 'c\r\nd', text: 'C' }]).body
+    ).toBe('a\uFEFFbC\n');
+  });
+
+  it('refuses an op kind that did not come through parseOps', () => {
+    expect(() => applyOps(DOC, [{ op: 'bogus' } as unknown as DocOp])).toThrow(
+      'ops[0].op'
+    );
+  });
+
+  it('refuses the op that takes the body over 768 KiB', () => {
+    expect(() =>
+      applyOps({ title: 'x', body: '# x\n' }, [
+        { op: 'append', text: 'ok' },
+        { op: 'append', text: '#\n'.repeat(400_000) },
+        { op: 'append', section: 'x', text: 'never runs' },
+      ])
+    ).toThrow('ops[1]: the body would be over 768 KiB');
+  });
+
+  it('refuses section ops once a call has outlined too many lines', () => {
+    const body = `# a\n${'\n'.repeat(600_000)}`;
+    const once = applyOps({ title: 'a', body }, [
+      { op: 'append', section: 'a', text: 'one' },
+    ]);
+    expect(once.body.endsWith('\none\n')).toBe(true);
+    expect(() =>
+      applyOps({ title: 'a', body }, [
+        { op: 'append', section: 'a', text: 'one' },
+        { op: 'insert', before: 'a', text: 'two' },
+      ])
+    ).toThrow(
+      'ops[1]: these ops scan too much of a long doc; send fewer section ops, or save the whole body'
+    );
+  });
+
+  it('counts heading lines as more work than plain lines', () => {
+    const op: DocOp = { op: 'append', section: 'a', text: 'x' };
+    const plain = `# a\n${'\n'.repeat(250_000)}`;
+    expect(
+      applyOps({ title: 'a', body: plain }, [op]).body.endsWith('\n\nx\n')
+    ).toBe(true);
+    const headings = `# a\n${'#\n'.repeat(250_000)}`;
+    expect(() => applyOps({ title: 'a', body: headings }, [op])).toThrow(
+      'ops[0]: these ops scan too much of a long doc'
+    );
+    expect(
+      applyOps({ title: 'a', body: headings }, [
+        { op: 'append', text: 'x' },
+        { op: 'replace', find: '#\n#\n#\nx\n', text: 'end\n' },
+      ]).body.endsWith('#\nend\n')
+    ).toBe(true);
+  });
+
+  it('does doc-end appends and replaces without spending the budget', () => {
+    const body = `# a\n${'\n'.repeat(450_000)}`;
+    const r = applyOps({ title: 'a', body }, [
+      { op: 'append', section: 'a', text: 'first' },
+      ...Array.from({ length: 47 }, () => ({
+        op: 'append' as const,
+        text: 'x',
+      })),
+      { op: 'replace', find: '# a\n', text: '# b\n' },
+      { op: 'append', section: 'b', text: 'last' },
+    ]);
+    expect(r.body.startsWith('# b\n')).toBe(true);
+    expect(r.body.endsWith(`first\n${'x\n'.repeat(47)}last\n`)).toBe(true);
+  });
 });
 
 describe('parseOps', () => {
@@ -127,6 +223,20 @@ describe('parseOps', () => {
     expect(() =>
       parseOps([{ op: 'replace_section', section: 1, text: 'x' }])
     ).toThrow('ops[0].section');
+  });
+
+  it('returns only the fields each op takes', () => {
+    expect(
+      parseOps([
+        { op: 'append', text: 'x', junk: { deep: 1 } },
+        { op: 'append', section: 'A', text: 'y', extra: 1 },
+        { op: 'set_title', title: 'T', section: 'A' },
+      ])
+    ).toStrictEqual([
+      { op: 'append', text: 'x' },
+      { op: 'append', text: 'y', section: 'A' },
+      { op: 'set_title', title: 'T' },
+    ]);
   });
 
   it('refuses an op named after an object prototype member', () => {
