@@ -98,7 +98,7 @@ export function ThreadsView({
         <Button
           size="sm"
           variant="ghost"
-          disabled={!access.canMessage}
+          disabled={!access.canMessage || me === null}
           onClick={() => {
             setComposing(true);
             onFocus(null);
@@ -109,16 +109,26 @@ export function ThreadsView({
       }
     />
   );
-  if (me === null || !access.canMessage) {
+  if (!access.canMessage) {
     return (
       <div className="flex h-full flex-col">
         {header}
         <EmptyState
           className="flex-1"
           heading="Threads are not available in this window."
-          description={
-            access.explanation ?? 'Waiting for the daemon to say who you are.'
-          }
+          description={access.explanation}
+        />
+      </div>
+    );
+  }
+  if (me === null) {
+    return (
+      <div aria-busy="true" className="flex h-full flex-col">
+        {header}
+        <EmptyState
+          className="flex-1"
+          heading="Loading threads"
+          description="Waiting for the daemon to say who you are."
         />
       </div>
     );

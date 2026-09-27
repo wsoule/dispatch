@@ -171,6 +171,58 @@ test('an attached agent-token window queries nothing and says why', () => {
   expect(client.listChannels).not.toHaveBeenCalled();
 });
 
+test('a teammate waits for the daemon to say who they are, with no reason given as a refusal', () => {
+  const client = {
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  };
+  const data = dataWith({
+    client: client as unknown as ApiClient,
+    port: 4000,
+    me: null,
+    messageAccess: {
+      canDecide: false,
+      canMessage: true,
+      explanation: 'Answering approvals needs the decide tier.',
+    },
+    tasks: [],
+    runs: [],
+    presence: [],
+  });
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ThreadsView
+        data={data}
+        projectName="storefront"
+        focus={null}
+        onFocus={() => {}}
+        onOpenRef={() => {}}
+        overseer={OVERSEER}
+      />
+    </QueryClientProvider>
+  );
+  expect(
+    screen.getByText('Waiting for the daemon to say who you are.')
+  ).toBeTruthy();
+  expect(
+    screen.queryByText('Threads are not available in this window.')
+  ).toBeNull();
+  expect(
+    screen.queryByText('Answering approvals needs the decide tier.')
+  ).toBeNull();
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'New thread' })
+      .disabled
+  ).toBe(true);
+});
+
 test('a focus that names no message says the thread did not load', async () => {
   const client = {
     getMailbox: mock(() => Promise.resolve({ items: [] })),
