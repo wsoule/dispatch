@@ -117,6 +117,29 @@ describe('PromptBar', () => {
     expect(removedId).toBe('ref-1');
   });
 
+  test('a locked reference chip offers no remove button', () => {
+    render(
+      <PromptBar
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        references={[
+          { id: 'task', label: 'Checkout', locked: true },
+          { id: 'ref-1', label: 'boot.rs' },
+        ]}
+        onRemoveReference={() => {}}
+      />
+    );
+
+    expect(screen.getByText('Checkout')).toBeDefined();
+    expect(
+      screen.queryByRole('button', { name: 'Remove Checkout' })
+    ).toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Remove boot.rs' })
+    ).toBeDefined();
+  });
+
   // The frame is the comment composer (quaternary card, half-pixel border), the
   // reference chips are `Pill`s, and send is an icon button that goes indigo only
   // once there is something to send.

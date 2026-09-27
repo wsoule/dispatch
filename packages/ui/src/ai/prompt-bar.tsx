@@ -18,6 +18,8 @@ export type PromptBarReference = {
   id: string;
   label: string;
   icon?: ReactNode;
+  /** Shown without a remove button, such as a recipient the caller fixes. */
+  locked?: boolean;
 };
 
 export type PromptBarCommand = {
@@ -141,17 +143,22 @@ export function PromptBar({
       {references.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-0.5 pt-0.5">
           {references.map((reference) => (
-            <Pill key={reference.id} className="pr-1">
+            <Pill
+              key={reference.id}
+              className={reference.locked === true ? undefined : 'pr-1'}
+            >
               {reference.icon}
               <span className="min-w-0 truncate">{reference.label}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${reference.label}`}
-                onClick={() => onRemoveReference?.(reference.id)}
-                className="text-muted-foreground hover:bg-surface-active hover:text-foreground ease-out-expo rounded-pill flex size-4 shrink-0 items-center justify-center transition-colors duration-100"
-              >
-                <XIcon aria-hidden className="size-3" />
-              </button>
+              {reference.locked !== true && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${reference.label}`}
+                  onClick={() => onRemoveReference?.(reference.id)}
+                  className="text-muted-foreground hover:bg-surface-active hover:text-foreground ease-out-expo rounded-pill flex size-4 shrink-0 items-center justify-center transition-colors duration-100"
+                >
+                  <XIcon aria-hidden className="size-3" />
+                </button>
+              )}
             </Pill>
           ))}
         </div>

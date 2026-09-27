@@ -105,6 +105,25 @@ describe('Composer', () => {
     expect(box().disabled).toBe(true);
   });
 
+  it('offers no way to remove a locked recipient, and removes any other', () => {
+    render(
+      <Composer
+        known={KNOWN}
+        initialTo={['task:t-1a2b3c', 'human:wyat']}
+        locked={['task:t-1a2b3c']}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+      />
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Remove task:t-1a2b3c' })
+    ).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Remove human:wyat' }));
+    expect(screen.queryByText('human:wyat')).toBeNull();
+    expect(screen.getByText('task:t-1a2b3c')).toBeTruthy();
+  });
+
   it('sends a question that wakes a task by default, then clears the draft', async () => {
     const onSend = mock((_state: ComposeState) => Promise.resolve(SENT));
     const onSent = mock((_result: SendResult) => {});

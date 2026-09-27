@@ -193,11 +193,11 @@ export function Composer({
         references={to.map((address) => ({
           id: address,
           label: label(address),
+          locked: locked.includes(address),
         }))}
-        onRemoveReference={(id) => {
-          if (!locked.includes(id))
-            setTo((prev) => prev.filter((a) => a !== id));
-        }}
+        onRemoveReference={(id) =>
+          setTo((prev) => prev.filter((a) => a !== id))
+        }
         disabled={disabledReason !== null || sending}
         placeholder="Write a message… type @ to add a recipient"
         ariaLabel="New message"
