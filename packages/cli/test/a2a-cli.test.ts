@@ -21,6 +21,8 @@ const STATUS = {
 
 let root: string;
 let home: string;
+// What the fake daemon answers a listener write with.
+let written: object;
 let lines: string[];
 let ctx: CliContext;
 let server: ReturnType<typeof Bun.serve>;
@@ -54,11 +56,14 @@ function startFakeDaemon() {
       });
       if (url.pathname === '/api/health') return Response.json({ ok: true });
       if (url.pathname === '/api/a2a/listener') {
-        return Response.json(
-          req.method === 'DELETE'
-            ? { ...STATUS, enabled: false, listening: false, url: null }
-            : STATUS
-        );
+        if (req.method === 'DELETE')
+          return Response.json({
+            ...STATUS,
+            enabled: false,
+            listening: false,
+            url: null,
+          });
+        return Response.json(req.method === 'PUT' ? written : STATUS);
       }
       if (url.pathname === '/api/a2a/card') {
         return Response.json({ name: 'Acme API' });
@@ -123,6 +128,7 @@ beforeEach(async () => {
   delete process.env.DISPATCH_APP_TOKEN;
   lines = [];
   received = [];
+  written = STATUS;
   ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
   lines = [];
@@ -182,6 +188,15 @@ describe('dispatch a2a listen', () => {
       },
     ]);
     expect(lines.join('\n')).toContain('http://127.0.0.1:7450');
+  });
+
+  it('fails when the daemon saved the settings but the listener did not open', async () => {
+    process.env.DISPATCH_APP_TOKEN = APP_TOKEN;
+    written = { ...STATUS, listening: false, url: null, error: 'EADDRINUSE' };
+    await expect(run('a2a', 'listen', '--port', '7450')).rejects.toThrow(
+      CliError
+    );
+    expect(lines.join('\n')).toContain('closed (EADDRINUSE)');
   });
 
   it('never falls back to the agent token to open a listener', async () => {
