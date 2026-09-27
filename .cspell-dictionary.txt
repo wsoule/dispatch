@@ -250,6 +250,7 @@ mergebasesha
 mergedsha
 metacharacter
 METACHARS
+Metas
 misdescribe
 mktemp
 modelcontextprotocol
@@ -480,6 +481,7 @@ TOCTOU
 toidentifier
 tokenisation
 tokeniser
+tombstoned
 toolsets
 toolu
 topbar
@@ -522,6 +524,7 @@ unhovered
 unhydratable
 unignorable
 unimportable
+UNINDEXED
 uninit
 unioned
 unioning
