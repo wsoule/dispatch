@@ -315,7 +315,12 @@ export function RunLogView({
       {subagents.length > 0 && (
         <SubagentTree nodes={subagents} className="mx-1 shrink-0" />
       )}
-      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto px-1">
+      <div
+        ref={scrollRef}
+        role="region"
+        aria-label="Run log"
+        className="min-h-0 flex-1 overflow-y-auto px-1"
+      >
         <div ref={contentRef} className="flex min-h-full flex-col gap-3">
           {meta.resumedFrom !== undefined && (
             <div className="text-muted-foreground font-book flex items-center justify-center gap-1.5 py-1 text-center text-[12px]">

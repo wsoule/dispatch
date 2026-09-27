@@ -9,6 +9,8 @@ import { APP_TOKEN, DAEMON_PORT, HOME, ROOT } from './paths';
 const DAEMON = `http://localhost:${DAEMON_PORT}`;
 // Messaging refuses the shared agent token, so the daemon is driven with the app token.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
+// A run in these states still takes a pushed answer, so nothing is held for its task.
+const LIVE_STATES = new Set(['running', 'awaiting-approval']);
 
 // Duplicated from views.spec.ts, following the convention edit-diff.spec.ts documents.
 function requireToken(): string {
@@ -43,15 +45,28 @@ async function getJson<T>(
   return (await res.json()) as T;
 }
 
-let created: { runId: string; taskId: string } | null = null;
+let created: {
+  runId: string;
+  taskId: string;
+  questionId: string | null;
+} | null = null;
 
 test.describe('messaging end to end', () => {
   test.afterEach(async ({ request }) => {
-    // overseer.spec.ts's undo, plus a cancel for a run a failure left parked, so the
-    // screenshot suite's counts hold. No route closes the run's question, so a failed
-    // attempt leaves it open under Needs you in every decide-tier window of the fixture.
+    // Answers a question a failure left open while its run can still take it, then
+    // undoes the run like overseer.spec.ts, so the fixture's counts hold.
     if (created === null) return;
-    const { runId, taskId } = created;
+    const { runId, taskId, questionId } = created;
+    const run = await getJson<{ meta: { state: string } }>(
+      request,
+      `/api/runs/${runId}`
+    );
+    if (questionId !== null && LIVE_STATES.has(run.meta.state)) {
+      await request.post(`${DAEMON}/api/messages/${questionId}/reply`, {
+        headers: APP,
+        data: { body: 'Closed: the e2e attempt ended before answering.' },
+      });
+    }
     await request.post(`${DAEMON}/api/runs/${runId}/cancel`, { headers: APP });
     await request.post(`${DAEMON}/api/runs/${runId}/review`, {
       headers: APP,
@@ -84,6 +99,15 @@ test.describe('messaging end to end', () => {
     if (taskId === undefined) {
       throw new Error('the storefront fixture has no ready task');
     }
+    // Held mail would reach the new run at start and release its wait before it asks.
+    const held = await getJson<{ items: { message: { id: string } }[] }>(
+      request,
+      `/api/mailbox?address=task:${taskId}&state=held`
+    );
+    expect(
+      held.items.map((item) => item.message.id),
+      `task ${taskId} has held mail from an earlier attempt in the fixture`
+    ).toEqual([]);
     const dispatched = await request.post(
       `${DAEMON}/api/tasks/${taskId}/runs`,
       {
@@ -93,7 +117,8 @@ test.describe('messaging end to end', () => {
     );
     expect(dispatched.ok()).toBe(true);
     const runId = ((await dispatched.json()) as { id: string }).id;
-    created = { runId, taskId };
+    const attempt = { runId, taskId, questionId: null as string | null };
+    created = attempt;
 
     // fake-ask parks until a message is pushed in; ask as the run, with its own token.
     await expect
@@ -111,13 +136,16 @@ test.describe('messaging end to end', () => {
       },
     });
     expect(asked.status()).toBe(201);
+    attempt.questionId = (
+      (await asked.json()) as { message: { id: string } }
+    ).message.id;
 
     await page.goto(authedUrl(baseURL));
     const rail = page.locator('#dispatch-sidebar');
     await rail.getByRole('button', { name: /^Threads/ }).click();
     // Scoped to this run: a question an earlier failed attempt left open stays in Needs you.
     const question = page
-      .getByRole('region', { name: 'Needs you' })
+      .getByRole('region', { name: 'Needs you', exact: true })
       .getByRole('button', {
         name: new RegExp(
           String.raw`Which cart should the checkout read\?.*${runId}`
@@ -143,7 +171,7 @@ test.describe('messaging end to end', () => {
 
     // The run chat shows the answer where the agent saw it, and what it did next.
     await page
-      .locator('article')
+      .getByRole('article')
       .getByRole('button', { name: new RegExp(runId) })
       .first()
       .click();
@@ -153,18 +181,19 @@ test.describe('messaging end to end', () => {
     const answerLink = page.getByRole('button', {
       name: `Open thread: answer from ${me}`,
     });
-    const answer = answerLink.locator('xpath=../..');
-    await expect(answer.getByText('new cart', { exact: true })).toBeVisible();
-    await expect(answer).not.toContainText('[message from');
+    await expect(answerLink).toBeVisible();
+    const log = page.getByRole('region', { name: 'Run log', exact: true });
+    await expect(log.getByText('new cart', { exact: true })).toBeVisible();
+    await expect(log).not.toContainText('[message from');
 
     // The link returns to Threads on the question it answered.
     await answerLink.click();
-    const thread = page.getByRole('region', { name: 'Thread' });
+    const thread = page.getByRole('region', { name: 'Thread', exact: true });
     await expect(
       thread.getByText('Which cart should the checkout read?')
     ).toBeVisible();
     await expect(
-      thread.locator('article').filter({ hasText: 'Chose new cart' })
+      thread.getByRole('article').filter({ hasText: 'Chose new cart' })
     ).toHaveCount(1);
   });
 });

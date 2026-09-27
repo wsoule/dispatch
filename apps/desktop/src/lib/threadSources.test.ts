@@ -371,7 +371,7 @@ describe('replyPlan', () => {
   });
 
   it("after my own last message, replies to the other party's newest message to me, so a run that ended since reaches its task", () => {
-    // The daemon reroutes an ended run to its task only when that run wrote the replied-to message.
+    // The daemon reroutes an ended run that wrote or received the replied-to message.
     const first = msg('m-01');
     const theirs = msg('m-02', { thread: 'm-01', replyTo: 'm-01' });
     const aside = msg('m-03', { thread: 'm-01', to: ['human:ada'] });

@@ -248,8 +248,8 @@ export function replyPlan(
     (address) => address !== me && address !== SYSTEM
   );
   if (to.length === 0) return null;
-  // The daemon reroutes an ended run to its task only for the replied-to
-  // message's writer, so reply to the newest message they sent me.
+  // Reply to the newest message they sent me, or else my own; either way the
+  // daemon reroutes a party that is an ended run to its task.
   const theirs = [...messages].reverse().filter((m) => to.includes(m.from));
   const anchor = theirs.find((m) => m.to.includes(me)) ?? theirs[0] ?? target;
   return { kind: 'send', to, replyTo: anchor.id };

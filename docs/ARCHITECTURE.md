@@ -98,25 +98,18 @@ your runs.
 
 | Package              | Size                  | What it is                                                                                                                                     |
 | -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@dispatch/core`     | ~4.3k                 | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding |
+| `@dispatch/core`     | ~11.5k                | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding |
 | `@dispatch/protocol` | ~2.0k                 | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                 |
-| `@dispatch/server`   | ~33.7k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
-| `@dispatch/cli`      | ~2.8k                 | The `dispatch` binary                                                                                                                          |
-| `@dispatch/mcp`      | ~1.7k                 | Stdio MCP server, 17 tools                                                                                                                     |
-| `@dispatch/client`   | ~2.9k                 | Typed API client and React hooks over the daemon                                                                                               |
-| `@dispatch/ui`       | ~6.7k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
-| `@dispatch/web`      | ~0.9k                 | Browser board UI — **no dependents, see below**                                                                                                |
-| `apps/desktop`       | ~40.8k TS + 3.5k Rust | The Tauri app: ~25 views, Rust shell, sidecar management                                                                                       |
+| `@dispatch/server`   | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
+| `@dispatch/cli`      | ~6.4k                 | The `dispatch` binary                                                                                                                          |
+| `@dispatch/mcp`      | ~2.8k                 | Stdio MCP server, 17 tools                                                                                                                     |
+| `@dispatch/client`   | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
+| `@dispatch/ui`       | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
+| `@dispatch/tokens`   | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |
+| `apps/desktop`       | ~67.4k TS + 8.6k Rust | The Tauri app: ~25 views, Rust shell, sidecar management                                                                                       |
 | `apps/demo`          | —                     | Hosted sandbox. Embeds `startServer` in-process with `FakeExecutor`/`FakePlanner`                                                              |
 | `apps/site`          | —                     | Static marketing server (Railway)                                                                                                              |
 | `packages/demo`      | —                     | Seeds a demo repo — board, runs, records, teammate                                                                                             |
-
-`@dispatch/web` is the Phase-2 browser UI (Board, ListView, TaskDetail, TopBar).
-Nothing depends on it. `dispatchd` can still serve its `dist/` if built
-(`webDistDir` in `startServer`), but the desktop app is the real client now.
-**Treat it as unmaintained until someone decides otherwise** — it is either the
-seed of a future browser client or dead weight, and nothing in the tree says
-which.
 
 ## The task model
 
@@ -146,7 +139,7 @@ the obvious fields (`status`, `priority`, `assignee`, `blockedBy`, `labels`,
 
 ## The daemon
 
-`packages/server/src/api.ts` (~4.8k lines) serves roughly 91 REST routes.
+`packages/server/src/api.ts` (~6.2k lines) serves roughly 91 REST routes.
 Grouped by what they're for:
 
 - **Tasks and planning** — `/api/tasks/*`, `/api/plan/*`, `/api/tasks/draft*`
@@ -177,7 +170,7 @@ anyway carry it inline (`run.log`, `queue.drained`, `board.sync`, `run.survey`,
 
 ## The orchestrator
 
-`packages/server/src/orchestrator/` is ~19.1k lines across 37 files, the largest
+`packages/server/src/orchestrator/` is ~25.3k lines across 46 files, the largest
 subsystem by a wide margin.
 
 **Run lifecycle:**
@@ -283,20 +276,22 @@ Agents, runs and people talk over one persistent bus
   `deliveries` (one per resolved recipient, each with its own state),
   `channels`, `members`, `agents`, `gate_effects`.
 - **Clients**: the MCP's `msg_*`, `inbox_read`, `thread_read` and `channel_*`
-  tools; the CLI's `orchestrate approve`, `orchestrate message` and `scope`; the
-  desktop's Threads view, each task's Thread tab, messages inline in the run
+  tools; the CLI's `dispatch approve`, `dispatch message` and `dispatch scope`;
+  the desktop's Threads view, each task's Thread tab, messages inline in the run
   chat, the gate cards, and Settings → Connected agents, all fed by
   `apps/desktop/src/hooks/useThreads.ts` and the one open-gates query.
 
 ## Clients
 
-**Desktop** (`apps/desktop`, ~40.8k lines) is the primary surface: ~25 views
+**Desktop** (`apps/desktop`, ~67.4k lines) is the primary surface: ~25 views
 covering board, tasks, task detail, PR review, diffs, branches, milestones,
 plans, sessions, agents, impact, inbox/brain-dump, threads, settings, gallery.
 
-**CLI** (`packages/cli`) — commands: `init`, `mcp`, `task`, `plan`, `daemon`,
-`doctor`, `orchestrate`, `scope`, `merge-task`, `merge-team`. Every read command
-takes `--json`.
+**CLI** (`packages/cli`) — commands include `init`, `mcp`, `task`, `plan`,
+`epic`, `serve`, `ui`, `doctor`, `run`, `runs`, `approve`, `message`, `cancel`,
+`diff`, `review`, `scope`, `fanout`, `worktree`, `share`, `team`, `sync`,
+`receipts`, `migrate`, `merge-task`, `merge-team`; `dispatch --help` lists them
+all. Every read command takes `--json`.
 
 **MCP** (`packages/mcp`) — stdio server registered into the project's
 `.mcp.json` by `dispatch init`. 17 tools. Five (`task_list`, `task_get`,
@@ -373,7 +368,6 @@ this.
 Things that are true about the tree and worth knowing before you trust
 something:
 
-- `@dispatch/web` has no dependents and no stated future.
 - Versioning: the app version lives in `apps/desktop/src-tauri/tauri.conf.json`
   and the release tag (v0.24.0 at the time of writing); the npm packages are
   unpublished and their `package.json` versions now track the app version.

@@ -37,10 +37,9 @@ import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
 import {
   applyScopeAnswer,
-  expireScopeGates,
-  grantScopeGatesByPolicy,
   installScopePolicy,
   SCOPE_EXPIRY_SWEEP_MS,
+  sweepScopeGates,
 } from './scopePolicy.js';
 import {
   isStaleApproval,
@@ -448,13 +447,11 @@ export function openMessaging(deps: {
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
   // Grants what policy covers before expiring, so a covered gate is never denied.
   const scopeSweep = setInterval(() => {
-    grantScopeGatesByPolicy(engine, scopeDeps)
-      .then(() =>
-        expireScopeGates(engine, deps.scopeExpiry?.now?.() ?? Date.now())
-      )
-      .catch((err: unknown) =>
-        console.error('messaging: scope sweep failed', err)
-      );
+    void sweepScopeGates(
+      engine,
+      scopeDeps,
+      () => deps.scopeExpiry?.now?.() ?? Date.now()
+    );
   }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
   scopeSweep.unref();
 

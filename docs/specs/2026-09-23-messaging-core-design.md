@@ -570,8 +570,10 @@ bus land together — no aliases.
   shows the thread with kind badges, clickable refs and choice buttons, built
   from `@dispatch/ui` `ai/` pieces (`ChatMessage`, `PromptBar`, `ApprovalCard`).
   The composer completes addresses on `@`.
-- **Task page** (`views/TaskView.tsx`): a `thread` tab for everything to or from
-  `task:<id>`, listed through `GET /api/threads?about=task:<id>`.
+- **Task page** (`views/TaskView.tsx`, which the task page rewrite replaces with
+  `components/tasks/page/TaskPage.tsx`, a Thread toggle beside Preview): a
+  `thread` tab for everything to or from `task:<id>`, listed through
+  `GET /api/threads?about=task:<id>`.
 - **Run chat** (`TaskChatTab` → `RunLogView`): pushed and notified messages
   render inline where the agent saw them, each with a link to its thread;
   `QuestionCard`, `ApprovalCard` and `ScopeRequestCard` render from open gate

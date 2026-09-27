@@ -359,6 +359,12 @@ function delivered(
   };
 }
 
+test('the transcript is a region named Run log, holding each message it shows', () => {
+  renderEntries([delivered('human:wyat', 'answer', 'm-02', 'new cart')]);
+  const log = screen.getByRole('region', { name: 'Run log' });
+  expect(within(log).getByText('new cart')).toBeDefined();
+});
+
 test('a pushed question shows its body without the agent framing, with its kind and a thread link', () => {
   const onOpen = mock((_id: string) => {});
   renderEntries(
