@@ -456,15 +456,16 @@ export class SqliteDocStore {
     return row === undefined ? null : toDoc(row);
   }
 
-  // A live handle or a retired slug; either one is never given to another doc of `ns`.
-  slugTaken(ns: string, slug: string): boolean {
+  // A live handle or a retired slug; either one is never given to another doc
+  // of `ns`. `except` names a doc whose own slugs do not count, for its rename.
+  slugTaken(ns: string, slug: string, except = ''): boolean {
     const live = this.one<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM docs WHERE ns = ? AND (handle = ? OR slug = ?)',
-      [ns, slug, slug]
+      'SELECT COUNT(*) AS c FROM docs WHERE ns = ? AND (handle = ? OR slug = ?) AND id != ?',
+      [ns, slug, slug, except]
     );
     const retired = this.one<{ c: number }>(
-      'SELECT COUNT(*) AS c FROM slug_aliases WHERE ns = ? AND slug = ?',
-      [ns, slug]
+      'SELECT COUNT(*) AS c FROM slug_aliases WHERE ns = ? AND slug = ? AND doc_id != ?',
+      [ns, slug, except]
     );
     return (live?.c ?? 0) + (retired?.c ?? 0) > 0;
   }

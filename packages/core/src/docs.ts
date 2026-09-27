@@ -138,7 +138,8 @@ export interface DocSaveResult {
   rebased?: { since: { n: number; author: string; summary: string }[] };
   proposal?: string;
   gate?: string;
-  // A merged save's own revision: an editor still typing bases its next save on it.
+  // After a save against a moved head (merged, or unchanged because the head had it all):
+  // the revision an editor still typing bases its next save on.
   mine?: { id: string; n: number | null; hash: string };
 }
 

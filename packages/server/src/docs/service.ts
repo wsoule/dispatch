@@ -138,6 +138,9 @@ const HOUR_MS = 3_600_000;
 const MAX_OPEN_AGE_MS = HOUR_MS;
 const ANCESTOR_LEVELS = 8;
 const HITS_PER_DOC = 3;
+// A high surrogate with no low one after it, or a low one with no high one before.
+const UNPAIRED_SURROGATE =
+  /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
 const OPEN_CAUSES: ReadonlySet<RevisionCause> = new Set([
   'create',
   'save',
@@ -970,6 +973,13 @@ export class DocsService {
     }
     const mineTitle = title ?? base.title;
     const nextTitle = mineTitle !== base.title ? mineTitle : head.title;
+    // The head already holds everything the writer changed: store nothing, and
+    // keep the writer's base as the one its editor saves against next.
+    if (merged.body === head.body && nextTitle === head.title) {
+      return this.result(doc, head, 'unchanged', {
+        mine: { id: base.id, n: base.n, hash: base.hash },
+      });
+    }
     const headRev = head;
     const at = this.nowIso();
     return this.write(() => {
@@ -1075,7 +1085,7 @@ export class DocsService {
     const problem = docSlugProblem(slug);
     if (problem !== null) throw new DocsError('invalid', problem, 'slug');
     if (slug === doc.handle) return this.record(doc);
-    if (this.store().slugTaken(doc.ns, slug))
+    if (this.store().slugTaken(doc.ns, slug, doc.id))
       throw new DocsError('conflict', `slug ${slug} is taken`, 'slug');
     const at = this.nowIso();
     return this.write(() => {
@@ -1282,7 +1292,8 @@ export class DocsService {
     return true;
   }
 
-  // Who may make a link: runs stay on their own task, run and threads; agents add context only.
+  // Who may make a link: runs stay on their own task, run and threads, plus
+  // docs; agents add context only.
   private checkLinkAuthority(
     actor: DocsActor,
     target: LinkTarget,
@@ -1292,6 +1303,11 @@ export class DocsService {
     if (!this.mayWriteDrafts(actor))
       throw forbidden('you may not change links', field);
     if (actor.kind === 'run') {
+      if (target.type === 'memory')
+        throw forbidden(
+          'a run links only its own task, run and threads, and docs',
+          field
+        );
       if (target.type === 'task' && target.id !== actor.taskId)
         throw forbidden('a run links only its own task', field);
       if (target.type === 'run' && target.id !== actor.runId)
@@ -1408,6 +1424,12 @@ export class DocsService {
       'link'
     );
     this.checkLinkAuthority(actor, target, input.rel, 'link');
+    // Changing a link's rel drops the old one, so it needs the right to remove it, as unlink does.
+    const existing = this.store()
+      .links({ docId: doc.id })
+      .find((l) => l.targetType === target.type && l.targetId === target.id);
+    if (existing !== undefined && existing.rel !== input.rel)
+      this.checkLinkAuthority(actor, target, existing.rel, 'rel');
     const at = this.nowIso();
     return this.write(() => {
       this.sealInTx(doc, this.headOf(doc));
@@ -1659,6 +1681,14 @@ export class DocsService {
     const query = q.query.trim();
     if (query === '' || utf8Bytes(query) > DOCS_LIMITS.queryBytes) {
       throw new DocsError('invalid', 'query must be 1-500 bytes', 'query');
+    }
+    // FTS5's parser fails on both; refusing them in every search mode keeps the answer a 400.
+    if (query.includes('\u0000') || UNPAIRED_SURROGATE.test(query)) {
+      throw new DocsError(
+        'invalid',
+        'query must not contain NUL or an unpaired surrogate',
+        'query'
+      );
     }
     const limit = clamp(q.limit, 10, 50);
     const includeArchived = q.includeArchived === true;

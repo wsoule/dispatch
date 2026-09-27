@@ -8,6 +8,7 @@ import {
   FakeDocsHost,
   makeService,
   OWNER,
+  REVIEW_RUN,
   RUN,
   TEAMMATE,
 } from './fakeHost.js';
@@ -186,6 +187,75 @@ describe('review focus 4: link rules', () => {
         rel: 'context',
       }).length
     ).toBe(2);
+  });
+
+  it('refuses a run linking a memory entry it can see', () => {
+    const mine = service.create(as(RUN), { title: 'Run draft', body: 'x\n' });
+    expect(
+      denied(() =>
+        service.link(as(RUN), mine.doc.id, {
+          target: { type: 'memory', id: 'mem-team' },
+          rel: 'context',
+        })
+      )
+    ).toBe(
+      'forbidden: a run links only its own task, run and threads, and docs'
+    );
+    expect(
+      denied(() =>
+        service.create(as(RUN), {
+          title: 'Run notes',
+          body: 'x\n',
+          links: [
+            { target: { type: 'memory', id: 'mem-team' }, rel: 'context' },
+          ],
+        })
+      )
+    ).toBe(
+      'forbidden: a run links only its own task, run and threads, and docs'
+    );
+  });
+
+  it("refuses an agent turning a draft's spec link into context, as unlink does", () => {
+    expect(
+      denied(() =>
+        service.unlink(as(AGENT), 'spec', { type: 'task', id: 't-2' })
+      )
+    ).toBe('forbidden: agents add context links only');
+    expect(
+      denied(() =>
+        service.link(as(AGENT), 'spec', {
+          target: { type: 'task', id: 't-2' },
+          rel: 'context',
+        })
+      )
+    ).toBe('forbidden: agents add context links only');
+    expect(
+      service
+        .list(as(OWNER), { taskId: 't-2' })
+        .docs.map((d) => [d.handle, d.rel])
+    ).toEqual([['spec', 'spec']]);
+  });
+
+  it('refuses link and unlink for the overseer and review runs', () => {
+    for (const actor of [service.overseerActor(), as(REVIEW_RUN)]) {
+      expect(
+        denied(() =>
+          service.link(actor, 'spec', {
+            target: { type: 'task', id: 't-1' },
+            rel: 'context',
+          })
+        )
+      ).toBe('forbidden: you may not change links');
+      expect(
+        denied(() => service.unlink(actor, 'spec', { type: 'task', id: 't-2' }))
+      ).toBe('forbidden: you may not change links');
+    }
+    expect(
+      service
+        .list(as(OWNER), { taskId: 't-2' })
+        .docs.map((d) => [d.handle, d.rel])
+    ).toEqual([['spec', 'spec']]);
   });
 
   it('links a thread only for its participants and decide-tier humans', () => {

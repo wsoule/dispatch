@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import type { DocsError } from '../../src/docs/errors.js';
+import { DocsError } from '../../src/docs/errors.js';
 import { makeService, OWNER, TEAMMATE } from './fakeHost.js';
 
 describe('read', () => {
@@ -53,6 +53,29 @@ describe('search', () => {
       expect(() => service.search(owner, { query: 'x'.repeat(501) })).toThrow(
         'query'
       );
+    });
+
+    it(`refuses a query with a NUL or an unpaired surrogate as invalid (${fts ? 'FTS5' : 'LIKE fallback'})`, () => {
+      const { service } = makeService({ fts });
+      const owner = service.actorFor(OWNER);
+      service.create(owner, {
+        title: 'Hello',
+        body: '# Hello\nhello \ud83d\ude00\n',
+      });
+      service.sweep();
+      for (const query of ['x\u0000', 'hello\ud800', '\udc00hello']) {
+        let failure: unknown = null;
+        try {
+          service.search(owner, { query });
+        } catch (err) {
+          failure = err;
+        }
+        expect(failure).toBeInstanceOf(DocsError);
+        expect(failure).toMatchObject({ code: 'invalid', field: 'query' });
+      }
+      expect(
+        service.search(owner, { query: 'hello 😀' }).length
+      ).toBeGreaterThan(0);
     });
   }
 });

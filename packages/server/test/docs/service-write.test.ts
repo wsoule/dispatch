@@ -39,7 +39,7 @@ describe('create', () => {
   it('creates a team draft with a derived slug, suffixed on a clash', () => {
     const first = service.create(as(OWNER), {
       title: 'Auth refactor',
-      body: '# Auth\r\n﻿body\n',
+      body: '# Auth\r\n\uFEFFbody\n',
     });
     expect(first).toMatchObject({
       handle: 'auth-refactor',
@@ -53,7 +53,7 @@ describe('create', () => {
       head: { sealed: false },
     });
     expect(service.read(as(OWNER), 'auth-refactor').text).toBe(
-      '# Auth\n﻿body\n'
+      '# Auth\n\uFEFFbody\n'
     );
     expect(
       service.create(as(OWNER), { title: 'Auth refactor', body: 'x' }).handle
@@ -377,6 +377,30 @@ describe('whole-body saves against a moved head', () => {
     ).toBe('unchanged');
   });
 
+  it('says unchanged when the clean merge equals the head, storing nothing', () => {
+    const made = service.create(as(OWNER), { title: 'A', body: 'a\nb\n' });
+    service.seal(as(OWNER), 'a');
+    const edited = service.edit(as(AGENT), 'a', {
+      ops: [{ op: 'append', text: 'c' }],
+    });
+    const changesBefore = host.changes.length;
+    const saved = service.saveBody(as(OWNER), 'a', {
+      baseRev: made.rev.id,
+      body: 'a\nb\n',
+    });
+    expect(saved).toMatchObject({
+      status: 'unchanged',
+      rev: { id: edited.rev.id, n: 2 },
+      mine: { id: made.rev.id, n: 1 },
+    });
+    expect(saved.doc.updatedBy).toBe(AGENT.address);
+    expect(service.revisions(as(OWNER), 'a', {})).toHaveLength(2);
+    expect(service.read(as(OWNER), 'a').text).toBe('a\nb\nc\n');
+    expect(
+      host.changes.slice(changesBefore).map((c) => [c.kind, c.author])
+    ).toEqual([['sealed', AGENT.address]]);
+  });
+
   it('refuses a base that is not a revision of this doc', () => {
     service.create(as(OWNER), { title: 'A', body: 'x\n' });
     const other = service.create(as(OWNER), { title: 'B', body: 'y\n' });
@@ -502,6 +526,22 @@ describe('review state, revert and lifecycle', () => {
     );
   });
 
+  it('renames a doc back to its own retired slug', () => {
+    service.create(as(OWNER), { title: 'Old name', body: 'x\n' });
+    service.create(as(OWNER), { title: 'Other', body: 'x\n' });
+    service.rename(as(OWNER), 'old-name', 'new-name');
+    expect(code(() => service.rename(as(OWNER), 'other', 'old-name'))).toBe(
+      'conflict'
+    );
+    expect(service.rename(as(OWNER), 'new-name', 'old-name').handle).toBe(
+      'old-name'
+    );
+    expect(service.read(as(OWNER), 'new-name').doc.handle).toBe('old-name');
+    expect(code(() => service.rename(as(OWNER), 'other', 'new-name'))).toBe(
+      'conflict'
+    );
+  });
+
   it('hard-deletes with a tombstone, decide tier only', () => {
     const made = service.create(as(OWNER), { title: 'A', body: 'x\n' });
     expect(code(() => service.remove(as(TEAMMATE), 'a'))).toBe('forbidden');
@@ -520,6 +560,42 @@ describe('review state, revert and lifecycle', () => {
       service.create(as(OWNER), { title: 'A', body: 'x\n', slug: 'a' })
     ).toThrow();
     expect(host.changes).toHaveLength(1);
+  });
+
+  it('drops the changes queued by a write that fails inside its transaction', () => {
+    const spec = {
+      target: { type: 'task' as const, id: 't-2' },
+      rel: 'spec' as const,
+    };
+    service.create(as(OWNER), { title: 'Spec', body: 'x\n', links: [spec] });
+    // The spec 409 comes from inside create()'s transaction: no half-made doc.
+    expect(
+      code(() =>
+        service.create(as(OWNER), { title: 'B', body: 'x\n', links: [spec] })
+      )
+    ).toBe('conflict');
+    expect(code(() => service.read(as(OWNER), 'b'))).toBe('not-found');
+    const other = service.create(as(TEAMMATE), { title: 'C', body: 'x\n' });
+    const queued = host.changes.length;
+    // link() seals the open head, queuing 'sealed', then the 409 rolls it back.
+    expect(code(() => service.link(as(OWNER), 'c', spec))).toBe('conflict');
+    expect(store.revision(other.rev.id)?.sealed).toBe(false);
+    expect(host.changes).toHaveLength(queued);
+    service.edit(as(TEAMMATE), 'c', { ops: [{ op: 'append', text: 'y' }] });
+    expect(host.changes.slice(queued).map((c) => c.kind)).toEqual(['amended']);
+  });
+
+  it('seals an open head when someone else reads it through revision or diff', () => {
+    const made = service.create(as(OWNER), { title: 'A', body: 'x\n' });
+    service.revision(as(OWNER), 'a', 1);
+    service.diff(as(OWNER), 'a', 1, 1);
+    expect(store.revision(made.rev.id)?.sealed).toBe(false);
+    service.revision(as(TEAMMATE), 'a', 1);
+    expect(store.revision(made.rev.id)?.sealed).toBe(true);
+
+    const b = service.create(as(OWNER), { title: 'B', body: 'x\n' });
+    service.diff(as(TEAMMATE), 'b', b.rev.id, 1);
+    expect(store.revision(b.rev.id)?.sealed).toBe(true);
   });
 });
 

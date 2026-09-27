@@ -196,6 +196,10 @@ describe('SqliteDocStore', () => {
     expect(store.docByOrigin('import:auth')?.id).toBe('doc-01');
     expect(store.slugTaken('team', 'old-auth')).toBe(true);
     expect(store.slugTaken('p:alice', 'auth')).toBe(false);
+    // A doc's own handle and retired slugs are not taken from itself.
+    expect(store.slugTaken('team', 'old-auth', 'doc-01')).toBe(false);
+    expect(store.slugTaken('team', 'auth', 'doc-01')).toBe(false);
+    expect(store.slugTaken('team', 'old-auth', 'doc-02')).toBe(true);
   });
 
   it('allows one team spec and one personal spec per task and namespace', () => {
