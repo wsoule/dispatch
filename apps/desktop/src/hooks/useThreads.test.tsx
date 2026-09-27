@@ -26,6 +26,7 @@ import {
   useThread,
   useThreadActions,
   useThreadRail,
+  useThreadsNeedsYouCount,
 } from './useThreads';
 
 const PORT = 4000;
@@ -628,6 +629,28 @@ describe('messaging queries', () => {
     });
     expect(agent.calls).toEqual([]);
     expect(idle.result.current.summaries).toEqual([]);
+  });
+
+  // The sidebar is on every screen, so its count must not keep the recent list alive.
+  it('counts Needs you for the sidebar from the mailbox and open gates alone', async () => {
+    const decider = readingClient();
+    const { result } = mount(() =>
+      useThreadsNeedsYouCount(decider.client, PORT, ME, DECIDER)
+    );
+    await waitFor(() => {
+      expect(result.current).toBe(1);
+    });
+    expect([...decider.calls].sort()).toEqual([`mailbox ${ME}`, 'open gates']);
+  });
+
+  it('counts nothing and asks nothing in a window that cannot message', async () => {
+    const agent = readingClient();
+    const { result } = mount(() =>
+      useThreadsNeedsYouCount(agent.client, PORT, ME, AGENT_WINDOW)
+    );
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(result.current).toBe(0);
+    expect(agent.calls).toEqual([]);
   });
 
   it("asks about a task's threads for a decider only", async () => {

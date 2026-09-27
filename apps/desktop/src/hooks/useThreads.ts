@@ -140,6 +140,27 @@ function useMailbox(
   });
 }
 
+// Folds the rail's sources into summaries; the sidebar count reads the same fold.
+function railSummaries(
+  mailbox: readonly MailboxItem[],
+  openGates: Message[],
+  me: string | null,
+  recent: readonly RecentThread[]
+) {
+  const merged = mergeThreadSources({ mailbox, openGates }, me ?? '');
+  const summaries =
+    me === null
+      ? []
+      : summarizeThreads(
+          merged.messages,
+          merged.deliveries,
+          me,
+          merged.openIds,
+          { recent }
+        );
+  return { openIds: merged.openIds, summaries };
+}
+
 export interface ThreadRail {
   summaries: ThreadSummary[];
   groups: Record<RailGroup, ThreadSummary[]>;
@@ -164,27 +185,16 @@ export function useThreadRail(
   });
   const gates = useOpenGates(client, port, access);
   return useMemo(() => {
-    const merged = mergeThreadSources(
-      {
-        mailbox: mailbox.data?.items ?? NO_ITEMS,
-        openGates: gates.data?.items ?? NO_MESSAGES,
-      },
-      me ?? ''
+    const { openIds, summaries } = railSummaries(
+      mailbox.data?.items ?? NO_ITEMS,
+      gates.data?.items ?? NO_MESSAGES,
+      me,
+      recent.data?.threads ?? NO_RECENT
     );
-    const summaries =
-      me === null
-        ? []
-        : summarizeThreads(
-            merged.messages,
-            merged.deliveries,
-            me,
-            merged.openIds,
-            { recent: recent.data?.threads ?? NO_RECENT }
-          );
     return {
       summaries,
       groups: groupRail(summaries),
-      openIds: merged.openIds,
+      openIds,
       loading: mailbox.isLoading,
       error: mailbox.error ?? recent.error ?? null,
     };
@@ -197,6 +207,31 @@ export function useThreadRail(
     recent.error,
     gates.data,
   ]);
+}
+
+/**
+ * The sidebar's Needs you count, on every screen. It reads only my mailbox and
+ * the open gates, which hold every ask waiting on me; recent threads add rows,
+ * never asks, so it never fetches them.
+ */
+export function useThreadsNeedsYouCount(
+  client: ApiClient | null,
+  port: number | undefined,
+  me: string | null,
+  access: MessageAccess
+): number {
+  const mailbox = useMailbox(client, port, me, access.canMessage);
+  const gates = useOpenGates(client, port, access);
+  return useMemo(
+    () =>
+      railSummaries(
+        mailbox.data?.items ?? NO_ITEMS,
+        gates.data?.items ?? NO_MESSAGES,
+        me,
+        NO_RECENT
+      ).summaries.filter((summary) => summary.needsYou).length,
+    [me, mailbox.data, gates.data]
+  );
 }
 
 /** One task's threads: those the task or any of its runs took part in
