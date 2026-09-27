@@ -266,6 +266,141 @@
         ],
         "noOtherMessages": true
       }
+    },
+    {
+      "id": "core.participation.an-empty-reply-to-names-no-message",
+      "title": "An empty replyTo names no message, so it fails not-found at the participation step, before the input is validated",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.5", "4.6"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["nope"],
+            "kind": "message",
+            "body": "",
+            "replyTo": ""
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000001"],
+            "kind": "message",
+            "body": "x",
+            "replyTo": ""
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } },
+          { "ok": false, "error": { "code": "not-found", "field": "replyTo" } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.participation.a-reply-authorizes-before-its-target",
+      "title": "Replying to one message refuses an unauthorized sender on from whether or not the target exists",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.5", "4.6", "9.1", "13.5"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "agents": [
+          { "address": "agent:wyat/pending-bot", "status": "pending" },
+          { "address": "agent:wyat/old-bot", "status": "revoked" }
+        ],
+        "store": {
+          "messages": [
+            {
+              "id": "m-note",
+              "from": "human:wyat",
+              "to": ["agent:wyat/pending-bot", "agent:wyat/old-bot"],
+              "kind": "message",
+              "body": "hello"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-pending",
+              "message": "m-note",
+              "recipient": "agent:wyat/pending-bot",
+              "session": null,
+              "via": "direct",
+              "state": "held"
+            },
+            {
+              "id": "d-old",
+              "message": "m-note",
+              "recipient": "agent:wyat/old-bot",
+              "session": null,
+              "via": "direct",
+              "state": "held"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/pending-bot", "canDecide": false },
+          "message": "m-absent",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/pending-bot", "canDecide": false },
+          "message": "m-note",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/old-bot", "canDecide": false },
+          "message": "m-absent",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "agent:wyat/old-bot", "canDecide": false },
+          "message": "m-note",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": true },
+          "message": "m-absent",
+          "input": { "body": "x" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "run:r-000001", "canDecide": true },
+          "message": "m-note",
+          "input": { "body": "x" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } }
+        ],
+        "noOtherMessages": true
+      }
     }
   ]
 }

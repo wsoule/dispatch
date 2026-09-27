@@ -30,11 +30,14 @@ vector ids (see §14.2).
   `core.gates.only-humans-and-the-system-decide`,
   `core.gates.wake-is-raised-only-by-the-system`.
 - [breaking] A reply to a message the sender does not take part in fails
-  `not-found`, exactly as a reply to an absent id, before the input is
-  validated; the read rule is tested through `canRead` (C6). Vectors:
+  `not-found`, exactly as a reply to an absent id or an empty `replyTo`, before
+  the input is validated; the reply shorthand authorizes its sender before it
+  looks up the target; the read rule is tested through `canRead` (C6). Vectors:
   `core.participation.absent-and-foreign-look-alike`,
   `core.participation.a-bystander-session-cannot-reply`,
   `core.participation.comes-before-validation`,
+  `core.participation.an-empty-reply-to-names-no-message`,
+  `core.participation.a-reply-authorizes-before-its-target`,
   `core.read.can-read-participants`, `core.read.can-read-not-bystanders`,
   `core.read.can-read-any-as-a-deciding-principal`,
   `core.read.can-read-no-absent-id`.

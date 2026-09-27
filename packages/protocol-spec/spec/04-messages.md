@@ -113,7 +113,9 @@ first check that fails is the send's error (pinned rule 1; vectors:
 `core.idempotency.a-revoked-sender-gets-no-replay`,
 `core.idempotency.a-retried-answer-replays`,
 `core.participation.absent-and-foreign-look-alike`,
-`core.participation.comes-before-validation`):
+`core.participation.comes-before-validation`,
+`core.participation.an-empty-reply-to-names-no-message`,
+`core.participation.a-reply-authorizes-before-its-target`):
 
 1. **Authorize the sender** ([§9](09-identity-and-authorization.md#s9)): refuse
    an agent that is not approved, and a sender that claims to decide from an
@@ -122,8 +124,8 @@ first check that fails is the send's error (pinned rule 1; vectors:
 2. **Replay an idempotency key** ([§4.9](04-messages.md#s4.9)): a hit returns
    the first send's result and nothing below runs.
 3. **Participation** for a reply ([§4.6](04-messages.md#s4.6)): a `replyTo` that
-   names no message, or a message the sender does not participate in, fails
-   `not-found` on `replyTo`.
+   names no message (an empty string included), or a message the sender does not
+   participate in, fails `not-found` on `replyTo`.
 4. **Validate** the input: this section, and the gate rules of
    [§5](05-gates.md#s5).
 5. **The breaker** for a reply from an agent or session
@@ -170,7 +172,10 @@ rewritten; its delivery is held on the session ([§6.1](06-delivery.md#s6.1)).
 **Replying to a message.** A host MAY offer a shorthand that replies to one
 message: it sends to the target's sender, as an `answer` when the target is a
 question or handoff and as a `message` otherwise, with `replyTo` set to the
-target. When the target does not exist it fails `not-found` on `replyTo`.
+target. When the target does not exist it fails `not-found` on `replyTo`. The
+shorthand is a send and keeps the order of [§4.5](04-messages.md#s4.5): a sender
+refused at the first step fails `forbidden` on `from` whether or not the target
+exists.
 
 ## 4.7 Questions, answers and handoffs
 

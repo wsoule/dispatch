@@ -254,13 +254,11 @@ export class DeliveryEngine {
     }
     const replyTo = input.replyTo ?? null;
     const replyTarget =
-      replyTo === null || replyTo === ''
-        ? null
-        : this.store.getMessage(replyTo);
-    // A non-participant cannot tell an existing message from an absent one.
+      replyTo === null ? null : this.store.getMessage(replyTo);
+    // A non-participant cannot tell an existing message from an absent one;
+    // an empty replyTo names no message and fails the same way.
     if (
       replyTo !== null &&
-      replyTo !== '' &&
       (replyTarget === null || !this.participates(replyTarget, sender))
     ) {
       throw new MessagingError('not-found', `no message ${replyTo}`, 'replyTo');
@@ -795,6 +793,8 @@ export class DeliveryEngine {
     },
     sender: Sender
   ): Promise<SendResult> {
+    // Authorize before the lookup, so a refused sender cannot probe for ids.
+    this.authorize(sender);
     const target = this.store.getMessage(messageId);
     if (target === null)
       throw new MessagingError(
