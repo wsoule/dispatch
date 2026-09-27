@@ -71,6 +71,7 @@ export function Composer({
   const listId = useId();
   const optionId = (index: number) => `${listId}-option-${index}`;
   const listed = query !== null && matches.length > 0;
+  const noMatch = query !== null && !listed;
   // The list can shrink under the highlight when the known addresses change.
   const active = Math.min(highlight, Math.max(matches.length - 1, 0));
 
@@ -170,14 +171,17 @@ export function Composer({
           ))}
         </ul>
       )}
-      {query !== null && !listed && (
-        <p
-          role="status"
-          className="bg-surface-quaternary rounded-card border-border-strong text-muted-foreground border-[0.5px] px-3 py-2 text-[13px]"
-        >
-          No match. Type kind:id, then Enter.
-        </p>
-      )}
+      {/* Always mounted, since screen readers skip a live region's first text. */}
+      <p
+        role="status"
+        className={
+          noMatch
+            ? 'bg-surface-quaternary rounded-card border-border-strong text-muted-foreground border-[0.5px] px-3 py-2 text-[13px]'
+            : 'sr-only'
+        }
+      >
+        {noMatch ? 'No match. Type kind:id, then Enter.' : ''}
+      </p>
       <PromptBar
         value={body}
         onChange={(value) => {

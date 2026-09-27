@@ -177,6 +177,25 @@ describe('Composer', () => {
     expect(box().value).toBe('@t-1a');
   });
 
+  it('says there is no match in a status region already on the page, so it is announced', () => {
+    render(
+      <Composer
+        known={KNOWN}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+      />
+    );
+    const status = screen.getByRole('status');
+    expect(status.textContent).toBe('');
+    type('@t-1a');
+    expect(screen.getByRole('status') === status).toBe(true);
+    expect(status.textContent).toBe('');
+    type('@zzz');
+    expect(screen.getByRole('status') === status).toBe(true);
+    expect(status.textContent).toBe('No match. Type kind:id, then Enter.');
+  });
+
   it('Escape drops the @token being completed', () => {
     render(
       <Composer
