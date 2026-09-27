@@ -282,6 +282,15 @@ describe('replyPlan', () => {
     });
   });
 
+  it("writes back to the sender of someone else's plain message as a send, which a retry can key", () => {
+    const theirs = msg('m-01');
+    expect(replyPlan([theirs], ME, new Set())).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+  });
+
   it('writes beside an open handoff to its sender, since answering one needs accept or decline', () => {
     const handoff = msg('m-01', {
       kind: 'handoff',

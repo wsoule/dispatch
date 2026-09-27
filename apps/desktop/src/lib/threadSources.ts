@@ -155,6 +155,7 @@ export function rowControl(
   return { kind: 'choices', choices: message.choices ?? fallback, gate: false };
 }
 
+/** `reply` answers an open question; `send` writes a plain message beside `replyTo`. */
 export type ReplyPlan =
   | { kind: 'reply'; target: Message }
   | { kind: 'send'; to: string[]; replyTo: string };
@@ -183,13 +184,10 @@ export function replyPlan(
   if (channel !== undefined) {
     return { kind: 'send', to: [channel], replyTo: target.id };
   }
+  // Text to anyone else is a plain message a retry can key, including beside
+  // a handoff (answered only by accept or decline) or someone else's question.
   if (target.from !== me) {
-    // Text goes beside a handoff (whose answer is accept or decline), a
-    // closed question, or one put to someone else.
-    const asking = target.kind === 'question' || target.kind === 'handoff';
-    return asking
-      ? { kind: 'send', to: [target.from], replyTo: target.id }
-      : { kind: 'reply', target };
+    return { kind: 'send', to: [target.from], replyTo: target.id };
   }
   // The daemon reads no mail, so an answered gate of its own leaves no one to write to.
   const to = target.to.filter(

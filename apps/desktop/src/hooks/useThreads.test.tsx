@@ -302,6 +302,44 @@ describe('useThreadActions', () => {
     expect(new Set(keys).size).toBe(2);
   });
 
+  it('resends a draft whose response was lost under its first idempotency key', async () => {
+    const { client, actions } = setup(DECIDER);
+    const lost = () => Promise.reject(new TypeError('Failed to fetch'));
+    const settled = (p: Promise<unknown>) =>
+      p.then(
+        () => 'sent',
+        () => 'failed'
+      );
+    const draft = {
+      to: ['task:t-000001'],
+      body: 'ship it',
+      kind: 'message' as const,
+      urgent: false,
+      wake: false,
+    };
+    client.sendMessage.mockImplementationOnce(lost);
+    expect(await settled(actions.send(draft))).toBe('failed');
+    expect(await settled(actions.send(draft))).toBe('sent');
+    const plan = {
+      kind: 'send' as const,
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    };
+    client.sendMessage.mockImplementationOnce(lost);
+    expect(await settled(actions.reply(plan, 'noted'))).toBe('failed');
+    expect(await settled(actions.reply(plan, 'noted'))).toBe('sent');
+    const keys = (
+      client.sendMessage.mock.calls as unknown as [
+        SendInput,
+        { idempotencyKey: string },
+      ][]
+    ).map(([, opts]) => opts.idempotencyKey);
+    expect(keys).toHaveLength(4);
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[3]).toBe(keys[2]);
+    expect(keys[2]).not.toBe(keys[0]);
+  });
+
   it('replies to the target of a reply plan, and sends a send plan as a plain message beside its replyTo', async () => {
     const { client, actions } = setup(DECIDER);
     await actions.reply({ kind: 'reply', target: msg('m-01') }, 'on it');

@@ -9,6 +9,7 @@ import type {
   MailboxItem,
   Message,
   ThreadSummary as RecentThread,
+  SendInput,
   SendResult,
   ServerEvent,
   ThreadDetail,
@@ -361,31 +362,45 @@ export function useThreadActions(
     return ready(client);
   }, [access, client]);
 
-  const send = useCallback(
-    async (state: ComposeState): Promise<SendResult> => {
-      const result = await messenger().sendMessage(toSendInput(state), {
-        idempotencyKey: crypto.randomUUID(),
-      });
+  // One Idempotency-Key per unsent draft: resending the same input after a
+  // lost response reuses it, so the daemon replays the first send.
+  const draftKeys = useRef(new Map<string, string>());
+  const sendDraft = useCallback(
+    async (input: SendInput): Promise<SendResult> => {
+      const api = messenger();
+      const draft = JSON.stringify(input);
+      const key = draftKeys.current.get(draft) ?? crypto.randomUUID();
+      draftKeys.current.set(draft, key);
+      const result = await api.sendMessage(input, { idempotencyKey: key });
+      draftKeys.current.delete(draft);
       refresh();
       return result;
     },
     [messenger, refresh]
   );
 
+  const send = useCallback(
+    (state: ComposeState): Promise<SendResult> => sendDraft(toSendInput(state)),
+    [sendDraft]
+  );
+
   const reply = useCallback(
     async (plan: ReplyPlan, body: string): Promise<SendResult> => {
-      const api = messenger();
-      const result =
-        plan.kind === 'reply'
-          ? await api.replyToMessage(plan.target.id, { body })
-          : await api.sendMessage(
-              { to: plan.to, kind: 'message', body, replyTo: plan.replyTo },
-              { idempotencyKey: crypto.randomUUID() }
-            );
+      if (plan.kind === 'send') {
+        return sendDraft({
+          to: plan.to,
+          kind: 'message',
+          body,
+          replyTo: plan.replyTo,
+        });
+      }
+      const result = await messenger().replyToMessage(plan.target.id, {
+        body,
+      });
       refresh();
       return result;
     },
-    [messenger, refresh]
+    [messenger, refresh, sendDraft]
   );
 
   const answer = useCallback(
