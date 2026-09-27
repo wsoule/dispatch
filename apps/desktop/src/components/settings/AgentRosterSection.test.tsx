@@ -52,21 +52,27 @@ const ROSTER: AgentSummary[] = [
 ];
 
 // A client stub with just the roster calls, each recorded. Every action
-// resolves to the agent as the daemon would return it after the change.
-function rosterClient(agents: AgentSummary[] = ROSTER) {
-  const find = (address: string) =>
-    agents.find((a) => a.address === address) ?? agent({ address });
+// changes the listed agent and resolves to it, as the daemon would.
+function rosterClient(initial: AgentSummary[] = ROSTER) {
+  let agents = initial;
+  const change = (address: string, patch: Partial<AgentSummary>) => {
+    const found =
+      agents.find((a) => a.address === address) ?? agent({ address });
+    const updated = { ...found, ...patch };
+    agents = agents.map((a) => (a.address === address ? updated : a));
+    return Promise.resolve(updated);
+  };
   return {
     baseUrl: 'http://127.0.0.1:1',
     listAgentRoster: mock(() => Promise.resolve({ agents })),
     approveAgent: mock((address: string) =>
-      Promise.resolve({ ...find(address), status: 'approved' as const })
+      change(address, { status: 'approved' })
     ),
     revokeAgent: mock((address: string) =>
-      Promise.resolve({ ...find(address), status: 'revoked' as const })
+      change(address, { status: 'revoked' })
     ),
     muteAgent: mock((address: string, muted: boolean) =>
-      Promise.resolve({ ...find(address), muted })
+      change(address, { muted })
     ),
   };
 }
@@ -216,6 +222,46 @@ describe('AgentRosterSection', () => {
     mount(rosterClient());
     await row(PENDING);
     expect(screen.queryByText(NEEDS_DECIDE)?.textContent).toBeUndefined();
+  });
+
+  // The pressed button leaves the row once the change lands; focus must not fall to the page.
+  test('after an approve, focus stays in the row', async () => {
+    const client = rosterClient();
+    mount(client);
+    const approve = within(await row(PENDING)).getByRole('button', {
+      name: `Approve ${PENDING}`,
+    });
+    approve.focus();
+    fireEvent.click(approve);
+    await waitFor(async () =>
+      expect(within(await row(PENDING)).queryByText('Approved')).not.toBeNull()
+    );
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute('aria-label')).toBe(
+        `Mute ${PENDING}`
+      )
+    );
+  });
+
+  test('after a revoke, focus moves to the roster rather than the page', async () => {
+    const client = rosterClient();
+    mount(client);
+    const revoke = within(await row(APPROVED)).getByRole('button', {
+      name: `Revoke ${APPROVED}`,
+    });
+    revoke.focus();
+    fireEvent.click(revoke);
+    fireEvent.click(
+      within(await screen.findByRole('alertdialog')).getByRole('button', {
+        name: 'Revoke',
+      })
+    );
+    await waitFor(async () =>
+      expect(within(await row(APPROVED)).queryByText('Revoked')).not.toBeNull()
+    );
+    await waitFor(() =>
+      expect(document.activeElement?.getAttribute('aria-label')).toBe('Agents')
+    );
   });
 
   test('a refused action says why beside the roster', async () => {
