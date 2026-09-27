@@ -43,7 +43,7 @@ export {
   openMessagesDb,
   SqliteMessageStore,
 } from './sqliteStore.js';
-export { DELIVERY_STATES } from './store.js';
+export { DELIVERY_STATES, REMOTE_STATES } from './store.js';
 export type {
   AgentRecord,
   AgentStatus,
@@ -53,6 +53,11 @@ export type {
   DeliveryState,
   DeliveryVia,
   MessageStore,
+  RemoteDelivery,
+  RemoteState,
+  SettledAs,
+  Settlement,
+  StoredMeta,
   ThreadSummary,
 } from './store.js';
 export { createUlidFactory } from './ulid.js';

@@ -46,6 +46,10 @@ export interface Message {
   choice?: string;
   wake: 'none' | 'request';
   createdAt: string;
+  /** The replica that created a remote message; absent when created here. */
+  origin?: string;
+  /** The origin's hybrid clock at send; threads order by it. */
+  hlc?: string;
 }
 
 export interface SendInput {
