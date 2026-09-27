@@ -53,13 +53,14 @@ import {
   linearStatusKey,
   syncStatusKey,
 } from '../lib/configEvents';
-import type { DecideAvailability } from '../lib/daemonAuth';
+import type { DecideAvailability, MessageAccess } from '../lib/daemonAuth';
 import {
   assertCanDecide,
   assertCanMessage,
   credentialTier,
   daemonBaseUrl,
   decideAvailability,
+  messageAccess,
   resolveDaemonAuth,
 } from '../lib/daemonAuth';
 import type { DecisionItem } from '../lib/decisionFeed';
@@ -107,6 +108,7 @@ import {
   useStopFixLoop,
 } from './useOrchestration';
 import { overseerKey, overseerKeyPrefix } from './useOverseerSession';
+import { applyThreadEvent } from './useThreads';
 import { useTransitionNotifications } from './useTransitionNotifications';
 
 // Shared empty list, so the maps derived from the open gates keep their
@@ -534,6 +536,8 @@ export interface DispatchProjectData {
   /** Whether this window holds the app token that scope decisions require, plus the notice
    * and restart affordance to show when it does not. */
   scopeDecide: DecideAvailability;
+  /** What this window may do on the message bus (send; answer gates), and why not. */
+  messageAccess: MessageAccess;
   /** Replaces an attached daemon with one this app spawns, to regain decide tier. Ends any
    * run in flight — gate on `scopeDecide.restart.safe`. */
   handleRestartDaemon: () => Promise<void>;
@@ -1362,6 +1366,7 @@ export function useDispatchProject(
       },
       {
         onEvent: (event) => {
+          applyThreadEvent(queryClient, port, event);
           // Checked structurally (see isDecisionsChanged): the client's
           // ServerEvent union predates this broadcast, so a literal comparison
           // here would not typecheck. First in the chain because no later
@@ -2765,6 +2770,7 @@ export function useDispatchProject(
     () => decideAvailability(auth, runs ?? []),
     [auth, runs]
   );
+  const access = useMemo(() => messageAccess(auth), [auth]);
 
   return {
     client,
@@ -2831,6 +2837,7 @@ export function useDispatchProject(
     pendingScopeRequests,
     handleDecideScopeRequest,
     scopeDecide,
+    messageAccess: access,
     handleRestartDaemon,
     openQuestions,
     decisions: decisionList ?? [],

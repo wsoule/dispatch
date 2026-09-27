@@ -9,9 +9,11 @@ import {
   credentialTier,
   daemonBaseUrl,
   daemonRestartReadiness,
+  DECIDE_TIER_EXPLANATION,
   decideAvailability,
   isInsufficientTier,
   isMissingOrInvalidToken,
+  messageAccess,
   resolveDaemonAuth,
   RESTART_FOR_APPROVALS,
 } from './daemonAuth';
@@ -276,5 +278,33 @@ describe('decideAvailability', () => {
     );
     expect(availability.enabled).toBe(false);
     expect(availability.restart?.safe).toBe(false);
+  });
+});
+
+describe('messageAccess', () => {
+  test('the app token decides and messages', () => {
+    expect(
+      messageAccess({ token: 'app', canDecide: true, canMessage: true })
+    ).toEqual({ canDecide: true, canMessage: true, explanation: null });
+  });
+
+  test('a request-tier teammate messages but cannot decide, and is told why', () => {
+    expect(
+      messageAccess({ token: undefined, canDecide: false, canMessage: true })
+    ).toEqual({
+      canDecide: false,
+      canMessage: true,
+      explanation: DECIDE_TIER_EXPLANATION,
+    });
+  });
+
+  test('the shared agent token does neither', () => {
+    expect(
+      messageAccess({ token: 'agent', canDecide: false, canMessage: false })
+    ).toEqual({
+      canDecide: false,
+      canMessage: false,
+      explanation: ATTACHED_DAEMON_MESSAGING_EXPLANATION,
+    });
   });
 });

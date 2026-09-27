@@ -8,6 +8,7 @@ import {
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  gateOf,
   openGatesAfter,
   questionsByRun,
   runIdOf,
@@ -298,5 +299,14 @@ describe('openGatesAfter', () => {
     expect(
       openGatesAfter(open, msg('m-plain', { kind: 'message', blocking: false }))
     ).toBe(open);
+  });
+});
+
+describe('gateOf', () => {
+  it('narrows gate data and ignores plain, x- and malformed data', () => {
+    expect(gateOf(approval)?.type).toBe('tool-approval');
+    expect(gateOf(question)).toBeNull();
+    expect(gateOf({ ...question, data: { type: 'x-closed' } })).toBeNull();
+    expect(gateOf({ ...question, data: ['scope'] })).toBeNull();
   });
 });

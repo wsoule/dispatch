@@ -54,6 +54,35 @@ export const ATTACHED_DAEMON_EXPLANATION =
 export const ATTACHED_DAEMON_MESSAGING_EXPLANATION =
   "This window didn't start the daemon, so it can't send messages to runs or tasks. Use the app token the daemon printed at startup.";
 
+/** Why a teammate below the decide tier cannot answer gates. */
+export const DECIDE_TIER_EXPLANATION =
+  'Answering approvals, scope requests and wake-ups needs the decide tier. Ask the project owner for a decide token.';
+
+/** What this window may do on the message bus, and why not when it may not. */
+export interface MessageAccess {
+  canDecide: boolean;
+  canMessage: boolean;
+  explanation: string | null;
+}
+
+export function messageAccess(auth: DaemonAuth): MessageAccess {
+  if (!auth.canMessage) {
+    return {
+      canDecide: false,
+      canMessage: false,
+      explanation: ATTACHED_DAEMON_MESSAGING_EXPLANATION,
+    };
+  }
+  if (auth.canDecide) {
+    return { canDecide: true, canMessage: true, explanation: null };
+  }
+  return {
+    canDecide: false,
+    canMessage: true,
+    explanation: DECIDE_TIER_EXPLANATION,
+  };
+}
+
 /**
  * Picks the credential to send. The app token grants request tier as well as
  * decide tier, so when we have it there is never a reason to send the agent

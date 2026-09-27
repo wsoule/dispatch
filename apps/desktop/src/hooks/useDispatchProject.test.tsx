@@ -8,6 +8,7 @@ import type {
   RunMeta,
   SendInput,
   ServerEvent,
+  ThreadDetail,
 } from '@dispatch/client';
 import * as dispatchClient from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
@@ -185,6 +186,7 @@ const { ATTACHED_DAEMON_MESSAGING_EXPLANATION } =
   await import('../lib/daemonAuth');
 const { agentRosterKey } = await import('../lib/agentRoster');
 const { overseerKey } = await import('./useOverseerSession');
+const { threadKey } = await import('./useThreads');
 
 function wrapper(queryClient: QueryClient) {
   return ({ children }: { children: ReactNode }) => (
@@ -302,6 +304,31 @@ test('a hello during the first presence fetch still gets a fresh one', async () 
   await waitFor(() => {
     expect(presenceFetches).toBe(2);
   });
+});
+
+// A new message joins the open thread from the event itself, without a refetch.
+test('a new message lands in its cached thread through the event handler', async () => {
+  const queryClient = await mountConnected();
+  const root = gateMessage('m-01', {
+    kind: 'message',
+    blocking: false,
+    from: 'run:r-000001',
+  });
+  queryClient.setQueryData<ThreadDetail>(threadKey(PORT, 'm-01'), {
+    messages: [root],
+    deliveries: [],
+  });
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: { ...root, id: 'm-02', replyTo: 'm-01' },
+    });
+  });
+  expect(
+    queryClient
+      .getQueryData<ThreadDetail>(threadKey(PORT, 'm-01'))
+      ?.messages.map((m) => m.id)
+  ).toEqual(['m-01', 'm-02']);
 });
 
 // The regression this pairs with: the invalidation used to sit in the first

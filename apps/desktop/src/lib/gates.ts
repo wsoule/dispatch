@@ -46,8 +46,8 @@ export function openGatesKey(
   return ['dispatch-open-gates', port] as const;
 }
 
-// The message's gate payload, or null for a plain message or `x-` data.
-function gateOf(message: Message): GateData | null {
+/** A message's gate payload, or null for a plain message or `x-` data. */
+export function gateOf(message: Message): GateData | null {
   const data = message.data;
   if (typeof data !== 'object' || data === null || Array.isArray(data)) {
     return null;
