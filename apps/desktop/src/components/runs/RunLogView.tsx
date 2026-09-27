@@ -12,6 +12,7 @@ import { useMemo, useState } from 'react';
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
+import type { PendingApproval } from '../../lib/pendingApprovals';
 import { groupLogEntries } from '../../lib/runLog';
 import {
   continueMessage,
@@ -87,18 +88,16 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
 interface RunLogViewProps {
   meta: RunMeta;
   entries: NormalizedEntry[];
-  /** The approval this run is parked on, from its open gate, or `null`. A parked run can
-   * show `null` when this window cannot read gates; the banner below covers that case. */
-  pendingApproval: {
-    requestId: string;
-    toolName: string;
-    input?: unknown;
-  } | null;
+  /** Each tool call this run is parked on, oldest first, one card per call. Empty while
+   * this window cannot read gates or the list has not loaded; a banner covers that. */
+  pendingApprovals: readonly PendingApproval[];
   onApprove: (
     requestId: string,
     allow: boolean,
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
+  /** Reads a parked call's full input, for a card whose gate carries only a preview. */
+  onLoadApprovalInput?: (requestId: string) => Promise<unknown>;
   onSendMessage: (text: string) => Promise<void>;
   /** Blocking questions this run's agent sent a human, oldest first. Usually one, but an
    * agent can send several in a single turn. */
@@ -127,8 +126,9 @@ interface RunLogViewProps {
 export function RunLogView({
   meta,
   entries,
-  pendingApproval,
+  pendingApprovals,
   onApprove,
+  onLoadApprovalInput,
   onSendMessage,
   openQuestions,
   onAnswerQuestion,
@@ -171,18 +171,6 @@ export function RunLogView({
   // resume gate checks, so the button never offers what would 400.
   const canContinue = deriveRunDisposition(meta) === 'stopped-short';
   const orphanWork = postFailWorkLabel(meta);
-
-  // The approval card's input preview: the gate's own preview when it carried
-  // one, else a best-effort lookup of the most recent matching tool-log entry.
-  const pendingApprovalInput =
-    pendingApproval !== null
-      ? (pendingApproval.input ??
-        entries
-          .filter(
-            (e) => e.kind === 'tool' && e.toolName === pendingApproval.toolName
-          )
-          .at(-1)?.toolInput)
-      : undefined;
 
   async function send(text: string, resume: boolean) {
     setSending(true);
@@ -327,29 +315,32 @@ export function RunLogView({
               pinned below it, so it scrolls with the transcript and the surrounding work stays
               readable while you decide. */}
           {meta.state === 'awaiting-approval' &&
-            (pendingApproval !== null ? (
-              <ApprovalCard
-                toolName={pendingApproval.toolName}
-                toolInput={pendingApprovalInput}
-                frozenSince={meta.updatedAt}
-                onDecide={(allow, opts) =>
-                  onApprove(pendingApproval.requestId, allow, opts)
-                }
-                availability={scopeDecide}
-                onRestartDaemon={onRestartDaemon}
-              />
+            (pendingApprovals.length > 0 ? (
+              pendingApprovals.map((approval) => (
+                <ApprovalCard
+                  key={approval.requestId}
+                  toolName={approval.toolName}
+                  toolInput={approval.input}
+                  truncated={approval.truncated}
+                  loadFullInput={
+                    onLoadApprovalInput === undefined
+                      ? undefined
+                      : () => onLoadApprovalInput(approval.requestId)
+                  }
+                  frozenSince={meta.updatedAt}
+                  onDecide={(allow, opts) =>
+                    onApprove(approval.requestId, allow, opts)
+                  }
+                  availability={scopeDecide}
+                  onRestartDaemon={onRestartDaemon}
+                />
+              ))
             ) : (
               <div className="bg-surface-quaternary text-muted-foreground rounded-card border-border font-book flex items-start gap-2 border-[0.5px] px-3 py-2 text-[12px]">
                 <Info className="size-3.5 shrink-0 translate-y-0.5" />
                 {/* A window that cannot decide cannot read open gates, so it says why. */}
-                {scopeDecide.explanation ?? (
-                  <>
-                    This run is waiting on an approval this window didn&rsquo;t
-                    see live — reopen it from a session that was connected when
-                    the approval was requested, or check the run&rsquo;s process
-                    directly.
-                  </>
-                )}
+                {scopeDecide.explanation ??
+                  'This run is waiting on an approval that has not reached this window yet; it will appear here shortly.'}
               </div>
             ))}
         </div>

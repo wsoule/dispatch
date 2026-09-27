@@ -127,9 +127,13 @@ export class DeliveryEngine {
     return { muted: agent.muted };
   }
 
-  // Expands channels, de-duplicates (direct beats channel) and drops the
-  // sender itself, including a run's own task.
-  private resolveTargets(to: Address[], sender: Address): Target[] {
+  // Expands channels, de-duplicates (direct beats channel) and drops the sender
+  // itself, including a run's own task; errors name the caller's `to` entry.
+  private resolveTargets(
+    to: Address[],
+    sender: Address,
+    fields: Map<Address, string>
+  ): Target[] {
     const senderTask = sender.startsWith('run:')
       ? this.host.taskOfRun(sender.slice(4))
       : null;
@@ -147,9 +151,13 @@ export class DeliveryEngine {
       )
         byRecipient.set(recipient, { recipient, via });
     };
-    to.forEach((addr, i) => {
-      const parsed = parseAddress(addr, `to[${i}]`);
-      if (parsed.kind !== 'channel') return add(addr, 'direct');
+    for (const addr of to) {
+      const field = fields.get(addr) ?? 'to';
+      const parsed = parseAddress(addr, field);
+      if (parsed.kind !== 'channel') {
+        add(addr, 'direct');
+        continue;
+      }
       const explicit = this.store.members(parsed.name);
       const implicit = this.host.implicitMembers(parsed.name);
       const known = this.store.channels().some((c) => c.name === parsed.name);
@@ -157,20 +165,20 @@ export class DeliveryEngine {
         throw new MessagingError(
           'not-found',
           `no channel ${parsed.name}`,
-          `to[${i}]`
+          field
         );
       for (const member of [...explicit, ...implicit]) add(member, 'channel');
-    });
+    }
     return [...byRecipient.values()];
   }
 
-  // A target's initial delivery state and run; null drops a not-live run that
-  // only a channel reached. A reply to an ended run with no task is held on it.
+  // A target's initial delivery; null drops an ended run only a channel reached.
+  // `heldIfEnded` holds mail to an ended run instead of refusing it.
   private plan(
     target: Target,
     muted: boolean,
     field: string,
-    repliesToIt: boolean
+    heldIfEnded: boolean
   ): Delivery | null {
     const base = {
       id: this.id('d'),
@@ -196,7 +204,7 @@ export class DeliveryEngine {
       case 'run':
         if (!this.host.isLiveRun(parsed.id)) {
           if (target.via === 'channel') return null;
-          if (repliesToIt) return { ...base, runId: null, state: 'held' };
+          if (heldIfEnded) return { ...base, runId: null, state: 'held' };
           throw new MessagingError(
             'invalid',
             `run ${parsed.id} is not live`,
@@ -275,19 +283,20 @@ export class DeliveryEngine {
 
     const fields = this.recipientFields(input.to, replyTarget);
     const targets = this.admitExternal(
-      this.resolveTargets(message.to, sender.address),
+      this.resolveTargets(message.to, sender.address, fields),
       fields,
       sender,
       replyTarget,
       message
     );
+    const wakesRuns = wakesEndedRuns(message);
     const deliveries: Delivery[] = [];
     for (const t of targets) {
       const planned = this.plan(
         t,
         muted,
         fields.get(t.recipient) ?? 'to',
-        t.recipient === replyTarget?.from
+        t.recipient === replyTarget?.from || wakesRuns
       );
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
     }
@@ -799,8 +808,14 @@ export class DeliveryEngine {
   // After a wake-requesting send, asks the host to wake each held task
   // recipient (or gates/denies it), so the message is actually seen soon.
   private async runWake(message: Message, settled: Delivery[]): Promise<void> {
+    const wakesRuns = wakesEndedRuns(message);
     for (const d of settled) {
-      if (d.state !== 'held' || !d.recipient.startsWith('task:')) continue;
+      if (d.state !== 'held') continue;
+      if (
+        !d.recipient.startsWith('task:') &&
+        !(wakesRuns && d.recipient.startsWith('run:'))
+      )
+        continue;
       const ruling = this.host.decide({
         type: 'wake',
         target: d.recipient,
@@ -889,4 +904,9 @@ function alreadyAnswered(questionId: string): MessagingError {
     `${questionId} is already answered`,
     'replyTo'
   );
+}
+
+// Only a human's wake may name an ended run: it asks to continue exactly that run.
+function wakesEndedRuns(message: Message): boolean {
+  return message.wake === 'request' && message.from.startsWith('human:');
 }

@@ -77,6 +77,25 @@ describe('DeliveryEngine.send', () => {
     ).rejects.toMatchObject({ code: 'invalid', field: 'to[2]' });
   });
 
+  it("names the caller's own to[] entry for an unknown channel after a reply collapses recipients", async () => {
+    const { message: question } = await engine.send(
+      { to: ['human:wyat'], kind: 'question', body: 'ok?' },
+      run1
+    );
+    host.endRun('t-000001');
+    await expect(
+      engine.send(
+        {
+          to: ['task:t-000001', 'run:r-000001', 'channel:nope'],
+          kind: 'message',
+          body: 'see above',
+          replyTo: question.id,
+        },
+        human
+      )
+    ).rejects.toMatchObject({ code: 'not-found', field: 'to[2]' });
+  });
+
   it('notifies humans', async () => {
     const { deliveries } = await engine.send(
       { to: ['human:wyat'], kind: 'notice', body: 'fyi' },

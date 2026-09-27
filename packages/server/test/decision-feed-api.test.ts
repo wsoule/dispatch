@@ -280,9 +280,8 @@ describe('GET /api/decisions', () => {
     expect(await decisions()).toEqual([]);
   });
 
-  // The floor at this gate: a request reaching into .git/ parks for a human
-  // even though the rung would auto-grant it, and the feed lists it as
-  // blocking rather than as a recorded auto-decision.
+  // A request into .git/ is the floor at this gate: it parks for a human at
+  // any rung, and the feed lists it as blocking, not recorded.
   it('lists a rung-2 scope gate into .git as blocking and never auto-grants it', async () => {
     mkdirSync(join(root, '.dispatch'), { recursive: true });
     writeFileSync(
@@ -336,6 +335,108 @@ describe('GET /api/decisions', () => {
     expect(await json(bad)).toMatchObject({
       error: expect.stringContaining('disposition'),
     });
+  });
+});
+
+describe('tool approvals under policy rung 3', () => {
+  it('Dispatch answers the gate itself and the parked call runs', async () => {
+    mkdirSync(join(root, '.dispatch'), { recursive: true });
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'policy:\n  rung: 3\n'
+    );
+    await liveRun('Needs a shell', 'parking');
+    parking.park('req-1', 'Bash', { command: 'pnpm install' });
+    await waitFor(() => parking.decisions.length === 1);
+    expect(parking.decisions[0]).toEqual({
+      requestId: 'req-1',
+      decision: { allow: true, scope: 'once' },
+    });
+    const [item] = await decisions('?resolved=1');
+    const gateId = item?.id.slice('approval:'.length) ?? '';
+    const answer: {
+      answer: { from: string; data?: { type?: string } } | null;
+    } = await json(await fetch(`${baseUrl}/api/messages/${gateId}/answer`));
+    expect(answer.answer).toMatchObject({
+      from: 'agent:dispatch',
+      data: { type: 'x-policy' },
+    });
+  });
+});
+
+describe('GET /api/runs/:id/approvals/:requestId', () => {
+  it("returns a parked floor call's full input, which its cut gate flags", async () => {
+    const { runId } = await liveRun('Push it', 'parking');
+    const command = `${' '.repeat(9000)}; git push --force origin main`;
+    parking.park('req-1', 'Bash', { command });
+    let gate: Message | undefined;
+    await waitFor(async () => {
+      const open: { items: Message[] } = await json(
+        await fetch(`${baseUrl}/api/decisions/open`)
+      );
+      gate = open.items[0];
+      return gate !== undefined;
+    });
+    expect(gate?.data).toMatchObject({ truncated: true, floor: true });
+    expect(JSON.stringify(gate?.data)).not.toContain('git push');
+
+    const res = await fetch(`${baseUrl}/api/runs/${runId}/approvals/req-1`);
+    expect(res.status).toBe(200);
+    expect(await json(res)).toEqual({ tool: 'Bash', input: { command } });
+    const [item] = await decisions();
+    expect(item).toMatchObject({
+      floor: 'force-push',
+      disposition: 'blocking',
+    });
+  });
+
+  it('404s a request the run is not parked on, and refuses the agent token', async () => {
+    const { runId } = await liveRun('Needs a shell', 'parking');
+    await parkForApproval();
+
+    const missing = await fetch(`${baseUrl}/api/runs/${runId}/approvals/req-9`);
+    expect(missing.status).toBe(404);
+    const asAgent = await fetch(
+      `${baseUrl}/api/runs/${runId}/approvals/req-1`,
+      { headers: { authorization: `Bearer ${handle.tokens.agentToken}` } }
+    );
+    expect(asAgent.status).toBe(403);
+  });
+});
+
+describe('gates across a daemon restart', () => {
+  it("closes a dead run's approval but keeps an execute run's scope gate open", async () => {
+    await liveRun('Needs a shell', 'parking');
+    const approval = await parkForApproval();
+    await liveRun('Needs scope');
+    const scopeId = await requestScope(['a.ts'], 'needs the helper');
+
+    await handle.stop();
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerExecutors: (orchestrator) => {
+        orchestrator.registerExecutor('claude', new StallingExecutor());
+        orchestrator.registerExecutor('parking', new ParkingExecutor());
+      },
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const open: { items: Message[] } = await json(
+      await fetch(`${baseUrl}/api/decisions/open`)
+    );
+    expect(open.items.map((m) => m.id)).toEqual([scopeId]);
+    expect(
+      (await decisions()).filter((i) => i.kind !== 'run-stalled')
+    ).toMatchObject([
+      { id: `scope-request:${scopeId}`, kind: 'scope-request' },
+    ]);
+    const answer: { answer: { data?: { type?: string } } | null } = await json(
+      await fetch(`${baseUrl}/api/messages/${approval.id}/answer`)
+    );
+    expect(answer.answer?.data?.type).toBe('x-closed');
   });
 });
 

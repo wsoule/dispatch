@@ -10,7 +10,10 @@ export {
 export * from './subagents.js';
 export * from './preview.js';
 export { absoluteGitLocation } from './gitLocation.js';
-export { DISPATCH_MCP_TOOLS } from './dispatchMcpTools.js';
+export {
+  DISPATCH_MCP_TOOLS,
+  DISPATCH_MESSAGING_TOOLS,
+} from './dispatchMcpTools.js';
 export {
   generateDraftId,
   generateFindingId,

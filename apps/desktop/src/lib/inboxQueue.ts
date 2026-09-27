@@ -26,8 +26,9 @@ export interface InboxInput {
   epics: TaskDoc[];
   repoPrs: RepoPr[];
   mergeQueue: MergeQueueSnapshot | null;
-  pendingApprovals: ReadonlyMap<string, { toolName: string }>;
+  pendingApprovals: ReadonlyMap<string, readonly { toolName: string }[]>;
   openQuestions: ReadonlyMap<string, RunQuestion[]>;
+  openScopeRequests: ReadonlyMap<string, { paths: readonly string[] }>;
   fixLoops: ReadonlyMap<string, FixLoopState>;
   /** This window's ActorRef. When set, asks on runs someone else dispatched are
    * that person's to answer: still listed, under Teammates, but not in Needs you
@@ -76,6 +77,7 @@ export function buildInbox(input: InboxInput): InboxData {
     mergeQueue: input.mergeQueue,
     pendingApprovals: input.pendingApprovals,
     openQuestions: input.openQuestions,
+    openScopeRequests: input.openScopeRequests,
     fixLoops: input.fixLoops,
     query: '',
     activeStates: new Set(),

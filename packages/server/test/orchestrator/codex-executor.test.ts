@@ -25,6 +25,12 @@ import type {
   ExecutorEvents,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
+import {
+  HUMAN,
+  makeOrchestrator,
+  openRecovered,
+  useTempProject,
+} from '../messaging/harness.js';
 
 const APPROVE_EVERY_DISPATCH_TOOL = Object.fromEntries(
   DISPATCH_MCP_TOOLS.map((name) => [name, { approval_mode: 'approve' }])
@@ -1828,5 +1834,76 @@ describe('the irreversibility floor for Codex runs', () => {
     expect(harness.entries.some((entry) => entry.kind === 'system')).toBe(
       false
     );
+  });
+});
+
+describe('CodexExecutor approvals through the orchestrator', () => {
+  const project = useTempProject();
+
+  it('parks two concurrent asks on their own gates and answers each exactly', async () => {
+    const fake = scriptedProcess({
+      afterTurn(codex) {
+        codex.serverRequest('item/commandExecution/requestApproval', 'ask-1', {
+          command: 'ls',
+          itemId: 'item-1',
+        });
+        codex.serverRequest('item/commandExecution/requestApproval', 'ask-2', {
+          command: 'pwd',
+          itemId: 'item-2',
+        });
+      },
+    });
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    writeFileSync(
+      join(project.root(), '.dispatch/config.yml'),
+      'orchestrator:\n  permissionMode: default\n'
+    );
+    orchestrator.registerExecutor(
+      'codex',
+      new CodexExecutor(() => fake, {
+        cartoSpec: () => null,
+        userMcpServers: () => [],
+        pricing: () => undefined,
+      })
+    );
+    const messaging = await openRecovered(project.root(), orchestrator, store);
+    const task = store.create({ title: 'Two asks' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'codex', {});
+    await waitFor(() => messaging.engine.openBlocking().length === 2);
+    const gateFor = (command: string) => {
+      const gate = messaging.engine
+        .openBlocking()
+        .find(
+          (m) =>
+            (m.data as { input?: { command?: string } }).input?.command ===
+            command
+        );
+      if (gate === undefined) throw new Error(`no gate for ${command}`);
+      return gate;
+    };
+    const answerTo = (id: string) =>
+      fake.requests.find((m) => m.id === id && m.result !== undefined)?.result;
+
+    await messaging.engine.reply(
+      gateFor('pwd').id,
+      { body: '', choice: 'deny' },
+      HUMAN
+    );
+    await waitFor(() => answerTo('ask-2') !== undefined);
+    expect(answerTo('ask-2')).toEqual({ decision: 'decline' });
+    expect(answerTo('ask-1')).toBeUndefined();
+    expect(orchestrator.getRun(meta.id)?.meta.state).toBe('awaiting-approval');
+
+    await messaging.engine.reply(
+      gateFor('ls').id,
+      { body: '', choice: 'approve' },
+      HUMAN
+    );
+    await waitFor(() => answerTo('ask-1') !== undefined);
+    expect(answerTo('ask-1')).toEqual({ decision: 'accept' });
+    expect(orchestrator.getRun(meta.id)?.meta.state).toBe('running');
+    expect(messaging.engine.openBlocking()).toEqual([]);
+    await orchestrator.cancel(meta.id);
+    messaging.close();
   });
 });

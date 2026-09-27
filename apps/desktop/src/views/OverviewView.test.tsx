@@ -40,6 +40,7 @@ function dataWith(
     mergeQueue: null,
     pendingApprovals: new Map(),
     openQuestions: new Map(),
+    pendingScopeRequests: new Map(),
     fixLoops: new Map(),
     handleStopFixLoop: async () => {},
     handleApprove: async () => {},
