@@ -317,14 +317,16 @@ export class DeliveryEngine {
     );
   }
 
-  // The address a reply actually goes to: an ended run's task (see deliverableAddress).
+  // The address a reply actually goes to: a party to the target that is an
+  // ended run is reached through its task (see deliverableAddress).
   private rewriteForReply(address: Address, target: Message | null): Address {
-    return target !== null && address === target.from
+    return target !== null &&
+      (address === target.from || target.to.includes(address))
       ? this.deliverableAddress(address)
       : address;
   }
 
-  // A reply's recipients, with the target's sender rewritten by
+  // A reply's recipients, with the target's sender and recipients rewritten by
   // deliverableAddress so an ended run's task (and live successor) hears it.
   private replyRecipients(to: Address[], target: Message | null): Address[] {
     if (target === null) return [...to];

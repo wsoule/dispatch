@@ -102,6 +102,21 @@ test('a failed reply says why and keeps the draft', async () => {
   expect(replyBox().value).toBe('the new cart');
 });
 
+test('a thread that is only my message to a run still sends a reply to that run', async () => {
+  // The daemon routes it to the run's task once the run has ended.
+  const mine = msg('m-01', { from: ME, to: ['run:r-000001'] });
+  const onReply = renderPane({ messages: [mine], openIds: new Set() });
+  fireEvent.change(replyBox(), { target: { value: 'still there?' } });
+  fireEvent.keyDown(replyBox(), { key: 'Enter' });
+  await waitFor(() => expect(onReply).toHaveBeenCalledTimes(1));
+  expect(onReply.mock.calls[0]?.[0]).toMatchObject({
+    kind: 'send',
+    to: ['run:r-000001'],
+    replyTo: 'm-01',
+  });
+  expect(onReply.mock.calls[0]?.[1]).toBe('still there?');
+});
+
 test('a non-blocking question put to me offers its choices as answers', async () => {
   const onAnswer = mock((_m: Message, _r: { body: string; choice?: string }) =>
     Promise.resolve()

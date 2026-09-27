@@ -122,6 +122,77 @@ describe('answers', () => {
     expect(host.hooks('push').at(-1)![0]).toBe('r-000002');
   });
 
+  it('a reply to my own message to a run that ended since is held for its task', async () => {
+    const { message: mine } = await engine.send(
+      { to: ['run:r-000001'], kind: 'message', body: 'try the cart first' },
+      human
+    );
+    host.endRun('t-000001');
+    const { message: r, deliveries } = await engine.send(
+      {
+        to: ['run:r-000001'],
+        kind: 'message',
+        body: 'still there?',
+        replyTo: mine.id,
+      },
+      human
+    );
+    expect(r.to).toEqual(['task:t-000001']);
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        recipient: 'task:t-000001',
+        runId: null,
+        state: 'held',
+      }),
+    ]);
+  });
+
+  it("a reply to my own message to a run that ended since reaches its task's live successor", async () => {
+    const { message: mine } = await engine.send(
+      { to: ['run:r-000001'], kind: 'message', body: 'try the cart first' },
+      human
+    );
+    host.endRun('t-000001');
+    host.startRun('t-000001', 'r-000002');
+    const { message: r, deliveries } = await engine.send(
+      {
+        to: ['run:r-000001'],
+        kind: 'message',
+        body: 'still there?',
+        replyTo: mine.id,
+      },
+      human
+    );
+    expect(r.to).toEqual(['task:t-000001']);
+    expect(deliveries).toEqual([
+      expect.objectContaining({
+        recipient: 'task:t-000001',
+        runId: 'r-000002',
+        state: 'pushed',
+      }),
+    ]);
+  });
+
+  it('a reply naming an ended run the replied-to message never reached is still refused', async () => {
+    host.startRun('t-000002', 'r-000002');
+    const { message: mine } = await engine.send(
+      { to: ['run:r-000001'], kind: 'message', body: 'try the cart first' },
+      human
+    );
+    host.endRun('t-000002');
+    await expect(
+      engine.send(
+        {
+          to: ['run:r-000002'],
+          kind: 'message',
+          body: 'still there?',
+          replyTo: mine.id,
+        },
+        human
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'to[0]' });
+  });
+
   it('reply holds the answer on an ended run that stands for no task', async () => {
     host.auxRuns.add('r-0000a1');
     const reviewer = { address: 'run:r-0000a1', canDecide: false };
