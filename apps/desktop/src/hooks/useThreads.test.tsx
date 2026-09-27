@@ -794,24 +794,27 @@ describe('messaging queries', () => {
     ]);
   });
 
-  it('tries a thread read again after a network blip or a daemon error', async () => {
-    const failures = [
+  it('tries a thread read again after a network blip, a daemon error or any refusal but 403 and 404', async () => {
+    const messageFailures: Error[] = [
       new TypeError('Failed to fetch'),
-      new ApiError('daemon busy', 503),
+      new ApiError('too many requests', 429),
     ];
+    const threadFailures: Error[] = [new ApiError('daemon busy', 503)];
     const calls: string[] = [];
     const client = {
       getMessage: (id: string) => {
         calls.push(`message ${id}`);
-        return calls.length === 1
-          ? Promise.reject(failures[0])
-          : Promise.resolve(msg(id, { thread: 'm-01' }));
+        const failure = messageFailures.shift();
+        return failure === undefined
+          ? Promise.resolve(msg(id, { thread: 'm-01' }))
+          : Promise.reject(failure);
       },
       getThread: (id: string) => {
         calls.push(`thread ${id}`);
-        return calls.length === 3
-          ? Promise.reject(failures[1])
-          : Promise.resolve({ messages: [msg('m-01')], deliveries: [] });
+        const failure = threadFailures.shift();
+        return failure === undefined
+          ? Promise.resolve({ messages: [msg('m-01')], deliveries: [] })
+          : Promise.reject(failure);
       },
     } as unknown as ApiClient;
     const qc = new QueryClient({
@@ -829,6 +832,7 @@ describe('messaging queries', () => {
     });
     expect(result.current.error).toBeNull();
     expect(calls).toEqual([
+      'message m-02',
       'message m-02',
       'message m-02',
       'thread m-01',

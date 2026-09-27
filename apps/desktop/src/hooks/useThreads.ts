@@ -57,11 +57,17 @@ export function threadKey(port: number | undefined, thread: string) {
   return ['dispatch-threads', port, 'thread', thread] as const;
 }
 
-// Tries a read again when it may pass next time (a network blip, a daemon
-// error), never when the daemon refused it or has no such thread.
+// Tries a read again when it may pass next time, never when the daemon said
+// this window may not read it (403) or it does not exist (404).
 function retryTransient(failures: number, error: Error): boolean {
-  if (error instanceof ApiError && error.status < 500) return false;
+  if (isRefusedOrGone(error)) return false;
   return failures < 3;
+}
+
+function isRefusedOrGone(error: unknown): boolean {
+  return (
+    error instanceof ApiError && (error.status === 403 || error.status === 404)
+  );
 }
 
 function ready(client: ApiClient | null): ApiClient {
