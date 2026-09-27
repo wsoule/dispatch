@@ -206,10 +206,10 @@ export function foldRoster(input: FoldInput): RosterView {
     const open = having('open');
     if (open.length === 0) break;
     let progress = false;
-    // A fight's winner stands, so a removal that would undo it is void,
-    const winners = accepted.filter((s) => won.has(s));
+    // A removal that would undo a fight's winner, or the accepted removals its
+    // own right rests on, is void,
     for (const r of open) {
-      if (!undoes(ctx, accepted, winners, r)) continue;
+      if (!undoes(ctx, accepted, won, r)) continue;
       status.set(r, 'void');
       progress = true;
     }
@@ -871,20 +871,28 @@ function hadRight(ctx: Context, ev: Evaluation, r: Removal): boolean {
   return rights.admin || (rights.member && !needsAdmin(ctx, ev, r));
 }
 
-// Whether accepting r would take the right from one of the fight winners.
+// Whether accepting r would take the right from a fight's winner, or from the
+// accepted removals r's own right rests on; each is judged without its own cut.
 function undoes(
   ctx: Context,
   accepted: readonly Removal[],
-  winners: readonly Removal[],
+  winners: ReadonlySet<Removal>,
   r: Removal
 ): boolean {
-  if (winners.length === 0) return false;
-  const withIt = evaluate(ctx, [...accepted, r]);
-  return winners.some((w) => !hadRight(ctx, withIt, w));
+  const withIt = [...accepted, r];
+  const keeps = (s: Removal): boolean => {
+    const others = withIt.filter((o) => o !== s);
+    return hadRight(ctx, evaluate(ctx, others), s);
+  };
+  const undone = accepted.filter((s) => !keeps(s));
+  if (undone.length === 0) return false;
+  if (undone.some((s) => winners.has(s))) return true;
+  const kept = accepted.filter((s) => !undone.includes(s));
+  return !hadRight(ctx, evaluate(ctx, kept), r);
 }
 
-// The waiting removals that would hold their right were every undecided one
-// accepted; any other is taken never to gain it, so it holds no removal back.
+// The waiting removals that would hold their right, their own cut included, were
+// every undecided one accepted; any other is taken never to gain it.
 function couldCut(
   ctx: Context,
   others: readonly Removal[],

@@ -85,6 +85,20 @@ const revoke = (
     afterHash: `h-${target}-${afterSeq}`,
     reason: 'test',
   });
+const demote = (
+  by: string,
+  seq: number,
+  ms: number,
+  target: string,
+  afterSeq: number
+) =>
+  op(by, seq, ms, {
+    action: 'role',
+    replica: target,
+    role: 'member',
+    afterSeq,
+    afterHash: `h-${target}-${afterSeq}`,
+  });
 function fold(
   ops: RosterOpRef[],
   extra: { now?: Date; licensePublicKey?: string | null } = {}
@@ -616,6 +630,145 @@ describe('foldRoster', () => {
       [D]: 'member',
       [A2]: 'member',
     });
+  });
+
+  it('gives the fight to the earlier admin when a waiting removal would cut the later one', () => {
+    const byC = revoke(C, 2, 400, D, 1);
+    const byB = revoke(B, 2, 410, C, 1);
+    const byA2 = revoke(A2, 2, 420, B, 1);
+    const v = fold([
+      admit(A, 2, 100, C, 'admin'),
+      admit(A, 3, 105, D, 'admin'),
+      admit(A, 4, 110, B, 'admin'),
+      // D's admit comes first, so A2 is an admin only once C's revocation stands.
+      admit(D, 2, 200, A2),
+      admit(A, 5, 300, A2, 'admin'),
+      byC,
+      byB,
+      byA2,
+    ]);
+    expect(v.resolution.get(byC.hash)).toBe('accepted');
+    expect(v.resolution.get(byB.hash)).toBe('void');
+    expect(v.resolution.get(byA2.hash)).toBe('accepted');
+    expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin', [A2]: 'admin' });
+  });
+
+  it('keeps unrelated revocations standing when a self-demotion wins a fight', () => {
+    const selfDemotion = demote(B, 2, 200, B, 1);
+    const byC = revoke(C, 2, 210, B, 1);
+    const byBofC = revoke(B, 3, 220, C, 1);
+    const byBofA2 = revoke(B, 4, 225, A2, 1);
+    const byA2 = revoke(A2, 2, 300, D, 1);
+    const v = fold([
+      admit(A, 2, 100, B, 'admin'),
+      admit(A, 3, 110, C, 'admin'),
+      admit(A, 4, 120, D),
+      admit(A, 5, 130, A2, 'admin'),
+      selfDemotion,
+      byC,
+      byBofC,
+      byBofA2,
+      byA2,
+    ]);
+    expect(v.resolution.get(selfDemotion.hash)).toBe('accepted');
+    expect(v.resolution.get(byC.hash)).toBe('void');
+    expect(v.resolution.get(byBofC.hash)).toBe('void');
+    expect(v.resolution.get(byBofA2.hash)).toBe('void');
+    // Nothing cuts A2, so its revocation of D stands.
+    expect(v.resolution.get(byA2.hash)).toBe('accepted');
+    expect(roles(v)).toEqual({
+      [A]: 'admin',
+      [B]: 'member',
+      [C]: 'admin',
+      [A2]: 'admin',
+    });
+  });
+
+  it('voids a removal that would undo the accepted removal its own right rests on', () => {
+    const selfRevoke = revoke(D, 3, 400, D, 1);
+    const byC = revoke(C, 2, 410, D, 1);
+    const v = fold([
+      admit(A, 2, 100, D, 'admin'),
+      // C is an admin only once a revocation of D cuts this admit.
+      admit(D, 2, 200, C),
+      admit(A, 3, 300, C, 'admin'),
+      // A pending replica's demotion, which never gains its right.
+      demote(B2, 2, 150, A, 1),
+      selfRevoke,
+      byC,
+    ]);
+    expect(v.resolution.get(selfRevoke.hash)).toBe('accepted');
+    expect(v.resolution.get(byC.hash)).toBe('void');
+    expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin' });
+    expect([...v.revoked.keys()]).toEqual([D]);
+  });
+
+  it("holds nothing back with a waiting removal that would cut its own publisher's admission", () => {
+    const selfDemotion = demote(B2, 3, 405, B2, 2);
+    const byC = revoke(C, 2, 433, A, 1);
+    const selfRevoke = revoke(B2, 4, 443, B2, 1);
+    const v = fold([
+      admit(A, 2, 115, B2, 'admin'),
+      // C is an admin only once B2's self-revocation cuts this admit, and C's
+      // revocation of A would cut A's admit of C.
+      admit(B2, 2, 204, C),
+      admit(A, 3, 281, C, 'admin'),
+      selfDemotion,
+      byC,
+      selfRevoke,
+    ]);
+    expect(v.resolution.get(selfRevoke.hash)).toBe('accepted');
+    expect(v.resolution.get(selfDemotion.hash)).toBe('void');
+    expect(v.resolution.get(byC.hash)).toBe('void');
+    expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin' });
+    expect([...v.revoked.keys()]).toEqual([B2]);
+  });
+
+  it('lets a revocation cut a removal accepted while it waited, when no fight decided that one', () => {
+    const byD = revoke(D, 2, 175, B2, 1);
+    const byC = revoke(C, 2, 448, D, 1);
+    const demotion = demote(A, 5, 496, B, 1);
+    const v = fold([
+      admit(A, 2, 100, B, 'admin'),
+      admit(A, 3, 110, D, 'admin'),
+      byD,
+      // C is an admin only once A's demotion of B cuts this admit.
+      admit(B, 2, 236, C),
+      admit(A, 4, 304, C, 'admin'),
+      // A pending replica's demotion, which never gains its right.
+      demote(A2, 2, 413, A, 1),
+      byC,
+      demotion,
+    ]);
+    expect(v.resolution.get(demotion.hash)).toBe('accepted');
+    expect(v.resolution.get(byC.hash)).toBe('accepted');
+    expect(v.resolution.get(byD.hash)).toBe('void');
+    expect(roles(v)).toEqual({ [A]: 'admin', [B]: 'member', [C]: 'admin' });
+    expect(v.revoked.has(B2)).toBe(false);
+  });
+
+  it('ends a fight whose removals keep trading rights by voiding one on its second loss', () => {
+    const byB = revoke(B, 2, 400, C, 1);
+    const byC = revoke(C, 2, 411, A2, 1);
+    const selfRevoke = revoke(D, 3, 429, D, 1);
+    const byA2 = revoke(A2, 2, 441, B, 1);
+    const v = fold([
+      admit(A, 2, 105, C, 'admin'),
+      admit(A, 3, 115, D, 'admin'),
+      admit(A, 4, 120, B, 'admin'),
+      // A2 is an admin only once D's self-revocation cuts this admit.
+      admit(D, 2, 230, A2),
+      admit(A, 5, 302, A2, 'admin'),
+      byB,
+      byC,
+      selfRevoke,
+      byA2,
+    ]);
+    expect(v.resolution.get(byC.hash)).toBe('accepted');
+    expect(v.resolution.get(selfRevoke.hash)).toBe('accepted');
+    expect(v.resolution.get(byB.hash)).toBe('void');
+    expect(v.resolution.get(byA2.hash)).toBe('void');
+    expect(roles(v)).toEqual({ [A]: 'admin', [B]: 'admin', [C]: 'admin' });
   });
 
   it('never makes an observer an admin, so the last admin cannot hand the team to one', () => {

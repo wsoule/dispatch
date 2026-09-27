@@ -114,6 +114,21 @@ const revoke = (
     reason: 'test',
   });
 
+const demote = (
+  by: string,
+  seq: number,
+  ms: number,
+  target: string,
+  afterSeq: number
+) =>
+  op(by, seq, ms, {
+    action: 'role',
+    replica: target,
+    role: 'member',
+    afterSeq,
+    afterHash: `h-${target}-${afterSeq}`,
+  });
+
 const ATTEST = [
   { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },
 ];
@@ -244,6 +259,67 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(C, 2, 200, B, 2),
     revoke(B, 3, 300, D, 1),
     revoke(A2, 2, 250, C, 1),
+  ]),
+  // A2's revocation of B waits for C's of D, so B's of C cannot pass alone.
+  scenario('waiting-cutter-fight', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 105, D, 'admin'),
+    admit(A, 4, 110, B, 'admin'),
+    admit(D, 2, 200, A2),
+    admit(A, 5, 300, A2, 'admin'),
+    revoke(C, 2, 400, D, 1),
+    revoke(B, 2, 410, C, 1),
+    revoke(A2, 2, 420, B, 1),
+  ]),
+  scenario('self-demotion-wins', [
+    admit(A, 2, 100, B, 'admin'),
+    admit(A, 3, 110, C, 'admin'),
+    admit(A, 4, 120, D),
+    admit(A, 5, 130, A2, 'admin'),
+    demote(B, 2, 200, B, 1),
+    revoke(C, 2, 210, B, 1),
+    revoke(B, 3, 220, C, 1),
+    revoke(B, 4, 225, A2, 1),
+    revoke(A2, 2, 300, D, 1),
+  ]),
+  // C's right to revoke D rests on D's self-revocation, which it would undo.
+  scenario('right-rests-on-undone', [
+    admit(A, 2, 100, D, 'admin'),
+    admit(D, 2, 200, C),
+    admit(A, 3, 300, C, 'admin'),
+    demote(B2, 2, 150, A, 1),
+    revoke(D, 3, 400, D, 1),
+    revoke(C, 2, 410, D, 1),
+  ]),
+  // C's revocation of A would cut A's admit of C, so it holds nothing back.
+  scenario('waiting-self-cutter', [
+    admit(A, 2, 115, B2, 'admin'),
+    admit(B2, 2, 204, C),
+    admit(A, 3, 281, C, 'admin'),
+    demote(B2, 3, 405, B2, 2),
+    revoke(C, 2, 433, A, 1),
+    revoke(B2, 4, 443, B2, 1),
+  ]),
+  scenario('cut-while-waiting', [
+    admit(A, 2, 100, B, 'admin'),
+    admit(A, 3, 110, D, 'admin'),
+    revoke(D, 2, 175, B2, 1),
+    admit(B, 2, 236, C),
+    admit(A, 4, 304, C, 'admin'),
+    demote(A2, 2, 413, A, 1),
+    revoke(C, 2, 448, D, 1),
+    demote(A, 5, 496, B, 1),
+  ]),
+  scenario('rights-trading-fight', [
+    admit(A, 2, 105, C, 'admin'),
+    admit(A, 3, 115, D, 'admin'),
+    admit(A, 4, 120, B, 'admin'),
+    admit(D, 2, 230, A2),
+    admit(A, 5, 302, A2, 'admin'),
+    revoke(B, 2, 400, C, 1),
+    revoke(C, 2, 411, A2, 1),
+    revoke(D, 3, 429, D, 1),
+    revoke(A2, 2, 441, B, 1),
   ]),
   scenario('demotion-then-promotion', [
     admit(A, 2, 100, B, 'admin'),
