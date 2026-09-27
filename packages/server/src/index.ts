@@ -22,6 +22,7 @@ import type {
   TaskStoreBackend,
   TaskStorePort,
 } from '@dispatch/core';
+import { timingSafeEqual } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { networkInterfaces } from 'node:os';
 import { dirname, extname, join } from 'node:path';
@@ -54,12 +55,13 @@ import {
   isSkippedPath,
 } from './depmap.js';
 import { EventBus } from './events.js';
+import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
 import type { FindingStorePort } from './findings.js';
 import { floorCheckForToolInput } from './floor.js';
 import { GitRepo } from './git/commands.js';
 import { resolvePushTarget } from './gitTarget.js';
-import { TokenRegistry } from './identity.js';
+import { sha256, TokenRegistry } from './identity.js';
 import { IdleShutdown } from './idleShutdown.js';
 import { InboxStore } from './inbox.js';
 import type { InboxClusterer } from './inboxClusterer.js';
@@ -567,10 +569,16 @@ async function serveIndexHtml(
  *  leaving. `handle` is null only for a socket whose credential resolved to
  *  nobody, which the upgrade guard already refuses — kept nullable so the
  *  type does not promise more than the guard does. */
-interface SocketData {
+interface SocketData extends SocketAudience {
   handle: string | null;
-  ref: string | null;
   release?: () => boolean;
+}
+
+// Constant-time, like principal.ts: /ws must tell the shared agent token
+// apart from the owner's app token, since both resolve to the owner.
+function isAgentToken(presented: string | null, agentToken: string): boolean {
+  if (presented === null) return false;
+  return timingSafeEqual(sha256(presented), sha256(agentToken));
 }
 
 // How often the idle sweep runs. Well under the shortest sensible
@@ -1827,11 +1835,17 @@ async function bootServer(
             return withCors(unauthorized, origin, ownOriginSet);
           // Carry who connected onto the socket: presence is read off open
           // sockets, and the credential was just checked above, so resolving it
-          // again cannot fail here.
+          // again cannot fail here. The tier and the agent-token flag scope
+          // which sockets hear message events.
           const who = tokens.registry.resolve(wsToken);
           if (
             srv.upgrade(req, {
-              data: { handle: who?.handle ?? null, ref: who?.ref ?? null },
+              data: {
+                handle: who?.handle ?? null,
+                ref: who?.ref ?? null,
+                tier: who?.tier ?? null,
+                agentToken: isAgentToken(wsToken, tokens.agentToken),
+              },
             })
           ) {
             return undefined;
