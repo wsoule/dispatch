@@ -1,7 +1,5 @@
-// A scripted adapter for the runner tests: it answers each vector with the
-// observation the fixture's own `then` describes, bent by the mode in argv[2].
-// argv[3] is crash-once's state file, crash-always's start log, or the JSON
-// that patch-hello and patch-observation spread over their reply.
+// A scripted adapter answering from each vector's own `then`, bent by the mode
+// in argv[2]; argv[3] is that mode's state file, start log or patch JSON.
 import {
   appendFileSync,
   closeSync,

@@ -47,9 +47,8 @@ function parseRetired(raw: unknown): Retired[] {
   });
 }
 
-// Reads a kit directory: `retired.json`, then each class directory's `*.json`
-// files in name order. Refuses a stray directory, a file whose class is not
-// its directory, and an id used twice or also retired.
+// Reads `retired.json`, then each class directory's `*.json` in name order,
+// refusing a stray directory, a misfiled class and a reused or retired id.
 export function loadVectors(dir: URL | string = VECTORS_DIR): {
   files: VectorFile[];
   vectors: Vector[];

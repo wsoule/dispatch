@@ -81,10 +81,8 @@ function tally(results: readonly VectorResult[]): ClassTally {
   };
 }
 
-// A claim fails when a class it needs has no vector that ran, when a MUST
-// did not pass, or when its extra requirement is unmet: for the Dispatch
-// profile, a dispatch-profile vector that ran and every permanent gate type
-// declared; for the A2A binding, a passing TCK attestation.
+// Fails a claim with a class no vector ran in, a MUST that did not pass, or an
+// unmet extra (Dispatch: its vectors and gate types; A2A: a passing TCK).
 export function claimOutcome(
   claim: ClaimName,
   results: readonly VectorResult[],

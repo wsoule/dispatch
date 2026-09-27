@@ -21,9 +21,8 @@ function jsonText(value: string): string {
   return JSON.stringify(value).slice(1, -1);
 }
 
-// Replaces the runner-resolved symbols (`$system`, `$unimplementedGateType`)
-// before the vector crosses the pipe; a vector that needs an unimplemented
-// gate type when none is left is not applicable.
+// Resolves `$system` and `$unimplementedGateType` before the pipe; a vector
+// needing an unimplemented gate type when none is left is not applicable.
 export function prepareVector(
   vector: Vector,
   hello: Hello,

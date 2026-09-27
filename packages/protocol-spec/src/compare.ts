@@ -382,9 +382,8 @@ function checkChannels(
   if (failure !== null) failures.push(failure);
 }
 
-// Every `render` step must produce text unless the vector expects it to fail;
-// a core vector's text is checked structurally against the adapter's declared
-// forms, and a step `then.render` names must match exactly.
+// Each `render` step not expected to fail must yield text that fits the
+// declared forms, and exactly `then.render`'s text where it names the step.
 function checkRenders(
   vector: Vector,
   observation: Observation,
