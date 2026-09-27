@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { createPrivateKey, sign } from 'node:crypto';
+import { createPrivateKey, createPublicKey, sign, verify } from 'node:crypto';
 
 import { b64u } from '../../src/federation/encoding.js';
 import { fingerprint } from '../../src/federation/fingerprint.js';
@@ -74,5 +74,40 @@ describe('Ed25519 through node:crypto', () => {
     for (const left of ['I', 'L', 'O', 'U'])
       expect(printed).not.toContain(left);
     expect(printed).toBe(fingerprint(keys.signPub, keys.sealPub));
+  });
+
+  // With R the identity and S zero, a small-order key verifies any message
+  // whose challenge its order divides; libsodium refuses such keys too.
+  it('refuses every encoding of a small-order public key', () => {
+    const p = 2n ** 255n - 19n;
+    const order8 =
+      2707385501144840649318225287225658788936804267575313519463743609750303402022n;
+    const encode = (y: bigint, sign: number) => {
+      const raw = Buffer.alloc(32);
+      let rest = y;
+      for (let i = 0; i < 32; i++) {
+        raw.writeUInt8(Number(rest & 0xffn), i);
+        rest >>= 8n;
+      }
+      raw.writeUInt8((raw.readUInt8(31) & 0x7f) | (sign << 7), 31);
+      return raw;
+    };
+    const sig = Buffer.concat([encode(1n, 0), Buffer.alloc(32)]);
+    const messages = Array.from({ length: 64 }, (_, i) => `m${String(i)}`);
+    // y = 0, 1 and -1, both order-8 values, and p and p + 1 spelling 0 and 1.
+    for (const y of [0n, 1n, p - 1n, order8, p - order8, p, p + 1n])
+      for (const sign of [0, 1]) {
+        const raw = encode(y, sign);
+        const key = createPublicKey({
+          key: { kty: 'OKP', crv: 'Ed25519', x: b64u(raw) },
+          format: 'jwk',
+        });
+        const forged = messages.filter((m) =>
+          verify(null, Buffer.from(m), key, sig)
+        );
+        expect(forged.length).toBeGreaterThan(0);
+        for (const m of forged)
+          expect(verifyText(b64u(raw), m, b64u(sig))).toBe(false);
+      }
   });
 });

@@ -235,6 +235,7 @@ landable
 lede
 Lesk
 libc
+libsodium
 libvips
 lifecycles
 lightningcss
