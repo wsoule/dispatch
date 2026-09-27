@@ -1,5 +1,5 @@
 // Agent-written text lands in another agent's context, where it can forge
-// prompt structure; anything rendering it uses one of the three helpers here.
+// prompt structure; anything rendering it uses one of the helpers here.
 
 // Line breaks in every form a value could use to escape its line.
 const LINE_BREAKS = /[\r\n\v\f\u0085\u2028\u2029]+/g;
@@ -42,4 +42,16 @@ export function untrustedFenced(label: string, text: string): string {
     fence = `${bar} ${label} ${bar}`;
   }
   return [fence, body, fence].join('\n');
+}
+
+// An untrusted block between labelled fences with every line unaltered, so a
+// doc read and saved back whole, or a `find` copied from it, still matches.
+// The bar is widened past the text's longest tilde run, so no line can close it.
+export function untrustedVerbatim(label: string, text: string): string {
+  let longest = 0;
+  for (const run of text.match(/~+/g) ?? [])
+    longest = Math.max(longest, run.length);
+  const bar = '~'.repeat(Math.max(FENCE_BAR.length, longest + 1));
+  const fence = `${bar} ${label} ${bar}`;
+  return [fence, text, fence].join('\n');
 }
