@@ -2,7 +2,9 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   handleFromEmail,
+  MAX_HANDLE_BYTES,
   parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
@@ -28,6 +30,17 @@ describe('handleFromEmail', () => {
 
   it('falls back when the local part yields nothing usable', () => {
     expect(handleFromEmail('+++@example.com', new Set())).toBe('member');
+  });
+
+  it('keeps a colliding 64-character local part within 64 bytes', () => {
+    const local = 'a'.repeat(64);
+    const first = handleFromEmail(`${local}@x.com`, new Set());
+    const second = handleFromEmail(`${local}@y.com`, new Set([first]));
+    expect(first).toBe(local);
+    expect(second).toBe(`${'a'.repeat(63)}2`);
+    expect(new TextEncoder().encode(second).byteLength).toBeLessThanOrEqual(
+      MAX_HANDLE_BYTES
+    );
   });
 });
 
@@ -83,6 +96,15 @@ describe('parseTeam / serializeTeam', () => {
   it('defaults displayName to the handle when it is absent', () => {
     const yaml = 'members:\n  - handle: a\n    email: a@x.com\n';
     expect(parseTeam(yaml)[0]?.displayName).toBe('a');
+  });
+
+  it('drops a 65-byte handle and reports it by email', () => {
+    const yaml = `members:\n  - handle: ${'b'.repeat(65)}\n    email: long@x.com\n  - handle: ok\n    email: ok@x.com\n`;
+    expect(parseTeamReport(yaml)).toEqual({
+      members: [expect.objectContaining({ handle: 'ok' })],
+      dropped: ['long@x.com'],
+    });
+    expect(parseTeam(yaml).map((m) => m.handle)).toEqual(['ok']);
   });
 });
 

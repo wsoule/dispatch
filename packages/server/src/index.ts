@@ -864,6 +864,11 @@ async function bootServer(
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
+  for (const email of actorContext.droppedEmails) {
+    console.warn(
+      `team.yml: skipped the entry for ${email}: its handle is malformed or over 64 bytes; shorten it so this teammate stays addressable`
+    );
+  }
 
   // Credentials, once there is someone for them to speak for. The pair may be
   // supplied (a harness presetting the decide-tier token); the registry is

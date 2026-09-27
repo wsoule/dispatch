@@ -330,7 +330,9 @@ export {
 export type { RegisteredProject } from './registry.js';
 export {
   handleFromEmail,
+  MAX_HANDLE_BYTES,
   parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,

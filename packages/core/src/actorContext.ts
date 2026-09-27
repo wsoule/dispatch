@@ -7,7 +7,7 @@ import { formatActorRef } from './actor.js';
 import { DISPATCH_DIR } from './store.js';
 import type { TeamMember } from './team.js';
 import {
-  parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
@@ -78,7 +78,10 @@ export class ActorContext {
     readonly humanRef: string,
     // False when `.dispatch/team.yml` was unparseable (e.g. merge
     // conflict markers) — the caller should surface the degraded state.
-    readonly rosterReadable: boolean
+    readonly rosterReadable: boolean,
+    // Emails (or `(no email)`) of roster entries skipped as malformed; while
+    // any remain, resolve() leaves team.yml untouched so the owner can fix them.
+    readonly droppedEmails: readonly string[]
   ) {}
 
   static resolve(rootDir: string, runGit: GitReader): ActorContext {
@@ -91,9 +94,11 @@ export class ActorContext {
     // A conflicted roster must be reported, never treated as empty — that
     // would re-register the local member alone and wipe out the team.
     let existingMembers: TeamMember[] = [];
+    let droppedEmails: string[] = [];
     let rosterReadable = true;
     try {
-      existingMembers = parseTeam(existing);
+      ({ members: existingMembers, dropped: droppedEmails } =
+        parseTeamReport(existing));
     } catch (err) {
       if (!(err instanceof TeamParseError)) throw err;
       rosterReadable = false;
@@ -103,7 +108,8 @@ export class ActorContext {
     // survives a changed git email — the roster cannot infer identity itself.
     const knownHandle = readKnownHandle(rootDir);
     const result = upsertMember(existingMembers, email, name, knownHandle);
-    if (rosterReadable && result.changed) {
+    // Rewriting a roster with skipped entries would delete those teammates.
+    if (rosterReadable && droppedEmails.length === 0 && result.changed) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(file, serializeTeam(result.members));
     }
@@ -120,7 +126,8 @@ export class ActorContext {
         handle: result.member.handle,
         operator: null,
       }),
-      rosterReadable
+      rosterReadable,
+      droppedEmails
     );
   }
 

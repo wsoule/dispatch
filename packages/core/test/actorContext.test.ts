@@ -219,4 +219,14 @@ describe('ActorContext.resolve', () => {
       conflicted
     );
   });
+
+  it('never rewrites a roster that had an entry dropped', () => {
+    const root = fixture();
+    const file = join(root, '.dispatch', 'team.yml');
+    const yaml = `members:\n  - handle: ${'c'.repeat(65)}\n    email: long@x.com\n`;
+    writeFileSync(file, yaml);
+    const ctx = ActorContext.resolve(root, gitOk);
+    expect(ctx.droppedEmails).toEqual(['long@x.com']);
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+  });
 });
