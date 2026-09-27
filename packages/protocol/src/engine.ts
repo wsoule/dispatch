@@ -271,7 +271,8 @@ export class DeliveryEngine {
         t,
         muted,
         fields.get(t.recipient) ?? 'to',
-        t.recipient === replyTarget?.from || wakesRuns
+        t.recipient === replyTarget?.from ||
+          (wakesRuns && this.hasTask(t.recipient))
       );
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
     }
@@ -305,6 +306,15 @@ export class DeliveryEngine {
     }
 
     return { message, deliveries: settled, downgraded };
+  }
+
+  // Whether `address` is a run the host places under a task: held mail to a run
+  // is delivered only through its task, so a wake may hold nothing for any other.
+  private hasTask(address: Address): boolean {
+    return (
+      address.startsWith('run:') &&
+      this.host.taskOfRun(address.slice('run:'.length)) !== null
+    );
   }
 
   // The address a reply actually goes to: an ended run's task (see deliverableAddress).
