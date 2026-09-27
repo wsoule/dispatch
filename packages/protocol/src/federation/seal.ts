@@ -3,7 +3,7 @@ import { randomBytes } from 'node:crypto';
 import type { JsonValue } from '../envelope.js';
 import { b64u, fromB64u } from './encoding.js';
 import { aeadOpen, aeadSeal, encap, openBase, sealBase } from './hpke.js';
-import { canonicalize } from './jcs.js';
+import { canonicalizeLenient } from './jcs.js';
 import { privateKeyOf, publicOfPrivate } from './keys.js';
 import { MAX_SEALED_RECIPIENTS, TAG } from './ops.js';
 import type { FederatedOp, Sealed } from './ops.js';
@@ -39,7 +39,7 @@ export function sealPayload(input: {
     key,
     nonce,
     Buffer.from(aad),
-    Buffer.from(canonicalize(input.payload))
+    Buffer.from(canonicalizeLenient(input.payload))
   );
   const keys: Sealed['keys'] = {};
   for (const r of to) {

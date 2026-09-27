@@ -109,4 +109,12 @@ describe('sealing', () => {
     for (const bad of [highBit, aboveP])
       expect(canSealTo(b64u(bad))).toBe(false);
   });
+
+  // Only hashed text must be I-JSON; a sealed plaintext is never hashed.
+  it('seals and opens a payload holding a lone surrogate', () => {
+    const op = sealedOp({ hello: 'a\ud83d' });
+    expect(openPayload(op, 'bob-0000000b', bob.sealPriv)).toEqual({
+      hello: 'a\ud83d',
+    });
+  });
 });

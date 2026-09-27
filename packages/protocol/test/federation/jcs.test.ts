@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { canonicalize } from '../../src/federation/jcs.js';
+import { canonicalize, canonicalizeLenient } from '../../src/federation/jcs.js';
 
 describe('canonicalize (RFC 8785)', () => {
   // Escapes keep the RFC's code points; a precomposed U+FB33 would not survive NFC.
@@ -53,5 +53,12 @@ describe('canonicalize (RFC 8785)', () => {
     expect(canonicalize({ '\u{1f600}': '\u{1f600}' })).toBe(
       '{"\u{1f600}":"\u{1f600}"}'
     );
+  });
+
+  it('escapes a lone surrogate in text that is never hashed', () => {
+    expect(canonicalizeLenient({ b: 'a\ud800', '\udc00': 1 })).toBe(
+      '{"b":"a\\ud800","\\udc00":1}'
+    );
+    expect(() => canonicalizeLenient(Number.NaN)).toThrow();
   });
 });

@@ -2,15 +2,14 @@
 // lone surrogate, which I-JSON (RFC 8785's input) forbids.
 const LONE_SURROGATE = /\p{Cs}/u;
 
-function jsonString(s: string): string {
+function iJsonString(s: string): string {
   if (LONE_SURROGATE.test(s))
     throw new TypeError('JCS refuses a lone surrogate');
   return JSON.stringify(s);
 }
 
-// RFC 8785: keys sorted by UTF-16 code units (JS string order), strings and
-// numbers exactly as JSON.stringify writes them.
-export function canonicalize(value: unknown): string {
+// JCS with `str` writing each string and key, so only hashed text need refuse.
+function write(value: unknown, str: (s: string) => string): string {
   if (value === null) return 'null';
   switch (typeof value) {
     case 'boolean':
@@ -20,18 +19,30 @@ export function canonicalize(value: unknown): string {
         throw new TypeError('JCS refuses non-finite numbers');
       return JSON.stringify(value);
     case 'string':
-      return jsonString(value);
+      return str(value);
     case 'object': {
       if (Array.isArray(value))
-        return `[${value.map((v: unknown) => canonicalize(v === undefined ? null : v)).join(',')}]`;
+        return `[${value.map((v: unknown) => write(v === undefined ? null : v, str)).join(',')}]`;
       const obj = value as Record<string, unknown>;
       // A comparator-free sort compares UTF-16 code units, as JCS asks.
       const keys = Object.keys(obj)
         .filter((k) => obj[k] !== undefined)
         .sort();
-      return `{${keys.map((k) => `${jsonString(k)}:${canonicalize(obj[k])}`).join(',')}}`;
+      return `{${keys.map((k) => `${str(k)}:${write(obj[k], str)}`).join(',')}}`;
     }
     default:
       throw new TypeError(`JCS cannot serialize a ${typeof value}`);
   }
+}
+
+// RFC 8785: keys sorted by UTF-16 code units (JS string order), strings and
+// numbers exactly as JSON.stringify writes them, lone surrogates refused.
+export function canonicalize(value: unknown): string {
+  return write(value, iJsonString);
+}
+
+// canonicalize for text that is never hashed, such as a sealed payload: a lone
+// surrogate is escaped as JSON.stringify writes it rather than refused.
+export function canonicalizeLenient(value: unknown): string {
+  return write(value, JSON.stringify);
 }
