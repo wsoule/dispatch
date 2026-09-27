@@ -129,7 +129,6 @@ export function ThreadsView({
             <div className="p-3">
               <Composer
                 known={known}
-                disabledReason={null}
                 label={(address) => participantLabel(address, lookups)}
                 onSend={actions.send}
                 onSent={(result) => {

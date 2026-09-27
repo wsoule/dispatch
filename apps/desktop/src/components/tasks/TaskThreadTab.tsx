@@ -98,7 +98,6 @@ export function TaskThreadTab({
             known={pane.known}
             initialTo={locked}
             locked={locked}
-            disabledReason={null}
             label={(address) => participantLabel(address, pane.lookups)}
             onSend={actions.send}
             onSent={(result) => setFocus(result.message.thread)}

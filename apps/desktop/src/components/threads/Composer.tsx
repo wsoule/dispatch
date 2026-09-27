@@ -38,7 +38,6 @@ export interface ComposerProps {
   initialTo?: readonly string[];
   /** Recipients that cannot be removed, such as a task tab's own task. */
   locked?: readonly string[];
-  disabledReason: string | null;
   label: (address: string) => string;
   /** Sends the draft under its idempotency key, kept until a send or an edit. */
   onSend: (state: ComposeState, idempotencyKey: string) => Promise<SendResult>;
@@ -50,7 +49,6 @@ export function Composer({
   known,
   initialTo = NONE,
   locked = NONE,
-  disabledReason,
   label,
   onSend,
   onSent,
@@ -209,7 +207,7 @@ export function Composer({
           setTo((prev) => withoutRecipient(prev, id, locked));
           renewKey();
         }}
-        disabled={disabledReason !== null || sending}
+        disabled={sending}
         placeholder="Write a message… type @ to add a recipient"
         ariaLabel="New message"
         completion={
@@ -247,9 +245,6 @@ export function Composer({
         <p role="alert" className="text-destructive text-[12px]">
           {problemText(problem)}
         </p>
-      )}
-      {disabledReason !== null && (
-        <p className="text-muted-foreground text-[12px]">{disabledReason}</p>
       )}
     </div>
   );

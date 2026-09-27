@@ -27,7 +27,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -44,7 +43,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={people}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -61,14 +59,7 @@ describe('Composer', () => {
 
   it('blocks an @token that matches nothing, inline, and sends nothing', () => {
     const onSend = mock(() => Promise.resolve(SENT));
-    render(
-      <Composer
-        known={KNOWN}
-        disabledReason={null}
-        label={label}
-        onSend={onSend}
-      />
-    );
+    render(<Composer known={KNOWN} label={label} onSend={onSend} />);
     type('hello @bogus');
     press('Enter');
     expect(screen.getByRole('alert').textContent).toContain(
@@ -88,14 +79,7 @@ describe('Composer', () => {
         )
       )
     );
-    render(
-      <Composer
-        known={KNOWN}
-        disabledReason={null}
-        label={label}
-        onSend={onSend}
-      />
-    );
+    render(<Composer known={KNOWN} label={label} onSend={onSend} />);
     type('@task:t-zzzzzz');
     press('Enter');
     type('ship it');
@@ -109,29 +93,12 @@ describe('Composer', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a locked recipient and says why the window cannot send', () => {
-    render(
-      <Composer
-        known={KNOWN}
-        initialTo={['task:t-1a2b3c']}
-        locked={['task:t-1a2b3c']}
-        disabledReason="This window cannot send."
-        label={label}
-        onSend={mock(() => Promise.resolve(SENT))}
-      />
-    );
-    expect(screen.getByText('task:t-1a2b3c')).toBeTruthy();
-    expect(screen.getByText('This window cannot send.')).toBeTruthy();
-    expect(box().disabled).toBe(true);
-  });
-
   it('offers no way to remove a locked recipient, and removes any other', () => {
     render(
       <Composer
         known={KNOWN}
         initialTo={['task:t-1a2b3c', 'human:wyat']}
         locked={['task:t-1a2b3c']}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -148,13 +115,7 @@ describe('Composer', () => {
     const onSend = mock((_state: ComposeState) => Promise.resolve(SENT));
     const onSent = mock((_result: SendResult) => {});
     render(
-      <Composer
-        known={KNOWN}
-        disabledReason={null}
-        label={label}
-        onSend={onSend}
-        onSent={onSent}
-      />
+      <Composer known={KNOWN} label={label} onSend={onSend} onSent={onSent} />
     );
     type('@t-1a');
     press('Enter');
@@ -187,7 +148,6 @@ describe('Composer', () => {
       <Composer
         known={KNOWN}
         initialTo={['task:t-1a2b3c']}
-        disabledReason={null}
         label={label}
         onSend={onSend}
       />
@@ -216,7 +176,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -238,7 +197,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -259,7 +217,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -278,7 +235,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
