@@ -1,6 +1,10 @@
+import type { DocRevisionInfo } from '@dispatch/core';
+import { parseDocFile } from '@dispatch/core';
 import { afterAll, describe, expect, it } from 'bun:test';
 import {
+  mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   realpathSync,
   rmSync,
@@ -9,8 +13,8 @@ import {
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { editLoop, importFiles } from '../src/commands/docs.js';
-import type { DocsApi } from '../src/docsApi.js';
+import { editLoop, exportDocs, importFiles } from '../src/commands/docs.js';
+import type { DocsApi, ImportReportInfo } from '../src/docsApi.js';
 
 // A DocsApi whose saveBody answers a scripted sequence and records what it got.
 function fakeApi(
@@ -256,6 +260,142 @@ describe('dispatch docs import', () => {
       'put imp-1 b # B\n',
       'commit imp-1 true',
       'delete imp-1',
+    ]);
+  });
+});
+
+describe('dispatch docs import with unreadable paths', () => {
+  it('reports a missing path and a directory by name and imports the rest', async () => {
+    const good = join(tmpDir, 'good.md');
+    writeFileSync(good, '# Good\n');
+    const dir = join(tmpDir, 'folder.md');
+    mkdirSync(dir, { recursive: true });
+    const gone = join(tmpDir, 'gone.md');
+    let sent: string[] = [];
+    const api = {
+      openImport: (files: { name: string }[]) => {
+        sent = files.map((f) => f.name);
+        return Promise.resolve({ id: 'imp-1', need: [] });
+      },
+      putImportContent: () => Promise.resolve(),
+      commitImport: (): Promise<ImportReportInfo> =>
+        Promise.resolve({
+          dryRun: false,
+          files: 1,
+          names: 1,
+          distinctContents: 1,
+          docsCreated: 1,
+          docsExisting: 0,
+          partDocsCreated: 0,
+          contentsImported: 1,
+          splitContents: 0,
+          revisionsCreated: 1,
+          duplicates: 0,
+          alreadyPresent: 0,
+          tombstoned: 0,
+          tombstonedNames: 0,
+          failedNames: 0,
+          errors: [],
+          parity: { files: true, names: true },
+        }),
+      deleteImport: () => Promise.resolve(),
+    } as unknown as DocsApi;
+    const report = await importFiles(api, [good, gone, dir], { dryRun: false });
+    expect(sent).toEqual(['good.md']);
+    expect(report.errors.map((e) => [e.path, e.reason])).toEqual([
+      [gone, 'missing'],
+      [dir, 'missing'],
+    ]);
+    expect(report).toMatchObject({
+      files: 3,
+      names: 3,
+      failedNames: 2,
+      parity: { files: true, names: true },
+    });
+  });
+});
+
+// A revision of doc `a` for the export fake: n, its parents, author and sealed flag.
+function rev(
+  n: number,
+  parents: number[],
+  author: string,
+  sealed = true
+): DocRevisionInfo {
+  return {
+    id: `rev-${n}`,
+    doc: 'doc-a',
+    n,
+    parents: parents.map((p) => `rev-${p}`),
+    title: 'A',
+    author,
+    cause: 'save',
+    summary: '',
+    approval: null,
+    hash: `h${n}`,
+    bytes: 1,
+    conflicted: false,
+    sealed,
+    unreviewed: false,
+    provisional: false,
+    via: null,
+    createdAt: '2026-09-26T10:00:00.000Z',
+    updatedAt: '2026-09-26T10:00:00.000Z',
+  };
+}
+
+describe('dispatch docs export', () => {
+  it('pages through every sealed revision and names only the head ancestry authors', async () => {
+    // 205 revisions in a line, a side revision 206 off 205, and head 207 off 205.
+    const revisions: DocRevisionInfo[] = [];
+    for (let n = 1; n <= 205; n++)
+      revisions.push(
+        rev(
+          n,
+          n === 1 ? [] : [n - 1],
+          n % 2 === 0 ? 'run:r-1' : 'human:wyat',
+          n !== 3
+        )
+      );
+    revisions.push(rev(206, [205], 'run:r-x'), rev(207, [205], 'human:wyat'));
+    const newestFirst = [...revisions].reverse();
+    const pages: (number | undefined)[] = [];
+    const api = {
+      list: () =>
+        Promise.resolve({
+          docs: [
+            {
+              id: 'doc-a',
+              handle: 'a',
+              title: 'A',
+              status: 'draft',
+              scope: 'team',
+              updatedAt: '2026-09-26T11:00:00.000Z',
+            },
+          ],
+          total: 1,
+        }),
+      get: () =>
+        Promise.resolve({ rev: revisions[206], links: [], text: 'head\n' }),
+      history: (_ref: string, limit: number, before?: number) => {
+        pages.push(before);
+        return Promise.resolve({
+          revisions: newestFirst
+            .filter((r) => before === undefined || (r.n ?? 0) < before)
+            .slice(0, limit),
+        });
+      },
+      revision: (_ref: string, id: string) =>
+        Promise.resolve({ body: `${id}\n` }),
+    } as unknown as DocsApi;
+    const out = join(tmpDir, 'export');
+    expect(await exportDocs(api, out, true)).toBe(1);
+    expect(pages).toEqual([undefined, 8]);
+    expect(readdirSync(join(out, '.history', 'a')).length).toBe(206);
+    const parsed = parseDocFile(readFileSync(join(out, 'a.md'), 'utf8'));
+    expect('meta' in parsed ? parsed.meta.authors : parsed.error).toEqual([
+      'human:wyat',
+      'run:r-1',
     ]);
   });
 });

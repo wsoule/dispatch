@@ -93,9 +93,11 @@ export interface DocsApi {
     input: { target: string; rel: LinkRel; replace?: boolean }
   ): Promise<unknown>;
   unlink(ref: string, target: string): Promise<unknown>;
+  // Numbered revisions newest first; `before` pages to those below that number.
   history(
     ref: string,
-    limit?: number
+    limit?: number,
+    before?: number
   ): Promise<{ revisions: DocRevisionInfo[] }>;
   revision(
     ref: string,
@@ -204,8 +206,11 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
         `${docPath(ref)}/links/${encodeURIComponent(target.slice(0, colon))}/${encodeURIComponent(target.slice(colon + 1))}`
       );
     },
-    history: (ref, limit = 50) =>
-      json('GET', `${docPath(ref)}/revisions?limit=${limit}`),
+    history: (ref, limit = 50, before) => {
+      const q = new URLSearchParams({ limit: String(limit) });
+      if (before !== undefined) q.set('before', String(before));
+      return json('GET', withQuery(`${docPath(ref)}/revisions`, q));
+    },
     revision: (ref, rev) =>
       json(
         'GET',

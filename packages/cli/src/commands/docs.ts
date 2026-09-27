@@ -1,4 +1,9 @@
-import type { DocFileMeta, DocStatus, LinkRel } from '@dispatch/core';
+import type {
+  DocFileMeta,
+  DocRevisionInfo,
+  DocStatus,
+  LinkRel,
+} from '@dispatch/core';
 import { LINK_RELS, renderDocFile } from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
@@ -112,6 +117,37 @@ export async function editLoop(
   }
 }
 
+// The name an import groups a file under, as the daemon keys it.
+const importName = (path: string): string =>
+  basename(path).replace(/\.md$/i, '');
+
+// Adds paths this machine could not read to the daemon's report as errors,
+// counting a name only they carry as failed, so both identities still hold.
+function withUnread(
+  report: ImportReportInfo,
+  unread: readonly { path: string; detail: string }[],
+  sent: readonly string[]
+): ImportReportInfo {
+  if (unread.length === 0) return report;
+  const known = new Set(sent.map(importName));
+  const errors = [...report.errors];
+  let failedNames = 0;
+  for (const u of unread) {
+    errors.push({ path: u.path, reason: 'missing', detail: u.detail });
+    const name = importName(u.path);
+    if (known.has(name)) continue;
+    known.add(name);
+    failedNames++;
+  }
+  return {
+    ...report,
+    files: report.files + unread.length,
+    names: report.names + failedNames,
+    failedNames: report.failedNames + failedNames,
+    errors,
+  };
+}
+
 // Reads files on this machine (the daemon never reads arbitrary paths) and runs
 // one staged session: manifest, uploads of what the daemon needs, commit.
 export async function importFiles(
@@ -119,16 +155,24 @@ export async function importFiles(
   paths: readonly string[],
   opts: { link?: string; dryRun: boolean }
 ): Promise<ImportReportInfo> {
-  const files = paths.map((path) => {
-    const content = readFileSync(path);
-    return {
-      path,
-      name: basename(path),
-      mtime: statSync(path).mtime.toISOString(),
-      bytes: content.byteLength,
-      hash: createHash('sha256').update(content).digest('hex'),
-      content,
-    };
+  const unread: { path: string; detail: string }[] = [];
+  const files = paths.flatMap((path) => {
+    try {
+      const content = readFileSync(path);
+      return [
+        {
+          path,
+          name: basename(path),
+          mtime: statSync(path).mtime.toISOString(),
+          bytes: content.byteLength,
+          hash: createHash('sha256').update(content).digest('hex'),
+          content,
+        },
+      ];
+    } catch (err) {
+      unread.push({ path, detail: (err as Error).message });
+      return [];
+    }
   });
   const { id, need } = await api.openImport(
     files.map(({ content: _content, ...f }) => f),
@@ -139,7 +183,12 @@ export async function importFiles(
     if (f !== undefined) await api.putImportContent(id, hash, f.content);
   }
   try {
-    return await api.commitImport(id, opts.dryRun);
+    const report = await api.commitImport(id, opts.dryRun);
+    return withUnread(
+      report,
+      unread,
+      files.map((f) => f.path)
+    );
   } finally {
     if (opts.dryRun) await api.deleteImport(id).catch(() => undefined);
   }
@@ -189,9 +238,47 @@ function runEditor(file: string): number {
   );
 }
 
+const HISTORY_PAGE = 200;
+
+// Every numbered revision of a doc, newest first, a page at a time.
+async function allRevisions(
+  api: DocsApi,
+  id: string
+): Promise<DocRevisionInfo[]> {
+  const out: DocRevisionInfo[] = [];
+  for (;;) {
+    const before = out.at(-1)?.n ?? undefined;
+    const page = (await api.history(id, HISTORY_PAGE, before)).revisions;
+    out.push(...page);
+    const last = page.at(-1);
+    if (page.length < HISTORY_PAGE || last === undefined || last.n === null)
+      return out;
+  }
+}
+
+// Distinct authors of the head and its ancestors, newest first, at most 20.
+function ancestryAuthors(
+  head: DocRevisionInfo,
+  revisions: readonly DocRevisionInfo[]
+): string[] {
+  const all = [head, ...revisions];
+  const byId = new Map(all.map((r) => [r.id, r]));
+  const ancestry = new Set<string>();
+  const stack = [head.id];
+  for (let id = stack.pop(); id !== undefined; id = stack.pop()) {
+    if (ancestry.has(id)) continue;
+    ancestry.add(id);
+    stack.push(...(byId.get(id)?.parents ?? []));
+  }
+  const authors = new Set(
+    all.filter((r) => ancestry.has(r.id)).map((r) => r.author)
+  );
+  return [...authors].slice(0, 20);
+}
+
 // Writes every doc the caller can see to `dir` in the receipt file format, and
 // with `revHistory` each sealed revision's body under `.history/<handle>/`.
-async function exportDocs(
+export async function exportDocs(
   api: DocsApi,
   dir: string,
   revHistory: boolean
@@ -202,7 +289,7 @@ async function exportDocs(
     const page = await api.list({ includeArchived: true, limit: 200, offset });
     for (const d of page.docs) {
       const r = await api.get(d.id);
-      const history = (await api.history(d.id, 200)).revisions;
+      const history = await allRevisions(api, d.id);
       const meta: DocFileMeta = {
         id: d.id,
         slug: d.handle,
@@ -219,7 +306,7 @@ async function exportDocs(
           target: `${l.target.type}:${l.target.id}`,
           rel: l.rel,
         })),
-        authors: [...new Set(history.map((h) => h.author))].slice(0, 20),
+        authors: ancestryAuthors(r.rev, history),
         updatedAt: d.updatedAt,
       };
       const sub = d.scope === 'personal' ? join(dir, 'personal') : dir;
