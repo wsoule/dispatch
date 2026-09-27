@@ -223,7 +223,7 @@ describe('ask', () => {
     );
     await expect(
       open({ clientMessageId: 'c-9', kind: 'message', replyTo: gate.id })
-    ).rejects.toMatchObject({ code: 'forbidden', field: 'replyTo' });
+    ).rejects.toMatchObject({ code: 'not-found', field: 'replyTo' });
   });
 
   it('fails an unanswered ask when its task is dropped, but keeps an answered one completed', async () => {
