@@ -148,6 +148,10 @@ export interface ExecutorEvents {
   // The session has its result and is winding down to onFinish; a message
   // sent from here on is never read, so delivery waits for the next run.
   onEnding?(): void;
+  // Export mode's load check changed the run's memory mode; `detail` says why.
+  onMemoryMode?(mode: MemoryMode, detail: string): void;
+  // The agent read exported memory files, by a Read call or Claude's own recall.
+  onMemoryRecall?(paths: string[], via: 'read' | 'claude-recall'): void;
   onFinish(finish: {
     state: 'finished' | 'failed';
     costUsd?: number;
@@ -196,6 +200,29 @@ export interface ExecutorStartOptions {
   // The 0600 file holding this run's messaging token. Only the path travels to
   // the dispatch MCP server, since backends put MCP env on a process's argv.
   runTokenFile?: string;
+  // How a Claude session carries memory; absent is `native`, today's behavior.
+  memory?: ExecutorMemoryOptions;
+}
+
+/** A run's memory mode, including the two outcomes of export's load check. */
+export type MemoryMode =
+  | 'export'
+  | 'native'
+  | 'prompt'
+  | 'export-fallback'
+  | 'export-unloaded';
+
+/** The memory mode a session starts in, and what export mode needs. */
+interface ExecutorMemoryOptions {
+  mode: 'export' | 'native' | 'prompt';
+  // The absolute export directory Claude Code loads MEMORY.md from.
+  dir?: string;
+  // The oldest Claude Code version the live probe passed on.
+  probeVersion?: string;
+  // The prompt, with the memory index, that a prompt-mode restart starts from.
+  fallbackPrompt?: string;
+  // Reaches the agent with its first tool result when nothing loaded.
+  unloadedNote?: string;
 }
 
 // What the orchestrator may assume about an executor beyond `start()`: which

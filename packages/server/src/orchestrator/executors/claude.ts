@@ -10,8 +10,14 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { CartoBinary } from '@dispatch/core/carto';
+import { isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { floorCheckForToolInput } from '../../floor.js';
+import {
+  claudeMemorySettings,
+  compareVersions,
+  mergeFlagSettings,
+} from '../../memory/claudeModes.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import type { StdioServerSpec } from '../dispatchMcp.js';
 import { cartoMcpSpec, cartoSpecFor, dispatchMcpSpec } from '../dispatchMcp.js';
@@ -255,6 +261,119 @@ function withinMs(ms: number, work: Promise<unknown>): Promise<unknown> {
 export const STOP_DENIAL_MESSAGE =
   'The user asked this run to stop. Do not start any new tool calls. ' +
   'Summarize what you completed and what is left unfinished, then end your turn.';
+
+// What every tool call is refused with while an export-mode session waits to
+// confirm Claude Code loaded Dispatch's MEMORY.md.
+const MEMORY_PENDING_DENIAL =
+  "memory setup pending: Dispatch is confirming this session's memory loaded. Try the call again.";
+
+// How long the load check waits for the CLI to list the memory files it loaded.
+const MEMORY_CHECK_MS = 30_000;
+
+// The `memoryFiles` type Claude Code gives an auto-memory MEMORY.md, read from
+// the bundled CLI (2.1.207); the live probe confirms it on each passing version.
+const AUTO_MEMORY_FILE_TYPE = 'AutoMem';
+
+// Whether `path` names something inside `dir`.
+function isInside(path: string, dir: string): boolean {
+  const rel = relative(dir, path);
+  return (
+    rel !== '' &&
+    rel !== '..' &&
+    !rel.startsWith(`..${sep}`) &&
+    !isAbsolute(rel)
+  );
+}
+
+// The memory files the CLI says it loaded, bounded so a CLI that never answers
+// cannot hold every tool of the session forever.
+async function loadedMemoryFiles(
+  sdkQuery: Query
+): Promise<{ path: string; type: string }[]> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`no answer within ${MEMORY_CHECK_MS / 1000}s`));
+    }, MEMORY_CHECK_MS);
+  });
+  try {
+    return (await Promise.race([sdkQuery.getContextUsage(), timeout]))
+      .memoryFiles;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+type LoadCheck =
+  | { outcome: 'loaded' }
+  | { outcome: 'fallback' | 'unloaded'; detail: string };
+
+// Export mode's load check. Any auto-memory file outside the export, or a CLI
+// that cannot list its files, means native notes may be in context, so the
+// session must restart; otherwise the export loaded on a probed CLI, or it did not.
+async function checkExportLoaded(
+  sdkQuery: Query,
+  dir: string,
+  probeVersion: string,
+  version: string
+): Promise<LoadCheck> {
+  let files: { path: string; type: string }[];
+  try {
+    files = await loadedMemoryFiles(sdkQuery);
+  } catch (err) {
+    return {
+      outcome: 'fallback',
+      detail: `Claude Code ${version} could not list the memory files it loaded: ${(err as Error).message}`,
+    };
+  }
+  const native = files.find(
+    (f) => f.type === AUTO_MEMORY_FILE_TYPE && !isInside(f.path, dir)
+  );
+  if (native !== undefined) {
+    return {
+      outcome: 'fallback',
+      detail: `Claude Code ${version} loaded ${native.path} instead of the export`,
+    };
+  }
+  const exported = resolve(dir, 'MEMORY.md');
+  if (!files.some((f) => resolve(f.path) === exported)) {
+    return {
+      outcome: 'unloaded',
+      detail: `Claude Code ${version} loaded no MEMORY.md`,
+    };
+  }
+  if (compareVersions(version, probeVersion) < 0) {
+    return {
+      outcome: 'unloaded',
+      detail: `Claude Code ${version} is older than the probed ${probeVersion}`,
+    };
+  }
+  return { outcome: 'loaded' };
+}
+
+// The file a Read tool call read, from a PostToolUse hook's input.
+function readFilePath(input: {
+  hook_event_name: string;
+  tool_name?: string;
+  tool_input?: unknown;
+}): string | null {
+  if (input.hook_event_name !== 'PostToolUse' || input.tool_name !== 'Read') {
+    return null;
+  }
+  const toolInput = input.tool_input as
+    | { file_path?: unknown }
+    | null
+    | undefined;
+  const path = toolInput?.file_path;
+  return typeof path === 'string' ? path : null;
+}
+
+// What a session hands the session that replaces it: the follow-ups and notes
+// that arrived while its load check ran.
+interface CarriedInput {
+  sent: string[];
+  notes: string[];
+}
 
 // Builds the one SDKUserMessage shape this executor ever sends: plain text,
 // no images or tool results. Both the initial task prompt and any mid-run
@@ -679,7 +798,39 @@ export class ClaudeExecutor implements Executor {
     });
   }
 
+  // Hands back a handle that follows the run's live session: export mode's
+  // load check can replace the first session with a prompt-mode one.
   start(opts: ExecutorStartOptions, events: ExecutorEvents): ExecutorRun {
+    let stopRequested = false;
+    const restart = (
+      next: ExecutorStartOptions,
+      carried: CarriedInput
+    ): void => {
+      current = this.runSession(next, events, restart);
+      for (const text of carried.sent) current.send(text);
+      for (const note of carried.notes) current.notify(note);
+      if (stopRequested) current.requestStop();
+    };
+    let current = this.runSession(opts, events, restart);
+    return {
+      interrupt: () => current.interrupt(),
+      requestStop: () => {
+        stopRequested = true;
+        current.requestStop();
+      },
+      send: (message) => current.send(message),
+      approve: (requestId, decision) => current.approve(requestId, decision),
+      notify: (text) => current.notify(text),
+    };
+  }
+
+  // One Agent SDK session of a run. `restart` replaces it with a prompt-mode
+  // session when export mode finds Claude Code loaded native memory.
+  private runSession(
+    opts: ExecutorStartOptions,
+    events: ExecutorEvents,
+    restart: (next: ExecutorStartOptions, carried: CarriedInput) => void
+  ): ExecutorRun {
     const pendingApprovals = new Map<string, ApprovalResolver>();
     let interrupted = false;
     // Set before every onFinish call, so notify() drops a note that arrives
@@ -692,13 +843,36 @@ export class ClaudeExecutor implements Executor {
     // (see windDown below): nothing may be approved any more.
     let ending = false;
     // Tools the user said "always, for this run" about. Session-scoped by construction: this
-    // Set lives inside start(), so it dies with the run rather than leaking a permission grant
-    // into the next one — which is the property that makes approve-for-session safe to offer
-    // at all.
+    // Set lives inside runSession(), so it dies with the run rather than leaking a permission
+    // grant into the next one — which is the property that makes approve-for-session safe to
+    // offer at all.
     const sessionAllowed = new Set<string>();
     // Digests waiting for the agent's next tool result (see notify below).
     const pendingNotes: string[] = [];
-    const postToolUse: HookCallback = () => {
+    const mem = opts.memory;
+    const memorySettings = claudeMemorySettings(
+      mem?.mode ?? 'native',
+      mem?.dir
+    );
+    // The export directory, in export mode only (claudeMemorySettings refuses
+    // export without an absolute one).
+    const exportDir = mem?.mode === 'export' ? (mem.dir ?? null) : null;
+    // Export mode holds every tool until Claude confirms it loaded Dispatch's
+    // MEMORY.md, and holds the session's entries back with them.
+    let memoryPending = exportDir !== null;
+    const buffered: NormalizedEntry[] = [];
+    const sentWhilePending: string[] = [];
+    const emit = (entry: NormalizedEntry): void => {
+      if (memoryPending) buffered.push(entry);
+      else events.onEntry(entry);
+    };
+    const postToolUse: HookCallback = (input) => {
+      if (exportDir !== null) {
+        const read = readFilePath(input);
+        if (read !== null && isInside(read, exportDir)) {
+          events.onMemoryRecall?.([read], 'read');
+        }
+      }
       if (pendingNotes.length === 0) return Promise.resolve({});
       const additionalContext = pendingNotes.splice(0).join('\n');
       return Promise.resolve({
@@ -759,6 +933,9 @@ export class ClaudeExecutor implements Executor {
       if (stopRequested) {
         return { behavior: 'deny', message: STOP_DENIAL_MESSAGE };
       }
+      if (memoryPending) {
+        return { behavior: 'deny', message: MEMORY_PENDING_DENIAL };
+      }
       // The irreversibility floor: a force-push, npm publish, or
       // repo-visibility change always raises the approval flow below — ahead
       // of every allow branch, so neither an acceptEdits auto-allow nor an
@@ -814,7 +991,13 @@ export class ClaudeExecutor implements Executor {
     // approves, and a settings PermissionRequest hook can answer before it
     // — see floorGuard.
     const floor = floorGuard(holdForHuman, () =>
-      stopRequested ? STOP_DENIAL_MESSAGE : ending ? RUN_ENDED_DENIAL : null
+      stopRequested
+        ? STOP_DENIAL_MESSAGE
+        : ending
+          ? RUN_ENDED_DENIAL
+          : memoryPending
+            ? MEMORY_PENDING_DENIAL
+            : null
     );
     const sdkOptions: Options = {
       cwd: opts.cwd,
@@ -825,9 +1008,18 @@ export class ClaudeExecutor implements Executor {
       effort: opts.effort,
       resume: opts.resumeSessionId,
       canUseTool,
-      settings: floor.settings,
+      // The memory mode's settings sit beside the floor's in the flag layer,
+      // both env pins kept.
+      settings: mergeFlagSettings(
+        floor.settings as Record<string, unknown>,
+        memorySettings.settings
+      ) as Options['settings'],
+      ...(memorySettings.additionalDirectories.length > 0
+        ? { additionalDirectories: memorySettings.additionalDirectories }
+        : {}),
       // The floor's PreToolUse hook, plus the PostToolUse hook that hands
-      // queued notes to the agent with its next tool result.
+      // queued notes to the agent with its next tool result and reports
+      // exported memory files it read.
       hooks: { ...floor.hooks, PostToolUse: [{ hooks: [postToolUse] }] },
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
@@ -1011,24 +1203,71 @@ export class ClaudeExecutor implements Executor {
               subagents,
               message.parent_tool_use_id ?? undefined
             )) {
-              events.onEntry(entry);
+              emit(entry);
             }
           } else if (message.type === 'user') {
             const ts = new Date().toISOString();
             for (const entry of entriesForUserContent(message, ts, subagents)) {
-              events.onEntry(entry);
+              emit(entry);
             }
           } else if (message.type === 'system') {
             if (message.subtype === 'background_tasks_changed') {
               backgroundTasks = message.tasks.map((task) => task.task_id);
+            } else if (message.subtype === 'memory_recall') {
+              const recalled =
+                exportDir === null
+                  ? []
+                  : message.memories
+                      .map((memory) => memory.path)
+                      .filter((path) => isInside(path, exportDir));
+              if (recalled.length > 0) {
+                events.onMemoryRecall?.(recalled, 'claude-recall');
+              }
             } else if (message.subtype === 'init') {
               cliVersion = message.claude_code_version;
+              if (memoryPending && exportDir !== null) {
+                const check = await checkExportLoaded(
+                  sdkQuery,
+                  exportDir,
+                  mem?.probeVersion ?? '0.0.0',
+                  message.claude_code_version
+                );
+                if (interrupted) break;
+                if (check.outcome === 'fallback') {
+                  // Claude may hold the native notes (its system prompt can
+                  // name that directory), so this session ends before any tool.
+                  buffered.length = 0;
+                  sdkQuery.close();
+                  events.onMemoryMode?.('export-fallback', check.detail);
+                  restart(
+                    {
+                      ...opts,
+                      prompt: mem?.fallbackPrompt ?? opts.prompt,
+                      memory: { mode: 'prompt' },
+                    },
+                    {
+                      sent: sentWhilePending.splice(0),
+                      notes: pendingNotes.splice(0),
+                    }
+                  );
+                  return;
+                }
+                memoryPending = false;
+                if (check.outcome === 'unloaded') {
+                  const note = mem?.unloadedNote;
+                  if (note !== undefined && note !== '') {
+                    pendingNotes.push(note);
+                  }
+                  events.onMemoryMode?.('export-unloaded', check.detail);
+                }
+                for (const entry of buffered.splice(0)) events.onEntry(entry);
+              }
             }
             const lifecycle = subagents.onSystem(
               message,
               new Date().toISOString()
             );
-            if (lifecycle !== null) events.onEntry(lifecycle);
+            if (lifecycle !== null) emit(lifecycle);
             if (message.session_id !== sessionId) {
               // A resume that did not reattach: the SDK keeps a plain
               // `resume` on the SAME session id (only `forkSession` mints a
@@ -1140,6 +1379,7 @@ export class ClaudeExecutor implements Executor {
         pendingApprovals.clear();
       },
       send(message: string): void {
+        if (memoryPending) sentWhilePending.push(message);
         queue.push(message);
       },
       approve(requestId: string, decision: ApprovalDecision): void {
