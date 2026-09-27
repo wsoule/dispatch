@@ -189,26 +189,54 @@ function Control({
       );
     case 'choices':
       return (
-        <div
-          role="group"
-          aria-label="Answer"
-          className="flex flex-wrap gap-1.5"
-        >
-          {control.choices.map((choice) => (
-            <Button
-              key={choice}
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void answer(
-                  control.gate ? { body: '', choice } : { body: choice, choice }
-                )
-              }
-            >
-              {choice}
-            </Button>
-          ))}
-        </div>
+        <Choices
+          choices={control.choices}
+          gate={control.gate}
+          answer={answer}
+        />
       );
   }
+}
+
+// Choice buttons that hold while one answer is in flight, so a double click
+// answers once rather than failing the second time as already answered.
+function Choices({
+  choices,
+  gate,
+  answer,
+}: {
+  choices: string[];
+  gate: boolean;
+  answer: (reply: Reply) => Promise<void>;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const choose = async (choice: string): Promise<void> => {
+    if (pending !== null) return;
+    setPending(choice);
+    try {
+      await answer(gate ? { body: '', choice } : { body: choice, choice });
+    } finally {
+      setPending(null);
+    }
+  };
+  return (
+    <div
+      role="group"
+      aria-label="Answer"
+      aria-busy={pending === null ? undefined : true}
+      className="flex flex-wrap gap-1.5"
+    >
+      {choices.map((choice) => (
+        <Button
+          key={choice}
+          size="sm"
+          variant="outline"
+          disabled={pending !== null}
+          onClick={() => void choose(choice)}
+        >
+          {pending === choice ? 'Sending…' : choice}
+        </Button>
+      ))}
+    </div>
+  );
 }

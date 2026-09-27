@@ -101,6 +101,41 @@ test('answers a question put to me with the choice as body and choice', async ()
   );
 });
 
+test('holds the choices while an answer is in flight, so a double click answers once', async () => {
+  const q = msg('m-q', {
+    kind: 'question',
+    blocking: true,
+    choices: ['Mapbox', 'Leaflet'],
+  });
+  let settle = () => {};
+  const onAnswer = mock(
+    (_m: Message, _r: { body: string; choice?: string }) =>
+      new Promise<void>((resolve) => {
+        settle = resolve;
+      })
+  );
+  renderRow(q, { onAnswer });
+  fireEvent.click(screen.getByRole('button', { name: 'Mapbox' }));
+  const sending = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'Sending…',
+  });
+  expect(sending.disabled).toBe(true);
+  const other = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'Leaflet',
+  });
+  expect(other.disabled).toBe(true);
+  fireEvent.click(sending);
+  fireEvent.click(other);
+  expect(onAnswer).toHaveBeenCalledTimes(1);
+  settle();
+  await waitFor(() =>
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Mapbox' }).disabled
+    ).toBe(false)
+  );
+  expect(screen.queryByRole('alert')).toBeNull();
+});
+
 test('shows a gate read-only, with the reason and no buttons, to a viewer who cannot decide', () => {
   const wake = msg('m-w', {
     from: 'agent:dispatch',
