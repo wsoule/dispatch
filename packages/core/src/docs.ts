@@ -275,22 +275,27 @@ export function docBodyProblem(body: unknown): string | null {
   return null;
 }
 
-// A new doc's slug from its title. `slugify` cuts at 40, too short for dated
-// names; an id prefix or a route word gets `the-` so the slug stays valid.
-export function docSlug(title: string): string {
-  let base = title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '');
-  if (base === '') return 'untitled';
-  if (
-    base.startsWith('doc-') ||
-    base.startsWith('rev-') ||
-    RESERVED_DOC_SLUGS.includes(base)
-  )
-    base = `the-${base}`;
-  if (base.length <= DOCS_LIMITS.slugChars) return base;
-  const cut = base.slice(0, DOCS_LIMITS.slugChars);
+// A derived slug held to 64 characters, cut back to its last whole word.
+function fitSlug(slug: string): string {
+  if (slug.length <= DOCS_LIMITS.slugChars) return slug;
+  const cut = slug.slice(0, DOCS_LIMITS.slugChars);
   const dash = cut.lastIndexOf('-');
   return (dash > 0 ? cut.slice(0, dash) : cut).replace(/-+$/, '');
+}
+
+// A new doc's slug from its title. `slugify` cuts at 40, too short for dated
+// names; a cut slug on an id prefix or a route word gets `the-` to stay valid.
+export function docSlug(title: string): string {
+  const base = fitSlug(
+    title
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+  );
+  if (base === '') return 'untitled';
+  const refused =
+    base.startsWith('doc-') ||
+    base.startsWith('rev-') ||
+    RESERVED_DOC_SLUGS.includes(base);
+  return refused ? fitSlug(`the-${base}`) : base;
 }

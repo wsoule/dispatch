@@ -8,6 +8,7 @@ import {
   docTitleProblem,
   jsonEscapedBytes,
   normalizeDocText,
+  RESERVED_DOC_SLUGS,
 } from '../src/docs.js';
 
 describe('normalizeDocText', () => {
@@ -39,6 +40,21 @@ describe('docSlug', () => {
     expect(docSlug('日本語')).toBe('untitled');
     for (const title of ['Doc overview', 'Search', '日本語', 'x'.repeat(100)])
       expect(docSlugProblem(docSlug(title))).toBeNull();
+  });
+
+  it('checks the cut slug, so a long hash after a route word cannot strip it bare', () => {
+    const hash = 'x'.repeat(64);
+    for (const word of RESERVED_DOC_SLUGS)
+      expect(docSlug(`${word} ${hash}`)).toBe(`the-${word}`);
+    for (const title of [
+      `Doc ${hash}`,
+      `Rev ${hash}`,
+      `Doc ${'a'.repeat(58)} ${'b'.repeat(10)}`,
+      `Search ${'x'.repeat(70)}`,
+    ]) {
+      const slug = docSlug(title);
+      expect(docSlugProblem(slug)).toBeNull();
+    }
   });
 });
 
