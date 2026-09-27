@@ -2,10 +2,28 @@
 // observation the fixture's own `then` describes, bent by the mode in argv[2].
 // argv[3] is crash-once's state file, crash-always's start log, or the JSON
 // that patch-hello and patch-observation spread over their reply.
-import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
+import {
+  appendFileSync,
+  closeSync,
+  existsSync,
+  readdirSync,
+  readFileSync,
+  readSync,
+} from 'node:fs';
 
 const mode = process.argv[2] ?? 'pass';
 const arg = process.argv[3] ?? '';
+const hello = {
+  dmp: 'hello',
+  implementation: { name: 'fixture', version: '0.0.0' },
+  classes: ['envelope', 'host-core', 'a2a-binding'],
+  profiles: mode.startsWith('with-dispatch') ? ['core', 'dispatch'] : ['core'],
+  capabilities: mode === 'with-cap' ? ['x-cap'] : [],
+  systemAddress: 'agent:system',
+  gateTypes: ['wake'],
+  render: { quotePrefix: '> ', header: '^\\[from ', hostLines: [] },
+  ...(mode === 'patch-hello' ? (JSON.parse(arg) as object) : {}),
+};
 // What the runner resolves before the pipe, so the adapter never sees it.
 const RUNNER_SYMBOL = /\$(?:system|unimplementedGateType)\b/;
 // The runner escapes these, so a reader that breaks lines at them still works.
@@ -36,19 +54,6 @@ function onLine(line: string): void {
     };
   };
   if (msg.dmp === 'hello') {
-    const hello = {
-      dmp: 'hello',
-      implementation: { name: 'fixture', version: '0.0.0' },
-      classes: ['envelope', 'host-core', 'a2a-binding'],
-      profiles: mode.startsWith('with-dispatch')
-        ? ['core', 'dispatch']
-        : ['core'],
-      capabilities: mode === 'with-cap' ? ['x-cap'] : [],
-      systemAddress: 'agent:system',
-      gateTypes: ['wake'],
-      render: { quotePrefix: '> ', header: '^\\[from ', hostLines: [] },
-      ...(mode === 'patch-hello' ? (JSON.parse(arg) as object) : {}),
-    };
     if (mode === 'crash-always' && arg !== '') appendFileSync(arg, 'started\n');
     // Answers hello, then dies before the first vector: the runner must not
     // crash on the write that follows (EPIPE), only fail the vector.
@@ -111,11 +116,20 @@ function onLine(line: string): void {
   });
 }
 
-// Splits stdin at LF alone, as the contract asks of an adapter.
-let buffered = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk: string) => {
-  const lines = (buffered + chunk).split('\n');
-  buffered = lines.pop() ?? '';
-  for (const line of lines) onLine(line);
-});
+if (mode === 'close-stdin-after-hello') {
+  // Under Node: waits for hello, closes fd 0 and answers, then stays up, so
+  // the runner's next write fails with EPIPE every time.
+  readSync(0, Buffer.alloc(4096));
+  closeSync(0);
+  write(hello);
+  setTimeout(() => process.exit(0), 300);
+} else {
+  // Splits stdin at LF alone, as the contract asks of an adapter.
+  let buffered = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk: string) => {
+    const lines = (buffered + chunk).split('\n');
+    buffered = lines.pop() ?? '';
+    for (const line of lines) onLine(line);
+  });
+}

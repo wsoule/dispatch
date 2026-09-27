@@ -101,18 +101,24 @@ it('carries U+2028 and U+2029 both ways under Node', () => {
   expect(run.status).toBe(0);
 });
 
-it('survives an adapter that exits after hello, under Node', () => {
+// Node raises EPIPE on a write to an adapter whose stdin is gone; unhandled,
+// it would crash the runner instead of failing the vector.
+it('survives an adapter that exits or closes its stdin after hello, under Node', () => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'dmp-bin-')));
-  // The write racing the adapter's exit raises EPIPE in some runs only (Bun
-  // never reproduced it), so this repeats the run under Node.
-  for (let i = 0; i < 5; i += 1) {
-    const report = join(dir, `r${i}.json`);
+  // Bun 1.3 ignores fs.closeSync(0), so the stdin-closing mode runs on Node.
+  const adapters: [string, string][] = [
+    ['exit-after-hello', 'bun'],
+    ['close-stdin-after-hello', 'node'],
+  ];
+  const modes = adapters.map(([mode]) => mode);
+  const results = adapters.map(([mode, runtime]) => {
+    const report = join(dir, `${mode}.json`);
     const run = spawnSync(
       'node',
       [
         'dist/bin.js',
         '--adapter',
-        'bun test/fixtures/adapters/fixture.ts exit-after-hello',
+        `${runtime} test/fixtures/adapters/fixture.ts ${mode}`,
         '--claim',
         'envelope',
         '--vectors',
@@ -122,11 +128,27 @@ it('survives an adapter that exits after hello, under Node', () => {
       ],
       { cwd: pkg, encoding: 'utf8' }
     );
-    expect({ status: run.status, epipe: run.stderr.includes('EPIPE') }).toEqual(
-      { status: 1, epipe: false }
-    );
-    expect(
-      (JSON.parse(readFileSync(report, 'utf8')) as { claims: unknown }).claims
-    ).toEqual({ envelope: 'fail' });
-  }
+    const { claims, vectors } = (
+      existsSync(report) ? JSON.parse(readFileSync(report, 'utf8')) : {}
+    ) as {
+      claims?: unknown;
+      vectors?: { id: string; outcome: string }[];
+    };
+    return {
+      mode,
+      status: run.status,
+      stderr: run.stderr.includes('EPIPE') ? run.stderr : '',
+      claims,
+      must: vectors?.find((v) => v.id === 'env.basic.must')?.outcome,
+    };
+  });
+  expect(results).toEqual(
+    modes.map((mode) => ({
+      mode,
+      status: 1,
+      stderr: '',
+      claims: { envelope: 'fail' },
+      must: 'adapter-error',
+    }))
+  );
 }, 30_000);
