@@ -8,6 +8,7 @@ import {
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  openGatesAfter,
   questionsByRun,
   runIdOf,
   scopeRequestsByRun,
@@ -263,5 +264,39 @@ describe('foldsIntoOpenApproval', () => {
       )
     ).toBe(false);
     expect(foldsIntoOpenApproval(wake, [approval])).toBe(false);
+  });
+});
+
+describe('openGatesAfter', () => {
+  const answer = (replyTo: string) =>
+    msg('m-ans', {
+      from: 'human:ada',
+      to: ['agent:dispatch'],
+      kind: 'answer',
+      blocking: false,
+      replyTo,
+      choice: 'approve',
+    });
+
+  // Answered in another window, the gate leaves the list before any refetch.
+  it('drops the gate an answer replies to', () => {
+    expect(openGatesAfter([approval, wake], answer('m-a'))).toEqual([wake]);
+  });
+
+  it('adds a new blocking message a human is asked, once', () => {
+    const open = openGatesAfter([approval], wake);
+    expect(open).toEqual([approval, wake]);
+    expect(openGatesAfter(open, wake)).toBe(open);
+  });
+
+  it('keeps the list for what opens or closes no human gate', () => {
+    const open = [approval];
+    expect(openGatesAfter(open, answer('m-unknown'))).toBe(open);
+    expect(
+      openGatesAfter(open, msg('m-agents', { to: ['agent:reviewer'] }))
+    ).toBe(open);
+    expect(
+      openGatesAfter(open, msg('m-plain', { kind: 'message', blocking: false }))
+    ).toBe(open);
   });
 });

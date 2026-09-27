@@ -74,6 +74,7 @@ import {
   findToolApprovalGate,
   foldsIntoOpenApproval,
   gateNotification,
+  openGatesAfter,
   openGatesKey,
   questionsByRun,
   scopeRequestsByRun,
@@ -1440,10 +1441,17 @@ export function useDispatchProject(
           } else if (event.type === 'message.new') {
             const message = event.message;
             const openGatesKeyNow = openGatesKey(port);
-            // Read before the invalidation below, which refetches the list.
+            // The cached list follows the event at once, so the fold below sees
+            // gates answered elsewhere and gates the refetch has not brought.
             const openNow =
-              queryClient.getQueryData<{ items: Message[] }>(openGatesKeyNow)
-                ?.items ?? NO_GATES;
+              queryClient.setQueryData<{ items: Message[] }>(
+                openGatesKeyNow,
+                (prev) => {
+                  if (prev === undefined) return prev;
+                  const items = openGatesAfter(prev.items, message);
+                  return items === prev.items ? prev : { items };
+                }
+              )?.items ?? NO_GATES;
             // Only a new blocking question or an answer opens or closes a gate.
             if (message.blocking || message.kind === 'answer') {
               void queryClient.invalidateQueries({ queryKey: openGatesKeyNow });

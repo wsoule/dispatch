@@ -551,6 +551,45 @@ test('a deciding window notifies one tool approval per waiting run', async () =>
   resetGateFixtures();
 });
 
+// The fold reads the cached gates, which follow each event at once: an
+// approval answered elsewhere no longer folds its run's next one, and two
+// approvals that land before any refetch notify once.
+test('folding tracks gates answered elsewhere and gates not yet refetched', async () => {
+  await mountWithGates([approvalGate]);
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-ans', {
+        from: 'human:ada',
+        to: ['agent:dispatch'],
+        kind: 'answer',
+        blocking: false,
+        replyTo: 'm-a',
+        choice: 'approve',
+      }),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-a2', 'r-1', 'req-2'),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-b', 'r-9', 'req-1'),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: toolApprovalGate('m-b2', 'r-9', 'req-2'),
+    });
+  });
+
+  expect(notified.map((n) => n.body)).toEqual([
+    'Bash · Needs a shared export',
+    'Bash · r-9',
+  ]);
+  resetGateFixtures();
+});
+
 test('the card handlers answer their gates with the matching choice', async () => {
   const result = await mountWithGates([approvalGate, scopeGate, questionGate]);
 
