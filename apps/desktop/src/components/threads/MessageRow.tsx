@@ -21,6 +21,7 @@ import {
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
+import { cn } from '@/lib/utils';
 import { ChatMessage } from '@/ui/ai/chat';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 import { Pill, PillButton } from '@/ui/ai/pill';
@@ -33,6 +34,8 @@ export interface MessageRowProps {
   me: string;
   /** The message is an open gate or ask, so its control is live. */
   open: boolean;
+  /** A link opened the thread at this message, so it is briefly marked. */
+  linked?: boolean;
   access: MessageAccess;
   lookups: ThreadLookups;
   availability: DecideAvailability;
@@ -48,6 +51,7 @@ export const MessageRow = memo(function MessageRow({
   message,
   me,
   open,
+  linked = false,
   access,
   lookups,
   availability,
@@ -71,7 +75,14 @@ export const MessageRow = memo(function MessageRow({
     }
   };
   return (
-    <article data-message-id={message.id}>
+    <article
+      data-message-id={message.id}
+      data-linked={linked ? 'true' : undefined}
+      className={cn(
+        'rounded-card transition-colors duration-700',
+        linked && 'bg-surface-hover'
+      )}
+    >
       <ChatMessage
         role={mine ? 'user' : 'agent'}
         avatar={mine ? undefined : <InitialsAvatar name={sender} />}

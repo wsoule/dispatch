@@ -1,7 +1,8 @@
 import type { Delivery, Message } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
-import { useMemo, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useState } from 'react';
 
+import { useStickToBottom } from '../../hooks/useStickToBottom';
 import { useDraftKey } from '../../hooks/useThreads';
 import type { ComposeProblem } from '../../lib/composer';
 import { problemText, sendProblem } from '../../lib/composer';
@@ -23,8 +24,13 @@ import { MessageRow } from './MessageRow';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Button } from '@/ui/button';
 
+// How long a message a link opened the thread at stays marked.
+const LINKED_MARK_MS = 2000;
+
 export interface ThreadPaneProps {
   messages: Message[];
+  /** The message id the thread was opened at; a later one is scrolled to and briefly marked. */
+  focus: string | null;
   /** The thread's deliveries: a teammate may reply only to what reached them. */
   deliveries: readonly Delivery[];
   me: string;
@@ -49,31 +55,64 @@ export interface ThreadPaneProps {
   onOpenOverseer: () => void;
 }
 
-/** An open thread: its messages, then a reply box addressed by `replyPlan`. */
+/** An open thread, following its newest message: its messages, then a reply
+ *  box addressed by `replyPlan`. */
 export function ThreadPane(props: ThreadPaneProps) {
-  const { messages, me } = props;
+  const { messages, me, focus } = props;
   const openIds = useMemo(
     () => threadOpenIds(messages, me, props.openIds),
     [messages, me, props.openIds]
   );
+  const thread = messages[0]?.thread ?? '';
+  const { scrollRef, contentRef, unpin } = useStickToBottom(thread);
+  const linked =
+    focus !== null && focus !== thread && messages.some((m) => m.id === focus)
+      ? focus
+      : null;
+  const [faded, setFaded] = useState<string | null>(null);
+  // Runs after the hook's jump to the bottom, so the linked message wins.
+  useLayoutEffect(() => {
+    if (linked === null) return;
+    const rows = scrollRef.current?.querySelectorAll('[data-message-id]');
+    const row = Array.from(rows ?? []).find(
+      (el) => el.getAttribute('data-message-id') === linked
+    );
+    if (row === undefined) return;
+    unpin();
+    row.scrollIntoView({ block: 'center' });
+  }, [linked, scrollRef, unpin]);
+  useEffect(() => {
+    if (linked === null) return;
+    const timer = setTimeout(() => setFaded(linked), LINKED_MARK_MS);
+    return () => clearTimeout(timer);
+  }, [linked]);
+  const marked = linked !== faded ? linked : null;
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
-        {messages.map((message) => (
-          <MessageRow
-            key={message.id}
-            message={message}
-            me={me}
-            open={openIds.has(message.id)}
-            access={props.access}
-            lookups={props.lookups}
-            availability={props.availability}
-            onRestartDaemon={props.onRestartDaemon}
-            onAnswer={props.onAnswer}
-            onOpen={props.onOpen}
-            loadApprovalInput={props.loadApprovalInput}
-          />
-        ))}
+      <div
+        ref={scrollRef}
+        role="log"
+        aria-label="Messages"
+        className="min-h-0 flex-1 overflow-y-auto"
+      >
+        <div ref={contentRef} className="flex flex-col gap-3 p-3">
+          {messages.map((message) => (
+            <MessageRow
+              key={message.id}
+              message={message}
+              me={me}
+              linked={message.id === marked}
+              open={openIds.has(message.id)}
+              access={props.access}
+              lookups={props.lookups}
+              availability={props.availability}
+              onRestartDaemon={props.onRestartDaemon}
+              onAnswer={props.onAnswer}
+              onOpen={props.onOpen}
+              loadApprovalInput={props.loadApprovalInput}
+            />
+          ))}
+        </div>
       </div>
       <div className="border-border border-t-[0.5px] p-2">
         <ReplyBox

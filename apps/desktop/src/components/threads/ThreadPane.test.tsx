@@ -57,6 +57,7 @@ function renderPane(over: Partial<ThreadPaneProps> = {}) {
     <ThreadPane
       messages={[msg('m-01', { kind: 'question', blocking: true })]}
       deliveries={[]}
+      focus={null}
       me={ME}
       openIds={new Set(['m-01'])}
       access={DECIDER}
@@ -170,6 +171,7 @@ test('resending after a lost response repeats the first plan, even once the answ
     <ThreadPane
       messages={messages}
       deliveries={[]}
+      focus={null}
       me={ME}
       openIds={openIds}
       access={DECIDER}
@@ -310,4 +312,57 @@ test('an Assistant conversation this pane cannot reply to is read-only, with a w
   fireEvent.click(screen.getByRole('button', { name: 'Open Assistant' }));
   expect(onOpenOverseer).toHaveBeenCalledTimes(1);
   expect(screen.queryByLabelText('Reply')).toBeNull();
+});
+
+// happy-dom has no layout, so the scroller's height is given by hand.
+test('opens a thread at its newest message', () => {
+  const height = Object.getOwnPropertyDescriptor(
+    HTMLElement.prototype,
+    'scrollHeight'
+  );
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get(this: HTMLElement) {
+      return this.getAttribute('role') === 'log' ? 900 : 0;
+    },
+  });
+  try {
+    renderPane({ messages: [msg('m-01'), msg('m-02'), msg('m-03')] });
+    expect(screen.getByRole('log', { name: 'Messages' }).scrollTop).toBe(900);
+  } finally {
+    if (height === undefined) {
+      Reflect.deleteProperty(HTMLElement.prototype, 'scrollHeight');
+    } else {
+      Object.defineProperty(HTMLElement.prototype, 'scrollHeight', height);
+    }
+  }
+});
+
+test('a link to a message further up scrolls it into view and marks it; the root does not', () => {
+  const scrolled: [string | null, ScrollIntoViewOptions | undefined][] = [];
+  const original = Element.prototype.scrollIntoView;
+  Element.prototype.scrollIntoView = function (
+    this: Element,
+    arg?: boolean | ScrollIntoViewOptions
+  ) {
+    scrolled.push([
+      this.getAttribute('data-message-id'),
+      typeof arg === 'object' ? arg : undefined,
+    ]);
+  };
+  const messages = [msg('m-01'), msg('m-02'), msg('m-03')];
+  const linked = () =>
+    document
+      .querySelector('[data-message-id="m-02"]')
+      ?.getAttribute('data-linked');
+  try {
+    renderPane({ messages, focus: 'm-01' });
+    expect(scrolled).toEqual([]);
+    cleanup();
+    renderPane({ messages, focus: 'm-02' });
+  } finally {
+    Element.prototype.scrollIntoView = original;
+  }
+  expect(scrolled).toEqual([['m-02', { block: 'center' }]]);
+  expect(linked()).toBe('true');
 });
