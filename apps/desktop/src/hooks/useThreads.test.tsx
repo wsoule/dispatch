@@ -16,6 +16,7 @@ import type { ReactNode } from 'react';
 
 import { agentRosterKey } from '../lib/agentRoster';
 import type { MessageAccess } from '../lib/daemonAuth';
+import { openGatesKey } from '../lib/gates';
 import {
   applyThreadEvent,
   threadKey,
@@ -171,6 +172,17 @@ describe('applyThreadEvent', () => {
     expect(stale(qc, threadKey(PORT, 'm-01'))).toBe(false);
     applyThreadEvent(qc, PORT, { type: 'hello', version: '0.0.1' });
     expect(stale(qc, threadKey(PORT, 'm-01'))).toBe(true);
+  });
+
+  it('on reconnect also refetches the open gates and the roster, which a daemon restart may have changed unseen', () => {
+    const qc = new QueryClient();
+    qc.setQueryData(openGatesKey(PORT), { items: [] });
+    qc.setQueryData(agentRosterKey(PORT), { agents: [] });
+    qc.setQueryData(openGatesKey(PORT + 1), { items: [] });
+    applyThreadEvent(qc, PORT, { type: 'hello', version: '0.0.1' });
+    expect(stale(qc, openGatesKey(PORT))).toBe(true);
+    expect(stale(qc, agentRosterKey(PORT))).toBe(true);
+    expect(stale(qc, openGatesKey(PORT + 1))).toBe(false);
   });
 });
 

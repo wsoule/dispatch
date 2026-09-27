@@ -494,6 +494,33 @@ describe('threadOpenIds', () => {
     const theirs = msg('m-03', { kind: 'question', to: ['human:ada'] });
     expect(threadOpenIds([theirs], ME, open)).toBe(open);
   });
+
+  it('drops a listed gate the thread already answers, as a restart closes it before the list refetches', () => {
+    const gate = msg('m-g', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'deny'],
+      data: { type: 'wake', target: 'task:t-000002', message: 'm-x' },
+    });
+    const closed = msg('m-c', {
+      thread: 'm-g',
+      replyTo: 'm-g',
+      from: 'agent:dispatch',
+      to: [ME],
+      kind: 'answer',
+      data: { type: 'x-closed' },
+    });
+    const stale = new Set(['m-g', 'm-other']);
+    expect([...threadOpenIds([gate, closed], ME, stale)]).toEqual(['m-other']);
+    expect(
+      hasAnswerButtons([gate, closed], {
+        me: ME,
+        openIds: threadOpenIds([gate, closed], ME, stale),
+        access: DECIDER,
+      })
+    ).toBe(false);
+  });
 });
 
 describe('replyRoute', () => {

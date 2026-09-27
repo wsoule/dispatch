@@ -106,7 +106,10 @@ export function applyThreadEvent(
     }
     void queryClient.invalidateQueries({ queryKey: threadListsKey(port) });
   } else if (event.type === 'hello') {
+    // A restart may have closed gates or settled agents with no event we saw.
     void queryClient.invalidateQueries({ queryKey: threadsPrefix(port) });
+    void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
+    void queryClient.invalidateQueries({ queryKey: agentRosterKey(port) });
   }
 }
 
