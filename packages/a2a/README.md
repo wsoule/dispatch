@@ -30,9 +30,9 @@ a shorter wait. It then returns the task as it stands, usually `WORKING`.
 An answer from a person can take hours, and tunnels and proxies cut idle HTTP
 requests long before that. The ask skill on the agent card says so.
 
-A green TCK run says nothing about this deviation: the TCK's test server
-completes every scenario at once, well inside the wait. `test/wait.test.ts`
-asserts the deviation directly.
+A green TCK run says nothing about this deviation: the SUT (`test/tck/sut.ts`)
+finishes every scenario within seconds, well inside the wait.
+`test/wait.test.ts` asserts the deviation directly.
 
 **dispatchd refuses a `contextId` it does not know**, which the TCK's
 `CORE-MULTI-002a` counts as a failure. dispatchd reads a client's `contextId` as
@@ -63,6 +63,9 @@ behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced
 - A `message:stream` ends at `INPUT_REQUIRED`, where the client must answer
   (§11.7). A `:subscribe` stream stays open until the task is terminal (§3.1.6).
   Both stay open through `AUTH_REQUIRED`.
+- A stream coalesces a task's changes over one second. An `artifactUpdate`
+  always carries the whole artifact (`append: false`, `lastChunk: true`), so
+  replace your copy of it rather than appending.
 
 ## Running the TCK
 

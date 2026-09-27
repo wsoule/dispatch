@@ -146,7 +146,8 @@ it('keeps a subscription open until a follow-up completes the task', async () =>
   expect(stateOf(events.at(-1))).toBe('TASK_STATE_COMPLETED');
 });
 
-it('streams a chunked artifact to completion', async () => {
+// A changed artifact is resent whole (append false), never as a trailing chunk.
+it('streams a chunked artifact whole, then completes', async () => {
   const res = await fetch(`${base}/a2a/v1/message:stream`, {
     method: 'POST',
     headers: HEADERS,
@@ -158,11 +159,19 @@ it('streams a chunked artifact to completion', async () => {
       },
     }),
   });
-  const events = (await res.text())
-    .split('\n')
-    .filter((line) => line.startsWith('data: '))
-    .map((line) => line.slice('data: '.length));
-  expect(events[0]).toContain('"task"');
-  expect(events.join('\n')).toContain('chunk-2');
-  expect(events.at(-1)).toContain('TASK_STATE_COMPLETED');
+  const events = await sseEvents(res);
+  const chunked = events.flatMap((e) =>
+    'artifactUpdate' in e && e.artifactUpdate.artifact.artifactId === 'chunked'
+      ? [e.artifactUpdate]
+      : []
+  );
+  expect('task' in events[0]).toBe(true);
+  expect(chunked.length).toBeGreaterThan(0);
+  for (const update of chunked)
+    expect(update).toMatchObject({ append: false, lastChunk: true });
+  expect(chunked.at(-1)?.artifact.parts).toEqual([
+    { text: 'chunk-1 ' },
+    { text: 'chunk-2' },
+  ]);
+  expect(stateOf(events.at(-1))).toBe('TASK_STATE_COMPLETED');
 });
