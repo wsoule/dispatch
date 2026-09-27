@@ -10,17 +10,17 @@ the Elastic License 2.0, on 2026-09-23.
 
 | Code                                                                                       | License                                  |
 | ------------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`                         | MIT                                      |
+| `packages/core`, `packages/protocol`, `packages/client`, `packages/cli`, `packages/mcp`    | MIT                                      |
 | Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site) | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
 | Team features: `packages/server/src/team/` and `packages/server/test/team/`                | Elastic-2.0 (their own `LICENSE` files)  |
 
 Three tiers, one rule each:
 
-- **MIT — the interop surface.** The task model and types (`core`), the daemon
-  API client (`client`), the CLI, and the MCP server are how other tools,
-  agents, and scripts integrate with Dispatch. We want that integration to
-  happen without anyone needing a license review, so these packages are plain
-  MIT.
+- **MIT — the interop surface.** The task model and types (`core`), the message
+  bus (`protocol`), the daemon API client (`client`), the CLI, and the MCP
+  server are how other tools, agents, and scripts integrate with Dispatch. We
+  want that integration to happen without anyone needing a license review, so
+  these packages are plain MIT.
 - **FSL — the product.** The desktop app and the daemon/orchestrator are
   source-available under the
   [Functional Source License 1.1, Apache 2.0 Future License](https://fsl.software)
