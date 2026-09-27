@@ -7,10 +7,13 @@ export function b64u(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString('base64url');
 }
 
-// Decodes base64url and nothing else, so a padded or standard-alphabet value is refused.
+// Decodes only the one spelling b64u writes: padding, the standard alphabet
+// and stray trailing bits are refused, so no value has a second encoding.
 export function fromB64u(text: string): Buffer {
   if (!B64U.test(text)) throw new TypeError('not base64url');
-  return Buffer.from(text, 'base64url');
+  const bytes = Buffer.from(text, 'base64url');
+  if (b64u(bytes) !== text) throw new TypeError('not canonical base64url');
+  return bytes;
 }
 
 export function sha256Hex(data: string | Uint8Array): string {

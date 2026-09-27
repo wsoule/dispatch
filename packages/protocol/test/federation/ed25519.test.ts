@@ -51,6 +51,21 @@ describe('Ed25519 through node:crypto', () => {
     expect(verifyText(keys.signPub, 'x', 'not base64url!')).toBe(false);
   });
 
+  it('refuses a second signature made by adding the group order to S', () => {
+    const keys = generateReplicaKeys();
+    const sig = Buffer.from(signText(keys.signPriv, 'x'), 'base64url');
+    const order = (1n << 252n) + 27742317777372353535851937790883648493n;
+    // S is the little-endian second half of the signature.
+    let s = 0n;
+    for (let i = 63; i >= 32; i--) s = (s << 8n) | BigInt(sig.readUInt8(i));
+    let raised = s + order;
+    for (let i = 32; i < 64; i++) {
+      sig.writeUInt8(Number(raised & 0xffn), i);
+      raised >>= 8n;
+    }
+    expect(verifyText(keys.signPub, 'x', b64u(sig))).toBe(false);
+  });
+
   it('prints a fingerprint as six groups of four Crockford characters', () => {
     const keys = generateReplicaKeys();
     const printed = fingerprint(keys.signPub, keys.sealPub);

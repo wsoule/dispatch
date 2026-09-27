@@ -179,6 +179,23 @@ describe('verifyEntry along a chain', () => {
     expect(run([key, task, resealed(mail.to)]).failure).toBeNull();
   });
 
+  it('refuses a signature re-encoded by someone without the key', () => {
+    const [key, task] = chain();
+    const alphabet =
+      'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = alphabet.indexOf(task.sig.charAt(task.sig.length - 1));
+    // An 86-character signature leaves four bits of its last character unused.
+    const reencoded = {
+      ...task,
+      sig: `${task.sig.slice(0, -1)}${alphabet.charAt(last ^ 1)}`,
+    };
+    expect(Buffer.from(reencoded.sig, 'base64url')).toEqual(
+      Buffer.from(task.sig, 'base64url')
+    );
+    expect(opHash(reencoded)).not.toBe(opHash(task));
+    expect(run([key, reencoded]).failure).toBe('bad signature');
+  });
+
   it('pins the fingerprint over both public keys', () => {
     expect(fingerprint(keys.signPub, keys.sealPub)).not.toBe(
       fingerprint(keys.signPub, peer.sealPub)
