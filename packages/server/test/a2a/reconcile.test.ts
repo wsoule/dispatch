@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, expect, it } from 'bun:test';
+import { afterEach, beforeEach, expect, it, spyOn } from 'bun:test';
 
-import { reconcileA2A } from '../../src/a2a/reconcile.js';
+import { reconcileA2A, rowFor } from '../../src/a2a/reconcile.js';
 import { HUMAN, useTempProject } from '../messaging/harness.js';
 import { bridgeFixture } from './fixture.js';
 
@@ -81,4 +81,35 @@ it('recomputes the state cache of open tasks', async () => {
   f.store.updateTask(opened.taskId, { state: 'WORKING' });
   reconcileA2A(f.deps, f.watch);
   expect(f.store.getTask(opened.taskId)?.state).toBe('COMPLETED');
+});
+
+it('logs a task that cannot be recomputed and still recomputes the rest', async () => {
+  const opened = await f.port.open(f.caller, {
+    clientMessageId: 'c-1',
+    contextId: null,
+    kind: 'ask',
+    to: null,
+    replyTo: null,
+    body: 'q',
+    refs: [],
+  });
+  if (opened.kind !== 'task') throw new Error('expected a task');
+  const root = f.messaging.engine.getMessage(opened.taskId);
+  if (root === null) throw new Error('no root message');
+  for (const id of ['m-0000lost', 'm-zzzzlost']) {
+    f.store.insertTask(rowFor(f.caller.address, { ...root, id, thread: id }));
+  }
+  await f.messaging.engine.reply(opened.taskId, { body: 'yes' }, HUMAN);
+  f.store.updateTask(opened.taskId, { state: 'WORKING' });
+  const logged: string[] = [];
+  const spy = spyOn(console, 'error').mockImplementation((...args) => {
+    logged.push(args.map(String).join(' '));
+  });
+  try {
+    expect(reconcileA2A(f.deps, f.watch).recomputed).toBe(3);
+  } finally {
+    spy.mockRestore();
+  }
+  expect(f.store.getTask(opened.taskId)?.state).toBe('COMPLETED');
+  expect(logged.join('\n')).toContain('m-0000lost');
 });
