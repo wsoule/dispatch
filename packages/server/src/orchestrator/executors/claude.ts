@@ -366,16 +366,21 @@ async function checkExportLoaded(
   return { outcome: 'loaded' };
 }
 
-// The prompt-mode session that replaces a failed export check. It never
-// resumes: the checked session may already hold its prompt or native notes.
-function fallbackOptions(opts: ExecutorStartOptions): ExecutorStartOptions {
+// The fresh prompt-mode session for a failed export check, plus a resumed run's
+// own prompt to send next; null when a resume has no fallback prompt.
+function fallbackStart(
+  opts: ExecutorStartOptions
+): { next: ExecutorStartOptions; continuation: string[] } | null {
+  const fallbackPrompt = opts.memory?.fallbackPrompt;
+  const resumed = opts.resumeSessionId !== undefined;
+  if (resumed && fallbackPrompt === undefined) return null;
   const next: ExecutorStartOptions = {
     ...opts,
-    prompt: opts.memory?.fallbackPrompt ?? opts.prompt,
+    prompt: fallbackPrompt ?? opts.prompt,
     memory: { mode: 'prompt' },
   };
   delete next.resumeSessionId;
-  return next;
+  return { next, continuation: resumed ? [opts.prompt] : [] };
 }
 
 // The file a Read tool call read, from a PostToolUse hook's input.
@@ -852,7 +857,7 @@ export class ClaudeExecutor implements Executor {
   }
 
   // One Agent SDK session of a run. `restart` replaces it with a prompt-mode
-  // session when export mode finds Claude Code loaded native memory.
+  // session when export mode's load check fails.
   private runSession(
     opts: ExecutorStartOptions,
     events: ExecutorEvents,
@@ -1268,14 +1273,28 @@ export class ClaudeExecutor implements Executor {
                   // Claude may hold the native notes (its system prompt can
                   // name that directory), so this session ends before any tool.
                   sdkQuery.close();
+                  const fresh = fallbackStart(opts);
+                  if (fresh === null) {
+                    finished = true;
+                    events.onFinish({
+                      state: 'failed',
+                      error: `${check.detail}; the resumed run has no fallback prompt to start a fresh session from`,
+                      usage: usageMeter.fromStream(),
+                      ...experimentStamp,
+                    });
+                    return;
+                  }
                   events.onMemoryMode?.(
                     'export-fallback',
                     opts.resumeSessionId === undefined
                       ? check.detail
                       : `${check.detail}; the run starts a fresh session instead of continuing ${opts.resumeSessionId}`
                   );
-                  restart(fallbackOptions(opts), {
-                    sent: sentWhilePending.splice(0),
+                  restart(fresh.next, {
+                    sent: [
+                      ...fresh.continuation,
+                      ...sentWhilePending.splice(0),
+                    ],
                     notes: pendingNotes.splice(0),
                   });
                   return;

@@ -11,6 +11,7 @@ import {
 } from '../../src/orchestrator/executors/claude.js';
 import type {
   ExecutorEvents,
+  ExecutorStartOptions,
   MemoryMode,
   NormalizedEntry,
 } from '../../src/orchestrator/types.js';
@@ -137,6 +138,7 @@ function recorder() {
   const recalls: [string[], string][] = [];
   const sessionIds: string[] = [];
   const states: string[] = [];
+  const errors: string[] = [];
   let finish: () => void = () => {};
   const finished = new Promise<void>((resolve) => {
     finish = resolve;
@@ -145,8 +147,9 @@ function recorder() {
     onEntry: (e) => entries.push(e),
     onApprovalRequest: () => {},
     onSession: (id) => sessionIds.push(id),
-    onFinish: ({ state }) => {
+    onFinish: ({ state, error }) => {
       states.push(state);
+      if (error !== undefined) errors.push(error);
       finish();
     },
     onMemoryMode: (mode, detail) => modes.push([mode, detail]),
@@ -159,6 +162,7 @@ function recorder() {
     recalls,
     sessionIds,
     states,
+    errors,
     events,
     finished,
     said,
@@ -202,20 +206,17 @@ const promptModeSettings = {
 const EXPORTED = { path: `${DIR}/MEMORY.md`, type: 'AutoMem', tokens: 10 };
 const NATIVE_FILE = { path: NATIVE, type: 'AutoMem', tokens: 10 };
 
-// Starts one export-mode run over scripted sessions.
+// Starts one export-mode run over scripted sessions; `overrides` replaces
+// start options, such as a resume's session id and continuation prompt.
 function startExport(
   memoryFiles: (session: number) => MemoryFile[],
   script?: Script,
-  resumeSessionId?: string
+  overrides: Partial<ExecutorStartOptions> = {}
 ) {
   const s = scripted(memoryFiles, script);
   const r = recorder();
   const run = new ClaudeExecutor(s.queryFn).start(
-    {
-      ...start,
-      ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
-      memory: exportOpts,
-    },
+    { ...start, memory: exportOpts, ...overrides },
     r.events
   );
   return { s, r, run };
@@ -295,19 +296,50 @@ describe('ClaudeExecutor memory modes', () => {
     expect(started.r.sessionIds).toEqual(['s1']);
   });
 
-  it('export on a resumed session: the fallback starts a fresh session instead of re-opening the checked one', async () => {
+  it('export on a resumed session: the fallback starts a fresh session instead of re-opening the checked one, and the continuation follows the fallback prompt', async () => {
     const started = startExport(
       (i) => (i === 0 ? [NATIVE_FILE] : []),
       {},
-      's-prev'
+      {
+        resumeSessionId: 's-prev',
+        prompt: 'CONTINUATION with the feedback',
+      }
     );
-    const { s, r } = started;
+    const { s, r, run } = started;
+    run.send('FOLLOW-UP sent while the check ran');
     expect(s.sessions[0].options.resume).toBe('s-prev');
     expect(await expectRestart(started)).toContain(
       'fresh session instead of continuing s-prev'
     );
     expect(s.sessions[1].options.resume).toBeUndefined();
     expect(r.sessionIds).toEqual(['s1']);
+    await waitUntil(() => s.sessions[1].texts.length === 3);
+    expect(s.sessions[1].texts).toEqual([
+      'FALLBACK PROMPT with the index',
+      'CONTINUATION with the feedback',
+      'FOLLOW-UP sent while the check ran',
+    ]);
+  });
+
+  it('export on a resumed session without a fallback prompt: the run fails rather than start a fresh session with only the continuation', async () => {
+    const { s, r } = startExport(
+      () => [NATIVE_FILE],
+      {},
+      {
+        resumeSessionId: 's-prev',
+        prompt: 'CONTINUATION with the feedback',
+        memory: { ...exportOpts, fallbackPrompt: undefined },
+      }
+    );
+    s.sessions[0].release();
+    await r.finished;
+    expect(s.sessions).toHaveLength(1);
+    expect(s.sessions[0].closed).toBe(true);
+    expect(r.states).toEqual(['failed']);
+    expect(r.errors[0]).toContain(NATIVE);
+    expect(r.errors[0]).toContain('no fallback prompt');
+    expect(r.said()).not.toContain('said in session 0');
+    expect(r.sessionIds).toEqual([]);
   });
 
   it('export: notes and a stop that arrive during the check reach the restarted session', async () => {

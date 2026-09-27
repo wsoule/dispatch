@@ -219,8 +219,8 @@ interface ExecutorMemoryOptions {
   dir?: string;
   // The oldest Claude Code version the live probe passed on.
   probeVersion?: string;
-  // The self-contained prompt, with the memory index, that a prompt-mode
-  // restart starts from: the restart is a fresh session, never a resume.
+  // The task prompt, with the index, that a prompt-mode restart opens with. A
+  // resume needs it: its restart is a fresh session sent the run's prompt next.
   fallbackPrompt?: string;
   // Reaches the agent with its first tool result when nothing loaded.
   unloadedNote?: string;

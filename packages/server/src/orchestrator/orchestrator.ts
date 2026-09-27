@@ -4509,12 +4509,10 @@ export class Orchestrator {
     const meta = this.registry.get(runId);
     if (meta === undefined || meta.sessionId === sessionId) return;
     if (TERMINAL_RUN_STATES.has(meta.state)) return;
-    // A resumed run is born holding the session it was told to continue, so
-    // an executor reporting a DIFFERENT one has opened a conversation with
-    // none of the history this run claims. ClaudeExecutor fails the run
-    // itself before this can happen; for any executor that does not, the
-    // Session log at least says so, rather than letting the successor pass
-    // as a continuation while the agent underneath it starts from nothing.
+    // A resumed run is born holding the session it was told to continue, so a
+    // DIFFERENT one reported here has none of the history this run claims: an
+    // export fallback's fresh session, or a resume an executor did not refuse.
+    // The Session log says so rather than letting it pass as a continuation.
     if (meta.resumedFrom !== undefined && meta.sessionId !== undefined) {
       const notice: NormalizedEntry = {
         ts: new Date().toISOString(),
