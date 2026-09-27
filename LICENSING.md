@@ -28,14 +28,14 @@ Three tiers, one rule each:
   purpose except shipping a competing product or service — and **each release
   converts to Apache-2.0 two years after it ships**, irrevocably.
 - **Elastic License 2.0 — the team tier.** What lets more than one person use
-  Dispatch together lives in `packages/server/src/team/`: teammates' tokens on a
-  shared host, board sync between teammates' own machines, and the license key
-  that says how many people that may be. Free for up to **three people** with
-  every feature; more needs a license key. ELv2 allows use, modification and
-  redistribution, but not moving, disabling or circumventing the license key,
-  and not offering the software as a hosted service — the two things the FSL's
-  "internal use" grant could not rule out, which is why this code is not FSL.
-  See "The team tier, plainly" below.
+  Dispatch together lives in `packages/federation` and
+  `packages/server/src/team/`: teammates' tokens on a shared host, board sync
+  between teammates' own machines, and the license key that says how many people
+  that may be. Free for up to **three people** with every feature; more needs a
+  license key. ELv2 allows use, modification and redistribution, but not moving,
+  disabling or circumventing the license key, and not offering the software as a
+  hosted service — the two things the FSL's "internal use" grant could not rule
+  out, which is why this code is not FSL. See "The team tier, plainly" below.
 
 ## The team tier, plainly
 
