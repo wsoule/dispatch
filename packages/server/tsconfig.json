@@ -11,6 +11,9 @@
       "path": "../core/tsconfig.json"
     },
     {
+      "path": "../memory/tsconfig.json"
+    },
+    {
       "path": "../protocol/tsconfig.json"
     }
   ]

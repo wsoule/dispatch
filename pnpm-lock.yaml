@@ -551,6 +551,9 @@ importers:
       '@dispatch/mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@dispatch/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@dispatch/protocol':
         specifier: workspace:*
         version: link:../protocol
