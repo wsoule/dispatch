@@ -228,20 +228,23 @@ export interface OpenThread {
   error: Error | null;
 }
 
-/** The thread holding `focus` (any message id in it; a root id is its own thread). */
+/** The thread holding `focus` (any message id in it; a root id is its own
+ *  thread). A window that cannot message reads none. */
 export function useThread(
   client: ApiClient | null,
   port: number | undefined,
-  focus: string | null
+  focus: string | null,
+  access: MessageAccess
 ): OpenThread {
+  const enabled = client !== null && focus !== null && access.canMessage;
   const resolved = useQuery({
     queryKey: [...threadsPrefix(port), 'message', focus],
     queryFn: () => ready(client).getMessage(focus ?? ''),
-    enabled: client !== null && focus !== null,
+    enabled,
     staleTime: Infinity, // a message never changes
     select: (message) => message.thread,
   });
-  const thread = focus === null ? null : (resolved.data ?? null);
+  const thread = enabled ? (resolved.data ?? null) : null;
   const detail = useQuery({
     queryKey: threadKey(port, thread ?? ''),
     queryFn: () => ready(client).getThread(thread ?? ''),

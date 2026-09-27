@@ -84,7 +84,9 @@ describe('applyThreadEvent', () => {
   it('keeps a message that arrives while the thread is first fetched', async () => {
     const server = gatedThreadServer();
     server.gated = true;
-    const { qc, result } = mount(() => useThread(server.client, PORT, 'm-01'));
+    const { qc, result } = mount(() =>
+      useThread(server.client, PORT, 'm-01', DECIDER)
+    );
     await waitFor(() => {
       expect(server.pending).toHaveLength(1);
     });
@@ -103,7 +105,9 @@ describe('applyThreadEvent', () => {
 
   it('keeps a message that arrives during a background refetch of the open thread', async () => {
     const server = gatedThreadServer();
-    const { qc, result } = mount(() => useThread(server.client, PORT, 'm-01'));
+    const { qc, result } = mount(() =>
+      useThread(server.client, PORT, 'm-01', DECIDER)
+    );
     await waitFor(() => {
       expect(result.current.messages.map((m) => m.id)).toEqual(['m-01']);
     });
@@ -126,7 +130,9 @@ describe('applyThreadEvent', () => {
 
   it("keeps an open thread's deliveries current, so a message that arrived live can be marked read", async () => {
     const server = gatedThreadServer();
-    const { qc, result } = mount(() => useThread(server.client, PORT, 'm-01'));
+    const { qc, result } = mount(() =>
+      useThread(server.client, PORT, 'm-01', DECIDER)
+    );
     await waitFor(() => {
       expect(result.current.messages).toHaveLength(1);
     });
@@ -459,7 +465,7 @@ describe('messaging queries', () => {
 
   it('opens the thread holding any of its messages', async () => {
     const { calls, client } = readingClient();
-    const { result } = mount(() => useThread(client, PORT, 'm-02'));
+    const { result } = mount(() => useThread(client, PORT, 'm-02', TEAMMATE));
     await waitFor(() => {
       expect(result.current.messages.map((m) => m.id)).toEqual([
         'm-01',
@@ -468,6 +474,22 @@ describe('messaging queries', () => {
     });
     expect(result.current.thread).toBe('m-01');
     expect(calls).toEqual(['message m-02', 'thread m-01']);
+  });
+
+  it('opens no thread for an agent window, even with a focus from a link', async () => {
+    const { calls, client } = readingClient();
+    const agent = mount(() => useThread(client, PORT, 'm-02', AGENT_WINDOW));
+    const decider = readingClient();
+    mount(() => useThread(decider.client, PORT, 'm-02', DECIDER));
+    await waitFor(() => {
+      expect(decider.calls).toEqual(['message m-02', 'thread m-01']);
+    });
+    expect(calls).toEqual([]);
+    expect(agent.result.current).toMatchObject({
+      thread: null,
+      messages: [],
+      loading: false,
+    });
   });
 
   it('reads the roster on the key Settings shares, and channels only when asked', async () => {
