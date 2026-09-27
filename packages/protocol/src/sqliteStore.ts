@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS recipients (
   message_id TEXT NOT NULL, position INTEGER NOT NULL, addr TEXT NOT NULL,
   PRIMARY KEY (message_id, position)
 );
+CREATE INDEX IF NOT EXISTS recipients_addr ON recipients (addr);
 CREATE TABLE IF NOT EXISTS deliveries (
   id TEXT PRIMARY KEY, message_id TEXT NOT NULL, recipient TEXT NOT NULL,
   run_id TEXT, via TEXT NOT NULL, state TEXT NOT NULL, updated_at TEXT NOT NULL
