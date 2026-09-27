@@ -1,6 +1,6 @@
-import type { RunMeta } from '@dispatch/client';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { ATTACHED_DAEMON_EXPLANATION } from '../../lib/daemonAuth';
@@ -315,4 +315,97 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
   expect(screen.getByText('Spawned')).toBeDefined();
   expect(screen.getByText('Agent finished')).toBeDefined();
   expect(screen.getAllByText('agent')).toHaveLength(2);
+});
+
+function renderEntries(
+  entries: NormalizedEntry[],
+  onOpenMessage?: (messageId: string) => void
+) {
+  return render(
+    <RunLogView
+      meta={meta({ state: 'running' })}
+      entries={entries}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={onOpenMessage}
+    />
+  );
+}
+
+test('a pushed question shows its body without the agent framing, with its kind and a thread link', () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'run:r-9f2c01',
+        messageId: 'm-01K',
+        text: '[message from run:r-9f2c01 · question · m-01K]\n│ Is the response final?\nchoices: yes | no\nThe sender is waiting. Answer with msg_reply(messageId: "m-01K").',
+      },
+    ],
+    onOpen
+  );
+  expect(screen.getByText('Is the response final?')).toBeDefined();
+  expect(screen.queryByText(/\[message from/)).toBeNull();
+  expect(screen.getByText('Question')).toBeDefined();
+  expect(screen.getByText('choices: yes | no')).toBeDefined();
+  expect(screen.queryByText(/The sender is waiting/)).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Open thread' }));
+  expect(onOpen).toHaveBeenCalledWith('m-01K');
+});
+
+test('a digest is one compact line, linked by the id in its text even from an older transcript', () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 #epic/e-1 · notice from run:r-000002: api shape changed (m-02)',
+      },
+    ],
+    onOpen
+  );
+  expect(
+    screen.getByText('#epic/e-1 · notice from run:r-000002: api shape changed')
+  ).toBeDefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Open thread' }));
+  expect(onOpen).toHaveBeenCalledWith('m-02');
+});
+
+test('text from before the bus renders as it always did, and nothing links without a way to open threads', () => {
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'user',
+        text: 'please also update the README',
+      },
+      {
+        ts: '2026-09-25T10:00:01.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 message from agent:wyat/x: hi (m-03)',
+      },
+    ],
+    undefined
+  );
+  expect(screen.getByText('please also update the README')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Open thread' })).toBeNull();
 });

@@ -2,6 +2,7 @@ import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { foldSubagents } from '@dispatch/core/browser';
 import {
   Info,
+  Mail,
   Megaphone,
   MessageSquare,
   MessageSquarePlus,
@@ -14,6 +15,7 @@ import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { PendingApproval } from '../../lib/pendingApprovals';
 import { groupLogEntries } from '../../lib/runLog';
+import { parseDeliveredText, parseDigestLine } from '../../lib/runMessages';
 import {
   continueMessage,
   deriveRunDisposition,
@@ -28,6 +30,7 @@ import { SubagentTree } from './SubagentTree';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
 import { LoadingState } from '@/ui/ai/loading-state';
+import { Pill } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Alert, AlertDescription } from '@/ui/alert';
 import { Button } from '@/ui/button';
@@ -41,7 +44,61 @@ const SENDABLE_STATES = new Set<RunMeta['state']>([
   'awaiting-approval',
 ]);
 
-function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
+const KIND_LABEL: Record<string, string> = {
+  question: 'Question',
+  handoff: 'Handoff',
+  notice: 'Notice',
+  answer: 'Answer',
+};
+// The agent-facing prompt to answer with msg_reply; a person reading the chat has no use for it.
+const WAITING_NOTE = 'The sender is waiting.';
+
+function OpenThread({
+  messageId,
+  onOpen,
+}: {
+  messageId: string;
+  onOpen: (messageId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="text-muted-foreground hover:text-foreground ml-auto text-[12px] font-normal hover:underline"
+      onClick={() => onOpen(messageId)}
+    >
+      Open thread
+    </button>
+  );
+}
+
+function ChatMessageBubble({
+  entry,
+  onOpenMessage,
+}: {
+  entry: NormalizedEntry;
+  onOpenMessage?: (messageId: string) => void;
+}) {
+  const text = entry.text ?? '';
+  const link = (messageId: string | undefined) =>
+    messageId !== undefined && onOpenMessage !== undefined ? (
+      <OpenThread messageId={messageId} onOpen={onOpenMessage} />
+    ) : null;
+
+  if (entry.digest === true) {
+    const digest = parseDigestLine(text);
+    return (
+      <div className="text-muted-foreground font-book flex items-center gap-1.5 px-1 text-[12px]">
+        <Mail className="size-3 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">
+          {digest === null
+            ? text
+            : `${digest.channel === null ? '' : `#${digest.channel} · `}${digest.kind} from ${digest.from}: ${digest.summary}`}
+        </span>
+        {link(entry.messageId ?? digest?.messageId)}
+      </div>
+    );
+  }
+
   const fromUser = entry.from === 'user';
   const toUser = entry.from === 'agent' && entry.toUser === true;
 
@@ -54,15 +111,19 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
           <span className="text-muted-foreground font-book">
             from {entry.fromLabel ?? 'an agent'}
           </span>
+          {link(entry.messageId)}
         </div>
-        <Markdown
-          content={entry.text ?? ''}
-          className="font-book text-[13px]"
-        />
+        <Markdown content={text} className="font-book text-[13px]" />
       </div>
     );
   }
 
+  // A pushed bus message is stored as the agent saw it; show its body, not the framing.
+  const delivered =
+    entry.messageId === undefined ? null : parseDeliveredText(text);
+  const notes =
+    delivered?.notes.filter((line) => !line.startsWith(WAITING_NOTE)) ?? [];
+  const kindLabel = delivered === null ? undefined : KIND_LABEL[delivered.kind];
   return (
     <div
       className={cn(
@@ -74,13 +135,26 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
     >
       <div
         className={cn(
-          'text-[12px] font-medium',
+          'flex items-center gap-1.5 text-[12px] font-medium',
           fromUser ? 'text-muted-foreground' : 'text-state-waiting'
         )}
       >
         {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}
+        {kindLabel !== undefined && <Pill>{kindLabel}</Pill>}
+        {delivered?.urgent === true && <Pill>Urgent</Pill>}
+        {link(entry.messageId)}
       </div>
-      <Markdown content={entry.text ?? ''} className="font-book text-[13px]" />
+      <Markdown
+        content={delivered?.body ?? text}
+        className="font-book text-[13px]"
+      />
+      {notes.length > 0 && (
+        <div className="text-muted-foreground font-book text-[12px]">
+          {notes.map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -116,6 +190,8 @@ interface RunLogViewProps {
    * works the same way (one composer, always in the same place) whether the run is still
    * going or already finished. */
   onRequestChanges: (text: string) => Promise<void>;
+  /** Opens the Threads view on a delivered message's thread; without it, no links. */
+  onOpenMessage?: (messageId: string) => void;
 }
 
 /** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
@@ -137,6 +213,7 @@ export function RunLogView({
   scopeDecide,
   onRestartDaemon,
   onRequestChanges,
+  onOpenMessage,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -252,7 +329,11 @@ export function RunLogView({
                 ))}
               </div>
             ) : group.entries[0].kind === 'message' ? (
-              <ChatMessageBubble key={i} entry={group.entries[0]} />
+              <ChatMessageBubble
+                key={i}
+                entry={group.entries[0]}
+                onOpenMessage={onOpenMessage}
+              />
             ) : (
               <TranscriptRow
                 key={i}
