@@ -97,6 +97,7 @@ This section is generated from `registries/registries.json` by
 | `read`      | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | none    |
 | `answered`  | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | none    |
 | `forwarded` | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | no       | none    |
+| `refused`   | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | no       | none    |
 
 ## 11.9 Error codes
 

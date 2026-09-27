@@ -525,6 +525,16 @@
       "internal": false,
       "note": "a remote row handed to the transport, no report yet",
       "vectors": []
+    },
+    {
+      "value": "refused",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "internal": false,
+      "note": "every home of a remote recipient refused the message",
+      "vectors": []
     }
   ],
   "error-codes": [
