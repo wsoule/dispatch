@@ -72,6 +72,8 @@ export interface OverseerToolContext {
     ): Promise<void>;
     sendAsHuman(to: string, text: string, actor: string): Promise<void>;
   };
+  /** The daemon's human: the overseer acts for them, so its runs do too. */
+  ownerRef: string;
   /**
    * Executor `dispatch_task` uses when the overseer doesn't name one. Matches
    * api.ts's own fallback rather than being configurable per call site, so
@@ -481,6 +483,7 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     await ctx.orchestrator.dispatchOrResume(input.taskId, {
       executor: input.executor,
       model: input.model,
+      operator: ctx.ownerRef,
       defaults: { executor: executorFor(ctx) },
     });
   },

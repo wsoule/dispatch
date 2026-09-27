@@ -1368,6 +1368,8 @@ export interface EpicSession {
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** The human who started the session; its auto-fill runs act for them. */
+  startedBy?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }

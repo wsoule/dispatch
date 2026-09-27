@@ -33,7 +33,7 @@ import type {
 import { MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
@@ -57,7 +57,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor } from './api/caller.js';
+import { humanActor, humanCredentialRef } from './api/caller.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
@@ -123,7 +123,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
-import { expiredTokenMessage } from './identity.js';
+import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
@@ -385,6 +385,9 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
+  /** True when the request presented the shared agentToken: `caller` names
+   *  the owner, but no human is behind it. Set per request by handleApi. */
+  viaAgentToken?: boolean;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -777,6 +780,9 @@ async function createRun(
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
     actor: humanActor(ctx),
+    // Who the run acts for: the credential's own human, never the shared
+    // agentToken, which humanActor credits to the owner.
+    operator: humanCredentialRef(ctx),
   });
   return jsonResponse(meta, 201);
 }
@@ -3557,7 +3563,12 @@ async function startEpic(
   if (!parsed.ok) return parsed.response;
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
-  const session = await ctx.epicEngine.start(epicId, checked.body);
+  // Only a human credential starts a session its auto-fill runs act for.
+  const startedBy = humanCredentialRef(ctx);
+  const session = await ctx.epicEngine.start(epicId, {
+    ...checked.body,
+    ...(startedBy === null ? {} : { startedBy }),
+  });
   return jsonResponse(session, 201);
 }
 
@@ -4554,8 +4565,13 @@ export async function handleApi(
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
   const caller = daemonCtx.tokens.registry.resolve(presented);
+  // The shared agentToken resolves to the owner but is never a human; a
+  // constant-time digest compare, as resolvePrincipal does.
+  const viaAgentToken =
+    presented !== null &&
+    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
   let ctx: ApiContext = daemonCtx;
-  if (caller !== null) ctx = { ...ctx, caller };
+  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken };
   if (principal !== undefined) ctx = { ...ctx, principal };
 
   try {

@@ -332,6 +332,12 @@ export interface RunMeta {
   // and the files it claims, and the decisions it parks on — someone's on a
   // daemon more than one person uses.
   dispatchedBy?: string;
+  // The human whose personal memory this run reads and writes (read it through
+  // runOperator). null = no one; absent = recorded before the field.
+  operator?: string | null;
+  // The run whose Claude memory export this one shares: itself, or a
+  // continuing predecessor's (read it through runLineage).
+  memoryLineage?: string;
   // C2: once a run has been merged or discarded, review() must refuse any
   // further review/resume calls on it — this pair of fields, once set, is
   // that one-way marker. `state` itself stays whatever terminal value it
@@ -421,6 +427,23 @@ export interface RunMeta {
 // before `kind` existed.
 export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
   return meta.kind ?? 'execute';
+}
+
+// The human a run acts for; null means no one. Runs from before the field
+// fall back to dispatchedBy.
+export function runOperator(
+  meta: Pick<RunMeta, 'operator' | 'dispatchedBy'>
+): string | null {
+  return meta.operator !== undefined
+    ? meta.operator
+    : (meta.dispatchedBy ?? null);
+}
+
+// The first run of a continuing resume chain: the key of its Claude memory export.
+export function runLineage(
+  meta: Pick<RunMeta, 'id' | 'memoryLineage'>
+): string {
+  return meta.memoryLineage ?? meta.id;
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

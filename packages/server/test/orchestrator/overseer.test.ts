@@ -151,6 +151,7 @@ function makeHarness(): Harness {
     ledgerStore: new LedgerStore(repo),
     defaultExecutor: 'fake',
     messaging: lateMessaging.port,
+    ownerRef: 'human:test',
   };
   return {
     ...ctx,

@@ -172,6 +172,7 @@ function makeHarness(): Harness {
     ledgerStore,
     defaultExecutor: 'fake',
     messaging: lateMessaging.port,
+    ownerRef: 'human:test',
   };
   return {
     ...ctx,
@@ -701,6 +702,8 @@ describe('applyAction performs the real effect', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0].taskId).toBe(task.meta.id);
     expect(runs[0].executor).toBe('fake');
+    // The overseer acts for the daemon's owner.
+    expect(runs[0].operator).toBe('human:test');
   });
 
   it("approve_run answers the run's tool-approval gate as the confirming human", async () => {

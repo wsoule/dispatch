@@ -1475,6 +1475,7 @@ async function bootServer(
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
       messaging: overseerToolMessaging(messaging.engine),
+      ownerRef: actorContext.humanRef,
     }),
     events,
     bus: createOverseerBus(messaging.engine, messaging.store, {
