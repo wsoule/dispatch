@@ -1,5 +1,6 @@
 import type { TeamMember } from '@dispatch/core';
 import {
+  describeDroppedEntry,
   DISPATCH_DIR,
   parseTeamReport,
   serializeTeam,
@@ -163,7 +164,7 @@ export async function issueTeamToken(
     if (result.changed) {
       // Rewriting a roster with skipped entries would delete those teammates.
       if (roster.dropped.length > 0) {
-        const named = roster.dropped.map((e) => JSON.stringify(e)).join(', ');
+        const named = roster.dropped.map(describeDroppedEntry).join('; ');
         return errorResponse(
           409,
           `team.yml has entries this daemon skipped (${named}); fix them before adding anyone, or rewriting the roster would delete them`

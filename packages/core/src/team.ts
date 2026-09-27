@@ -23,6 +23,25 @@ const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
 /** The longest handle an address may carry. Handles are ASCII, so length is bytes. */
 export const MAX_HANDLE_BYTES = 64;
 
+// How parseTeamReport names a dropped entry that has no email.
+const NO_EMAIL = '(no email)';
+
+// Line breaks and C1 controls JSON.stringify leaves raw.
+const RAW_AFTER_JSON = /[\u007f-\u009f\u2028\u2029]/g;
+
+/**
+ * Names an entry parseTeamReport dropped, for a log line or an error. The
+ * email is quoted and escaped so a hand-edited one cannot forge extra lines.
+ */
+export function describeDroppedEntry(label: string): string {
+  if (label === NO_EMAIL) return 'an entry with no email';
+  const quoted = JSON.stringify(label).replace(
+    RAW_AFTER_JSON,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+  return `the entry for ${quoted}`;
+}
+
 /** Derives a stable handle from an email's local part, suffixing on collision. */
 export function handleFromEmail(email: string, taken: Set<string>): string {
   const local = email.slice(
@@ -85,7 +104,7 @@ export function parseTeamReport(yaml: string): {
       dropped.push(
         typeof entry?.email === 'string' && entry.email !== ''
           ? entry.email
-          : '(no email)'
+          : NO_EMAIL
       );
       continue;
     }

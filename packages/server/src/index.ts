@@ -1,5 +1,6 @@
 import {
   ActorContext,
+  describeDroppedEntry,
   formatMigrationReport,
   generateSyncedTaskId,
   hasLegacyState,
@@ -7,6 +8,7 @@ import {
   initProjectStores,
   isMergeDriverResolvable,
   loadConfig,
+  MAX_HANDLE_BYTES,
   openProjectStores,
   SqliteTaskStore,
   syncSettings,
@@ -864,9 +866,9 @@ async function bootServer(
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
-  for (const email of actorContext.droppedEmails) {
+  for (const label of actorContext.droppedEmails) {
     console.warn(
-      `team.yml: skipped the entry for ${email}: its handle is malformed or over 64 bytes; shorten it so this teammate stays addressable`
+      `team.yml: skipped ${describeDroppedEntry(label)}: each entry needs an email and a handle of at most ${MAX_HANDLE_BYTES} bytes, made of lowercase letters, digits, '.', '_' and '-' and starting with a letter or digit; until it is fixed, dispatchd will not write team.yml or add any new teammate to it`
     );
   }
 

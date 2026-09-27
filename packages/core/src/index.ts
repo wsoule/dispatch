@@ -329,6 +329,7 @@ export {
 } from './registry.js';
 export type { RegisteredProject } from './registry.js';
 export {
+  describeDroppedEntry,
   handleFromEmail,
   MAX_HANDLE_BYTES,
   parseTeam,

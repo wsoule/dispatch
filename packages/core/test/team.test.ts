@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import {
+  describeDroppedEntry,
   handleFromEmail,
   MAX_HANDLE_BYTES,
   parseTeam,
@@ -105,6 +106,22 @@ describe('parseTeam / serializeTeam', () => {
       dropped: ['long@x.com'],
     });
     expect(parseTeam(yaml).map((m) => m.handle)).toEqual(['ok']);
+  });
+});
+
+describe('describeDroppedEntry', () => {
+  it('quotes the email so a hand-edited one cannot break a log line', () => {
+    const email = 'a@x.com\ndispatchd: forged\u2028\u0085';
+    expect(describeDroppedEntry(email)).toBe(
+      'the entry for "a@x.com\\ndispatchd: forged\\u2028\\u0085"'
+    );
+  });
+
+  it('says so when the entry had no email to name it by', () => {
+    const { dropped } = parseTeamReport('members:\n  - handle: ok\n');
+    expect(dropped.map(describeDroppedEntry)).toEqual([
+      'an entry with no email',
+    ]);
   });
 });
 
