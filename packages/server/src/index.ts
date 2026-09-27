@@ -494,10 +494,11 @@ function withCors(
     // `authorization` must stay listed: every guarded route needs the bearer
     // header, and the desktop webview and dev harness are both cross-origin to
     // this daemon, so dropping it makes the browser discard their requests at
-    // the preflight before the daemon ever sees them.
+    // the preflight before the daemon ever sees them. The same holds for the
+    // `idempotency-key` a message send carries.
     res.headers.set(
       'access-control-allow-headers',
-      'content-type, authorization'
+      'content-type, authorization, idempotency-key'
     );
     // The allowed origin is request-dependent, so caches must key on it.
     res.headers.set('vary', 'origin');
