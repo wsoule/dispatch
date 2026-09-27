@@ -21,7 +21,7 @@ const MESSAGE_FIELDS = ['message', 'question', 'answer'];
 
 type Bound = Map<string, string>;
 
-// Binds role symbols to the ids the observation produced (spec:558-569).
+// Binds role symbols to the ids the observation produced (§12.4).
 export function bindSymbols(
   vector: Vector,
   observation: Observation,
@@ -487,7 +487,7 @@ function checkIds(
   }
 }
 
-// Judges an observation against the vector's expectation (spec:570-593).
+// Judges an observation against the vector's expectation (§12.4).
 export function compare(
   vector: Vector,
   observation: Observation,

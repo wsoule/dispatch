@@ -188,7 +188,7 @@ async function startAdapter(
 }
 
 // Runs every vector the requested claims need through one adapter and judges
-// each claim by the TCK's levels (spec:888-912).
+// each claim by the TCK's levels (§12.1, §12.2).
 export async function runConformance(opts: RunOptions): Promise<Report> {
   const log = opts.log ?? ((): void => undefined);
   const registry = loadRegistry();

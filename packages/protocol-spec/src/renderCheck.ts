@@ -2,7 +2,7 @@ import { LINE_BREAK } from './lines.js';
 import type { RenderForms } from './types.js';
 
 // Checks a rendered push against the forms the adapter declared, so Core can
-// test injection-safe presentation without fixing a format (spec:594-602).
+// test injection-safe presentation without fixing a format (§13.12).
 export function checkRender(
   text: string,
   body: string,

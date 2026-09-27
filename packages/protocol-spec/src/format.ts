@@ -82,7 +82,7 @@ function refuseUnknownKeys(
   if (extra !== undefined) fail(`${what} has unknown field ${extra}`);
 }
 
-// `$sN` must name an earlier step that created a message (spec:558-569).
+// `$sN` must name an earlier step that created a message (§12.4).
 function checkSymbols(v: Vector, fail: Fail): void {
   const bound = (n: number, before: number): boolean =>
     n >= 1 && n <= before && CREATES.has(v.when[n - 1]?.op ?? '');
