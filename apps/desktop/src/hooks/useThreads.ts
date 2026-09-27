@@ -195,7 +195,8 @@ export function useThreadRail(
       summaries,
       groups: groupRail(summaries),
       openIds,
-      loading: mailbox.isLoading,
+      // Until every list this window reads is in, an empty rail means nothing.
+      loading: mailbox.isLoading || recent.isLoading || gates.isLoading,
       error: mailbox.error ?? recent.error ?? null,
     };
   }, [
@@ -204,8 +205,10 @@ export function useThreadRail(
     mailbox.isLoading,
     mailbox.error,
     recent.data,
+    recent.isLoading,
     recent.error,
     gates.data,
+    gates.isLoading,
   ]);
 }
 
