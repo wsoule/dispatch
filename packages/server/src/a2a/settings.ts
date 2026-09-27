@@ -57,9 +57,9 @@ export function listenerSettingsPath(rootDir: string): string {
   return join(runsDir(rootDir), 'a2a-listener.json');
 }
 
-// The file's settings, or the key whose value has the wrong type. A missing
-// optional key takes its default, so a hand-written file can stay short.
-function parseSettings(
+// The file's (or a PUT body's) settings, or the key whose value has the wrong
+// type. A missing optional key takes its default, so a file can stay short.
+export function parseSettings(
   raw: unknown
 ): { ok: true; settings: ListenerSettings } | { ok: false; key: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw))

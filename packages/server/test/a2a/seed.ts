@@ -38,3 +38,40 @@ export async function freePort(): Promise<number> {
   await probe.stop(true);
   return port;
 }
+
+let seedBase = '';
+
+// Each daemon test calls this after boot(), so approvedClient reaches its /api.
+export function useSeedBase(base: string): void {
+  seedBase = base;
+}
+
+// A client added and approved through the route, as the owner would.
+export async function approvedClient(
+  name: string
+): Promise<{ caller: { address: string; name: string }; token: string }> {
+  const res = await fetch(`${seedBase}/api/a2a/clients`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ name, approve: true }),
+  });
+  if (res.status !== 201)
+    throw new Error(
+      `approvedClient ${name}: ${res.status} ${await res.text()}`
+    );
+  const body = (await res.json()) as { address: string; token: string };
+  return {
+    caller: { address: body.address, name: `a2a.${name}` },
+    token: body.token,
+  };
+}
+
+// The SDK's result shape for sendMessage is Task | Message (or its oneof wrapper).
+export function taskIdOf(result: unknown): string {
+  const r = result as {
+    id?: string;
+    payload?: { value?: { id?: string } };
+    task?: { id?: string };
+  };
+  return r.payload?.value?.id ?? r.task?.id ?? r.id ?? '';
+}

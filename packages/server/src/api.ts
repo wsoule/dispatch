@@ -37,6 +37,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { isA2AClientToken } from './a2a/auth.js';
 import type { A2ABridge } from './a2a/bridge.js';
+import { handleA2ARoute } from './a2a/routes.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
@@ -4252,12 +4253,29 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['agents', '*', 'revoke'], tier: 'decide' },
   { method: 'POST', segments: ['agents', '*', 'mute'], tier: 'decide' },
   { method: 'POST', segments: ['agents', '*', 'unmute'], tier: 'decide' },
+  // A fresh A2A client token is a credential handed out; an A2A task list
+  // names every client's questions, and declining one answers it.
+  {
+    method: 'POST',
+    segments: ['a2a', 'clients', '*', 'rotate'],
+    tier: 'decide',
+  },
+  { method: 'GET', segments: ['a2a', 'tasks'], tier: 'decide' },
+  {
+    method: 'POST',
+    segments: ['a2a', 'tasks', '*', 'decline'],
+    tier: 'decide',
+  },
 
   // ---- operator: acting on the host machine as its owner --------------------
   // Writing a file straight to disk bypasses the orchestrator, which is what
   // holds a run's edits to the task's declared `writes` and records them.
   // Reads stay on the request tier with the rest of the read surface.
   { method: 'POST', segments: ['files', 'write'], tier: 'operator' },
+  // Opening the A2A listener exposes this machine on a network port and
+  // points the daemon at TLS files on disk; closing it is paired.
+  { method: 'PUT', segments: ['a2a', 'listener'], tier: 'operator' },
+  { method: 'DELETE', segments: ['a2a', 'listener'], tier: 'operator' },
   // The stored Linear key is the credential the daemon acts on Linear with,
   // kept in the owner's own ~/.dispatch/credentials.json: choosing it picks
   // whose account, and which workspace, the board is sent to — the same call
@@ -5443,6 +5461,11 @@ export async function handleApi(
           segments.length === 4 ? decodeURIComponent(segments[3]) : undefined
         );
       }
+    }
+
+    if (segments[0] === 'a2a') {
+      const handled = await handleA2ARoute(req, ctx, segments.slice(1), method);
+      if (handled !== null) return handled;
     }
 
     if (segments[0] === 'agents') {

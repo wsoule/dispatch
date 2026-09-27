@@ -1,4 +1,4 @@
-import { isReservedName } from '@dispatch/a2a';
+import { isClientAddress, isReservedName } from '@dispatch/a2a';
 import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
@@ -761,28 +761,21 @@ export function normalizeAgentName(raw: string): string {
 const UNPRINTABLE = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
 
 // A required registration field with its unprintable characters removed, or
-// the 400 explaining why it is missing or too long.
-function registrationField(
+// why it is missing or too long.
+export function registrationField(
   value: unknown,
   field: 'name' | 'client'
-): { ok: true; value: string } | { ok: false; response: Response } {
+): { ok: true; value: string } | { ok: false; error: string } {
   const required = `invalid ${field}: ${field} is required`;
-  if (typeof value !== 'string') {
-    return { ok: false, response: errorResponse(400, required) };
-  }
+  if (typeof value !== 'string') return { ok: false, error: required };
   if (value.length > MAX_REGISTRATION_FIELD_LENGTH) {
     return {
       ok: false,
-      response: errorResponse(
-        400,
-        `invalid ${field}: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`
-      ),
+      error: `invalid ${field}: longer than ${MAX_REGISTRATION_FIELD_LENGTH} characters`,
     };
   }
   const printable = value.replace(UNPRINTABLE, '').trim();
-  if (printable === '') {
-    return { ok: false, response: errorResponse(400, required) };
-  }
+  if (printable === '') return { ok: false, error: required };
   return { ok: true, value: printable };
 }
 
@@ -796,9 +789,9 @@ export async function registerAgent(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { name?: unknown; client?: unknown };
   const displayName = registrationField(body.name, 'name');
-  if (!displayName.ok) return displayName.response;
+  if (!displayName.ok) return errorResponse(400, displayName.error);
   const client = registrationField(body.client, 'client');
-  if (!client.ok) return client.response;
+  if (!client.ok) return errorResponse(400, client.error);
   const name = normalizeAgentName(displayName.value);
   if (isReservedName(name)) {
     return errorResponse(
@@ -983,12 +976,14 @@ export function approveAgent(
   return decideAgent(ctx, address, 'approve', 'approved');
 }
 
-// POST /api/agents/:addr/revoke
-export function revokeAgent(
+// POST /api/agents/:addr/revoke. A revoked A2A client's open asks are closed.
+export async function revokeAgent(
   ctx: ApiContext,
   address: string
 ): Promise<Response> {
-  return decideAgent(ctx, address, 'deny', 'revoked');
+  const res = await decideAgent(ctx, address, 'deny', 'revoked');
+  if (res.ok && isClientAddress(address)) ctx.a2a?.clientRevoked(address);
+  return res;
 }
 
 // Shared body for mute/unmute: these never touch a gate (there is no

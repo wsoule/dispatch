@@ -4,6 +4,7 @@ export {
   buildCard,
   buildCardJson,
   cardEtag,
+  cardJson,
   DEFAULT_CARD_DESCRIPTION,
   handoffSupported,
   offeredSkills,

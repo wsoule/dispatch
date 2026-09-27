@@ -1,10 +1,16 @@
-import type { A2AStore } from '@dispatch/a2a';
-import { isClientAddress, openA2ADb, SqliteA2AStore } from '@dispatch/a2a';
+import type { A2AStore, TaskRow } from '@dispatch/a2a';
+import {
+  isClientAddress,
+  openA2ADb,
+  SqliteA2AStore,
+  TERMINAL_STATES,
+} from '@dispatch/a2a';
 import type { A2AConfig, TaskStorePort } from '@dispatch/core';
 import { CANONICAL_STATUSES, DEFAULT_A2A, loadConfig } from '@dispatch/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
+import { closeGate } from '../messaging/gates.js';
 import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
@@ -41,10 +47,18 @@ export interface A2ABridge {
   status(): ListenerStatus;
   // Opens the listener from the settings file plus the one-boot overrides.
   start(): Promise<void>;
+  // The key that would keep `next` closed, before anything is written;
+  // disabled settings always pass.
+  check(
+    next: ListenerSettings
+  ): { ok: true } | { ok: false; key: string; error: string };
   // Writes the settings file and (re)opens the listener from it.
   applySettings(next: ListenerSettings): Promise<ListenerStatus>;
   disable(): Promise<ListenerStatus>;
   listening(): boolean;
+  // Closes a revoked client's unanswered asks as the system ("client
+  // revoked"); its handoff gates stay open for the owner.
+  clientRevoked(address: string): void;
   close(): Promise<void>;
 }
 
@@ -243,6 +257,34 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         return status();
       }),
     listening: () => url() !== null,
+    check(next) {
+      if (!next.enabled) return { ok: true };
+      const resolved = resolveListener(next, deps.daemonPorts());
+      return resolved.ok
+        ? { ok: true }
+        : { ok: false, key: resolved.key, error: resolved.error };
+    },
+    // Never throws: the revocation has already happened, and one task that
+    // cannot close is logged without stopping the others.
+    clientRevoked(address) {
+      let rows: TaskRow[] = [];
+      try {
+        rows = store?.tasksOf(address) ?? [];
+      } catch (err) {
+        console.error(`dispatchd: could not list ${address}'s A2A tasks`, err);
+      }
+      for (const row of rows) {
+        if (row.skill !== 'ask' || TERMINAL_STATES.has(row.state)) continue;
+        try {
+          // False when an answer got there first; the recompute shows which.
+          closeGate(messaging.engine, row.id, 'client revoked');
+          watch?.recompute(row.id);
+        } catch (err) {
+          console.error(`dispatchd: could not close A2A task ${row.id}`, err);
+        }
+      }
+      deps.events.broadcast({ type: 'a2a.changed' });
+    },
     close: () =>
       serial(async () => {
         stopWatch?.();

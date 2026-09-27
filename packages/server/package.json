@@ -28,6 +28,7 @@
     "zod": "catalog:"
   },
   "devDependencies": {
+    "@a2a-js/sdk": "catalog:",
     "@types/bun": "catalog:",
     "typescript": "catalog:"
   }
