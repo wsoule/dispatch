@@ -5,6 +5,7 @@ import {
   GATE_TYPES,
   gateTypeOf,
   hasGateData,
+  MAX_SEGMENT_BYTES,
   raiserOf,
   REF_TYPES,
 } from './constants.js';
@@ -25,7 +26,8 @@ export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 export type MessageKind = BuiltInKind | `x-${string}`;
 
 export interface Ref {
-  type: (typeof REF_TYPES)[number];
+  /** A registered ref type, or any identifier on a ref received from a peer (§4.4). */
+  type: (typeof REF_TYPES)[number] | (string & {});
   id: string;
   /** Commit sha for `file` refs. */
   at?: string;
@@ -106,8 +108,8 @@ export interface ValidateOptions {
 const PACKAGE_GATE_TYPES: ReadonlySet<string> = new Set(GATE_TYPES);
 
 const X_KIND = /^x-[a-z0-9][a-z0-9-]*$/;
+// §1.4's identifier grammar; an identifier's cap is the segment cap.
 const IDENTIFIER = /^[a-z0-9][a-z0-9._-]*$/;
-const MAX_IDENTIFIER_BYTES = 64;
 const ASKING_KINDS: ReadonlySet<string> = new Set(['question', 'handoff']);
 
 // Caps on one send, so no message can flood a recipient's session or the store.
@@ -294,14 +296,15 @@ export function validateSendInput(
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
   refs.forEach((ref, i) => {
-    const known = (REF_TYPES as readonly string[]).includes(ref.type);
+    const registered = (REF_TYPES as readonly string[]).includes(ref.type);
     // A peer's newer ref type is kept, not refused, so a minor version can add one.
     const receivedOk =
       options.origin === 'received' &&
       typeof ref.type === 'string' &&
       IDENTIFIER.test(ref.type) &&
-      ref.type.length <= MAX_IDENTIFIER_BYTES;
-    if (!known && !receivedOk) invalid(`refs[${i}].type`, 'unknown ref type');
+      ref.type.length <= MAX_SEGMENT_BYTES;
+    if (!registered && !receivedOk)
+      invalid(`refs[${i}].type`, 'unknown ref type');
     if (typeof ref.id !== 'string' || ref.id === '')
       invalid(`refs[${i}].id`, 'required');
     singleLine(ref.id, `refs[${i}].id`, MAX_REF_BYTES);

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { gateOf } from '../src/envelope.js';
-import type { Message } from '../src/envelope.js';
+import type { Message, Ref } from '../src/envelope.js';
 
 const gate: Message = {
   id: 'm-g',
@@ -34,5 +34,14 @@ describe('gateOf', () => {
     expect(gateOf({ data: { type: 'other' } })).toBeNull();
     expect(gateOf({ data: [1] })).toBeNull();
     expect(gateOf({})).toBeNull();
+  });
+});
+
+describe('Ref', () => {
+  it('types a received ref of a type this package does not know', () => {
+    // A message received through a binding keeps such a ref (§4.4).
+    const kept: Ref = { type: 'wiki', id: 'handbook', at: 's2' };
+    const known: Ref = { type: 'file', id: 'src/a.ts', at: 'abc123' };
+    expect([kept.type, known.type]).toEqual(['wiki', 'file']);
   });
 });
