@@ -18,8 +18,10 @@ const SYSTEM = 'agent:dispatch';
 const OVERSEER = /^agent:[a-z0-9][a-z0-9._-]*\/overseer$/;
 const TITLE_WIDTH = 80;
 
-/** My mailbox's messages plus the open gates, my deliveries, and the ids of
- *  open things put to me. */
+/** My mailbox's messages plus the open gates, and my deliveries. `openIds` is
+ *  every id still open that this window can see: each open decision, whoever
+ *  it asks, plus the unanswered asks in my mailbox. It is not "waiting on me";
+ *  summarizeThreads decides that. */
 export function mergeThreadSources(
   src: { mailbox: readonly MailboxItem[]; openGates: readonly Message[] },
   me: string
@@ -46,6 +48,8 @@ export interface ThreadLookups {
   taskTitle: (taskId: string) => string | null;
   taskIdOfRun: (runId: string) => string | null;
   agentStatus: (address: string) => 'revoked' | 'muted' | null;
+  /** Whether an address is the daemon's own overseer (the Assistant). */
+  isOverseer: (address: string) => boolean;
 }
 
 export function threadLookups(
@@ -60,15 +64,22 @@ export function threadLookups(
     if (agent.status === 'revoked') status.set(agent.address, 'revoked');
     else if (agent.muted) status.set(agent.address, 'muted');
   }
+  // The daemon approves only its own agents; anyone may register a name.
+  const overseer = agents.find(
+    (a) => a.approvedBy === SYSTEM && OVERSEER.test(a.address)
+  )?.address;
   return {
     taskTitle: (id) => titles.get(id) ?? null,
     taskIdOfRun: (id) => taskOfRun.get(id) ?? null,
     agentStatus: (address) => status.get(address) ?? null,
+    // Until the roster loads, any overseer-named agent reads as the Assistant.
+    isOverseer: (address) =>
+      overseer === undefined ? OVERSEER.test(address) : address === overseer,
   };
 }
 
 /** Changes only when something `threadLookups` reads does: a task's title, a
- *  run's task, an agent's status or mute. */
+ *  run's task, an agent's status, mute or approver. */
 export function lookupsKey(
   tasks: readonly { meta: { id: string; title: string } }[],
   runs: readonly { id: string; taskId: string }[],
@@ -77,7 +88,7 @@ export function lookupsKey(
   return JSON.stringify([
     tasks.map((t) => [t.meta.id, t.meta.title]),
     runs.map((r) => [r.id, r.taskId]),
-    agents.map((a) => [a.address, a.status, a.muted]),
+    agents.map((a) => [a.address, a.status, a.muted, a.approvedBy]),
   ]);
 }
 
@@ -95,6 +106,19 @@ export function participantLabel(
       : `${addressLabel(`task:${taskId}`, lookups)} · ${runId}`;
   }
   return addressLabel(address, lookups);
+}
+
+const KIND_LABELS: Record<string, string> = {
+  question: 'Question',
+  handoff: 'Handoff',
+  notice: 'Notice',
+  answer: 'Answer',
+};
+
+/** The badge a message kind shows: a built-in kind's name, a custom `x-` kind
+ *  as written, and none for a plain message. */
+export function kindLabel(kind: string): string | undefined {
+  return kind === 'message' ? undefined : (KIND_LABELS[kind] ?? kind);
 }
 
 /** A thread's one-line title: its root's first line, cut to 80 characters. */
@@ -194,19 +218,31 @@ export function rowControl(
   return { kind: 'choices', choices: message.choices ?? fallback, gate: false };
 }
 
+/** A row control that draws something to answer with. */
+type AnswerControl = Extract<
+  RowControl,
+  { kind: 'tool-approval' | 'scope' | 'choices' }
+>;
+
+/** Whether a row's control draws a gate card or at least one choice button:
+ *  the one rule `MessageRow` renders by and the reply box's footer reads. */
+export function offersAnswer(control: RowControl): control is AnswerControl {
+  if (control.kind === 'choices') return control.choices.length > 0;
+  return control.kind === 'tool-approval' || control.kind === 'scope';
+}
+
 /** Whether some open message in a thread gives this viewer buttons (or a
- *  gate card) to answer it with, as `MessageRow` renders its control. */
+ *  gate card) to answer it with. */
 export function hasAnswerButtons(
   messages: readonly Message[],
   ctx: { me: string; openIds: ReadonlySet<string>; access: MessageAccess }
 ): boolean {
-  return messages.some((message) => {
-    if (!ctx.openIds.has(message.id)) return false;
-    const { me, access } = ctx;
-    const control = rowControl(message, { me, open: true, access });
-    if (control.kind === 'choices') return control.choices.length > 0;
-    return control.kind === 'tool-approval' || control.kind === 'scope';
-  });
+  const { me, access } = ctx;
+  return messages.some(
+    (message) =>
+      ctx.openIds.has(message.id) &&
+      offersAnswer(rowControl(message, { me, open: true, access }))
+  );
 }
 
 /** `reply` answers an open question; `send` writes a plain message beside `replyTo`. */
@@ -214,23 +250,43 @@ export type ReplyPlan =
   | { kind: 'reply'; target: Message }
   | { kind: 'send'; to: string[]; replyTo: string };
 
+/** Who is replying: a deciding human may reply to any message; anyone else
+ *  only to one they sent, were sent, or were delivered (`deliveries`). */
+export interface Replier {
+  canDecide: boolean;
+  deliveries: readonly Delivery[];
+}
+
+const DECIDING: Replier = { canDecide: true, deliveries: [] };
+
 /** How a typed reply in an open thread is addressed; null when there is nothing to reply to. */
 export function replyPlan(
   messages: readonly Message[],
   me: string,
-  openIds: ReadonlySet<string>
+  openIds: ReadonlySet<string>,
+  replier: Replier = DECIDING
 ): ReplyPlan | null {
   const channel = messages[0]?.to.find((address) =>
     address.startsWith('channel:')
   );
-  const newestFirst = [...messages].reverse();
+  const delivered = new Set(
+    replier.deliveries.filter((d) => d.recipient === me).map((d) => d.messageId)
+  );
+  const tookPart = (m: Message): boolean =>
+    replier.canDecide ||
+    m.from === me ||
+    m.to.includes(me) ||
+    delivered.has(m.id);
+  const newestFirst = [...messages].reverse().filter(tookPart);
   const answered = answeredIds(messages);
-  // Text answers an open question put to me, whatever was said after it.
+  // Text answers the newest open question put to me, unless I wrote since it.
   const ask =
     channel === undefined
-      ? newestFirst.find((m) => asksMe(m, me, openIds, answered))
+      ? newestFirst.find((m) => m.from === me || asksMe(m, me, answered))
       : undefined;
-  if (ask !== undefined) return { kind: 'reply', target: ask };
+  if (ask !== undefined && ask.from !== me) {
+    return { kind: 'reply', target: ask };
+  }
   const target = newestFirst.find(
     (m) => m.from !== SYSTEM && !(openIds.has(m.id) && gateOf(m) !== null)
   );
@@ -250,13 +306,23 @@ export function replyPlan(
   if (to.length === 0) return null;
   // Reply to the newest message they sent me, or else my own; either way the
   // daemon reroutes a party that is an ended run to its task.
-  const theirs = [...messages].reverse().filter((m) => to.includes(m.from));
+  const theirs = newestFirst.filter((m) => to.includes(m.from));
   const anchor = theirs.find((m) => m.to.includes(me)) ?? theirs[0] ?? target;
   return { kind: 'send', to, replyTo: anchor.id };
 }
 
-/** The ids a thread's rows treat as open: `openIds`, plus each unanswered
- *  non-blocking question put to me, which its choices or typed text answer. */
+/** Where a typed reply goes, as the reply box names it. */
+export function replyTarget(plan: ReplyPlan, lookups: ThreadLookups): string {
+  if (plan.kind === 'reply') {
+    return `Answering ${participantLabel(plan.target.from, lookups)}`;
+  }
+  const names = plan.to.map((address) => participantLabel(address, lookups));
+  return `To ${names.join(', ')}`;
+}
+
+/** The ids a thread's rows treat as open: `openIds` less any the thread already
+ *  answers (a list can lag an answer), plus each question put to me that it
+ *  holds no answer to, which its choices or typed text answer. */
 export function threadOpenIds(
   messages: readonly Message[],
   me: string,
@@ -264,10 +330,13 @@ export function threadOpenIds(
 ): ReadonlySet<string> {
   const answered = answeredIds(messages);
   const asks = messages.filter(
-    (m) => !openIds.has(m.id) && asksMe(m, me, openIds, answered)
+    (m) => !openIds.has(m.id) && asksMe(m, me, answered)
   );
-  if (asks.length === 0) return openIds;
-  return new Set([...openIds, ...asks.map((m) => m.id)]);
+  const settled = [...answered].filter((id) => openIds.has(id));
+  if (asks.length === 0 && settled.length === 0) return openIds;
+  const ids = new Set([...openIds, ...asks.map((m) => m.id)]);
+  for (const id of settled) ids.delete(id);
+  return ids;
 }
 
 // The ids of the questions and handoffs this thread already holds an answer to.
@@ -279,32 +348,29 @@ function answeredIds(messages: readonly Message[]): Set<string> {
   return ids;
 }
 
-// Whether `m` is a plain question put to me that still takes an answer: a
-// blocking one while it is listed open, any other until it is answered.
+// Whether `m` is a plain question put to me that still takes an answer: one
+// its thread holds no answer to, blocking or not.
 function asksMe(
   m: Message,
   me: string,
-  openIds: ReadonlySet<string>,
   answered: ReadonlySet<string>
 ): boolean {
   if (m.kind !== 'question' || m.from === me || m.from === SYSTEM) return false;
-  if (!m.to.includes(me) || gateOf(m) !== null || answered.has(m.id)) {
-    return false;
-  }
-  return !m.blocking || openIds.has(m.id);
+  return m.to.includes(me) && gateOf(m) === null && !answered.has(m.id);
 }
 
 export type ReplyRoute = 'bus' | 'overseer' | 'overseer-elsewhere';
 
-/** Where a reply goes: the bus, the live overseer conversation, or nowhere (an older one). */
+/** Where a reply goes: the bus, the live overseer conversation, or nowhere
+ *  from here (another conversation, or any when the live one is not given). */
 export function replyRoute(
   messages: readonly Message[],
   thread: string,
-  overseerThread: string | null
+  overseerThread: string | null,
+  lookups: Pick<ThreadLookups, 'isOverseer'>
 ): ReplyRoute {
   const withOverseer = messages.some(
-    (m) =>
-      OVERSEER.test(m.from) || m.to.some((address) => OVERSEER.test(address))
+    (m) => lookups.isOverseer(m.from) || m.to.some(lookups.isOverseer)
   );
   if (!withOverseer) return 'bus';
   return thread === overseerThread ? 'overseer' : 'overseer-elsewhere';

@@ -11,6 +11,9 @@ interface StickToBottom {
   /** Forces a scroll to the bottom and re-pins, for moments the user clearly wants to be
    * back at the latest content (e.g. they just sent a message) even if they had scrolled up. */
   scrollToBottom: () => void;
+  /** Stops following new content until the user scrolls back to the bottom, for a jump
+   * to something further up (a linked message) that growth must not undo. */
+  unpin: () => void;
 }
 
 /**
@@ -44,6 +47,10 @@ export function useStickToBottom(resetKey: string): StickToBottom {
     scroller.scrollTop = scroller.scrollHeight;
   }, []);
 
+  const unpin = useCallback(() => {
+    pinnedRef.current = false;
+  }, []);
+
   // Layout effect (not a plain effect) so switching runs paints already scrolled to the
   // bottom instead of flashing the top of the transcript first.
   useLayoutEffect(() => {
@@ -73,5 +80,5 @@ export function useStickToBottom(resetKey: string): StickToBottom {
     };
   }, []);
 
-  return { scrollRef, contentRef, scrollToBottom };
+  return { scrollRef, contentRef, scrollToBottom, unpin };
 }

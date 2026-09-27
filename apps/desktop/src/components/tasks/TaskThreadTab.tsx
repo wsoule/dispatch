@@ -74,6 +74,8 @@ export function TaskThreadTab({
             // A fresh reply draft per thread.
             key={open.thread}
             messages={open.messages}
+            focus={focus}
+            deliveries={open.deliveries}
             me={me}
             openIds={list.openIds}
             access={access}
@@ -83,7 +85,7 @@ export function TaskThreadTab({
             onAnswer={actions.answer}
             onOpen={pane.onOpen}
             loadApprovalInput={pane.loadApprovalInput}
-            route={replyRoute(open.messages, open.thread, null)}
+            route={replyRoute(open.messages, open.thread, null, pane.lookups)}
             onReply={actions.reply}
             onOverseerReply={noOverseerReply}
             overseerBusy={false}
@@ -97,7 +99,6 @@ export function TaskThreadTab({
             known={pane.known}
             initialTo={locked}
             locked={locked}
-            disabledReason={null}
             label={(address) => participantLabel(address, pane.lookups)}
             onSend={actions.send}
             onSent={(result) => setFocus(result.message.thread)}

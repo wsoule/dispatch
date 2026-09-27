@@ -22,6 +22,7 @@ import {
   isTerminalRunState,
   postFailWorkLabel,
 } from '../../lib/runState';
+import { kindLabel } from '../../lib/threadSources';
 import { ApprovalCard } from './ApprovalCard';
 import { Markdown } from './Markdown';
 import { QuestionCard } from './QuestionCard';
@@ -44,12 +45,6 @@ const SENDABLE_STATES = new Set<RunMeta['state']>([
   'awaiting-approval',
 ]);
 
-const KIND_LABEL: Record<string, string> = {
-  question: 'Question',
-  handoff: 'Handoff',
-  notice: 'Notice',
-  answer: 'Answer',
-};
 // The agent-facing prompt to answer with msg_reply; a person reading the chat has no use for it.
 const WAITING_NOTE = 'The sender is waiting.';
 
@@ -135,10 +130,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
   const notes =
     delivered?.notes.filter((line) => !line.startsWith(WAITING_NOTE)) ?? [];
   const kind = delivered?.kind;
-  const kindLabel =
-    kind === undefined || kind === 'message'
-      ? undefined
-      : (KIND_LABEL[kind] ?? kind);
+  const badge = kind === undefined ? undefined : kindLabel(kind);
   const sender = entry.fromLabel ?? delivered?.from;
   // A human sender reads as "You" only when it is the viewer, or composer text with no sender.
   const heading = fromUser
@@ -162,7 +154,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         )}
       >
         {heading}
-        {kindLabel !== undefined && <Pill>{kindLabel}</Pill>}
+        {badge !== undefined && <Pill>{badge}</Pill>}
         {delivered?.urgent === true && <Pill>Urgent</Pill>}
         {link(
           entry.messageId,

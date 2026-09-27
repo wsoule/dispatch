@@ -1,5 +1,6 @@
 import type {
   AgentSessionMeta,
+  AgentSummary,
   ApiClient,
   AuthTier,
   ConfirmResult,
@@ -45,7 +46,11 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { agentRosterKey, mayChangeAgentRoster } from '../lib/agentRoster';
+import {
+  agentRosterKey,
+  mayChangeAgentRoster,
+  mutedAddresses,
+} from '../lib/agentRoster';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
   configChangedQueryKeys,
@@ -1466,17 +1471,23 @@ export function useDispatchProject(
             if (message.blocking || message.kind === 'answer') {
               void queryClient.invalidateQueries({ queryKey: openGatesKeyNow });
             }
-            // A window that cannot decide is not told about gates it cannot see;
-            // titles come from the cache, as this effect's `runs` can be stale.
-            const note = auth.canDecide
-              ? gateNotification(
-                  message,
-                  (runId) =>
-                    queryClient
-                      .getQueryData<RunMeta[]>(runsQueryKey)
-                      ?.find((r) => r.id === runId)?.taskTitle
-                )
-              : null;
+            // A window that cannot decide is not told about gates it cannot see,
+            // nor anyone about a muted agent; runs and roster come from the cache.
+            const muted = mutedAddresses(
+              queryClient.getQueryData<{ agents: AgentSummary[] }>(
+                agentRosterKey(port)
+              )?.agents ?? []
+            );
+            const note =
+              auth.canDecide && !muted.has(message.from)
+                ? gateNotification(
+                    message,
+                    (runId) =>
+                      queryClient
+                        .getQueryData<RunMeta[]>(runsQueryKey)
+                        ?.find((r) => r.id === runId)?.taskTitle
+                  )
+                : null;
             if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
               void notify(note.title, note.body, note.kind);
             }

@@ -498,6 +498,9 @@ const questionGate = gateMessage('m-q', {
   choices: ['old', 'new'],
 });
 
+// The query client the last mountWithGates made, for a test to seed its cache.
+let gatesQueryClient: QueryClient | null = null;
+
 // Mounts the hook over `gates` with live run r-1 parked on an approval, and
 // waits until the open gates have been read into its three maps.
 async function mountWithGates(gates: Message[]) {
@@ -510,6 +513,7 @@ async function mountWithGates(gates: Message[]) {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  gatesQueryClient = queryClient;
   const rendered = renderHook(
     () => useDispatchProject('/repo', { selectedRunId: null }),
     { wrapper: wrapper(queryClient) }
@@ -587,6 +591,47 @@ test('a deciding window notifies one tool approval per waiting run', async () =>
 
   expect(notified).toEqual([
     { title: 'Approval needed', body: 'Bash · r-9', kind: 'approval' },
+  ]);
+  resetGateFixtures();
+});
+
+// Muting an agent promises it never interrupts anyone, so its questions
+// raise no OS notification; another agent's still do.
+test("a muted agent's question raises no notification", async () => {
+  await mountWithGates([approvalGate]);
+  gatesQueryClient?.setQueryData(agentRosterKey(PORT), {
+    agents: [
+      {
+        address: 'agent:wyat/quiet',
+        displayName: 'quiet',
+        client: 'codex',
+        status: 'approved',
+        muted: true,
+        approvedBy: 'human:wyat',
+        createdAt: '2026-09-25T10:00:00.000Z',
+      },
+    ],
+  });
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-quiet', {
+        from: 'agent:wyat/quiet',
+        body: 'Deploy now?',
+      }),
+    });
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-loud', {
+        from: 'agent:wyat/loud',
+        body: 'Ship it?',
+      }),
+    });
+  });
+
+  expect(notified).toEqual([
+    { title: 'An agent has a question', body: 'Ship it?', kind: 'question' },
   ]);
   resetGateFixtures();
 });

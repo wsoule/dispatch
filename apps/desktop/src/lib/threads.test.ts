@@ -11,6 +11,7 @@ import {
   appendToThread,
   completeAddress,
   groupRail,
+  isUnread,
   summarizeThreads,
   type ThreadSummary,
 } from './threads';
@@ -117,6 +118,21 @@ describe('summarizeThreads', () => {
     expect(summary.unread).toBe(3);
   });
 
+  test('counts as unread exactly what marking read clears', () => {
+    const states: DeliveryState[] = [
+      'held',
+      'notified',
+      'pushed',
+      'read',
+      'answered',
+      'sending',
+    ];
+    expect(
+      states.filter((state) => isUnread(delivery('m-001', state), ME))
+    ).toEqual(['held', 'notified', 'pushed']);
+    expect(isUnread(delivery('m-001', 'held', 'human:ada'), ME)).toBe(false);
+  });
+
   test('ignores deliveries for messages it was not given', () => {
     const summary = only(
       summarizeThreads(
@@ -220,6 +236,44 @@ describe('summarizeThreads', () => {
         )
       );
       expect(byDelivery.needsYou).toBe(false);
+    });
+
+    test('leaves out a gate this window cannot answer, but not a question put to me', () => {
+      const teammate = { canDecide: false };
+      const gated = only(
+        summarizeThreads(
+          [msg('m-001'), gate],
+          [],
+          ME,
+          new Set(['m-002']),
+          teammate
+        )
+      );
+      expect(gated.needsYou).toBe(false);
+      const question = msg('m-020', { kind: 'question', blocking: true });
+      const asked = only(
+        summarizeThreads([question], [], ME, new Set(['m-020']), teammate)
+      );
+      expect(asked.needsYou).toBe(true);
+    });
+
+    test("leaves out a muted sender's questions and handoffs, which stay readable in Direct", () => {
+      const quiet = 'agent:ada/quiet';
+      const question = msg('m-020', {
+        from: quiet,
+        kind: 'question',
+        blocking: true,
+      });
+      const passed = { ...handoff, from: quiet };
+      const summaries = summarizeThreads(
+        [question, passed],
+        [],
+        ME,
+        new Set(['m-020']),
+        { muted: new Set([quiet]) }
+      );
+      expect(summaries.map((s) => s.needsYou)).toEqual([false, false]);
+      expect(groupRail(summaries).direct).toHaveLength(2);
     });
   });
 
@@ -425,10 +479,26 @@ describe('completeAddress', () => {
       'task:t-3c4d',
       'channel:auth-refactor',
     ]);
+    // `ada` names the human exactly, so the human leads the agent it only starts.
     expect(completeAddress('@ada', known)).toEqual([
-      { address: 'agent:ada/codex', label: 'ada/codex' },
       { address: 'human:ada', label: 'ada' },
+      { address: 'agent:ada/codex', label: 'ada/codex' },
     ]);
+  });
+
+  test('puts an exactly typed name ahead of longer names it starts', () => {
+    const people = {
+      ...known,
+      agents: [],
+      humans: ['human:adam', 'human:ada'],
+    };
+    expect(addresses('@human:ada', people)).toEqual([
+      'human:ada',
+      'human:adam',
+    ]);
+    expect(addresses('@ada', people)).toEqual(['human:ada', 'human:adam']);
+    expect(addresses('@#releases')).toEqual(['channel:releases']);
+    expect(addresses('@T-1A2B')).toEqual(['task:t-1a2b']);
   });
 
   test('returns the top five of each kind for a bare @', () => {

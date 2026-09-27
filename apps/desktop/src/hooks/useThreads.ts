@@ -5,7 +5,6 @@ import type {
   ApiClient,
   ChannelSummary,
   Delivery,
-  DeliveryState,
   MailboxItem,
   Message,
   ThreadSummary as RecentThread,
@@ -17,25 +16,25 @@ import type {
 import { ApiError } from '@dispatch/client';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { agentRosterKey } from '../lib/agentRoster';
+import { agentRosterKey, mutedAddresses } from '../lib/agentRoster';
 import type { ComposeState } from '../lib/composer';
 import { toSendInput } from '../lib/composer';
 import type { MessageAccess } from '../lib/daemonAuth';
 import { gateOf, openGatesKey, runIdOf } from '../lib/gates';
 import type { RailGroup, ThreadSummary } from '../lib/threads';
-import { appendToThread, groupRail, summarizeThreads } from '../lib/threads';
+import {
+  appendToThread,
+  groupRail,
+  isUnread,
+  summarizeThreads,
+} from '../lib/threads';
 import type { ReplyPlan } from '../lib/threadSources';
 import { mergeThreadSources } from '../lib/threadSources';
 
 const RECENT_THREADS = 100;
 const TASK_THREADS = 50;
-const UNREAD: ReadonlySet<DeliveryState> = new Set([
-  'held',
-  'notified',
-  'pushed',
-]);
 const APPROVES: ReadonlySet<string> = new Set(['approve', 'approve-session']);
 const NO_ITEMS: readonly MailboxItem[] = [];
 const NO_MESSAGES: Message[] = [];
@@ -58,11 +57,12 @@ export function threadKey(port: number | undefined, thread: string) {
   return ['dispatch-threads', port, 'thread', thread] as const;
 }
 
-// Tries a read again when it may pass next time (a network blip, a daemon
-// error), never when the daemon refused it or has no such thread.
+// Tries a read again when it may pass next time, never when the daemon said
+// this window may not read it (403) or it does not exist (404).
 function retryTransient(failures: number, error: Error): boolean {
-  if (error instanceof ApiError && error.status < 500) return false;
-  return failures < 3;
+  const final =
+    error instanceof ApiError && (error.status === 403 || error.status === 404);
+  return !final && failures < 3;
 }
 
 function ready(client: ApiClient | null): ApiClient {
@@ -107,7 +107,10 @@ export function applyThreadEvent(
     }
     void queryClient.invalidateQueries({ queryKey: threadListsKey(port) });
   } else if (event.type === 'hello') {
+    // A restart may have closed gates or settled agents with no event we saw.
     void queryClient.invalidateQueries({ queryKey: threadsPrefix(port) });
+    void queryClient.invalidateQueries({ queryKey: openGatesKey(port) });
+    void queryClient.invalidateQueries({ queryKey: agentRosterKey(port) });
   }
 }
 
@@ -163,6 +166,8 @@ export function useThreadRail(
     enabled: enabled && access.canDecide,
   });
   const gates = useOpenGates(client, port, access);
+  const agents = useAgentRoster(client, port, access.canMessage);
+  const { canDecide } = access;
   return useMemo(() => {
     const merged = mergeThreadSources(
       {
@@ -179,7 +184,11 @@ export function useThreadRail(
             merged.deliveries,
             me,
             merged.openIds,
-            { recent: recent.data?.threads ?? NO_RECENT }
+            {
+              recent: recent.data?.threads ?? NO_RECENT,
+              canDecide,
+              muted: mutedAddresses(agents),
+            }
           );
     return {
       summaries,
@@ -190,6 +199,8 @@ export function useThreadRail(
     };
   }, [
     me,
+    canDecide,
+    agents,
     mailbox.data,
     mailbox.isLoading,
     mailbox.error,
@@ -223,6 +234,7 @@ export function useTaskThreads(
   });
   const mailbox = useMailbox(client, port, me, access.canDecide);
   const gates = useOpenGates(client, port, access);
+  const agents = useAgentRoster(client, port, access.canDecide);
   return useMemo(() => {
     const recent = about.data?.threads ?? NO_RECENT;
     const inTask = new Set(recent.map((t) => t.thread));
@@ -241,14 +253,25 @@ export function useTaskThreads(
     const summaries =
       me === null
         ? []
-        : summarizeThreads(messages, deliveries, me, openIds, { recent });
+        : summarizeThreads(messages, deliveries, me, openIds, {
+            recent,
+            muted: mutedAddresses(agents),
+          });
     return {
       summaries,
       openIds: me === null ? NO_OPEN : openIds,
       loading: about.isLoading,
       error: about.error ?? null,
     };
-  }, [me, about.data, about.isLoading, about.error, mailbox.data, gates.data]);
+  }, [
+    me,
+    agents,
+    about.data,
+    about.isLoading,
+    about.error,
+    mailbox.data,
+    gates.data,
+  ]);
 }
 
 export interface OpenThread {
@@ -257,6 +280,20 @@ export interface OpenThread {
   deliveries: Delivery[];
   loading: boolean;
   error: Error | null;
+}
+
+// The thread holding message `id`. A rail row names its thread by the root,
+// which a teammate pulled in by a later reply may not hold; the thread itself
+// may still be theirs to read, so a refused id is tried as a thread id.
+async function threadOf(api: ApiClient, id: string): Promise<string> {
+  try {
+    return (await api.getMessage(id)).thread;
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 403)) throw err;
+    const detail = await api.getThread(id).catch(() => null);
+    if (detail === null || detail.messages.length === 0) throw err;
+    return id;
+  }
 }
 
 /** The thread holding `focus` (any message id in it; a root id is its own
@@ -270,10 +307,9 @@ export function useThread(
   const enabled = client !== null && focus !== null && access.canMessage;
   const resolved = useQuery({
     queryKey: [...threadsPrefix(port), 'message', focus],
-    queryFn: () => ready(client).getMessage(focus ?? ''),
+    queryFn: () => threadOf(ready(client), focus ?? ''),
     enabled,
-    staleTime: Infinity, // a message never changes
-    select: (message) => message.thread,
+    staleTime: Infinity, // a message never moves thread
     // A link to a thread this window cannot read, or one gone, says so at once.
     retry: retryTransient,
   });
@@ -296,12 +332,13 @@ export function useThread(
 /** The agent roster, on the key Settings → Connected agents uses, so both share it. */
 export function useAgentRoster(
   client: ApiClient | null,
-  port: number | undefined
+  port: number | undefined,
+  enabled = true
 ): AgentSummary[] {
   const roster = useQuery({
     queryKey: agentRosterKey(port),
     queryFn: () => ready(client).listAgentRoster(),
-    enabled: client !== null,
+    enabled: client !== null && enabled,
   });
   return roster.data?.agents ?? NO_AGENTS;
 }
@@ -336,9 +373,22 @@ export interface RunGateHandlers {
   ) => Promise<void>;
 }
 
+/** One Idempotency-Key per draft, which its text box renews after a send or an
+ *  edit: resending an unchanged draft after a lost response replays that send. */
+export function useDraftKey(): [key: string, renew: () => void] {
+  const [key, setKey] = useState(() => crypto.randomUUID());
+  const renew = useCallback(() => setKey(crypto.randomUUID()), []);
+  return [key, renew];
+}
+
 export interface ThreadActions {
-  send: (state: ComposeState) => Promise<SendResult>;
-  reply: (plan: ReplyPlan, body: string) => Promise<SendResult>;
+  /** Sends a draft under the key its text box holds (`useDraftKey`). */
+  send: (state: ComposeState, idempotencyKey: string) => Promise<SendResult>;
+  reply: (
+    plan: ReplyPlan,
+    body: string,
+    idempotencyKey: string
+  ) => Promise<SendResult>;
   answer: (
     message: Message,
     reply: { body: string; choice?: string }
@@ -373,17 +423,9 @@ export function useThreadActions(
     return ready(client);
   }, [access, client]);
 
-  // One Idempotency-Key per unsent draft: resending the same input after a
-  // lost response reuses it, so the daemon replays the first send.
-  const draftKeys = useRef(new Map<string, string>());
   const sendDraft = useCallback(
-    async (input: SendInput): Promise<SendResult> => {
-      const api = messenger();
-      const draft = JSON.stringify(input);
-      const key = draftKeys.current.get(draft) ?? crypto.randomUUID();
-      draftKeys.current.set(draft, key);
-      const result = await api.sendMessage(input, { idempotencyKey: key });
-      draftKeys.current.delete(draft);
+    async (input: SendInput, idempotencyKey: string): Promise<SendResult> => {
+      const result = await messenger().sendMessage(input, { idempotencyKey });
       refresh();
       return result;
     },
@@ -391,14 +433,15 @@ export function useThreadActions(
   );
 
   const send = useCallback(
-    (state: ComposeState): Promise<SendResult> => sendDraft(toSendInput(state)),
+    (state: ComposeState, idempotencyKey: string): Promise<SendResult> =>
+      sendDraft(toSendInput(state), idempotencyKey),
     [sendDraft]
   );
 
   // An answer goes as a keyed send, as the reply route would build it, so a
   // resend after a lost response replays rather than 409s.
   const reply = useCallback(
-    (plan: ReplyPlan, body: string): Promise<SendResult> =>
+    (plan: ReplyPlan, body: string, idempotencyKey: string) =>
       sendDraft(
         plan.kind === 'send'
           ? { to: plan.to, kind: 'message', body, replyTo: plan.replyTo }
@@ -407,7 +450,8 @@ export function useThreadActions(
               kind: 'answer',
               body,
               replyTo: plan.target.id,
-            }
+            },
+        idempotencyKey
       ),
     [sendDraft]
   );
@@ -465,8 +509,7 @@ export function useThreadActions(
     (deliveries: readonly Delivery[]): void => {
       if (client === null || me === null || !access.canMessage) return;
       const unread = deliveries.filter(
-        (d) =>
-          d.recipient === me && UNREAD.has(d.state) && !marked.current.has(d.id)
+        (d) => isUnread(d, me) && !marked.current.has(d.id)
       );
       if (unread.length === 0) return;
       for (const d of unread) marked.current.add(d.id);

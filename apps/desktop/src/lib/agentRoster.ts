@@ -36,6 +36,13 @@ export function rosterActions(agent: AgentSummary): RosterActions {
   return { approve: agent.status === 'pending', mute: live, revoke: live };
 }
 
+/** The agents a decider muted: their messages stay readable but never ask for attention. */
+export function mutedAddresses(
+  agents: readonly AgentSummary[]
+): ReadonlySet<string> {
+  return new Set(agents.filter((a) => a.muted).map((a) => a.address));
+}
+
 /** An address without its kind: `human:wyat` → `wyat`. */
 export function handleOf(address: string): string {
   const colon = address.indexOf(':');

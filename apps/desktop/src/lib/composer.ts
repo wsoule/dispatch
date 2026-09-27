@@ -53,15 +53,23 @@ export function dropTrailingMention(body: string): string {
   return mention === null ? body : body.slice(0, mention.start);
 }
 
-/** The trailing `@token` as a recipient: the highlighted match, a typed `kind:id`, or a problem. */
+/** The trailing `@token` as a recipient: the match picked (`highlighted`), else a
+ *  listed address typed in full or the first match, else a typed `kind:id`, or a problem. */
 export function resolveMention(
   query: string,
   matches: readonly { address: string }[],
-  highlighted: number
+  highlighted: number | null
 ):
   | { kind: 'address'; address: string }
   | { kind: 'problem'; problem: ComposeProblem } {
-  const picked = matches[highlighted] ?? matches[0];
+  const lowered = query.toLowerCase();
+  const full = lowered.startsWith('#')
+    ? `channel:${lowered.slice(1)}`
+    : lowered;
+  const picked =
+    (highlighted === null ? undefined : matches[highlighted]) ??
+    matches.find((match) => match.address === full) ??
+    matches[0];
   if (picked !== undefined) return { kind: 'address', address: picked.address };
   if (TYPED_ADDRESS.test(query)) return { kind: 'address', address: query };
   return {
@@ -106,6 +114,16 @@ export function toSendInput(state: ComposeState): SendInput {
     ...(state.kind === 'question' ? { blocking: true } : {}),
     wake: state.wake ? 'request' : 'none',
   };
+}
+
+/** The recipients without `id`, unless it is locked (a task tab's own task),
+ *  which stays however its removal was asked for. */
+export function withoutRecipient(
+  to: string[],
+  id: string,
+  locked: readonly string[]
+): string[] {
+  return locked.includes(id) ? to : to.filter((address) => address !== id);
 }
 
 /** A failed send as an inline problem, with the daemon's field and text when it sent them. */

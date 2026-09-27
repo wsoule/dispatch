@@ -5,14 +5,17 @@ import type { MessageAccess } from './daemonAuth';
 import {
   addressAction,
   hasAnswerButtons,
+  kindLabel,
   knownAddresses,
   lookupsKey,
   mergeThreadSources,
+  offersAnswer,
   openRefWith,
   participantLabel,
   refAction,
   replyPlan,
   replyRoute,
+  replyTarget,
   rowControl,
   threadLookups,
   threadOpenIds,
@@ -251,6 +254,29 @@ describe('rowControl', () => {
 });
 
 describe('hasAnswerButtons', () => {
+  it('counts a gate card or at least one choice as something to answer with', () => {
+    expect(
+      offersAnswer({ kind: 'scope', paths: ['a.ts'], reason: 'needed' })
+    ).toBe(true);
+    expect(
+      offersAnswer({
+        kind: 'tool-approval',
+        tool: 'Bash',
+        input: {},
+        truncated: false,
+        call: null,
+      })
+    ).toBe(true);
+    expect(offersAnswer({ kind: 'choices', choices: ['a'], gate: false })).toBe(
+      true
+    );
+    expect(offersAnswer({ kind: 'choices', choices: [], gate: true })).toBe(
+      false
+    );
+    expect(offersAnswer({ kind: 'read-only', reason: 'why' })).toBe(false);
+    expect(offersAnswer({ kind: 'none' })).toBe(false);
+  });
+
   it('is true only when an open row gives this viewer buttons to answer with', () => {
     const open = new Set(['m-s']);
     expect(
@@ -300,6 +326,62 @@ describe('replyPlan', () => {
       kind: 'reply',
       target: q,
     });
+  });
+
+  it('writes a plain message, not an answer, once I have written since the question', () => {
+    const q = msg('m-01', { kind: 'question', blocking: true });
+    const mine = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+    });
+    expect(replyPlan([q, mine], ME, new Set(['m-01']))).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+    const again = msg('m-03', { thread: 'm-01', kind: 'question' });
+    expect(replyPlan([q, mine, again], ME, new Set(['m-01']))).toEqual({
+      kind: 'reply',
+      target: again,
+    });
+  });
+
+  it('names where a reply goes: who it answers, or who it is to', () => {
+    const q = msg('m-01', { kind: 'question' });
+    expect(replyTarget({ kind: 'reply', target: q }, lookups)).toBe(
+      'Answering t-000001 · Checkout · r-000001'
+    );
+    expect(
+      replyTarget(
+        { kind: 'send', to: ['channel:general', 'human:ada'], replyTo: 'm-01' },
+        lookups
+      )
+    ).toBe('To #general, ada');
+  });
+
+  it('answers a blocking question put to me by what the thread holds, even when no open list names it', () => {
+    // A teammate's task tab loads no open lists, yet the question waits on them.
+    const q = msg('m-01', {
+      kind: 'question',
+      blocking: true,
+      choices: ['old', 'new'],
+    });
+    expect(replyPlan([q], ME, new Set())).toEqual({ kind: 'reply', target: q });
+    expect([...threadOpenIds([q], ME, new Set())]).toEqual(['m-01']);
+    const answer = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+      kind: 'answer',
+      choice: 'new',
+    });
+    expect(replyPlan([q, answer], ME, new Set())).toMatchObject({
+      kind: 'send',
+    });
+    expect([...threadOpenIds([q, answer], ME, new Set())]).toEqual([]);
   });
 
   it('answers a non-blocking question put to me until its thread holds an answer', () => {
@@ -441,6 +523,65 @@ describe('replyPlan', () => {
     });
     expect(replyPlan([wake, answer], ME, new Set())).toBeNull();
   });
+
+  it("anchors a teammate's reply on a message they took part in, which is all the daemon lets them reply to", () => {
+    const question = msg('m-01', { kind: 'question' });
+    const answer = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+      kind: 'answer',
+    });
+    const note = msg('m-03', {
+      thread: 'm-01',
+      replyTo: 'm-02',
+      to: ['human:owner'],
+    });
+    const thread = [question, answer, note];
+    const teammate = { canDecide: false, deliveries: [] };
+    expect(replyPlan(thread, ME, new Set(), teammate)).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+    // A decider may reply to anything, so they write beside the newest.
+    expect(replyPlan(thread, ME, new Set())).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-03',
+    });
+  });
+
+  it('counts a channel message delivered to a teammate as one they took part in', () => {
+    const root = msg('m-01', { to: ['channel:general'] });
+    const aside = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      to: ['human:owner'],
+    });
+    const delivered = {
+      id: 'd-01',
+      messageId: 'm-01',
+      recipient: ME,
+      runId: null,
+      via: 'channel' as const,
+      state: 'read' as const,
+      updatedAt: root.createdAt,
+    };
+    expect(
+      replyPlan([root, aside], ME, new Set(), {
+        canDecide: false,
+        deliveries: [delivered],
+      })
+    ).toEqual({ kind: 'send', to: ['channel:general'], replyTo: 'm-01' });
+    expect(
+      replyPlan([root, aside], ME, new Set(), {
+        canDecide: false,
+        deliveries: [],
+      })
+    ).toBeNull();
+  });
 });
 
 describe('threadOpenIds', () => {
@@ -469,19 +610,77 @@ describe('threadOpenIds', () => {
     const theirs = msg('m-03', { kind: 'question', to: ['human:ada'] });
     expect(threadOpenIds([theirs], ME, open)).toBe(open);
   });
+
+  it('drops a listed gate the thread already answers, as a restart closes it before the list refetches', () => {
+    const gate = msg('m-g', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'deny'],
+      data: { type: 'wake', target: 'task:t-000002', message: 'm-x' },
+    });
+    const closed = msg('m-c', {
+      thread: 'm-g',
+      replyTo: 'm-g',
+      from: 'agent:dispatch',
+      to: [ME],
+      kind: 'answer',
+      data: { type: 'x-closed' },
+    });
+    const stale = new Set(['m-g', 'm-other']);
+    expect([...threadOpenIds([gate, closed], ME, stale)]).toEqual(['m-other']);
+    expect(
+      hasAnswerButtons([gate, closed], {
+        me: ME,
+        openIds: threadOpenIds([gate, closed], ME, stale),
+        access: DECIDER,
+      })
+    ).toBe(false);
+  });
 });
 
 describe('replyRoute', () => {
   const line = msg('m-01', { from: ME, to: ['agent:wyat/overseer'] });
+  // The roster holds the daemon's own overseer, approved by the daemon, and
+  // a teammate's external agent that registered under the same name.
+  const withRoster = threadLookups(
+    [],
+    [],
+    [
+      agent('agent:wyat/overseer', {
+        client: 'dispatch',
+        approvedBy: 'agent:dispatch',
+      }),
+      agent('agent:pmirand/overseer', { approvedBy: ME }),
+    ]
+  );
 
   it('keeps ordinary threads on the bus', () => {
-    expect(replyRoute([msg('m-02')], 'm-02', 'm-01')).toBe('bus');
+    expect(replyRoute([msg('m-02')], 'm-02', 'm-01', withRoster)).toBe('bus');
   });
 
   it('routes the live overseer conversation through the overseer and leaves an older one read-only', () => {
-    expect(replyRoute([line], 'm-01', 'm-01')).toBe('overseer');
-    expect(replyRoute([line], 'm-01', 'm-77')).toBe('overseer-elsewhere');
-    expect(replyRoute([line], 'm-01', null)).toBe('overseer-elsewhere');
+    expect(replyRoute([line], 'm-01', 'm-01', withRoster)).toBe('overseer');
+    expect(replyRoute([line], 'm-01', 'm-77', withRoster)).toBe(
+      'overseer-elsewhere'
+    );
+    expect(replyRoute([line], 'm-01', null, withRoster)).toBe(
+      'overseer-elsewhere'
+    );
+  });
+
+  it("keeps a teammate's agent named overseer on the bus: only the daemon's own overseer is the Assistant", () => {
+    const external = msg('m-05', { from: ME, to: ['agent:pmirand/overseer'] });
+    expect(replyRoute([external], 'm-05', null, withRoster)).toBe('bus');
+    expect(withRoster.isOverseer('agent:wyat/overseer')).toBe(true);
+    expect(withRoster.isOverseer('agent:pmirand/overseer')).toBe(false);
+  });
+
+  it('treats any overseer-named agent as the Assistant only until the roster loads', () => {
+    const unloaded = threadLookups([], [], []);
+    expect(replyRoute([line], 'm-01', 'm-01', unloaded)).toBe('overseer');
+    expect(unloaded.isOverseer('agent:pmirand/overseer')).toBe(true);
+    expect(unloaded.isOverseer('agent:wyat/claude')).toBe(false);
   });
 });
 
@@ -549,6 +748,15 @@ describe('refs and labels', () => {
     ).toBe(`${'x'.repeat(79)}…`);
   });
 
+  it('badges every kind but a plain message, a custom kind by its own name', () => {
+    expect(kindLabel('question')).toBe('Question');
+    expect(kindLabel('handoff')).toBe('Handoff');
+    expect(kindLabel('notice')).toBe('Notice');
+    expect(kindLabel('answer')).toBe('Answer');
+    expect(kindLabel('x-review')).toBe('x-review');
+    expect(kindLabel('message')).toBeUndefined();
+  });
+
   it('keys the lookups by what they read, so an event that changes no label keeps them', () => {
     const task = (status: string) => ({
       meta: { id: 't-000001', title: 'Checkout', status },
@@ -578,6 +786,15 @@ describe('refs and labels', () => {
     ).not.toBe(key);
     expect(
       lookupsKey(tasks, runs, [agent('agent:wyat/quiet', { muted: false })])
+    ).not.toBe(key);
+    // Who approved an agent decides which overseer is the daemon's own.
+    expect(
+      lookupsKey(tasks, runs, [
+        agent('agent:wyat/quiet', {
+          muted: true,
+          approvedBy: 'agent:dispatch',
+        }),
+      ])
     ).not.toBe(key);
   });
 

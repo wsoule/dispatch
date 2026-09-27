@@ -129,7 +129,6 @@ export function ThreadsView({
             <div className="p-3">
               <Composer
                 known={known}
-                disabledReason={null}
                 label={(address) => participantLabel(address, lookups)}
                 onSend={actions.send}
                 onSent={(result) => {
@@ -143,6 +142,8 @@ export function ThreadsView({
               // A fresh reply draft per thread.
               key={open.thread}
               messages={open.messages}
+              focus={focus}
+              deliveries={open.deliveries}
               me={me}
               openIds={rail.openIds}
               access={access}
@@ -152,7 +153,12 @@ export function ThreadsView({
               onAnswer={actions.answer}
               onOpen={onOpen}
               loadApprovalInput={loadApprovalInput}
-              route={replyRoute(open.messages, open.thread, overseer.thread)}
+              route={replyRoute(
+                open.messages,
+                open.thread,
+                overseer.thread,
+                lookups
+              )}
               onReply={actions.reply}
               onOverseerReply={overseer.submit}
               overseerBusy={overseer.busy}
