@@ -47,4 +47,30 @@ describe('the receipt file format', () => {
       parseDocFile(renderDocFile(META, 'x').replace('\n---\nx', '\nx'))
     ).toEqual({ error: 'unterminated frontmatter' });
   });
+
+  it('refuses values outside their sets and arrays of the wrong shape', () => {
+    const bad = (meta: Record<string, unknown>) =>
+      parseDocFile(
+        renderDocFile({ ...META, ...meta } as unknown as DocFileMeta, 'x')
+      );
+    expect(bad({ status: 'bogus' })).toEqual({
+      error: 'status must be draft, accepted or archived',
+    });
+    expect(bad({ cause: 'hack' })).toEqual({
+      error: 'cause is not a revision cause',
+    });
+    expect(bad({ parents: [5] })).toEqual({
+      error: 'parents must hold strings',
+    });
+    expect(bad({ authors: [null] })).toEqual({
+      error: 'authors must hold strings',
+    });
+    expect(bad({ links: [5] })).toEqual({
+      error: 'links must hold { target, rel } with rel spec, plan or context',
+    });
+    expect(bad({ links: [{ target: 'task:t-1', rel: 'owner' }] })).toEqual({
+      error: 'links must hold { target, rel } with rel spec, plan or context',
+    });
+    expect(bad({ n: 1.5 })).toEqual({ error: 'n must be a whole number' });
+  });
 });

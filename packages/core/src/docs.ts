@@ -347,12 +347,59 @@ const DOC_FILE_ARRAYS: ReadonlySet<keyof DocFileMeta> = new Set([
   'authors',
 ]);
 
+// Every revision cause, so a parsed file can name only one of them.
+const REVISION_CAUSES: Record<RevisionCause, true> = {
+  create: true,
+  save: true,
+  edit: true,
+  merge: true,
+  revert: true,
+  import: true,
+  restore: true,
+  proposal: true,
+  approve: true,
+  reject: true,
+  sync: true,
+};
+
+// Whether a parsed link entry is `{ target, rel }` with a known rel.
+function isFileLink(value: unknown): boolean {
+  if (typeof value !== 'object' || value === null) return false;
+  const link = value as Record<string, unknown>;
+  return (
+    typeof link.target === 'string' && LINK_RELS.some((r) => r === link.rel)
+  );
+}
+
+// Why typed frontmatter still holds a value outside its set or an array
+// element of the wrong shape; null when it has none.
+function docFileValueProblem(
+  fields: ReadonlyMap<string, unknown>
+): string | null {
+  const status = fields.get('status');
+  if (!DOC_STATUSES.some((s) => s === status))
+    return 'status must be draft, accepted or archived';
+  if (!Object.hasOwn(REVISION_CAUSES, fields.get('cause') as string))
+    return 'cause is not a revision cause';
+  const n = fields.get('n') as number;
+  if (!Number.isInteger(n) || n < 0) return 'n must be a whole number';
+  for (const key of ['parents', 'authors']) {
+    const values = fields.get(key) as unknown[];
+    if (!values.every((v) => typeof v === 'string'))
+      return `${key} must hold strings`;
+  }
+  if (!(fields.get('links') as unknown[]).every(isFileLink))
+    return 'links must hold { target, rel } with rel spec, plan or context';
+  return null;
+}
+
 export function renderDocFile(meta: DocFileMeta, body: string): string {
   const lines = DOC_FILE_FIELDS.map((k) => `${k}: ${JSON.stringify(meta[k])}`);
   return `---\n${lines.join('\n')}\n---\n${body}`;
 }
 
-// The inverse of renderDocFile: every field present with its JSON type, or why not.
+// The inverse of renderDocFile: every field present with its type and in its
+// set, or why not.
 export function parseDocFile(
   text: string
 ): { meta: DocFileMeta; body: string } | { error: string } {
@@ -381,8 +428,11 @@ export function parseDocFile(
         error: `${key} must be ${want === 'array' ? 'an' : 'a'} ${want}`,
       };
   }
+  const problem = docFileValueProblem(fields);
+  if (problem !== null) return { error: problem };
   const meta = Object.fromEntries(
     DOC_FILE_FIELDS.map((k) => [k, fields.get(k)])
   ) as unknown as DocFileMeta;
+  meta.links = meta.links.map(({ target, rel }) => ({ target, rel }));
   return { meta, body: text.slice(end + 5) };
 }
