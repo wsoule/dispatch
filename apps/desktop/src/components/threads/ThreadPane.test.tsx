@@ -366,3 +366,43 @@ test('a link to a message further up scrolls it into view and marks it; the root
   expect(scrolled).toEqual([['m-02', { block: 'center' }]]);
   expect(linked()).toBe('true');
 });
+
+test('the mark fades, and a later link back to the same message marks it again', async () => {
+  const messages = [msg('m-01'), msg('m-02'), msg('m-03')];
+  const pane = (focus: string) => (
+    <ThreadPane
+      messages={messages}
+      deliveries={[]}
+      focus={focus}
+      me={ME}
+      openIds={new Set()}
+      access={DECIDER}
+      lookups={threadLookups([], [], [])}
+      availability={{
+        enabled: true,
+        notice: null,
+        explanation: null,
+        restart: null,
+      }}
+      onRestartDaemon={() => Promise.resolve()}
+      onAnswer={() => Promise.resolve()}
+      onOpen={() => {}}
+      loadApprovalInput={() => Promise.resolve(undefined)}
+      route="bus"
+      onReply={() => Promise.resolve()}
+      onOverseerReply={() => Promise.resolve()}
+      overseerBusy={false}
+      onOpenOverseer={() => {}}
+    />
+  );
+  const marked = () =>
+    document
+      .querySelector('[data-linked="true"]')
+      ?.getAttribute('data-message-id') ?? null;
+  const { rerender } = render(pane('m-02'));
+  expect(marked()).toBe('m-02');
+  await waitFor(() => expect(marked()).toBeNull(), { timeout: 3000 });
+  rerender(pane('m-01'));
+  rerender(pane('m-02'));
+  expect(marked()).toBe('m-02');
+});

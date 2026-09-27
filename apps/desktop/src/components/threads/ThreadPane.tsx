@@ -84,7 +84,11 @@ export function ThreadPane(props: ThreadPaneProps) {
   useEffect(() => {
     if (linked === null) return;
     const timer = setTimeout(() => setFaded(linked), LINKED_MARK_MS);
-    return () => clearTimeout(timer);
+    // A later link back to the same message marks it again.
+    return () => {
+      clearTimeout(timer);
+      setFaded(null);
+    };
   }, [linked]);
   const marked = linked !== faded ? linked : null;
   return (
