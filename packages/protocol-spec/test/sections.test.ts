@@ -55,6 +55,10 @@ describe('the spec skeleton', () => {
     ).toEqual(['6.3']);
     // Backticks after the run make it inline code, not a fence.
     expect(sectionsOf('```a``` b\n## 6.1 A\n')).toEqual(['6.1']);
+    // CRLF line endings still open and close a fence.
+    expect(
+      sectionsOf('# 6 D\r\n```sh\r\n# 6.1 c\r\n```\r\n## 6.2 X\r\n')
+    ).toEqual(['6', '6.2']);
   });
 
   it('lists 5.9, 6.8, 9.3, 13.16 and C.3', () => {

@@ -20,6 +20,28 @@ const ILLEGAL = /[^a-z0-9._-]/g;
 // stays exactly what it is today.
 const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
 
+/** The longest handle an address may carry. Handles are ASCII, so length is bytes. */
+export const MAX_HANDLE_BYTES = 64;
+
+// How parseTeamReport names a dropped entry that has no email.
+const NO_EMAIL = '(no email)';
+
+// Line breaks and C1 controls JSON.stringify leaves raw.
+const RAW_AFTER_JSON = /[\u007f-\u009f\u2028\u2029]/g;
+
+/**
+ * Names an entry parseTeamReport dropped, for a log line or an error. The
+ * email is quoted and escaped so a hand-edited one cannot forge extra lines.
+ */
+export function describeDroppedEntry(label: string): string {
+  if (label === NO_EMAIL) return 'an entry with no email';
+  const quoted = JSON.stringify(label).replace(
+    RAW_AFTER_JSON,
+    (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
+  );
+  return `the entry for ${quoted}`;
+}
+
 /** Derives a stable handle from an email's local part, suffixing on collision. */
 export function handleFromEmail(email: string, taken: Set<string>): string {
   const local = email.slice(
@@ -30,15 +52,30 @@ export function handleFromEmail(email: string, taken: Set<string>): string {
     .toLowerCase()
     .replace(ILLEGAL, '')
     .replace(/^[._-]+/, '');
-  const base = cleaned.length > 0 ? cleaned : 'member';
+  const base = (cleaned.length > 0 ? cleaned : 'member').slice(
+    0,
+    MAX_HANDLE_BYTES
+  );
   if (!taken.has(base)) return base;
   for (let n = 2; ; n++) {
-    const candidate = `${base}${n}`;
+    const suffix = String(n);
+    const candidate = `${base.slice(0, MAX_HANDLE_BYTES - suffix.length)}${suffix}`;
     if (!taken.has(candidate)) return candidate;
   }
 }
 
 export function parseTeam(yaml: string): TeamMember[] {
+  return parseTeamReport(yaml).members;
+}
+
+/**
+ * Parses a roster and names each entry it drops, by email or `(no email)`,
+ * so the caller can refuse to rewrite the file and ask the owner to fix it.
+ */
+export function parseTeamReport(yaml: string): {
+  members: TeamMember[];
+  dropped: string[];
+} {
   let raw: unknown;
   try {
     raw = yaml.trim() === '' ? null : parse(yaml);
@@ -47,36 +84,43 @@ export function parseTeam(yaml: string): TeamMember[] {
     throw new TeamParseError(`invalid team.yml: ${(err as Error).message}`);
   }
   const members = (raw as { members?: unknown } | null)?.members;
-  if (!Array.isArray(members)) return [];
+  if (!Array.isArray(members)) return { members: [], dropped: [] };
   // An entry without a usable handle and email is dropped, not coerced —
   // a fabricated "undefined" handle produces an unparseable actor ref. A
   // handle that doesn't match the format the rest of the system requires
-  // (e.g. a hand-edited `handle: Wyat`) is dropped the same way: it would
-  // otherwise reach InboxStore, which throws an uncaught error out of
-  // startServer instead of failing closed.
-  return members.flatMap((m: unknown) => {
-    const entry = m as Partial<TeamMember>;
+  // (e.g. a hand-edited `handle: Wyat`, or one over MAX_HANDLE_BYTES) is
+  // dropped the same way: it would otherwise reach InboxStore, which throws
+  // an uncaught error out of startServer instead of failing closed.
+  const kept: TeamMember[] = [];
+  const dropped: string[] = [];
+  for (const m of members as unknown[]) {
+    const entry = m as Partial<TeamMember> | null;
     if (
       typeof entry?.handle !== 'string' ||
       typeof entry?.email !== 'string' ||
-      !HANDLE.test(entry.handle)
+      !HANDLE.test(entry.handle) ||
+      entry.handle.length > MAX_HANDLE_BYTES
     ) {
-      return [];
+      dropped.push(
+        typeof entry?.email === 'string' && entry.email !== ''
+          ? entry.email
+          : NO_EMAIL
+      );
+      continue;
     }
-    return [
-      {
-        handle: entry.handle,
-        email: entry.email,
-        displayName:
-          typeof entry.displayName === 'string'
-            ? entry.displayName
-            : entry.handle,
-        emails: Array.isArray(entry.emails)
-          ? entry.emails.filter((e): e is string => typeof e === 'string')
-          : [],
-      },
-    ];
-  });
+    kept.push({
+      handle: entry.handle,
+      email: entry.email,
+      displayName:
+        typeof entry.displayName === 'string'
+          ? entry.displayName
+          : entry.handle,
+      emails: Array.isArray(entry.emails)
+        ? entry.emails.filter((e): e is string => typeof e === 'string')
+        : [],
+    });
+  }
+  return { members: kept, dropped };
 }
 
 export function serializeTeam(members: TeamMember[]): string {

@@ -1,6 +1,14 @@
 import { parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
-import { gateTypeOf, hasGateData, raiserOf } from './constants.js';
+import {
+  BUILT_IN_KINDS,
+  GATE_TYPES,
+  gateTypeOf,
+  hasGateData,
+  MAX_SEGMENT_BYTES,
+  raiserOf,
+  REF_TYPES,
+} from './constants.js';
 import { MessagingError } from './errors.js';
 import { LINE_BREAK } from './lines.js';
 
@@ -12,19 +20,14 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export const BUILT_IN_KINDS = [
-  'message',
-  'question',
-  'answer',
-  'handoff',
-  'notice',
-] as const;
+export { GATE_TYPES };
+
 export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 export type MessageKind = BuiltInKind | `x-${string}`;
 
-export const REF_TYPES = ['task', 'run', 'file', 'commit', 'message'] as const;
 export interface Ref {
-  type: (typeof REF_TYPES)[number];
+  /** A registered ref type, or any identifier on a ref received from a peer (§4.4). */
+  type: (typeof REF_TYPES)[number] | (string & {});
   id: string;
   /** Commit sha for `file` refs. */
   at?: string;
@@ -70,13 +73,6 @@ export interface SendInput {
   idempotencyKey?: string;
 }
 
-export const GATE_TYPES = [
-  'tool-approval',
-  'scope',
-  'wake',
-  'agent-registration',
-  'overseer-action',
-] as const;
 export type GateData =
   | {
       type: 'tool-approval';
@@ -104,15 +100,20 @@ export type GateData =
       summary: string;
     };
 
-/** How validateSendInput judges gates. */
+/** How validateSendInput judges gates and refs. A federated receive adds
+ *  `parentOptional?: boolean`: a reply whose target is absent skips its checks. */
 export interface ValidateOptions {
   /** The gate types the host implements; default every GATE_TYPES entry. */
   gateTypes?: ReadonlySet<string>;
+  /** `received` for a message that arrived through a binding: it keeps unknown ref types. */
+  origin?: 'local' | 'received';
 }
 
 const PACKAGE_GATE_TYPES: ReadonlySet<string> = new Set(GATE_TYPES);
 
 const X_KIND = /^x-[a-z0-9][a-z0-9-]*$/;
+// §1.4's identifier grammar; an identifier's cap is the segment cap.
+const IDENTIFIER = /^[a-z0-9][a-z0-9._-]*$/;
 const ASKING_KINDS: ReadonlySet<string> = new Set(['question', 'handoff']);
 
 // Caps on one send, so no message can flood a recipient's session or the store.
@@ -299,7 +300,14 @@ export function validateSendInput(
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
   refs.forEach((ref, i) => {
-    if (!(REF_TYPES as readonly string[]).includes(ref.type))
+    const registered = (REF_TYPES as readonly string[]).includes(ref.type);
+    // A peer's newer ref type is kept, not refused, so a minor version can add one.
+    const receivedOk =
+      options.origin === 'received' &&
+      typeof ref.type === 'string' &&
+      IDENTIFIER.test(ref.type) &&
+      ref.type.length <= MAX_SEGMENT_BYTES;
+    if (!registered && !receivedOk)
       invalid(`refs[${i}].type`, 'unknown ref type');
     if (typeof ref.id !== 'string' || ref.id === '')
       invalid(`refs[${i}].id`, 'required');

@@ -660,8 +660,8 @@ describe('messaging HTTP routes', () => {
       sendRes
     );
 
-    // The engine itself rejects the reply — a stranger must never get to
-    // insert a message into a thread it wasn't addressed by or sender of.
+    // The engine itself rejects the reply, as it would for an absent id: a
+    // stranger never inserts into, or learns of, a thread it is not part of.
     const replyRes = await fetch(
       `${baseUrl}/api/messages/${sent.message.id}/reply`,
       {
@@ -670,7 +670,7 @@ describe('messaging HTTP routes', () => {
         body: JSON.stringify({ body: 'butting in' }),
       }
     );
-    expect(replyRes.status).toBe(403);
+    expect(replyRes.status).toBe(404);
     const replyBody = await json<{ error: string; field?: string }>(replyRes);
     expect(replyBody.field).toBe('replyTo');
 
@@ -1150,7 +1150,7 @@ describe('messaging HTTP routes', () => {
     expect(body.approvedBy).toBeNull();
   });
 
-  it("an approved agent cannot answer another agent's registration gate (403, not a participant)", async () => {
+  it("an approved agent cannot answer another agent's registration gate (404, as for an absent id)", async () => {
     const pending = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
         method: 'POST',
@@ -1171,12 +1171,12 @@ describe('messaging HTTP routes', () => {
       headers: authHeaders(approved.token),
       body: JSON.stringify({ body: 'approve me', choice: 'approve' }),
     });
-    expect(replyRes.status).toBe(403);
+    expect(replyRes.status).toBe(404);
     const body = await json<{ error: string }>(replyRes);
-    expect(body.error).toContain('only a participant');
+    expect(body.error).toBe(`no message ${gate!.id}`);
   });
 
-  it('a request-tier teammate token cannot answer a gate question either (403, not a participant)', async () => {
+  it('a request-tier teammate token cannot answer a gate question either (404, as for an absent id)', async () => {
     const pending = await json<{ address: string }>(
       await fetch(`${baseUrl}/api/agents/register`, {
         method: 'POST',
@@ -1196,9 +1196,9 @@ describe('messaging HTTP routes', () => {
       headers: authHeaders(teammateToken),
       body: JSON.stringify({ body: 'approve me', choice: 'approve' }),
     });
-    expect(replyRes.status).toBe(403);
+    expect(replyRes.status).toBe(404);
     const body = await json<{ error: string }>(replyRes);
-    expect(body.error).toContain('only a participant');
+    expect(body.error).toBe(`no message ${gate!.id}`);
   });
 
   it('registration caps name and client at 100 characters', async () => {
@@ -1809,7 +1809,7 @@ describe('messaging routes — direct unit coverage', () => {
         { body: 'mine' },
         { address: `run:${review.id}`, canDecide: false }
       )
-    ).rejects.toThrow('only a participant');
+    ).rejects.toThrow(`no message ${question.message.id}`);
     await orchestrator.cancel(review.id);
 
     const run = await orchestrator.dispatch(task.meta.id, 'claude', {});

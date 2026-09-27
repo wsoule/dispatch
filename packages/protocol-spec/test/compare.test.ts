@@ -188,6 +188,13 @@ describe('compare', () => {
     expect(compare(v, { ...good, deliveries: [] }, hello).failures).toEqual([]);
   });
 
+  it('fails a noDeliveries symbol that names no message', () => {
+    const v: Vector = { ...send, then: { noDeliveries: ['$gate1'] } };
+    expect(compare(v, good, hello).failures).toEqual([
+      '$gate1 names no message',
+    ]);
+  });
+
   it('fails calls out of order and passes callsInclude as a subsequence', () => {
     const v = {
       ...send,

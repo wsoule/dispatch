@@ -233,10 +233,13 @@
     {
       "value": "idempotencyKey",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.9",
-      "vectors": []
+      "vectors": [
+        "core.idempotency.replays-the-first-message",
+        "core.idempotency.a-key-is-one-line-of-at-most-200-bytes"
+      ]
     },
     {
       "value": "origin",
@@ -507,7 +510,8 @@
       "section": "4.8",
       "vectors": [
         "core.close.answers-without-effect-or-deliveries",
-        "core.close.moves-the-question-to-answered"
+        "core.close.moves-the-question-to-answered",
+        "core.markers.close-is-honored-only-from-the-system"
       ]
     },
     {
@@ -641,7 +645,10 @@
       "since": "1.0.0-draft.1",
       "section": "10.1",
       "httpStatus": 404,
-      "vectors": ["env.envelope.a-reply-to-no-message-is-not-found"]
+      "vectors": [
+        "env.envelope.a-reply-to-no-message-is-not-found",
+        "core.participation.absent-and-foreign-look-alike"
+      ]
     },
     {
       "value": "conflict",

@@ -20,7 +20,7 @@ A host MUST NOT expose a state this table does not list, except a state of an
 appendix it implements ([§11.8](11-registries.md#s11.8)). Adding a state a host
 exposes is a major change ([§14.1](14-versioning.md#s14.1)).
 
-**Initial state.** A delivery starts as follows (pinned rule 3):
+**Initial state.** A delivery starts as follows:
 
 | Recipient                                                                                                       | Initial state and session                                                                             |
 | --------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
@@ -41,7 +41,18 @@ session start could claim ([§6.4](06-delivery.md#s6.4)), and a human's message
 that does not request a wake. A session is "being replied to" when it is the
 sender of the reply's target and [§4.6](04-messages.md#s4.6) did not rewrite it.
 A channel is never a recipient: it expands to its members, and it is never a
-member ([§7.3](07-mailboxes-and-channels.md#s7.3)).
+member ([§7.3](07-mailboxes-and-channels.md#s7.3)). (pinned rule 3; vectors:
+`core.send.human-mail-is-notified`, `core.send.agent-mail-is-held`,
+`core.send.task-held-without-live-session`,
+`core.send.direct-mail-pushes-to-the-live-session`,
+`core.mailbox.a-muted-senders-mail-starts-read`,
+`core.send.a-session-that-is-not-live-is-invalid`,
+`core.send.an-ended-session-reached-through-a-channel-gets-nothing`,
+`core.answers.a-reply-to-an-ended-auxiliary-session-is-held-on-it`,
+`core.wake.a-humans-wake-holds-mail-for-an-ended-session`,
+`core.wake.only-a-humans-wake-reaches-an-ended-session`,
+`core.wake.a-humans-wake-to-a-session-of-no-work-item-fails`,
+`core.channels.a-stored-channel-member-is-skipped`)
 
 **Transitions.** A delivery changes state only as follows:
 

@@ -131,7 +131,7 @@ describe('tool-approval gates', () => {
           canDecide: false,
         }
       )
-    ).rejects.toMatchObject({ code: 'forbidden' });
+    ).rejects.toMatchObject({ code: 'not-found', field: 'replyTo' });
     await orchestrator.cancel(meta.id);
     messaging.close();
   });

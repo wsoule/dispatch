@@ -120,7 +120,7 @@ senders ([§6.8](06-delivery.md#s6.8)).
 
 Keyword: MUST. Vectors: `host-core` for pushes and digests (structural),
 `dispatch` profile (exact text). Reads are not tested: how each read surface
-presents messages is declared ([§12.5](12-conformance.md#s12.5)).
+presents messages is listed in [§12.5](12-conformance.md#s12.5).
 
 ## 13.13 Size limits
 

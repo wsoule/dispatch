@@ -4,7 +4,9 @@ import { readFileSync } from 'node:fs';
 import { loadVectors } from '../src/load.js';
 
 const TYPES = new Set(['editorial', 'clarification', 'additive', 'breaking']);
-const ids = new Set(loadVectors().vectors.map((v) => v.id));
+// A retired id stays citable, so the entry that retires it still names it.
+const { vectors, retired } = loadVectors();
+const ids = new Set([...vectors, ...retired].map((v) => v.id));
 const changelog = readFileSync(
   new URL('../CHANGELOG.md', import.meta.url),
   'utf8'

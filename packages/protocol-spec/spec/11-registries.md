@@ -23,27 +23,27 @@ This section is generated from `registries/registries.json` by
 
 ## 11.3 Envelope fields
 
-| Value            | Scope      | Status      | Since         | Defined in                            | Vectors                                                                                          |
-| ---------------- | ---------- | ----------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `id`             | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `core.render.dispatch-push-format`             |
-| `thread`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
-| `replyTo`        | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.an-answer-needs-reply-to`, `env.envelope.a-reply-to-no-message-is-not-found`       |
-| `from`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `env.envelope.only-sessions-raise-scope-gates` |
-| `session`        | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-session-is-at-most-200-bytes`                                                    |
-| `to`             | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.to-is-a-non-empty-list`, `env.envelope.names-the-bad-recipient-index`              |
-| `kind`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.unknown-kind-refused-x-kind-accepted`                                              |
-| `body`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.body-is-required-unless-an-answer-chooses`, `env.envelope.body-is-at-most-64-kib`  |
-| `refs`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-local-ref-type-must-be-registered`, `env.envelope.refs-hold-at-most-50-entries`  |
-| `data`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.data-is-at-most-64-kib-as-jcs`                                                     |
-| `urgent`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `core.render.dispatch-push-format`             |
-| `blocking`       | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.blocking-only-on-questions-and-handoffs`                                           |
-| `choices`        | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.choices-only-on-questions-and-handoffs`, `env.envelope.choices-are-distinct`       |
-| `choice`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-choice-must-be-one-of-the-questions`, `env.envelope.a-gate-answer-must-choose`   |
-| `wake`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
-| `createdAt`      | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
-| `idempotencyKey` | core       | provisional | 1.0.0-draft.1 | [§4.9](04-messages.md#s4.9)           | none                                                                                             |
-| `origin`         | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none                                                                                             |
-| `hlc`            | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none                                                                                             |
+| Value            | Scope      | Status    | Since         | Defined in                            | Vectors                                                                                                 |
+| ---------------- | ---------- | --------- | ------------- | ------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `id`             | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `core.render.dispatch-push-format`                    |
+| `thread`         | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                        |
+| `replyTo`        | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.an-answer-needs-reply-to`, `env.envelope.a-reply-to-no-message-is-not-found`              |
+| `from`           | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `env.envelope.only-sessions-raise-scope-gates`        |
+| `session`        | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-session-is-at-most-200-bytes`                                                           |
+| `to`             | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.to-is-a-non-empty-list`, `env.envelope.names-the-bad-recipient-index`                     |
+| `kind`           | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.unknown-kind-refused-x-kind-accepted`                                                     |
+| `body`           | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.body-is-required-unless-an-answer-chooses`, `env.envelope.body-is-at-most-64-kib`         |
+| `refs`           | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-local-ref-type-must-be-registered`, `env.envelope.refs-hold-at-most-50-entries`         |
+| `data`           | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.data-is-at-most-64-kib-as-jcs`                                                            |
+| `urgent`         | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `core.render.dispatch-push-format`                    |
+| `blocking`       | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.blocking-only-on-questions-and-handoffs`                                                  |
+| `choices`        | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.choices-only-on-questions-and-handoffs`, `env.envelope.choices-are-distinct`              |
+| `choice`         | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-choice-must-be-one-of-the-questions`, `env.envelope.a-gate-answer-must-choose`          |
+| `wake`           | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                        |
+| `createdAt`      | core       | permanent | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                        |
+| `idempotencyKey` | core       | permanent | 1.0.0-draft.1 | [§4.9](04-messages.md#s4.9)           | `core.idempotency.replays-the-first-message`, `core.idempotency.a-key-is-one-line-of-at-most-200-bytes` |
+| `origin`         | federation | appendix  | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none                                                                                                    |
+| `hlc`            | federation | appendix  | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | none                                                                                                    |
 
 ## 11.4 Kinds
 
@@ -81,10 +81,10 @@ This section is generated from `registries/registries.json` by
 
 ## 11.7 System markers
 
-| Value       | Scope | Status    | Since         | Defined in                  | Vectors                                                                                        |
-| ----------- | ----- | --------- | ------------- | --------------------------- | ---------------------------------------------------------------------------------------------- |
-| `x-closed`  | core  | permanent | 1.0.0-draft.1 | [§4.8](04-messages.md#s4.8) | `core.close.answers-without-effect-or-deliveries`, `core.close.moves-the-question-to-answered` |
-| `x-breaker` | core  | permanent | 1.0.0-draft.1 | [§6.6](06-delivery.md#s6.6) | `core.guardrails.breaker-tells-the-owner-once-per-window`                                      |
+| Value       | Scope | Status    | Since         | Defined in                  | Vectors                                                                                                                                              |
+| ----------- | ----- | --------- | ------------- | --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `x-closed`  | core  | permanent | 1.0.0-draft.1 | [§4.8](04-messages.md#s4.8) | `core.close.answers-without-effect-or-deliveries`, `core.close.moves-the-question-to-answered`, `core.markers.close-is-honored-only-from-the-system` |
+| `x-breaker` | core  | permanent | 1.0.0-draft.1 | [§6.6](06-delivery.md#s6.6) | `core.guardrails.breaker-tells-the-owner-once-per-window`                                                                                            |
 
 ## 11.8 Delivery states
 
@@ -101,14 +101,14 @@ This section is generated from `registries/registries.json` by
 
 ## 11.9 Error codes
 
-| Value         | Scope  | Status      | Since         | Defined in                  | HTTP status | Vectors                                                                                 |
-| ------------- | ------ | ----------- | ------------- | --------------------------- | ----------- | --------------------------------------------------------------------------------------- |
-| `invalid`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 400         | `env.envelope.unknown-kind-refused-x-kind-accepted`                                     |
-| `forbidden`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 403         | `env.envelope.a-gate-answer-needs-a-deciding-principal`                                 |
-| `not-found`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 404         | `env.envelope.a-reply-to-no-message-is-not-found`                                       |
-| `conflict`    | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 409         | `core.answers.a-question-takes-one-answer`, `core.close.an-answered-question-conflicts` |
-| `limited`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 429         | `core.guardrails.breaker-refuses-the-next-agent-turn`                                   |
-| `unavailable` | memory | informative | 1.0.0-draft.1 | [§10.3](10-errors.md#s10.3) | 503         | none                                                                                    |
+| Value         | Scope  | Status      | Since         | Defined in                  | HTTP status | Vectors                                                                                               |
+| ------------- | ------ | ----------- | ------------- | --------------------------- | ----------- | ----------------------------------------------------------------------------------------------------- |
+| `invalid`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 400         | `env.envelope.unknown-kind-refused-x-kind-accepted`                                                   |
+| `forbidden`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 403         | `env.envelope.a-gate-answer-needs-a-deciding-principal`                                               |
+| `not-found`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 404         | `env.envelope.a-reply-to-no-message-is-not-found`, `core.participation.absent-and-foreign-look-alike` |
+| `conflict`    | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 409         | `core.answers.a-question-takes-one-answer`, `core.close.an-answered-question-conflicts`               |
+| `limited`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 429         | `core.guardrails.breaker-refuses-the-next-agent-turn`                                                 |
+| `unavailable` | memory | informative | 1.0.0-draft.1 | [§10.3](10-errors.md#s10.3) | 503         | none                                                                                                  |
 
 ## 11.10 Extension URIs
 

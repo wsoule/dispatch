@@ -243,7 +243,7 @@ function checkMessages(
 
 // For each message the list mentions, its deliveries are exactly the listed
 // recipients, with via, state and session compared when listed; each message
-// `noDeliveries` lists has none.
+// `noDeliveries` lists exists and has none.
 function checkDeliveries(
   then: Expectation,
   observation: Observation,
@@ -285,7 +285,9 @@ function checkDeliveries(
   }
   for (const symbol of then.noDeliveries ?? []) {
     const id = resolveText(symbol, bound);
-    if (observation.deliveries.some((d) => d.message === id))
+    if (!observation.messages.some((m) => m.id === id))
+      failures.push(`${symbol} names no message`);
+    else if (observation.deliveries.some((d) => d.message === id))
       failures.push(`${symbol} has deliveries`);
   }
 }

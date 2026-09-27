@@ -1,5 +1,6 @@
 import {
   ActorContext,
+  describeDroppedEntry,
   formatMigrationReport,
   generateSyncedTaskId,
   hasLegacyState,
@@ -7,6 +8,7 @@ import {
   initProjectStores,
   isMergeDriverResolvable,
   loadConfig,
+  MAX_HANDLE_BYTES,
   openProjectStores,
   SqliteTaskStore,
   syncSettings,
@@ -883,6 +885,11 @@ async function bootServer(
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
+  for (const label of actorContext.droppedEmails) {
+    console.warn(
+      `team.yml: skipped ${describeDroppedEntry(label)}: each entry needs an email and a handle of at most ${MAX_HANDLE_BYTES} bytes, made of lowercase letters, digits, '.', '_' and '-' and starting with a letter or digit; until it is fixed, dispatchd will not write team.yml or add any new teammate to it`
+    );
+  }
 
   // Credentials, once there is someone for them to speak for. The pair may be
   // supplied (a harness presetting the decide-tier token); the registry is

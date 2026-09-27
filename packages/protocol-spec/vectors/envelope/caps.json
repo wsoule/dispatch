@@ -1,0 +1,108 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "envelope",
+  "area": "caps",
+  "vectors": [
+    {
+      "id": "env.caps.handles-and-segments-are-at-most-64-bytes",
+      "title": "A 64-byte handle parses; a 65-byte handle, operator or channel segment is refused on the field that carried it",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["1.4", "3.2"],
+      "given": {},
+      "when": [
+        {
+          "op": "parseAddress",
+          "input": "human:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "op": "parseAddress",
+          "input": "human:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        {
+          "op": "parseAddress",
+          "input": "agent:ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo/claude"
+        },
+        {
+          "op": "parseAddress",
+          "input": "channel:ops/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        },
+        {
+          "op": "validate",
+          "as": { "address": "run:r-9f2c01", "canDecide": false },
+          "input": {
+            "to": [
+              "human:ada",
+              "channel:ops/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            ],
+            "kind": "message",
+            "body": "hi"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "kind": "human",
+              "handle": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "address": "human:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            }
+          },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid", "field": "to[1]" } }
+        ]
+      }
+    },
+    {
+      "id": "env.caps.an-address-is-at-most-256-bytes",
+      "title": "A 256-byte address parses; a 257-byte one is refused even when every segment fits",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.2", "13.13"],
+      "given": {},
+      "when": [
+        {
+          "op": "parseAddress",
+          "input": "channel:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        {
+          "op": "parseAddress",
+          "input": "channel:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        },
+        {
+          "op": "validate",
+          "as": { "address": "run:r-9f2c01", "canDecide": false },
+          "input": {
+            "to": [
+              "human:ada",
+              "human:bob",
+              "human:cy",
+              "channel:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            ],
+            "kind": "message",
+            "body": "hi"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "kind": "channel",
+              "address": "channel:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc/ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+            }
+          },
+          { "ok": false, "error": { "code": "invalid" } },
+          { "ok": false, "error": { "code": "invalid", "field": "to[3]" } }
+        ]
+      }
+    }
+  ]
+}
