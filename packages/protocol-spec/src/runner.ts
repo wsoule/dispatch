@@ -82,7 +82,9 @@ function tally(results: readonly VectorResult[]): ClassTally {
 }
 
 // A claim fails when a class it needs has no vector that ran, when a MUST
-// did not pass, or when its extra requirement (gate types, the TCK) is unmet.
+// did not pass, or when its extra requirement is unmet: for the Dispatch
+// profile, a dispatch-profile vector that ran and every permanent gate type
+// declared; for the A2A binding, a passing TCK attestation.
 export function claimOutcome(
   claim: ClaimName,
   results: readonly VectorResult[],
@@ -95,13 +97,9 @@ export function claimOutcome(
     (r) =>
       CLAIM_CLASSES[claim].includes(r.class) && profiles.includes(r.profile)
   );
+  const ran = mine.filter((r) => r.outcome === 'pass' || r.outcome === 'fail');
   for (const c of CLAIM_CLASSES[claim]) {
-    if (
-      !mine.some(
-        (r) => r.class === c && (r.outcome === 'pass' || r.outcome === 'fail')
-      )
-    )
-      return 'fail';
+    if (!ran.some((r) => r.class === c)) return 'fail';
   }
   if (
     mine.some(
@@ -113,6 +111,7 @@ export function claimOutcome(
   )
     return 'fail';
   if (claim === 'dispatch-profile') {
+    if (!ran.some((r) => r.profile === 'dispatch')) return 'fail';
     const needed = registry['gate-types']
       .filter((g) => g.status === 'permanent')
       .map((g) => g.value);

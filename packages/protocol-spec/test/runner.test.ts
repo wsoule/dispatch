@@ -438,4 +438,17 @@ describe('claimOutcome', () => {
       claimOutcome('core', ran, { ...hello, gateTypes: [] }, registry, opts)
     ).toBe('pass');
   });
+
+  it('a dispatch-profile claim fails when no dispatch-profile vector ran', () => {
+    const inapplicable = [
+      ...core,
+      result('core.a.dispatch', 'dispatch', 'not-applicable'),
+    ];
+    expect(
+      [core, inapplicable].map((results) =>
+        claimOutcome('dispatch-profile', results, hello, registry, opts)
+      )
+    ).toEqual(['fail', 'fail']);
+    expect(claimOutcome('core', core, hello, registry, opts)).toBe('pass');
+  });
 });
