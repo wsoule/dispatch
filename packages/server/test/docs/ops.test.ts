@@ -144,6 +144,12 @@ describe('applyOps', () => {
     );
   });
 
+  it('refuses an empty find that did not come through parseOps', () => {
+    expect(() =>
+      applyOps(DOC, [{ op: 'replace', find: '', text: 'x' }])
+    ).toThrow('ops[0].find: 1 byte to 8 KiB');
+  });
+
   it('refuses the op that takes the body over 768 KiB', () => {
     expect(() =>
       applyOps({ title: 'x', body: '# x\n' }, [
@@ -188,7 +194,23 @@ describe('applyOps', () => {
     ).toBe(true);
   });
 
-  it('does doc-end appends and replaces without spending the budget', () => {
+  it('charges each replace a scan of the body against the budget', () => {
+    const body = `# a\n${'\n'.repeat(620_000)}`;
+    const section: DocOp = { op: 'append', section: 'a', text: 'x' };
+    const same: DocOp = { op: 'replace', find: '# a\n', text: '# a\n' };
+    expect(() =>
+      applyOps({ title: 'a', body }, [section, section])
+    ).not.toThrow();
+    expect(() =>
+      applyOps({ title: 'a', body }, [
+        section,
+        ...Array.from({ length: 10 }, () => same),
+        section,
+      ])
+    ).toThrow('ops[11]: these ops scan');
+  });
+
+  it('does doc-end appends without spending the budget', () => {
     const body = `# a\n${'\n'.repeat(450_000)}`;
     const r = applyOps({ title: 'a', body }, [
       { op: 'append', section: 'a', text: 'first' },

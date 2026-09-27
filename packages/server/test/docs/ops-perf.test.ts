@@ -99,6 +99,22 @@ describe('review focus 2: one ops call stays bounded at the cap', () => {
     expect(timed(() => applyOps(doc, ops))).toBeLessThan(1000);
   });
 
+  it('finds text in linear time however the body repeats', () => {
+    const find = `${'ab'.repeat(2047)}ba${'ab'.repeat(2048)}`;
+    const body = `# a\n${'ab'.repeat(380_000)}${find}\n`;
+    const ops: DocOp[] = Array.from({ length: 50 }, () => ({
+      op: 'replace',
+      find,
+      text: find,
+    }));
+    let result = '';
+    const ms = timed(() => {
+      result = applyOps({ title: 'a', body }, ops).body;
+    });
+    expect(result).toBe(body);
+    expect(ms).toBeLessThan(1000);
+  });
+
   it('prices short lines inside fenced code', () => {
     const body = capBody('  x\n').replace('# a\n', '# a\n```\n');
     const ops = sectionAppends(50, '#a');

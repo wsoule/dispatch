@@ -21,13 +21,15 @@ export interface OpsResult {
   summary: string;
 }
 
-// Outline work one call may spend, in units of about 100 ns: 50 section ops on
-// a cap-sized prose doc, and about half a second on the daemon's one thread.
+// Outlining and find scans one call may spend, in units of about 100 ns: 50
+// section ops on a cap-sized prose doc, and about half a second on the
+// daemon's one thread.
 const OPS_WORK = 5_000_000;
 const LINE_WORK = 4;
 const CHARS_PER_WORK = 64;
 const FENCE_WORK = 5;
 const HEADING_WORK = 30;
+const FIND_CHARS_PER_WORK = 12;
 
 const OP_FIELDS: Record<DocOp['op'], readonly string[]> = {
   replace_section: ['section', 'text'],
@@ -103,13 +105,26 @@ function quoted(level: number, heading: string): string {
   return `"${'#'.repeat(level)} ${heading}"`;
 }
 
-// Overlapping occurrences of `find` in `body`, counted up to `cap`.
+// Overlapping occurrences of `find` in `body`, counted up to `cap`. A
+// Knuth-Morris-Pratt scan stays linear on repetitive text, where indexOf can
+// compare most of `find` at every offset.
 function occurrences(body: string, find: string, cap: number): number[] {
+  const fallback = new Int32Array(find.length);
+  for (let i = 1, k = 0; i < find.length; i++) {
+    while (k > 0 && find.charCodeAt(i) !== find.charCodeAt(k))
+      k = fallback[k - 1];
+    if (find.charCodeAt(i) === find.charCodeAt(k)) k++;
+    fallback[i] = k;
+  }
   const at: number[] = [];
-  let from = body.indexOf(find);
-  while (from !== -1 && at.length < cap) {
-    at.push(from);
-    from = body.indexOf(find, from + 1);
+  for (let i = 0, k = 0; i < body.length && at.length < cap; i++) {
+    const c = body.charCodeAt(i);
+    while (k > 0 && c !== find.charCodeAt(k)) k = fallback[k - 1];
+    if (c === find.charCodeAt(k)) k++;
+    if (k === find.length) {
+      at.push(i - k + 1);
+      k = fallback[k - 1];
+    }
   }
   return at;
 }
@@ -142,16 +157,20 @@ export function applyOps(
   const parts: string[] = [];
   ops.forEach((op, i) => {
     const field = `ops[${i}]`;
-    // The body's lines, once the call can afford to outline them.
-    const outlined = (): string[] => {
-      const lines = splitLines(body);
-      work += outlineWork(body, lines);
+    // Charges `cost` to the call, refusing this op once it passes OPS_WORK.
+    const spend = (cost: number): void => {
+      work += cost;
       if (work > OPS_WORK) {
         invalid(
           field,
           'these ops scan too much of a long doc; send fewer section ops, or save the whole body'
         );
       }
+    };
+    // The body's lines, once the call can afford to outline them.
+    const outlined = (): string[] => {
+      const lines = splitLines(body);
+      spend(outlineWork(body, lines));
       return lines;
     };
     switch (op.op) {
@@ -168,6 +187,8 @@ export function applyOps(
       }
       case 'replace': {
         const find = op.find.replace(/\r\n?/g, '\n');
+        if (find === '') invalid(`${field}.find`, '1 byte to 8 KiB');
+        spend(Math.ceil(body.length / FIND_CHARS_PER_WORK));
         const hits = occurrences(body, find, 1000);
         if (hits.length === 0)
           throw new DocsError(
