@@ -165,28 +165,31 @@ export function replyPlan(
   me: string,
   openIds: ReadonlySet<string>
 ): ReplyPlan | null {
-  const target = [...messages]
-    .reverse()
-    .find(
-      (m) => m.from !== SYSTEM && !(openIds.has(m.id) && gateOf(m) !== null)
-    );
-  if (target === undefined) return null;
   const channel = messages[0]?.to.find((address) =>
     address.startsWith('channel:')
   );
+  const newestFirst = [...messages].reverse();
+  const answered = answeredIds(messages);
+  // Text answers an open question put to me, whatever was said after it.
+  const ask =
+    channel === undefined
+      ? newestFirst.find((m) => asksMe(m, me, openIds, answered))
+      : undefined;
+  if (ask !== undefined) return { kind: 'reply', target: ask };
+  const target = newestFirst.find(
+    (m) => m.from !== SYSTEM && !(openIds.has(m.id) && gateOf(m) !== null)
+  );
+  if (target === undefined) return null;
   if (channel !== undefined) {
     return { kind: 'send', to: [channel], replyTo: target.id };
   }
   if (target.from !== me) {
-    // Text answers an open question put to me. It goes beside a handoff (whose
-    // answer is accept or decline), a closed ask, or one put to someone else.
-    const answerable =
-      target.kind === 'question'
-        ? openIds.has(target.id) && target.to.includes(me)
-        : target.kind !== 'handoff';
-    return answerable
-      ? { kind: 'reply', target }
-      : { kind: 'send', to: [target.from], replyTo: target.id };
+    // Text goes beside a handoff (whose answer is accept or decline), a
+    // closed question, or one put to someone else.
+    const asking = target.kind === 'question' || target.kind === 'handoff';
+    return asking
+      ? { kind: 'send', to: [target.from], replyTo: target.id }
+      : { kind: 'reply', target };
   }
   // The daemon reads no mail, so an answered gate of its own leaves no one to write to.
   const to = target.to.filter(
@@ -198,6 +201,30 @@ export function replyPlan(
   const theirs = [...messages].reverse().filter((m) => to.includes(m.from));
   const anchor = theirs.find((m) => m.to.includes(me)) ?? theirs[0] ?? target;
   return { kind: 'send', to, replyTo: anchor.id };
+}
+
+// The ids of the questions and handoffs this thread already holds an answer to.
+function answeredIds(messages: readonly Message[]): Set<string> {
+  const ids = new Set<string>();
+  for (const m of messages) {
+    if (m.kind === 'answer' && m.replyTo !== null) ids.add(m.replyTo);
+  }
+  return ids;
+}
+
+// Whether `m` is a plain question put to me that still takes an answer: a
+// blocking one while it is listed open, any other until it is answered.
+function asksMe(
+  m: Message,
+  me: string,
+  openIds: ReadonlySet<string>,
+  answered: ReadonlySet<string>
+): boolean {
+  if (m.kind !== 'question' || m.from === me || m.from === SYSTEM) return false;
+  if (!m.to.includes(me) || gateOf(m) !== null || answered.has(m.id)) {
+    return false;
+  }
+  return !m.blocking || openIds.has(m.id);
 }
 
 export type ReplyRoute = 'bus' | 'overseer' | 'overseer-elsewhere';

@@ -235,6 +235,38 @@ describe('replyPlan', () => {
     });
   });
 
+  it('answers an open question put to me even after later messages in its thread', () => {
+    const q = msg('m-01', { kind: 'question', blocking: true });
+    const followUp = msg('m-02', { thread: 'm-01', replyTo: 'm-01' });
+    const aside = msg('m-03', {
+      thread: 'm-01',
+      replyTo: 'm-02',
+      from: 'human:ada',
+      to: [ME, 'run:r-000001'],
+    });
+    expect(replyPlan([q, followUp, aside], ME, new Set(['m-01']))).toEqual({
+      kind: 'reply',
+      target: q,
+    });
+  });
+
+  it('answers a non-blocking question put to me until its thread holds an answer', () => {
+    const q = msg('m-01', { kind: 'question' });
+    expect(replyPlan([q], ME, new Set())).toEqual({ kind: 'reply', target: q });
+    const answer = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+      kind: 'answer',
+    });
+    expect(replyPlan([q, answer], ME, new Set())).toEqual({
+      kind: 'send',
+      to: ['run:r-000001'],
+      replyTo: 'm-01',
+    });
+  });
+
   it('writes beside an open question put to someone else, never answering it for them', () => {
     const q = msg('m-01', {
       kind: 'question',
