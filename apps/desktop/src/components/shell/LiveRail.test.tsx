@@ -64,6 +64,7 @@ function overseerSession(over: Partial<OverseerSession> = {}): OverseerSession {
     record: undefined,
     recordError: null,
     submit: () => Promise.resolve(),
+    reply: () => Promise.resolve(),
     sending: false,
     sendError: null,
     confirmAction: () => Promise.resolve(),

@@ -577,6 +577,55 @@ describe('wake gate handler', () => {
     messaging.close();
   });
 
+  // A wake that blocks while a retry awaits its own records itself; the retry
+  // must keep it, so a human's message still leads the next retry.
+  it('a wake blocked while a retry is waking the task keeps its place', async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    orchestrator.registerExecutor('claude', new NoMessagesExecutor());
+    const task = store.create({ title: 'Busy' });
+    const messaging = await openRecovered(project.root(), orchestrator, store);
+    const run = await orchestrator.dispatch(task.meta.id, 'claude', {});
+    await approveWake(messaging, task.meta.id);
+
+    const wakeTask = orchestrator.wakeTask.bind(orchestrator);
+    const actors: string[] = [];
+    let review: { id: string } | null = null;
+    // Runs inside the retry's wake: a review run keeps the task busy, so a
+    // human's wake sent now blocks as well.
+    let duringRetry: (() => Promise<void>) | null = async () => {
+      review = await orchestrator.dispatchAuxRun({
+        taskId: task.meta.id,
+        kind: 'review',
+        head: 'main',
+        buildPrompt: () => 'review this',
+      });
+      await messaging.engine.send(
+        {
+          to: [`task:${task.meta.id}`],
+          kind: 'message',
+          body: 'from a human',
+          wake: 'request',
+        },
+        { address: 'human:wyat', canDecide: true }
+      );
+    };
+    orchestrator.wakeTask = async (taskId, opts) => {
+      actors.push(opts.actor);
+      const during = duringRetry;
+      duringRetry = null;
+      if (during !== null) await during();
+      return wakeTask(taskId, opts);
+    };
+
+    await orchestrator.cancel(run.id);
+    await waitFor(() => actors.length === 2 && review !== null);
+    await orchestrator.cancel((review as unknown as { id: string }).id);
+    await waitFor(() => actors.length === 3);
+    expect(actors).toEqual(['agent:dispatch', 'human:wyat', 'human:wyat']);
+    await cancelLiveRuns(orchestrator);
+    messaging.close();
+  });
+
   it('treats a task lookup that throws as a deny, notices the sender and marks the gate applied', async () => {
     const { orchestrator, store } = makeOrchestrator(project.root());
     const executor = new StallingExecutor();

@@ -44,6 +44,7 @@ function shellActions(createPreset: CreateTaskPreset | null): ShellActions {
   };
   return {
     openTask: unexpected,
+    openThread: unexpected,
     peekTask: unexpected,
     openCreateTask: unexpected,
     createPreset,

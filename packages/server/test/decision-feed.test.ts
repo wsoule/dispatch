@@ -235,6 +235,8 @@ describe('DecisionFeed aggregation', () => {
     });
     // Pins the floor from the full input, not the truncated preview.
     expect(items[0].floor).toBeDefined();
+    // An approval's reason names the gate behind it.
+    expect(items[0].reason).toBe('tool-approval');
     expect(items[1]).toMatchObject({
       paths: ['a.ts', 'b.ts'],
       reason: 'needs both',
@@ -244,6 +246,7 @@ describe('DecisionFeed aggregation', () => {
     expect(items[3]).toMatchObject({
       taskId: 't-000002',
       taskTitle: 'Sleeper',
+      reason: 'wake',
     });
   });
 
@@ -739,6 +742,25 @@ describe('DecisionFeed irreversibility floor', () => {
     const [item] = h.feed.list();
     expect(item).toMatchObject({
       floor: 'force-push',
+      disposition: 'blocking',
+    });
+  });
+
+  it('keeps a flagged gate held when neither its parked call nor its preview names the check', () => {
+    const h = harness(recordEverything);
+    const command = `${' '.repeat(9000)}; git push --force origin main`;
+    // The parked call has settled, and the cut preview stops before the push.
+    h.runs.push(runMeta('r-1', { state: 'running' }));
+    h.gates.push(
+      gate('m-cut', {
+        data: toolApprovalGateData(
+          { runId: 'r-1' },
+          { requestId: 'req-1', toolName: 'Bash', input: { command } }
+        ),
+      })
+    );
+    expect(h.feed.list()[0]).toMatchObject({
+      floor: 'unknown',
       disposition: 'blocking',
     });
   });

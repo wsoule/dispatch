@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'bun:test';
 
-import { createApiClient } from '../src/api';
+import { ApiError, createApiClient } from '../src/api';
 import type { ApiClient, GateData } from '../src/api';
 
 // Captures the (url, init) a stubbed `fetch` was called with. Mirrors
@@ -166,6 +166,48 @@ describe('listRecentThreads', () => {
       expect(stub.calls[0].url).toBe(`${BASE}/api/threads?limit=25`);
     } finally {
       stub.restore();
+    }
+  });
+});
+
+describe('listRecentThreads about a task', () => {
+  it('adds ?about= beside the limit', async () => {
+    const stub = stubFetch();
+    try {
+      await createApiClient(BASE).listRecentThreads(50, {
+        about: 'task:t-1a2b3c',
+      });
+      expect(stub.calls[0].url).toBe(
+        `${BASE}/api/threads?limit=50&about=task%3At-1a2b3c`
+      );
+    } finally {
+      stub.restore();
+    }
+  });
+});
+
+describe('a messaging error names its field', () => {
+  it('carries the daemon field on the ApiError', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (() =>
+      Promise.resolve(
+        new Response(
+          JSON.stringify({
+            error: 'invalid address "task:nope": not a task id',
+            field: 'to[0]',
+          }),
+          { status: 400, headers: { 'content-type': 'application/json' } }
+        )
+      )) as unknown as typeof fetch;
+    try {
+      const err = await createApiClient(BASE)
+        .sendMessage({ to: ['task:nope'], kind: 'message', body: 'x' })
+        .catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(ApiError);
+      expect((err as ApiError).status).toBe(400);
+      expect((err as ApiError).field).toBe('to[0]');
+    } finally {
+      globalThis.fetch = original;
     }
   });
 });

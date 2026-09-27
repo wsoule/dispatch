@@ -19,7 +19,8 @@
     "tsc": "tsgo --noEmit --pretty"
   },
   "dependencies": {
-    "@dispatch/core": "workspace:*"
+    "@dispatch/core": "workspace:*",
+    "@dispatch/protocol": "workspace:*"
   },
   "devDependencies": {
     "@dispatch/server": "workspace:*"

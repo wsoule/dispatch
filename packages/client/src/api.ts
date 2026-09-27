@@ -1973,7 +1973,10 @@ export class ApiError extends Error {
      * `auth_invalid_token`, `auth_insufficient_tier`. Key on this rather than
      * the message, which is prose and will be reworded.
      */
-    public readonly code?: string
+    public readonly code?: string,
+    /** The messaging routes' `field`: which input was bad (`to[0]`,
+     *  `choice`, `about`). */
+    public readonly field?: string
   ) {
     super(message);
     this.name = 'ApiError';
@@ -2051,11 +2054,13 @@ async function send(
     const body = (await res.json().catch(() => ({}))) as {
       error?: string;
       code?: string;
+      field?: string;
     };
     throw new ApiError(
       body.error ?? `request failed: ${res.status}`,
       res.status,
-      body.code
+      body.code,
+      body.field
     );
   }
   return res;
@@ -2906,8 +2911,12 @@ export interface ApiClient {
     opts?: { wait?: boolean }
   ): Promise<{ answer: Message | null }>;
   getThread(id: string): Promise<ThreadDetail>;
-  /** The most recently active threads project-wide (deciding humans only). */
-  listRecentThreads(limit?: number): Promise<{ threads: ThreadSummary[] }>;
+  /** The most recently active threads project-wide (deciding humans only);
+   *  `about: 'task:<id>'` keeps those the task or its runs took part in. */
+  listRecentThreads(
+    limit?: number,
+    opts?: { about?: string }
+  ): Promise<{ threads: ThreadSummary[] }>;
   /** `address` defaults to the caller's own mailbox; `states` filters by
    *  delivery state. */
   getMailbox(
@@ -3620,15 +3629,13 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         `/api/messages/${id}/answer${opts.wait === true ? '?wait=1' : ''}`
       ),
     getThread: (id) => request(target, `/api/threads/${id}`),
-    listRecentThreads: (limit) =>
-      request(
-        target,
-        `/api/threads${
-          limit !== undefined
-            ? `?${new URLSearchParams({ limit: String(limit) }).toString()}`
-            : ''
-        }`
-      ),
+    listRecentThreads: (limit, opts = {}) => {
+      const params = new URLSearchParams();
+      if (limit !== undefined) params.set('limit', String(limit));
+      if (opts.about !== undefined) params.set('about', opts.about);
+      const qs = params.size > 0 ? `?${params.toString()}` : '';
+      return request(target, `/api/threads${qs}`);
+    },
     getMailbox: (address, states) => {
       const params = new URLSearchParams();
       if (address !== undefined) params.set('address', address);

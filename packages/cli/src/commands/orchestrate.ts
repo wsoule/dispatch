@@ -282,15 +282,16 @@ function pickRunGate(
         : undefined
       : gates.find((g) => g.approval.requestId === requestId);
   if (found !== undefined) return found;
-  if (requestId === undefined && gates.length > 1) {
-    const calls = gates
-      .map((g) => `${g.approval.requestId} (${g.approval.tool})`)
-      .join(', ');
-    throw new CliError(
-      `${runId} is parked on ${gates.length} calls: ${calls}; name one: dispatch approve ${runId} <requestId>`
-    );
-  }
-  throw new CliError(`${runId} is not awaiting an approval`);
+  if (gates.length === 0)
+    throw new CliError(`${runId} is not awaiting an approval`);
+  const calls = gates
+    .map((g) => `${g.approval.requestId} (${g.approval.tool})`)
+    .join(', ');
+  throw new CliError(
+    requestId === undefined
+      ? `${runId} is parked on ${gates.length} calls: ${calls}; name one: dispatch approve ${runId} <requestId>`
+      : `${runId} is not parked on ${requestId}; its parked calls: ${calls}`
+  );
 }
 
 // The `run show` lines for a parked run: each parked call's tool and request id
@@ -653,13 +654,11 @@ export function registerOrchestrateCommands(
         const continued = after.find(
           (r) => r.resumedFrom === runId && !before.has(r.id)
         );
-        const named = after.find((r) => r.id === runId);
-        if (
-          continued === undefined &&
-          named !== undefined &&
-          exitCodeForRunState(named.state) === null
-        ) {
-          // A run that is still live simply got the message.
+        // A live run that took the message into its conversation simply got it.
+        const pushed = sent.deliveries.some(
+          (d) => d.recipient === `run:${runId}` && d.state === 'pushed'
+        );
+        if (continued === undefined && pushed) {
           ctx.log(`sent message to ${runId}`);
           return;
         }

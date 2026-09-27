@@ -288,6 +288,28 @@ describe('policyDecisionClassifier', () => {
     }
     h.stop();
   });
+
+  // Policy only ever answers tool approvals; the other approval gates were
+  // decided by a human, so a resolved one never reads as auto-decided.
+  it('records only resolved tool approvals under the approval gate', () => {
+    const h = harness();
+    h.setPolicy('policy:\n  rung: 4\n');
+    const classify = policyDecisionClassifier(h.root, {
+      approvalFloor: () => false,
+    });
+    const approval = (reason: string) =>
+      ({ kind: 'approval', state: 'resolved', reason }) as Parameters<
+        typeof classify
+      >[0];
+    expect(classify(approval('tool-approval'))).toBe('recorded');
+    for (const reason of ['agent-registration', 'overseer-action', 'wake']) {
+      expect([reason, classify(approval(reason))]).toEqual([
+        reason,
+        'blocking',
+      ]);
+    }
+    h.stop();
+  });
 });
 
 describe('the verify-retry gate', () => {

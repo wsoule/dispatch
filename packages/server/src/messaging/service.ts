@@ -39,6 +39,7 @@ import { createRunTokens } from './runTokens.js';
 import {
   applyScopeAnswer,
   expireScopeGates,
+  grantScopeGatesByPolicy,
   installScopePolicy,
   SCOPE_EXPIRY_SWEEP_MS,
 } from './scopePolicy.js';
@@ -113,7 +114,7 @@ export function openMessaging(deps: {
   ledgerStore?: Pick<LedgerStorePort, 'add' | 'entriesFor'>;
   // The task Activity line a policy grant writes; defaults to none.
   appendPolicyActivity?: (taskId: string, text: string) => void;
-  // How often the scope-gate expiry sweep runs, and its clock; tests shorten both.
+  // How often the scope-gate sweep runs, and its clock; tests shorten both.
   scopeExpiry?: { sweepMs?: number; now?: () => number };
 }): Messaging {
   const db = openMessagesDb(
@@ -274,7 +275,10 @@ export function openMessaging(deps: {
     const result = await host.wake(target, first);
     if (result.ok) return;
     if (hasActiveRun(taskId)) {
-      blockedWakes.set(taskId, held);
+      // Kept beside, never over, wakes that blocked during the await.
+      const waiting = blockedWakes.get(taskId) ?? [];
+      const newer = waiting.filter((m) => !held.some((h) => h.id === m.id));
+      blockedWakes.set(taskId, [...held, ...newer]);
       return;
     }
     for (const m of held)
@@ -465,12 +469,17 @@ export function openMessaging(deps: {
     );
   });
   const uninstallScopePolicy = installScopePolicy(engine, scopeDeps);
-  const expiry = setInterval(() => {
-    expireScopeGates(engine, deps.scopeExpiry?.now?.() ?? Date.now()).catch(
-      (err: unknown) => console.error('messaging: scope expiry failed', err)
-    );
+  // Grants what policy covers before expiring, so a covered gate is never denied.
+  const scopeSweep = setInterval(() => {
+    grantScopeGatesByPolicy(engine, scopeDeps)
+      .then(() =>
+        expireScopeGates(engine, deps.scopeExpiry?.now?.() ?? Date.now())
+      )
+      .catch((err: unknown) =>
+        console.error('messaging: scope sweep failed', err)
+      );
   }, deps.scopeExpiry?.sweepMs ?? SCOPE_EXPIRY_SWEEP_MS);
-  expiry.unref();
+  scopeSweep.unref();
 
   // A run's end closes the gates nobody can act on any more, and retries (a
   // tick later, after its other end-of-run hooks) the wakes it blocked.
@@ -539,7 +548,7 @@ export function openMessaging(deps: {
     recover: () => engine.recover(),
     close() {
       overseer = null;
-      clearInterval(expiry);
+      clearInterval(scopeSweep);
       uninstallScopePolicy();
       unsubscribeRunStarted();
       unsubscribeRunTerminal();

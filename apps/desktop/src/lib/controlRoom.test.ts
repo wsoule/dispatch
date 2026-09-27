@@ -391,6 +391,27 @@ describe('row content', () => {
     ).toEqual(['answer:r-old', 'working:r-new']);
   });
 
+  // The ended run's ask is not a run in flight, so it cannot stand in for the
+  // task's newest round the way a live row does.
+  test("an ended run's question does not hide the task's newest review row", () => {
+    const model = buildFeed(
+      input({
+        runs: [
+          run({
+            id: 'r-new',
+            state: 'finished',
+            createdAt: '2026-07-27T00:00:00.000Z',
+          }),
+          run({ id: 'r-old', state: 'failed' }),
+        ],
+        openQuestions: new Map([['r-old', [{ question: 'Which database?' }]]]),
+      })
+    );
+    expect(
+      model.groups.flatMap((g) => g.rows.map((r) => `${r.state}:${r.runId}`))
+    ).toEqual(['answer:r-old', 'review:r-new']);
+  });
+
   test('an open scope gate asks you to answer and names the paths', () => {
     const model = buildFeed(
       input({

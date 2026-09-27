@@ -711,8 +711,7 @@ function writeVerifyRun(dir: string, rootDir: string): void {
 }
 
 // A granted scope gate: t-3f8a21 must edit routes.ts too, where the check
-// being retired lives. The demo seeds no messages.db, so a system note stands
-// in for the grant.
+// being retired lives. messages.ts seeds the gate's thread to match.
 function writeScopeRequestRun(dir: string, rootDir: string): void {
   const taskId = 't-3f8a21';
   const taskTitle = 'Validate discount codes server-side';
