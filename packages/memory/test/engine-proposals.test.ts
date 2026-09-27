@@ -1,5 +1,5 @@
 import { DEFAULT_MEMORY } from '@dispatch/core';
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 
 import { MemoryEngine } from '../src/engine.js';
 import { MemoryError } from '../src/errors.js';
@@ -50,13 +50,37 @@ function setup(overrides: Partial<typeof DEFAULT_MEMORY> = {}) {
   return { engine, host, ...s };
 }
 
-// A ledger cutover row: the owner's proposal, exempt from the limits.
-const ledgerRow = (t: ReturnType<typeof setup>, origin: string) =>
-  t.engine.submitProposal(OWNER, {
+// The daemon itself, which authors every ledger cutover row.
+const DISPATCH = {
+  address: 'agent:dispatch',
+  canDecide: false,
+  kind: 'agent',
+} as const;
+
+// A ledger cutover row: the daemon's proposal, exempt from the limits.
+const ledgerRow = (
+  t: ReturnType<typeof setup>,
+  origin: string,
+  title: string = team.title
+) =>
+  t.engine.submitProposal(DISPATCH, {
     action: 'add',
     scope: 'team',
-    content: valid(),
+    content: valid(title),
     origin,
+  });
+
+type Gated = { proposal: string; gate: string };
+
+// The owner approving a proposal from its gate.
+const approve = (t: ReturnType<typeof setup>, p: Gated) =>
+  t.engine.applyGateAnswer({
+    proposalId: p.proposal,
+    gateId: p.gate,
+    choice: 'approve',
+    by: 'human:wyat',
+    reason: '',
+    expired: false,
   });
 
 async function conflictOf(p: Promise<unknown>): Promise<string> {
@@ -113,6 +137,33 @@ describe('proposals', () => {
     ).toBe(true);
   });
 
+  it('never auto-approves while the operator’s personal store is down', async () => {
+    const t = setup();
+    t.host.ruling = AUTO;
+    t.down.add('self');
+    const out = (await t.engine.save(RUN, team)) as Gated;
+    expect(out.gate).toBe('m-gate-1');
+    expect(
+      t.engine.proposal(OWNER, out.proposal).proposal.matchedPersonal
+    ).toBe(true);
+    expect(t.shared.countEntries()).toBe(0);
+  });
+
+  it('sends a proposal to a human when the policy ruling throws', async () => {
+    const t = setup();
+    t.host.failing.add('rule');
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await t.engine.save(RUN, team)).toMatchObject({
+        status: 'proposed',
+        gate: 'm-gate-1',
+      });
+      expect(String(errors.mock.calls[0]?.[0])).toContain('policy ruling');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it('de-duplicates against active entries, open proposals and recent rejections', async () => {
     const t = setup();
     const first = (await t.engine.save(RUN, team)) as {
@@ -142,19 +193,74 @@ describe('proposals', () => {
     ).toContain(direct.handle);
   });
 
+  it('de-duplicates within one scope only', async () => {
+    const t = setup();
+    await t.engine.save(RUN, team);
+    await t.engine.save(OWNER, { ...team, title: 'already here' });
+    const asProject = (title: string) =>
+      t.engine.save(RUN, { ...team, scope: 'project', title });
+    expect((await asProject(team.title)).status).toBe('proposed');
+    expect((await asProject('already here')).status).toBe('proposed');
+  });
+
+  it('holds a rejection for 30 days, then lets the lesson be asked again', async () => {
+    const t = setup();
+    const first = (await t.engine.save(RUN, team)) as Gated;
+    t.engine.applyGateAnswer({
+      proposalId: first.proposal,
+      gateId: first.gate,
+      choice: 'reject',
+      by: 'human:wyat',
+      reason: 'wrong',
+      expired: false,
+    });
+    t.host.clock = new Date('2026-10-24T10:00:00.000Z');
+    expect(await conflictOf(t.engine.save(RUN, team))).toBe(
+      'conflict: the same lesson was rejected by human:wyat on 2026-09-25: wrong'
+    );
+    t.host.clock = new Date('2026-10-25T10:00:01.000Z');
+    expect((await t.engine.save(RUN, team)).status).toBe('proposed');
+  });
+
+  it('refuses a second retire of a target while the first is open', async () => {
+    const t = setup();
+    const target = (await t.engine.save(OWNER, team)) as {
+      id: string;
+      handle: string;
+    };
+    const first = (await t.engine.forget(RUN, target.id, 'stale')) as Gated;
+    expect(
+      await conflictOf(t.engine.forget(RUN, target.id, 'still stale'))
+    ).toBe(
+      `conflict: retiring ${target.handle} is already proposed as ${first.proposal}`
+    );
+  });
+
+  it('refuses a proposal whose origin another proposal holds', async () => {
+    const t = setup();
+    const first = (await ledgerRow(t, 'ledger:l-6@t')) as Gated;
+    expect(
+      await conflictOf(ledgerRow(t, 'ledger:l-6@t', 'a different lesson'))
+    ).toBe(`conflict: origin: ${first.proposal} already holds ledger:l-6@t`);
+  });
+
   it('limits proposals per hour and open proposals per project, but not ledger imports', async () => {
     const t = setup({ proposalsPerHour: 1, maxOpenProposals: 2 });
     await t.engine.save(RUN, { ...team, title: 'a' });
     expect(
       await conflictOf(t.engine.save(RUN, { ...team, title: 'b' }))
     ).toStartWith('limited');
-    await t.engine.submitProposal(OWNER, {
-      action: 'add',
-      scope: 'team',
-      content: valid('import'),
-      origin: 'ledger:l-1@t',
-    });
+    await ledgerRow(t, 'ledger:l-1@t', 'import');
     expect(t.engine.proposals(OWNER, 'open')).toHaveLength(2);
+    // A human has no hourly limit, so only the project's open count refuses her.
+    const low = { ...ADA, canDecide: false };
+    t.host.operators.set('human:ada', {
+      human: 'human:ada',
+      identity: 'pid-A',
+    });
+    expect(await conflictOf(t.engine.save(low, { ...team, title: 'c' }))).toBe(
+      'limited: this project already has 2 open memory proposals; wait for decisions'
+    );
     expect(
       await conflictOf(
         t.engine.submitProposal(OWNER, {
@@ -267,28 +373,63 @@ describe('proposals', () => {
 
   it('supersede retires a still-active target; a target retired meanwhile leaves the new entry standing', async () => {
     const t = setup();
-    const target = (await t.engine.save(OWNER, team)) as { id: string };
+    const live = (await t.engine.save(OWNER, team)) as { id: string };
+    const edit = (await t.engine.edit(RUN, live.id, {
+      body: 'still true, and more',
+    })) as Gated;
+    t.host.changes.length = 0;
+    approve(t, edit);
+    const successor = t.shared
+      .listEntries()
+      .find((e) => e.body === 'still true, and more');
+    expect(successor).toMatchObject({
+      status: 'active',
+      supersedes: live.id,
+      proposal: edit.proposal,
+    });
+    expect(t.shared.getEntry(live.id)).toMatchObject({
+      status: 'retired',
+      statusReason: 'superseded',
+      supersededBy: successor?.id,
+    });
+    expect(t.host.changes).toEqual([
+      { scope: 'team', id: successor?.id },
+      { scope: 'team', id: live.id },
+    ]);
+
+    const target = (await t.engine.save(OWNER, {
+      ...team,
+      title: 'retired meanwhile',
+    })) as { id: string };
     const p = (await t.engine.edit(RUN, target.id, {
       body: 'better detail',
-    })) as { proposal: string; gate: string };
+    })) as Gated;
     await t.engine.forget(OWNER, target.id, 'obsolete');
-    t.engine.applyGateAnswer({
-      proposalId: p.proposal,
-      gateId: p.gate,
-      choice: 'approve',
-      by: 'human:wyat',
-      reason: '',
-      expired: false,
-    });
+    approve(t, p);
     const entries = t.shared.listEntries();
-    expect(entries.find((e) => e.id !== target.id)).toMatchObject({
+    expect(entries.find((e) => e.body === 'better detail')).toMatchObject({
       status: 'active',
-      body: 'better detail',
       supersedes: target.id,
     });
     expect(entries.find((e) => e.id === target.id)?.statusReason).toBe(
       'forgotten'
     );
+  });
+
+  it('an approved retire forgets its target and names it as the result', async () => {
+    const t = setup();
+    const target = (await t.engine.save(OWNER, team)) as { id: string };
+    const r = (await t.engine.forget(RUN, target.id, 'stale')) as Gated;
+    expect(approve(t, r).proposal).toMatchObject({
+      state: 'approved',
+      result: target.id,
+      decidedBy: 'human:wyat',
+    });
+    expect(t.shared.getEntry(target.id)).toMatchObject({
+      status: 'retired',
+      statusReason: 'forgotten',
+    });
+    expect(t.shared.countEntries()).toBe(1);
   });
 
   it('rejecting or expiring a retire leaves its target active', async () => {

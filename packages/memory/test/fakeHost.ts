@@ -27,6 +27,8 @@ export class FakeMemoryHost implements MemoryHost {
   approvals: { proposal: MemoryProposal; rung: number }[] = [];
   activated: { entry: MemoryEntry; authorRun: string | null }[] = [];
   rejected: MemoryProposal[] = [];
+  // Host calls that throw, as when policy, messaging or the ledger is down.
+  failing = new Set<'rule' | 'raiseGate' | 'recordPolicyApproval'>();
 
   operatorOf(principal: Principal): Operator | null {
     return this.operators.get(principal.address) ?? null;
@@ -49,9 +51,12 @@ export class FakeMemoryHost implements MemoryHost {
     return this.clock;
   }
   rule(): PolicyRuling {
+    if (this.failing.has('rule')) throw new Error('policy is down');
     return this.ruling;
   }
   raiseGate(p: MemoryProposal): Promise<string> {
+    if (this.failing.has('raiseGate'))
+      return Promise.reject(new Error('messaging is down'));
     this.gates.push(p);
     return Promise.resolve(`m-gate-${this.gates.length}`);
   }
@@ -59,6 +64,8 @@ export class FakeMemoryHost implements MemoryHost {
     p: MemoryProposal,
     r: Extract<PolicyRuling, { mode: 'auto' }>
   ): void {
+    if (this.failing.has('recordPolicyApproval'))
+      throw new Error('the ledger is down');
     this.approvals.push({ proposal: p, rung: r.rung });
   }
   entryActivated(entry: MemoryEntry, authorRun: string | null): void {
