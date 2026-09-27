@@ -18,9 +18,8 @@ export function sealedAad(replica: string, seq: number, type: string): string {
   return `${TAG.sealed}\n${replica}\n${seq}\n${type}`;
 }
 
-// Encrypts the payload once under a random content key K, and wraps K for
-// each recipient with single-shot HPKE; `info` binds each wrap to its recipient.
-// Throws a RangeError naming a recipient no peer would accept or none could open.
+// Encrypts the payload once under a random key K, wrapped per recipient by HPKE
+// whose `info` names them. Throws a RangeError for recipients it cannot seal to.
 export function sealPayload(input: {
   replica: string;
   seq: number;

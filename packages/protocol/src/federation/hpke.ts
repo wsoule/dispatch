@@ -1,6 +1,5 @@
-// RFC 9180 base mode for one suite: DHKEM(X25519, HKDF-SHA256) 0x0020,
-// HKDF-SHA256 0x0001, AES-256-GCM 0x0002. LabeledExtract and LabeledExpand
-// are built on createHmac because hkdfSync fuses extract with expand (§4).
+// RFC 9180 base mode for DHKEM(X25519) 0x0020, HKDF-SHA256 0x0001, AES-256-GCM
+// 0x0002. Labeled HKDF uses createHmac, since hkdfSync fuses extract and expand.
 import {
   createCipheriv,
   createDecipheriv,
