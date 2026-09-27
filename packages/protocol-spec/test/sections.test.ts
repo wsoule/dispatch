@@ -45,6 +45,18 @@ describe('the spec skeleton', () => {
     expect(sectionsOf('## A2A binding notes\n')).toEqual([]);
   });
 
+  it('skips heading-like lines inside fenced code', () => {
+    expect(
+      sectionsOf('# 6 Delivery\n```sh\n# 6.1 a shell comment\n```\n## 6.2 X\n')
+    ).toEqual(['6', '6.2']);
+    // A fence closes only on its own character, at least as long.
+    expect(
+      sectionsOf('~~~~\n```\n## 6.1 A\n~~~\n## 6.2 B\n~~~~\n## 6.3 C\n')
+    ).toEqual(['6.3']);
+    // Backticks after the run make it inline code, not a fence.
+    expect(sectionsOf('```a``` b\n## 6.1 A\n')).toEqual(['6.1']);
+  });
+
   it('lists 5.9, 6.8, 9.3, 13.16 and C.3', () => {
     const all = new Set(listSections(SPEC_DIR));
     for (const n of ['5.9', '6.8', '9.3', '13.16', 'C.3', '11.11'])
