@@ -6,4 +6,4 @@ vector ids (see §14.2).
 
 ## Unreleased
 
-- [editorial] Initial outline.
+- [editorial] The core text: §0-7, §9-14.
