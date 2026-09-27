@@ -53,6 +53,7 @@ export {
   gateInScope,
   isClientAddress,
   isReservedName,
+  matchChoice,
   normalizeName,
   replyChain,
   scopeOf,

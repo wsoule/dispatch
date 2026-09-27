@@ -174,3 +174,17 @@ export function gateInScope(
       return false;
   }
 }
+
+// The choice a client's answer picks: undefined when the question offers
+// none, null when neither `explicit` nor the trimmed text matches one.
+export function matchChoice(
+  choices: readonly string[] | undefined,
+  text: string,
+  explicit?: string
+): string | null | undefined {
+  if (choices === undefined) return undefined;
+  if (explicit !== undefined)
+    return choices.includes(explicit) ? explicit : null;
+  const wanted = text.trim().toLowerCase();
+  return choices.find((c) => c.trim().toLowerCase() === wanted) ?? null;
+}

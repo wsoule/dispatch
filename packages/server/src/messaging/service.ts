@@ -32,6 +32,7 @@ import {
   openToolApprovalGate,
   SYSTEM_SENDER,
 } from './gates.js';
+import type { ExternalPolicy } from './host.js';
 import { DaemonMessagingHost, settle, wakeRefusal } from './host.js';
 import type { RunTokens } from './runTokens.js';
 import { createRunTokens } from './runTokens.js';
@@ -75,6 +76,8 @@ export interface Messaging {
   // Replays crash-interrupted deliveries and gate effects; must run after
   // orchestrator.reconcileOnBoot() (index.ts says why).
   recover(): Promise<{ retried: number; reverted: number; replayed: number }>;
+  // Installs (or with null removes) the A2A bridge's say on external recipients.
+  setExternalPolicy(policy: ExternalPolicy | null): void;
   close(): void;
 }
 
@@ -514,8 +517,12 @@ export function openMessaging(deps: {
       overseer = target;
     },
     recover: () => engine.recover(),
+    setExternalPolicy(policy) {
+      host.setExternalPolicy(policy);
+    },
     close() {
       overseer = null;
+      host.setExternalPolicy(null);
       clearInterval(scopeSweep);
       uninstallScopePolicy();
       unsubscribeRunStarted();

@@ -8,6 +8,7 @@ import {
   gateInScope,
   isClientAddress,
   isReservedName,
+  matchChoice,
   normalizeName,
   replyChain,
   scopeOf,
@@ -247,5 +248,14 @@ describe('scope', () => {
       [tool, otherTool, scope, wake].map((q) => gateInScope(q, null, link))
     ).toEqual([true, false, true, true]);
     expect(gateInScope(tool, tool.id, null)).toBe(true);
+  });
+});
+
+describe('matchChoice', () => {
+  it('matches trimmed, case-insensitive text or an explicit choice', () => {
+    expect(matchChoice(['us', 'eu'], ' EU ')).toBe('eu');
+    expect(matchChoice(['us', 'eu'], 'whatever', 'us')).toBe('us');
+    expect(matchChoice(['us', 'eu'], 'mars')).toBeNull();
+    expect(matchChoice(undefined, 'free text')).toBeUndefined();
   });
 });
