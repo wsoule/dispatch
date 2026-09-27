@@ -5,7 +5,7 @@ import { b64u, fromB64u } from './encoding.js';
 import { aeadOpen, aeadSeal, encap, openBase, sealBase } from './hpke.js';
 import { canonicalizeLenient } from './jcs.js';
 import { privateKeyOf, publicOfPrivate } from './keys.js';
-import { MAX_SEALED_RECIPIENTS, TAG } from './ops.js';
+import { MAX_SEALED_RECIPIENTS, REPLICA_ID, TAG } from './ops.js';
 import type { FederatedOp, Sealed } from './ops.js';
 
 const CONTENT_KEY_BYTES = 32;
@@ -20,6 +20,7 @@ export function sealedAad(replica: string, seq: number, type: string): string {
 
 // Encrypts the payload once under a random content key K, and wraps K for
 // each recipient with single-shot HPKE; `info` binds each wrap to its recipient.
+// Throws a RangeError naming a recipient no peer would accept or none could open.
 export function sealPayload(input: {
   replica: string;
   seq: number;
@@ -32,6 +33,11 @@ export function sealPayload(input: {
     throw new RangeError(
       `a sealed op names 1-${MAX_SEALED_RECIPIENTS} recipients`
     );
+  for (const r of to) {
+    if (!REPLICA_ID.test(r)) throw new RangeError(`${r} is not a replica id`);
+    if (!canSealTo(input.recipients.get(r) ?? ''))
+      throw new RangeError(`cannot seal to ${r}: its sealPub is unusable`);
+  }
   const key = randomBytes(CONTENT_KEY_BYTES);
   const nonce = randomBytes(NONCE_BYTES);
   const aad = sealedAad(input.replica, input.seq, input.type);
@@ -42,15 +48,8 @@ export function sealPayload(input: {
     Buffer.from(canonicalizeLenient(input.payload))
   );
   const keys: Sealed['keys'] = {};
-  for (const r of to) {
-    try {
-      keys[r] = wrapContentKey(key, aad, r, input.recipients.get(r) ?? '');
-    } catch (cause) {
-      throw new RangeError(`cannot seal to ${r}: its sealPub is unusable`, {
-        cause,
-      });
-    }
-  }
+  for (const r of to)
+    keys[r] = wrapContentKey(key, aad, r, input.recipients.get(r) ?? '');
   return { to, sealed: { nonce: b64u(nonce), ct: b64u(ct), keys }, key };
 }
 

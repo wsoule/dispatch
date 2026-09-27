@@ -106,8 +106,31 @@ describe('sealing', () => {
     highBit[31] = (highBit[31] ?? 0) | 0x80;
     // 2^255 - 10 is p + 9, which reduces to the base point.
     const aboveP = Buffer.from([0xf6, ...Buffer.alloc(30, 0xff), 0x7f]);
-    for (const bad of [highBit, aboveP])
+    for (const bad of [highBit, aboveP]) {
       expect(canSealTo(b64u(bad))).toBe(false);
+      expect(() =>
+        sealPayload({
+          replica: 'alice-0000000a',
+          seq: 7,
+          type: 'mail',
+          payload: {},
+          recipients: new Map([['eve-0000000e', b64u(bad)]]),
+        })
+      ).toThrow('cannot seal to eve-0000000e');
+    }
+  });
+
+  // Every peer refuses a recipient list outside the grammar.
+  it('refuses a recipient id outside the replica grammar', () => {
+    expect(() =>
+      sealPayload({
+        replica: 'alice-0000000a',
+        seq: 7,
+        type: 'mail',
+        payload: {},
+        recipients: new Map([['bob', bob.sealPub]]),
+      })
+    ).toThrow('bob is not a replica id');
   });
 
   // Only hashed text must be I-JSON; a sealed plaintext is never hashed.
