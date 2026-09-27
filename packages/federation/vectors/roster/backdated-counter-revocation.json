@@ -109,6 +109,15 @@
         }
       ],
       [
+        "ada-0000000e",
+        {
+          "replica": "ada-0000000e",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000e",
+          "fingerprint": "FP-ada-0000000e"
+        }
+      ],
+      [
         "obs-00000010",
         {
           "replica": "obs-00000010",
@@ -123,13 +132,45 @@
   },
   "expect": {
     "members": [["ada-0000000a", "admin", 0, [], false, false]],
-    "revoked": ["bob-0000000b"],
+    "revoked": [
+      [
+        "bob-0000000b",
+        {
+          "afterSeq": 2,
+          "afterHash": "h-bob-0000000b-2",
+          "handle": "bob",
+          "hosts": [],
+          "observer": false
+        }
+      ]
+    ],
+    "hostCuts": [],
+    "resolution": [
+      [
+        "05c475c6276c8cf4ee30d01cc73e870176d5dabf6df6228ca8c4388deac4e6ce",
+        "accepted"
+      ],
+      [
+        "8c925207aa7738f4e05073a05a77b3413d0b25844bdfad104317d8ce0fa03be3",
+        "void"
+      ]
+    ],
+    "pending": [
+      "ada-0000000e",
+      "bob-0000000f",
+      "cy-0000000c",
+      "dee-0000000d",
+      "obs-00000010"
+    ],
+    "invites": [],
+    "invitedBy": [],
     "seats": 3,
+    "people": ["ada"],
     "covered": ["ada"],
     "closedBy": null,
     "transport": {
       "kind": "git"
     },
-    "unknown": true
+    "unknown": null
   }
 }

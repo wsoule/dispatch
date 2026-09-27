@@ -1,5 +1,5 @@
 {
-  "name": "stolen-device",
+  "name": "transport-and-invites",
   "input": {
     "founder": {
       "replica": "ada-0000000a",
@@ -34,45 +34,54 @@
         }
       },
       {
-        "replica": "bob-0000000b",
-        "seq": 2,
-        "hlc": "1790380800200.0000.bob-0000000b",
-        "hash": "0380bb8d5f00a2b7b77047219fdc37966c4553c229c5733957007010cd93719c",
+        "replica": "ada-0000000a",
+        "seq": 3,
+        "hlc": "1790380800200.0000.ada-0000000a",
+        "hash": "c4464c9606b93b3f7346a6c7c57f5a05d8c4f068f4f991243c24b8e6120b2b7e",
         "body": {
           "rv": 1,
-          "action": "admit",
-          "replica": "bob-0000000f",
-          "handle": "bob",
-          "role": "member",
-          "fingerprint": "FP-bob-0000000f"
+          "action": "transport",
+          "kind": "relay",
+          "url": "https://relay.test"
+        }
+      },
+      {
+        "replica": "bob-0000000b",
+        "seq": 2,
+        "hlc": "1790380800300.0000.bob-0000000b",
+        "hash": "0257f392e1a4e0967915692623d49385d8ef0273646bc51816980dee76b17cd1",
+        "body": {
+          "rv": 1,
+          "action": "transport",
+          "kind": "git"
         }
       },
       {
         "replica": "bob-0000000b",
         "seq": 3,
-        "hlc": "1790380800500.0000.bob-0000000b",
-        "hash": "b93f86770460ae54f1ced87b4cce8abe6901276c1397207cd44b62311d32479a",
+        "hlc": "1790380800400.0000.bob-0000000b",
+        "hash": "a4525c818cd0220f9555e1b11fa2d51741872647456fac8877fe629bfa831204",
         "body": {
           "rv": 1,
-          "action": "revoke",
-          "replica": "bob-0000000f",
-          "afterSeq": 1,
-          "afterHash": "h-bob-0000000f-1",
-          "reason": "test"
+          "action": "invite",
+          "id": "i-own",
+          "pub": "P",
+          "handle": "bob",
+          "expires": "2026-10-03T00:00:00.000Z"
         }
       },
       {
-        "replica": "bob-0000000f",
-        "seq": 2,
-        "hlc": "1790380800250.0000.bob-0000000f",
-        "hash": "504f9483e7b7310629e50c3111fcce3079fc3fdcbc1f5d071f5d732fc24842cf",
+        "replica": "bob-0000000b",
+        "seq": 4,
+        "hlc": "1790380800500.0000.bob-0000000b",
+        "hash": "ae0e471e1cffbf57ec89adff9f92a26b52d1ac9a7a2c076876bc7d3d96e90724",
         "body": {
           "rv": 1,
-          "action": "revoke",
-          "replica": "bob-0000000b",
-          "afterSeq": 2,
-          "afterHash": "h-bob-0000000b-2",
-          "reason": "test"
+          "action": "invite",
+          "id": "i-other",
+          "pub": "P",
+          "handle": "cy",
+          "expires": "2026-10-03T00:00:00.000Z"
         }
       }
     ],
@@ -149,38 +158,35 @@
       ["ada-0000000a", "admin", 0, [], false, false],
       ["bob-0000000b", "member", null, [], false, false]
     ],
-    "revoked": [
+    "revoked": [],
+    "hostCuts": [],
+    "resolution": [],
+    "pending": [
+      "ada-0000000e",
+      "bob-0000000f",
+      "cy-0000000c",
+      "dee-0000000d",
+      "obs-00000010"
+    ],
+    "invites": [
       [
-        "bob-0000000f",
+        "i-own",
         {
-          "afterSeq": 1,
-          "afterHash": "h-bob-0000000f-1",
+          "pub": "P",
           "handle": "bob",
-          "hosts": [],
-          "observer": false
+          "expires": "2026-10-03T00:00:00.000Z",
+          "by": "bob-0000000b"
         }
       ]
     ],
-    "hostCuts": [],
-    "resolution": [
-      [
-        "504f9483e7b7310629e50c3111fcce3079fc3fdcbc1f5d071f5d732fc24842cf",
-        "void"
-      ],
-      [
-        "b93f86770460ae54f1ced87b4cce8abe6901276c1397207cd44b62311d32479a",
-        "accepted"
-      ]
-    ],
-    "pending": ["ada-0000000e", "cy-0000000c", "dee-0000000d", "obs-00000010"],
-    "invites": [],
     "invitedBy": [],
     "seats": 3,
     "people": ["ada", "bob"],
     "covered": ["ada", "bob"],
     "closedBy": null,
     "transport": {
-      "kind": "git"
+      "kind": "relay",
+      "url": "https://relay.test"
     },
     "unknown": null
   }

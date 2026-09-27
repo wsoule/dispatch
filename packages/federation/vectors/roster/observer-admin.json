@@ -1,5 +1,5 @@
 {
-  "name": "stolen-device",
+  "name": "observer-admin",
   "input": {
     "founder": {
       "replica": "ada-0000000a",
@@ -23,56 +23,56 @@
         "replica": "ada-0000000a",
         "seq": 2,
         "hlc": "1790380800100.0000.ada-0000000a",
-        "hash": "5b1ef33080b375e2e13c321f5241092eb1a83029f3fb9fdb4a2945557f7a5bfc",
+        "hash": "fda24659781d38fc4d12fdaa69de1799a54f2b1da9ca8c8cdb5df4cd3c02658c",
         "body": {
           "rv": 1,
           "action": "admit",
-          "replica": "bob-0000000b",
-          "handle": "bob",
-          "role": "member",
-          "fingerprint": "FP-bob-0000000b"
+          "replica": "obs-00000010",
+          "handle": "obs",
+          "role": "admin",
+          "fingerprint": "FP-obs-00000010",
+          "observer": true
         }
       },
       {
-        "replica": "bob-0000000b",
-        "seq": 2,
-        "hlc": "1790380800200.0000.bob-0000000b",
-        "hash": "0380bb8d5f00a2b7b77047219fdc37966c4553c229c5733957007010cd93719c",
-        "body": {
-          "rv": 1,
-          "action": "admit",
-          "replica": "bob-0000000f",
-          "handle": "bob",
-          "role": "member",
-          "fingerprint": "FP-bob-0000000f"
-        }
-      },
-      {
-        "replica": "bob-0000000b",
+        "replica": "ada-0000000a",
         "seq": 3,
-        "hlc": "1790380800500.0000.bob-0000000b",
-        "hash": "b93f86770460ae54f1ced87b4cce8abe6901276c1397207cd44b62311d32479a",
+        "hlc": "1790380800150.0000.ada-0000000a",
+        "hash": "d7cfbb70a50655a993b0c37a730f5f908a408d4db5b503457a7631ba41429606",
         "body": {
           "rv": 1,
-          "action": "revoke",
-          "replica": "bob-0000000f",
-          "afterSeq": 1,
-          "afterHash": "h-bob-0000000f-1",
-          "reason": "test"
+          "action": "admit",
+          "replica": "cy-0000000c",
+          "handle": "cy",
+          "role": "member",
+          "fingerprint": "FP-cy-0000000c",
+          "observer": true
         }
       },
       {
-        "replica": "bob-0000000f",
-        "seq": 2,
-        "hlc": "1790380800250.0000.bob-0000000f",
-        "hash": "504f9483e7b7310629e50c3111fcce3079fc3fdcbc1f5d071f5d732fc24842cf",
+        "replica": "ada-0000000a",
+        "seq": 4,
+        "hlc": "1790380800200.0000.ada-0000000a",
+        "hash": "3d402cb3cdab734c66bdbd163774ebb6fc323551300d5e4029ed896b2840fe17",
         "body": {
           "rv": 1,
-          "action": "revoke",
-          "replica": "bob-0000000b",
-          "afterSeq": 2,
-          "afterHash": "h-bob-0000000b-2",
-          "reason": "test"
+          "action": "role",
+          "replica": "cy-0000000c",
+          "role": "admin"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 5,
+        "hlc": "1790380800300.0000.ada-0000000a",
+        "hash": "13e545539e5c8db33456eee9e52003782df529aae62228b521dc99eca66261d0",
+        "body": {
+          "rv": 1,
+          "action": "role",
+          "replica": "ada-0000000a",
+          "role": "member",
+          "afterSeq": 4,
+          "afterHash": "h"
         }
       }
     ],
@@ -147,37 +147,28 @@
   "expect": {
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
-      ["bob-0000000b", "member", null, [], false, false]
+      ["cy-0000000c", "member", null, [], true, false]
     ],
-    "revoked": [
-      [
-        "bob-0000000f",
-        {
-          "afterSeq": 1,
-          "afterHash": "h-bob-0000000f-1",
-          "handle": "bob",
-          "hosts": [],
-          "observer": false
-        }
-      ]
-    ],
+    "revoked": [],
     "hostCuts": [],
     "resolution": [
       [
-        "504f9483e7b7310629e50c3111fcce3079fc3fdcbc1f5d071f5d732fc24842cf",
+        "13e545539e5c8db33456eee9e52003782df529aae62228b521dc99eca66261d0",
         "void"
-      ],
-      [
-        "b93f86770460ae54f1ced87b4cce8abe6901276c1397207cd44b62311d32479a",
-        "accepted"
       ]
     ],
-    "pending": ["ada-0000000e", "cy-0000000c", "dee-0000000d", "obs-00000010"],
+    "pending": [
+      "ada-0000000e",
+      "bob-0000000b",
+      "bob-0000000f",
+      "dee-0000000d",
+      "obs-00000010"
+    ],
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "bob"],
-    "covered": ["ada", "bob"],
+    "people": ["ada"],
+    "covered": ["ada"],
     "closedBy": null,
     "transport": {
       "kind": "git"

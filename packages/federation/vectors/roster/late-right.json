@@ -1,5 +1,5 @@
 {
-  "name": "stolen-device",
+  "name": "late-right",
   "input": {
     "founder": {
       "replica": "ada-0000000a",
@@ -23,55 +23,111 @@
         "replica": "ada-0000000a",
         "seq": 2,
         "hlc": "1790380800100.0000.ada-0000000a",
-        "hash": "5b1ef33080b375e2e13c321f5241092eb1a83029f3fb9fdb4a2945557f7a5bfc",
+        "hash": "82c7e82c0e0f4028717e01808a2b8cb21f0f42de88c47f48f4feb4c07d05653e",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "cy-0000000c",
+          "handle": "cy",
+          "role": "admin",
+          "fingerprint": "FP-cy-0000000c"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 3,
+        "hlc": "1790380800110.0000.ada-0000000a",
+        "hash": "90298dbe25d2ff36d736c8141734d33bcbee7a9e5322a53e880aca41d096e1da",
         "body": {
           "rv": 1,
           "action": "admit",
           "replica": "bob-0000000b",
           "handle": "bob",
-          "role": "member",
+          "role": "admin",
           "fingerprint": "FP-bob-0000000b"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 4,
+        "hlc": "1790380800120.0000.ada-0000000a",
+        "hash": "5ca34fd2d27d0f43d0aeeb64be19a026a1ee51bf57b675fff5161cf3f27ac354",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "dee-0000000d",
+          "handle": "dee",
+          "role": "member",
+          "fingerprint": "FP-dee-0000000d"
         }
       },
       {
         "replica": "bob-0000000b",
         "seq": 2,
         "hlc": "1790380800200.0000.bob-0000000b",
-        "hash": "0380bb8d5f00a2b7b77047219fdc37966c4553c229c5733957007010cd93719c",
+        "hash": "f8618dd4dc1258007aedada63503e82614bb3e3f9639c4353b7dcb1a1e8bc955",
         "body": {
           "rv": 1,
           "action": "admit",
-          "replica": "bob-0000000f",
-          "handle": "bob",
+          "replica": "ada-0000000e",
+          "handle": "ada",
           "role": "member",
-          "fingerprint": "FP-bob-0000000f"
+          "fingerprint": "FP-ada-0000000e"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 5,
+        "hlc": "1790380800300.0000.ada-0000000a",
+        "hash": "028a11f1d2c9334d7350837711a910c7c3e4dc9c47e10d83c9209789b19f676b",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "ada-0000000e",
+          "handle": "ada",
+          "role": "admin",
+          "fingerprint": "FP-ada-0000000e"
+        }
+      },
+      {
+        "replica": "ada-0000000e",
+        "seq": 2,
+        "hlc": "1790380800400.0000.ada-0000000e",
+        "hash": "21567f7ff02cfa6aaa97b558543ccc3446a7ea6245cd7e47c00996ff46af42cb",
+        "body": {
+          "rv": 1,
+          "action": "revoke",
+          "replica": "dee-0000000d",
+          "afterSeq": 1,
+          "afterHash": "h-dee-0000000d-1",
+          "reason": "test"
+        }
+      },
+      {
+        "replica": "cy-0000000c",
+        "seq": 2,
+        "hlc": "1790380800500.0000.cy-0000000c",
+        "hash": "26a5e0e50784a031ba70a75dda547c0255b0d736f248097c355f51dbca0da145",
+        "body": {
+          "rv": 1,
+          "action": "revoke",
+          "replica": "bob-0000000b",
+          "afterSeq": 1,
+          "afterHash": "h-bob-0000000b-1",
+          "reason": "test"
         }
       },
       {
         "replica": "bob-0000000b",
         "seq": 3,
         "hlc": "1790380800500.0000.bob-0000000b",
-        "hash": "b93f86770460ae54f1ced87b4cce8abe6901276c1397207cd44b62311d32479a",
+        "hash": "3499cd1dcf6dfd2ccc800e0fe139464394c53e8b4ad2c40dc12e5f2812a8cbc3",
         "body": {
           "rv": 1,
           "action": "revoke",
-          "replica": "bob-0000000f",
+          "replica": "cy-0000000c",
           "afterSeq": 1,
-          "afterHash": "h-bob-0000000f-1",
-          "reason": "test"
-        }
-      },
-      {
-        "replica": "bob-0000000f",
-        "seq": 2,
-        "hlc": "1790380800250.0000.bob-0000000f",
-        "hash": "504f9483e7b7310629e50c3111fcce3079fc3fdcbc1f5d071f5d732fc24842cf",
-        "body": {
-          "rv": 1,
-          "action": "revoke",
-          "replica": "bob-0000000b",
-          "afterSeq": 2,
-          "afterHash": "h-bob-0000000b-2",
+          "afterHash": "h-cy-0000000c-1",
           "reason": "test"
         }
       }
@@ -147,15 +203,26 @@
   "expect": {
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
-      ["bob-0000000b", "member", null, [], false, false]
+      ["ada-0000000e", "admin", 2, [], false, false],
+      ["cy-0000000c", "admin", 1, [], false, false]
     ],
     "revoked": [
       [
-        "bob-0000000f",
+        "bob-0000000b",
         {
           "afterSeq": 1,
-          "afterHash": "h-bob-0000000f-1",
+          "afterHash": "h-bob-0000000b-1",
           "handle": "bob",
+          "hosts": [],
+          "observer": false
+        }
+      ],
+      [
+        "dee-0000000d",
+        {
+          "afterSeq": 1,
+          "afterHash": "h-dee-0000000d-1",
+          "handle": "dee",
           "hosts": [],
           "observer": false
         }
@@ -164,20 +231,24 @@
     "hostCuts": [],
     "resolution": [
       [
-        "504f9483e7b7310629e50c3111fcce3079fc3fdcbc1f5d071f5d732fc24842cf",
-        "void"
+        "21567f7ff02cfa6aaa97b558543ccc3446a7ea6245cd7e47c00996ff46af42cb",
+        "accepted"
       ],
       [
-        "b93f86770460ae54f1ced87b4cce8abe6901276c1397207cd44b62311d32479a",
+        "26a5e0e50784a031ba70a75dda547c0255b0d736f248097c355f51dbca0da145",
         "accepted"
+      ],
+      [
+        "3499cd1dcf6dfd2ccc800e0fe139464394c53e8b4ad2c40dc12e5f2812a8cbc3",
+        "void"
       ]
     ],
-    "pending": ["ada-0000000e", "cy-0000000c", "dee-0000000d", "obs-00000010"],
+    "pending": ["bob-0000000f", "obs-00000010"],
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "bob"],
-    "covered": ["ada", "bob"],
+    "people": ["ada", "cy"],
+    "covered": ["ada", "cy"],
     "closedBy": null,
     "transport": {
       "kind": "git"

@@ -7,7 +7,7 @@ import {
 import type { RosterBody } from '@dispatch/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
-import { foldRoster, speaksForHandle } from '../src/roster.js';
+import { foldRoster, isCovered, speaksForHandle } from '../src/roster.js';
 import type { KeyInfo, RosterOpRef } from '../src/roster.js';
 import { licenseFor, testKeys } from './licenseKeys.js';
 
@@ -477,5 +477,161 @@ describe('foldRoster', () => {
     );
     const v = fold([op(A2, 2, -100, { action: 'recover', proof })]);
     expect(v.members.has(A2)).toBe(false);
+  });
+
+  it('names a second founding as such, even one positioned before the pinned one', () => {
+    const rival = op(C, 1, -100, {
+      action: 'found',
+      name: 'rival',
+      legacy: [],
+      recoveryPub: RECOVERY.signPub,
+    });
+    expect(fold([rival]).problems).toContainEqual({
+      subject: `op:${C}:1`,
+      message: `a second founding by ${C} (FP-${C}), ignored`,
+    });
+  });
+
+  it('accepts a removal whose publisher gains the right only once another removal is accepted', () => {
+    const byC = revoke(C, 2, 500, B, 1);
+    const byB = revoke(B, 3, 500, C, 1);
+    const byA2 = revoke(A2, 2, 400, D, 1);
+    const v = fold([
+      admit(A, 2, 100, C, 'admin'),
+      admit(A, 3, 110, B, 'admin'),
+      admit(A, 4, 120, D),
+      // B's admit comes first, so A2 is a member until C's revocation cuts it.
+      admit(B, 2, 200, A2),
+      admit(A, 5, 300, A2, 'admin'),
+      byA2,
+      byC,
+      byB,
+    ]);
+    expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin', [A2]: 'admin' });
+    expect([...v.revoked.keys()].sort()).toEqual([B, D]);
+    expect(v.resolution.get(byC.hash)).toBe('accepted');
+    expect(v.resolution.get(byB.hash)).toBe('void');
+    expect(v.resolution.get(byA2.hash)).toBe('accepted');
+  });
+
+  it('never makes an observer an admin, so the last admin cannot hand the team to one', () => {
+    const v = fold([
+      admit(A, 2, 100, OBS, 'admin', { observer: true }),
+      admit(A, 3, 150, C, 'member', { observer: true }),
+      op(A, 4, 200, { action: 'role', replica: C, role: 'admin' }),
+      op(A, 5, 300, {
+        action: 'role',
+        replica: A,
+        role: 'member',
+        afterSeq: 4,
+        afterHash: 'h',
+      }),
+    ]);
+    expect(v.members.has(OBS)).toBe(false);
+    expect(v.members.get(C)).toMatchObject({
+      role: 'member',
+      observer: true,
+      rank: null,
+    });
+    expect(roles(v)[A]).toBe('admin');
+  });
+
+  it('cuts a demoted admin by seq and restores admin on a later promotion', () => {
+    const ops = [
+      admit(A, 2, 100, B, 'admin'),
+      admit(B, 2, 150, C), // seq 2 <= afterSeq 2: stands
+      admit(B, 3, 200, OBS, 'member', { observer: true }), // backdated: cut
+      op(A, 3, 300, {
+        action: 'role',
+        replica: B,
+        role: 'member',
+        afterSeq: 2,
+        afterHash: 'h',
+      }),
+      admit(B, 4, 500, D),
+    ];
+    const demoted = fold(ops);
+    expect(roles(demoted)).toEqual({
+      [A]: 'admin',
+      [B]: 'member',
+      [C]: 'member',
+    });
+    const promoted = fold([
+      ...ops,
+      op(A, 4, 400, { action: 'role', replica: B, role: 'admin' }),
+    ]);
+    expect(roles(promoted)).toEqual({
+      [A]: 'admin',
+      [B]: 'admin',
+      [C]: 'member',
+      [D]: 'member',
+    });
+    expect(promoted.members.get(D)?.since.seq).toBe(4);
+    expect(promoted.members.get(B)?.rank).toBe(1);
+  });
+
+  it('switches the transport on an admin op only', () => {
+    const v = fold([
+      admit(A, 2, 100, B),
+      op(A, 3, 200, {
+        action: 'transport',
+        kind: 'relay',
+        url: 'https://relay.test',
+      }),
+      op(B, 2, 300, { action: 'transport', kind: 'git' }),
+    ]);
+    expect(v.transport).toEqual({ kind: 'relay', url: 'https://relay.test' });
+  });
+
+  it('takes the latest license an admin shared that verifies, and names who shared it', () => {
+    const lk = testKeys();
+    const license = (by: string, seq: number, ms: number, seats: number) =>
+      op(by, seq, ms, {
+        action: 'license',
+        key: licenseFor(lk.privateKey, { seats }),
+      });
+    const v = fold(
+      [
+        admit(A, 2, 100, B),
+        license(B, 2, 200, 9),
+        license(A, 3, 300, 5),
+        op(A, 4, 400, { action: 'license', key: 'dispatch1.garbage' }),
+      ],
+      { licensePublicKey: lk.publicKey }
+    );
+    expect(v.seats).toBe(5);
+    expect(v.licenseBy).toBe(A);
+  });
+
+  it('lets a member invite only for their own handle', () => {
+    const invite = (by: string, seq: number, id: string, handle: string) =>
+      op(by, seq, 200 + seq, {
+        action: 'invite',
+        id,
+        pub: 'P',
+        handle,
+        expires: '2026-10-03T00:00:00.000Z',
+      });
+    const v = fold([
+      admit(A, 2, 100, B),
+      invite(B, 2, 'i-own', 'bob'),
+      invite(B, 3, 'i-other', 'cy'),
+      invite(A, 3, 'i-admin', 'cy'),
+    ]);
+    expect([...v.invites.keys()].sort()).toEqual(['i-admin', 'i-own']);
+    expect(v.invites.get('i-own')?.by).toBe(B);
+  });
+
+  it('counts an observer as covered and a replica past the seats as not', () => {
+    const v = fold([
+      admit(A, 2, 100, B),
+      admit(A, 3, 200, OBS, 'member', { observer: true }),
+      admit(A, 4, 300, C),
+      admit(A, 5, 400, D),
+    ]);
+    expect(isCovered(v, C)).toBe(true);
+    expect(isCovered(v, OBS)).toBe(true);
+    expect(isCovered(v, D)).toBe(false);
+    expect(isCovered(v, A2)).toBe(false);
   });
 });

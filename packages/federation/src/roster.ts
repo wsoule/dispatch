@@ -9,10 +9,8 @@ import type { LicenseState } from './license.js';
 import { comparePositions } from './position.js';
 import type { Position } from './position.js';
 
-// The roster fold: who is on the team, with which role, hosts and rank, and
-// the seats, from the set of verified roster ops alone. Every daemon and the
-// relay run it, so its result never depends on arrival order or a local clock
-// (only license expiry reads `now`).
+// The roster fold: members, roles, hosts, ranks and seats from the set of
+// verified roster ops alone, so every daemon and the relay agree.
 
 /** How long after the founding only an admin may close the legacy window. */
 export const LEGACY_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
@@ -69,6 +67,7 @@ type Invite = { pub: string; handle: string; expires: string; by: string };
 type Closed = { by: string; entries: readonly LegacyAttestation[] };
 type HostCut = { afterSeq: number; hosts: readonly string[] };
 type Problem = { subject: string; message: string };
+type Resolution = 'accepted' | 'void';
 
 export interface RosterView {
   teamId: string;
@@ -78,6 +77,8 @@ export interface RosterView {
   revoked: ReadonlyMap<string, RevokedReplica>;
   /** Per replica, the hosts each accepted hosts removal took away. */
   hostCuts: ReadonlyMap<string, HostCut[]>;
+  /** Each removal's op hash (revoke, demotion, hosts cut) → the fold's decision. */
+  resolution: ReadonlyMap<string, Resolution>;
   /** Pinned keys neither admitted nor revoked, sorted. */
   pending: readonly string[];
   invites: ReadonlyMap<string, Invite>;
@@ -107,6 +108,8 @@ type Action<A extends RosterBody['action']> = Extract<
   { action: A }
 >;
 type CutKind = 'all' | 'admin' | 'hosts';
+// A removal's state in the resolution loop; `waiting` lacks the right for now.
+type Status = 'open' | 'waiting' | Resolution;
 
 interface Item {
   op: RosterOpRef;
@@ -175,43 +178,47 @@ export function foldRoster(input: FoldInput): RosterView {
   const removals = ctx.items
     .map(removalOf)
     .filter((r): r is Removal => r !== null);
-  const status = new Map<Removal, 'undecided' | 'accepted' | 'void'>(
-    removals.map((r) => [r, 'undecided'])
-  );
-  const having = (s: 'undecided' | 'accepted') =>
-    removals.filter((r) => status.get(r) === s);
+  const status = new Map<Removal, Status>(removals.map((r) => [r, 'open']));
+  const having = (...wanted: Status[]) =>
+    removals.filter((r) => wanted.includes(status.get(r) ?? 'void'));
+  // Whether accepting r would take the right from a removal already accepted.
+  const undoes = (r: Removal, accepted: readonly Removal[]) => {
+    if (accepted.length === 0) return false;
+    const withIt = evaluate(ctx, [...accepted, r]);
+    return accepted.some((a) => !hadRight(ctx, withIt, a));
+  };
 
   for (;;) {
-    const undecided = having('undecided');
-    if (undecided.length === 0) break;
-    const ev = evaluate(ctx, having('accepted'));
+    const accepted = having('accepted');
+    const ev = evaluate(ctx, accepted);
+    // A removal whose publisher lacks the right waits: accepting another can
+    // grant it, as a cut first admit lets a later admit stand.
+    for (const r of having('open', 'waiting'))
+      status.set(r, hadRight(ctx, ev, r) ? 'open' : 'waiting');
+    const open = having('open');
+    if (open.length === 0) break;
     let progress = false;
-    // Rights only shrink as removals are accepted: one missing now stays missing,
-    for (const r of undecided) {
-      if (hadRight(ctx, ev, r)) continue;
+    // Accepted removals stand, so one that would undo them is void,
+    for (const r of open) {
+      if (!undoes(r, accepted)) continue;
       status.set(r, 'void');
       progress = true;
     }
-    // and one held even were every other open removal accepted stays held.
-    for (const r of having('undecided')) {
-      const worst = removals.filter((o) => o !== r && status.get(o) !== 'void');
+    if (progress) continue;
+    // and one held even were every other open removal accepted is accepted.
+    for (const r of open) {
+      const worst = having('open', 'accepted').filter((o) => o !== r);
       if (!hadRight(ctx, evaluate(ctx, worst), r)) continue;
       status.set(r, 'accepted');
       progress = true;
     }
     if (progress) continue;
     // Only removals that cut each other remain: the earliest-ranked publisher's
-    // is accepted, and every removal that would take its right away is void.
-    const pick = undecided.reduce((best, r) =>
-      byRank(ev, r, best) < 0 ? r : best
-    );
+    // is accepted, and each removal that would undo it ends void.
+    const pick = open.reduce((best, r) => (byRank(ev, r, best) < 0 ? r : best));
     status.set(pick, 'accepted');
-    for (const o of undecided) {
-      if (o === pick) continue;
-      const withIt = [...having('accepted'), o];
-      if (!hadRight(ctx, evaluate(ctx, withIt), pick)) status.set(o, 'void');
-    }
   }
+  for (const r of having('waiting')) status.set(r, 'void');
 
   let ev = evaluate(ctx, having('accepted'));
   // A result with no admin voids accepted removals, latest publisher rank first.
@@ -222,7 +229,13 @@ export function foldRoster(input: FoldInput): RosterView {
     status.set(worst, 'void');
     ev = evaluate(ctx, having('accepted'));
   }
-  return viewOf(ctx, ev);
+  const resolution = new Map<string, Resolution>();
+  for (const r of removals)
+    resolution.set(
+      r.op.hash,
+      status.get(r) === 'accepted' ? 'accepted' : 'void'
+    );
+  return viewOf(ctx, ev, resolution);
 }
 
 /** Whether `replica`'s op `seq` may speak for `handle`. Observers speak for nobody. */
@@ -519,6 +532,10 @@ function step(
   const refuse = (message: string): void => {
     ev.problems.push({ subject: `op:${op.replica}:${op.seq}`, message });
   };
+  if (isAction(body, 'found')) {
+    foundStep(ctx, ev, op, body, refuse);
+    return;
+  }
   if (comparePositions(op, ctx.found.op) < 0) {
     refuse(
       `${op.replica}'s roster op at seq ${op.seq} precedes the founding; ignored`
@@ -555,9 +572,6 @@ function step(
       `${op.replica} lacks the right to ${body.action} at seq ${op.seq}; ignored`
     );
   switch (body.action) {
-    case 'found':
-      foundStep(ctx, ev, op, body, refuse);
-      return;
     case 'admit':
       admitStep(ctx, ev, op, body, rights, refuse);
       return;
@@ -571,6 +585,10 @@ function step(
       if (!rights.admin) return noRight();
       if (!admittedAt(ev, body.replica, op)) {
         refuse(`${body.replica} is not admitted; ignored`);
+        return;
+      }
+      if (ev.holders.get(body.replica)?.observer === true) {
+        refuse(`${body.replica} is an observer, never an admin; ignored`);
         return;
       }
       grant(ev, body.replica, {
@@ -679,6 +697,12 @@ function admitStep(
   if (ev.holders.has(body.replica)) return;
   const hosts = [...(body.hosts ?? [])];
   const observer = body.observer === true;
+  // Every roster op an observer publishes is void, so an observer admin would
+  // count as an admin that can do nothing.
+  if (observer && body.role === 'admin') {
+    refuse(`${body.replica} is an observer, never an admin; ignored`);
+    return;
+  }
   // A member may admit only a device of their own, as a plain member.
   const own = ev.holders.get(op.replica)?.handle;
   const ownDevice =
@@ -866,7 +890,11 @@ function adminsOf(ev: Evaluation): string[] {
   );
 }
 
-function viewOf(ctx: Context, ev: Evaluation): RosterView {
+function viewOf(
+  ctx: Context,
+  ev: Evaluation,
+  resolution: ReadonlyMap<string, Resolution>
+): RosterView {
   const { input } = ctx;
   const revoked = new Map<string, RevokedReplica>();
   for (const c of ev.cuts) {
@@ -955,6 +983,7 @@ function viewOf(ctx: Context, ev: Evaluation): RosterView {
     members,
     revoked,
     hostCuts: ev.hostCuts,
+    resolution,
     pending,
     invites: ev.invites,
     invitedBy,

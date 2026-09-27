@@ -10,10 +10,8 @@ import type {
   RosterView,
 } from '../src/roster.js';
 
-// The roster fold scenarios that need no signature. The property test folds
-// each in every order; run as a script (`bun
-// packages/federation/scripts/roster-vectors.ts`, then `moon run root:format`)
-// it writes each to vectors/roster, the files the relay's CI also folds.
+// Roster fold scenarios that need no signature: the property test folds each in
+// every order, and running this file writes each to vectors/roster for the relay.
 
 export const ROSTER_VECTORS_DIR = new URL(
   '../vectors/roster/',
@@ -43,6 +41,7 @@ const B = 'bob-0000000b';
 const C = 'cy-0000000c';
 const D = 'dee-0000000d';
 const B2 = 'bob-0000000f';
+const A2 = 'ada-0000000e';
 const OBS = 'obs-00000010';
 const handleOf = (r: string) => r.slice(0, r.lastIndexOf('-'));
 const DAY = 24 * 60 * 60 * 1000;
@@ -50,7 +49,7 @@ const T0 = Date.parse('2026-09-26T00:00:00.000Z');
 const RECOVERY_PUB = ed25519FromSeed(Buffer.alloc(32, 7)).signPub;
 
 const keys = new Map<string, KeyInfo>(
-  [A, B, C, D, B2, OBS].map((r) => [
+  [A, B, C, D, B2, A2, OBS].map((r) => [
     r,
     {
       replica: r,
@@ -195,6 +194,65 @@ export const SCENARIOS: readonly RosterScenario[] = [
       afterHash: FOUND.hash,
     }),
   ]),
+  scenario('late-right', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 110, B, 'admin'),
+    admit(A, 4, 120, D),
+    admit(B, 2, 200, A2),
+    admit(A, 5, 300, A2, 'admin'),
+    revoke(A2, 2, 400, D, 1),
+    revoke(C, 2, 500, B, 1),
+    revoke(B, 3, 500, C, 1),
+  ]),
+  scenario('demotion-then-promotion', [
+    admit(A, 2, 100, B, 'admin'),
+    admit(B, 2, 150, C),
+    admit(B, 3, 200, OBS, 'member', { observer: true }),
+    op(A, 3, 300, {
+      action: 'role',
+      replica: B,
+      role: 'member',
+      afterSeq: 2,
+      afterHash: 'h',
+    }),
+    op(A, 4, 400, { action: 'role', replica: B, role: 'admin' }),
+    admit(B, 4, 500, D),
+  ]),
+  scenario('observer-admin', [
+    admit(A, 2, 100, OBS, 'admin', { observer: true }),
+    admit(A, 3, 150, C, 'member', { observer: true }),
+    op(A, 4, 200, { action: 'role', replica: C, role: 'admin' }),
+    op(A, 5, 300, {
+      action: 'role',
+      replica: A,
+      role: 'member',
+      afterSeq: 4,
+      afterHash: 'h',
+    }),
+  ]),
+  scenario('transport-and-invites', [
+    admit(A, 2, 100, B),
+    op(A, 3, 200, {
+      action: 'transport',
+      kind: 'relay',
+      url: 'https://relay.test',
+    }),
+    op(B, 2, 300, { action: 'transport', kind: 'git' }),
+    op(B, 3, 400, {
+      action: 'invite',
+      id: 'i-own',
+      pub: 'P',
+      handle: 'bob',
+      expires: '2026-10-03T00:00:00.000Z',
+    }),
+    op(B, 4, 500, {
+      action: 'invite',
+      id: 'i-other',
+      pub: 'P',
+      handle: 'cy',
+      expires: '2026-10-03T00:00:00.000Z',
+    }),
+  ]),
   scenario('seats-hosts-observer', [
     admit(A, 2, 100, B, 'member', { hosts: ['eve'] }),
     admit(A, 3, 200, OBS, 'member', { observer: true }),
@@ -272,6 +330,9 @@ export const SCENARIOS: readonly RosterScenario[] = [
   ]),
 ];
 
+const byKey = <T>(m: ReadonlyMap<string, T>): [string, T][] =>
+  [...m.entries()].sort(([a], [b]) => (a < b ? -1 : 1));
+
 /** The parts of a view the golden vectors pin, in a form that ignores map order. */
 export function normalize(v: RosterView): unknown {
   return {
@@ -285,12 +346,18 @@ export function normalize(v: RosterView): unknown {
         m.observer,
         m.recovered,
       ]),
-    revoked: [...v.revoked.keys()].sort(),
+    revoked: byKey(v.revoked),
+    hostCuts: byKey(v.hostCuts),
+    resolution: byKey(v.resolution),
+    pending: v.pending,
+    invites: byKey(v.invites),
+    invitedBy: byKey(v.invitedBy),
     seats: v.seats,
+    people: v.people,
     covered: [...v.covered].sort(),
     closedBy: v.legacy.closed?.by ?? null,
     transport: v.transport,
-    unknown: v.unknown === null,
+    unknown: v.unknown,
   };
 }
 

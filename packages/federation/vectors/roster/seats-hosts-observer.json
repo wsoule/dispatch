@@ -125,6 +125,15 @@
         }
       ],
       [
+        "ada-0000000e",
+        {
+          "replica": "ada-0000000e",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000e",
+          "fingerprint": "FP-ada-0000000e"
+        }
+      ],
+      [
         "obs-00000010",
         {
           "replica": "obs-00000010",
@@ -146,12 +155,18 @@
       ["obs-00000010", "member", null, [], true, false]
     ],
     "revoked": [],
+    "hostCuts": [],
+    "resolution": [],
+    "pending": ["ada-0000000e", "bob-0000000f"],
+    "invites": [],
+    "invitedBy": [],
     "seats": 3,
+    "people": ["ada", "bob", "eve", "cy", "dee"],
     "covered": ["ada", "bob", "eve"],
     "closedBy": null,
     "transport": {
       "kind": "git"
     },
-    "unknown": true
+    "unknown": null
   }
 }
