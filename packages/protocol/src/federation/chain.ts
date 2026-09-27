@@ -119,8 +119,8 @@ function wellFormed(e: unknown): boolean {
   return typeof sig === 'string' && isHex64(prev) && isHex64(bodyHash);
 }
 
-// Null in place of a throw: JCS refuses a non-finite number or a lone
-// surrogate, and runs out of stack on deep nesting.
+// Null in place of a throw: JCS refuses a non-finite number, a lone surrogate
+// and nesting past MAX_JSON_DEPTH.
 function orNull<T>(step: () => T): T | null {
   try {
     return step();

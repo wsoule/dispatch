@@ -4,6 +4,7 @@ import {
   canonicalize,
   CanonicalizeError,
   canonicalizeLenient,
+  MAX_JSON_DEPTH,
 } from '../../src/federation/jcs.js';
 
 describe('canonicalize (RFC 8785)', () => {
@@ -68,5 +69,33 @@ describe('canonicalize (RFC 8785)', () => {
       '{"b":"a\\ud800","\\udc00":1}'
     );
     expect(() => canonicalizeLenient(Number.NaN)).toThrow();
+  });
+
+  // Stack depth differs between runtimes, so a fixed bound keeps every peer's
+  // verdict on the same op identical.
+  it('refuses nesting past MAX_JSON_DEPTH, and cycles, with a CanonicalizeError', () => {
+    const nested = (depth: number, wrap: (v: unknown) => unknown) => {
+      let v: unknown = 1;
+      for (let i = 0; i < depth; i++) v = wrap(v);
+      return v;
+    };
+    const inArray = (v: unknown) => [v];
+    const inObject = (v: unknown) => ({ a: v });
+    for (const wrap of [inArray, inObject]) {
+      expect(canonicalize(nested(MAX_JSON_DEPTH, wrap))).toContain('1');
+      const deep = nested(MAX_JSON_DEPTH + 1, wrap);
+      expect(() => canonicalize(deep)).toThrow(CanonicalizeError);
+      expect(() => canonicalizeLenient(deep)).toThrow(CanonicalizeError);
+    }
+    // Deep enough to overflow the stack of any runtime without the bound.
+    expect(() => canonicalize(nested(100_000, inArray))).toThrow(
+      CanonicalizeError
+    );
+    const loop: Record<string, unknown> = {};
+    loop['self'] = loop;
+    const ring: unknown[] = [];
+    ring.push(ring);
+    for (const cyclic of [loop, ring])
+      expect(() => canonicalize(cyclic)).toThrow(CanonicalizeError);
   });
 });

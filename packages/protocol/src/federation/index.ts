@@ -12,7 +12,7 @@ export {
   parseOpHlc,
 } from './hlc.js';
 export type { ParsedHlc } from './hlc.js';
-export { canonicalize, CanonicalizeError } from './jcs.js';
+export { canonicalize, CanonicalizeError, MAX_JSON_DEPTH } from './jcs.js';
 export {
   ed25519FromSeed,
   generateReplicaKeys,

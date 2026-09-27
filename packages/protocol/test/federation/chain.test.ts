@@ -469,7 +469,13 @@ describe('verifyEntry along a chain', () => {
         },
         keys.signPriv
       );
-    const bodies: JsonValue[] = [{ title: 'a\ud800' }, { n: Number.NaN }];
+    let deep: JsonValue = [];
+    for (let i = 0; i < 100_000; i++) deep = [deep];
+    const bodies: JsonValue[] = [
+      { title: 'a\ud800' },
+      { n: Number.NaN },
+      { fields: deep },
+    ];
     for (const body of bodies) expect(signing(body)).toThrow(CanonicalizeError);
   });
 
