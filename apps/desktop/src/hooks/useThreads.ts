@@ -60,14 +60,9 @@ export function threadKey(port: number | undefined, thread: string) {
 // Tries a read again when it may pass next time, never when the daemon said
 // this window may not read it (403) or it does not exist (404).
 function retryTransient(failures: number, error: Error): boolean {
-  if (isRefusedOrGone(error)) return false;
-  return failures < 3;
-}
-
-function isRefusedOrGone(error: unknown): boolean {
-  return (
-    error instanceof ApiError && (error.status === 403 || error.status === 404)
-  );
+  const final =
+    error instanceof ApiError && (error.status === 403 || error.status === 404);
+  return !final && failures < 3;
 }
 
 function ready(client: ApiClient | null): ApiClient {
@@ -287,6 +282,20 @@ export interface OpenThread {
   error: Error | null;
 }
 
+// The thread holding message `id`. A rail row names its thread by the root,
+// which a teammate pulled in by a later reply may not hold; the thread itself
+// may still be theirs to read, so a refused id is tried as a thread id.
+async function threadOf(api: ApiClient, id: string): Promise<string> {
+  try {
+    return (await api.getMessage(id)).thread;
+  } catch (err) {
+    if (!(err instanceof ApiError && err.status === 403)) throw err;
+    const detail = await api.getThread(id).catch(() => null);
+    if (detail === null || detail.messages.length === 0) throw err;
+    return id;
+  }
+}
+
 /** The thread holding `focus` (any message id in it; a root id is its own
  *  thread). A window that cannot message reads none. */
 export function useThread(
@@ -298,10 +307,9 @@ export function useThread(
   const enabled = client !== null && focus !== null && access.canMessage;
   const resolved = useQuery({
     queryKey: [...threadsPrefix(port), 'message', focus],
-    queryFn: () => ready(client).getMessage(focus ?? ''),
+    queryFn: () => threadOf(ready(client), focus ?? ''),
     enabled,
-    staleTime: Infinity, // a message never changes
-    select: (message) => message.thread,
+    staleTime: Infinity, // a message never moves thread
     // A link to a thread this window cannot read, or one gone, says so at once.
     retry: retryTransient,
   });

@@ -787,11 +787,41 @@ describe('messaging queries', () => {
       );
       expect(gone.result.current.error?.message).toBe('no thread m-gone');
     });
+    // m-hidden is also tried as a thread id once, which fails the same way.
     expect([...calls].sort()).toEqual([
       'message m-gone',
       'message m-hidden',
       'thread m-gone',
+      'thread m-hidden',
     ]);
+  });
+
+  it('opens a thread by its root id when the root is one a teammate cannot read but the thread is', async () => {
+    // A rail row names its thread by the root, which a teammate pulled in
+    // by a later reply never held.
+    const calls: string[] = [];
+    const client = {
+      getMessage: (id: string) => {
+        calls.push(`message ${id}`);
+        return Promise.reject(new ApiError(`cannot read message ${id}`, 403));
+      },
+      getThread: (id: string) => {
+        calls.push(`thread ${id}`);
+        return Promise.resolve({
+          messages: [msg('m-root'), msg('m-02', { thread: 'm-root' })],
+          deliveries: [],
+        });
+      },
+    } as unknown as ApiClient;
+    const { result } = mount(() => useThread(client, PORT, 'm-root', TEAMMATE));
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.id)).toEqual([
+        'm-root',
+        'm-02',
+      ]);
+    });
+    expect(result.current.thread).toBe('m-root');
+    expect(result.current.error).toBeNull();
   });
 
   it('tries a thread read again after a network blip, a daemon error or any refusal but 403 and 404', async () => {
