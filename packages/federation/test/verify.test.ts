@@ -1,8 +1,10 @@
+import type { JsonValue } from '@dispatch/protocol';
 import {
   buildOp,
   fingerprint,
   generateReplicaKeys,
   opHash,
+  sha256Hex,
   stubOf,
   ZERO_HASH,
 } from '@dispatch/protocol/federation';
@@ -37,6 +39,29 @@ function keyOp(
       },
     },
     signPriv
+  );
+}
+
+// The default key op with some body fields replaced, signed by `keys`.
+function keyOpWith(changes: Record<string, JsonValue>): FederatedOp {
+  return buildOp(
+    {
+      replica: R,
+      seq: 1,
+      prev: ZERO_HASH,
+      hlc: hlc(1000),
+      type: 'key',
+      body: {
+        handle: 'ada',
+        device: 'laptop',
+        build: '0.40.0',
+        signPub: keys.signPub,
+        sealPub: keys.sealPub,
+        legacy: null,
+        ...changes,
+      },
+    },
+    keys.signPriv
   );
 }
 
@@ -155,6 +180,78 @@ describe('verifyLog', () => {
     expect(r.accepted).toEqual([]);
     expect(r.problem).toContain('a different key');
     expect(r.cursor.halted).toBe(r.problem);
+  });
+
+  it('halts when a pinned replica shows its key op with any field changed', () => {
+    const first = verifyLog(R, log(1), fresh, null);
+    const changes: Record<string, JsonValue>[] = [
+      { sealPub: generateReplicaKeys().sealPub },
+      { handle: 'eve' },
+      { device: 'desk' },
+      { build: '0.41.0' },
+      { legacy: { throughSeq: 3, digest: sha256Hex('v1') } },
+      { invite: { id: 'inv-1', sig: 'sig' } },
+    ];
+    for (const change of changes) {
+      const r = verifyLog(R, [keyOpWith(change)], fresh, first.pinned);
+      expect(r.accepted).toEqual([]);
+      expect(r.pinned).toBeNull();
+      expect(r.problem).toContain('a different key');
+      expect(r.cursor.halted).toBe(r.problem);
+    }
+  });
+
+  it('reads the pinned key op again without pinning it twice', () => {
+    const first = verifyLog(R, log(1), fresh, null);
+    const r = verifyLog(R, log(3), fresh, first.pinned);
+    expect(r.accepted.map((a) => a.entry.seq)).toEqual([1, 2, 3]);
+    expect(r.pinned).toBeNull();
+    expect(r.problem).toBeNull();
+  });
+
+  it('halts on anything placed before the key op', () => {
+    const junk = { replica: R, seq: 0 } as unknown as LogEntry;
+    const r = verifyLog(R, [junk, ...log(2)], fresh, null);
+    expect(r.accepted).toEqual([]);
+    expect(r.pinned).toBeNull();
+    expect(r.cursor.halted).toContain(
+      'fails verification at seq 0: a log must start with its key op'
+    );
+  });
+
+  it('halts on a stub of the key op or a key op with no signing key', () => {
+    for (const bad of [stubOf(keyOp()), keyOpWith({ signPub: 5 })]) {
+      const r = verifyLog(R, [bad, ...log(2).slice(1)], fresh, null);
+      expect(r.accepted).toEqual([]);
+      expect(r.cursor.halted).toContain('fails verification at seq 1');
+      expect(r.problem).toBe(r.cursor.halted);
+    }
+  });
+
+  it('carries a well-formed legacy and invite onto the pin', () => {
+    const legacy = { throughSeq: 12, digest: sha256Hex('v1') };
+    const invite = { id: 'inv-1', sig: 'sig' };
+    const r = verifyLog(R, [keyOpWith({ legacy, invite })], fresh, null);
+    expect(r.pinned?.legacy).toEqual(legacy);
+    expect(r.pinned?.invite).toEqual(invite);
+  });
+
+  it('halts on a key op whose legacy or invite is malformed', () => {
+    const digest = sha256Hex('v1');
+    const bad: Record<string, JsonValue>[] = [
+      { legacy: { throughSeq: -1, digest } },
+      { legacy: { throughSeq: 1.5, digest } },
+      { legacy: { throughSeq: 1, digest: 'not a digest' } },
+      { legacy: { throughSeq: 1, digest: digest.toUpperCase() } },
+      { legacy: [] },
+      { invite: null },
+      { invite: { id: 1, sig: 'sig' } },
+    ];
+    for (const change of bad) {
+      const r = verifyLog(R, [keyOpWith(change)], fresh, null);
+      expect(r.pinned).toBeNull();
+      expect(r.cursor.halted).toContain('seq 1: malformed key op');
+    }
   });
 
   it('halts on a key op whose body is not a key', () => {
