@@ -25,7 +25,7 @@ export interface TaskThreadTabProps {
 // Never called: without the live Assistant thread, an Assistant thread here is read-only.
 const noOverseerReply = (): Promise<void> => Promise.resolve();
 const NOT_LISTED =
-  "Listing a task's threads needs the decide tier. You can still write to the task below.";
+  "Listing a task's threads needs the decide tier. Ask the project owner for a decide token. You can still write to the task below.";
 const NOTE = 'text-muted-foreground p-2 text-[12px]';
 
 /** Everything to or from a task and its runs, with a composer addressed to the task. */
@@ -58,7 +58,10 @@ export function TaskThreadTab({
   }
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <aside className="border-border w-72 shrink-0 overflow-y-auto border-r-[0.5px] p-2">
+      <aside
+        aria-label="Thread list"
+        className="border-border w-72 shrink-0 overflow-y-auto border-r-[0.5px] p-2"
+      >
         <TaskThreads
           list={list}
           canDecide={access.canDecide}
@@ -133,24 +136,27 @@ function TaskThreads({
       </p>
     );
   }
-  if (list.error !== null) {
-    return (
+  const error =
+    list.error === null ? null : (
       <p role="alert" className="text-destructive p-2 text-[12px]">
         {list.error.message}
       </p>
     );
-  }
   if (list.summaries.length === 0) {
-    return <p className={NOTE}>No messages yet.</p>;
+    return error ?? <p className={NOTE}>No messages yet.</p>;
   }
+  // A failed refetch keeps the rows it already had, with why under them.
   return (
-    <ThreadList
-      label="Threads"
-      sections={[{ key: 'task', summaries: list.summaries }]}
-      selected={selected}
-      onSelect={onSelect}
-      lookups={lookups}
-    />
+    <>
+      <ThreadList
+        label="Threads"
+        sections={[{ key: 'task', summaries: list.summaries }]}
+        selected={selected}
+        onSelect={onSelect}
+        lookups={lookups}
+      />
+      {error}
+    </>
   );
 }
 
