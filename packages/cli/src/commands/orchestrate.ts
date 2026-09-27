@@ -112,7 +112,7 @@ export function createRunWatcher(
   }
 
   // /ws carries gates only to deciding humans, so a park is read off the run's
-  // state; the app client, when given, names the gate's tool and request.
+  // state; the app client, when given, names each parked call and its tool.
   let parkAnnounced = false;
   async function announcePark(id: string): Promise<void> {
     let gates: RunGate[] = [];

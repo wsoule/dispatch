@@ -260,6 +260,31 @@ describe('createRunWatcher', () => {
     w.watcher.dispose();
   });
 
+  it('names every call a parked run waits on, one banner each', async () => {
+    const second = {
+      ...gate,
+      id: 'm-second',
+      data: {
+        ...(gate.data as object),
+        requestId: 'fake-approval-2',
+        tool: 'write_file',
+      },
+    };
+    const appClient: ApiClient = {
+      ...makeClient(() => Promise.reject(new Error('not used'))),
+      openDecisions: () => Promise.resolve({ items: [gate, second] }),
+    };
+    const w = parkedWatcher(appClient);
+
+    w.watcher.setRunId('r-1');
+    await sleep(10);
+    expect(w.banners()).toBe(2);
+    expect(w.text()).toContain('approve: dispatch approve r-1 fake-approval-1');
+    expect(w.text()).toContain('approve: dispatch approve r-1 fake-approval-2');
+    expect(w.text()).toContain('tool:    write_file');
+    w.watcher.dispose();
+  });
+
   it('announces a parked run without its gate when there is no app token', async () => {
     const w = parkedWatcher();
 
