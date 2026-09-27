@@ -151,17 +151,19 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
       ? undefined
       : (KIND_LABEL[kind] ?? kind);
   const sender = entry.fromLabel ?? delivered?.from;
-  // A human sender reads as "You" only when it is the viewer, or composer text with no sender.
-  const heading = fromUser
-    ? sender === undefined || sender === me
-      ? 'You'
-      : sender
-    : `↳ ${sender ?? 'another agent'}`;
+  // Only the viewer's own line, or composer text with no sender, reads as "You" on the
+  // right; a teammate's sits on the left with the other senders.
+  const own = fromUser && (sender === undefined || sender === me);
+  const heading = own
+    ? 'You'
+    : fromUser
+      ? sender
+      : `↳ ${sender ?? 'another agent'}`;
   return (
     <div
       className={cn(
         'flex max-w-[90%] flex-col gap-0.5 rounded-card px-3 py-2',
-        fromUser
+        own
           ? 'bg-surface-quaternary self-end border-[0.5px] border-border-strong'
           : 'bg-state-waiting-surface self-start'
       )}
@@ -169,7 +171,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
       <div
         className={cn(
           'flex items-center gap-1.5 text-[12px] font-medium',
-          fromUser ? 'text-muted-foreground' : 'text-state-waiting'
+          own ? 'text-muted-foreground' : 'text-state-waiting'
         )}
       >
         {heading}

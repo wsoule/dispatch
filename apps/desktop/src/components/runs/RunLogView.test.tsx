@@ -429,6 +429,22 @@ test('a human sender stays an address while the viewer is unknown', () => {
   expect(screen.queryByText('You')).toBeNull();
 });
 
+test("a teammate's line sits with the other senders, and only the viewer's own at the right", () => {
+  renderEntries(
+    [
+      delivered('human:bob', 'message', 'm-30', 'ship it after lunch'),
+      delivered('human:wyat', 'message', 'm-31', 'agreed'),
+    ],
+    null,
+    'human:wyat'
+  );
+  const bubble = (heading: string) =>
+    screen.getByText(heading).parentElement?.className ?? '';
+  expect(bubble('human:bob')).toContain('self-start');
+  expect(bubble('human:bob')).not.toContain('self-end');
+  expect(bubble('You')).toContain('self-end');
+});
+
 // A window below decide can read a thread only if it took part, and all a run
 // chat knows of a message is who sent it.
 test('a window below decide links only the messages it sent', () => {
