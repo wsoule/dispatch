@@ -8,13 +8,14 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 
 import {
   applyOverrides,
   clientIpFor,
   DEFAULT_LISTENER,
   listenerSettingsPath,
+  parseListenerFlags,
   readListenerSettings,
   resolveListener,
   writeListenerSettings,
@@ -71,6 +72,13 @@ describe('the settings file', () => {
     expect(read.error).toContain('a2a-listener.json');
   });
 
+  it('fills the keys a short hand-written file leaves out from the defaults', () => {
+    const path = listenerSettingsPath(root);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, JSON.stringify({ enabled: true, port: 7450 }));
+    expect(readListenerSettings(root)).toEqual({ settings: on(), error: null });
+  });
+
   it('lets the flags override the file for one boot', () => {
     expect(
       applyOverrides(DEFAULT_LISTENER, {
@@ -96,6 +104,53 @@ describe('the settings file', () => {
     );
     expect(applyOverrides(DEFAULT_LISTENER, {})).toEqual(DEFAULT_LISTENER);
   });
+});
+
+describe('parseListenerFlags', () => {
+  it('gives no overrides when no --a2a-* flag is set', () => {
+    expect(parseListenerFlags({})).toEqual({ ok: true, overrides: {} });
+  });
+
+  it('reads every flag and resolves the TLS files against the working directory', () => {
+    expect(
+      parseListenerFlags({
+        host: '0.0.0.0',
+        port: '7450',
+        publicUrl: 'https://x.example.com',
+        tlsCert: 'certs/a2a.pem',
+        tlsKey: 'certs/a2a.key',
+      })
+    ).toEqual({
+      ok: true,
+      overrides: {
+        host: '0.0.0.0',
+        port: 7450,
+        publicUrl: 'https://x.example.com',
+        tlsCert: resolve('certs/a2a.pem'),
+        tlsKey: resolve('certs/a2a.key'),
+      },
+    });
+  });
+
+  it.each(['0', '65536', '1.5', 'seven', ''])(
+    'refuses --a2a-port %j',
+    (port) => {
+      expect(parseListenerFlags({ port })).toEqual({
+        ok: false,
+        error: `--a2a-port must be a port number, not "${port}"`,
+      });
+    }
+  );
+
+  it.each([{ tlsCert: '/c' }, { tlsKey: '/k' }])(
+    'refuses half a TLS pair: %j',
+    (flags) => {
+      expect(parseListenerFlags(flags)).toEqual({
+        ok: false,
+        error: '--a2a-tls-cert and --a2a-tls-key go together',
+      });
+    }
+  );
 });
 
 describe('resolveListener', () => {
@@ -126,12 +181,48 @@ describe('resolveListener', () => {
     [on({ port: null }), 'port'],
     [on({ port: 4000 }), 'port'],
     [on({ publicUrl: 'http://agent.example.com' }), 'publicUrl'],
+    [on({ publicUrl: 'http://127.evil.example.com' }), 'publicUrl'],
     [on({ publicUrl: 'not a url' }), 'publicUrl'],
   ])('refuses %j on %s', (settings, key) => {
     expect(resolveListener(settings, [4000])).toMatchObject({
       ok: false,
       key,
     });
+  });
+
+  it('binds 127.0.0.1 for localhost, so the default URL is where it listens', () => {
+    expect(resolveListener(on({ host: 'localhost' }), [4000])).toMatchObject({
+      ok: true,
+      listener: { host: '127.0.0.1', publicUrl: 'http://127.0.0.1:7450' },
+    });
+  });
+
+  it('defaults an https public URL for a loopback listener with TLS', () => {
+    expect(
+      resolveListener(on({ tls: { certPath: '/c', keyPath: '/k' } }), [4000])
+    ).toMatchObject({
+      ok: true,
+      listener: { publicUrl: 'https://127.0.0.1:7450' },
+    });
+  });
+
+  it.each([
+    'http://localhost:7450',
+    'http://[::1]:7450',
+    'http://127.0.0.2:7450',
+  ])('accepts the plain-http loopback public URL %s', (publicUrl) => {
+    expect(resolveListener(on({ publicUrl }), [4000])).toMatchObject({
+      ok: true,
+      listener: { publicUrl },
+    });
+  });
+
+  it('refuses an interface host with the choices the A2A listener takes', () => {
+    const resolved = resolveListener(on({ host: '192.168.1.5' }), [4000]);
+    if (resolved.ok) throw new Error('expected a refusal');
+    expect(resolved.key).toBe('host');
+    expect(resolved.error).toContain('0.0.0.0');
+    expect(resolved.error).not.toContain('daemon');
   });
 
   it('accepts a loopback listener behind a tunnel with an https public URL', () => {

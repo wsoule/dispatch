@@ -29,7 +29,7 @@ interface ListenerStatus {
   error: string | null;
   // config.yml `a2a:` keys that fell back to their defaults.
   warnings: string[];
-  // a2a.* agents with no clients row, registered before the bridge existed.
+  // Approved a2a.* agents with no clients row, registered before the bridge.
   legacyClients: string[];
 }
 
@@ -86,8 +86,7 @@ function a2aConfig(rootDir: string): {
   }
 }
 
-// Opens a2a.db, keeps its state current off the engine, installs the
-// bridge's external-recipient policy and owns the listener. Never throws:
+// Opens a2a.db, keeps its state current and owns the listener. Never throws:
 // a store that cannot open leaves the bridge down and the daemon booting.
 export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   const { rootDir, messaging } = deps;
@@ -179,6 +178,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         .agents()
         .filter(
           (a) =>
+            a.status === 'approved' &&
             isClientAddress(a.address) &&
             (store === null || store.getClient(a.address) === null)
         )

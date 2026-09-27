@@ -91,6 +91,13 @@ export class A2AListener {
                 key: Bun.file(listener.tls.keyPath),
               },
             }),
+        // This port faces the internet: an escaped error is logged here and
+        // answered opaquely, never with Bun's page of stack and paths.
+        development: false,
+        error: (err) => {
+          console.error(`dispatchd: A2A listener error: ${err.message}`);
+          return Response.json({ error: 'internal error' }, { status: 500 });
+        },
         fetch: (req, srv) => this.serve(req, srv, listener),
       });
       this.current = listener;

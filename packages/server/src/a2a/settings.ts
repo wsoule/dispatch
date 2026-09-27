@@ -8,10 +8,11 @@ import {
   renameSync,
   writeFileSync,
 } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { isIP } from 'node:net';
+import { dirname, join, resolve } from 'node:path';
 
 import { runsDir } from '../orchestrator/paths.js';
-import { bindModeFor } from '../shared.js';
+import { bindModeFor, isLoopbackAddress } from '../shared.js';
 
 export interface ListenerSettings {
   enabled: boolean;
@@ -175,6 +176,41 @@ export function applyOverrides(
   };
 }
 
+// Validates dispatchd's raw `--a2a-*` flag values; TLS paths resolve
+// against the working directory the daemon was started from.
+export function parseListenerFlags(
+  flags: Partial<
+    Record<'host' | 'port' | 'publicUrl' | 'tlsCert' | 'tlsKey', string>
+  >
+): { ok: true; overrides: ListenerOverrides } | { ok: false; error: string } {
+  const port = flags.port === undefined ? undefined : Number(flags.port);
+  if (
+    port !== undefined &&
+    (!Number.isInteger(port) || port < 1 || port > 65535)
+  )
+    return {
+      ok: false,
+      error: `--a2a-port must be a port number, not "${flags.port}"`,
+    };
+  if ((flags.tlsCert === undefined) !== (flags.tlsKey === undefined))
+    return {
+      ok: false,
+      error: '--a2a-tls-cert and --a2a-tls-key go together',
+    };
+  return {
+    ok: true,
+    overrides: {
+      ...(flags.host === undefined ? {} : { host: flags.host }),
+      ...(port === undefined ? {} : { port }),
+      ...(flags.publicUrl === undefined ? {} : { publicUrl: flags.publicUrl }),
+      ...(flags.tlsCert === undefined
+        ? {}
+        : { tlsCert: resolve(flags.tlsCert) }),
+      ...(flags.tlsKey === undefined ? {} : { tlsKey: resolve(flags.tlsKey) }),
+    },
+  };
+}
+
 function readable(path: string): boolean {
   try {
     accessSync(path, constants.R_OK);
@@ -184,13 +220,12 @@ function readable(path: string): boolean {
   }
 }
 
+// A URL hostname that is this machine: localhost or a loopback IP literal,
+// never a DNS name that merely starts with 127.
 function isLoopbackHost(hostname: string): boolean {
-  return (
-    hostname === 'localhost' ||
-    hostname === '[::1]' ||
-    hostname === '::1' ||
-    hostname.startsWith('127.')
-  );
+  if (hostname === 'localhost') return true;
+  const bare = hostname.replace(/^\[(.*)\]$/, '$1');
+  return isIP(bare) !== 0 && isLoopbackAddress(bare);
 }
 
 // Checked every time the listener opens; a failing rule keeps it closed and
@@ -206,7 +241,7 @@ export function resolveListener(
     return {
       ok: false,
       key: 'host',
-      error: mode.error.replace('--host', 'host'),
+      error: `host ${s.host} is not supported: use 127.0.0.1 (this machine, or behind a tunnel) or 0.0.0.0 (every interface, with TLS)`,
     };
   const loopback = mode.mode === 'loopback';
   if (s.port === null || s.port < 1 || s.port > 65535) {
@@ -251,9 +286,12 @@ export function resolveListener(
       };
     }
   }
-  const host =
-    s.host === '::1' ? '[::1]' : s.host === 'localhost' ? '127.0.0.1' : s.host;
-  const publicUrl = s.publicUrl ?? `http://${host}:${s.port}`;
+  // localhost binds 127.0.0.1 explicitly: Bun can resolve it to ::1 alone,
+  // and the default URL has to be where the listener answers.
+  const bindHost = s.host === 'localhost' ? '127.0.0.1' : s.host;
+  const urlHost = bindHost === '::1' ? '[::1]' : bindHost;
+  const scheme = s.tls === null ? 'http' : 'https';
+  const publicUrl = s.publicUrl ?? `${scheme}://${urlHost}:${s.port}`;
   let url: URL;
   try {
     url = new URL(publicUrl);
@@ -277,7 +315,7 @@ export function resolveListener(
   return {
     ok: true,
     listener: {
-      host: s.host,
+      host: bindHost,
       port: s.port,
       publicUrl: publicUrl.replace(/\/$/, ''),
       tls: s.tls,

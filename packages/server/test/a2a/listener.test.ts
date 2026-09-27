@@ -11,6 +11,7 @@ import {
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+import { A2AListener } from '../../src/a2a/listener.js';
 import {
   DEFAULT_LISTENER,
   listenerSettingsPath,
@@ -276,9 +277,79 @@ describe('the A2A listener', () => {
     expect(all).not.toContain('QUERY-MARKER-55e1');
   });
 
-  it('lists legacy a2a.* agents that have no clients row', async () => {
+  it('lists approved legacy a2a.* agents that have no clients row, never revoked or pending ones', async () => {
     const h = await boot();
     seedAgent(root, 'agent:test/a2a.legacy', 'legacy-token');
+    seedAgent(root, 'agent:test/a2a.gone', 'gone-token', 'revoked');
+    seedAgent(root, 'agent:test/a2a.waiting', 'waiting-token', 'pending');
     expect(h.a2a.status().legacyClients).toEqual(['agent:test/a2a.legacy']);
+  });
+
+  it('answers on its reported URL when the host is localhost', async () => {
+    const h = await boot();
+    const port = await freePort();
+    const status = await h.a2a.applySettings({
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      host: 'localhost',
+      port,
+    });
+    expect(status).toMatchObject({ listening: true, error: null });
+    const card = await rawFetch(`${status.url}/.well-known/agent-card.json`);
+    expect(card.status).toBe(200);
+  });
+
+  it('answers an unexpected throw with an opaque 500, never a stack or a path', async () => {
+    const h = await boot();
+    const port = await freePort();
+    const listener = new A2AListener({
+      port: h.a2a.port!,
+      policy: () => {
+        throw new Error('policy exploded at /Users/someone/secret.ts');
+      },
+      log: () => {},
+    });
+    const logged: string[] = [];
+    const spy = spyOn(console, 'error').mockImplementation(
+      (...args: unknown[]) => {
+        logged.push(args.map(String).join(' '));
+      }
+    );
+    try {
+      expect(
+        listener.open({
+          host: '127.0.0.1',
+          port,
+          publicUrl: `http://127.0.0.1:${port}`,
+          tls: null,
+          trustForwardedFor: false,
+        })
+      ).toEqual({ ok: true });
+      const res = await rawFetch(`http://127.0.0.1:${port}/a2a/v1/tasks`);
+      expect(res.status).toBe(500);
+      expect(res.headers.get('content-type')).toContain('application/json');
+      expect(await res.json()).toEqual({ error: 'internal error' });
+    } finally {
+      spy.mockRestore();
+      await listener.close();
+    }
+    expect(logged.join('\n')).toContain('policy exploded');
+  });
+
+  it('keeps an idle daemon up while the listener is open, and lets it go once closed', async () => {
+    let idled = 0;
+    const h = await boot({
+      a2a: { port: await freePort() },
+      idleTimeoutMs: 200,
+      idleCheckIntervalMs: 20,
+      onIdle: () => (idled += 1),
+    });
+    expect(h.a2a.listening()).toBe(true);
+    await Bun.sleep(500);
+    expect(idled).toBe(0);
+    await h.a2a.disable();
+    const deadline = Date.now() + 5000;
+    while (idled === 0 && Date.now() < deadline) await Bun.sleep(10);
+    expect(idled).toBe(1);
   });
 });
