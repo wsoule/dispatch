@@ -150,13 +150,14 @@ that fails fails only itself: later steps still run. Each step's outcome is
 | `a2a.inbound`  | `as`, `envelope`, `body`, `parts`?: a message arriving through the A2A binding                               | as `send` ([§8.8](08-a2a-binding.md#s8.8))                |
 | `world`        | `change`: exactly one of the changes below                                                                   | no result                                                 |
 
-`validate` runs [§4.5](04-messages.md#s4.5) alone, stores nothing and needs no
-delivery. Its reply target is the message `replyTarget` names, and an input
-whose `replyTo` names no such message fails `not-found` on `replyTo`, as
-[§4.6](04-messages.md#s4.6) says. `parseAddress` refuses an address as `invalid`
-([§3.1](03-addresses.md#s3.1)); no input field carries it, so no vector names
-the error's field. `send`, `reply`, `close` and `a2a.inbound` create a message.
-A `world` step changes the world between steps:
+`validate` runs only step 4 of the order in [§4.5](04-messages.md#s4.5): it
+skips step 1's authorization and step 3's participation check, stores nothing
+and needs no delivery. Its reply target is the message `replyTarget` names. Of
+step 3 it keeps only the lookup: an input that sets `replyTo` when `replyTarget`
+names no message fails `not-found` on `replyTo`. `parseAddress` refuses an
+address as `invalid` ([§3.1](03-addresses.md#s3.1)); no input field carries it,
+so no vector names the error's field. `send`, `reply`, `close` and `a2a.inbound`
+create a message. A `world` step changes the world between steps:
 
 | Change           | Value                                                                         |
 | ---------------- | ----------------------------------------------------------------------------- |
