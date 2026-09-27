@@ -132,6 +132,8 @@ async function addClient(
     if (typeof a !== 'string' || !HUMAN.test(a))
       return invalid(`to[${i}]`, 'expected human:<handle>');
   }
+  if (body.approve !== undefined && typeof body.approve !== 'boolean')
+    return invalid('approve', 'approve must be true or false');
   if (
     body.approve === true &&
     !tierAllows(ctx.caller?.tier ?? 'request', 'decide')

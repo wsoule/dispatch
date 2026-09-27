@@ -128,6 +128,16 @@ describe('/api/a2a/clients', () => {
     expect(((await bad.json()) as { field: string }).field).toBe('to[0]');
   });
 
+  it('refuses an approve that is not a boolean, and adds nothing', async () => {
+    const { res, body } = await addClient('stringly', { approve: 'true' });
+    expect(res.status).toBe(400);
+    expect((body as unknown as { field: string }).field).toBe('approve');
+    const clients = (await (await fetch(`${base}/api/a2a/clients`)).json()) as {
+      clients: unknown[];
+    };
+    expect(clients.clients).toEqual([]);
+  });
+
   it('names the field when the name is missing or has no valid characters', async () => {
     for (const body of [{}, { name: '***' }, { name: 'x'.repeat(101) }]) {
       const res = await fetch(`${base}/api/a2a/clients`, {
