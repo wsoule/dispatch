@@ -113,6 +113,8 @@ test("lists the task's threads, opens one, and sends to the task by default", as
   });
   expect(await screen.findByLabelText('Reply')).toBeDefined();
 
+  // With a thread open, a new message to the task waits behind its own button.
+  fireEvent.click(screen.getByRole('button', { name: 'New message' }));
   // The task is a recipient the draft cannot drop.
   expect(screen.getByText('t-000001 · Checkout')).toBeDefined();
   expect(
@@ -188,4 +190,25 @@ test('a failed refetch keeps the rows on screen and says why under them', async 
   expect(
     screen.getAllByRole('option').map((option) => option.textContent)
   ).toEqual([expect.stringContaining('Blocked on the cart schema')]);
+});
+
+// Two text boxes at once invite a reply typed into the new-message one.
+test('while a thread is open the new-message composer waits behind a button', async () => {
+  renderTab(clientWith([root]));
+  expect(await screen.findByLabelText('New message')).toBeDefined();
+  fireEvent.click(
+    await screen.findByRole('option', { name: /Blocked on the cart schema/ })
+  );
+  expect(await screen.findByLabelText('Reply')).toBeDefined();
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+
+  fireEvent.click(screen.getByRole('button', { name: 'New message' }));
+  const box = screen.getByLabelText('New message');
+  expect(document.activeElement === box).toBe(true);
+  fireEvent.keyDown(box, { key: 'Escape' });
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+  expect(
+    document.activeElement ===
+      screen.getByRole('button', { name: 'New message' })
+  ).toBe(true);
 });
