@@ -87,6 +87,8 @@ export class FakeDocsHost implements DocsHost {
     ['mem-mine', new Set(['human:wyat'])],
   ]);
   operators = new Map<string, Operator>();
+  // Tasks an A2A client asked for.
+  a2aTasks = new Set<string>();
   changes: DocChange[] = [];
   clock = new Date('2026-09-26T10:00:00.000Z');
 
@@ -135,6 +137,9 @@ export class FakeDocsHost implements DocsHost {
   }
   task(id: string): DocsTaskFacts | null {
     return this.tasks.get(id) ?? null;
+  }
+  a2aOrigin(id: string): boolean {
+    return this.a2aTasks.has(id);
   }
   exists(t: LinkTarget): boolean {
     return t.type === 'task'

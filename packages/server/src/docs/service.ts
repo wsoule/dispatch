@@ -311,20 +311,23 @@ export class DocsService {
       throw forbidden('A2A clients cannot use docs');
     const runKind =
       principal.kind === 'run' ? this.host.runKind(principal) : null;
+    const taskId =
+      runKind === 'execute' ? this.host.taskOfPrincipal(principal) : null;
+    // A run of a task an A2A client asked for acts for nobody, so it has no personal scope.
+    const a2aRun = taskId !== null && this.host.a2aOrigin(taskId);
     return {
       principal,
       address: principal.address,
       kind: principal.kind,
       decider: principal.kind === 'human' && principal.canDecide,
       runKind,
-      taskId:
-        runKind === 'execute' ? this.host.taskOfPrincipal(principal) : null,
+      taskId,
       runId:
         principal.kind === 'run'
           ? principal.address.slice('run:'.length)
           : null,
-      operator: this.host.operatorOf(principal),
-      a2aRun: false,
+      operator: a2aRun ? null : this.host.operatorOf(principal),
+      a2aRun,
     };
   }
 
@@ -353,8 +356,31 @@ export class DocsService {
     return ['team'];
   }
 
+  // An A2A run sees only team docs linked by hand to its own task.
   private canSee(actor: DocsActor, row: DocRow): boolean {
+    if (actor.a2aRun) {
+      return (
+        row.ns === 'team' &&
+        this.store()
+          .links({ docId: row.id })
+          .some(
+            (l) =>
+              l.source === 'manual' &&
+              l.targetType === 'task' &&
+              l.targetId === actor.taskId
+          )
+      );
+    }
     return this.namespaces(actor).includes(row.ns);
+  }
+
+  // Ids of the docs with a manual link to the actor's task.
+  private ownTaskDocIds(actor: DocsActor): string[] {
+    if (actor.taskId === null) return [];
+    return this.store()
+      .links({ target: { type: 'task', id: actor.taskId } })
+      .filter((l) => l.source === 'manual')
+      .map((l) => l.docId);
   }
 
   private mayWriteDrafts(actor: DocsActor): boolean {
@@ -368,6 +394,10 @@ export class DocsService {
     if (this.mayWriteDrafts(actor)) return;
     if (actor.kind === 'overseer')
       throw forbidden('the overseer reads docs and never writes them');
+    if (actor.a2aRun)
+      throw forbidden(
+        'a run of a task an A2A client asked for reads its linked docs and writes none'
+      );
     throw forbidden('review and verify runs read docs and never write them');
   }
 
@@ -1298,8 +1328,8 @@ export class DocsService {
     return true;
   }
 
-  // Who may make a link: runs stay on their own task, run and threads, plus docs
-  // (memory only on personal docs); agents add context only.
+  // Who may make a link: only decide tier touches an A2A-origin task's links; runs stay on their
+  // own task, run and threads, plus docs (memory only on personal docs); agents add context only.
   private checkLinkAuthority(
     actor: DocsActor,
     doc: DocRow,
@@ -1307,6 +1337,16 @@ export class DocsService {
     rel: LinkRel,
     field: string
   ): void {
+    if (
+      target.type === 'task' &&
+      this.host.a2aOrigin(target.id) &&
+      !actor.decider
+    ) {
+      throw forbidden(
+        'only a decide-tier human links docs to a task an A2A client asked for',
+        field
+      );
+    }
     if (!this.mayWriteDrafts(actor))
       throw forbidden('you may not change links', field);
     if (actor.kind === 'run') {
@@ -1566,7 +1606,8 @@ export class DocsService {
   }
 
   // Docs linked to a task and its ancestors (at most 8 levels) plus [[slug]]
-  // mentions in the task's own body, in index rank order.
+  // mentions in the task's own body, in index rank order. An A2A run gets the
+  // task's own links only, and an A2A-origin task's body (client text) mentions nothing.
   taskDocs(
     actor: DocsActor,
     taskId: string,
@@ -1574,8 +1615,9 @@ export class DocsService {
   ): RankedDoc[] {
     const store = this.store();
     const chain: { id: string; depth: number; body: string }[] = [];
+    const levels = actor.a2aRun ? 0 : ANCESTOR_LEVELS;
     let cursor: string | null = taskId;
-    for (let depth = 0; cursor !== null && depth <= ANCESTOR_LEVELS; depth++) {
+    for (let depth = 0; cursor !== null && depth <= levels; depth++) {
       const task = this.host.task(cursor);
       if (task === null) break;
       chain.push({ id: task.id, depth, body: task.body });
@@ -1602,7 +1644,11 @@ export class DocsService {
           });
       }
     }
-    for (const m of mentionsOf(chain[0].body)) {
+    const mentions =
+      actor.a2aRun || this.host.a2aOrigin(chain[0].id)
+        ? []
+        : mentionsOf(chain[0].body);
+    for (const m of mentions) {
       if (m.personal) continue;
       const row =
         store.docByHandle('team', m.slug) ?? store.docByAlias('team', m.slug);
@@ -1718,6 +1764,7 @@ export class DocsService {
       unreviewed: q.unreviewed,
       conflicted: q.conflicted,
       query: q.query,
+      ...(actor.a2aRun ? { ids: this.ownTaskDocIds(actor) } : {}),
       limit,
       offset,
     });

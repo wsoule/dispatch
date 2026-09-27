@@ -48,6 +48,8 @@ export interface DocsHost {
   taskOfPrincipal(principal: Principal): string | null;
   runKind(principal: Principal): 'execute' | 'review' | 'verify' | null;
   task(id: string): DocsTaskFacts | null;
+  // Whether an A2A client asked for the task. Fails closed: never false because a2a.db is down.
+  a2aOrigin(taskId: string): boolean;
   // Whether a task, run, thread root or memory entry exists; docs are checked by the service.
   exists(target: LinkTarget): boolean;
   inThread(threadId: string, principal: Principal): boolean;
@@ -60,6 +62,10 @@ export interface DocsHost {
 
 // doc.changed events for amends of one doc coalesce within this window.
 export const AMEND_DEBOUNCE_MS = 2_000;
+
+// The line the A2A bridge writes into the body of each task a client asks for.
+export const A2A_PROVENANCE =
+  /^Requested over A2A by .+ \(message m-[0-9A-Z]+\)$/m;
 
 type DocsRuns = Pick<Orchestrator, 'list' | 'taskIdOfRun'>;
 type DocsMessages = Pick<MessageStore, 'getMessage' | 'thread' | 'deliveries'>;
@@ -127,6 +133,16 @@ export class DaemonDocsHost implements DocsHost {
       risk: doc.meta.risk,
       labels: doc.meta.labels,
     };
+  }
+
+  // The a2a label or the bridge's provenance line marks a task an A2A client
+  // asked for; both still answer while no bridge is bound.
+  a2aOrigin(taskId: string): boolean {
+    const task = this.task(taskId);
+    return (
+      task !== null &&
+      (task.labels.includes('a2a') || A2A_PROVENANCE.test(task.body))
+    );
   }
 
   exists(target: LinkTarget): boolean {
