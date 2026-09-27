@@ -46,6 +46,8 @@ export interface ThreadLookups {
   taskTitle: (taskId: string) => string | null;
   taskIdOfRun: (runId: string) => string | null;
   agentStatus: (address: string) => 'revoked' | 'muted' | null;
+  /** Whether an address is the daemon's own overseer (the Assistant). */
+  isOverseer: (address: string) => boolean;
 }
 
 export function threadLookups(
@@ -60,15 +62,22 @@ export function threadLookups(
     if (agent.status === 'revoked') status.set(agent.address, 'revoked');
     else if (agent.muted) status.set(agent.address, 'muted');
   }
+  // The daemon approves only its own agents; anyone may register a name.
+  const overseer = agents.find(
+    (a) => a.approvedBy === SYSTEM && OVERSEER.test(a.address)
+  )?.address;
   return {
     taskTitle: (id) => titles.get(id) ?? null,
     taskIdOfRun: (id) => taskOfRun.get(id) ?? null,
     agentStatus: (address) => status.get(address) ?? null,
+    // Until the roster loads, any overseer-named agent reads as the Assistant.
+    isOverseer: (address) =>
+      overseer === undefined ? OVERSEER.test(address) : address === overseer,
   };
 }
 
 /** Changes only when something `threadLookups` reads does: a task's title, a
- *  run's task, an agent's status or mute. */
+ *  run's task, an agent's status, mute or approver. */
 export function lookupsKey(
   tasks: readonly { meta: { id: string; title: string } }[],
   runs: readonly { id: string; taskId: string }[],
@@ -77,7 +86,7 @@ export function lookupsKey(
   return JSON.stringify([
     tasks.map((t) => [t.meta.id, t.meta.title]),
     runs.map((r) => [r.id, r.taskId]),
-    agents.map((a) => [a.address, a.status, a.muted]),
+    agents.map((a) => [a.address, a.status, a.muted, a.approvedBy]),
   ]);
 }
 
@@ -354,11 +363,11 @@ export type ReplyRoute = 'bus' | 'overseer' | 'overseer-elsewhere';
 export function replyRoute(
   messages: readonly Message[],
   thread: string,
-  overseerThread: string | null
+  overseerThread: string | null,
+  lookups: Pick<ThreadLookups, 'isOverseer'>
 ): ReplyRoute {
   const withOverseer = messages.some(
-    (m) =>
-      OVERSEER.test(m.from) || m.to.some((address) => OVERSEER.test(address))
+    (m) => lookups.isOverseer(m.from) || m.to.some(lookups.isOverseer)
   );
   if (!withOverseer) return 'bus';
   return thread === overseerThread ? 'overseer' : 'overseer-elsewhere';

@@ -153,7 +153,12 @@ export function ThreadsView({
               onAnswer={actions.answer}
               onOpen={onOpen}
               loadApprovalInput={loadApprovalInput}
-              route={replyRoute(open.messages, open.thread, overseer.thread)}
+              route={replyRoute(
+                open.messages,
+                open.thread,
+                overseer.thread,
+                lookups
+              )}
               onReply={actions.reply}
               onOverseerReply={overseer.submit}
               overseerBusy={overseer.busy}

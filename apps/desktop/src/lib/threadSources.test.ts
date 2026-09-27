@@ -641,15 +641,46 @@ describe('threadOpenIds', () => {
 
 describe('replyRoute', () => {
   const line = msg('m-01', { from: ME, to: ['agent:wyat/overseer'] });
+  // The roster holds the daemon's own overseer, approved by the daemon, and
+  // a teammate's external agent that registered under the same name.
+  const withRoster = threadLookups(
+    [],
+    [],
+    [
+      agent('agent:wyat/overseer', {
+        client: 'dispatch',
+        approvedBy: 'agent:dispatch',
+      }),
+      agent('agent:pmirand/overseer', { approvedBy: ME }),
+    ]
+  );
 
   it('keeps ordinary threads on the bus', () => {
-    expect(replyRoute([msg('m-02')], 'm-02', 'm-01')).toBe('bus');
+    expect(replyRoute([msg('m-02')], 'm-02', 'm-01', withRoster)).toBe('bus');
   });
 
   it('routes the live overseer conversation through the overseer and leaves an older one read-only', () => {
-    expect(replyRoute([line], 'm-01', 'm-01')).toBe('overseer');
-    expect(replyRoute([line], 'm-01', 'm-77')).toBe('overseer-elsewhere');
-    expect(replyRoute([line], 'm-01', null)).toBe('overseer-elsewhere');
+    expect(replyRoute([line], 'm-01', 'm-01', withRoster)).toBe('overseer');
+    expect(replyRoute([line], 'm-01', 'm-77', withRoster)).toBe(
+      'overseer-elsewhere'
+    );
+    expect(replyRoute([line], 'm-01', null, withRoster)).toBe(
+      'overseer-elsewhere'
+    );
+  });
+
+  it("keeps a teammate's agent named overseer on the bus: only the daemon's own overseer is the Assistant", () => {
+    const external = msg('m-05', { from: ME, to: ['agent:pmirand/overseer'] });
+    expect(replyRoute([external], 'm-05', null, withRoster)).toBe('bus');
+    expect(withRoster.isOverseer('agent:wyat/overseer')).toBe(true);
+    expect(withRoster.isOverseer('agent:pmirand/overseer')).toBe(false);
+  });
+
+  it('treats any overseer-named agent as the Assistant only until the roster loads', () => {
+    const unloaded = threadLookups([], [], []);
+    expect(replyRoute([line], 'm-01', 'm-01', unloaded)).toBe('overseer');
+    expect(unloaded.isOverseer('agent:pmirand/overseer')).toBe(true);
+    expect(unloaded.isOverseer('agent:wyat/claude')).toBe(false);
   });
 });
 
@@ -755,6 +786,15 @@ describe('refs and labels', () => {
     ).not.toBe(key);
     expect(
       lookupsKey(tasks, runs, [agent('agent:wyat/quiet', { muted: false })])
+    ).not.toBe(key);
+    // Who approved an agent decides which overseer is the daemon's own.
+    expect(
+      lookupsKey(tasks, runs, [
+        agent('agent:wyat/quiet', {
+          muted: true,
+          approvedBy: 'agent:dispatch',
+        }),
+      ])
     ).not.toBe(key);
   });
 
