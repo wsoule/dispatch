@@ -1,6 +1,8 @@
 import type {
   AgentSummary,
   ApiClient,
+  Delivery,
+  DeliveryState,
   MailboxItem,
   Message,
   ThreadDetail,
@@ -120,6 +122,27 @@ describe('applyThreadEvent', () => {
         'm-02',
       ]);
     });
+  });
+
+  it("keeps an open thread's deliveries current, so a message that arrived live can be marked read", async () => {
+    const server = gatedThreadServer();
+    const { qc, result } = mount(() => useThread(server.client, PORT, 'm-01'));
+    await waitFor(() => {
+      expect(result.current.messages).toHaveLength(1);
+    });
+    const root = result.current.messages[0];
+    server.post(qc, msg('m-02', { thread: 'm-01', replyTo: 'm-01' }));
+    server.deliver(qc, 'm-02', 'notified');
+    const states = () =>
+      result.current.deliveries.map((d) => `${d.id} ${d.state}`);
+    await waitFor(() => {
+      expect(states()).toEqual(['d-m-02 notified']);
+    });
+    server.deliver(qc, 'm-02', 'read');
+    await waitFor(() => {
+      expect(states()).toEqual(['d-m-02 read']);
+    });
+    expect(result.current.messages[0]).toBe(root);
   });
 
   it('marks the lists stale on a new message or a delivery change, and everything on reconnect', () => {
@@ -316,6 +339,7 @@ function readingClient() {
 // it was asked, held back while `gated` until the test releases it.
 function gatedThreadServer() {
   const rows: Message[] = [msg('m-01')];
+  const deliveries = new Map<string, Delivery>();
   const pending: (() => void)[] = [];
   const server = {
     gated: false,
@@ -323,7 +347,10 @@ function gatedThreadServer() {
     client: {
       getMessage: (id: string) => Promise.resolve(msg(id, { thread: 'm-01' })),
       getThread: () => {
-        const snapshot: ThreadDetail = { messages: [...rows], deliveries: [] };
+        const snapshot: ThreadDetail = {
+          messages: [...rows],
+          deliveries: [...deliveries.values()],
+        };
         if (!server.gated) return Promise.resolve(snapshot);
         return new Promise<ThreadDetail>((resolve) => {
           pending.push(() => resolve(snapshot));
@@ -334,6 +361,24 @@ function gatedThreadServer() {
     post(qc: QueryClient, message: Message) {
       rows.push(message);
       applyThreadEvent(qc, PORT, { type: 'message.new', message });
+    },
+    // Stores a delivery's new state, then signals it as delivery.changed.
+    deliver(qc: QueryClient, messageId: string, state: DeliveryState) {
+      const id = `d-${messageId}`;
+      deliveries.set(id, {
+        id,
+        messageId,
+        recipient: ME,
+        runId: null,
+        via: 'direct',
+        state,
+        updatedAt: '2026-09-25T10:00:00.000Z',
+      });
+      applyThreadEvent(qc, PORT, {
+        type: 'delivery.changed',
+        deliveryId: id,
+        messageId,
+      });
     },
     release() {
       for (const resolve of pending.splice(0)) resolve();

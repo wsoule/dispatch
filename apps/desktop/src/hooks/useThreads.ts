@@ -85,6 +85,16 @@ export function applyThreadEvent(
     }
     void queryClient.invalidateQueries({ queryKey: threadListsKey(port) });
   } else if (event.type === 'delivery.changed') {
+    // Refetch a cached thread holding the message, so its deliveries (which
+    // mark-read reads) stay current; unchanged rows keep their identity.
+    const cached = queryClient.getQueriesData<ThreadDetail>({
+      queryKey: [...threadsPrefix(port), 'thread'],
+    });
+    for (const [key, detail] of cached) {
+      if (detail?.messages.some((m) => m.id === event.messageId)) {
+        void queryClient.invalidateQueries({ queryKey: key, exact: true });
+      }
+    }
     void queryClient.invalidateQueries({ queryKey: threadListsKey(port) });
   } else if (event.type === 'hello') {
     void queryClient.invalidateQueries({ queryKey: threadsPrefix(port) });
