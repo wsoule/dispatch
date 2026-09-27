@@ -71,7 +71,10 @@ export interface DocsActor {
   kind: Principal['kind'] | 'overseer';
   decider: boolean;
   runKind: 'execute' | 'review' | 'verify' | null;
+  // An execute run's task, the one task it may link docs to.
   taskId: string | null;
+  // Any run's task, whatever its kind; an A2A run's reads are scoped to it.
+  runTaskId: string | null;
   runId: string | null;
   operator: Operator | null;
   a2aRun: boolean;
@@ -311,17 +314,19 @@ export class DocsService {
       throw forbidden('A2A clients cannot use docs');
     const runKind =
       principal.kind === 'run' ? this.host.runKind(principal) : null;
-    const taskId =
-      runKind === 'execute' ? this.host.taskOfPrincipal(principal) : null;
-    // A run of a task an A2A client asked for acts for nobody, so it has no personal scope.
-    const a2aRun = taskId !== null && this.host.a2aOrigin(taskId);
+    const runTaskId =
+      principal.kind === 'run' ? this.host.runTaskOf(principal) : null;
+    // Any run of a task an A2A client asked for acts for nobody, so it has no personal scope.
+    const a2aRun = runTaskId !== null && this.host.a2aOrigin(runTaskId);
     return {
       principal,
       address: principal.address,
       kind: principal.kind,
       decider: principal.kind === 'human' && principal.canDecide,
       runKind,
-      taskId,
+      taskId:
+        runKind === 'execute' ? this.host.taskOfPrincipal(principal) : null,
+      runTaskId,
       runId:
         principal.kind === 'run'
           ? principal.address.slice('run:'.length)
@@ -345,6 +350,7 @@ export class DocsService {
       decider: false,
       runKind: null,
       taskId: null,
+      runTaskId: null,
       runId: null,
       operator: null,
       a2aRun: false,
@@ -367,20 +373,37 @@ export class DocsService {
             (l) =>
               l.source === 'manual' &&
               l.targetType === 'task' &&
-              l.targetId === actor.taskId
+              l.targetId === actor.runTaskId
           )
       );
     }
     return this.namespaces(actor).includes(row.ns);
   }
 
-  // Ids of the docs with a manual link to the actor's task.
+  // Ids of the docs with a manual link to the actor's run's task.
   private ownTaskDocIds(actor: DocsActor): string[] {
-    if (actor.taskId === null) return [];
+    if (actor.runTaskId === null) return [];
     return this.store()
-      .links({ target: { type: 'task', id: actor.taskId } })
+      .links({ target: { type: 'task', id: actor.runTaskId } })
       .filter((l) => l.source === 'manual')
       .map((l) => l.docId);
+  }
+
+  // A doc's links the actor may see: an A2A run sees only those to its own task
+  // and run and to docs it can see, so no other id reaches it.
+  private visibleLinks(actor: DocsActor, docId: string): DocLink[] {
+    const store = this.store();
+    return store
+      .links({ docId })
+      .filter((l) => {
+        if (!actor.a2aRun) return true;
+        if (l.targetType === 'task') return l.targetId === actor.runTaskId;
+        if (l.targetType === 'run') return l.targetId === actor.runId;
+        if (l.targetType !== 'doc') return false;
+        const row = store.doc(l.targetId);
+        return row !== null && this.canSee(actor, row);
+      })
+      .map(toLink);
   }
 
   private mayWriteDrafts(actor: DocsActor): boolean {
@@ -1586,7 +1609,7 @@ export class DocsService {
     return {
       doc: this.record(fresh),
       rev: toInfo(current),
-      links: store.links({ docId: doc.id }).map(toLink),
+      links: this.visibleLinks(actor, doc.id),
       outline: sections
         .filter((s) => s.ord > 0)
         .map((s) => ({
@@ -1605,9 +1628,8 @@ export class DocsService {
     };
   }
 
-  // Docs linked to a task and its ancestors (at most 8 levels) plus [[slug]]
-  // mentions in the task's own body, in index rank order. An A2A run gets the
-  // task's own links only, and an A2A-origin task's body (client text) mentions nothing.
+  // Docs linked to a task and its ancestors (at most 8) plus [[slug]] mentions in its body, ranked;
+  // an A2A run gets only the task's own links, and client text mentions nothing.
   taskDocs(
     actor: DocsActor,
     taskId: string,
@@ -1820,23 +1842,28 @@ export class DocsService {
     const limit = clamp(q.limit, 10, 50);
     const includeArchived = q.includeArchived === true;
     const ns = scoped(this.namespaces(actor), q.scope);
+    // Each hit's doc, or null when the actor may not see it; checked once per doc.
     const rows = new Map<string, DocRow | null>();
-    const docOf = (id: string): DocRow | null => {
-      if (!rows.has(id)) rows.set(id, store.doc(id));
+    const visible = (id: string): DocRow | null => {
+      if (!rows.has(id)) {
+        const row = store.doc(id);
+        rows.set(id, row !== null && this.canSee(actor, row) ? row : null);
+      }
       return rows.get(id) ?? null;
     };
     const raw: RawHit[] = store.fts
       ? store.search(query, ns, {
           includeArchived,
           limit: Math.min(500, limit * 10),
+          ...(actor.a2aRun ? { ids: this.ownTaskDocIds(actor) } : {}),
         })
       : this.likeSearch(query, ns, includeArchived);
     const perDoc = new Map<string, number>();
     const hits: DocHit[] = [];
     for (const r of raw) {
       if (hits.length >= limit) break;
-      const row = docOf(r.docId);
-      if (row === null || !this.canSee(actor, row)) continue;
+      const row = visible(r.docId);
+      if (row === null) continue;
       const count = perDoc.get(row.id) ?? 0;
       if (count >= HITS_PER_DOC) continue;
       perDoc.set(row.id, count + 1);

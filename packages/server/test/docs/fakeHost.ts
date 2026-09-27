@@ -132,6 +132,9 @@ export class FakeDocsHost implements DocsHost {
     const run = this.runs.get(p.address);
     return run?.kind === 'execute' ? run.taskId : null;
   }
+  runTaskOf(p: Principal): string | null {
+    return this.runs.get(p.address)?.taskId ?? null;
+  }
   runKind(p: Principal): 'execute' | 'review' | 'verify' | null {
     return this.runs.get(p.address)?.kind ?? null;
   }

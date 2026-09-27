@@ -1,13 +1,16 @@
+import { TaskParseError } from '@dispatch/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
 import { DocsError } from '../../src/docs/errors.js';
-import { A2A_PROVENANCE, DaemonDocsHost } from '../../src/docs/host.js';
+import { DaemonDocsHost } from '../../src/docs/host.js';
 import type { DocsService } from '../../src/docs/service.js';
+import type { Principal } from '../../src/messaging/principal.js';
 import {
   DECIDER,
   FakeDocsHost,
   makeService,
   OWNER,
+  REVIEW_RUN,
   RUN,
   RUN2,
   TEAMMATE,
@@ -69,6 +72,68 @@ describe('A2A-provenance runs', () => {
     );
   });
 
+  it('hold for review and verify runs of the task too', () => {
+    seed();
+    const verify: Principal = {
+      address: 'run:r-ver',
+      canDecide: false,
+      kind: 'run',
+    };
+    const op = { human: 'human:wyat', identity: 'wyat' } as never;
+    host.runs.set('run:r-ver', { kind: 'verify', taskId: 't-1', operator: op });
+    host.operators.set('run:r-rev', op);
+    for (const p of [REVIEW_RUN, verify]) {
+      const run = as(p);
+      expect(run.a2aRun).toBe(true);
+      expect(run.operator).toBeNull();
+      expect(service.list(run, {}).docs.map((d) => d.handle)).toEqual([
+        'own-spec',
+      ]);
+      expect(() => service.read(run, 'team-notes')).toThrow('not found');
+      expect([
+        ...new Set(service.search(run, { query: 'x' }).map((h) => h.handle)),
+      ]).toEqual(['own-spec']);
+      expect(service.indexLines(run, 't-1').map((l) => l.handle)).toEqual([
+        'own-spec',
+      ]);
+    }
+  });
+
+  it('find their own doc in search however many other team docs rank above it', () => {
+    for (let i = 0; i < 12; i++) {
+      service.create(as(OWNER), {
+        title: `Alpha ${i}`,
+        body: 'alpha alpha alpha\n',
+      });
+    }
+    service.create(as(OWNER), {
+      title: 'Own spec',
+      body: 'alpha\n',
+      links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
+    });
+    expect(
+      service.search(as(RUN), { query: 'alpha', limit: 1 }).map((h) => h.handle)
+    ).toEqual(['own-spec']);
+  });
+
+  it("see only their own task's links when reading their doc", () => {
+    seed();
+    const own = service.read(as(OWNER), 'own-spec').doc.id;
+    const notes = service.read(as(OWNER), 'team-notes').doc.id;
+    for (const target of [
+      { type: 'task' as const, id: 'e-1' },
+      { type: 'thread' as const, id: 'm-1' },
+      { type: 'doc' as const, id: notes },
+      { type: 'run' as const, id: 'r-2' },
+    ]) {
+      service.link(as(OWNER), own, { target, rel: 'context' });
+    }
+    expect(service.read(as(OWNER), 'own-spec').links.length).toBe(5);
+    expect(
+      service.read(as(RUN), 'own-spec').links.map((l) => l.target)
+    ).toEqual([{ type: 'task', id: 't-1' }]);
+  });
+
   it('lists by title query only the docs linked to their own task', () => {
     seed();
     const listed = service.list(as(RUN), { query: 'spec' });
@@ -120,7 +185,7 @@ describe('A2A-origin tasks', () => {
 });
 
 describe('a2aOrigin fails closed', () => {
-  it('reads the label and the provenance line with no bridge bound', () => {
+  it('reads the label, the provenance line the bridge writes, and an unreadable task file as A2A, with no bridge bound', () => {
     const events = { broadcast: () => undefined } as never;
     const tasks = new Map<
       string,
@@ -137,7 +202,7 @@ describe('a2aOrigin fails closed', () => {
         't-line',
         {
           meta: { title: 'x', parent: null, risk: 'routine', labels: [] },
-          body: 'Requested over A2A by acme (message m-01K00000000000000000000000)\n',
+          body: 'Client text.\n\nRequested over A2A by agent:wyat/a2a.acme (message m-01k3a7b2c9d4e5f6g8h0j1k2m3).\n',
         },
       ],
       [
@@ -149,24 +214,18 @@ describe('a2aOrigin fails closed', () => {
       ],
     ]);
     const daemon = new DaemonDocsHost({
-      store: { get: (id: string) => tasks.get(id) ?? null } as never,
+      store: {
+        get: (id: string) => {
+          if (id === 't-bad') throw new TaskParseError('bad front matter');
+          return tasks.get(id) ?? null;
+        },
+      } as never,
       events,
     });
     expect(
-      ['t-lab', 't-line', 't-plain', 't-missing'].map((id) =>
+      ['t-lab', 't-line', 't-bad', 't-plain', 't-missing'].map((id) =>
         daemon.a2aOrigin(id)
       )
-    ).toEqual([true, true, false, false]);
-  });
-
-  it('matches only a whole provenance line', () => {
-    expect(
-      A2A_PROVENANCE.test(
-        'Intro\nRequested over A2A by acme (message m-01K0ABC)\nMore'
-      )
-    ).toBe(true);
-    expect(
-      A2A_PROVENANCE.test('Requested over A2A by acme (message m-01K0ABC) ok')
-    ).toBe(false);
+    ).toEqual([true, true, true, false, false]);
   });
 });

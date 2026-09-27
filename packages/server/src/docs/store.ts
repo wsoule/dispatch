@@ -885,17 +885,22 @@ export class SqliteDocStore {
   }
 
   // Ranks head sections with bm25, title weighted over heading over text; ties
-  // break on doc id and section order so results are stable.
+  // break on doc id and section order so results are stable. `ids` narrows to those docs.
   search(
     query: string,
     ns: readonly string[],
-    opts: { includeArchived: boolean; limit: number }
+    opts: { includeArchived: boolean; limit: number; ids?: readonly string[] }
   ): SearchRow[] {
     if (!this.fts) {
       throw new Error('FTS5 is not available; use the LIKE fallback');
     }
     const match = ftsQuery(query);
-    if (match === '' || ns.length === 0) return [];
+    const ids = opts.ids;
+    if (match === '' || ns.length === 0 || ids?.length === 0) return [];
+    const only =
+      ids === undefined
+        ? ''
+        : ` AND d.id IN (${ids.map(() => '?').join(', ')})`;
     return this.all<SearchRow>(
       `SELECT sections_fts.doc_id AS docId, sections_fts.ord AS ord, s.heading AS heading, s.anchor AS anchor,
         snippet(sections_fts, 4, '[', ']', '…', 24) AS snippet,
@@ -904,9 +909,9 @@ export class SqliteDocStore {
        JOIN docs d ON d.id = sections_fts.doc_id
        JOIN sections s ON s.doc_id = sections_fts.doc_id AND s.ord = sections_fts.ord
        WHERE sections_fts MATCH ? AND d.ns IN (${ns.map(() => '?').join(', ')})
-         AND (? = 1 OR d.status != 'archived')
+         AND (? = 1 OR d.status != 'archived')${only}
        ORDER BY score, sections_fts.doc_id, sections_fts.ord LIMIT ?`,
-      [match, ...ns, bit(opts.includeArchived), opts.limit]
+      [match, ...ns, bit(opts.includeArchived), ...(ids ?? []), opts.limit]
     );
   }
 

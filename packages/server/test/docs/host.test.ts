@@ -38,3 +38,28 @@ describe('doc.changed', () => {
     ]);
   });
 });
+
+describe('runs', () => {
+  it("resolve any run's task, while only an execute run has a task to link", () => {
+    const host = new DaemonDocsHost({
+      store: {} as never,
+      events: { broadcast: () => undefined } as never,
+    });
+    const run = (id: string) =>
+      ({ address: `run:${id}`, canDecide: false, kind: 'run' }) as const;
+    expect(host.runTaskOf(run('r-rev'))).toBeNull();
+    host.bindRuns({
+      list: () =>
+        [
+          { id: 'r-1', kind: 'execute', taskId: 't-1' },
+          { id: 'r-rev', kind: 'review', taskId: 't-1' },
+        ] as never,
+      taskIdOfRun: (id) => (id === 'r-1' ? 't-1' : null),
+    });
+    expect(host.runTaskOf(run('r-rev'))).toBe('t-1');
+    expect(host.runTaskOf(run('r-1'))).toBe('t-1');
+    expect(host.runTaskOf(run('r-gone'))).toBeNull();
+    expect(host.taskOfPrincipal(run('r-rev'))).toBeNull();
+    expect(host.runKind(run('r-rev'))).toBe('review');
+  });
+});

@@ -11,6 +11,7 @@ import type { MessageStore } from '@dispatch/protocol';
 import type { EventBus } from '../events.js';
 import type { Principal } from '../messaging/principal.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import type { RunMeta } from '../orchestrator/types.js';
 import { runKind } from '../orchestrator/types.js';
 
 // How DocsService reaches the rest of the daemon, so its tests run against a
@@ -46,6 +47,8 @@ export interface DocsHost {
   operatorOf(principal: Principal): Operator | null;
   // The task of an execute run; null for every other principal.
   taskOfPrincipal(principal: Principal): string | null;
+  // The task of any run, whatever its kind; null for every other principal.
+  runTaskOf(principal: Principal): string | null;
   runKind(principal: Principal): 'execute' | 'review' | 'verify' | null;
   task(id: string): DocsTaskFacts | null;
   // Whether an A2A client asked for the task. Fails closed: never false because a2a.db is down.
@@ -63,9 +66,8 @@ export interface DocsHost {
 // doc.changed events for amends of one doc coalesce within this window.
 export const AMEND_DEBOUNCE_MS = 2_000;
 
-// The line the A2A bridge writes into the body of each task a client asks for.
-export const A2A_PROVENANCE =
-  /^Requested over A2A by .+ \(message m-[0-9A-Z]+\)$/m;
+// How the line the A2A bridge writes into each task a client asks for begins.
+const A2A_PROVENANCE_PREFIX = 'Requested over A2A by ';
 
 type DocsRuns = Pick<Orchestrator, 'list' | 'taskIdOfRun'>;
 type DocsMessages = Pick<MessageStore, 'getMessage' | 'thread' | 'deliveries'>;
@@ -103,11 +105,19 @@ export class DaemonDocsHost implements DocsHost {
     return null;
   }
 
-  runKind(principal: Principal): 'execute' | 'review' | 'verify' | null {
-    if (principal.kind !== 'run' || this.runs === null) return null;
+  private runMeta(principal: Principal): RunMeta | undefined {
+    if (principal.kind !== 'run' || this.runs === null) return undefined;
     const id = principal.address.slice('run:'.length);
-    const meta = this.runs.list().find((r) => r.id === id);
+    return this.runs.list().find((r) => r.id === id);
+  }
+
+  runKind(principal: Principal): 'execute' | 'review' | 'verify' | null {
+    const meta = this.runMeta(principal);
     return meta === undefined ? null : runKind(meta);
+  }
+
+  runTaskOf(principal: Principal): string | null {
+    return this.runMeta(principal)?.taskId ?? null;
   }
 
   taskOfPrincipal(principal: Principal): string | null {
@@ -135,13 +145,20 @@ export class DaemonDocsHost implements DocsHost {
     };
   }
 
-  // The a2a label or the bridge's provenance line marks a task an A2A client
-  // asked for; both still answer while no bridge is bound.
+  // The a2a label or the bridge's provenance line marks a task an A2A client asked
+  // for, and so does a task file that does not parse; none needs a bound bridge.
   a2aOrigin(taskId: string): boolean {
-    const task = this.task(taskId);
+    let doc;
+    try {
+      doc = this.deps.store.get(taskId);
+    } catch (err) {
+      if (err instanceof TaskParseError) return true;
+      throw err;
+    }
     return (
-      task !== null &&
-      (task.labels.includes('a2a') || A2A_PROVENANCE.test(task.body))
+      doc !== null &&
+      (doc.meta.labels.includes('a2a') ||
+        doc.body.includes(A2A_PROVENANCE_PREFIX))
     );
   }
 
