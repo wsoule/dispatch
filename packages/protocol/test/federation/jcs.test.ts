@@ -44,4 +44,14 @@ describe('canonicalize (RFC 8785)', () => {
       '{"a":"x","b":[1,{"c":2,"d":1}]}'
     );
   });
+
+  // RFC 8785 takes I-JSON, which forbids them; JSON.stringify would escape one.
+  it('refuses lone surrogates in strings and keys, but not a pair', () => {
+    expect(() => canonicalize('a\ud800')).toThrow('lone surrogate');
+    expect(() => canonicalize(['\udc00b'])).toThrow('lone surrogate');
+    expect(() => canonicalize({ '\ud83d': 1 })).toThrow('lone surrogate');
+    expect(canonicalize({ '\u{1f600}': '\u{1f600}' })).toBe(
+      '{"\u{1f600}":"\u{1f600}"}'
+    );
+  });
 });

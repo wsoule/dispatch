@@ -314,6 +314,7 @@ describe('verifyEntry along a chain', () => {
       [key, parsed(task, /"sig":"[^"]+"/, '"sig":1e400')],
       // Signed by its own key, with content no JCS can hash.
       [parsed(key, /"build":"[^"]+"/, '"build":1e400')],
+      [parsed(key, /"build":"[^"]+"/, '"build":"\\ud800"')],
       [key, JSON.parse('null') as LogEntry],
       [key, JSON.parse('"op"') as LogEntry],
       [key, JSON.parse('[]') as LogEntry],
