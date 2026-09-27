@@ -221,6 +221,14 @@ describe('formatApprovalRequest', () => {
     );
   });
 
+  it('without the gate, prints the commands that find it by run', () => {
+    const text = formatApprovalRequest({ runId: 'r-1' });
+    expect(text).toContain('=== approval requested ===');
+    expect(text).not.toContain('tool:');
+    expect(text).toContain('approve: dispatch approve r-1\n');
+    expect(text).toContain('deny:    dispatch approve r-1 --deny');
+  });
+
   it('toolApprovalOf reads the run, request and tool off a run gate', () => {
     expect(toolApprovalOf(GATE)).toEqual({
       runId: 'r-1',

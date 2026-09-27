@@ -1,26 +1,26 @@
 import { expect, type Page, test } from '@playwright/test';
 
-// Views are React state rather than routes, so each one is reached by its
-// sidebar accelerator (visible as ⌘1–⌘7 in the sidebar) instead of a URL. The
-// order below is `PROJECT_VIEW_ORDER` (see components/shell/Sidebar.tsx),
-// which is what assigns the numbers — the Runs and Review pages that used to
-// hold ⌘5/⌘6 were retired by the task-centric consolidation, and Inbox and
-// Impact took those slots.
-//
-// Every entry here is one "press key, screenshot" shot. A run's diff is no
-// longer reachable this way at all: it lives on a task's Diff tab now, which
-// takes real navigation and its own content assertion — see the fixme'd
-// `review detail` block below.
+// Each shot opens its view from the sidebar row carrying its `data-nav-item`
+// (a `ProjectView` id), so a new rail row cannot shift which view a shot shows.
 const VIEWS = [
-  { name: 'inbox', key: 'Meta+1' },
-  { name: 'overview', key: 'Meta+2' },
-  { name: 'braindump', key: 'Meta+3' },
-  { name: 'plans', key: 'Meta+4' },
-  { name: 'tasks', key: 'Meta+5' },
-  { name: 'impact', key: 'Meta+6' },
-  { name: 'git', key: 'Meta+7' },
-  { name: 'landing', key: 'Meta+8' },
+  { name: 'inbox', navItem: 'inbox' },
+  { name: 'threads', navItem: 'threads' },
+  { name: 'overview', navItem: 'overview' },
+  { name: 'tasks', navItem: 'board' },
+  { name: 'plans', navItem: 'plans' },
+  { name: 'braindump', navItem: 'brain-dump' },
+  { name: 'landing', navItem: 'landing' },
+  { name: 'git', navItem: 'branches' },
+  { name: 'files', navItem: 'files' },
+  { name: 'impact', navItem: 'impact' },
 ];
+
+// Opens a project view by its sidebar row, failing clearly if the row is gone.
+async function openView(page: Page, navItem: string): Promise<void> {
+  const row = page.locator(`#dispatch-sidebar [data-nav-item="${navItem}"]`);
+  await expect(row, `no sidebar row for the ${navItem} view`).toBeVisible();
+  await row.click();
+}
 
 // global-setup.ts resolves the daemon's per-run token before any test worker
 // starts and hands it over via the environment; this fails loudly rather than
@@ -63,31 +63,14 @@ async function assertFixtureDataLoaded(page: Page): Promise<void> {
   ).toHaveCount(0);
 }
 
-// BASELINES, EXACTLY (branch: the rail's Runs | Overseer tab toggle). The loop
-// below produces 14 screenshot tests — 7 views x 2 themes — but
-// views.spec.ts-snapshots/ holds 10 PNGs, and they fail in two different ways:
-//
-//   - overview, braindump, plans, tasks, git (10 PNGs) were captured before
-//     the live rail existed, which every project view has carried since. These
-//     diff against a stale baseline. The mask below is what stops the next
-//     rail edit from re-staling them; it does not un-stale them now.
-//   - inbox and impact (4 shots) have NO baseline at all — they were added to
-//     VIEWS when they took the retired Runs/Review accelerators and never
-//     captured. Playwright fails these with "A snapshot doesn't exist" and
-//     writes the file, so `bun run e2e:update` does not refresh them, it
-//     AUTHORS them. Look at those four before committing them; nobody has.
-//
-// All of it needs one run from an environment where Playwright can launch,
-// which this branch's is not, for two independent reasons: the webServer
-// cannot `posix_spawn` git, and the storefront fixture (e2e/paths.ts) is
-// gitignored and keyed by root path, so a worktree has none to seed from.
-// Neither ci.yml nor release.yml runs Playwright, so nothing else catches it.
+// threads and files have no baseline yet, and the others were captured under the
+// old ⌘N map, some of another view; each needs a reviewed refresh, never a local one.
 for (const view of VIEWS) {
   test(`${view.name} renders`, async ({ page, baseURL }) => {
     await page.goto(authedUrl(baseURL));
     await page.locator('#dispatch-sidebar').waitFor();
     await assertFixtureDataLoaded(page);
-    await page.keyboard.press(view.key);
+    await openView(page, view.navItem);
     // The pulse on in-flight rows is the only animation these surfaces have;
     // let it settle so it can't shift a screenshot.
     await page.waitForTimeout(1000);
@@ -96,7 +79,7 @@ for (const view of VIEWS) {
       // The live rail is on every project screen but is not what any of these
       // baselines is about, and it is chrome that keeps moving — the Runs |
       // Overseer tab strip alone has changed shape three times. Unmasked, each
-      // of those edits silently invalidates all 14 PNGs here with no CI job to
+      // of those edits silently invalidates every PNG here with no CI job to
       // catch it. Masked, the rail still occupies its 240px, so a view
       // squeezed beside it still regresses visibly.
       //
@@ -138,7 +121,7 @@ for (const view of VIEWS) {
  *
  * It is also narrower than what the mask removes: width, horizontal overflow
  * and composer containment on one view in one theme, versus every pixel of the
- * rail across 7 views x 2 themes. The tab strip, run rows, attention strip,
+ * rail across every view in both themes. The tab strip, run rows, attention strip,
  * amber badge and collapsed strip have no visual coverage anywhere. That trade
  * is a human's to rule on, not a closed question.
  */
@@ -193,7 +176,7 @@ test('the live rail keeps its column on a project view', async ({
 // rather than asserting around whichever one happens to be squeezing the pane.
 //
 // FIXME (branch: the task-centric consolidation, 98bf1858): the page this
-// drives no longer exists. Retargeting is Inbox (⌘5) → a "Needs review" row →
+// drives no longer exists. Retargeting is Inbox → a "Needs review" row →
 // TaskView's Diff tab, and that first half is mechanical. What has no
 // replacement is the second half: the run review surface no longer renders a
 // changed-files tree at all (`RunReviewView` hands the whole patch to
@@ -216,7 +199,7 @@ test.describe('review detail', () => {
     await page.goto(authedUrl(baseURL));
     await page.locator('#dispatch-sidebar').waitFor();
     await assertFixtureDataLoaded(page);
-    await page.keyboard.press('Meta+5');
+    await openView(page, 'inbox');
 
     // The Inbox's needs-review row (see `Row` in InboxView.tsx): the task
     // title plus a relative timestamp. Matched loosely on the title because

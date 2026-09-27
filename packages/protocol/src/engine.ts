@@ -1,8 +1,8 @@
 import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
+import { gateTypeOf, hasGateData } from './constants.js';
 import {
   checkIdempotencyKey,
-  gateOf,
   isSystemMarker,
   validateSendInput,
 } from './envelope.js';
@@ -61,18 +61,22 @@ export class DeliveryEngine {
   private readonly host: MessagingHost;
   private readonly limits: EngineLimits;
   private readonly ulid: (nowMs: number) => string;
+  private readonly gateTypes: ReadonlySet<string>;
   private readonly listeners = new Set<(e: EngineEvent) => void>();
 
+  // `gateTypes` are the gate types the host implements; any other is refused.
   constructor(opts: {
     store: MessageStore;
     host: MessagingHost;
     limits?: Partial<EngineLimits>;
     newUlid?: (nowMs: number) => string;
+    gateTypes?: readonly string[];
   }) {
     this.store = opts.store;
     this.host = opts.host;
     this.limits = { ...DEFAULT_LIMITS, ...opts.limits };
     this.ulid = opts.newUlid ?? createUlidFactory();
+    this.gateTypes = new Set(opts.gateTypes ?? ['wake']);
   }
 
   subscribe(listener: (e: EngineEvent) => void): () => void {
@@ -113,6 +117,18 @@ export class DeliveryEngine {
   // Approved agents, humans, runs and the system may send; pending or revoked
   // agents may not. Humans and runs were authenticated by the host already.
   private authorize(sender: Sender): { muted: boolean } {
+    // Only humans the host authorized and the system decide.
+    if (
+      sender.canDecide &&
+      sender.address !== SYSTEM_ADDRESS &&
+      !sender.address.startsWith('human:')
+    ) {
+      throw new MessagingError(
+        'forbidden',
+        `${sender.address} cannot decide; only humans and the system do`,
+        'from'
+      );
+    }
     const parsed = parseAddress(sender.address, 'from');
     if (parsed.kind !== 'agent' || sender.address === SYSTEM_ADDRESS)
       return { muted: false };
@@ -230,7 +246,9 @@ export class DeliveryEngine {
       : null;
     // Participation first: a non-participant must learn nothing about the target.
     if (replyTarget !== null) this.authorizeReply(replyTarget, sender);
-    validateSendInput(input, sender.address, sender.canDecide, replyTarget);
+    validateSendInput(input, sender.address, sender.canDecide, replyTarget, {
+      gateTypes: this.gateTypes,
+    });
     await this.checkBreaker(replyTarget, sender);
     // The breaker await lets a duplicate commit first, so look again before the
     // answered check: a raced retry replays rather than meeting conflict.
@@ -316,11 +334,16 @@ export class DeliveryEngine {
     });
     if (!Array.isArray(written)) return written;
     const answered = written;
-    // A gate's effect lands before anyone hears of the answer; a system close has none.
+    // A gate's effect lands before anyone hears of the answer; a system close
+    // has none. Effects need a type this host implements and a deciding author.
+    const gateType =
+      question === null ? null : gateTypeOf(question, this.gateTypes);
     if (
       question !== null &&
-      gateOf(question) !== null &&
-      !isSystemMarker(message, 'x-closed')
+      gateType !== null &&
+      this.gateTypes.has(gateType) &&
+      !isSystemMarker(message, 'x-closed') &&
+      decidingAuthor(message.from)
     )
       await this.applyGate(question, message);
     this.emit({ type: 'message', message });
@@ -342,8 +365,17 @@ export class DeliveryEngine {
     return { message, deliveries: settled, downgraded };
   }
 
-  // Refuses or drops A2A clients and peers before anything is stored: gate data
-  // never leaves the machine, and a channel member the host refuses is skipped.
+  // Whether `address` is a run the host places under a task: held mail to a run
+  // is delivered only through its task, so a wake may hold nothing for any other.
+  private hasTask(address: Address): boolean {
+    return (
+      address.startsWith('run:') &&
+      this.host.taskOfRun(address.slice('run:'.length)) !== null
+    );
+  }
+
+  // Refuses or drops A2A clients and peers before storing: gate data, sent or
+  // replied to, never leaves the machine; a refused channel member is skipped.
   private admitExternal(
     targets: Target[],
     fields: Map<Address, string>,
@@ -353,7 +385,10 @@ export class DeliveryEngine {
   ): Target[] {
     const external = (t: Target) => this.isExternal(t.recipient);
     if (!targets.some(external)) return targets;
-    if (gateOf(message) !== null) {
+    if (
+      hasGateData(message) ||
+      (replyTarget !== null && hasGateData(replyTarget))
+    ) {
       throw new MessagingError(
         'forbidden',
         'gate data never goes to an A2A client or peer',
@@ -400,23 +435,16 @@ export class DeliveryEngine {
     };
   }
 
-  // Whether `address` is a run the host places under a task: held mail to a run
-  // is delivered only through its task, so a wake may hold nothing for any other.
-  private hasTask(address: Address): boolean {
-    return (
-      address.startsWith('run:') &&
-      this.host.taskOfRun(address.slice('run:'.length)) !== null
-    );
-  }
-
-  // The address a reply actually goes to: an ended run's task (see deliverableAddress).
+  // The address a reply actually goes to: a party to the target that is an
+  // ended run is reached through its task (see deliverableAddress).
   private rewriteForReply(address: Address, target: Message | null): Address {
-    return target !== null && address === target.from
+    return target !== null &&
+      (address === target.from || target.to.includes(address))
       ? this.deliverableAddress(address)
       : address;
   }
 
-  // A reply's recipients, with the target's sender rewritten by
+  // A reply's recipients, with the target's sender and recipients rewritten by
   // deliverableAddress so an ended run's task (and live successor) hears it.
   private replyRecipients(to: Address[], target: Message | null): Address[] {
     if (target === null) return [...to];
@@ -440,7 +468,8 @@ export class DeliveryEngine {
   // also stands for its task, that task's other runs and deliveries bound to it.
   private authorizeReply(target: Message, sender: Sender): void {
     if (sender.address === SYSTEM_ADDRESS) return;
-    if (sender.canDecide && sender.address.startsWith('human:')) return;
+    // authorize() already refused canDecide on anyone but a human or the system.
+    if (sender.canDecide) return;
     const senderRunId = sender.address.startsWith('run:')
       ? sender.address.slice(4)
       : null;
@@ -474,6 +503,7 @@ export class DeliveryEngine {
     question: Message,
     answer: Message
   ): Promise<boolean> {
+    if (!decidingAuthor(answer.from)) return false;
     try {
       await this.host.onAnswered(question, answer);
     } catch (err) {
@@ -540,17 +570,18 @@ export class DeliveryEngine {
     return { delivery: next, won: true };
   }
 
-  // Finishes work a crash left between commit and hook: retries sending
-  // deliveries whose run is still live, returns the rest to the mailbox, and
-  // replays gate effects that never recorded as applied.
+  // Finishes work a crash left: re-sends or holds `sending` deliveries, replays
+  // unapplied gate effects, and voids gate answers no deciding principal gave.
   async recover(): Promise<{
     retried: number;
     reverted: number;
     replayed: number;
+    voided: number;
   }> {
     let retried = 0;
     let reverted = 0;
     let replayed = 0;
+    let voided = 0;
     for (const d of this.store.deliveries({ states: ['sending'] })) {
       const message = this.store.getMessage(d.messageId);
       if (
@@ -568,9 +599,79 @@ export class DeliveryEngine {
       }
     }
     for (const { question, answer } of this.store.unappliedAnsweredGates()) {
+      const type = gateTypeOf(question, this.gateTypes);
+      // Unknown to this build: leave it unapplied, so a build that knows it replays it.
+      if (type === null || !this.gateTypes.has(type)) continue;
+      if (!decidingAuthor(answer.from)) {
+        if (await this.voidAndReopen(question, answer)) voided++;
+        continue;
+      }
       if (await this.applyGate(question, answer)) replayed++;
     }
-    return { retried, reverted, replayed };
+    return { retried, reverted, replayed, voided };
+  }
+
+  // Sets an answer from anyone but a deciding human or the system aside and
+  // reopens its gate; handlers key on the question id, so the question stays.
+  private async voidAndReopen(
+    question: Message,
+    answer: Message
+  ): Promise<boolean> {
+    const muted = this.store.getAgent(question.from)?.muted === true;
+    const reopened = this.store.transaction((): Delivery[] | null => {
+      if (!this.store.voidAnswer(answer.id, question.id, this.nowIso()))
+        return null;
+      const out: Delivery[] = [];
+      for (const d of this.store.deliveries({ messageId: question.id })) {
+        if (d.state !== 'answered') continue;
+        const { state, runId } = this.reopenState(d, muted);
+        const next: Delivery = { ...d, state, runId, updatedAt: this.nowIso() };
+        if (
+          this.store.setDelivery(d.id, state, runId, next.updatedAt, 'answered')
+        )
+          out.push(next);
+      }
+      return out;
+    });
+    if (reopened === null) return false;
+    const voidedRow = this.store.getMessage(answer.id);
+    if (voidedRow !== null) this.emit({ type: 'message', message: voidedRow });
+    for (const d of reopened) await this.dispatch(d, question);
+    try {
+      await this.send(
+        {
+          to: [this.host.owner(answer.from)],
+          kind: 'notice',
+          replyTo: question.id,
+          refs: [{ type: 'message', id: answer.id }],
+          body: `An answer from ${answer.from} to gate ${question.id} was set aside; only deciding humans answer gates. The gate is open again.`,
+        },
+        SYSTEM_SENDER
+      );
+    } catch (err) {
+      console.error('messaging void notice failed', err);
+    }
+    return true;
+  }
+
+  // The state plan() would give a reopened delivery now; never throws.
+  private reopenState(
+    d: Delivery,
+    muted: boolean
+  ): { state: DeliveryState; runId: string | null } {
+    try {
+      const planned = this.plan(
+        { recipient: d.recipient, via: d.via },
+        muted,
+        'to',
+        true
+      );
+      return planned === null
+        ? { state: 'held', runId: null }
+        : { state: planned.state, runId: planned.runId };
+    } catch {
+      return { state: 'held', runId: null };
+    }
   }
 
   getMessage(id: string): Message | null {
@@ -914,6 +1015,11 @@ function alreadyAnswered(questionId: string): MessagingError {
     `${questionId} is already answered`,
     'replyTo'
   );
+}
+
+// Answers that may take effect: a deciding human's or the system's.
+function decidingAuthor(address: Address): boolean {
+  return address === SYSTEM_ADDRESS || address.startsWith('human:');
 }
 
 // Only a human's wake may name an ended run: it asks to continue exactly that run.

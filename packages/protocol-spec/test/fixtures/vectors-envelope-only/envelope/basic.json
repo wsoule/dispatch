@@ -1,0 +1,41 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "envelope",
+  "area": "basic",
+  "vectors": [
+    {
+      "id": "env.basic.must",
+      "title": "A MUST that parses",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:wyat" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
+    },
+    {
+      "id": "env.basic.should",
+      "title": "A SHOULD",
+      "class": "envelope",
+      "level": "SHOULD",
+      "profile": "core",
+      "sections": ["3.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:ada" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
+    },
+    {
+      "id": "env.basic.may",
+      "title": "A MAY needing a capability",
+      "class": "envelope",
+      "level": "MAY",
+      "profile": "core",
+      "sections": ["3.1"],
+      "capability": "x-cap",
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:bo" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
+    }
+  ]
+}

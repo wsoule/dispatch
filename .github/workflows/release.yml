@@ -125,8 +125,11 @@ jobs:
       # Workspace package dist/ output must exist before the desktop build:
       # the sidecar `bun build --compile` step resolves @dispatch/* imports
       # through each package.json's `exports`, which point at dist/*.
+      # apps/desktop/scripts/build-sidecars.test.ts checks this list.
       - name: Build workspace packages
-        run: moon run core:build client:build cli:build mcp:build
+        run: >-
+          moon run core:build client:build cli:build mcp:build protocol:build
+          federation:build a2a:build
 
       # The signing certificate must be importable BEFORE the build: the
       # sidecar build script codesigns during tauri's beforeBuildCommand,

@@ -101,6 +101,18 @@ describe('PromptBar', () => {
     expect(textarea.getAttribute('aria-activedescendant')).toBe('recipients-1');
   });
 
+  test('focusOnMount puts the caret in the text box when it mounts', () => {
+    render(
+      <PromptBar
+        value=""
+        onChange={() => {}}
+        onSubmit={() => {}}
+        focusOnMount
+      />
+    );
+    expect(document.activeElement === screen.getByRole('textbox')).toBe(true);
+  });
+
   test('removing a reference chip calls onRemoveReference with its id', () => {
     let removedId: string | undefined;
     render(

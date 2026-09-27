@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { Composer } from '../components/threads/Composer';
 import { ThreadPane } from '../components/threads/ThreadPane';
@@ -57,23 +57,29 @@ export function ThreadsView({
     loadApprovalInput,
   } = useThreadPaneProps(data, onOpenRef);
   const [composing, setComposing] = useState(false);
+  const newThreadRef = useRef<HTMLButtonElement>(null);
   const { markRead } = actions;
   useEffect(() => {
     markRead(open.deliveries);
   }, [markRead, open.deliveries]);
+  const startComposing = () => {
+    setComposing(true);
+    onFocus(null);
+  };
+  // Nothing to list once the rail has loaded without error.
+  const railEmpty =
+    !rail.loading && rail.error === null && rail.summaries.length === 0;
 
   const header = (
     <PageHeader
       crumb={[projectName ?? 'Project', 'Threads']}
       actions={
         <Button
+          ref={newThreadRef}
           size="sm"
           variant="ghost"
           disabled={!access.canMessage || me === null}
-          onClick={() => {
-            setComposing(true);
-            onFocus(null);
-          }}
+          onClick={startComposing}
         >
           New thread
         </Button>
@@ -88,6 +94,19 @@ export function ThreadsView({
           className="flex-1"
           heading="Threads are not available in this window."
           description={access.explanation}
+        />
+      </div>
+    );
+  }
+  if (me === null && data.whoamiError !== null) {
+    return (
+      <div className="flex h-full flex-col">
+        {header}
+        <EmptyState
+          className="flex-1"
+          heading="The daemon did not say who you are"
+          description={data.whoamiError.message}
+          secondary={{ label: 'Retry', onClick: data.retryWhoami }}
         />
       </div>
     );
@@ -108,16 +127,32 @@ export function ThreadsView({
     <div className="flex h-full min-h-0 flex-col">
       {header}
       <div className="flex min-h-0 flex-1">
-        <aside className="border-border w-80 shrink-0 overflow-y-auto border-r-[0.5px] p-2">
-          <ThreadRail
-            groups={rail.groups}
-            selected={open.thread}
-            onSelect={(thread) => {
-              setComposing(false);
-              onFocus(thread);
-            }}
-            lookups={lookups}
-          />
+        <aside
+          aria-label="Thread list"
+          aria-busy={rail.loading || undefined}
+          className="border-border w-80 shrink-0 overflow-y-auto border-r-[0.5px] p-2"
+        >
+          {rail.loading ? (
+            <p className="text-muted-foreground p-2 text-[12px]">
+              Loading threads…
+            </p>
+          ) : railEmpty ? (
+            <EmptyState
+              heading="No threads yet"
+              description="Questions, handoffs and messages to or from you land here."
+              primary={{ label: 'New thread', onClick: startComposing }}
+            />
+          ) : (
+            <ThreadRail
+              groups={rail.groups}
+              selected={open.thread}
+              onSelect={(thread) => {
+                setComposing(false);
+                onFocus(thread);
+              }}
+              lookups={lookups}
+            />
+          )}
           {rail.error !== null && (
             <p role="alert" className="text-destructive p-2 text-[12px]">
               {rail.error.message}
@@ -129,13 +164,17 @@ export function ThreadsView({
             <div className="p-3">
               <Composer
                 known={known}
-                disabledReason={null}
                 label={(address) => participantLabel(address, lookups)}
                 onSend={actions.send}
                 onSent={(result) => {
                   setComposing(false);
                   onFocus(result.message.thread);
                 }}
+                onCancel={() => {
+                  setComposing(false);
+                  newThreadRef.current?.focus();
+                }}
+                focusOnMount
               />
             </div>
           ) : open.thread !== null && open.messages.length > 0 ? (
@@ -143,6 +182,8 @@ export function ThreadsView({
               // A fresh reply draft per thread.
               key={open.thread}
               messages={open.messages}
+              focus={focus}
+              deliveries={open.deliveries}
               me={me}
               openIds={rail.openIds}
               access={access}
@@ -152,14 +193,24 @@ export function ThreadsView({
               onAnswer={actions.answer}
               onOpen={onOpen}
               loadApprovalInput={loadApprovalInput}
-              route={replyRoute(open.messages, open.thread, overseer.thread)}
+              route={replyRoute(
+                open.messages,
+                open.thread,
+                overseer.thread,
+                lookups
+              )}
               onReply={actions.reply}
               onOverseerReply={overseer.submit}
               overseerBusy={overseer.busy}
               onOpenOverseer={overseer.open}
             />
           ) : (
-            <EmptyPane focus={focus} open={open} />
+            <EmptyPane
+              focus={focus}
+              open={open}
+              railLoading={rail.loading}
+              railEmpty={railEmpty}
+            />
           )}
         </section>
       </div>
@@ -167,14 +218,18 @@ export function ThreadsView({
   );
 }
 
-// What the pane shows with no thread on screen: nothing while one loads, why
-// one failed, or where to start.
+// What the pane shows with no thread on screen: nothing while one or the rail
+// loads, why one failed, or where to start.
 function EmptyPane({
   focus,
   open,
+  railLoading,
+  railEmpty,
 }: {
   focus: string | null;
   open: OpenThread;
+  railLoading: boolean;
+  railEmpty: boolean;
 }) {
   if (open.error !== null) {
     return (
@@ -185,8 +240,17 @@ function EmptyPane({
       />
     );
   }
-  if (focus !== null && open.loading) {
+  if ((focus !== null && open.loading) || railLoading) {
     return <div aria-busy="true" className="flex-1" />;
+  }
+  if (railEmpty) {
+    return (
+      <EmptyState
+        className="flex-1"
+        heading="Nothing to read yet"
+        description="A thread opens here once someone writes to you, or once you start one."
+      />
+    );
   }
   return (
     <EmptyState

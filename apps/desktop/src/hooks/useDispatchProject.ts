@@ -1,5 +1,6 @@
 import type {
   AgentSessionMeta,
+  AgentSummary,
   ApiClient,
   AuthTier,
   ConfirmResult,
@@ -45,7 +46,11 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
-import { agentRosterKey, mayChangeAgentRoster } from '../lib/agentRoster';
+import {
+  agentRosterKey,
+  mayChangeAgentRoster,
+  mutedAddresses,
+} from '../lib/agentRoster';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
   configChangedQueryKeys,
@@ -274,6 +279,11 @@ export interface DispatchProjectData {
   /** This window's own ActorRef (`human:<handle>`), or `null` until the daemon
    *  has said. While null, nothing is treated as a teammate's. */
   me: string | null;
+  /** Why the daemon has not said who this window is, while its last answer failed;
+   *  `null` once it has, or while it is still asked. */
+  whoamiError: Error | null;
+  /** Asks the daemon who this window is again, after `whoamiError`. */
+  retryWhoami: () => void;
   /** The tier this window's credential carries. The daemon's own answer from
    *  `/api/whoami` wins once it arrives; until then (or if it never does, on a
    *  daemon without that route) it is read off the credential itself — see
@@ -1015,7 +1025,11 @@ export function useDispatchProject(
   // Who this window is, as the daemon sees its credential. Fetched once per
   // connection — a credential does not change identity mid-session — and read
   // wherever the app has to tell "mine" from "a teammate's".
-  const { data: whoami } = useQuery({
+  const {
+    data: whoami,
+    error: whoamiError,
+    refetch: refetchWhoami,
+  } = useQuery({
     queryKey: whoamiQueryKey,
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
@@ -1399,6 +1413,9 @@ export function useDispatchProject(
             void queryClient.invalidateQueries({
               queryKey: overseerKeyPrefix(port),
             });
+            // Who this window is: the answer never goes stale, so a whoami that
+            // failed while the daemon was coming up is asked again here.
+            void queryClient.invalidateQueries({ queryKey: whoamiQueryKey });
             // Presence too, and for a reason of its own: the daemon announces
             // this socket's arrival before the socket joins the event bus, so
             // the one event saying "you are here now" never reaches the window
@@ -1466,17 +1483,23 @@ export function useDispatchProject(
             if (message.blocking || message.kind === 'answer') {
               void queryClient.invalidateQueries({ queryKey: openGatesKeyNow });
             }
-            // A window that cannot decide is not told about gates it cannot see;
-            // titles come from the cache, as this effect's `runs` can be stale.
-            const note = auth.canDecide
-              ? gateNotification(
-                  message,
-                  (runId) =>
-                    queryClient
-                      .getQueryData<RunMeta[]>(runsQueryKey)
-                      ?.find((r) => r.id === runId)?.taskTitle
-                )
-              : null;
+            // A window that cannot decide is not told about gates it cannot see,
+            // nor anyone about a muted agent; runs and roster come from the cache.
+            const muted = mutedAddresses(
+              queryClient.getQueryData<{ agents: AgentSummary[] }>(
+                agentRosterKey(port)
+              )?.agents ?? []
+            );
+            const note =
+              auth.canDecide && !muted.has(message.from)
+                ? gateNotification(
+                    message,
+                    (runId) =>
+                      queryClient
+                        .getQueryData<RunMeta[]>(runsQueryKey)
+                        ?.find((r) => r.id === runId)?.taskTitle
+                  )
+                : null;
             if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
               void notify(note.title, note.body, note.kind);
             }
@@ -1743,6 +1766,7 @@ export function useDispatchProject(
     readyQueryKey,
     runsQueryKey,
     presenceQueryKey,
+    whoamiQueryKey,
     notesQueryKey,
     draftsQueryKey,
     agentSessionsQueryKey,
@@ -2797,6 +2821,8 @@ export function useDispatchProject(
     daemonBaseUrl: connection === undefined ? null : daemonBaseUrl(connection),
     presence: presence ?? [],
     me: whoami?.ref ?? null,
+    whoamiError,
+    retryWhoami: () => void refetchWhoami(),
     myTier: whoami?.tier ?? credentialTier(connection),
     attachedWithoutAppToken:
       connection !== undefined &&

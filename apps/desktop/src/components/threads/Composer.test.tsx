@@ -27,7 +27,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -39,16 +38,28 @@ describe('Composer', () => {
     expect(screen.getByText('task:t-1a2b3c')).toBeTruthy();
   });
 
-  it('blocks an @token that matches nothing, inline, and sends nothing', () => {
-    const onSend = mock(() => Promise.resolve(SENT));
+  it('adds the address typed in full rather than a longer one listed first, unless another is picked', () => {
+    const people = { ...KNOWN, humans: ['human:adam', 'human:ada'] };
     render(
       <Composer
-        known={KNOWN}
-        disabledReason={null}
+        known={people}
         label={label}
-        onSend={onSend}
+        onSend={mock(() => Promise.resolve(SENT))}
       />
     );
+    type('@human:ada');
+    press('Enter');
+    expect(screen.getByText('human:ada')).toBeTruthy();
+    expect(screen.queryByText('human:adam')).toBeNull();
+    type('@human:ada');
+    press('ArrowDown');
+    press('Enter');
+    expect(screen.getByText('human:adam')).toBeTruthy();
+  });
+
+  it('blocks an @token that matches nothing, inline, and sends nothing', () => {
+    const onSend = mock(() => Promise.resolve(SENT));
+    render(<Composer known={KNOWN} label={label} onSend={onSend} />);
     type('hello @bogus');
     press('Enter');
     expect(screen.getByRole('alert').textContent).toContain(
@@ -68,14 +79,7 @@ describe('Composer', () => {
         )
       )
     );
-    render(
-      <Composer
-        known={KNOWN}
-        disabledReason={null}
-        label={label}
-        onSend={onSend}
-      />
-    );
+    render(<Composer known={KNOWN} label={label} onSend={onSend} />);
     type('@task:t-zzzzzz');
     press('Enter');
     type('ship it');
@@ -89,29 +93,12 @@ describe('Composer', () => {
     expect(onSend).toHaveBeenCalledTimes(1);
   });
 
-  it('keeps a locked recipient and says why the window cannot send', () => {
-    render(
-      <Composer
-        known={KNOWN}
-        initialTo={['task:t-1a2b3c']}
-        locked={['task:t-1a2b3c']}
-        disabledReason="This window cannot send."
-        label={label}
-        onSend={mock(() => Promise.resolve(SENT))}
-      />
-    );
-    expect(screen.getByText('task:t-1a2b3c')).toBeTruthy();
-    expect(screen.getByText('This window cannot send.')).toBeTruthy();
-    expect(box().disabled).toBe(true);
-  });
-
   it('offers no way to remove a locked recipient, and removes any other', () => {
     render(
       <Composer
         known={KNOWN}
         initialTo={['task:t-1a2b3c', 'human:wyat']}
         locked={['task:t-1a2b3c']}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -128,13 +115,7 @@ describe('Composer', () => {
     const onSend = mock((_state: ComposeState) => Promise.resolve(SENT));
     const onSent = mock((_result: SendResult) => {});
     render(
-      <Composer
-        known={KNOWN}
-        disabledReason={null}
-        label={label}
-        onSend={onSend}
-        onSent={onSent}
-      />
+      <Composer known={KNOWN} label={label} onSend={onSend} onSent={onSent} />
     );
     type('@t-1a');
     press('Enter');
@@ -142,22 +123,59 @@ describe('Composer', () => {
     type('Which cart?');
     press('Enter');
     await waitFor(() => expect(onSent).toHaveBeenCalledWith(SENT));
-    expect(onSend).toHaveBeenCalledWith({
-      to: ['task:t-1a2b3c'],
-      body: 'Which cart?',
-      kind: 'question',
-      urgent: false,
-      wake: true,
-    });
+    expect(onSend).toHaveBeenCalledWith(
+      {
+        to: ['task:t-1a2b3c'],
+        body: 'Which cart?',
+        kind: 'question',
+        urgent: false,
+        wake: true,
+      },
+      expect.any(String)
+    );
     expect(box().value).toBe('');
     expect(screen.queryByText('task:t-1a2b3c')).toBeNull();
+  });
+
+  it('keeps one idempotency key per draft: resent unchanged after a lost response, new after an edit or a send', async () => {
+    const onSend = mock((_state: ComposeState, _key: string) =>
+      Promise.resolve(SENT)
+    );
+    onSend.mockImplementationOnce(() =>
+      Promise.reject(new TypeError('Failed to fetch'))
+    );
+    render(
+      <Composer
+        known={KNOWN}
+        initialTo={['task:t-1a2b3c']}
+        label={label}
+        onSend={onSend}
+      />
+    );
+    const send = async (calls: number) => {
+      press('Enter');
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(calls));
+    };
+    type('ship it');
+    await send(1);
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    // Unchanged: the same key, so the daemon replays a send that landed.
+    await send(2);
+    await waitFor(() => expect(box().value).toBe(''));
+    type('ship it');
+    await send(3);
+    fireEvent.click(screen.getByRole('switch', { name: 'Urgent' }));
+    type('ship it now');
+    await send(4);
+    const keys = onSend.mock.calls.map((call) => call[1]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(new Set(keys).size).toBe(3);
   });
 
   it('ties the recipient list to the text box, so the highlighted recipient is announced', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -179,7 +197,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -200,7 +217,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -219,7 +235,6 @@ describe('Composer', () => {
     render(
       <Composer
         known={KNOWN}
-        disabledReason={null}
         label={label}
         onSend={mock(() => Promise.resolve(SENT))}
       />
@@ -228,5 +243,58 @@ describe('Composer', () => {
     press('Escape');
     expect(box().value).toBe('hi ');
     expect(screen.queryByRole('listbox')).toBeNull();
+  });
+
+  it('Escape with no @token cancels, after dropping one first', () => {
+    const onCancel = mock(() => {});
+    render(
+      <Composer
+        known={KNOWN}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+        onCancel={onCancel}
+      />
+    );
+    type('hi @t-1');
+    press('Escape');
+    expect(onCancel).not.toHaveBeenCalled();
+    press('Escape');
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('Cancel is offered only with somewhere to go back to', () => {
+    const onCancel = mock(() => {});
+    const { rerender } = render(
+      <Composer
+        known={KNOWN}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+      />
+    );
+    expect(
+      screen.queryByRole('button', { name: 'Cancel' })?.textContent
+    ).toBeUndefined();
+    rerender(
+      <Composer
+        known={KNOWN}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+        onCancel={onCancel}
+      />
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it('focusOnMount puts the caret in the message box', () => {
+    render(
+      <Composer
+        known={KNOWN}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+        focusOnMount
+      />
+    );
+    expect(document.activeElement === box()).toBe(true);
   });
 });

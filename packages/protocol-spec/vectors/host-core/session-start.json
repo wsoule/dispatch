@@ -1,0 +1,275 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "session-start",
+  "vectors": [
+    {
+      "id": "core.session-start.claims-held-mail-for-the-work-item",
+      "title": "A starting session claims its work item's held mail: direct mail is pushed, channel mail notified",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.4"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "channels": [{ "name": "auth", "members": ["task:t-000002"] }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002"],
+            "kind": "message",
+            "body": "direct"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["channel:auth"],
+            "kind": "notice",
+            "body": "broadcast"
+          }
+        },
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000002",
+              "session": "run:r-000002"
+            }
+          }
+        },
+        {
+          "op": "deliverHeld",
+          "session": "run:r-000002",
+          "workItem": "t-000002"
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          null,
+          {
+            "ok": true,
+            "result": {
+              "deliveries": [
+                {
+                  "message": "$s1",
+                  "recipient": "task:t-000002",
+                  "state": "pushed"
+                },
+                {
+                  "message": "$s2",
+                  "recipient": "task:t-000002",
+                  "state": "notified"
+                }
+              ]
+            }
+          }
+        ],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "via": "direct",
+            "state": "pushed",
+            "session": "run:r-000002"
+          },
+          {
+            "message": "$s2",
+            "recipient": "task:t-000002",
+            "via": "channel",
+            "state": "notified",
+            "session": "run:r-000002"
+          }
+        ],
+        "calls": [
+          { "hook": "published", "message": "$s1" },
+          { "hook": "published", "message": "$s2" },
+          { "hook": "push", "session": "run:r-000002", "message": "$s1" },
+          { "hook": "notify", "session": "run:r-000002", "message": "$s2" }
+        ]
+      }
+    },
+    {
+      "id": "core.session-start.claims-mail-left-on-an-earlier-session",
+      "title": "A starting session claims mail held on one of its work item's earlier sessions",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.4"],
+      "given": {
+        "workItems": [{ "id": "t-000002", "sessions": ["run:r-00000a"] }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-seed-1",
+              "from": "human:wyat",
+              "to": ["run:r-00000a"],
+              "kind": "message",
+              "body": "rename foo"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-seed-1",
+              "message": "m-seed-1",
+              "recipient": "run:r-00000a",
+              "session": null,
+              "via": "direct",
+              "state": "held"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000002",
+              "session": "run:r-000002"
+            }
+          }
+        },
+        {
+          "op": "deliverHeld",
+          "session": "run:r-000002",
+          "workItem": "t-000002"
+        }
+      ],
+      "then": {
+        "steps": [
+          null,
+          {
+            "ok": true,
+            "result": {
+              "deliveries": [
+                {
+                  "message": "m-seed-1",
+                  "recipient": "run:r-00000a",
+                  "state": "pushed"
+                }
+              ]
+            }
+          }
+        ],
+        "deliveries": [
+          {
+            "message": "m-seed-1",
+            "recipient": "run:r-00000a",
+            "state": "pushed",
+            "session": "run:r-000002"
+          }
+        ],
+        "calls": [
+          { "hook": "push", "session": "run:r-000002", "message": "m-seed-1" }
+        ]
+      }
+    },
+    {
+      "id": "core.session-start.claims-only-held-mail",
+      "title": "A starting session leaves deliveries in any state but held alone",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.4"],
+      "given": {
+        "workItems": [{ "id": "t-000002" }],
+        "store": {
+          "messages": [
+            {
+              "id": "m-seed-1",
+              "from": "human:wyat",
+              "to": ["task:t-000002"],
+              "kind": "message",
+              "body": "one"
+            },
+            {
+              "id": "m-seed-2",
+              "from": "human:wyat",
+              "to": ["task:t-000002"],
+              "kind": "message",
+              "body": "two"
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-seed-1",
+              "message": "m-seed-1",
+              "recipient": "task:t-000002",
+              "session": null,
+              "via": "direct",
+              "state": "held"
+            },
+            {
+              "id": "d-seed-2",
+              "message": "m-seed-2",
+              "recipient": "task:t-000002",
+              "session": null,
+              "via": "direct",
+              "state": "read"
+            }
+          ]
+        },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "world",
+          "change": {
+            "startSession": {
+              "workItem": "t-000002",
+              "session": "run:r-000002"
+            }
+          }
+        },
+        {
+          "op": "deliverHeld",
+          "session": "run:r-000002",
+          "workItem": "t-000002"
+        }
+      ],
+      "then": {
+        "steps": [
+          null,
+          {
+            "ok": true,
+            "result": {
+              "deliveries": [
+                {
+                  "message": "m-seed-1",
+                  "recipient": "task:t-000002",
+                  "state": "pushed"
+                }
+              ]
+            }
+          }
+        ],
+        "deliveries": [
+          {
+            "message": "m-seed-1",
+            "recipient": "task:t-000002",
+            "state": "pushed",
+            "session": "run:r-000002"
+          },
+          {
+            "message": "m-seed-2",
+            "recipient": "task:t-000002",
+            "state": "read",
+            "session": null
+          }
+        ],
+        "calls": [
+          { "hook": "push", "session": "run:r-000002", "message": "m-seed-1" }
+        ]
+      }
+    }
+  ]
+}

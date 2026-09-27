@@ -255,6 +255,42 @@ describe('messaging HTTP routes', () => {
     );
   });
 
+  it('a reply to my own message to a run that has since ended is held for its task', async () => {
+    const { runId, taskId } = await liveRun('Ends without writing back');
+    const mine = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`run:${runId}`],
+        kind: 'message',
+        body: 'try the cart first',
+      }),
+    });
+    expect(mine.status).toBe(201);
+    const { message } = await json<{ message: { id: string } }>(mine);
+    await handle.orchestrator.cancel(runId);
+
+    const reply = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        to: [`run:${runId}`],
+        kind: 'message',
+        body: 'still there?',
+        replyTo: message.id,
+      }),
+    });
+    expect(reply.status).toBe(201);
+    const sent = await json<{
+      message: { to: string[] };
+      deliveries: { recipient: string; state: string }[];
+    }>(reply);
+    expect(sent.message.to).toEqual([`task:${taskId}`]);
+    expect(sent.deliveries).toEqual([
+      expect.objectContaining({ recipient: `task:${taskId}`, state: 'held' }),
+    ]);
+  });
+
   it('a run joins a channel as its task; the channel list shows epic children implicitly', async () => {
     const { taskId } = await liveRun('Join a channel');
     const runToken = executor.lastRunToken;
@@ -1382,6 +1418,55 @@ describe('messaging HTTP routes', () => {
       body,
     });
     expect(retried.status).toBe(201);
+  });
+
+  it('replays an Idempotency-Key after the daemon restarts', async () => {
+    const headers = {
+      'content-type': 'application/json',
+      'idempotency-key': 'restart-1',
+    };
+    const body = JSON.stringify({
+      to: ['human:test'],
+      kind: 'message',
+      body: 'once',
+    });
+    const first = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(first.status).toBe(201);
+    const { message } = await json<{ message: { id: string } }>(first);
+
+    await handle.stop();
+    handle = await startTestServer();
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+
+    const again = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers,
+      body,
+    });
+    expect(again.status).toBe(200);
+    const replay = await json<{ message: { id: string }; replayed?: boolean }>(
+      again
+    );
+    expect(replay.message.id).toBe(message.id);
+    expect(replay.replayed).toBe(true);
+  });
+
+  it('refuses a key over 200 bytes as 400 on idempotencyKey', async () => {
+    const res = await fetch(`${baseUrl}/api/messages`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': 'é'.repeat(101),
+      },
+      body: JSON.stringify({ to: ['human:test'], kind: 'message', body: 'x' }),
+    });
+    expect(res.status).toBe(400);
+    expect((await json<{ field?: string }>(res)).field).toBe('idempotencyKey');
   });
 
   it('the old question, scope, approval and message routes are gone', async () => {

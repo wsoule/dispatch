@@ -1,6 +1,12 @@
-export const PROTOCOL_VERSION = '0.1.0';
 export { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 export type { Address, ParsedAddress } from './address.js';
+export {
+  GATE_RAISERS,
+  gateTypeOf,
+  hasGateData,
+  raiserOf,
+} from './constants.js';
+export type { GateRaiser } from './constants.js';
 export { DEFAULT_LIMITS, DeliveryEngine } from './engine.js';
 export type {
   EngineEvent,
@@ -25,6 +31,7 @@ export type {
   MessageKind,
   Ref,
   SendInput,
+  ValidateOptions,
 } from './envelope.js';
 export { MessagingError } from './errors.js';
 export type { MessagingErrorCode } from './errors.js';
@@ -43,7 +50,7 @@ export {
   openMessagesDb,
   SqliteMessageStore,
 } from './sqliteStore.js';
-export { DELIVERY_STATES } from './store.js';
+export { DELIVERY_STATES, REMOTE_STATES } from './store.js';
 export type {
   AgentRecord,
   AgentStatus,
@@ -53,6 +60,12 @@ export type {
   DeliveryState,
   DeliveryVia,
   MessageStore,
+  RemoteDelivery,
+  RemoteState,
+  SettledAs,
+  Settlement,
+  StoredMeta,
   ThreadSummary,
 } from './store.js';
 export { createUlidFactory } from './ulid.js';
+export { PROTOCOL_VERSION } from './version.js';

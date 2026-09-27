@@ -121,7 +121,7 @@ export function applyScopeAnswer(
 }
 
 // Answers a run's scope gate as the system when the project's policy rung
-// covers it, resolving whether it did; a failed grant is logged and left open.
+// covers it, resolving whether it did; never rejects, a failure is logged.
 async function grantByPolicy(
   engine: DeliveryEngine,
   deps: ScopePolicyDeps,
@@ -134,13 +134,13 @@ async function grantByPolicy(
     !question.from.startsWith('run:')
   )
     return false;
-  const ruling = scopeRulingFor(
-    deps,
-    question.from.slice('run:'.length),
-    gate.paths
-  );
-  if (ruling === null) return false;
   try {
+    const ruling = scopeRulingFor(
+      deps,
+      question.from.slice('run:'.length),
+      gate.paths
+    );
+    if (ruling === null) return false;
     await engine.reply(
       question.id,
       {
@@ -172,7 +172,7 @@ export function installScopePolicy(
 
 // Grants every open scope gate policy covers, catching a live grant that
 // failed or that a crash cut off after the question was stored.
-export async function grantScopeGatesByPolicy(
+async function grantScopeGatesByPolicy(
   engine: DeliveryEngine,
   deps: ScopePolicyDeps
 ): Promise<number> {
@@ -180,6 +180,25 @@ export async function grantScopeGatesByPolicy(
   for (const question of engine.openBlocking())
     if (await grantByPolicy(engine, deps, question)) granted++;
   return granted;
+}
+
+// One pass of the daemon's scope sweep: grants what policy covers, then
+// expires the rest, so a failing grant phase never stops the expiry.
+export async function sweepScopeGates(
+  engine: DeliveryEngine,
+  deps: ScopePolicyDeps,
+  nowMs: () => number
+): Promise<void> {
+  try {
+    await grantScopeGatesByPolicy(engine, deps);
+  } catch (err) {
+    console.error('messaging: scope grant sweep failed', err);
+  }
+  try {
+    await expireScopeGates(engine, nowMs());
+  } catch (err) {
+    console.error('messaging: scope expiry sweep failed', err);
+  }
 }
 
 // Denies, as the system, every open scope gate nobody decided within the TTL.

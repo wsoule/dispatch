@@ -1,0 +1,151 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "mailbox",
+  "vectors": [
+    {
+      "id": "core.mailbox.inbox-lists-and-mark-read-reads",
+      "title": "A recipient's inbox lists its mail; marking a delivery read moves it out of the held list",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "7.1"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["agent:wyat/claude-code.macbook"],
+            "kind": "message",
+            "body": "hello"
+          }
+        },
+        { "op": "inbox", "recipient": "agent:wyat/claude-code.macbook" },
+        {
+          "op": "markRead",
+          "message": "$s1",
+          "recipient": "agent:wyat/claude-code.macbook"
+        },
+        {
+          "op": "inbox",
+          "recipient": "agent:wyat/claude-code.macbook",
+          "states": ["held"]
+        },
+        {
+          "op": "inbox",
+          "recipient": "agent:wyat/claude-code.macbook",
+          "states": ["read"]
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true, "result": { "messages": ["$s1"] } },
+          { "ok": true, "result": { "state": "read" } },
+          { "ok": true, "result": { "messages": [] } },
+          { "ok": true, "result": { "messages": ["$s1"] } }
+        ],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "agent:wyat/claude-code.macbook",
+            "state": "read",
+            "session": null
+          }
+        ]
+      }
+    },
+    {
+      "id": "core.mailbox.marking-read-leaves-answered-alone",
+      "title": "Marking an answered delivery read changes nothing and succeeds; marking a missing delivery fails not-found",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "7.1"],
+      "given": {
+        "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-000001", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "which?",
+            "blocking": true,
+            "choices": ["a", "b"]
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "a" }
+        },
+        { "op": "markRead", "message": "$s1", "recipient": "human:wyat" },
+        { "op": "markRead", "message": "$s1", "recipient": "human:ana" }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": true, "result": { "state": "answered" } },
+          { "ok": false, "error": { "code": "not-found" } }
+        ],
+        "deliveries": [
+          { "message": "$s1", "recipient": "human:wyat", "state": "answered" }
+        ]
+      }
+    },
+    {
+      "id": "core.mailbox.a-muted-senders-mail-starts-read",
+      "title": "A muted sender's deliveries start read, bound to no session, and are never pushed or notified",
+      "class": "host-core",
+      "level": "MAY",
+      "profile": "core",
+      "sections": ["6.1", "6.7"],
+      "capability": "muted-senders",
+      "given": {
+        "workItems": [{ "id": "t-000002", "liveSession": "run:r-000002" }],
+        "agents": [
+          { "address": "agent:wyat/noisy", "status": "approved", "muted": true }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/noisy", "canDecide": false },
+          "input": {
+            "to": ["task:t-000002", "human:wyat"],
+            "kind": "message",
+            "body": "x"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "task:t-000002",
+            "state": "read",
+            "session": null
+          },
+          {
+            "message": "$s1",
+            "recipient": "human:wyat",
+            "state": "read",
+            "session": null
+          }
+        ],
+        "calls": [{ "hook": "published", "message": "$s1" }]
+      }
+    }
+  ]
+}

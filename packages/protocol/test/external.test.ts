@@ -76,6 +76,55 @@ describe('external recipients', () => {
     ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
   });
 
+  it('an x-less unknown-typed question to a client is refused on data', async () => {
+    const wide = new DeliveryEngine({
+      store,
+      host,
+      gateTypes: ['wake', 'future-gate'],
+    });
+    await expect(
+      wide.send(
+        {
+          to: [CLIENT],
+          kind: 'question',
+          blocking: true,
+          choices: ['approve', 'deny'],
+          body: 'decide?',
+          data: { type: 'future-gate', ref: 'x' },
+        },
+        SYSTEM
+      )
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
+    expect(store.deliveries({})).toHaveLength(0);
+  });
+
+  it('an answer to a gate is not sent to a client', async () => {
+    const { message: gate } = await engine.send(
+      {
+        to: ['human:wyat'],
+        kind: 'question',
+        blocking: true,
+        choices: ['approve', 'deny'],
+        body: 'wake?',
+        data: WAKE_GATE,
+      },
+      SYSTEM
+    );
+    await expect(
+      engine.send(
+        {
+          to: [CLIENT],
+          kind: 'answer',
+          replyTo: gate.id,
+          body: '',
+          choice: 'approve',
+        },
+        human
+      )
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
+    expect(engine.answerOf(gate.id)).toBeNull();
+  });
+
   it('fails a direct send the host refuses, and names the caller’s field', async () => {
     host.admit = (target) => {
       throw new MessagingError(

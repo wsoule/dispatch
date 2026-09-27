@@ -12,6 +12,8 @@ import type {
 } from '../../lib/threadSources';
 import {
   addressAction,
+  kindLabel,
+  offersAnswer,
   participantLabel,
   refAction,
   rowControl,
@@ -19,17 +21,11 @@ import {
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
+import { cn } from '@/lib/utils';
 import { ChatMessage } from '@/ui/ai/chat';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 import { Pill, PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
-
-const KIND_BADGE: Partial<Record<Message['kind'], string>> = {
-  question: 'Question',
-  handoff: 'Handoff',
-  notice: 'Notice',
-  answer: 'Answer',
-};
 
 type Reply = { body: string; choice?: string };
 
@@ -38,6 +34,8 @@ export interface MessageRowProps {
   me: string;
   /** The message is an open gate or ask, so its control is live. */
   open: boolean;
+  /** A link opened the thread at this message, so it is briefly marked. */
+  linked?: boolean;
   access: MessageAccess;
   lookups: ThreadLookups;
   availability: DecideAvailability;
@@ -53,6 +51,7 @@ export const MessageRow = memo(function MessageRow({
   message,
   me,
   open,
+  linked = false,
   access,
   lookups,
   availability,
@@ -66,7 +65,7 @@ export const MessageRow = memo(function MessageRow({
   const sender = participantLabel(message.from, lookups);
   const senderAction = addressAction(message.from, lookups);
   const status = lookups.agentStatus(message.from);
-  const badge = KIND_BADGE[message.kind];
+  const badge = kindLabel(message.kind);
   const answer = async (reply: Reply): Promise<void> => {
     setError(null);
     try {
@@ -76,7 +75,14 @@ export const MessageRow = memo(function MessageRow({
     }
   };
   return (
-    <article data-message-id={message.id}>
+    <article
+      data-message-id={message.id}
+      data-linked={linked ? 'true' : undefined}
+      className={cn(
+        'rounded-card transition-colors duration-700',
+        linked && 'bg-surface-hover'
+      )}
+    >
       <ChatMessage
         role={mine ? 'user' : 'agent'}
         avatar={mine ? undefined : <InitialsAvatar name={sender} />}
@@ -157,13 +163,13 @@ function Control({
   answer: (reply: Reply) => Promise<void>;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
 }) {
+  if (control.kind === 'read-only') {
+    return (
+      <p className="text-muted-foreground text-[12px]">{control.reason}</p>
+    );
+  }
+  if (!offersAnswer(control)) return null;
   switch (control.kind) {
-    case 'none':
-      return null;
-    case 'read-only':
-      return (
-        <p className="text-muted-foreground text-[12px]">{control.reason}</p>
-      );
     case 'tool-approval': {
       const { call } = control;
       return (
@@ -193,28 +199,55 @@ function Control({
         />
       );
     case 'choices':
-      if (control.choices.length === 0) return null;
       return (
-        <div
-          role="group"
-          aria-label="Answer"
-          className="flex flex-wrap gap-1.5"
-        >
-          {control.choices.map((choice) => (
-            <Button
-              key={choice}
-              size="sm"
-              variant="outline"
-              onClick={() =>
-                void answer(
-                  control.gate ? { body: '', choice } : { body: choice, choice }
-                )
-              }
-            >
-              {choice}
-            </Button>
-          ))}
-        </div>
+        <Choices
+          choices={control.choices}
+          gate={control.gate}
+          answer={answer}
+        />
       );
   }
+}
+
+// Choice buttons that hold while one answer is in flight, so a double click
+// answers once rather than failing the second time as already answered.
+function Choices({
+  choices,
+  gate,
+  answer,
+}: {
+  choices: string[];
+  gate: boolean;
+  answer: (reply: Reply) => Promise<void>;
+}) {
+  const [pending, setPending] = useState<string | null>(null);
+  const choose = async (choice: string): Promise<void> => {
+    if (pending !== null) return;
+    setPending(choice);
+    try {
+      await answer(gate ? { body: '', choice } : { body: choice, choice });
+    } finally {
+      setPending(null);
+    }
+  };
+  return (
+    <div
+      role="group"
+      aria-label="Answer"
+      aria-busy={pending === null ? undefined : true}
+      className="flex flex-wrap gap-1.5"
+    >
+      {choices.map((choice) => (
+        <Button
+          key={choice}
+          size="sm"
+          variant="outline"
+          disabled={pending !== null}
+          onClick={() => void choose(choice)}
+        >
+          {pending === choice ? 'Sending…' : choice}
+        </Button>
+      ))}
+    </div>
+  );
 }

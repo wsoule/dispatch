@@ -299,8 +299,12 @@ export function TaskPage({
   // The executor this dispatch will use; undefined means "the daemon's default", which is
   // sent as no executor at all so a resumable run is never refused for naming one.
   const [executor, setExecutor] = useState<string | undefined>(undefined);
+  // The daemon's test-only executors (`fake`, `fake-ask`, …) are never a real choice.
   const executorChoices = useMemo(
-    () => (executors?.executors ?? []).filter((e) => e.name !== 'fake'),
+    () =>
+      (executors?.executors ?? []).filter(
+        (e) => e.name !== 'fake' && !e.name.startsWith('fake-')
+      ),
     [executors]
   );
   const effectiveExecutor = executor ?? executors?.default ?? 'claude';

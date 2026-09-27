@@ -225,7 +225,11 @@ describe('FakeExecutor', () => {
     const run = executor.start({ ...baseOpts, cwd: repo }, events);
     await Bun.sleep(10);
     await run.interrupt();
-    await Bun.sleep(10);
+    const settled = await Promise.race([
+      run.settled.then(() => 'settled'),
+      Bun.sleep(200).then(() => 'still parked'),
+    ]);
+    expect(settled).toBe('settled');
     expect(finishes).toEqual([]);
   });
 
