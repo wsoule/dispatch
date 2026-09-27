@@ -125,6 +125,11 @@ export function knownAddresses(input: {
   };
 }
 
+/** Where a tool call waits for its answer: a run, or an Assistant conversation. */
+export type ParkedCall =
+  | { runId: string; requestId: string }
+  | { conversation: string; requestId: string };
+
 export type RowControl =
   | { kind: 'none' }
   | { kind: 'read-only'; reason: string }
@@ -133,12 +138,23 @@ export type RowControl =
       tool: string;
       input: unknown;
       truncated: boolean;
-      /** The parked call, which a truncated preview reads in full; no run for an Assistant call. */
-      runId: string | null;
-      requestId: string;
+      /** The parked call, which a truncated preview reads in full; null when the gate names none. */
+      call: ParkedCall | null;
     }
   | { kind: 'scope'; paths: string[]; reason: string }
   | { kind: 'choices'; choices: string[]; gate: boolean };
+
+// The run or Assistant conversation a tool-approval gate's call is parked on.
+function parkedCall(gate: {
+  requestId: string;
+  runId?: string;
+  conversation?: string;
+}): ParkedCall | null {
+  const { requestId, runId, conversation } = gate;
+  if (runId !== undefined) return { runId, requestId };
+  if (conversation !== undefined) return { conversation, requestId };
+  return null;
+}
 
 /** What a message row offers this viewer: a gate card, choice buttons, a
  *  read-only reason, or nothing. */
@@ -162,8 +178,7 @@ export function rowControl(
         tool: gate.tool,
         input: gate.input,
         truncated: gate.truncated === true,
-        runId: gate.runId ?? null,
-        requestId: gate.requestId,
+        call: parkedCall(gate),
       };
     }
     if (gate.type === 'scope') {

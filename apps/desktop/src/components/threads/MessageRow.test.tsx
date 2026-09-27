@@ -1,8 +1,15 @@
 import type { AgentSummary, Message } from '@dispatch/client';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
+import type { ParkedCall } from '../../lib/threadSources';
 import { threadLookups } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
 import { MessageRow } from './MessageRow';
@@ -109,30 +116,45 @@ test('shows a gate read-only, with the reason and no buttons, to a viewer who ca
   expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
 });
 
-test('a truncated tool call loads its full input for a decider', async () => {
-  const approval = msg('m-a', {
-    from: 'agent:dispatch',
-    kind: 'question',
-    blocking: true,
-    choices: ['approve', 'approve-session', 'deny'],
-    data: {
-      type: 'tool-approval',
-      requestId: 'req-1',
-      runId: 'r-000001',
-      tool: 'Bash',
-      input: '{"command":"rm -rf build/',
-      truncated: true,
-      floor: false,
-    },
-  });
-  const loadApprovalInput = mock((_runId: string, _requestId: string) =>
+test('a truncated tool call loads its full input for a decider, from its run or its Assistant conversation', async () => {
+  const approval = (parkedOn: { runId: string } | { conversation: string }) =>
+    msg('m-a', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'approve-session', 'deny'],
+      data: {
+        type: 'tool-approval',
+        requestId: 'req-1',
+        ...parkedOn,
+        tool: 'Bash',
+        input: '{"command":"rm -rf build/',
+        truncated: true,
+        floor: false,
+      },
+    });
+  const loadApprovalInput = mock((_call: ParkedCall) =>
     Promise.resolve({ command: 'rm -rf build/tmp' })
   );
-  renderRow(approval, { loadApprovalInput });
+  renderRow(approval({ runId: 'r-000001' }), { loadApprovalInput });
   await waitFor(() =>
     expect(screen.getByText(/rm -rf build\/tmp/)).toBeTruthy()
   );
-  expect(loadApprovalInput).toHaveBeenCalledWith('r-000001', 'req-1');
+  expect(loadApprovalInput).toHaveBeenCalledWith({
+    runId: 'r-000001',
+    requestId: 'req-1',
+  });
+  expect(screen.queryByText(/Preview truncated/)).toBeNull();
+  cleanup();
+
+  renderRow(approval({ conversation: 'o-000001' }), { loadApprovalInput });
+  await waitFor(() =>
+    expect(screen.getByText(/rm -rf build\/tmp/)).toBeTruthy()
+  );
+  expect(loadApprovalInput).toHaveBeenLastCalledWith({
+    conversation: 'o-000001',
+    requestId: 'req-1',
+  });
   expect(screen.queryByText(/Preview truncated/)).toBeNull();
 });
 

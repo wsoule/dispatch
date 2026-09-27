@@ -5,6 +5,7 @@ import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
 import { approvalReply } from '../../lib/gates';
 import { formatShortDate } from '../../lib/taskDates';
 import type {
+  ParkedCall,
   RefAction,
   RowControl,
   ThreadLookups,
@@ -43,8 +44,8 @@ export interface MessageRowProps {
   onRestartDaemon: () => Promise<void>;
   onAnswer: (message: Message, reply: Reply) => Promise<void>;
   onOpen: (action: RefAction) => void;
-  /** Reads a parked run call's full input, for a tool-approval preview that was cut short. */
-  loadApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
+  /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
+  loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
 }
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
@@ -164,16 +165,14 @@ function Control({
         <p className="text-muted-foreground text-[12px]">{control.reason}</p>
       );
     case 'tool-approval': {
-      const { runId, requestId } = control;
+      const { call } = control;
       return (
         <ApprovalCard
           toolName={control.tool}
           toolInput={control.input}
           truncated={control.truncated}
           loadFullInput={
-            runId === null
-              ? undefined
-              : () => loadApprovalInput(runId, requestId)
+            call === null ? undefined : () => loadApprovalInput(call)
           }
           availability={availability}
           onRestartDaemon={onRestartDaemon}

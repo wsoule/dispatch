@@ -121,6 +121,19 @@ void mock.module('@dispatch/client', () => ({
       approvalReads.push([runId, requestId]);
       return Promise.resolve({ tool: 'Bash', input: { command: 'ls -la' } });
     },
+    getOverseer: (id: string) =>
+      Promise.resolve({
+        id,
+        pendingApprovals: [
+          {
+            requestId: 'req-9',
+            toolName: 'Bash',
+            input: { command: 'make clean' },
+            summary: 'Bash: make clean',
+            requestedAt: '2026-09-20T00:00:00Z',
+          },
+        ],
+      }),
     replyToMessage: (id: string, input: ReplyInput) => {
       replies.push([id, input]);
       return Promise.resolve({
@@ -705,6 +718,23 @@ test('a parked call is read in full by its run and request id', async () => {
 
   expect(input).toEqual({ command: 'ls -la' });
   expect(approvalReads).toEqual([['r-1', 'req-1']]);
+  resetGateFixtures();
+});
+
+// An Assistant call's gate carries a preview too; its conversation holds the call whole.
+test('a parked Assistant call is read in full from its conversation', async () => {
+  const result = await mountWithGates([approvalGate]);
+
+  const input = await result.current.fetchOverseerApprovalInput('o-1', 'req-9');
+  const gone = await result.current
+    .fetchOverseerApprovalInput('o-1', 'req-gone')
+    .then(
+      () => null,
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+
+  expect(input).toEqual({ command: 'make clean' });
+  expect(gone).toBe('The Assistant is no longer waiting on this call.');
   resetGateFixtures();
 });
 

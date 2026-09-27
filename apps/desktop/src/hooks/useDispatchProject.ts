@@ -595,6 +595,11 @@ export interface DispatchProjectData {
   ) => Promise<void>;
   /** The full input of a call a run is parked on, which its gate may only preview. */
   fetchApprovalInput: (runId: string, requestId: string) => Promise<unknown>;
+  /** The same for a call an Assistant conversation is parked on. */
+  fetchOverseerApprovalInput: (
+    conversation: string,
+    requestId: string
+  ) => Promise<unknown>;
   handleSendMessage: (runId: string, text: string) => Promise<void>;
   handleCancelRun: (runId: string) => Promise<void>;
   /** Asks a live run to wind down: it finishes its current operation, then stops,
@@ -2090,6 +2095,20 @@ export function useDispatchProject(
     [client, auth]
   );
 
+  const fetchOverseerApprovalInput = useCallback(
+    async (conversation: string, requestId: string): Promise<unknown> => {
+      if (client === null) throw new Error('dispatchd client not ready');
+      assertCanDecide(auth);
+      const { pendingApprovals } = await client.getOverseer(conversation);
+      const parked = pendingApprovals.find((a) => a.requestId === requestId);
+      if (parked === undefined) {
+        throw new Error('The Assistant is no longer waiting on this call.');
+      }
+      return parked.input;
+    },
+    [client, auth]
+  );
+
   const handleDecideScopeRequest = useCallback(
     async (
       _runId: string,
@@ -2859,6 +2878,7 @@ export function useDispatchProject(
     handleDispatch,
     handleApprove,
     fetchApprovalInput,
+    fetchOverseerApprovalInput,
     handleSendMessage,
     handleCancelRun,
     handleStopRun,

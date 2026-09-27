@@ -126,6 +126,74 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
   );
 });
 
+test("a cut-off Assistant call is read in full from the Assistant's conversation", async () => {
+  const gate: Message = {
+    ...question,
+    id: 'm-g',
+    thread: 'm-g',
+    from: 'agent:dispatch',
+    body: 'The overseer wants to run Bash: make clean',
+    choices: ['approve', 'approve-session', 'deny'],
+    data: {
+      type: 'tool-approval',
+      requestId: 'req-9',
+      conversation: 'o-1',
+      tool: 'Bash',
+      input: '{"command":"make cl',
+      truncated: true,
+      floor: false,
+    },
+  };
+  const client = {
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [gate] })),
+    getMessage: mock(() => Promise.resolve(gate)),
+    getThread: mock(() =>
+      Promise.resolve({ messages: [gate], deliveries: [] })
+    ),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  };
+  const fetchOverseerApprovalInput = mock(
+    (_conversation: string, _requestId: string) =>
+      Promise.resolve({ command: 'make clean' })
+  );
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ThreadsView
+        data={dataWith({
+          client: client as unknown as ApiClient,
+          port: 4000,
+          me: 'human:wyat',
+          messageAccess: {
+            canDecide: true,
+            canMessage: true,
+            explanation: null,
+          },
+          scopeDecide: DECIDES,
+          fetchOverseerApprovalInput,
+          tasks: [],
+          runs: [],
+          presence: [],
+        })}
+        projectName="storefront"
+        focus="m-g"
+        onFocus={() => {}}
+        onOpenRef={() => {}}
+        overseer={OVERSEER}
+      />
+    </QueryClientProvider>
+  );
+  expect(await screen.findByText(/"make clean"/)).toBeTruthy();
+  expect(fetchOverseerApprovalInput).toHaveBeenCalledWith('o-1', 'req-9');
+  expect(screen.queryByText(/Preview truncated/)).toBeNull();
+});
+
 test('an attached agent-token window queries nothing and says why', () => {
   const client = {
     getMailbox: mock(() => Promise.resolve({ items: [] })),

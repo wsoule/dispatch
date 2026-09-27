@@ -13,7 +13,7 @@ import {
   useThreadRail,
 } from '../hooks/useThreads';
 import { availabilityKey } from '../lib/daemonAuth';
-import type { RefAction } from '../lib/threadSources';
+import type { ParkedCall, RefAction } from '../lib/threadSources';
 import {
   knownAddresses,
   lookupsKey,
@@ -95,8 +95,13 @@ export function ThreadsView({
     []
   );
   const loadApprovalInput = useCallback(
-    (runId: string, requestId: string) =>
-      latest.current.fetchApprovalInput(runId, requestId),
+    (call: ParkedCall) =>
+      'runId' in call
+        ? latest.current.fetchApprovalInput(call.runId, call.requestId)
+        : latest.current.fetchOverseerApprovalInput(
+            call.conversation,
+            call.requestId
+          ),
     []
   );
   const { markRead } = actions;

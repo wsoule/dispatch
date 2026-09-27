@@ -176,7 +176,12 @@ describe('rowControl', () => {
   });
 
   it('gives a decider the approval card, saying when the call preview was cut and which call it is', () => {
-    const approval = (truncated: boolean) =>
+    const approval = (
+      truncated: boolean,
+      parkedOn: { runId: string } | { conversation: string } = {
+        runId: 'r-000001',
+      }
+    ) =>
       msg('m-a', {
         from: 'agent:dispatch',
         kind: 'question',
@@ -185,7 +190,7 @@ describe('rowControl', () => {
         data: {
           type: 'tool-approval',
           requestId: 'req-1',
-          runId: 'r-000001',
+          ...parkedOn,
           tool: 'Bash',
           input: truncated ? '{"command":"ls' : { command: 'ls' },
           ...(truncated ? { truncated: true as const } : {}),
@@ -199,8 +204,7 @@ describe('rowControl', () => {
       tool: 'Bash',
       input: '{"command":"ls',
       truncated: true,
-      runId: 'r-000001',
-      requestId: 'req-1',
+      call: { runId: 'r-000001', requestId: 'req-1' },
     });
     expect(
       rowControl(approval(false), { me: ME, open: true, access: DECIDER })
@@ -209,8 +213,21 @@ describe('rowControl', () => {
       tool: 'Bash',
       input: { command: 'ls' },
       truncated: false,
-      runId: 'r-000001',
-      requestId: 'req-1',
+      call: { runId: 'r-000001', requestId: 'req-1' },
+    });
+    // An Assistant call is parked on its conversation instead of a run.
+    expect(
+      rowControl(approval(true, { conversation: 'o-000001' }), {
+        me: ME,
+        open: true,
+        access: DECIDER,
+      })
+    ).toEqual({
+      kind: 'tool-approval',
+      tool: 'Bash',
+      input: '{"command":"ls',
+      truncated: true,
+      call: { conversation: 'o-000001', requestId: 'req-1' },
     });
   });
 
