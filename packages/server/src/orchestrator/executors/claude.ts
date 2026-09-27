@@ -10,7 +10,7 @@ import type {
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { CartoBinary } from '@dispatch/core/carto';
-import { isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
 import { floorCheckForToolInput } from '../../floor.js';
 import {
@@ -270,9 +270,14 @@ const MEMORY_PENDING_DENIAL =
 // How long the load check waits for the CLI to list the memory files it loaded.
 const MEMORY_CHECK_MS = 30_000;
 
-// The `memoryFiles` type Claude Code gives an auto-memory MEMORY.md, read from
-// the bundled CLI (2.1.207); the live probe confirms it on each passing version.
-const AUTO_MEMORY_FILE_TYPE = 'AutoMem';
+// The `memoryFiles` types of CLAUDE.md files in the bundled CLI (2.1.207). Any
+// other type outside the export, such as `AutoMem`, counts as native memory.
+const CLAUDE_MD_FILE_TYPES: ReadonlySet<string> = new Set([
+  'User',
+  'Project',
+  'Local',
+  'Managed',
+]);
 
 // Whether `path` names something inside `dir`.
 function isInside(path: string, dir: string): boolean {
@@ -308,9 +313,21 @@ type LoadCheck =
   | { outcome: 'loaded' }
   | { outcome: 'fallback' | 'unloaded'; detail: string };
 
-// Export mode's load check. Any auto-memory file outside the export, or a CLI
-// that cannot list its files, means native notes may be in context, so the
-// session must restart; otherwise the export loaded on a probed CLI, or it did not.
+// Whether a loaded memory file may be native auto memory: outside the export,
+// and either of a type other than CLAUDE.md's or named MEMORY.md.
+function isNativeMemory(
+  file: { path: string; type: string },
+  dir: string
+): boolean {
+  return (
+    !isInside(file.path, dir) &&
+    (!CLAUDE_MD_FILE_TYPES.has(file.type) ||
+      basename(file.path) === 'MEMORY.md')
+  );
+}
+
+// Export mode's load check: possible native notes, a CLI that cannot list its
+// files or one older than the probe restart the session; else loaded or not.
 async function checkExportLoaded(
   sdkQuery: Query,
   dir: string,
@@ -326,13 +343,17 @@ async function checkExportLoaded(
       detail: `Claude Code ${version} could not list the memory files it loaded: ${(err as Error).message}`,
     };
   }
-  const native = files.find(
-    (f) => f.type === AUTO_MEMORY_FILE_TYPE && !isInside(f.path, dir)
-  );
+  const native = files.find((f) => isNativeMemory(f, dir));
   if (native !== undefined) {
     return {
       outcome: 'fallback',
       detail: `Claude Code ${version} loaded ${native.path} instead of the export`,
+    };
+  }
+  if (compareVersions(version, probeVersion) < 0) {
+    return {
+      outcome: 'fallback',
+      detail: `Claude Code ${version} is older than the probed ${probeVersion}`,
     };
   }
   const exported = resolve(dir, 'MEMORY.md');
@@ -342,13 +363,19 @@ async function checkExportLoaded(
       detail: `Claude Code ${version} loaded no MEMORY.md`,
     };
   }
-  if (compareVersions(version, probeVersion) < 0) {
-    return {
-      outcome: 'unloaded',
-      detail: `Claude Code ${version} is older than the probed ${probeVersion}`,
-    };
-  }
   return { outcome: 'loaded' };
+}
+
+// The prompt-mode session that replaces a failed export check. It never
+// resumes: the checked session may already hold its prompt or native notes.
+function fallbackOptions(opts: ExecutorStartOptions): ExecutorStartOptions {
+  const next: ExecutorStartOptions = {
+    ...opts,
+    prompt: opts.memory?.fallbackPrompt ?? opts.prompt,
+    memory: { mode: 'prompt' },
+  };
+  delete next.resumeSessionId;
+  return next;
 }
 
 // The file a Read tool call read, from a PostToolUse hook's input.
@@ -857,15 +884,10 @@ export class ClaudeExecutor implements Executor {
     // The export directory, in export mode only (claudeMemorySettings refuses
     // export without an absolute one).
     const exportDir = mem?.mode === 'export' ? (mem.dir ?? null) : null;
-    // Export mode holds every tool until Claude confirms it loaded Dispatch's
-    // MEMORY.md, and holds the session's entries back with them.
+    // Export mode refuses every tool until Claude confirms it loaded Dispatch's
+    // MEMORY.md; the loop reads no message past init until then.
     let memoryPending = exportDir !== null;
-    const buffered: NormalizedEntry[] = [];
     const sentWhilePending: string[] = [];
-    const emit = (entry: NormalizedEntry): void => {
-      if (memoryPending) buffered.push(entry);
-      else events.onEntry(entry);
-    };
     const postToolUse: HookCallback = (input) => {
       if (exportDir !== null) {
         const read = readFilePath(input);
@@ -1017,9 +1039,8 @@ export class ClaudeExecutor implements Executor {
       ...(memorySettings.additionalDirectories.length > 0
         ? { additionalDirectories: memorySettings.additionalDirectories }
         : {}),
-      // The floor's PreToolUse hook, plus the PostToolUse hook that hands
-      // queued notes to the agent with its next tool result and reports
-      // exported memory files it read.
+      // The floor's PreToolUse hook, plus the PostToolUse hook that hands the
+      // agent queued notes and reports its reads of exported memory files.
       hooks: { ...floor.hooks, PostToolUse: [{ hooks: [postToolUse] }] },
       // Same "query() doesn't auto-load what the CLI does" class of bug as
       // the `.mcp.json` fix directly below: a dispatched run must behave
@@ -1203,25 +1224,35 @@ export class ClaudeExecutor implements Executor {
               subagents,
               message.parent_tool_use_id ?? undefined
             )) {
-              emit(entry);
+              events.onEntry(entry);
             }
           } else if (message.type === 'user') {
             const ts = new Date().toISOString();
             for (const entry of entriesForUserContent(message, ts, subagents)) {
-              emit(entry);
+              events.onEntry(entry);
             }
           } else if (message.type === 'system') {
             if (message.subtype === 'background_tasks_changed') {
               backgroundTasks = message.tasks.map((task) => task.task_id);
-            } else if (message.subtype === 'memory_recall') {
-              const recalled =
-                exportDir === null
-                  ? []
-                  : message.memories
-                      .map((memory) => memory.path)
-                      .filter((path) => isInside(path, exportDir));
+            } else if (
+              message.subtype === 'memory_recall' &&
+              exportDir !== null
+            ) {
+              const paths = message.memories.map((memory) => memory.path);
+              const recalled = paths.filter((path) =>
+                isInside(path, exportDir)
+              );
               if (recalled.length > 0) {
                 events.onMemoryRecall?.(recalled, 'claude-recall');
+              }
+              // A synthesis sentinel or an organization URL names no exported file.
+              const unmapped = paths.filter(
+                (path) => !isInside(path, exportDir)
+              );
+              if (unmapped.length > 0) {
+                console.error(
+                  `dispatchd: run ${opts.runId ?? '(no id)'}: ignored memory_recall paths outside the export: ${unmapped.join(', ')}`
+                );
               }
             } else if (message.subtype === 'init') {
               cliVersion = message.claude_code_version;
@@ -1236,20 +1267,17 @@ export class ClaudeExecutor implements Executor {
                 if (check.outcome === 'fallback') {
                   // Claude may hold the native notes (its system prompt can
                   // name that directory), so this session ends before any tool.
-                  buffered.length = 0;
                   sdkQuery.close();
-                  events.onMemoryMode?.('export-fallback', check.detail);
-                  restart(
-                    {
-                      ...opts,
-                      prompt: mem?.fallbackPrompt ?? opts.prompt,
-                      memory: { mode: 'prompt' },
-                    },
-                    {
-                      sent: sentWhilePending.splice(0),
-                      notes: pendingNotes.splice(0),
-                    }
+                  events.onMemoryMode?.(
+                    'export-fallback',
+                    opts.resumeSessionId === undefined
+                      ? check.detail
+                      : `${check.detail}; the run starts a fresh session instead of continuing ${opts.resumeSessionId}`
                   );
+                  restart(fallbackOptions(opts), {
+                    sent: sentWhilePending.splice(0),
+                    notes: pendingNotes.splice(0),
+                  });
                   return;
                 }
                 memoryPending = false;
@@ -1260,14 +1288,13 @@ export class ClaudeExecutor implements Executor {
                   }
                   events.onMemoryMode?.('export-unloaded', check.detail);
                 }
-                for (const entry of buffered.splice(0)) events.onEntry(entry);
               }
             }
             const lifecycle = subagents.onSystem(
               message,
               new Date().toISOString()
             );
-            if (lifecycle !== null) emit(lifecycle);
+            if (lifecycle !== null) events.onEntry(lifecycle);
             if (message.session_id !== sessionId) {
               // A resume that did not reattach: the SDK keeps a plain
               // `resume` on the SAME session id (only `forkSession` mints a
