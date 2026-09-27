@@ -3,12 +3,13 @@
 // argv[3] is crash-once's state file, crash-always's start log, or the JSON
 // that patch-hello and patch-observation spread over their reply.
 import { appendFileSync, existsSync, readdirSync, readFileSync } from 'node:fs';
-import { createInterface } from 'node:readline';
 
 const mode = process.argv[2] ?? 'pass';
 const arg = process.argv[3] ?? '';
 // What the runner resolves before the pipe, so the adapter never sees it.
 const RUNNER_SYMBOL = /\$(?:system|unimplementedGateType)\b/;
+// The runner escapes these, so a reader that breaks lines at them still works.
+const RAW_SEPARATOR = /[\u2028\u2029]/;
 const root = new URL('../vectors/', import.meta.url);
 const expected = new Map<string, unknown[]>();
 for (const cls of readdirSync(root)) {
@@ -19,14 +20,20 @@ for (const cls of readdirSync(root)) {
     for (const v of parsed.vectors) expected.set(v.id, v.then.steps ?? []);
   }
 }
+// Writes U+2028 and U+2029 raw, which the runner must read inside one line.
 const write = (msg: unknown): void => {
   process.stdout.write(`${JSON.stringify(msg)}\n`);
 };
 
-createInterface({ input: process.stdin }).on('line', (line) => {
+function onLine(line: string): void {
   const msg = JSON.parse(line) as {
     dmp: string;
-    vector?: { id: string; level: string; then?: unknown };
+    vector?: {
+      id: string;
+      level: string;
+      when: { input?: unknown }[];
+      then?: unknown;
+    };
   };
   if (msg.dmp === 'hello') {
     const hello = {
@@ -72,9 +79,11 @@ createInterface({ input: process.stdin }).on('line', (line) => {
   const failing =
     (mode === 'should-fail' && v.level === 'SHOULD') ||
     (mode === 'with-dispatch-fail' && v.id === 'a2a.basic.dispatch-must');
-  // An expectation or a runner symbol on the pipe fails the vector loudly.
-  const leak =
-    'then' in v
+  // An expectation, a runner symbol or a raw separator on the pipe fails the
+  // vector loudly.
+  const leak = RAW_SEPARATOR.test(line)
+    ? 'unescaped-separator'
+    : 'then' in v
       ? 'saw-then'
       : RUNNER_SYMBOL.test(JSON.stringify(v))
         ? 'unresolved-symbol'
@@ -84,7 +93,9 @@ createInterface({ input: process.stdin }).on('line', (line) => {
       ? [{ ok: false, error: { code: leak } }]
       : failing
         ? [{ ok: false, error: { code: 'invalid' } }]
-        : expected.get(v.id);
+        : mode === 'echo'
+          ? v.when.map((s) => ({ ok: true, result: s.input }))
+          : expected.get(v.id);
   write({
     dmp: 'observation',
     id: v.id,
@@ -98,4 +109,13 @@ createInterface({ input: process.stdin }).on('line', (line) => {
     render: [],
     ...(mode === 'patch-observation' ? (JSON.parse(arg) as object) : {}),
   });
+}
+
+// Splits stdin at LF alone, as the contract asks of an adapter.
+let buffered = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk: string) => {
+  const lines = (buffered + chunk).split('\n');
+  buffered = lines.pop() ?? '';
+  for (const line of lines) onLine(line);
 });

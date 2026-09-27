@@ -43,6 +43,7 @@ describe('parseVectorFile', () => {
       'vectors/host-core/basic.json',
       'vectors/a2a-binding/basic.json',
       'vectors-envelope-only/envelope/basic.json',
+      'vectors-separators/envelope/separators.json',
     ]) {
       expect(parseVectorFile(fixture(p), p).vectors.length).toBeGreaterThan(0);
     }

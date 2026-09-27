@@ -74,6 +74,33 @@ it('exits 1 when a claim fails and 2 on a usage error', () => {
   expect([fail.status, usage.status, unknownFlag.status]).toEqual([1, 2, 2]);
 });
 
+it('carries U+2028 and U+2029 both ways under Node', () => {
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'dmp-bin-')));
+  const report = join(dir, 'r.json');
+  const run = spawnSync(
+    'node',
+    [
+      'dist/bin.js',
+      '--adapter',
+      'bun test/fixtures/adapters/fixture.ts echo',
+      '--claim',
+      'envelope',
+      '--vectors',
+      'test/fixtures/vectors-separators',
+      '--report',
+      report,
+    ],
+    { cwd: pkg, encoding: 'utf8' }
+  );
+  const { vectors } = JSON.parse(readFileSync(report, 'utf8')) as {
+    vectors: { id: string; outcome: string; reasons: string[] }[];
+  };
+  expect(vectors.map((v) => [v.id, v.outcome, v.reasons])).toEqual([
+    ['env.separators.echo', 'pass', []],
+  ]);
+  expect(run.status).toBe(0);
+});
+
 it('survives an adapter that exits after hello, under Node', () => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'dmp-bin-')));
   // The write racing the adapter's exit raises EPIPE in some runs only (Bun

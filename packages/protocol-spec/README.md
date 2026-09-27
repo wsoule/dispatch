@@ -21,7 +21,11 @@ once published, the same command is the package's `dmp-conformance` bin.
 
 **The adapter contract.** The runner starts your command and speaks JSON lines
 over its stdin and stdout, one JSON object per line; whatever the adapter writes
-to stderr goes to the runner's log.
+to stderr goes to the runner's log. Lines end at LF alone (a CR before it is
+dropped), so split input at LF only. The runner writes U+2028 and U+2029 as the
+JSON escapes `\u2028` and `\u2029`, so a reader that also breaks lines at them
+still sees whole lines, and it reads the adapter's output at LF only, so the
+adapter may write the two characters raw or escaped.
 
 1. The runner sends `{"dmp":"hello","kit":"<version>"}`; the adapter answers
    with its hello: implementation, classes, profiles, capabilities, system

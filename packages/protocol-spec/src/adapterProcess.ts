@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { createInterface } from 'node:readline';
+import type { Readable } from 'node:stream';
 
 import { isRecord, isStringArray } from './guards.js';
 import { PROFILES, VECTOR_CLASSES } from './types.js';
@@ -15,6 +15,34 @@ export class AdapterError extends Error {}
 
 const HELLO_TIMEOUT_MS = 10_000;
 const BYE_GRACE_MS = 2000;
+
+const SEPARATORS = /[\u2028\u2029]/g;
+
+// One JSON line for the adapter, with U+2028 and U+2029 escaped (the same
+// JSON value) so a reader that breaks lines at them still sees whole lines.
+function jsonLine(msg: object): string {
+  const text = JSON.stringify(msg).replace(
+    SEPARATORS,
+    (c) => `\\u${c.charCodeAt(0).toString(16)}`
+  );
+  return `${text}\n`;
+}
+
+// Calls `onLine` for each line of `stream`, split at LF alone (a CR before it
+// is dropped), so U+2028 and U+2029 inside a JSON string never end a line.
+function readLines(stream: Readable, onLine: (line: string) => void): void {
+  let buffered = '';
+  stream.setEncoding('utf8');
+  stream.on('data', (chunk: string) => {
+    const lines = (buffered + chunk).split('\n');
+    buffered = lines.pop() ?? '';
+    for (const line of lines)
+      onLine(line.endsWith('\r') ? line.slice(0, -1) : line);
+  });
+  stream.on('end', () => {
+    if (buffered !== '') onLine(buffered);
+  });
+}
 
 function isPattern(v: unknown): boolean {
   if (typeof v !== 'string') return false;
@@ -144,9 +172,7 @@ export class AdapterProcess {
     });
     this.child = child;
     if (child.stdout !== null)
-      createInterface({ input: child.stdout }).on('line', (line) =>
-        this.onLine(line)
-      );
+      readLines(child.stdout, (line) => this.onLine(line));
     child.stderr?.on('data', (chunk: Buffer) =>
       this.log(chunk.toString('utf8'))
     );
@@ -194,7 +220,7 @@ export class AdapterProcess {
     this.child = null;
     if (child === null || child.exitCode !== null || child.signalCode !== null)
       return;
-    child.stdin?.end(`${JSON.stringify({ dmp: 'bye' })}\n`);
+    child.stdin?.end(jsonLine({ dmp: 'bye' }));
     await new Promise<void>((done) => {
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
@@ -236,7 +262,7 @@ export class AdapterProcess {
           reject(e);
         },
       };
-      stdin.write(`${JSON.stringify(msg)}\n`);
+      stdin.write(jsonLine(msg));
     });
   }
 

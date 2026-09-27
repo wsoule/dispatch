@@ -255,6 +255,17 @@ describe('runConformance', () => {
     ).toContain('malformed');
   });
 
+  it('escapes U+2028 and U+2029 on the pipe and reads them back inside a line', async () => {
+    const report = await runConformance({
+      adapter: adapter('echo'),
+      claims: ['envelope'],
+      vectorsDir: fixture('vectors-separators'),
+    });
+    expect(report.vectors.map((v) => [v.id, v.outcome, v.reasons])).toEqual([
+      ['env.separators.echo', 'pass', []],
+    ]);
+  });
+
   it('an adapter that exits after hello fails the next vector without crashing the runner', async () => {
     const report = await runConformance({
       adapter: adapter('exit-after-hello'),
