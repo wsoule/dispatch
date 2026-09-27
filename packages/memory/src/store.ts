@@ -116,6 +116,16 @@ export interface MemoryStore {
   proposalByOrigin(origin: string): MemoryProposal | null;
   listProposals(filter?: { states?: ProposalState[] }): MemoryProposal[];
   countOpenProposals(): number;
+  /** Entries of `scopes` whose content hash is `hash`, in any state. */
+  entriesByContentHash(
+    hash: string,
+    scopes: readonly MemoryScope[]
+  ): MemoryEntry[];
+  /** Proposals whose content hash is `hash`, in any state. */
+  proposalsByContentHash(hash: string): MemoryProposal[];
+  openRetireFor(target: string): MemoryProposal | null;
+  /** Proposals `author` made after `sinceIso`, except `ledger:` and `sync:` origins. */
+  countProposalsBy(author: Address, sinceIso: string): number;
   manifest(lineage: string): ManifestRow[];
   /** Replaces every row of `lineage` in one transaction. */
   replaceManifest(lineage: string, rows: readonly ManifestRow[]): void;

@@ -93,14 +93,17 @@ export { MemoryEngine } from './engine.js';
 export type {
   EditInput,
   EntryView,
+  GateAnswer,
   IndexRequest,
   ListQuery,
+  ProposalView,
   RankedIndex,
   ReadResult,
   SaveInput,
   SaveResult,
   SearchQuery,
   SearchResult,
+  SubmitProposalInput,
 } from './engine.js';
 export {
   CLAUDE_INDEX_HEADER,

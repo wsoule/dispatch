@@ -1,15 +1,22 @@
 import { untrustedInline } from '@dispatch/core';
-import type { MemoryConfig } from '@dispatch/core';
+import type { MemoryConfig, PolicyRuling } from '@dispatch/core';
+import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { Address, Ref } from '@dispatch/protocol';
 
+import { normalizeTitle } from './contentHash.js';
 import { MemoryError } from './errors.js';
-import { parseMemoryRef } from './handle.js';
+import { memoryHandle, parseMemoryRef } from './handle.js';
 import type { MemoryHost, MemoryStores } from './host.js';
 import { cutUtf8 } from './limits.js';
 import { queryTerms, relevanceTerms } from './query.js';
 import { compareRank, rankEntries, reaches, specificity } from './rank.js';
 import type { RankContext, Ranked } from './rank.js';
-import { createMemoryIds, insertFresh, newMemoryEntry } from './records.js';
+import {
+  createMemoryIds,
+  insertFresh,
+  newMemoryEntry,
+  newProposal,
+} from './records.js';
 import { renderIndex } from './render.js';
 import type { IndexVariant, RenderedIndex } from './render.js';
 import type { SearchMode } from './schema.js';
@@ -19,10 +26,14 @@ import type {
   DisplayState,
   MemoryEntry,
   MemoryKind,
+  MemoryProposal,
   MemoryScope,
   MemoryTrust,
+  PolicyDecision,
   Principal,
   ProposalAction,
+  ProposalContent,
+  ProposalState,
   Revision,
   RevisionCause,
   SharedScope,
@@ -36,6 +47,7 @@ import {
 import type { ValidMemoryInput } from './validate.js';
 import {
   personalIdentityFor,
+  proposalVisible,
   refuseA2A,
   sharedScopesFor,
 } from './visibility.js';
@@ -135,6 +147,52 @@ interface ProposeInput {
   origin?: string | null;
 }
 
+// A proposal from an in-process caller (amendments, ledger rows, ingest),
+// whatever the principal's tier.
+export interface SubmitProposalInput {
+  action: ProposalAction;
+  scope: SharedScope;
+  content?: ValidMemoryInput;
+  target?: string;
+  baseRev?: number;
+  reason?: string;
+  origin?: string;
+}
+
+// A proposal with its target as proposed against (`base`) and as it is now.
+export interface ProposalView {
+  proposal: MemoryProposal;
+  base: EntryView | null;
+  current: EntryView | null;
+}
+
+// A memory gate's answer as the daemon's gate effect hands it over.
+export interface GateAnswer {
+  proposalId: string;
+  gateId: string;
+  choice: 'approve' | 'reject';
+  by: Address;
+  reason: string;
+  expired: boolean;
+}
+
+interface Approval {
+  decidedBy: Address | null;
+  decidedByPolicy: PolicyDecision | null;
+}
+
+// What approving a proposal did: the proposal as approved and the entries it wrote.
+interface Applied {
+  proposal: MemoryProposal;
+  created: MemoryEntry | null;
+  retired: MemoryEntry | null;
+}
+
+type AnswerOutcome =
+  | { kind: 'skipped'; proposal: MemoryProposal | null }
+  | { kind: 'approved'; applied: Applied }
+  | { kind: 'closed'; proposal: MemoryProposal };
+
 interface Located {
   entry: MemoryEntry;
   store: MemoryStore;
@@ -160,6 +218,8 @@ const clamp = (value: number | undefined, fallback: number, max: number) =>
   Math.min(Math.max(1, value ?? fallback), max);
 
 const HOUR_MS = 3_600_000;
+// How long a rejection keeps an agent from proposing the same lesson again.
+const REJECTION_HOLD_MS = 30 * 24 * HOUR_MS;
 const ACTIVITY_LIMIT = 200;
 // Revisions that spend a run's or agent's hourly personal-write budget.
 const RATED_CAUSES: readonly RevisionCause[] = [
@@ -175,6 +235,23 @@ const isDecider = (principal: Principal): boolean =>
 // Trust is never raised by an agent: only a human principal writes `human`.
 const trustOf = (principal: Principal): MemoryTrust =>
   principal.kind === 'human' ? 'human' : 'agent';
+
+const runIdOf = (principal: Principal): string | null =>
+  principal.kind === 'run' ? principal.address.slice('run:'.length) : null;
+
+// Ledger-import and sync proposals are bounded by what arrives, not by what an agent asks.
+const isExemptOrigin = (origin: string | null): boolean =>
+  origin !== null &&
+  (origin.startsWith('ledger:') || origin.startsWith('sync:'));
+
+const toProposalContent = (valid: ValidMemoryInput): ProposalContent => ({
+  kind: valid.kind,
+  title: valid.title,
+  body: valid.body,
+  refs: valid.refs,
+  epic: valid.epic,
+  appliesTo: valid.appliesTo,
+});
 
 function sharedScope(scope: unknown): SharedScope {
   if (scope === 'project' || scope === 'team') return scope;
@@ -201,6 +278,19 @@ function checkOrigin(store: MemoryStore, origin: string | null): void {
     throw new MemoryError(
       'conflict',
       `origin: ${existing.handle} already holds ${origin}`,
+      'origin'
+    );
+}
+
+// A proposal's origin must be free among entries and proposals alike.
+function checkProposalOrigin(store: MemoryStore, origin: string | null): void {
+  checkOrigin(store, origin);
+  if (origin === null) return;
+  const existing = store.proposalByOrigin(origin);
+  if (existing !== null)
+    throw new MemoryError(
+      'conflict',
+      `origin: ${existing.id} already holds ${origin}`,
       'origin'
     );
 }
@@ -559,6 +649,7 @@ export class MemoryEngine {
     const { entry, store } = this.resolve(viewer, ref);
     this.mayManage(viewer, entry, 'undo');
     const by = principal.address;
+    const revived: MemoryEntry[] = [];
     const next = store.transaction(() => {
       if (entry.rev === 1) {
         const undone = this.revise(
@@ -571,12 +662,14 @@ export class MemoryEngine {
         const replaced =
           entry.supersedes === null ? null : store.getEntry(entry.supersedes);
         if (replaced !== null && replaced.supersededBy === entry.id)
-          this.revise(
-            store,
-            replaced,
-            { status: 'active', statusReason: null, supersededBy: null },
-            by,
-            'undo'
+          revived.push(
+            this.revise(
+              store,
+              replaced,
+              { status: 'active', statusReason: null, supersededBy: null },
+              by,
+              'undo'
+            )
           );
         return undone;
       }
@@ -600,6 +693,9 @@ export class MemoryEngine {
       );
     });
     this.changedFor(entry);
+    if (entry.status === 'retired' && next.status === 'active')
+      revived.push(next);
+    for (const back of revived) this.announceIfActivated(back, null);
     return view(next);
   }
 
@@ -684,6 +780,7 @@ export class MemoryEngine {
       'save'
     );
     this.deps.host.changed({ scope: target, id: copy.id });
+    this.announceIfActivated(copy, null);
     return { status: 'active', id: copy.id, handle: copy.handle };
   }
 
@@ -712,6 +809,175 @@ export class MemoryEngine {
     return this.personalStoreFor(viewer)
       .activitySince(new Date(sinceMs).toISOString(), ACTIVITY_LIMIT)
       .reverse();
+  }
+
+  // Deciders see every proposal; anyone else only their own (proposalVisible).
+  proposals(principal: Principal, state?: ProposalState): MemoryProposal[] {
+    const viewer = this.viewer(principal);
+    return this.deps.stores
+      .shared()
+      .listProposals(state === undefined ? {} : { states: [state] })
+      .filter((p) => proposalVisible(viewer, p));
+  }
+
+  proposal(principal: Principal, id: string): ProposalView {
+    const viewer = this.viewer(principal);
+    const store = this.deps.stores.shared();
+    const proposal = store.getProposal(id);
+    if (proposal === null || !proposalVisible(viewer, proposal))
+      throw new MemoryError('not-found', `no proposal ${id} you can see`, 'id');
+    if (proposal.target === null)
+      return { proposal, base: null, current: null };
+    const current = store.getEntry(proposal.target);
+    const base = store
+      .revisions(proposal.target)
+      .find((r) => r.rev === proposal.baseRev);
+    return {
+      proposal,
+      base: base === undefined ? null : view(base.snapshot),
+      current: current === null ? null : view(current),
+    };
+  }
+
+  // Always a proposal, even from a decider; the caller's content is validated here.
+  async submitProposal(
+    principal: Principal,
+    input: SubmitProposalInput
+  ): Promise<SaveResult> {
+    const viewer = this.viewer(principal);
+    const scope = sharedScope(input.scope);
+    const { action } = input;
+    if ((action === 'retire') !== (input.content === undefined))
+      throw new MemoryError(
+        'invalid',
+        action === 'retire'
+          ? 'content: a retire carries no content'
+          : `content: required to ${action}`,
+        'content'
+      );
+    if ((action === 'add') !== (input.target === undefined))
+      throw new MemoryError(
+        'invalid',
+        action === 'add'
+          ? 'target: an add names no target'
+          : `target: required to ${action}`,
+        'target'
+      );
+    if (input.content !== undefined && input.content.scope !== scope)
+      throw new MemoryError(
+        'invalid',
+        `content.scope: expected ${scope}`,
+        'content.scope'
+      );
+    const valid =
+      input.content === undefined
+        ? undefined
+        : validateMemoryInput(input.content);
+    const target =
+      input.target === undefined
+        ? undefined
+        : checkTarget(
+            this.findVisible(viewer, input.target),
+            scope,
+            'target',
+            input.target
+          );
+    if (action === 'retire' && input.reason === undefined)
+      throw new MemoryError('invalid', 'reason: required to retire', 'reason');
+    return await this.propose(viewer, {
+      action,
+      scope,
+      valid,
+      target,
+      baseRev:
+        target === undefined
+          ? undefined
+          : (checkBaseRev(target, input.baseRev) ?? target.rev),
+      reason:
+        input.reason === undefined ? undefined : validateReason(input.reason),
+      origin: input.origin ?? null,
+    });
+  }
+
+  // The memory gate's effect. Only an open proposal whose recorded gate is
+  // unset or this one changes, so a replayed or foreign answer is skipped.
+  applyGateAnswer(answer: GateAnswer): {
+    outcome: 'applied' | 'skipped';
+    proposal: MemoryProposal | null;
+  } {
+    const store = this.deps.stores.shared();
+    const done = store.transaction((): AnswerOutcome => {
+      const p = store.getProposal(answer.proposalId);
+      if (
+        p === null ||
+        p.state !== 'open' ||
+        (p.gate !== null && p.gate !== answer.gateId)
+      )
+        return { kind: 'skipped', proposal: p };
+      if (answer.choice === 'approve' && !answer.expired)
+        return {
+          kind: 'approved',
+          applied: this.applyProposal(store, p, answer.gateId, {
+            decidedBy: answer.by,
+            decidedByPolicy: null,
+          }),
+        };
+      const closed: MemoryProposal = {
+        ...p,
+        state: answer.expired ? 'expired' : 'rejected',
+        gate: answer.gateId,
+        decidedBy: answer.by,
+        decisionReason: answer.reason === '' ? null : answer.reason,
+        decidedAt: this.now(),
+      };
+      store.updateProposal(closed);
+      return { kind: 'closed', proposal: closed };
+    });
+    if (done.kind === 'skipped')
+      return { outcome: 'skipped', proposal: done.proposal };
+    if (done.kind === 'approved') {
+      this.afterApply(done.applied);
+      return { outcome: 'applied', proposal: done.applied.proposal };
+    }
+    if (done.proposal.state === 'rejected')
+      this.deps.host.proposalRejected(done.proposal);
+    return { outcome: 'applied', proposal: done.proposal };
+  }
+
+  // Open proposals created before `cutoffIso`, oldest first, for expiry.
+  openProposalsOlderThan(cutoffIso: string): MemoryProposal[] {
+    return this.deps.stores
+      .shared()
+      .listProposals({ states: ['open'] })
+      .filter((p) => p.createdAt < cutoffIso);
+  }
+
+  // Expires an open proposal that never got a gate, so no answer can close it.
+  expireUngated(proposalId: string): void {
+    const store = this.deps.stores.shared();
+    store.transaction(() => {
+      const p = store.getProposal(proposalId);
+      if (p === null || p.state !== 'open' || p.gate !== null) return;
+      store.updateProposal({
+        ...p,
+        state: 'expired',
+        decidedBy: SYSTEM_ADDRESS,
+        decidedAt: this.now(),
+      });
+    });
+  }
+
+  // Raises the gate of every open proposal left without one by a crash
+  // between storing it and raising it; raiseGate finds a gate sent before.
+  async recover(): Promise<{ raised: number }> {
+    const store = this.deps.stores.shared();
+    let raised = 0;
+    for (const p of store.listProposals({ states: ['open'] })) {
+      if (p.gate !== null) continue;
+      this.recordGate(store, p.id, await this.deps.host.raiseGate(p));
+      raised++;
+    }
+    return { raised };
   }
 
   private now(): string {
@@ -833,18 +1099,302 @@ export class MemoryEngine {
       return created;
     });
     this.deps.host.changed({ scope, id: entry.id });
+    this.announceIfActivated(entry, null);
     return { status: 'active', id: entry.id, handle: entry.handle };
   }
 
-  // Shared writes that need a decision; refused until proposals exist.
-  private propose(_viewer: Viewer, _input: ProposeInput): Promise<SaveResult> {
-    return Promise.reject(
-      new MemoryError(
-        'forbidden',
-        'shared memory from you is a proposal, and this build takes no proposals yet',
-        'scope'
-      )
+  // An authorized shared write needing a decision: de-duplicate, rate-limit,
+  // store, consult policy outside the transaction, then apply or raise the gate.
+  private async propose(
+    viewer: Viewer,
+    input: ProposeInput
+  ): Promise<SaveResult> {
+    const store = this.deps.stores.shared();
+    const { principal } = viewer;
+    const now = this.now();
+    const origin = input.origin ?? null;
+    const draft = newProposal(
+      {
+        action: input.action,
+        scope: input.scope,
+        target: input.target?.id ?? null,
+        baseRev: input.baseRev ?? input.target?.rev ?? null,
+        content:
+          input.valid === undefined ? null : toProposalContent(input.valid),
+        reason: input.reason ?? null,
+        author: principal.address,
+        authorTrust: principal.kind === 'human' ? 'human' : 'agent',
+        operator: viewer.operator?.human ?? null,
+        runId: runIdOf(principal),
+        taskId: this.deps.host.taskOfPrincipal(principal),
+        origin,
+      },
+      this.ids.proposal(Date.parse(now)),
+      now
     );
+    checkProposalOrigin(store, origin);
+    this.checkDuplicate(store, draft, now);
+    if (!isExemptOrigin(origin))
+      this.checkProposalLimits(store, principal, now);
+    const stored: MemoryProposal = {
+      ...draft,
+      matchedPersonal: this.matchesOperatorPersonal(viewer, draft),
+    };
+    store.transaction(() => store.insertProposal(stored));
+    const ruling = this.ruleOn(stored);
+    if (ruling.mode === 'auto' && !stored.matchedPersonal) {
+      const applied = store.transaction(() =>
+        this.applyProposal(store, stored, null, {
+          decidedBy: null,
+          decidedByPolicy: {
+            rung: ruling.rung,
+            authorizedBy: ruling.authorizedBy,
+          },
+        })
+      );
+      this.deps.host.recordPolicyApproval(applied.proposal, ruling);
+      this.afterApply(applied);
+      return this.settled(store, stored.id);
+    }
+    this.recordGate(store, stored.id, await this.deps.host.raiseGate(stored));
+    return this.settled(store, stored.id);
+  }
+
+  // A ruling that throws leaves the proposal for a human.
+  private ruleOn(proposal: MemoryProposal): PolicyRuling {
+    try {
+      return this.deps.host.rule(proposal);
+    } catch (err) {
+      console.error('memory: policy ruling failed; the proposal waits', err);
+      return { mode: 'block' };
+    }
+  }
+
+  // An answer may have landed first and recorded its own gate, so only an
+  // open proposal still without one takes this gate id.
+  private recordGate(store: MemoryStore, id: string, gate: string): void {
+    store.transaction(() => {
+      const current = store.getProposal(id);
+      if (current !== null && current.state === 'open' && current.gate === null)
+        store.updateProposal({ ...current, gate });
+    });
+  }
+
+  // What a proposal came to, read back from the store rather than the host.
+  private settled(store: MemoryStore, id: string): SaveResult {
+    const p = store.getProposal(id);
+    if (p === null)
+      throw new MemoryError('not-found', `no proposal ${id}`, 'proposal');
+    const entry =
+      p.state === 'approved' && p.result !== null
+        ? store.getEntry(p.result)
+        : null;
+    return entry === null
+      ? { status: 'proposed', proposal: p.id, gate: p.gate }
+      : { status: 'active', id: entry.id, handle: entry.handle };
+  }
+
+  // One lesson, one row: an equal active or stale entry, open proposal or
+  // rejection in the last 30 days refuses the draft, as does a second open retire.
+  private checkDuplicate(
+    store: MemoryStore,
+    draft: MemoryProposal,
+    now: string
+  ): void {
+    if (draft.action === 'retire') {
+      if (draft.target === null) return;
+      const open = store.openRetireFor(draft.target);
+      if (open !== null)
+        throw new MemoryError(
+          'conflict',
+          `retiring ${memoryHandle(draft.target)} is already proposed as ${open.id}`,
+          'id'
+        );
+      return;
+    }
+    if (draft.contentHash === null) return;
+    const entry = store
+      .entriesByContentHash(draft.contentHash, [draft.scope])
+      .find((e) => displayState(e) !== 'retired');
+    if (entry !== undefined)
+      throw new MemoryError(
+        'conflict',
+        `the same lesson is already ${entry.handle}`,
+        'title'
+      );
+    const same = store
+      .proposalsByContentHash(draft.contentHash)
+      .filter((p) => p.scope === draft.scope);
+    const open = same.find((p) => p.state === 'open');
+    if (open !== undefined)
+      throw new MemoryError(
+        'conflict',
+        `the same lesson is already proposed as ${open.id}`,
+        'title'
+      );
+    const cutoff = new Date(Date.parse(now) - REJECTION_HOLD_MS).toISOString();
+    const rejected = same
+      .filter(
+        (p) =>
+          p.state === 'rejected' && p.decidedAt !== null && p.decidedAt > cutoff
+      )
+      .at(-1);
+    if (rejected === undefined) return;
+    const why =
+      rejected.decisionReason === null
+        ? ''
+        : `: ${untrustedInline(rejected.decisionReason)}`;
+    throw new MemoryError(
+      'conflict',
+      `the same lesson was rejected by ${rejected.decidedBy ?? SYSTEM_ADDRESS} on ${(rejected.decidedAt ?? now).slice(0, 10)}${why}`,
+      'title'
+    );
+  }
+
+  // Per run or agent per hour, and per project while open.
+  private checkProposalLimits(
+    store: MemoryStore,
+    principal: Principal,
+    now: string
+  ): void {
+    const { proposalsPerHour, maxOpenProposals } = this.deps.config();
+    const since = new Date(Date.parse(now) - HOUR_MS).toISOString();
+    if (
+      principal.kind !== 'human' &&
+      store.countProposalsBy(principal.address, since) >= proposalsPerHour
+    )
+      throw new MemoryError(
+        'limited',
+        `at most ${proposalsPerHour} memory proposals per hour`,
+        'scope'
+      );
+    if (store.countOpenProposals() >= maxOpenProposals)
+      throw new MemoryError(
+        'limited',
+        `this project already has ${maxOpenProposals} open memory proposals; wait for decisions`,
+        'scope'
+      );
+  }
+
+  // Content equal to one of the operator's personal entries never auto-approves;
+  // a personal store that will not open counts as a match.
+  private matchesOperatorPersonal(
+    viewer: Viewer,
+    draft: MemoryProposal
+  ): boolean {
+    const identity = personalIdentityFor(viewer);
+    if (identity === null || draft.content === null) return false;
+    let personal: MemoryStore;
+    try {
+      personal = this.deps.stores.personal(identity);
+    } catch (err) {
+      if (err instanceof MemoryError) return true;
+      throw err;
+    }
+    const live = (e: MemoryEntry) => displayState(e) !== 'retired';
+    if (
+      draft.contentHash !== null &&
+      personal.entriesByContentHash(draft.contentHash, ['personal']).some(live)
+    )
+      return true;
+    const title = normalizeTitle(draft.content.title);
+    return personal
+      .listEntries({ scopes: ['personal'], states: ['active', 'stale'] })
+      .some((e) => normalizeTitle(e.title) === title);
+  }
+
+  // Approval's effect: add creates the entry, supersede also retires a target
+  // still active, retire retires it; the proposal records what it produced.
+  private applyProposal(
+    store: MemoryStore,
+    p: MemoryProposal,
+    gate: string | null,
+    decision: Approval
+  ): Applied {
+    const now = this.now();
+    const by = decision.decidedBy ?? SYSTEM_ADDRESS;
+    // A rung is not a review, so only a human decision raises trust.
+    const trust: MemoryTrust =
+      decision.decidedByPolicy !== null
+        ? 'agent'
+        : p.authorTrust === 'human'
+          ? 'human'
+          : 'confirmed';
+    const content = p.action === 'retire' ? null : p.content;
+    const created =
+      content === null
+        ? null
+        : insertFresh(
+            store,
+            this.ids,
+            Date.parse(now),
+            (id) =>
+              newMemoryEntry(
+                {
+                  ...content,
+                  scope: p.scope,
+                  author: p.author,
+                  trust,
+                  origin: p.origin,
+                  proposal: p.id,
+                  decidedBy: decision.decidedBy,
+                  decidedByPolicy: decision.decidedByPolicy,
+                  supersedes: p.action === 'supersede' ? p.target : null,
+                },
+                id,
+                now
+              ),
+            by,
+            'gate'
+          );
+    const target =
+      p.action === 'add' || p.target === null ? null : store.getEntry(p.target);
+    const retired =
+      target === null || target.status !== 'active'
+        ? null
+        : this.revise(
+            store,
+            target,
+            created === null
+              ? { status: 'retired', statusReason: 'forgotten' }
+              : {
+                  status: 'retired',
+                  statusReason: 'superseded',
+                  supersededBy: created.id,
+                },
+            by,
+            'gate'
+          );
+    const proposal: MemoryProposal = {
+      ...p,
+      state: 'approved',
+      gate: gate ?? p.gate,
+      result: created?.id ?? p.target,
+      decidedBy: decision.decidedBy,
+      decidedByPolicy: decision.decidedByPolicy,
+      decidedAt: now,
+    };
+    store.updateProposal(proposal);
+    return { proposal, created, retired };
+  }
+
+  // Tells listeners what an approval changed; a new shared hazard or
+  // constraint also reaches live runs other than its author's.
+  private afterApply({ proposal, created, retired }: Applied): void {
+    for (const entry of [created, retired])
+      if (entry !== null)
+        this.deps.host.changed({ scope: proposal.scope, id: entry.id });
+    if (created !== null) this.announceIfActivated(created, proposal.runId);
+  }
+
+  // Live runs hear of every shared hazard or constraint that becomes active.
+  private announceIfActivated(
+    entry: MemoryEntry,
+    authorRun: string | null
+  ): void {
+    if (entry.scope === 'personal' || displayState(entry) !== 'active') return;
+    if (entry.kind !== 'hazard' && entry.kind !== 'constraint') return;
+    this.deps.host.entryActivated(entry, authorRun);
   }
 
   // Writes `changes` onto `entry` as its next revision and returns the result.
@@ -958,10 +1508,7 @@ export class MemoryEngine {
       at,
       kind,
       memoryId,
-      runId:
-        principal.kind === 'run'
-          ? principal.address.slice('run:'.length)
-          : null,
+      runId: runIdOf(principal),
       summary,
     });
   }
@@ -1096,10 +1643,8 @@ export class MemoryEngine {
     principal: Principal,
     via: 'search' | 'read'
   ): void {
-    const runId =
-      principal.kind === 'run' ? principal.address.slice('run:'.length) : null;
     located.store.recordRecall(located.entry.id, {
-      runId,
+      runId: runIdOf(principal),
       via,
       at: this.now(),
       countsAsUse: true,

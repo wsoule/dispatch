@@ -21,6 +21,7 @@ import type {
   DisplayState,
   MemoryEntry,
   MemoryProposal,
+  MemoryScope,
   ProposalState,
   RecallVia,
   Revision,
@@ -588,6 +589,47 @@ export class SqliteMemoryStore implements MemoryStore {
       queryOne<{ n: number }>(
         this.db,
         "SELECT COUNT(*) AS n FROM proposals WHERE state = 'open'"
+      )?.n ?? 0
+    );
+  }
+
+  entriesByContentHash(
+    hash: string,
+    scopes: readonly MemoryScope[]
+  ): MemoryEntry[] {
+    if (scopes.length === 0) return [];
+    return queryAll<EntryRow>(
+      this.db,
+      `SELECT * FROM entries e WHERE e.content_hash = ? AND e.scope IN (${scopes.map(() => '?').join(', ')}) ORDER BY e.seq`,
+      [hash, ...scopes]
+    ).map(entryFromRow);
+  }
+
+  proposalsByContentHash(hash: string): MemoryProposal[] {
+    return queryAll<ProposalRow>(
+      this.db,
+      'SELECT * FROM proposals WHERE content_hash = ? ORDER BY created_at, id',
+      [hash]
+    ).map(proposalFromRow);
+  }
+
+  openRetireFor(target: string): MemoryProposal | null {
+    const row = queryOne<ProposalRow>(
+      this.db,
+      "SELECT * FROM proposals WHERE target = ? AND action = 'retire' AND state = 'open' ORDER BY created_at, id LIMIT 1",
+      [target]
+    );
+    return row === undefined ? null : proposalFromRow(row);
+  }
+
+  // Ledger-import and sync proposals are bounded by what arrives, so they never count.
+  countProposalsBy(author: Address, sinceIso: string): number {
+    return (
+      queryOne<{ n: number }>(
+        this.db,
+        `SELECT COUNT(*) AS n FROM proposals WHERE author = ? AND created_at > ?
+         AND (origin IS NULL OR (origin NOT GLOB 'ledger:*' AND origin NOT GLOB 'sync:*'))`,
+        [author, sinceIso]
       )?.n ?? 0
     );
   }

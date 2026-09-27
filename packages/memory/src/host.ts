@@ -1,7 +1,11 @@
+import type { PolicyRuling } from '@dispatch/core';
+
 import type { MemoryStore } from './store.js';
 import type {
   IndexContext,
   MemoryChange,
+  MemoryEntry,
+  MemoryProposal,
   Operator,
   Principal,
 } from './types.js';
@@ -30,4 +34,17 @@ export interface MemoryHost {
   changed(change: MemoryChange): void;
   // The clock every recall and write is stamped with.
   now(): Date;
+  // Core's ruling for the memory gate, from the source task's risk.
+  rule(proposal: MemoryProposal): PolicyRuling;
+  // Finds the proposal's open gate or sends one; returns the gate message id.
+  raiseGate(proposal: MemoryProposal): Promise<string>;
+  // Writes the receipt for a proposal policy approved without a gate.
+  recordPolicyApproval(
+    proposal: MemoryProposal,
+    ruling: Extract<PolicyRuling, { mode: 'auto' }>
+  ): void;
+  // A shared hazard or constraint became active; `authorRun` is not told.
+  entryActivated(entry: MemoryEntry, authorRun: string | null): void;
+  // A human rejected the proposal, so its author run can be told.
+  proposalRejected(proposal: MemoryProposal): void;
 }

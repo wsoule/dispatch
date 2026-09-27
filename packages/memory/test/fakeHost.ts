@@ -1,4 +1,5 @@
 import { DEFAULT_MEMORY } from '@dispatch/core';
+import type { PolicyRuling } from '@dispatch/core';
 
 import { MemoryEngine } from '../src/engine.js';
 import { MemoryError } from '../src/errors.js';
@@ -8,17 +9,24 @@ import { SqliteMemoryStore } from '../src/sqliteStore.js';
 import type {
   IndexContext,
   MemoryChange,
+  MemoryEntry,
+  MemoryProposal,
   Operator,
   Principal,
 } from '../src/types.js';
 
-// A host whose world is plain maps; `changes` records every changed() call.
+// A host whose world is plain maps; each list records the calls it saw.
 export class FakeMemoryHost implements MemoryHost {
   operators = new Map<string, Operator>();
   tasks = new Map<string, IndexContext>();
   runTasks = new Map<string, string>();
   changes: MemoryChange[] = [];
   clock = new Date('2026-09-25T10:00:00.000Z');
+  ruling: PolicyRuling = { mode: 'block' };
+  gates: MemoryProposal[] = [];
+  approvals: { proposal: MemoryProposal; rung: number }[] = [];
+  activated: { entry: MemoryEntry; authorRun: string | null }[] = [];
+  rejected: MemoryProposal[] = [];
 
   operatorOf(principal: Principal): Operator | null {
     return this.operators.get(principal.address) ?? null;
@@ -39,6 +47,25 @@ export class FakeMemoryHost implements MemoryHost {
   }
   now(): Date {
     return this.clock;
+  }
+  rule(): PolicyRuling {
+    return this.ruling;
+  }
+  raiseGate(p: MemoryProposal): Promise<string> {
+    this.gates.push(p);
+    return Promise.resolve(`m-gate-${this.gates.length}`);
+  }
+  recordPolicyApproval(
+    p: MemoryProposal,
+    r: Extract<PolicyRuling, { mode: 'auto' }>
+  ): void {
+    this.approvals.push({ proposal: p, rung: r.rung });
+  }
+  entryActivated(entry: MemoryEntry, authorRun: string | null): void {
+    this.activated.push({ entry, authorRun });
+  }
+  proposalRejected(p: MemoryProposal): void {
+    this.rejected.push(p);
   }
 }
 

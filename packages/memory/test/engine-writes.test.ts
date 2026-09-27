@@ -206,28 +206,22 @@ describe('shared writes', () => {
     expect(t.host.changes).toContainEqual({ scope: 'team', id: out.id });
   });
 
-  it('anyone else is sent to a proposal (refused until proposals exist)', async () => {
+  it('anyone else is sent to a proposal', async () => {
     const t = setup();
-    expect(
-      await code(
-        t.engine.save(RUN, {
-          scope: 'team',
-          kind: 'hazard',
-          title: 't',
-          body: 'b',
-        })
-      )
-    ).toBe('forbidden');
-    expect(
-      await code(
-        t.engine.save(ADA_LOW, {
-          scope: 'project',
-          kind: 'fact',
-          title: 't',
-          body: 'b',
-        })
-      )
-    ).toBe('forbidden');
+    const fromRun = await t.engine.save(RUN, {
+      scope: 'team',
+      kind: 'hazard',
+      title: 't',
+      body: 'b',
+    });
+    const fromAda = await t.engine.save(ADA_LOW, {
+      scope: 'project',
+      kind: 'fact',
+      title: 't',
+      body: 'b',
+    });
+    expect([fromRun.status, fromAda.status]).toEqual(['proposed', 'proposed']);
+    expect(t.shared.countEntries()).toBe(0);
   });
 
   it('promotes a personal entry by copying it; the source stays', async () => {
@@ -294,10 +288,10 @@ describe('write edges', () => {
       () => t.engine.hardDelete(ADA_LOW, e.id),
     ])
       expect(await code(op)).toBe('forbidden');
-    expect(await code(t.engine.edit(RUN, e.id, { body: 'x' }))).toBe(
-      'forbidden'
+    expect((await t.engine.edit(RUN, e.id, { body: 'x' })).status).toBe(
+      'proposed'
     );
-    expect(await code(t.engine.forget(RUN, e.id, 'stale'))).toBe('forbidden');
+    expect((await t.engine.forget(RUN, e.id, 'stale')).status).toBe('proposed');
     await t.engine.forget(ADA, e.id, 'fixed upstream');
     expect(t.shared.getEntry(e.id)).toMatchObject({
       status: 'retired',
