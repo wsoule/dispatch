@@ -162,15 +162,54 @@ describe('Composer', () => {
     type('Which cart?');
     press('Enter');
     await waitFor(() => expect(onSent).toHaveBeenCalledWith(SENT));
-    expect(onSend).toHaveBeenCalledWith({
-      to: ['task:t-1a2b3c'],
-      body: 'Which cart?',
-      kind: 'question',
-      urgent: false,
-      wake: true,
-    });
+    expect(onSend).toHaveBeenCalledWith(
+      {
+        to: ['task:t-1a2b3c'],
+        body: 'Which cart?',
+        kind: 'question',
+        urgent: false,
+        wake: true,
+      },
+      expect.any(String)
+    );
     expect(box().value).toBe('');
     expect(screen.queryByText('task:t-1a2b3c')).toBeNull();
+  });
+
+  it('keeps one idempotency key per draft: resent unchanged after a lost response, new after an edit or a send', async () => {
+    const onSend = mock((_state: ComposeState, _key: string) =>
+      Promise.resolve(SENT)
+    );
+    onSend.mockImplementationOnce(() =>
+      Promise.reject(new TypeError('Failed to fetch'))
+    );
+    render(
+      <Composer
+        known={KNOWN}
+        initialTo={['task:t-1a2b3c']}
+        disabledReason={null}
+        label={label}
+        onSend={onSend}
+      />
+    );
+    const send = async (calls: number) => {
+      press('Enter');
+      await waitFor(() => expect(onSend).toHaveBeenCalledTimes(calls));
+    };
+    type('ship it');
+    await send(1);
+    await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+    // Unchanged: the same key, so the daemon replays a send that landed.
+    await send(2);
+    await waitFor(() => expect(box().value).toBe(''));
+    type('ship it');
+    await send(3);
+    fireEvent.click(screen.getByRole('switch', { name: 'Urgent' }));
+    type('ship it now');
+    await send(4);
+    const keys = onSend.mock.calls.map((call) => call[1]);
+    expect(keys[1]).toBe(keys[0]);
+    expect(new Set(keys).size).toBe(3);
   });
 
   it('ties the recipient list to the text box, so the highlighted recipient is announced', () => {

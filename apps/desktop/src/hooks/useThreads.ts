@@ -16,7 +16,7 @@ import type {
 import { ApiError } from '@dispatch/client';
 import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { agentRosterKey, mutedAddresses } from '../lib/agentRoster';
 import type { ComposeState } from '../lib/composer';
@@ -373,9 +373,22 @@ export interface RunGateHandlers {
   ) => Promise<void>;
 }
 
+/** One Idempotency-Key per draft, which its text box renews after a send or an
+ *  edit: resending an unchanged draft after a lost response replays that send. */
+export function useDraftKey(): [key: string, renew: () => void] {
+  const [key, setKey] = useState(() => crypto.randomUUID());
+  const renew = useCallback(() => setKey(crypto.randomUUID()), []);
+  return [key, renew];
+}
+
 export interface ThreadActions {
-  send: (state: ComposeState) => Promise<SendResult>;
-  reply: (plan: ReplyPlan, body: string) => Promise<SendResult>;
+  /** Sends a draft under the key its text box holds (`useDraftKey`). */
+  send: (state: ComposeState, idempotencyKey: string) => Promise<SendResult>;
+  reply: (
+    plan: ReplyPlan,
+    body: string,
+    idempotencyKey: string
+  ) => Promise<SendResult>;
   answer: (
     message: Message,
     reply: { body: string; choice?: string }
@@ -410,17 +423,9 @@ export function useThreadActions(
     return ready(client);
   }, [access, client]);
 
-  // One Idempotency-Key per unsent draft: resending the same input after a
-  // lost response reuses it, so the daemon replays the first send.
-  const draftKeys = useRef(new Map<string, string>());
   const sendDraft = useCallback(
-    async (input: SendInput): Promise<SendResult> => {
-      const api = messenger();
-      const draft = JSON.stringify(input);
-      const key = draftKeys.current.get(draft) ?? crypto.randomUUID();
-      draftKeys.current.set(draft, key);
-      const result = await api.sendMessage(input, { idempotencyKey: key });
-      draftKeys.current.delete(draft);
+    async (input: SendInput, idempotencyKey: string): Promise<SendResult> => {
+      const result = await messenger().sendMessage(input, { idempotencyKey });
       refresh();
       return result;
     },
@@ -428,14 +433,15 @@ export function useThreadActions(
   );
 
   const send = useCallback(
-    (state: ComposeState): Promise<SendResult> => sendDraft(toSendInput(state)),
+    (state: ComposeState, idempotencyKey: string): Promise<SendResult> =>
+      sendDraft(toSendInput(state), idempotencyKey),
     [sendDraft]
   );
 
   // An answer goes as a keyed send, as the reply route would build it, so a
   // resend after a lost response replays rather than 409s.
   const reply = useCallback(
-    (plan: ReplyPlan, body: string): Promise<SendResult> =>
+    (plan: ReplyPlan, body: string, idempotencyKey: string) =>
       sendDraft(
         plan.kind === 'send'
           ? { to: plan.to, kind: 'message', body, replyTo: plan.replyTo }
@@ -444,7 +450,8 @@ export function useThreadActions(
               kind: 'answer',
               body,
               replyTo: plan.target.id,
-            }
+            },
+        idempotencyKey
       ),
     [sendDraft]
   );

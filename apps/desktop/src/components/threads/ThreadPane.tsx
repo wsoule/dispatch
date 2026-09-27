@@ -2,6 +2,7 @@ import type { Delivery, Message } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { useMemo, useState } from 'react';
 
+import { useDraftKey } from '../../hooks/useThreads';
 import type { ComposeProblem } from '../../lib/composer';
 import { problemText, sendProblem } from '../../lib/composer';
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
@@ -36,7 +37,12 @@ export interface ThreadPaneProps {
   onOpen: (action: RefAction) => void;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
   route: ReplyRoute;
-  onReply: (plan: ReplyPlan, body: string) => Promise<unknown>;
+  /** Sends under the reply draft's idempotency key, kept until a send or an edit. */
+  onReply: (
+    plan: ReplyPlan,
+    body: string,
+    idempotencyKey: string
+  ) => Promise<unknown>;
   onOverseerReply: (body: string) => Promise<void>;
   /** The Assistant is mid-turn or taking a message, so it would refuse another. */
   overseerBusy: boolean;
@@ -100,9 +106,10 @@ function ReplyBox({
   const [body, setBody] = useState('');
   const [problem, setProblem] = useState<ComposeProblem | null>(null);
   const [sending, setSending] = useState(false);
-  // A send whose response was lost may have landed, so resending the same
-  // text repeats its plan (and idempotency key) even if the thread moved on.
-  const [lost, setLost] = useState<{ plan: ReplyPlan; body: string } | null>(
+  const [draftKey, renewKey] = useDraftKey();
+  // A send whose response was lost may have landed, so resending the unedited
+  // draft repeats its plan and key even if the thread moved on.
+  const [lost, setLost] = useState<{ plan: ReplyPlan; key: string } | null>(
     null
   );
   if (!access.canMessage) {
@@ -130,23 +137,24 @@ function ReplyBox({
     );
   }
   const waiting = route === 'overseer' && overseerBusy;
-  const next = lost !== null && lost.body === body.trim() ? lost.plan : plan;
+  const next = lost !== null && lost.key === draftKey ? lost.plan : plan;
   const submit = async () => {
-    if (waiting) return;
+    if (waiting || (route === 'bus' && next === null)) return;
     const text = body.trim();
     setSending(true);
     setProblem(null);
     try {
       if (route === 'overseer') await onOverseerReply(text);
-      else if (next !== null) await onReply(next, text);
+      else if (next !== null) await onReply(next, text, draftKey);
       setBody('');
       setLost(null);
+      renewKey();
     } catch (err) {
       setProblem(sendProblem(err));
       // The daemon answering with an error means nothing landed.
       const mayHaveLanded = route === 'bus' && !(err instanceof ApiError);
       setLost(
-        mayHaveLanded && next !== null ? { plan: next, body: text } : null
+        mayHaveLanded && next !== null ? { plan: next, key: draftKey } : null
       );
     } finally {
       setSending(false);
@@ -166,6 +174,7 @@ function ReplyBox({
         onChange={(value) => {
           setBody(value);
           setProblem(null);
+          renewKey();
         }}
         onSubmit={() => void submit()}
         disabled={sending || waiting}

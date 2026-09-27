@@ -288,7 +288,7 @@ describe('useThreadActions', () => {
     expect(handlers.handleApprove).toHaveBeenCalledTimes(1);
   });
 
-  it('sends a draft as its send input, each with a fresh idempotency key', async () => {
+  it('sends a draft as its send input, under the idempotency key its draft holds', async () => {
     const { client, actions } = setup(DECIDER);
     const draft = {
       to: ['task:t-000001'],
@@ -297,8 +297,9 @@ describe('useThreadActions', () => {
       urgent: false,
       wake: true,
     };
-    await actions.send(draft);
-    await actions.send(draft);
+    await actions.send(draft, 'k-draft-1');
+    // The same text sent again as a new draft is a new message, not a replay.
+    await actions.send(draft, 'k-draft-2');
     const calls = client.sendMessage.mock.calls as unknown as [
       SendInput,
       { idempotencyKey: string },
@@ -310,52 +311,15 @@ describe('useThreadActions', () => {
       blocking: true,
       wake: 'request',
     });
-    const keys = calls.map(([, opts]) => opts.idempotencyKey);
-    expect(keys).toHaveLength(2);
-    expect(new Set(keys).size).toBe(2);
-  });
-
-  it('sends a draft again under its first idempotency key when the response was lost', async () => {
-    const { client, actions } = setup(DECIDER);
-    const lost = () => Promise.reject(new TypeError('Failed to fetch'));
-    const settled = (p: Promise<unknown>) =>
-      p.then(
-        () => 'sent',
-        () => 'failed'
-      );
-    const draft = {
-      to: ['task:t-000001'],
-      body: 'ship it',
-      kind: 'message' as const,
-      urgent: false,
-      wake: false,
-    };
-    client.sendMessage.mockImplementationOnce(lost);
-    expect(await settled(actions.send(draft))).toBe('failed');
-    expect(await settled(actions.send(draft))).toBe('sent');
-    const plan = {
-      kind: 'send' as const,
-      to: ['run:r-000001'],
-      replyTo: 'm-01',
-    };
-    client.sendMessage.mockImplementationOnce(lost);
-    expect(await settled(actions.reply(plan, 'noted'))).toBe('failed');
-    expect(await settled(actions.reply(plan, 'noted'))).toBe('sent');
-    const keys = (
-      client.sendMessage.mock.calls as unknown as [
-        SendInput,
-        { idempotencyKey: string },
-      ][]
-    ).map(([, opts]) => opts.idempotencyKey);
-    expect(keys).toHaveLength(4);
-    expect(keys[1]).toBe(keys[0]);
-    expect(keys[3]).toBe(keys[2]);
-    expect(keys[2]).not.toBe(keys[0]);
+    expect(calls.map(([, opts]) => opts.idempotencyKey)).toEqual([
+      'k-draft-1',
+      'k-draft-2',
+    ]);
   });
 
   it('answers the target of a reply plan, and sends a send plan as a plain message beside its replyTo, both keyed', async () => {
     const { client, actions } = setup(DECIDER);
-    await actions.reply({ kind: 'reply', target: msg('m-01') }, 'on it');
+    await actions.reply({ kind: 'reply', target: msg('m-01') }, 'on it', 'k-1');
     expect(client.sendMessage).toHaveBeenCalledWith(
       {
         to: ['run:r-000001'],
@@ -363,12 +327,13 @@ describe('useThreadActions', () => {
         body: 'on it',
         replyTo: 'm-01',
       },
-      { idempotencyKey: expect.any(String) }
+      { idempotencyKey: 'k-1' }
     );
     expect(client.replyToMessage).not.toHaveBeenCalled();
     await actions.reply(
       { kind: 'send', to: ['channel:general'], replyTo: 'm-01' },
-      'noted'
+      'noted',
+      'k-2'
     );
     expect(client.sendMessage).toHaveBeenCalledWith(
       {
@@ -377,7 +342,7 @@ describe('useThreadActions', () => {
         body: 'noted',
         replyTo: 'm-01',
       },
-      { idempotencyKey: expect.any(String) }
+      { idempotencyKey: 'k-2' }
     );
   });
 
@@ -390,17 +355,22 @@ describe('useThreadActions', () => {
       );
     expect(
       await outcome(
-        actions.send({
-          to: ['task:t-000001'],
-          body: 'hi',
-          kind: 'message',
-          urgent: false,
-          wake: false,
-        })
+        actions.send(
+          {
+            to: ['task:t-000001'],
+            body: 'hi',
+            kind: 'message',
+            urgent: false,
+            wake: false,
+          },
+          'k-1'
+        )
       )
     ).toBe('cannot message');
     expect(
-      await outcome(actions.reply({ kind: 'reply', target: msg('m-01') }, 'x'))
+      await outcome(
+        actions.reply({ kind: 'reply', target: msg('m-01') }, 'x', 'k-2')
+      )
     ).toBe('cannot message');
     expect(client.sendMessage).not.toHaveBeenCalled();
     expect(client.replyToMessage).not.toHaveBeenCalled();

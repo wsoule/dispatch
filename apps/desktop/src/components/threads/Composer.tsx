@@ -2,6 +2,7 @@ import type { SendResult } from '@dispatch/client';
 import type { KeyboardEvent } from 'react';
 import { useId, useMemo, useState } from 'react';
 
+import { useDraftKey } from '../../hooks/useThreads';
 import type {
   ComposeKind,
   ComposeProblem,
@@ -38,7 +39,8 @@ export interface ComposerProps {
   locked?: readonly string[];
   disabledReason: string | null;
   label: (address: string) => string;
-  onSend: (state: ComposeState) => Promise<SendResult>;
+  /** Sends the draft under its idempotency key, kept until a send or an edit. */
+  onSend: (state: ComposeState, idempotencyKey: string) => Promise<SendResult>;
   onSent?: (result: SendResult) => void;
 }
 
@@ -61,6 +63,7 @@ export function Composer({
   const [highlight, setHighlight] = useState<number | null>(null);
   const [problem, setProblem] = useState<ComposeProblem | null>(null);
   const [sending, setSending] = useState(false);
+  const [draftKey, renewKey] = useDraftKey();
 
   const mention = trailingMention(body);
   const query = mention?.query ?? null;
@@ -86,6 +89,7 @@ export function Composer({
     setTo((prev) =>
       prev.includes(outcome.address) ? prev : [...prev, outcome.address]
     );
+    renewKey();
     setBody(dropTrailingMention(body));
     setHighlight(null);
     setProblem(null);
@@ -128,7 +132,8 @@ export function Composer({
     setSending(true);
     setProblem(null);
     try {
-      const result = await onSend(state);
+      const result = await onSend(state, draftKey);
+      renewKey();
       setBody('');
       setTo([...initialTo]);
       setWakeChoice(null);
@@ -189,6 +194,7 @@ export function Composer({
         value={body}
         onChange={(value) => {
           setBody(value);
+          renewKey();
           setProblem(null);
           setHighlight(null);
         }}
@@ -198,9 +204,10 @@ export function Composer({
           label: label(address),
           locked: locked.includes(address),
         }))}
-        onRemoveReference={(id) =>
-          setTo((prev) => prev.filter((a) => a !== id))
-        }
+        onRemoveReference={(id) => {
+          setTo((prev) => prev.filter((a) => a !== id));
+          renewKey();
+        }}
         disabled={disabledReason !== null || sending}
         placeholder="Write a message… type @ to add a recipient"
         ariaLabel="New message"
@@ -213,15 +220,26 @@ export function Composer({
           label="Kind"
           options={KINDS}
           value={kind}
-          onChange={(id) =>
-            setKind(KINDS.find((k) => k.id === id)?.id ?? 'message')
-          }
+          onChange={(id) => {
+            setKind(KINDS.find((k) => k.id === id)?.id ?? 'message');
+            renewKey();
+          }}
         />
-        <Switch label="Urgent" checked={urgent} onCheckedChange={setUrgent} />
+        <Switch
+          label="Urgent"
+          checked={urgent}
+          onCheckedChange={(on) => {
+            setUrgent(on);
+            renewKey();
+          }}
+        />
         <Switch
           label="Wake if asleep"
           checked={wake}
-          onCheckedChange={setWakeChoice}
+          onCheckedChange={(on) => {
+            setWakeChoice(on);
+            renewKey();
+          }}
         />
       </div>
       {problem !== null && (
