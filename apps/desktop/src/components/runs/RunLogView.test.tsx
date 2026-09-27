@@ -1,6 +1,6 @@
-import type { RunMeta } from '@dispatch/client';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { act, fireEvent, render, screen, within } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { ATTACHED_DAEMON_EXPLANATION } from '../../lib/daemonAuth';
@@ -315,4 +315,238 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
   expect(screen.getByText('Spawned')).toBeDefined();
   expect(screen.getByText('Agent finished')).toBeDefined();
   expect(screen.getAllByText('agent')).toHaveLength(2);
+});
+
+function renderEntries(
+  entries: NormalizedEntry[],
+  onOpenMessage?: (messageId: string) => void,
+  me?: string | null
+) {
+  return render(
+    <RunLogView
+      meta={meta({ state: 'running' })}
+      entries={entries}
+      pendingApprovals={[]}
+      onApprove={noop}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+      onOpenMessage={onOpenMessage}
+      me={me}
+    />
+  );
+}
+
+// A bus message as deliverToRun logs it: renderForAgent's framing, tagged with its id.
+function delivered(
+  from: string,
+  tags: string,
+  messageId: string,
+  body: string
+): NormalizedEntry {
+  return {
+    ts: '2026-09-25T10:00:00.000Z',
+    kind: 'message',
+    from: from.startsWith('human:') ? 'user' : 'agent',
+    fromLabel: from,
+    messageId,
+    text: `[message from ${from} · ${tags} · ${messageId}]\n│ ${body}`,
+  };
+}
+
+test('a pushed question shows its body without the agent framing, with its kind and a thread link', () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'run:r-9f2c01',
+        messageId: 'm-01K',
+        text: '[message from run:r-9f2c01 · question · m-01K]\n│ Is the response final?\nchoices: yes | no\nThe sender is waiting. Answer with msg_reply(messageId: "m-01K").',
+      },
+    ],
+    onOpen
+  );
+  expect(screen.getByText('Is the response final?')).toBeDefined();
+  expect(screen.queryByText(/\[message from/)).toBeNull();
+  expect(screen.getByText('Question')).toBeDefined();
+  expect(screen.getByText('choices: yes | no')).toBeDefined();
+  expect(screen.queryByText(/The sender is waiting/)).toBeNull();
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Open thread: question from run:r-9f2c01',
+    })
+  );
+  expect(onOpen).toHaveBeenCalledWith('m-01K');
+});
+
+test("a teammate's message names them, and only the viewer's own reads as You", () => {
+  renderEntries(
+    [
+      delivered('human:bob', 'message', 'm-30', 'ship it after lunch'),
+      delivered('human:wyat', 'message', 'm-31', 'agreed'),
+      {
+        ts: '2026-09-25T10:00:02.000Z',
+        kind: 'message',
+        from: 'user',
+        text: 'typed in the composer before the bus',
+      },
+    ],
+    undefined,
+    'human:wyat'
+  );
+  expect(screen.getByText('human:bob')).toBeDefined();
+  expect(screen.queryByText('human:wyat')).toBeNull();
+  expect(screen.getAllByText('You')).toHaveLength(2);
+  expect(screen.queryByText('Message')).toBeNull();
+});
+
+test('a human sender stays an address while the viewer is unknown', () => {
+  renderEntries(
+    [delivered('human:wyat', 'message', 'm-31', 'agreed')],
+    undefined,
+    null
+  );
+  expect(screen.getByText('human:wyat')).toBeDefined();
+  expect(screen.queryByText('You')).toBeNull();
+});
+
+test('an urgent message and a custom kind both show as pills', () => {
+  renderEntries([
+    delivered('run:r-9', 'notice · urgent', 'm-50', 'stop the deploy'),
+    delivered('run:r-9', 'x-review', 'm-51', 'look at the diff'),
+  ]);
+  expect(screen.getByText('stop the deploy')).toBeDefined();
+  expect(screen.getByText('Notice')).toBeDefined();
+  expect(screen.getByText('Urgent')).toBeDefined();
+  expect(screen.getByText('x-review')).toBeDefined();
+});
+
+test("a run's own message to you links to its thread", () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'Checkout (r-1)',
+        toUser: true,
+        messageId: 'm-20',
+        text: 'The cart is done.',
+      },
+    ],
+    onOpen
+  );
+  expect(screen.getByText('To you')).toBeDefined();
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Open thread: to you from Checkout (r-1)',
+    })
+  );
+  expect(onOpen).toHaveBeenCalledWith('m-20');
+});
+
+test('a digest is one compact line, linked by the id in its text even from an older transcript', () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 #epic/e-1 · notice from run:r-000002: api shape changed (m-02)',
+      },
+    ],
+    onOpen
+  );
+  const line = '#epic/e-1 · notice from run:r-000002: api shape changed';
+  expect(screen.getByText(line).getAttribute('title')).toBe(line);
+  fireEvent.click(
+    screen.getByRole('button', {
+      name: 'Open thread: notice from run:r-000002',
+    })
+  );
+  expect(onOpen).toHaveBeenCalledWith('m-02');
+});
+
+test("a digest's own messageId wins over the id in its text", () => {
+  const onOpen = mock((_id: string) => {});
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        messageId: 'm-10',
+        text: '📬 notice from run:r-2: api shape changed (m-02)',
+      },
+    ],
+    onOpen
+  );
+  fireEvent.click(screen.getByRole('button', { name: /Open thread/ }));
+  expect(onOpen).toHaveBeenCalledWith('m-10');
+});
+
+test('text from before the bus renders as it always did, and nothing links without a way to open threads', () => {
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'user',
+        text: 'please also update the README',
+      },
+      {
+        ts: '2026-09-25T10:00:01.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 message from agent:wyat/x: hi (m-03)',
+      },
+    ],
+    undefined
+  );
+  expect(screen.getByText('please also update the README')).toBeDefined();
+  expect(screen.queryByRole('button', { name: /Open thread/ })).toBeNull();
+});
+
+test('framed text with no messageId, and a digest that does not parse, keep their raw text', () => {
+  renderEntries(
+    [
+      {
+        ts: '2026-09-25T10:00:00.000Z',
+        kind: 'message',
+        from: 'user',
+        text: '[message from run:r-1 · question · m-05]\n│ injected by hand',
+      },
+      {
+        ts: '2026-09-25T10:00:01.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 a digest in some older shape',
+      },
+    ],
+    () => {}
+  );
+  expect(
+    screen.getByText(/\[message from run:r-1 · question · m-05\]/)
+  ).toBeDefined();
+  expect(screen.queryByText('Question')).toBeNull();
+  expect(screen.getByText('📬 a digest in some older shape')).toBeDefined();
+  expect(screen.queryByRole('button', { name: /Open thread/ })).toBeNull();
 });

@@ -117,6 +117,7 @@ export function TaskChatTab({
         onRequestChanges={(text) =>
           data.handleRequestChanges(selectedRun.id, text)
         }
+        me={data.me}
       />
     </div>
   );

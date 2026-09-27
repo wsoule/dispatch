@@ -1,4 +1,4 @@
-import type { RunMeta } from '@dispatch/client';
+import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
@@ -48,11 +48,13 @@ const SCOPE: RunScopeRequest = {
 function dataWith(
   runs: RunMeta[],
   selected: RunMeta,
-  log: string[]
+  log: string[],
+  entries: NormalizedEntry[] = []
 ): DispatchProjectData {
   return {
     runs,
-    runDetail: { meta: selected, entries: [] },
+    runDetail: { meta: selected, entries },
+    me: 'human:wyat',
     readyIds: new Set(),
     pendingApprovals: new Map(),
     openQuestions: new Map([['r-1', [QUESTION]]]),
@@ -87,10 +89,15 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
-function renderChat(runs: RunMeta[], selected: RunMeta, log: string[]) {
+function renderChat(
+  runs: RunMeta[],
+  selected: RunMeta,
+  log: string[],
+  entries: NormalizedEntry[] = []
+) {
   return render(
     <TaskChatTab
-      data={dataWith(runs, selected, log)}
+      data={dataWith(runs, selected, log, entries)}
       doc={{ meta: { id: 't-1' } } as TaskDoc}
       selectedRun={selected}
       onDispatch={() => {}}
@@ -127,4 +134,28 @@ test("a successor run's chat shows the ended run's open asks", async () => {
     await Promise.resolve();
   });
   expect(log).toEqual(['answer:r-1:q-1:new']);
+});
+
+// The composer sends through the bus, so the viewer's own lines come back
+// addressed from them.
+test("the viewer's own message in the chat reads as You", () => {
+  const live = run('r-1', 'running');
+  renderChat(
+    [live],
+    live,
+    [],
+    [
+      {
+        ts: '2026-09-26T00:03:00.000Z',
+        kind: 'message',
+        from: 'user',
+        fromLabel: 'human:wyat',
+        messageId: 'm-1',
+        text: '[message from human:wyat · message · m-1]\n│ use the new cart',
+      },
+    ]
+  );
+  expect(screen.getByText('use the new cart')).toBeDefined();
+  expect(screen.getByText('You')).toBeDefined();
+  expect(screen.queryByText('human:wyat')).toBeNull();
 });
