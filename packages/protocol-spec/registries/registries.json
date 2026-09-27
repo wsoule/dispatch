@@ -1,0 +1,613 @@
+{
+  "address-schemes": [
+    {
+      "value": "human",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": []
+    },
+    {
+      "value": "agent",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": []
+    },
+    {
+      "value": "task",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": []
+    },
+    {
+      "value": "run",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": []
+    },
+    {
+      "value": "channel",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "3.4",
+      "vectors": []
+    },
+    {
+      "value": "a2a",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.9",
+      "reference": "spec/08-a2a-binding.md#s8.9",
+      "vectors": []
+    }
+  ],
+  "address-characters": [
+    {
+      "value": "@",
+      "scope": "federation",
+      "status": "reserved",
+      "since": "1.0.0-draft.1",
+      "section": "3.3",
+      "note": "held for a federation authority qualifier",
+      "vectors": []
+    }
+  ],
+  "envelope-fields": [
+    {
+      "value": "id",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "thread",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "replyTo",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "from",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "session",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "to",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "kind",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "body",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "refs",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "data",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "urgent",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "blocking",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "choices",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "choice",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "wake",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "createdAt",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.1",
+      "vectors": []
+    },
+    {
+      "value": "idempotencyKey",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.9",
+      "vectors": []
+    },
+    {
+      "value": "origin",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "vectors": []
+    },
+    {
+      "value": "hlc",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "vectors": []
+    }
+  ],
+  "kinds": [
+    {
+      "value": "message",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": []
+    },
+    {
+      "value": "question",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": []
+    },
+    {
+      "value": "answer",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": []
+    },
+    {
+      "value": "handoff",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": []
+    },
+    {
+      "value": "notice",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.2",
+      "vectors": []
+    }
+  ],
+  "ref-types": [
+    {
+      "value": "task",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": []
+    },
+    {
+      "value": "run",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": []
+    },
+    {
+      "value": "file",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": []
+    },
+    {
+      "value": "commit",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": []
+    },
+    {
+      "value": "message",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "vectors": []
+    },
+    {
+      "value": "doc",
+      "scope": "docs",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.3",
+      "note": "`at` names a section anchor",
+      "vectors": []
+    }
+  ],
+  "gate-types": [
+    {
+      "value": "wake",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "5.9",
+      "raisedBy": "system",
+      "choices": ["approve", "deny"],
+      "data": { "target": "address", "message": "message id" },
+      "effect": "wake the target unless it no longer qualifies (5.9)",
+      "vectors": []
+    },
+    {
+      "value": "tool-approval",
+      "scope": "dispatch",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["approve", "approve-session", "deny"],
+      "data": {
+        "requestId": "string",
+        "runId": "session id, optional",
+        "conversation": "string, optional",
+        "tool": "string",
+        "input": "JSON preview, at most 8 KiB",
+        "truncated": "true, optional",
+        "floor": "boolean"
+      },
+      "effect": "release or refuse the parked tool call (C.3)",
+      "vectors": []
+    },
+    {
+      "value": "scope",
+      "scope": "dispatch",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "session",
+      "choices": ["grant", "deny"],
+      "data": { "paths": "string[]", "reason": "string" },
+      "effect": "widen the session's writes (C.3)",
+      "vectors": []
+    },
+    {
+      "value": "agent-registration",
+      "scope": "dispatch",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["approve", "deny"],
+      "data": {
+        "agent": "address",
+        "client": "string",
+        "requestedBy": "address, optional"
+      },
+      "effect": "approve or refuse the agent (C.3)",
+      "vectors": []
+    },
+    {
+      "value": "overseer-action",
+      "scope": "dispatch",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["confirm", "cancel"],
+      "data": {
+        "conversation": "string",
+        "actionId": "string",
+        "summary": "string"
+      },
+      "effect": "run or drop the overseer's action (C.3)",
+      "vectors": []
+    },
+    {
+      "value": "memory",
+      "scope": "memory",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system-or-decider",
+      "choices": ["approve", "reject"],
+      "data": {
+        "proposalId": "string",
+        "action": "add | supersede | retire",
+        "scope": "project | team",
+        "kind": "memory kind"
+      },
+      "effect": "apply or reject the memory proposal (C.3)",
+      "vectors": []
+    },
+    {
+      "value": "task-proposal",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.6",
+      "reference": "spec/08-a2a-binding.md#s8.6",
+      "raisedBy": "system",
+      "choices": ["approve", "decline"],
+      "data": {
+        "task": "work item id",
+        "proposedBy": "address",
+        "message": "message id"
+      },
+      "effect": "promote or drop the drafted work item (8.6)",
+      "vectors": []
+    },
+    {
+      "value": "doc",
+      "scope": "docs",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "C.3",
+      "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
+      "raisedBy": "system",
+      "choices": ["approve", "reject"],
+      "data": {
+        "doc": "doc id",
+        "proposal": "proposal revision id",
+        "taskId": "work item id, optional",
+        "runId": "run id, optional"
+      },
+      "effect": "apply or reject the document change (C.3)",
+      "vectors": []
+    }
+  ],
+  "system-markers": [
+    {
+      "value": "x-closed",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "4.8",
+      "vectors": []
+    },
+    {
+      "value": "x-breaker",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "6.6",
+      "vectors": []
+    }
+  ],
+  "delivery-states": [
+    {
+      "value": "held",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": []
+    },
+    {
+      "value": "sending",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": true,
+      "vectors": []
+    },
+    {
+      "value": "pushed",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": []
+    },
+    {
+      "value": "notified",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": []
+    },
+    {
+      "value": "read",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": []
+    },
+    {
+      "value": "answered",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "6.1",
+      "internal": false,
+      "vectors": []
+    },
+    {
+      "value": "forwarded",
+      "scope": "federation",
+      "status": "appendix",
+      "since": "1.0.0-draft.1",
+      "section": "F.4",
+      "internal": false,
+      "note": "a remote row handed to the transport, no report yet",
+      "vectors": []
+    }
+  ],
+  "error-codes": [
+    {
+      "value": "invalid",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 400,
+      "vectors": []
+    },
+    {
+      "value": "forbidden",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 403,
+      "vectors": []
+    },
+    {
+      "value": "not-found",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 404,
+      "vectors": []
+    },
+    {
+      "value": "conflict",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 409,
+      "vectors": []
+    },
+    {
+      "value": "limited",
+      "scope": "core",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "10.1",
+      "httpStatus": 429,
+      "vectors": []
+    },
+    {
+      "value": "unavailable",
+      "scope": "memory",
+      "status": "informative",
+      "since": "1.0.0-draft.1",
+      "section": "10.3",
+      "httpStatus": 503,
+      "note": "raised by hosts and bindings, never by the engine",
+      "vectors": []
+    }
+  ],
+  "extension-uris": [
+    {
+      "value": "https://dispatch.foo/a2a/ext/envelope/v1",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.4",
+      "vectors": []
+    },
+    {
+      "value": "https://dispatch.foo/a2a/ext/gate/v1",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.5",
+      "vectors": []
+    },
+    {
+      "value": "https://dispatch.foo/a2a/ext/work/v1",
+      "scope": "a2a",
+      "status": "provisional",
+      "since": "1.0.0-draft.1",
+      "section": "8.6",
+      "vectors": []
+    }
+  ]
+}
