@@ -52,6 +52,8 @@ export type OpHandler = (
 export interface AdapterOptions {
   // Ops a binding adds (the a2a adapter's `a2a.*`), tried before the core ops.
   ops?: Record<string, OpHandler>;
+  // Gate types the engine and `validate` implement; default every GATE_TYPES entry.
+  gateTypes?: readonly string[];
 }
 
 // The kit's CREATING_OPS, copied: the built adapter imports nothing from the
@@ -145,6 +147,10 @@ class RoleBinder {
       else if (kind === 'notice') this.bound.set(`$notice${++notices}`, id);
     }
   }
+}
+
+function gateTypesOf(options: AdapterOptions): readonly string[] {
+  return options.gateTypes ?? GATE_TYPES;
 }
 
 function senderOf(step: Step): Sender {
@@ -261,8 +267,8 @@ async function runStep(
       };
     }
     case 'recover': {
-      const { retried, reverted, replayed } = await engine.recover();
-      return { retried, reverted, replayed };
+      const { retried, reverted, replayed, voided } = await engine.recover();
+      return { retried, reverted, replayed, voided };
     }
     case 'parseAddress':
       return { ...parseAddress(text(step, 'input', 'parseAddress')) };
@@ -273,7 +279,8 @@ async function runStep(
         inputOf(step),
         as.address,
         as.canDecide,
-        target === undefined ? null : store.getMessage(target)
+        target === undefined ? null : store.getMessage(target),
+        { gateTypes: new Set(gateTypesOf(options)) }
       );
       return {};
     }
@@ -362,7 +369,10 @@ function observe(
     deliveries: store.deliveries({}).map(observedDelivery),
     calls: host.calls,
     gateEffects,
-    voided: [],
+    voided: queryAll<{ answer_id: string }>(
+      db,
+      'SELECT answer_id FROM voided_answers ORDER BY answer_id'
+    ).map((row) => row.answer_id),
     channels: store
       .channels()
       .map((c) => ({ name: c.name, members: store.members(c.name) })),
@@ -386,6 +396,7 @@ export async function runVector(
       host,
       limits: vector.given.limits,
       newUlid: createUlidFactory(seededBytes(vector.given.seed ?? 1)),
+      gateTypes: gateTypesOf(options),
     });
     engine.subscribe((e) => {
       if (e.type === 'message')

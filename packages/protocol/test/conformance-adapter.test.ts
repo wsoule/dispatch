@@ -17,6 +17,15 @@ import { renderDigestLine } from '../src/render.js';
 
 const registry = loadRegistry();
 const HUMAN = { address: 'human:wyat', canDecide: true };
+const SYSTEM = { address: 'agent:dispatch', canDecide: true };
+const TOOL = {
+  type: 'tool-approval',
+  requestId: 'req-1',
+  runId: 'r-000001',
+  tool: 'Bash',
+  input: {},
+  floor: false,
+};
 
 // The protocol's worked example: mail to a work item with no live session.
 const held: Vector = {
@@ -217,6 +226,88 @@ describe('runVector', () => {
           { hook: 'onAnswered', question: '$gate1', answer: '$s2' },
           { hook: 'wake', target: 'task:t-4a8cce', message: '$s1' },
         ],
+      },
+    };
+    expect(await check(v)).toEqual([]);
+  });
+
+  it('gives the engine every gate type it declares unless told fewer', async () => {
+    const input = {
+      to: ['human:wyat'],
+      kind: 'question',
+      body: 'Run Bash?',
+      blocking: true,
+      choices: ['approve', 'deny'],
+      data: TOOL,
+    };
+    const gate: Vector = {
+      ...held,
+      id: 'dispatch.gates.the-system-raises-tool-approval',
+      profile: 'dispatch',
+      when: [
+        { op: 'send', as: SYSTEM, input },
+        { op: 'validate', as: SYSTEM, input },
+      ],
+      then: { steps: [{ ok: true }, { ok: true }] },
+    };
+    expect(await check(gate)).toEqual([]);
+    const refused = {
+      ok: false,
+      error: { code: 'invalid', field: 'data.type' },
+    };
+    expect((await runVector(gate, { gateTypes: ['wake'] })).steps).toEqual([
+      refused,
+      refused,
+    ]);
+  });
+
+  it('reports the answers recover voids, in its result and as voided', async () => {
+    const v: Vector = {
+      ...held,
+      id: 'dispatch.recover.voids-an-agent-answer-to-a-gate',
+      profile: 'dispatch',
+      given: {
+        owner: 'human:wyat',
+        agents: [{ address: 'agent:wyat/claude', status: 'approved' }],
+        store: {
+          messages: [
+            {
+              id: 'm-gate',
+              from: 'agent:dispatch',
+              to: ['human:wyat'],
+              kind: 'question',
+              body: 'Run Bash?',
+              blocking: true,
+              choices: ['approve', 'deny'],
+              data: TOOL,
+            },
+            {
+              id: 'm-agent',
+              thread: 'm-gate',
+              replyTo: 'm-gate',
+              from: 'agent:wyat/claude',
+              to: ['agent:dispatch'],
+              kind: 'answer',
+              body: '',
+              choice: 'approve',
+            },
+          ],
+          deliveries: [
+            {
+              id: 'd-gate',
+              message: 'm-gate',
+              recipient: 'human:wyat',
+              state: 'answered',
+            },
+          ],
+        },
+      },
+      when: [{ op: 'recover' }],
+      then: {
+        steps: [{ ok: true, result: { replayed: 0, voided: 1 } }],
+        messages: [{ id: 'm-agent', kind: 'message' }],
+        gateEffects: [],
+        voided: ['m-agent'],
       },
     };
     expect(await check(v)).toEqual([]);

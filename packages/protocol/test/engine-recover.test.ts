@@ -57,6 +57,7 @@ describe('recover', () => {
       retried: 0,
       reverted: 0,
       replayed: 0,
+      voided: 0,
     });
     expect(store.getDelivery('d-4')?.state).toBe('held');
   });

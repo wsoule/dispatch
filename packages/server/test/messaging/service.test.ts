@@ -13,6 +13,7 @@ import type { ServerEvent } from '../../src/events.js';
 import { EventBus } from '../../src/events.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { SYSTEM_SENDER } from '../../src/messaging/gates.js';
 import { createRunTokens } from '../../src/messaging/runTokens.js';
 import type { Messaging } from '../../src/messaging/service.js';
 import { openMessaging } from '../../src/messaging/service.js';
@@ -387,6 +388,36 @@ describe('openMessaging', () => {
       { address: 'human:wyat', canDecide: true }
     );
     expect(sent.message.body).toBe('still up');
+    messaging.close();
+  });
+
+  it("the daemon's engine knows exactly Dispatch's gate types", async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    const messaging = openMessaging({
+      rootDir: project.root(),
+      orchestrator,
+      store,
+      events: new EventBus(),
+      ownerRef: 'human:wyat',
+      dbPath: join(project.root(), 'messages.db'),
+    });
+    await messaging.recover();
+    const gate = (type: string) => ({
+      to: ['human:wyat'],
+      kind: 'question' as const,
+      blocking: true,
+      choices: ['approve', 'decline'],
+      body: 'x',
+      data: {
+        type,
+        task: 't-000001',
+        proposedBy: 'agent:wyat/a2a.x',
+        message: 'm-x',
+      },
+    });
+    await expect(
+      messaging.engine.send(gate('task-proposal'), SYSTEM_SENDER)
+    ).rejects.toMatchObject({ code: 'invalid', field: 'data.type' });
     messaging.close();
   });
 });

@@ -1,5 +1,6 @@
 import { parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
+import { gateTypeOf, hasGateData, raiserOf } from './constants.js';
 import { MessagingError } from './errors.js';
 import { LINE_BREAK } from './lines.js';
 
@@ -61,6 +62,8 @@ export interface SendInput {
   replyTo?: string | null;
   wake?: 'none' | 'request';
   session?: string;
+  /** The sender's own dedupe key; a repeat returns the first message (A2A §3.3.1). */
+  idempotencyKey?: string;
 }
 
 export const GATE_TYPES = [
@@ -97,6 +100,14 @@ export type GateData =
       summary: string;
     };
 
+/** How validateSendInput judges gates. */
+export interface ValidateOptions {
+  /** The gate types the host implements; default every GATE_TYPES entry. */
+  gateTypes?: ReadonlySet<string>;
+}
+
+const PACKAGE_GATE_TYPES: ReadonlySet<string> = new Set(GATE_TYPES);
+
 const X_KIND = /^x-[a-z0-9][a-z0-9-]*$/;
 const ASKING_KINDS: ReadonlySet<string> = new Set(['question', 'handoff']);
 
@@ -120,6 +131,21 @@ export function gateOf(message: { data?: JsonValue }): GateData | null {
     (GATE_TYPES as readonly string[]).includes(type)
     ? (data as unknown as GateData)
     : null;
+}
+
+// True only for the daemon's own marker: a client, peer or human cannot forge one.
+export function isSystemMarker(
+  message: Pick<Message, 'from' | 'data'>,
+  type: 'x-closed' | 'x-breaker'
+): boolean {
+  const data = message.data;
+  return (
+    message.from === SYSTEM_ADDRESS &&
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (data as { [key: string]: JsonValue })['type'] === type
+  );
 }
 
 function invalid(field: string, why: string): never {
@@ -147,48 +173,80 @@ function singleLine(
     invalid(field, `at most ${maxBytes} bytes (UTF-8)`);
 }
 
-// Checks a gate payload's shape and who may send it: runs raise scope gates;
-// every other gate is minted by the daemon (system) or a deciding human.
+// A sender-chosen dedupe key: one line, 1..200 UTF-8 bytes, like `session`.
+export function checkIdempotencyKey(key: string): void {
+  if (key === '') invalid('idempotencyKey', 'must not be empty');
+  singleLine(key, 'idempotencyKey', MAX_LABEL_BYTES);
+}
+
+// Gate data travels only on questions and handoffs, only for a type this host
+// implements, and only from the raiser the type allows.
 function validateGate(
-  gate: GateData,
   input: SendInput,
   sender: Address,
-  canDecide: boolean
+  canDecide: boolean,
+  known: ReadonlySet<string>
 ): void {
-  if (gate.type === 'scope') {
-    if (!sender.startsWith('run:')) {
-      throw new MessagingError(
-        'forbidden',
-        'only runs may request scope',
-        'data'
-      );
-    }
-    if (
-      !Array.isArray(gate.paths) ||
-      gate.paths.length === 0 ||
-      !gate.paths.every((p) => typeof p === 'string' && p !== '')
-    ) {
-      invalid('data.paths', 'expected a non-empty list of paths');
-    }
-    if (typeof gate.reason !== 'string' || gate.reason.trim() === '')
-      invalid('data.reason', 'required');
-    if (
-      input.kind !== 'question' ||
-      input.blocking !== true ||
-      JSON.stringify(input.choices) !== '["grant","deny"]'
-    ) {
-      invalid(
-        'data',
-        'a scope request is { kind: "question", blocking: true, choices: ["grant", "deny"], data: { type: "scope", paths, reason } }'
-      );
-    }
-    return;
-  }
-  if (sender !== SYSTEM_ADDRESS && !canDecide) {
+  const type = (input.data as { type: string }).type;
+  if (!ASKING_KINDS.has(input.kind))
+    invalid(
+      'data.type',
+      'gate data travels only on questions and handoffs; private payloads use an x- type'
+    );
+  if (!known.has(type))
+    invalid(
+      'data.type',
+      `unregistered or unimplemented gate type ${type}; private payloads use an x- type`
+    );
+  const raiser = raiserOf(type);
+  if (raiser === 'session' && !sender.startsWith('run:')) {
     throw new MessagingError(
       'forbidden',
-      `only Dispatch may raise ${gate.type} gates`,
+      `only runs may request ${type}`,
       'data'
+    );
+  }
+  if (raiser === 'system' && sender !== SYSTEM_ADDRESS) {
+    throw new MessagingError(
+      'forbidden',
+      `only Dispatch may raise ${type} gates`,
+      'data'
+    );
+  }
+  if (
+    raiser === 'system-or-decider' &&
+    sender !== SYSTEM_ADDRESS &&
+    !(canDecide && sender.startsWith('human:'))
+  ) {
+    throw new MessagingError(
+      'forbidden',
+      `only Dispatch may raise ${type} gates, or a deciding human`,
+      'data'
+    );
+  }
+  if (type === 'scope') validateScopeShape(input);
+}
+
+// A scope request names its paths and reason and has one fixed question shape.
+function validateScopeShape(input: SendInput): void {
+  const gate = input.data as unknown as Extract<GateData, { type: 'scope' }>;
+  if (
+    !Array.isArray(gate.paths) ||
+    gate.paths.length === 0 ||
+    !gate.paths.every((p) => typeof p === 'string' && p !== '')
+  ) {
+    invalid('data.paths', 'expected a non-empty list of paths');
+  }
+  if (typeof gate.reason !== 'string' || gate.reason.trim() === '')
+    invalid('data.reason', 'required');
+  if (
+    input.kind !== 'question' ||
+    input.blocking !== true ||
+    JSON.stringify(input.choices) !== '["grant","deny"]'
+  ) {
+    invalid(
+      'data',
+      'a scope request is { kind: "question", blocking: true, choices: ["grant", "deny"], data: { type: "scope", paths, reason } }'
     );
   }
 }
@@ -199,8 +257,10 @@ export function validateSendInput(
   input: SendInput,
   sender: Address,
   canDecide: boolean,
-  replyTarget: Message | null
+  replyTarget: Message | null,
+  options: ValidateOptions = {}
 ): void {
+  const known = options.gateTypes ?? PACKAGE_GATE_TYPES;
   if (!Array.isArray(input.to) || input.to.length === 0)
     invalid('to', 'at least one recipient');
   if (input.to.length > MAX_RECIPIENTS)
@@ -229,6 +289,8 @@ export function validateSendInput(
   )
     invalid('data', `at most ${MAX_DATA_BYTES} bytes as JSON`);
   singleLine(input.session, 'session', MAX_LABEL_BYTES);
+  if (input.idempotencyKey !== undefined)
+    checkIdempotencyKey(input.idempotencyKey);
 
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
@@ -272,29 +334,27 @@ export function validateSendInput(
     if (kind === 'answer') {
       if (!ASKING_KINDS.has(replyTarget.kind))
         invalid('replyTo', 'only questions and handoffs take answers');
-      const targetGate = gateOf(replyTarget);
-      if (targetGate !== null && !canDecide) {
+      const isGate = gateTypeOf(replyTarget, known) !== null;
+      if (isGate && !canDecide) {
         throw new MessagingError(
           'forbidden',
           'answering this gate needs the decide tier',
           'replyTo'
         );
       }
-      const mustChoose = targetGate !== null || replyTarget.kind === 'handoff';
-      if (mustChoose && !hasChoice)
-        invalid(
-          'choice',
-          `choose one of ${(replyTarget.choices ?? []).join(', ')}`
-        );
-      if (hasChoice && !(replyTarget.choices ?? []).includes(input.choice!)) {
-        invalid(
-          'choice',
-          `choose one of ${(replyTarget.choices ?? []).join(', ')}`
-        );
-      }
+      // A gate or handoff answer carries one of its choices when it has any,
+      // and none when it has none (a choiceless answer needs a body, above).
+      const choices = replyTarget.choices ?? [];
+      if (
+        (isGate || replyTarget.kind === 'handoff') &&
+        choices.length > 0 &&
+        !hasChoice
+      )
+        invalid('choice', `choose one of ${choices.join(', ')}`);
+      if (hasChoice && !choices.includes(input.choice!))
+        invalid('choice', `choose one of ${choices.join(', ')}`);
     }
   }
 
-  const gate = gateOf(input);
-  if (gate !== null) validateGate(gate, input, sender, canDecide);
+  if (hasGateData(input)) validateGate(input, sender, canDecide, known);
 }

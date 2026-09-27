@@ -10,7 +10,7 @@ the Elastic License 2.0, on 2026-09-23.
 
 | Code                                                                                                          | License                                  |
 | ------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
-| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`, `packages/protocol`                       | MIT                                      |
+| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`, `packages/protocol`, `packages/a2a`       | MIT                                      |
 | `packages/protocol-spec` (the published protocol: DMP text, registries, schemas, vectors, conformance runner) | Apache-2.0 (its own `LICENSE`)           |
 | Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site)                    | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
 | Team features: `packages/server/src/team/` and `packages/server/test/team/`                                   | Elastic-2.0 (their own `LICENSE` files)  |

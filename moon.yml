@@ -11,6 +11,7 @@ dependsOn:
   - 'mcp'
   - 'protocol'
   - 'protocol-spec'
+  - 'a2a'
   - 'desktop'
 
 # Every repo-wide lane below scans from the root, and every one of them has to
