@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 
+import { isRecord, isStringArray, isText } from './guards.js';
+
 export const REGISTRY_NAMES = [
   'address-schemes',
   'address-characters',
@@ -90,34 +92,22 @@ const EXTRA_FIELDS: Partial<Record<RegistryName, readonly string[]>> = {
   'error-codes': ['httpStatus'],
 };
 
-function isString(v: unknown): v is string {
-  return typeof v === 'string' && v !== '';
-}
-
-function isStringArray(v: unknown): v is string[] {
-  return Array.isArray(v) && v.every((s) => typeof s === 'string');
-}
-
-function isRecord(v: unknown): v is Record<string, unknown> {
-  return typeof v === 'object' && v !== null && !Array.isArray(v);
-}
-
 // Why one registry entry is malformed, or null when it is well formed.
 function entryProblem(name: RegistryName, e: unknown): string | null {
   if (!isRecord(e)) return 'is not an object';
   const known = [...COMMON_FIELDS, ...(EXTRA_FIELDS[name] ?? [])];
   const unknown = Object.keys(e).find((k) => !known.includes(k));
   if (unknown !== undefined) return `has unknown field ${unknown}`;
-  if (!isString(e['value'])) return 'value must be a non-empty string';
+  if (!isText(e['value'])) return 'value must be a non-empty string';
   if (!(SCOPES as readonly unknown[]).includes(e['scope']))
     return `scope must be one of ${SCOPES.join(', ')}`;
   if (!(STATUSES as readonly unknown[]).includes(e['status']))
     return `status must be one of ${STATUSES.join(', ')}`;
-  if (!isString(e['since'])) return 'since must be a non-empty string';
-  if (!isString(e['section'])) return 'section must be a non-empty string';
+  if (!isText(e['since'])) return 'since must be a non-empty string';
+  if (!isText(e['section'])) return 'section must be a non-empty string';
   if (!isStringArray(e['vectors'])) return 'vectors must be a string array';
   for (const key of ['reference', 'note', 'effect']) {
-    if (e[key] !== undefined && !isString(e[key]))
+    if (e[key] !== undefined && !isText(e[key]))
       return `${key} must be a non-empty string`;
   }
   if (
@@ -130,7 +120,7 @@ function entryProblem(name: RegistryName, e: unknown): string | null {
   const data = e['data'];
   if (
     data !== undefined &&
-    !(isRecord(data) && Object.values(data).every((v) => isString(v)))
+    !(isRecord(data) && Object.values(data).every((v) => isText(v)))
   )
     return 'data must map field names to descriptions';
   if (e['internal'] !== undefined && typeof e['internal'] !== 'boolean')

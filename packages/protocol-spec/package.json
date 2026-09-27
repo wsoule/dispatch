@@ -3,6 +3,9 @@
   "version": "1.0.0-draft.1",
   "private": true,
   "license": "Apache-2.0",
+  "bin": {
+    "dmp-conformance": "./dist/bin.js"
+  },
   "type": "module",
   "exports": {
     ".": {

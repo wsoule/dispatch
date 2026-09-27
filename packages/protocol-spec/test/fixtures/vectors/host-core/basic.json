@@ -1,0 +1,18 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "basic",
+  "vectors": [
+    {
+      "id": "core.basic.must",
+      "title": "A host-core MUST that parses",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1"],
+      "given": {},
+      "when": [{ "op": "parseAddress", "input": "human:wyat" }],
+      "then": { "steps": [{ "ok": true, "result": { "kind": "human" } }] }
+    }
+  ]
+}

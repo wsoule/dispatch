@@ -38,6 +38,7 @@ braindump
 browserslistrc
 bunfig
 bunx
+bytewise
 cacheinfo
 callsites
 capitalised
@@ -80,6 +81,7 @@ coverable
 cpushed
 CRDT
 CRDT's
+Crockford
 cutover
 daemonfile
 Dami
