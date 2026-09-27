@@ -96,6 +96,8 @@ export interface MemoryStore {
     }
   ): void;
   recallsForRun(runId: string): RecallRow[];
+  /** Deletes recall rows from before `beforeIso`; returns how many went. */
+  pruneRecalls(beforeIso: string): number;
   isTombstoned(origin: string): boolean;
   meta(key: string): string | null;
   setMeta(key: string, value: string): void;
@@ -139,5 +141,7 @@ export interface MemoryStore {
   takeIngestProblem(
     id: string
   ): Pick<IngestProblemRow, 'lineage' | 'file' | 'content'> | null;
+  /** Writes a 0600 copy to `path`, replacing the previous one; not inside a transaction. */
+  backup(path: string): void;
   close(): void;
 }

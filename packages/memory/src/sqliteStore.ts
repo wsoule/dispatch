@@ -2,6 +2,14 @@ import { queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 import type { Address } from '@dispatch/protocol';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
+import {
+  chmodSync,
+  closeSync,
+  fsyncSync,
+  openSync,
+  renameSync,
+  rmSync,
+} from 'node:fs';
 
 import type { ManifestRow } from './claudeFiles.js';
 import { memoryContentHash } from './contentHash.js';
@@ -448,6 +456,12 @@ export class SqliteMemoryStore implements MemoryStore {
     }));
   }
 
+  pruneRecalls(beforeIso: string): number {
+    return Number(
+      this.db.prepare('DELETE FROM recalls WHERE at < ?').run(beforeIso).changes
+    );
+  }
+
   isTombstoned(origin: string): boolean {
     return (
       queryOne(
@@ -708,6 +722,22 @@ export class SqliteMemoryStore implements MemoryStore {
       this.db.prepare('DELETE FROM ingest_problems WHERE id = ?').run(id);
       return { lineage: row.lineage, file: row.file, content: row.content };
     });
+  }
+
+  // One generation of backup: VACUUM INTO refuses an existing target and any
+  // open transaction, so it writes a fresh temporary file and renames it over.
+  backup(path: string): void {
+    const tmp = `${path}.tmp`;
+    rmSync(tmp, { force: true });
+    this.db.prepare('VACUUM INTO ?').run(tmp);
+    const fd = openSync(tmp, 'r');
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, path);
   }
 
   close(): void {

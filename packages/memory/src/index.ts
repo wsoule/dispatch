@@ -90,6 +90,8 @@ export {
 export type { Viewer } from './visibility.js';
 export type { MemoryHost, MemoryStores } from './host.js';
 export { MemoryEngine } from './engine.js';
+export { decayStore } from './decay.js';
+export type { DecayResult } from './decay.js';
 export type {
   EditInput,
   EntryView,
