@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import { useThreadPaneProps } from '../../hooks/useThreadPaneProps';
@@ -13,6 +13,7 @@ import { participantLabel, replyRoute } from '../../lib/threadSources';
 import { Composer } from '../threads/Composer';
 import { ThreadList } from '../threads/ThreadList';
 import { ThreadPane } from '../threads/ThreadPane';
+import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 
 export interface TaskThreadTabProps {
@@ -25,7 +26,7 @@ export interface TaskThreadTabProps {
 // Never called: without the live Assistant thread, an Assistant thread here is read-only.
 const noOverseerReply = (): Promise<void> => Promise.resolve();
 const NOT_LISTED =
-  "Listing a task's threads needs the decide tier. You can still write to the task below.";
+  "Listing a task's threads needs the decide tier. Ask the project owner for a decide token. You can still write to the task below.";
 const NOTE = 'text-muted-foreground p-2 text-[12px]';
 
 /** Everything to or from a task and its runs, with a composer addressed to the task. */
@@ -42,10 +43,20 @@ export function TaskThreadTab({
   const actions = useThreadActions(client, port, me, access, data);
   const pane = useThreadPaneProps(data, onOpenRef);
   const locked = useMemo(() => [`task:${taskId}`], [taskId]);
+  // With a thread open, a new message waits behind a button so a reply is not
+  // typed into it by mistake; closing it returns focus to that button.
+  const [composing, setComposing] = useState(false);
+  const newMessageRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef(false);
   const { markRead } = actions;
   useEffect(() => {
     markRead(open.deliveries);
   }, [markRead, open.deliveries]);
+  useEffect(() => {
+    if (composing || !returnFocus.current) return;
+    returnFocus.current = false;
+    newMessageRef.current?.focus();
+  }, [composing]);
 
   if (!access.canMessage) {
     return (
@@ -56,20 +67,28 @@ export function TaskThreadTab({
       />
     );
   }
+  const threadOpen =
+    open.thread !== null && open.messages.length > 0 && me !== null;
   return (
     <div className="flex min-h-0 min-w-0 flex-1">
-      <aside className="border-border w-72 shrink-0 overflow-y-auto border-r-[0.5px] p-2">
+      <aside
+        aria-label="Thread list"
+        className="border-border w-72 shrink-0 overflow-y-auto border-r-[0.5px] p-2"
+      >
         <TaskThreads
           list={list}
           canDecide={access.canDecide}
           me={me}
           selected={open.thread}
-          onSelect={setFocus}
+          onSelect={(thread) => {
+            setComposing(false);
+            setFocus(thread);
+          }}
           lookups={pane.lookups}
         />
       </aside>
       <section aria-label="Thread" className="flex min-w-0 flex-1 flex-col">
-        {open.thread !== null && open.messages.length > 0 && me !== null ? (
+        {threadOpen && me !== null ? (
           <ThreadPane
             // A fresh reply draft per thread.
             key={open.thread}
@@ -95,14 +114,37 @@ export function TaskThreadTab({
           <NoThread focus={focus} open={open} />
         )}
         <div className="border-border border-t-[0.5px] p-2">
-          <Composer
-            known={pane.known}
-            initialTo={locked}
-            locked={locked}
-            label={(address) => participantLabel(address, pane.lookups)}
-            onSend={actions.send}
-            onSent={(result) => setFocus(result.message.thread)}
-          />
+          {threadOpen && !composing ? (
+            <Button
+              ref={newMessageRef}
+              size="sm"
+              variant="ghost"
+              onClick={() => setComposing(true)}
+            >
+              New message
+            </Button>
+          ) : (
+            <Composer
+              known={pane.known}
+              initialTo={locked}
+              locked={locked}
+              label={(address) => participantLabel(address, pane.lookups)}
+              onSend={actions.send}
+              onSent={(result) => {
+                setComposing(false);
+                setFocus(result.message.thread);
+              }}
+              onCancel={
+                threadOpen
+                  ? () => {
+                      returnFocus.current = true;
+                      setComposing(false);
+                    }
+                  : undefined
+              }
+              focusOnMount={composing}
+            />
+          )}
         </div>
       </section>
     </div>
@@ -134,23 +176,27 @@ function TaskThreads({
       </p>
     );
   }
-  if (list.error !== null) {
-    return (
+  const error =
+    list.error === null ? null : (
       <p role="alert" className="text-destructive p-2 text-[12px]">
         {list.error.message}
       </p>
     );
-  }
   if (list.summaries.length === 0) {
-    return <p className={NOTE}>No messages yet.</p>;
+    return error ?? <p className={NOTE}>No messages yet.</p>;
   }
+  // A failed refetch keeps the rows it already had, with why under them.
   return (
-    <ThreadList
-      summaries={list.summaries}
-      selected={selected}
-      onSelect={onSelect}
-      lookups={lookups}
-    />
+    <>
+      <ThreadList
+        label="Threads"
+        sections={[{ key: 'task', summaries: list.summaries }]}
+        selected={selected}
+        onSelect={onSelect}
+        lookups={lookups}
+      />
+      {error}
+    </>
   );
 }
 

@@ -62,6 +62,9 @@ function renderLog(
       scopeDecide={scopeDecide}
       onRestartDaemon={noop}
       onRequestChanges={onRequestChanges}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
     />
   );
 }
@@ -152,6 +155,9 @@ test('a truncated call loads its full input by its own request id', async () => 
       scopeDecide={CAN_DECIDE}
       onRestartDaemon={noop}
       onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
     />
   );
   expect(await screen.findByText(/evil\.example/)).toBeDefined();
@@ -307,6 +313,9 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
       }}
       onRestartDaemon={noop}
       onRequestChanges={noop}
+      onOpenMessage={null}
+      me={null}
+      readsAllThreads
     />
   );
   expect(
@@ -319,8 +328,9 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
 
 function renderEntries(
   entries: NormalizedEntry[],
-  onOpenMessage?: (messageId: string) => void,
-  me?: string | null
+  onOpenMessage: ((messageId: string) => void) | null = null,
+  me: string | null = null,
+  readsAllThreads = true
 ) {
   return render(
     <RunLogView
@@ -338,6 +348,7 @@ function renderEntries(
       onRequestChanges={noop}
       onOpenMessage={onOpenMessage}
       me={me}
+      readsAllThreads={readsAllThreads}
     />
   );
 }
@@ -405,7 +416,7 @@ test("a teammate's message names them, and only the viewer's own reads as You", 
         text: 'typed in the composer before the bus',
       },
     ],
-    undefined,
+    null,
     'human:wyat'
   );
   expect(screen.getByText('human:bob')).toBeDefined();
@@ -417,11 +428,63 @@ test("a teammate's message names them, and only the viewer's own reads as You", 
 test('a human sender stays an address while the viewer is unknown', () => {
   renderEntries(
     [delivered('human:wyat', 'message', 'm-31', 'agreed')],
-    undefined,
+    null,
     null
   );
   expect(screen.getByText('human:wyat')).toBeDefined();
   expect(screen.queryByText('You')).toBeNull();
+});
+
+test("a teammate's line sits with the other senders, and only the viewer's own at the right", () => {
+  renderEntries(
+    [
+      delivered('human:bob', 'message', 'm-30', 'ship it after lunch'),
+      delivered('human:wyat', 'message', 'm-31', 'agreed'),
+    ],
+    null,
+    'human:wyat'
+  );
+  const bubble = (heading: string) =>
+    screen.getByText(heading).parentElement?.className ?? '';
+  expect(bubble('human:bob')).toContain('self-start');
+  expect(bubble('human:bob')).not.toContain('self-end');
+  expect(bubble('You')).toContain('self-end');
+});
+
+// A window below decide can read a thread only if it took part, and all a run
+// chat knows of a message is who sent it.
+test('a window below decide links only the messages it sent', () => {
+  renderEntries(
+    [
+      delivered('run:r-9', 'question', 'm-9', 'Is the schema final?'),
+      delivered('human:bob', 'message', 'm-10', 'use the new cart'),
+      {
+        ts: '2026-09-25T10:00:02.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'dispatch',
+        digest: true,
+        text: '📬 notice from run:r-2: api shape changed (m-02)',
+      },
+      {
+        ts: '2026-09-25T10:00:03.000Z',
+        kind: 'message',
+        from: 'agent',
+        fromLabel: 'Checkout (r-1)',
+        toUser: true,
+        messageId: 'm-20',
+        text: 'The cart is done.',
+      },
+    ],
+    () => {},
+    'human:bob',
+    false
+  );
+  expect(
+    screen
+      .queryAllByRole('button', { name: /Open thread/ })
+      .map((button) => button.getAttribute('aria-label'))
+  ).toEqual(['Open thread: message from human:bob']);
 });
 
 test('an urgent message and a custom kind both show as pills', () => {
@@ -523,10 +586,14 @@ test('text from before the bus renders as it always did, and nothing links witho
         text: '📬 message from agent:wyat/x: hi (m-03)',
       },
     ],
-    undefined
+    null
   );
   expect(screen.getByText('please also update the README')).toBeDefined();
-  expect(screen.queryByRole('button', { name: /Open thread/ })).toBeNull();
+  expect(
+    screen
+      .queryAllByRole('button', { name: /Open thread/ })
+      .map((button) => button.getAttribute('aria-label'))
+  ).toEqual([]);
 });
 
 test('framed text with no messageId, and a digest that does not parse, keep their raw text', () => {
@@ -554,5 +621,9 @@ test('framed text with no messageId, and a digest that does not parse, keep thei
   ).toBeDefined();
   expect(screen.queryByText('Question')).toBeNull();
   expect(screen.getByText('📬 a digest in some older shape')).toBeDefined();
-  expect(screen.queryByRole('button', { name: /Open thread/ })).toBeNull();
+  expect(
+    screen
+      .queryAllByRole('button', { name: /Open thread/ })
+      .map((button) => button.getAttribute('aria-label'))
+  ).toEqual([]);
 });

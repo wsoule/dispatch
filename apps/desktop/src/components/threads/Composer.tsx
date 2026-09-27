@@ -24,6 +24,7 @@ import { cn } from '@/lib/utils';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { SegmentedControl } from '@/ui/ai/segmented';
 import { Switch } from '@/ui/ai/switch';
+import { Button } from '@/ui/button';
 
 const KINDS: { id: ComposeKind; label: string }[] = [
   { id: 'message', label: 'Message' },
@@ -42,6 +43,10 @@ export interface ComposerProps {
   /** Sends the draft under its idempotency key, kept until a send or an edit. */
   onSend: (state: ComposeState, idempotencyKey: string) => Promise<SendResult>;
   onSent?: (result: SendResult) => void;
+  /** Closes the draft: a Cancel button, and Escape with no @token to drop. */
+  onCancel?: () => void;
+  /** Puts the caret in the message box on mount. */
+  focusOnMount?: boolean;
 }
 
 /** A new message: `@` completes recipients, and every problem shows inline with its field. */
@@ -52,6 +57,8 @@ export function Composer({
   label,
   onSend,
   onSent,
+  onCancel,
+  focusOnMount = false,
 }: ComposerProps) {
   const [to, setTo] = useState<string[]>(() => [...initialTo]);
   const [body, setBody] = useState('');
@@ -96,7 +103,14 @@ export function Composer({
 
   // Runs before the PromptBar's own Enter handling, so Enter picks a recipient while completing.
   const onKeyDownCapture = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (query === null) return;
+    if (query === null) {
+      if (event.key === 'Escape' && onCancel !== undefined) {
+        event.preventDefault();
+        event.stopPropagation();
+        onCancel();
+      }
+      return;
+    }
     if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       event.stopPropagation();
@@ -213,6 +227,7 @@ export function Composer({
         completion={
           listed ? { listId, activeOptionId: optionId(active) } : undefined
         }
+        focusOnMount={focusOnMount}
       />
       <div className="flex flex-wrap items-center gap-3">
         <SegmentedControl
@@ -240,6 +255,16 @@ export function Composer({
             renewKey();
           }}
         />
+        {onCancel !== undefined && (
+          <Button
+            size="sm"
+            variant="ghost"
+            className="ml-auto"
+            onClick={onCancel}
+          >
+            Cancel
+          </Button>
+        )}
       </div>
       {problem !== null && (
         <p role="alert" className="text-destructive text-[12px]">

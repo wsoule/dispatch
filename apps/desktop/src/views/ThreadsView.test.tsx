@@ -108,9 +108,9 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
   );
   const { rerender } = render(view(null));
 
-  const needsYou = await screen.findByRole('region', { name: 'Needs you' });
+  const needsYou = await screen.findByRole('group', { name: 'Needs you' });
   fireEvent.click(
-    await within(needsYou).findByRole('button', {
+    await within(needsYou).findByRole('option', {
       name: /Which cart should the checkout read\?/,
     })
   );
@@ -124,6 +124,136 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
       choice: 'new cart',
     })
   );
+});
+
+function renderRail(client: Record<string, unknown>) {
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ThreadsView
+        data={dataWith({
+          client: client as unknown as ApiClient,
+          port: 4000,
+          me: 'human:wyat',
+          messageAccess: {
+            canDecide: true,
+            canMessage: true,
+            explanation: null,
+          },
+          scopeDecide: DECIDES,
+          tasks: [],
+          runs: [],
+          presence: [],
+        })}
+        projectName="storefront"
+        focus={null}
+        onFocus={() => {}}
+        onOpenRef={() => {}}
+        overseer={OVERSEER}
+      />
+    </QueryClientProvider>
+  );
+}
+
+test('while the rail loads it is busy and says so, and the pane asks for nothing', () => {
+  const pending = () => new Promise<never>(() => {});
+  renderRail({
+    getMailbox: mock(pending),
+    listRecentThreads: mock(pending),
+    openDecisions: mock(pending),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  });
+  const rail = screen.getByRole('complementary', { name: 'Thread list' });
+  expect(rail.getAttribute('aria-busy')).toBe('true');
+  expect(within(rail).getByText('Loading threads…')).toBeTruthy();
+  expect(screen.queryByText('Pick a thread')?.textContent).toBeUndefined();
+});
+
+// An empty mailbox is not an empty rail while a decider's other lists are out.
+test('the rail stays loading until recent threads and open gates are in too', async () => {
+  const pending = () => new Promise<never>(() => {});
+  const getMailbox = mock(() => Promise.resolve({ items: [] }));
+  renderRail({
+    getMailbox,
+    listRecentThreads: mock(pending),
+    openDecisions: mock(pending),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  });
+  await waitFor(() => expect(getMailbox).toHaveBeenCalled());
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const rail = screen.getByRole('complementary', { name: 'Thread list' });
+  expect(rail.getAttribute('aria-busy')).toBe('true');
+  expect(screen.queryByText('No threads yet')?.textContent).toBeUndefined();
+});
+
+test('with no threads at all the rail says so and starts one', async () => {
+  renderRail({
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  });
+  const rail = screen.getByRole('complementary', { name: 'Thread list' });
+  expect(await within(rail).findByText('No threads yet')).toBeTruthy();
+  expect(rail.getAttribute('aria-busy')).toBeNull();
+  expect(screen.queryByText('Pick a thread')?.textContent).toBeUndefined();
+  fireEvent.click(within(rail).getByRole('button', { name: 'New thread' }));
+  expect(screen.getByLabelText('New message')).toBeTruthy();
+});
+
+const QUESTION_CLIENT = () => ({
+  getMailbox: mock(() =>
+    Promise.resolve({
+      items: [
+        {
+          message: question,
+          delivery: {
+            id: 'd-1',
+            messageId: 'm-q',
+            recipient: 'human:wyat',
+            runId: null,
+            via: 'direct',
+            state: 'notified',
+            updatedAt: question.createdAt,
+          },
+        },
+      ],
+    })
+  ),
+  listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+  openDecisions: mock(() => Promise.resolve({ items: [question] })),
+  listChannels: mock(() => Promise.resolve({ channels: [] })),
+  listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+});
+
+// The rail sits between the header and the composer, so focus has to be put there.
+test('New thread puts the caret in the composer, and Escape closes it back to the button', async () => {
+  renderRail(QUESTION_CLIENT());
+  await screen.findByRole('group', { name: 'Needs you' });
+  const newThread = screen.getByRole('button', { name: 'New thread' });
+  fireEvent.click(newThread);
+  const box = screen.getByLabelText('New message');
+  expect(document.activeElement === box).toBe(true);
+
+  fireEvent.keyDown(box, { key: 'Escape' });
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+  expect(document.activeElement === newThread).toBe(true);
+});
+
+test('Cancel closes a new thread without sending', async () => {
+  renderRail(QUESTION_CLIENT());
+  await screen.findByRole('group', { name: 'Needs you' });
+  const newThread = screen.getByRole('button', { name: 'New thread' });
+  fireEvent.click(newThread);
+  fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+  expect(document.activeElement === newThread).toBe(true);
 });
 
 test("a cut-off Assistant call is read in full from the Assistant's conversation", async () => {
@@ -300,6 +430,55 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
     screen.getByRole<HTMLButtonElement>('button', { name: 'New thread' })
       .disabled
   ).toBe(true);
+});
+
+test('a failed whoami says so and asks again from Retry, instead of loading for good', () => {
+  const client = {
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    openDecisions: mock(() => Promise.resolve({ items: [] })),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  };
+  const retryWhoami = mock(() => {});
+  render(
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
+      <ThreadsView
+        data={dataWith({
+          client: client as unknown as ApiClient,
+          port: 4000,
+          me: null,
+          whoamiError: new Error('dispatchd is still starting'),
+          retryWhoami,
+          messageAccess: {
+            canDecide: true,
+            canMessage: true,
+            explanation: null,
+          },
+          scopeDecide: DECIDES,
+          tasks: [],
+          runs: [],
+          presence: [],
+        })}
+        projectName="storefront"
+        focus={null}
+        onFocus={() => {}}
+        onOpenRef={() => {}}
+        overseer={OVERSEER}
+      />
+    </QueryClientProvider>
+  );
+  expect(screen.getByText('dispatchd is still starting')).toBeTruthy();
+  expect(
+    screen.queryByText('Waiting for the daemon to say who you are.')
+      ?.textContent
+  ).toBeUndefined();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(retryWhoami).toHaveBeenCalledTimes(1);
 });
 
 test('a run moving on re-renders no row of the open thread until what a row offers changes', async () => {

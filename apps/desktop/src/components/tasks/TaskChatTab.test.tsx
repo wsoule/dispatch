@@ -4,6 +4,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
+import type { MessageAccess } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { ShellActions } from '../shell/ShellActionsContext';
 import { ShellActionsProvider } from '../shell/ShellActionsContext';
@@ -46,17 +47,25 @@ const SCOPE: RunScopeRequest = {
   decidedBy: null,
 };
 
+const DECIDER: MessageAccess = {
+  canDecide: true,
+  canMessage: true,
+  explanation: null,
+};
+
 // Only what TaskChatTab and the RunLogView it renders read.
 function dataWith(
   runs: RunMeta[],
   selected: RunMeta,
   log: string[],
-  entries: NormalizedEntry[] = []
+  entries: NormalizedEntry[] = [],
+  messageAccess: MessageAccess = DECIDER
 ): DispatchProjectData {
   return {
     runs,
     runDetail: { meta: selected, entries },
     me: 'human:wyat',
+    messageAccess,
     readyIds: new Set(),
     pendingApprovals: new Map(),
     openQuestions: new Map([['r-1', [QUESTION]]]),
@@ -116,12 +125,13 @@ function renderChat(
   runs: RunMeta[],
   selected: RunMeta,
   log: string[],
-  entries: NormalizedEntry[] = []
+  entries: NormalizedEntry[] = [],
+  messageAccess: MessageAccess = DECIDER
 ) {
   return render(
     <ShellActionsProvider value={shellWith(log)}>
       <TaskChatTab
-        data={dataWith(runs, selected, log, entries)}
+        data={dataWith(runs, selected, log, entries, messageAccess)}
         doc={{ meta: { id: 't-1' } } as TaskDoc}
         selectedRun={selected}
         onDispatch={() => {}}
@@ -202,4 +212,50 @@ test('a message delivered to the run opens its thread', () => {
     screen.getByRole('button', { name: 'Open thread: question from run:r-9' })
   );
   expect(log).toEqual(['thread:m-9']);
+});
+
+const DELIVERED: NormalizedEntry[] = [
+  {
+    ts: '2026-09-26T00:04:00.000Z',
+    kind: 'message',
+    from: 'agent',
+    fromLabel: 'run:r-9',
+    messageId: 'm-9',
+    text: '[message from run:r-9 · question · m-9]\n│ Is the cart schema final?',
+  },
+  {
+    ts: '2026-09-26T00:05:00.000Z',
+    kind: 'message',
+    from: 'user',
+    fromLabel: 'human:wyat',
+    messageId: 'm-10',
+    text: '[message from human:wyat · message · m-10]\n│ use the new cart',
+  },
+];
+
+const threadLinks = () =>
+  screen
+    .queryAllByRole('button', { name: /Open thread/ })
+    .map((button) => button.getAttribute('aria-label'));
+
+// Threads refuse a window holding the agent token, so it gets no links to them.
+test('a window that cannot message shows no thread links', () => {
+  const live = run('r-1', 'running');
+  renderChat([live], live, [], DELIVERED, {
+    canDecide: false,
+    canMessage: false,
+    explanation: 'This window cannot send messages.',
+  });
+  expect(screen.getByText('Is the cart schema final?')).toBeDefined();
+  expect(threadLinks()).toEqual([]);
+});
+
+test('a window below decide links only what it sent', () => {
+  const live = run('r-1', 'running');
+  renderChat([live], live, [], DELIVERED, {
+    canDecide: false,
+    canMessage: true,
+    explanation: 'needs decide',
+  });
+  expect(threadLinks()).toEqual(['Open thread: message from human:wyat']);
 });

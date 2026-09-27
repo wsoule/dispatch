@@ -1,6 +1,13 @@
 import type { ApiClient, Message } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import type { MessageAccess } from '../../lib/daemonAuth';
@@ -77,12 +84,9 @@ function renderTab(
     runs: [{ id: 'r-000001', taskId: 't-000001' }] as never,
     presence: [],
   });
-  return render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  render(
+    <QueryClientProvider client={qc}>
       <TaskThreadTab
         data={data}
         taskId="t-000001"
@@ -91,20 +95,26 @@ function renderTab(
       />
     </QueryClientProvider>
   );
+  return { qc };
 }
 
 test("lists the task's threads, opens one, and sends to the task by default", async () => {
   const client = clientWith([root]);
   renderTab(client);
 
+  const list = screen.getByRole('complementary', { name: 'Thread list' });
   fireEvent.click(
-    await screen.findByRole('button', { name: /Blocked on the cart schema/ })
+    await within(list).findByRole('option', {
+      name: /Blocked on the cart schema/,
+    })
   );
   expect(client.listRecentThreads).toHaveBeenCalledWith(50, {
     about: 'task:t-000001',
   });
   expect(await screen.findByLabelText('Reply')).toBeDefined();
 
+  // With a thread open, a new message to the task waits behind its own button.
+  fireEvent.click(screen.getByRole('button', { name: 'New message' }));
   // The task is a recipient the draft cannot drop.
   expect(screen.getByText('t-000001 · Checkout')).toBeDefined();
   expect(
@@ -143,6 +153,9 @@ test('a window that cannot decide says why it lists nothing, and still writes to
   expect(
     screen.getByText(/Listing a task's threads needs the decide tier/)
   ).toBeDefined();
+  expect(
+    screen.getByText(/Ask the project owner for a decide token\./)
+  ).toBeDefined();
   expect(client.listRecentThreads).not.toHaveBeenCalled();
   expect(client.getMailbox).not.toHaveBeenCalled();
   expect(
@@ -163,4 +176,39 @@ test('an attached agent-token window queries nothing and says why', () => {
   expect(client.getMailbox).not.toHaveBeenCalled();
   expect(client.openDecisions).not.toHaveBeenCalled();
   expect(client.listChannels).not.toHaveBeenCalled();
+});
+
+test('a failed refetch keeps the rows on screen and says why under them', async () => {
+  const client = clientWith([root]);
+  const { qc } = renderTab(client);
+  await screen.findByRole('option', { name: /Blocked on the cart schema/ });
+  client.listRecentThreads.mockImplementation(() =>
+    Promise.reject(new Error('daemon busy'))
+  );
+  await act(() => qc.invalidateQueries());
+  expect((await screen.findByRole('alert')).textContent).toBe('daemon busy');
+  expect(
+    screen.getAllByRole('option').map((option) => option.textContent)
+  ).toEqual([expect.stringContaining('Blocked on the cart schema')]);
+});
+
+// Two text boxes at once invite a reply typed into the new-message one.
+test('while a thread is open the new-message composer waits behind a button', async () => {
+  renderTab(clientWith([root]));
+  expect(await screen.findByLabelText('New message')).toBeDefined();
+  fireEvent.click(
+    await screen.findByRole('option', { name: /Blocked on the cart schema/ })
+  );
+  expect(await screen.findByLabelText('Reply')).toBeDefined();
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+
+  fireEvent.click(screen.getByRole('button', { name: 'New message' }));
+  const box = screen.getByLabelText('New message');
+  expect(document.activeElement === box).toBe(true);
+  fireEvent.keyDown(box, { key: 'Escape' });
+  expect(screen.queryByLabelText('New message')?.tagName).toBeUndefined();
+  expect(
+    document.activeElement ===
+      screen.getByRole('button', { name: 'New message' })
+  ).toBe(true);
 });

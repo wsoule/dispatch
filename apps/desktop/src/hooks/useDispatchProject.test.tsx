@@ -84,6 +84,9 @@ const epicStarts: [string, EpicSessionOptions | undefined][] = [];
 // it is still in flight — the interleaving a real browser hits.
 let presenceGate: Promise<void> | null = null;
 let presenceFetches = 0;
+// Who the daemon says this window is; null fails the read, as a daemon still
+// coming up would.
+let whoamiFixture: { handle: string; ref: string; tier: string } | null = null;
 
 void mock.module('@dispatch/client', () => ({
   ...dispatchClient,
@@ -174,6 +177,10 @@ void mock.module('@dispatch/client', () => ({
         updatedAt: '2026-09-20T00:00:00Z',
       }),
     confirmPlan: () => Promise.resolve({ epicId: 'e-1', taskIds: ['t-1'] }),
+    fetchWhoami: () =>
+      whoamiFixture === null
+        ? Promise.reject(new Error('dispatchd is still starting'))
+        : Promise.resolve(whoamiFixture),
     fetchPresence: async () => {
       presenceFetches += 1;
       const gate = presenceGate;
@@ -291,6 +298,52 @@ test('hello refetches presence, since a socket never hears its own arrival', asy
   expect(
     queryClient.getQueryState(['dispatch-presence', PORT])?.isInvalidated
   ).toBe(true);
+});
+
+// A whoami that failed on connect would otherwise stay failed for the whole
+// session: its answer never goes stale, and nothing else asks again.
+test('hello asks the daemon who this window is again', async () => {
+  const queryClient = await mountConnected();
+  queryClient.setQueryData(['dispatch-whoami', PORT], {
+    handle: 'wyat',
+    ref: 'human:wyat',
+    tier: 'decide',
+  });
+
+  act(() => {
+    sink?.onEvent({ type: 'hello', version: '0.0.1' });
+  });
+
+  expect(
+    queryClient.getQueryState(['dispatch-whoami', PORT])?.isInvalidated
+  ).toBe(true);
+});
+
+test('a failed whoami is exposed with a retry that asks again', async () => {
+  whoamiFixture = null;
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.whoamiError?.message).toBe(
+      'dispatchd is still starting'
+    );
+  });
+  expect(result.current.me).toBeNull();
+
+  whoamiFixture = { handle: 'wyat', ref: 'human:wyat', tier: 'decide' };
+  act(() => {
+    result.current.retryWhoami();
+  });
+  await waitFor(() => {
+    expect(result.current.me).toBe('human:wyat');
+  });
+  expect(result.current.whoamiError).toBeNull();
+  whoamiFixture = null;
 });
 
 // The race itself, as a real browser hit it: the first presence fetch leaves
