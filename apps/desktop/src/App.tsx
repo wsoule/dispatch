@@ -1303,7 +1303,10 @@ function App() {
                                   onOpenRef={openRef}
                                   overseer={{
                                     thread: overseer.record?.thread ?? null,
-                                    submit: overseer.submit,
+                                    busy:
+                                      overseer.sending ||
+                                      overseer.record?.state === 'running',
+                                    submit: overseer.reply,
                                     open: () => setGlobalView('overseer'),
                                   }}
                                 />

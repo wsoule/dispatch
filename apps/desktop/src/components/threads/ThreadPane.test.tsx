@@ -64,6 +64,7 @@ function renderPane(over: Partial<ThreadPaneProps> = {}) {
       route="bus"
       onReply={onReply}
       onOverseerReply={() => Promise.resolve()}
+      overseerBusy={false}
       onOpenOverseer={() => {}}
       {...over}
     />
@@ -120,6 +121,28 @@ test('an answered daemon gate offers no reply box', () => {
     screen.getByText('Nothing in this thread takes a reply.')
   ).toBeTruthy();
   expect(screen.queryByLabelText('Reply')).toBeNull();
+});
+
+test('a failed Assistant reply says why and keeps the draft', async () => {
+  renderPane({
+    route: 'overseer',
+    onOverseerReply: () =>
+      Promise.reject(new ApiError('overseer w-1 is still answering', 409)),
+  });
+  fireEvent.change(replyBox(), { target: { value: 'try the new cart' } });
+  fireEvent.keyDown(replyBox(), { key: 'Enter' });
+  await waitFor(() =>
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Reply: overseer w-1 is still answering'
+    )
+  );
+  expect(replyBox().value).toBe('try the new cart');
+});
+
+test('the Assistant reply box waits while the Assistant is answering', () => {
+  renderPane({ route: 'overseer', overseerBusy: true });
+  expect(replyBox().disabled).toBe(true);
+  expect(replyBox().placeholder).toBe('The Assistant is answering…');
 });
 
 test('an earlier Assistant conversation is read-only, with a way to the Assistant', () => {

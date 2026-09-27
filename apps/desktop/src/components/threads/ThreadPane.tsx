@@ -30,6 +30,8 @@ export interface ThreadPaneProps {
   route: ReplyRoute;
   onReply: (plan: ReplyPlan, body: string) => Promise<unknown>;
   onOverseerReply: (body: string) => Promise<void>;
+  /** The Assistant is mid-turn or taking a message, so it would refuse another. */
+  overseerBusy: boolean;
   onOpenOverseer: () => void;
 }
 
@@ -71,6 +73,7 @@ function ReplyBox({
   plan,
   onReply,
   onOverseerReply,
+  overseerBusy,
   onOpenOverseer,
 }: ThreadPaneProps & { plan: ReplyPlan | null }) {
   const [body, setBody] = useState('');
@@ -100,7 +103,9 @@ function ReplyBox({
       </p>
     );
   }
+  const waiting = route === 'overseer' && overseerBusy;
   const submit = async () => {
+    if (waiting) return;
     setSending(true);
     setProblem(null);
     try {
@@ -122,9 +127,13 @@ function ReplyBox({
           setProblem(null);
         }}
         onSubmit={() => void submit()}
-        disabled={sending}
+        disabled={sending || waiting}
         placeholder={
-          route === 'overseer' ? 'Reply to the Assistant…' : 'Reply…'
+          waiting
+            ? 'The Assistant is answering…'
+            : route === 'overseer'
+              ? 'Reply to the Assistant…'
+              : 'Reply…'
         }
         ariaLabel="Reply"
       />

@@ -29,6 +29,7 @@ const question: Message = {
 };
 const OVERSEER = {
   thread: null,
+  busy: false,
   submit: () => Promise.resolve(),
   open: () => {},
 };

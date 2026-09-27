@@ -33,6 +33,9 @@ export interface ThreadsViewProps {
   /** The live Assistant conversation, which takes replies through its own route. */
   overseer: {
     thread: string | null;
+    /** Mid-turn or sending: the daemon would refuse another message. */
+    busy: boolean;
+    /** Rejects on failure, so the reply box keeps its draft and says why. */
     submit: (text: string) => Promise<void>;
     open: () => void;
   };
@@ -171,6 +174,7 @@ export function ThreadsView({
               route={replyRoute(open.messages, open.thread, overseer.thread)}
               onReply={actions.reply}
               onOverseerReply={overseer.submit}
+              overseerBusy={overseer.busy}
               onOpenOverseer={overseer.open}
             />
           ) : (
