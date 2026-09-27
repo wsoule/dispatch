@@ -8,7 +8,7 @@ import {
   MessageSquarePlus,
   Play,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import type { DecideAvailability } from '../../lib/daemonAuth';
@@ -53,16 +53,20 @@ const KIND_LABEL: Record<string, string> = {
 // The agent-facing prompt to answer with msg_reply; a person reading the chat has no use for it.
 const WAITING_NOTE = 'The sender is waiting.';
 
+// `about` names the message, so a list of these links reads apart for a screen reader.
 function OpenThread({
   messageId,
+  about,
   onOpen,
 }: {
   messageId: string;
+  about: string | undefined;
   onOpen: (messageId: string) => void;
 }) {
   return (
     <button
       type="button"
+      aria-label={about === undefined ? undefined : `Open thread: ${about}`}
       className="text-muted-foreground hover:text-foreground ml-auto text-[12px] font-normal hover:underline"
       onClick={() => onOpen(messageId)}
     >
@@ -71,30 +75,38 @@ function OpenThread({
   );
 }
 
-function ChatMessageBubble({
+// Memoized so a run.log append re-renders only the new row; entries keep their identity.
+const ChatMessageBubble = memo(function ChatMessageBubble({
   entry,
+  me,
   onOpenMessage,
 }: {
   entry: NormalizedEntry;
+  me: string | null | undefined;
   onOpenMessage?: (messageId: string) => void;
 }) {
   const text = entry.text ?? '';
-  const link = (messageId: string | undefined) =>
+  const link = (messageId: string | undefined, about?: string) =>
     messageId !== undefined && onOpenMessage !== undefined ? (
-      <OpenThread messageId={messageId} onOpen={onOpenMessage} />
+      <OpenThread messageId={messageId} about={about} onOpen={onOpenMessage} />
     ) : null;
 
   if (entry.digest === true) {
     const digest = parseDigestLine(text);
+    const line =
+      digest === null
+        ? text
+        : `${digest.channel === null ? '' : `#${digest.channel} · `}${digest.kind} from ${digest.from}: ${digest.summary}`;
     return (
       <div className="text-muted-foreground font-book flex items-center gap-1.5 px-1 text-[12px]">
         <Mail className="size-3 shrink-0" />
-        <span className="min-w-0 flex-1 truncate">
-          {digest === null
-            ? text
-            : `${digest.channel === null ? '' : `#${digest.channel} · `}${digest.kind} from ${digest.from}: ${digest.summary}`}
+        <span className="min-w-0 flex-1 truncate" title={line}>
+          {line}
         </span>
-        {link(entry.messageId ?? digest?.messageId)}
+        {link(
+          entry.messageId ?? digest?.messageId,
+          digest === null ? undefined : `${digest.kind} from ${digest.from}`
+        )}
       </div>
     );
   }
@@ -103,15 +115,14 @@ function ChatMessageBubble({
   const toUser = entry.from === 'agent' && entry.toUser === true;
 
   if (toUser) {
+    const sender = entry.fromLabel ?? 'an agent';
     return (
       <div className="bg-surface-quaternary border-border-strong rounded-card flex w-full flex-col gap-0.5 border-[0.5px] px-3 py-2">
         <div className="flex items-center gap-1.5 text-[12px] font-medium text-(--text-secondary)">
           <Megaphone className="size-3" />
           To you
-          <span className="text-muted-foreground font-book">
-            from {entry.fromLabel ?? 'an agent'}
-          </span>
-          {link(entry.messageId)}
+          <span className="text-muted-foreground font-book">from {sender}</span>
+          {link(entry.messageId, `to you from ${sender}`)}
         </div>
         <Markdown content={text} className="font-book text-[13px]" />
       </div>
@@ -123,7 +134,18 @@ function ChatMessageBubble({
     entry.messageId === undefined ? null : parseDeliveredText(text);
   const notes =
     delivered?.notes.filter((line) => !line.startsWith(WAITING_NOTE)) ?? [];
-  const kindLabel = delivered === null ? undefined : KIND_LABEL[delivered.kind];
+  const kind = delivered?.kind;
+  const kindLabel =
+    kind === undefined || kind === 'message'
+      ? undefined
+      : (KIND_LABEL[kind] ?? kind);
+  const sender = entry.fromLabel ?? delivered?.from;
+  // A human sender reads as "You" only when it is the viewer, or composer text with no sender.
+  const heading = fromUser
+    ? sender === undefined || sender === me
+      ? 'You'
+      : sender
+    : `↳ ${sender ?? 'another agent'}`;
   return (
     <div
       className={cn(
@@ -139,10 +161,13 @@ function ChatMessageBubble({
           fromUser ? 'text-muted-foreground' : 'text-state-waiting'
         )}
       >
-        {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}
+        {heading}
         {kindLabel !== undefined && <Pill>{kindLabel}</Pill>}
         {delivered?.urgent === true && <Pill>Urgent</Pill>}
-        {link(entry.messageId)}
+        {link(
+          entry.messageId,
+          `${kind ?? 'message'} from ${sender ?? 'another agent'}`
+        )}
       </div>
       <Markdown
         content={delivered?.body ?? text}
@@ -157,7 +182,7 @@ function ChatMessageBubble({
       )}
     </div>
   );
-}
+});
 
 interface RunLogViewProps {
   meta: RunMeta;
@@ -192,6 +217,9 @@ interface RunLogViewProps {
   onRequestChanges: (text: string) => Promise<void>;
   /** Opens the Threads view on a delivered message's thread; without it, no links. */
   onOpenMessage?: (messageId: string) => void;
+  /** The viewer's address (`human:<handle>`): a human sender matching it reads as "You".
+   * While it is unknown, every addressed human sender shows its address. */
+  me?: string | null;
 }
 
 /** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
@@ -214,6 +242,7 @@ export function RunLogView({
   onRestartDaemon,
   onRequestChanges,
   onOpenMessage,
+  me,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -332,6 +361,7 @@ export function RunLogView({
               <ChatMessageBubble
                 key={i}
                 entry={group.entries[0]}
+                me={me}
                 onOpenMessage={onOpenMessage}
               />
             ) : (
