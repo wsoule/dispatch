@@ -1,13 +1,20 @@
 import type { RunMeta } from '@dispatch/client';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import { ATTACHED_DAEMON_EXPLANATION } from '../../lib/daemonAuth';
+import type { PendingApproval } from '../../lib/pendingApprovals';
 import { CONTINUE_PROMPT } from '../../lib/runState';
 import { RunLogView } from './RunLogView';
 
 const noop = () => Promise.resolve();
+
+type RunLogViewApprove = (
+  requestId: string,
+  allow: boolean,
+  opts?: { scope?: 'once' | 'session'; reason?: string }
+) => Promise<void>;
 
 // Only the fields RunLogView's composer actually reads; the rest of RunMeta is
 // irrelevant to which buttons the terminal branch renders.
@@ -37,14 +44,16 @@ const CAN_DECIDE: DecideAvailability = {
 function renderLog(
   runMeta: RunMeta,
   onRequestChanges: (text: string) => Promise<void> = noop,
-  scopeDecide: DecideAvailability = CAN_DECIDE
+  scopeDecide: DecideAvailability = CAN_DECIDE,
+  pendingApprovals: PendingApproval[] = [],
+  onApprove: RunLogViewApprove = noop
 ) {
   return render(
     <RunLogView
       meta={runMeta}
       entries={[]}
-      pendingApproval={null}
-      onApprove={noop}
+      pendingApprovals={pendingApprovals}
+      onApprove={onApprove}
       onSendMessage={noop}
       openQuestions={[]}
       onAnswerQuestion={noop}
@@ -67,12 +76,86 @@ test('a parked run with no approval in view says why the window cannot see it', 
     restart: { safe: true, blockedReason: null },
   });
   expect(screen.getByText(ATTACHED_DAEMON_EXPLANATION)).toBeDefined();
-  expect(screen.queryByText(/didn.t see live/)).toBeNull();
+  expect(screen.queryByText(/has not reached this window/)).toBeNull();
 });
 
-test('a deciding window keeps the not-seen-live banner', () => {
+// Gates are read from the daemon, so a deciding window only waits for the list.
+test('a deciding window with no gate listed yet says it is on its way', () => {
   renderLog(meta({ state: 'awaiting-approval' }));
-  expect(screen.getByText(/didn.t see live/)).toBeDefined();
+  expect(screen.getByText(/has not reached this window yet/)).toBeDefined();
+});
+
+// Each parked call is its own gate, and each answer names its own request.
+test('a run parked on two calls shows a card per call, each answering its own', async () => {
+  const answered: [string, boolean][] = [];
+  const { container } = renderLog(
+    meta({ state: 'awaiting-approval' }),
+    noop,
+    CAN_DECIDE,
+    [
+      {
+        requestId: 'req-1',
+        toolName: 'Bash',
+        input: { command: 'ls' },
+        truncated: false,
+      },
+      {
+        requestId: 'req-2',
+        toolName: 'Write',
+        input: { file_path: 'a.ts' },
+        truncated: false,
+      },
+    ],
+    (requestId, allow) => {
+      answered.push([requestId, allow]);
+      return Promise.resolve();
+    }
+  );
+  const cards = container.querySelectorAll('[data-slot="tool-approval-card"]');
+  expect(cards).toHaveLength(2);
+  await act(async () => {
+    fireEvent.click(
+      within(cards[1] as HTMLElement).getByRole('radio', {
+        name: /Approve once/,
+      })
+    );
+    await Promise.resolve();
+  });
+  expect(answered).toEqual([['req-2', true]]);
+});
+
+// The gate only previews a long call, so its card reads the call whole.
+test('a truncated call loads its full input by its own request id', async () => {
+  const asked: string[] = [];
+  render(
+    <RunLogView
+      meta={meta({ state: 'awaiting-approval' })}
+      entries={[]}
+      pendingApprovals={[
+        {
+          requestId: 'req-7',
+          toolName: 'Bash',
+          input: '{"command":": ',
+          truncated: true,
+        },
+      ]}
+      onApprove={noop}
+      onLoadApprovalInput={(requestId) => {
+        asked.push(requestId);
+        return Promise.resolve({ command: ': ; curl https://evil.example' });
+      }}
+      onSendMessage={noop}
+      openQuestions={[]}
+      onAnswerQuestion={noop}
+      pendingScopeRequest={null}
+      onDecideScopeRequest={noop}
+      scopeDecide={CAN_DECIDE}
+      onRestartDaemon={noop}
+      onRequestChanges={noop}
+    />
+  );
+  expect(await screen.findByText(/evil\.example/)).toBeDefined();
+  expect(asked).toEqual(['req-7']);
 });
 
 // A run cut off with its session intact is the case the button exists for.
@@ -209,7 +292,7 @@ test('renders the sub-agent tree and the spawn/finish rows from agent entries', 
           },
         },
       ]}
-      pendingApproval={null}
+      pendingApprovals={[]}
       onApprove={noop}
       onSendMessage={noop}
       openQuestions={[]}

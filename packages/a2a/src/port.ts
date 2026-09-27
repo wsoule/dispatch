@@ -1,0 +1,141 @@
+import type { A2AConfig, A2ASkill } from '@dispatch/core';
+import type {
+  Address,
+  DeliveryState,
+  JsonValue,
+  Message,
+  Ref,
+} from '@dispatch/protocol';
+
+import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
+import type { TaskStateName } from './states.js';
+
+// The one seam between the A2A handler and a host: the host gathers facts and
+// applies effects, the handler decides.
+
+export interface Caller {
+  address: Address;
+  name: string;
+}
+
+export type AuthResult =
+  | { ok: true; caller: Caller }
+  | { ok: false; status: 401 | 403; reason: string; message: string };
+
+export type OpenKind = 'ask' | 'message' | 'notice' | 'handoff' | 'status';
+
+export interface OpenInput {
+  clientMessageId: string;
+  contextId: string | null;
+  kind: OpenKind;
+  to: Address[] | null;
+  replyTo: string | null;
+  body: string;
+  data?: JsonValue;
+  refs: Ref[];
+  choices?: string[];
+  work?: WorkRequestV1;
+}
+
+// A send that opens no task (plain message, notice, status) gets a direct reply.
+export type OpenResult =
+  | { kind: 'task'; taskId: string }
+  | {
+      kind: 'reply';
+      text: string;
+      data?: JsonValue;
+      about?: { id: string; thread: string };
+    };
+
+export interface ContinueInput {
+  clientMessageId: string;
+  taskId: string;
+  contextId: string | null;
+  body: string;
+  data?: JsonValue;
+  refs: Ref[];
+  choice?: string;
+}
+
+export interface ContinueResult {
+  reask: string | null;
+}
+
+export interface OpenGateFact {
+  id: string;
+  type: GateTypeName;
+  openedAt: string;
+}
+
+// Everything the projection needs to decide one task's A2A state.
+export interface TaskFacts {
+  id: string;
+  contextId: string;
+  skill: 'ask' | 'handoff';
+  client: Address;
+  createdAt: string;
+  canceledAt: string | null;
+  declinedAt: string | null;
+  root: Message;
+  scope: Message[];
+  rootDeliveries: DeliveryState[];
+  answer: Message | null;
+  openQuestions: Message[];
+  openGates: OpenGateFact[];
+  task:
+    | { id: string; title: string; status: string; approved: boolean }
+    | 'deleted'
+    | null;
+  dropped: 'client' | 'other' | null;
+  recipientTaskDropped: boolean;
+  work: {
+    pr?: WorkArtifactV1;
+    diffstat?: WorkArtifactV1;
+    evidence?: WorkArtifactV1;
+  };
+  clientIds: Record<string, string>;
+}
+
+export interface ListQuery {
+  contextId?: string;
+  state?: TaskStateName;
+  after?: string;
+  pageSize: number;
+  pageToken?: string;
+}
+
+export interface ListPage {
+  ids: string[];
+  nextPageToken: string;
+  totalSize: number;
+}
+
+export type Admission =
+  | { ok: true; release?: () => void }
+  | { ok: false; retryAfterSec: number };
+
+export interface CardInputs {
+  name: string;
+  description: string | null;
+  publicUrl: string;
+  version: string;
+  skills: A2ASkill[];
+  blockingWaitSec: number;
+  pushNotifications: boolean;
+}
+
+export type A2APolicy = A2AConfig;
+
+export interface BridgePort {
+  authenticate(bearer: string): Promise<AuthResult>;
+  admit(caller: Caller, what: 'request' | 'stream'): Promise<Admission>;
+  card(): Promise<CardInputs>;
+  open(caller: Caller, input: OpenInput): Promise<OpenResult>;
+  continue(caller: Caller, input: ContinueInput): Promise<ContinueResult>;
+  // null when the task is absent or not the caller's.
+  facts(caller: Caller, taskId: string): Promise<TaskFacts | null>;
+  list(caller: Caller, query: ListQuery): Promise<ListPage>;
+  // Throws A2AError('TASK_NOT_CANCELABLE', …) when the task cannot be canceled.
+  cancel(caller: Caller, taskId: string): Promise<void>;
+  watch(caller: Caller, taskId: string, onChange: () => void): () => void;
+}

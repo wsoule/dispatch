@@ -51,11 +51,31 @@ describe('pendingApprovalsFromGates', () => {
       [gate('m-1', { requestId: 'req-1', runId: 'a', input: { cmd: 'ls' } })],
       [run('a')]
     );
-    expect(approvals.get('a')).toEqual({
-      requestId: 'req-1',
-      toolName: 'Bash',
-      input: { cmd: 'ls' },
-    });
+    expect(approvals.get('a')).toEqual([
+      {
+        requestId: 'req-1',
+        toolName: 'Bash',
+        input: { cmd: 'ls' },
+        truncated: false,
+      },
+    ]);
+  });
+
+  // The card says so and fetches the full call rather than passing the cut
+  // preview off as the whole command.
+  test('a preview cut short of the full input says so', () => {
+    const approvals = pendingApprovalsFromGates(
+      [
+        gate('m-1', {
+          requestId: 'req-1',
+          runId: 'a',
+          input: '{"command":": ',
+          truncated: true,
+        }),
+      ],
+      [run('a')]
+    );
+    expect(approvals.get('a')?.[0]?.truncated).toBe(true);
   });
 
   test('a run that is no longer awaiting approval contributes nothing', () => {
@@ -71,11 +91,12 @@ describe('pendingApprovalsFromGates', () => {
       [gate('m-1', { requestId: 'req-1', runId: 'a' })],
       undefined
     );
-    expect(approvals.get('a')?.requestId).toBe('req-1');
+    expect(approvals.get('a')?.[0]?.requestId).toBe('req-1');
   });
 
-  // Parallel tool calls park one gate each; the oldest is answered first.
-  test('a run with two open approvals shows the oldest', () => {
+  // Parallel tool calls park one gate each, and the daemon answers any of
+  // them by request id, so each call gets its own card.
+  test('a run with two open approvals lists each call, oldest first', () => {
     const approvals = pendingApprovalsFromGates(
       [
         gate('m-2', { requestId: 'req-2', runId: 'a' }, '2026-09-14T00:00:40Z'),
@@ -83,7 +104,10 @@ describe('pendingApprovalsFromGates', () => {
       ],
       [run('a')]
     );
-    expect(approvals.get('a')?.requestId).toBe('req-1');
+    expect(approvals.get('a')?.map((a) => a.requestId)).toEqual([
+      'req-1',
+      'req-2',
+    ]);
   });
 
   // An overseer conversation's gate has no run; the chat shows it.

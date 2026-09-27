@@ -1,7 +1,6 @@
 import type { MergeQueueSnapshot, RunMeta } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
-import type { RunQuestion } from './gates';
 import { deriveTaskAttentionById } from './taskAttention';
 
 function run(over: Partial<RunMeta> = {}): RunMeta {
@@ -20,17 +19,13 @@ function run(over: Partial<RunMeta> = {}): RunMeta {
   } as RunMeta;
 }
 
-function question(runId: string): RunQuestion {
-  return { runId, question: 'Which env?' } as RunQuestion;
-}
-
 function derive(
   runs: RunMeta[],
-  openQuestions = new Map<string, RunQuestion[]>(),
+  askingTaskIds: ReadonlySet<string> = new Set(),
   mergeQueue: MergeQueueSnapshot | null = null
 ) {
   const latestRunByTaskId = new Map(runs.map((r) => [r.taskId, r]));
-  return deriveTaskAttentionById(latestRunByTaskId, openQuestions, mergeQueue);
+  return deriveTaskAttentionById(latestRunByTaskId, askingTaskIds, mergeQueue);
 }
 
 describe('deriveTaskAttentionById', () => {
@@ -40,8 +35,21 @@ describe('deriveTaskAttentionById', () => {
   });
 
   test('a running run with an open question marks its task as waiting', () => {
-    const map = derive([run()], new Map([['r-1', [question('r-1')]]]));
+    const map = derive([run()], new Set(['t-1']));
     expect(map.get('t-1')).toBe('waiting');
+  });
+
+  // An ended run's question stays open for its task, which still owes an answer.
+  test('an ended run with an open ask still marks its task as waiting', () => {
+    expect(
+      derive([run({ state: 'finished' })], new Set(['t-1'])).get('t-1')
+    ).toBe('waiting');
+    expect(
+      derive(
+        [run({ state: 'finished', reviewedAt: '2026-07-27T00:00:00.000Z' })],
+        new Set(['t-1'])
+      ).get('t-1')
+    ).toBe('waiting');
   });
 
   test('a running run with no questions needs no attention', () => {
@@ -69,7 +77,7 @@ describe('deriveTaskAttentionById', () => {
     const queue = {
       entries: [{ runId: 'r-1', state: 'merging' }],
     } as MergeQueueSnapshot;
-    const map = derive([run({ state: 'finished' })], new Map(), queue);
+    const map = derive([run({ state: 'finished' })], new Set(), queue);
     expect(map.has('t-1')).toBe(false);
   });
 
@@ -77,7 +85,7 @@ describe('deriveTaskAttentionById', () => {
     const queue = {
       entries: [{ runId: 'r-1', state: 'failed' }],
     } as MergeQueueSnapshot;
-    const map = derive([run({ state: 'finished' })], new Map(), queue);
+    const map = derive([run({ state: 'finished' })], new Set(), queue);
     expect(map.get('t-1')).toBe('failed');
   });
 });

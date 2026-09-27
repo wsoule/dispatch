@@ -184,6 +184,24 @@ describe('validateSendInput', () => {
       },
       'data.paths'
     ));
+  it('rejects a scope gate naming an empty path', () =>
+    fails(
+      {
+        ...base,
+        kind: 'question',
+        data: { type: 'scope', paths: ['a.ts', ''], reason: 'r' },
+      },
+      'data.paths'
+    ));
+  it('rejects a scope gate with a blank reason', () =>
+    fails(
+      {
+        ...base,
+        kind: 'question',
+        data: { type: 'scope', paths: ['a.ts'], reason: '  ' },
+      },
+      'data.reason'
+    ));
 });
 
 // Every line break a reader might honor; none may appear in a one-line field.

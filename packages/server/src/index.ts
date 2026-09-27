@@ -1626,6 +1626,11 @@ async function bootServer(
     fixLoopStore,
     cache,
     events,
+    conversationApprovalInput: (conversation, requestId) =>
+      overseerManager
+        .list()
+        .find((record) => record.id === conversation)
+        ?.pendingApprovals.find((a) => a.requestId === requestId)?.input,
     // The policy engine's classifier: a gate the project's rung auto-decides
     // shows up as `recorded` rather than `blocking`.
     policy: policyDecisionClassifier(rootDir, {

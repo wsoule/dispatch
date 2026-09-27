@@ -10,8 +10,10 @@ export type {
 } from './engine.js';
 export {
   BUILT_IN_KINDS,
+  checkIdempotencyKey,
   GATE_TYPES,
   gateOf,
+  isSystemMarker,
   REF_TYPES,
   validateSendInput,
 } from './envelope.js';
@@ -27,6 +29,9 @@ export type {
 export { MessagingError } from './errors.js';
 export type { MessagingErrorCode } from './errors.js';
 export type {
+  ExternalAdmission,
+  ExternalKind,
+  ExternalTarget,
   MessagingHost,
   PolicyRequest,
   PolicyRuling,

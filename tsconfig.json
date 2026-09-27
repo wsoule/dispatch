@@ -12,6 +12,9 @@
       "path": "packages/federation/tsconfig.json"
     },
     {
+      "path": "packages/a2a/tsconfig.json"
+    },
+    {
       "path": "packages/cli/tsconfig.json"
     },
     {

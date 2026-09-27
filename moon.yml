@@ -10,6 +10,8 @@ dependsOn:
   - 'client'
   - 'cli'
   - 'mcp'
+  - 'protocol'
+  - 'a2a'
   - 'desktop'
 
 # Every repo-wide lane below scans from the root, and every one of them has to

@@ -61,6 +61,8 @@ export interface SendInput {
   replyTo?: string | null;
   wake?: 'none' | 'request';
   session?: string;
+  /** The sender's own dedupe key; a repeat returns the first message (A2A §3.3.1). */
+  idempotencyKey?: string;
 }
 
 export const GATE_TYPES = [
@@ -79,6 +81,7 @@ export type GateData =
       tool: string;
       input: JsonValue; // at most an 8 KiB preview; the executor holds the real input
       truncated?: true; // set when `input` was cut to fit
+      floor: boolean; // the irreversibility floor holds the call, judged on its full input
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: Address; message: string }
@@ -121,6 +124,21 @@ export function gateOf(message: { data?: JsonValue }): GateData | null {
     : null;
 }
 
+// True only for the daemon's own marker: a client, peer or human cannot forge one.
+export function isSystemMarker(
+  message: Pick<Message, 'from' | 'data'>,
+  type: 'x-closed' | 'x-breaker'
+): boolean {
+  const data = message.data;
+  return (
+    message.from === SYSTEM_ADDRESS &&
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (data as { [key: string]: JsonValue })['type'] === type
+  );
+}
+
 function invalid(field: string, why: string): never {
   throw new MessagingError('invalid', `${field}: ${why}`, field);
 }
@@ -144,6 +162,12 @@ function singleLine(
   if (LINE_BREAK.test(value)) invalid(field, 'must not contain line breaks');
   if (overBytes(value, maxBytes))
     invalid(field, `at most ${maxBytes} bytes (UTF-8)`);
+}
+
+// A sender-chosen dedupe key: one line, 1..200 UTF-8 bytes, like `session`.
+export function checkIdempotencyKey(key: string): void {
+  if (key === '') invalid('idempotencyKey', 'must not be empty');
+  singleLine(key, 'idempotencyKey', MAX_LABEL_BYTES);
 }
 
 // Checks a gate payload's shape and who may send it: runs raise scope gates;
@@ -228,6 +252,8 @@ export function validateSendInput(
   )
     invalid('data', `at most ${MAX_DATA_BYTES} bytes as JSON`);
   singleLine(input.session, 'session', MAX_LABEL_BYTES);
+  if (input.idempotencyKey !== undefined)
+    checkIdempotencyKey(input.idempotencyKey);
 
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);

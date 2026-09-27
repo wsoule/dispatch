@@ -64,9 +64,10 @@ and \`channel:<name>\`.
   (and \`choices\` for a pick-one). It waits up to 30 minutes for the answer.
   Inside a run, your human is named in your task prompt. Outside one, it is the
   handle in your own address (\`agent:<handle>/<name>\` → \`human:<handle>\`).
-- **Ask for scope**: \`msg_send(kind: "question", blocking: true,
-  choices: ["grant", "deny"], data: { type: "scope", paths, reason })\`. Edit
-  outside your fence only on \`grant\`. No decision in time means denied.
+- **Ask for scope** (inside a dispatch run): \`msg_send(kind: "question",
+  blocking: true, choices: ["grant", "deny"], data: { type: "scope", paths,
+  reason })\`. Edit outside your fence only on \`grant\`. No decision in time
+  means denied.
 - **Tell someone**: \`kind: "notice"\` (FYI) or \`"message"\`, no blocking.
 - **Hear back**: messages arrive in your session. Answer with \`msg_reply\`,
   catch up with \`inbox_read\`, and read a whole conversation with \`thread_read\`.

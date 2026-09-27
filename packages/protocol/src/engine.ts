@@ -1,6 +1,11 @@
 import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
-import { gateOf, validateSendInput } from './envelope.js';
+import {
+  checkIdempotencyKey,
+  gateOf,
+  isSystemMarker,
+  validateSendInput,
+} from './envelope.js';
 import type { JsonValue, Message, Ref, SendInput } from './envelope.js';
 import { MessagingError } from './errors.js';
 import type { MessagingHost, WakeResult } from './host.js';
@@ -34,6 +39,8 @@ export interface SendResult {
   deliveries: Delivery[];
   /** True when `urgent` was dropped because the sender hit its quota. */
   downgraded: boolean;
+  /** Set when `idempotencyKey` matched an earlier send from the same sender. */
+  replayed?: true;
 }
 
 export type EngineEvent =
@@ -120,9 +127,13 @@ export class DeliveryEngine {
     return { muted: agent.muted };
   }
 
-  // Expands channels, de-duplicates (direct beats channel) and drops the
-  // sender itself, including a run's own task.
-  private resolveTargets(to: Address[], sender: Address): Target[] {
+  // Expands channels, de-duplicates (direct beats channel) and drops the sender
+  // itself, including a run's own task; errors name the caller's `to` entry.
+  private resolveTargets(
+    to: Address[],
+    sender: Address,
+    fields: Map<Address, string>
+  ): Target[] {
     const senderTask = sender.startsWith('run:')
       ? this.host.taskOfRun(sender.slice(4))
       : null;
@@ -140,9 +151,13 @@ export class DeliveryEngine {
       )
         byRecipient.set(recipient, { recipient, via });
     };
-    to.forEach((addr, i) => {
-      const parsed = parseAddress(addr, `to[${i}]`);
-      if (parsed.kind !== 'channel') return add(addr, 'direct');
+    for (const addr of to) {
+      const field = fields.get(addr) ?? 'to';
+      const parsed = parseAddress(addr, field);
+      if (parsed.kind !== 'channel') {
+        add(addr, 'direct');
+        continue;
+      }
       const explicit = this.store.members(parsed.name);
       const implicit = this.host.implicitMembers(parsed.name);
       const known = this.store.channels().some((c) => c.name === parsed.name);
@@ -150,20 +165,20 @@ export class DeliveryEngine {
         throw new MessagingError(
           'not-found',
           `no channel ${parsed.name}`,
-          `to[${i}]`
+          field
         );
       for (const member of [...explicit, ...implicit]) add(member, 'channel');
-    });
+    }
     return [...byRecipient.values()];
   }
 
-  // A target's initial delivery state and run; null drops a not-live run that
-  // only a channel reached. A reply to an ended run with no task is held on it.
+  // A target's initial delivery; null drops an ended run only a channel reached.
+  // `heldIfEnded` holds mail to an ended run instead of refusing it.
   private plan(
     target: Target,
     muted: boolean,
     field: string,
-    repliesToIt: boolean
+    heldIfEnded: boolean
   ): Delivery | null {
     const base = {
       id: this.id('d'),
@@ -189,7 +204,7 @@ export class DeliveryEngine {
       case 'run':
         if (!this.host.isLiveRun(parsed.id)) {
           if (target.via === 'channel') return null;
-          if (repliesToIt) return { ...base, runId: null, state: 'held' };
+          if (heldIfEnded) return { ...base, runId: null, state: 'held' };
           throw new MessagingError(
             'invalid',
             `run ${parsed.id} is not live`,
@@ -202,6 +217,14 @@ export class DeliveryEngine {
 
   async send(input: SendInput, sender: Sender): Promise<SendResult> {
     const { muted } = this.authorize(sender);
+    // A repeated key replays before any other check, so a retried answer or a
+    // retry after the breaker trips gets the first result.
+    const key = input.idempotencyKey;
+    if (key !== undefined) {
+      checkIdempotencyKey(key);
+      const prior = this.replay(sender.address, key);
+      if (prior !== null) return prior;
+    }
     const replyTarget = input.replyTo
       ? this.store.getMessage(input.replyTo)
       : null;
@@ -209,6 +232,10 @@ export class DeliveryEngine {
     if (replyTarget !== null) this.authorizeReply(replyTarget, sender);
     validateSendInput(input, sender.address, sender.canDecide, replyTarget);
     await this.checkBreaker(replyTarget, sender);
+    // The breaker await lets a duplicate commit first, so look again before the
+    // answered check: a raced retry replays rather than meeting conflict.
+    const raced = key === undefined ? null : this.replay(sender.address, key);
+    if (raced !== null) return raced;
     if (
       input.kind === 'answer' &&
       replyTarget !== null &&
@@ -255,29 +282,45 @@ export class DeliveryEngine {
     if (input.choice !== undefined) message.choice = input.choice;
 
     const fields = this.recipientFields(input.to, replyTarget);
-    const targets = this.resolveTargets(message.to, sender.address);
+    const targets = this.admitExternal(
+      this.resolveTargets(message.to, sender.address, fields),
+      fields,
+      sender,
+      replyTarget,
+      message
+    );
+    const wakesRuns = wakesEndedRuns(message);
     const deliveries: Delivery[] = [];
     for (const t of targets) {
       const planned = this.plan(
         t,
         muted,
         fields.get(t.recipient) ?? 'to',
-        t.recipient === replyTarget?.from
+        t.recipient === replyTarget?.from || wakesRuns
       );
       if (planned !== null) deliveries.push({ ...planned, messageId: id });
     }
 
     const question = message.kind === 'answer' ? replyTarget : null;
-    const answered = this.store.transaction(() => {
-      // Re-checked inside the write: the breaker await lets a second answer race in.
+    const written = this.store.transaction((): Delivery[] | SendResult => {
+      // Re-checked inside the write for a writer on another connection; the
+      // unique index is the last backstop.
+      const prior = key === undefined ? null : this.replay(sender.address, key);
+      if (prior !== null) return prior;
       if (question !== null && this.store.answersTo(question.id).length > 0)
         throw alreadyAnswered(question.id);
-      this.store.insertMessage(message);
+      this.store.insertMessage(message, key);
       for (const d of deliveries) this.store.insertDelivery(d);
       return question === null ? [] : this.markAnswered(question.id);
     });
-    // A gate's effect lands before anyone hears of the answer.
-    if (question !== null && gateOf(question) !== null && !isClose(message))
+    if (!Array.isArray(written)) return written;
+    const answered = written;
+    // A gate's effect lands before anyone hears of the answer; a system close has none.
+    if (
+      question !== null &&
+      gateOf(question) !== null &&
+      !isSystemMarker(message, 'x-closed')
+    )
       await this.applyGate(question, message);
     this.emit({ type: 'message', message });
     for (const d of answered) this.emit({ type: 'delivery', delivery: d });
@@ -296,6 +339,64 @@ export class DeliveryEngine {
     }
 
     return { message, deliveries: settled, downgraded };
+  }
+
+  // Refuses or drops A2A clients and peers before anything is stored: gate data
+  // never leaves the machine, and a channel member the host refuses is skipped.
+  private admitExternal(
+    targets: Target[],
+    fields: Map<Address, string>,
+    sender: Sender,
+    replyTarget: Message | null,
+    message: Message
+  ): Target[] {
+    const external = (t: Target) => this.isExternal(t.recipient);
+    if (!targets.some(external)) return targets;
+    if (gateOf(message) !== null) {
+      throw new MessagingError(
+        'forbidden',
+        'gate data never goes to an A2A client or peer',
+        'data'
+      );
+    }
+    const out: Target[] = [];
+    for (const t of targets) {
+      if (!external(t)) {
+        out.push(t);
+        continue;
+      }
+      const target = {
+        recipient: t.recipient,
+        via: t.via,
+        field: fields.get(t.recipient) ?? 'to',
+      };
+      try {
+        const admission =
+          this.host.admitExternal?.(target, sender, replyTarget, message) ??
+          'deliver';
+        if (admission === 'deliver') out.push(t);
+      } catch (err) {
+        if (t.via === 'channel' && err instanceof MessagingError) continue;
+        throw err;
+      }
+    }
+    return out;
+  }
+
+  private isExternal(address: Address): boolean {
+    return (this.host.external?.(address) ?? null) !== null;
+  }
+
+  // The first send under (from, key) as send() would return it now, or null.
+  private replay(from: Address, key: string): SendResult | null {
+    const message = this.store.byIdemKey(from, key);
+    if (message === null) return null;
+    return {
+      message,
+      deliveries: this.store.deliveries({ messageId: message.id }),
+      downgraded: false,
+      replayed: true,
+    };
   }
 
   // The address a reply actually goes to: an ended run's task (see deliverableAddress).
@@ -387,11 +488,20 @@ export class DeliveryEngine {
     let next = d;
     if (d.state === 'sending' && d.runId !== null) {
       const push = d.via === 'direct' || message.urgent;
+      const external = this.isExternal(message.from);
       try {
         if (push)
-          await this.host.push(d.runId, renderForAgent(message), message);
+          await this.host.push(
+            d.runId,
+            renderForAgent(message, external),
+            message
+          );
         else
-          await this.host.notify(d.runId, renderDigestLine(message), message);
+          await this.host.notify(
+            d.runId,
+            renderDigestLine(message, external),
+            message
+          );
         next = {
           ...d,
           state: push ? 'pushed' : 'notified',
@@ -698,8 +808,14 @@ export class DeliveryEngine {
   // After a wake-requesting send, asks the host to wake each held task
   // recipient (or gates/denies it), so the message is actually seen soon.
   private async runWake(message: Message, settled: Delivery[]): Promise<void> {
+    const wakesRuns = wakesEndedRuns(message);
     for (const d of settled) {
-      if (d.state !== 'held' || !d.recipient.startsWith('task:')) continue;
+      if (d.state !== 'held') continue;
+      if (
+        !d.recipient.startsWith('task:') &&
+        !(wakesRuns && d.recipient.startsWith('run:'))
+      )
+        continue;
       const ruling = this.host.decide({
         type: 'wake',
         target: d.recipient,
@@ -759,14 +875,9 @@ export class DeliveryEngine {
       SYSTEM_ADDRESS
     );
     if (count < this.limits.agentTurnsPerThreadPerHour) return;
-    const flagged = this.store.thread(replyTarget.thread).some((m) => {
-      const data = m.data as { type?: string } | undefined;
-      return (
-        m.from === SYSTEM_ADDRESS &&
-        data?.type === 'x-breaker' &&
-        m.createdAt >= since
-      );
-    });
+    const flagged = this.store
+      .thread(replyTarget.thread)
+      .some((m) => isSystemMarker(m, 'x-breaker') && m.createdAt >= since);
     if (!flagged) {
       await this.send(
         {
@@ -795,7 +906,7 @@ function alreadyAnswered(questionId: string): MessagingError {
   );
 }
 
-// A system close carries `x-closed` data and applies no gate effect.
-function isClose(answer: Message): boolean {
-  return (answer.data as { type?: unknown } | undefined)?.type === 'x-closed';
+// Only a human's wake may name an ended run: it asks to continue exactly that run.
+function wakesEndedRuns(message: Message): boolean {
+  return message.wake === 'request' && message.from.startsWith('human:');
 }

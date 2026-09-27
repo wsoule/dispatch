@@ -57,8 +57,15 @@ void mock.module('../lib/notifications', () => ({
 let runsFixture: RunMeta[] = [];
 let openGatesFixture: Message[] = [];
 let openDecisionsCalls = 0;
+// Holds open-gate reads open while set, so a test sees the cache before them.
+let decisionsHold: Promise<void> | null = null;
 const sentMessages: SendInput[] = [];
 const replies: [string, ReplyInput][] = [];
+const approvalReads: [string, string][] = [];
+// Runs inside a send, the way the daemon wakes a run before the send returns.
+let duringSend: (() => void) | null = null;
+// The caller's unread mail, where the daemon's notices land.
+let mailboxFixture: { delivery: unknown; message: Message }[] = [];
 
 // The bulk epic-progress listing the daemon returns, how many times it was
 // asked for, and every `startEpic` body the hook sent — the fan-out tests
@@ -91,17 +98,24 @@ void mock.module('@dispatch/client', () => ({
         ],
         default: 'claude',
       }),
-    openDecisions: () => {
+    openDecisions: async () => {
       openDecisionsCalls += 1;
-      return Promise.resolve({ items: openGatesFixture });
+      if (decisionsHold !== null) await decisionsHold;
+      return { items: openGatesFixture };
     },
     sendMessage: (input: SendInput) => {
       sentMessages.push(input);
+      duringSend?.();
       return Promise.resolve({
-        message: {},
+        message: { id: 'm-sent' },
         deliveries: [],
         downgraded: false,
       });
+    },
+    getMailbox: () => Promise.resolve({ items: mailboxFixture }),
+    fetchRunApproval: (runId: string, requestId: string) => {
+      approvalReads.push([runId, requestId]);
+      return Promise.resolve({ tool: 'Bash', input: { command: 'ls -la' } });
     },
     replyToMessage: (id: string, input: ReplyInput) => {
       replies.push([id, input]);
@@ -391,6 +405,7 @@ async function mountWithGates(gates: Message[]) {
 function resetGateFixtures() {
   runsFixture = [];
   openGatesFixture = [];
+  mailboxFixture = [];
   window.localStorage.clear();
 }
 
@@ -399,12 +414,19 @@ function resetGateFixtures() {
 test('open gates fill the approval, scope and question maps', async () => {
   const result = await mountWithGates([approvalGate, scopeGate, questionGate]);
 
-  expect(result.current.pendingApprovals.get('r-1')).toEqual({
-    requestId: 'req-1',
-    toolName: 'Bash',
-    input: { command: 'ls' },
+  expect(result.current.pendingApprovals.get('r-1')).toEqual([
+    {
+      requestId: 'req-1',
+      toolName: 'Bash',
+      input: { command: 'ls' },
+      truncated: false,
+    },
+  ]);
+  expect(result.current.pendingScopeRequests.get('r-1')).toMatchObject({
+    id: 'm-s',
+    paths: ['a.ts'],
+    reason: 'needed',
   });
-  expect(result.current.pendingScopeRequests.get('r-1')?.requestId).toBe('m-s');
   expect(result.current.openQuestions.get('r-1')?.[0].id).toBe('m-q');
   resetGateFixtures();
 });
@@ -478,9 +500,75 @@ test('the card handlers answer their gates with the matching choice', async () =
   resetGateFixtures();
 });
 
-test('request changes wakes the task and follows its new run', async () => {
+// An answer closes its gate, and the event that says so refetches the list.
+test('an answer on the bus refetches the open gates', async () => {
+  await mountWithGates([approvalGate]);
+  const before = openDecisionsCalls;
+
+  act(() => {
+    sink?.onEvent({
+      type: 'message.new',
+      message: gateMessage('m-ans', {
+        kind: 'answer',
+        blocking: false,
+        replyTo: 'm-a',
+      }),
+    });
+  });
+
+  await waitFor(() => {
+    expect(openDecisionsCalls).toBeGreaterThan(before);
+  });
+  resetGateFixtures();
+});
+
+// The card goes as soon as its answer lands, before the refetch, so a second
+// click cannot send a second answer to a closed gate.
+test('an answered gate leaves the open list without waiting for the refetch', async () => {
+  const result = await mountWithGates([approvalGate, scopeGate, questionGate]);
+  let release = () => {};
+  decisionsHold = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    await act(async () => {
+      await result.current.handleAnswerQuestion('r-1', 'm-q', 'new');
+      await result.current.handleDecideScopeRequest('r-1', 'm-s', true);
+      await result.current.handleApprove('r-1', 'req-1', true);
+    });
+    // Every refetch is held, so only the answered-gate drop can empty these.
+    await waitFor(() => {
+      expect(result.current.openQuestions.has('r-1')).toBe(false);
+      expect(result.current.pendingScopeRequests.has('r-1')).toBe(false);
+      expect(result.current.pendingApprovals.has('r-1')).toBe(false);
+    });
+  } finally {
+    decisionsHold = null;
+    release();
+    resetGateFixtures();
+  }
+});
+
+// A card whose gate carries only a preview reads the parked call whole.
+test('a parked call is read in full by its run and request id', async () => {
+  const result = await mountWithGates([approvalGate]);
+  approvalReads.length = 0;
+
+  const input = await result.current.fetchApprovalInput('r-1', 'req-1');
+
+  expect(input).toEqual({ command: 'ls -la' });
+  expect(approvalReads).toEqual([['r-1', 'req-1']]);
+  resetGateFixtures();
+});
+
+// Feedback on one run continues exactly that run, not the task's newest one.
+test('request changes continues the named run and follows its continuation', async () => {
   const followed: [string, string][] = [];
-  runsFixture = [runFixture('r-1', 'finished')];
+  const r2 = {
+    ...runFixture('r-2', 'finished'),
+    createdAt: '2026-08-24T00:00:00Z',
+  };
+  runsFixture = [r2, runFixture('r-1', 'finished')];
   openGatesFixture = [];
   sentMessages.length = 0;
   const queryClient = new QueryClient({
@@ -495,33 +583,86 @@ test('request changes wakes the task and follows its new run', async () => {
     { wrapper: wrapper(queryClient) }
   );
   await waitFor(() => {
-    expect(result.current.runs).toHaveLength(1);
+    expect(result.current.runs).toHaveLength(2);
   });
 
-  // The daemon wakes the task inside the send, so the new run is listed next.
-  runsFixture = [runFixture('r-2', 'running'), runFixture('r-1', 'finished')];
-  await act(async () => {
-    await result.current.handleRequestChanges('r-1', 'use the new cart');
-  });
+  // The daemon continues r-1 inside the send, so its continuation is listed next.
+  duringSend = () => {
+    runsFixture = [
+      { ...runFixture('r-3', 'running'), resumedFrom: 'r-1' },
+      r2,
+      runFixture('r-1', 'finished'),
+    ];
+  };
+  try {
+    await act(async () => {
+      await result.current.handleRequestChanges('r-1', 'use the new cart');
+    });
+  } finally {
+    duringSend = null;
+  }
   expect(sentMessages).toEqual([
     {
-      to: ['task:t-1'],
+      to: ['run:r-1'],
       kind: 'message',
       body: 'use the new cart',
       wake: 'request',
     },
   ]);
-  expect(followed).toEqual([['r-2', 't-1']]);
+  expect(followed).toEqual([['r-3', 't-1']]);
+  resetGateFixtures();
+});
 
-  runsFixture = [runFixture('r-1', 'finished')];
-  const notWoken = await result.current
+// A continuation that already existed is not the one this request started.
+test('request changes that continued nothing says why, from the daemon notice', async () => {
+  runsFixture = [
+    { ...runFixture('r-2', 'running'), resumedFrom: 'r-1' },
+    runFixture('r-1', 'finished'),
+  ];
+  openGatesFixture = [];
+  mailboxFixture = [
+    {
+      delivery: {},
+      message: {
+        ...gateMessage('m-n', {
+          kind: 'notice',
+          blocking: false,
+          body: 'Could not wake run:r-1: run was already resumed. Your message is waiting for it.',
+        }),
+        refs: [{ type: 'message', id: 'm-sent' }],
+      },
+    },
+  ];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const { result } = renderHook(
+    () => useDispatchProject('/repo', { selectedRunId: null }),
+    { wrapper: wrapper(queryClient) }
+  );
+  await waitFor(() => {
+    expect(result.current.runs).toHaveLength(2);
+  });
+
+  const refused = await result.current
     .handleRequestChanges('r-1', 'again')
     .then(
       () => 'resolved',
       (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
     );
-  expect(notWoken).toBe(
-    'The task did not wake. Your message is waiting for its next run.'
+  expect(refused).toBe(
+    'Could not wake run:r-1: run was already resumed. Your message is waiting for it.'
+  );
+
+  mailboxFixture = [];
+  const unexplained = await result.current
+    .handleRequestChanges('r-1', 'again')
+    .then(
+      () => 'resolved',
+      (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+    );
+  expect(unexplained).toBe(
+    'The run did not continue. Your message is waiting for it.'
   );
   resetGateFixtures();
 });
@@ -563,6 +704,20 @@ test('a window on the agent token reads no gates, notifies none and sends nothin
     );
     expect(refused).toBe(ATTACHED_DAEMON_MESSAGING_EXPLANATION);
     expect(sentMessages).toEqual([]);
+    // Answering a question or deciding a scope gate is refused here too.
+    replies.length = 0;
+    const settle = (p: Promise<void>) =>
+      p.then(
+        () => 'resolved',
+        (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+      );
+    expect(
+      await settle(result.current.handleAnswerQuestion('r-1', 'm-q', 'new'))
+    ).not.toBe('resolved');
+    expect(
+      await settle(result.current.handleDecideScopeRequest('r-1', 'm-s', true))
+    ).not.toBe('resolved');
+    expect(replies).toEqual([]);
   } finally {
     connectionFixture = APP_CONNECTION;
     resetGateFixtures();

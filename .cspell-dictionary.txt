@@ -10,6 +10,7 @@ analyse
 analysed
 anci
 APFS
+apikey
 appliable
 argmax
 arrayish
@@ -223,6 +224,7 @@ jaccard
 jridgewell
 jsonpointer
 katex
+keepalives
 keepme
 keycap
 keycaps
@@ -349,6 +351,7 @@ RAII
 Railpack
 railwayignore
 readdirp
+reask
 reassignable
 reattribute
 reattributing

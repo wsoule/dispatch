@@ -25,7 +25,7 @@ import {
 } from '../api/http.js';
 import { openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
-import { isInternalAgent } from './overseerBus.js';
+import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
 import type { Messaging } from './service.js';
 
@@ -788,7 +788,7 @@ export async function registerAgent(
   if (existing !== null && isInternalAgent(existing)) {
     return errorResponse(
       409,
-      `${address} is Dispatch's own agent — approve it in Agents instead`
+      `${address} is Dispatch's own agent; register under another name`
     );
   }
   if (

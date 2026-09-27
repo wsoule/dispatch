@@ -157,7 +157,8 @@ interface PolicyEngineRuns {
   list(): RunMeta[];
   onRunTerminal(callback: (meta: RunMeta) => void): () => void;
   pendingApprovalFor(
-    runId: string
+    runId: string,
+    requestId: string
   ): { requestId: string; toolName: string; input: unknown } | undefined;
   /** The run's working diff against its base — what auto-merge would land. */
   diff(runId: string): { files: { path: string; status: string }[] };
@@ -327,8 +328,8 @@ export class PolicyEngine {
   ): Promise<void> {
     const floor = this.ctx.approvalFloor;
     if (floor === undefined) return;
-    const pending = this.ctx.orchestrator.pendingApprovalFor(runId);
-    if (pending === undefined || pending.requestId !== requestId) return;
+    const pending = this.ctx.orchestrator.pendingApprovalFor(runId, requestId);
+    if (pending === undefined) return;
     const taskId = this.ctx.orchestrator
       .list()
       .find((r) => r.id === runId)?.taskId;

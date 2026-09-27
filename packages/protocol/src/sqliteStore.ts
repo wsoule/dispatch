@@ -2,8 +2,8 @@ import { dbVersion, openSqliteDb, queryAll, queryOne } from '@dispatch/core';
 import type { SqliteDatabase, SqlValue } from '@dispatch/core';
 
 import type { Address } from './address.js';
-import { gateOf } from './envelope.js';
-import type { JsonValue, Message, Ref } from './envelope.js';
+import { gateOf, isSystemMarker } from './envelope.js';
+import type { JsonValue, Message, MessageKind, Ref } from './envelope.js';
 import { DELIVERY_STATES } from './store.js';
 import type {
   AgentRecord,
@@ -70,8 +70,31 @@ export function openMessagesDb(path: string): SqliteDatabase {
     );
   }
   db.exec(DDL);
+  addIdemKey(db);
   db.exec(`PRAGMA user_version = ${MESSAGES_DB_VERSION}`);
   return db;
+}
+
+// Additive, so an older build still opens and writes the file: its insert names
+// its columns and leaves idem_key NULL, which the partial index ignores.
+export function addIdemKey(db: SqliteDatabase): void {
+  if (!hasIdemKey(db)) {
+    try {
+      db.exec('ALTER TABLE messages ADD COLUMN idem_key TEXT');
+    } catch (err) {
+      // A daemon opening the same file at once may have added it first.
+      if (!hasIdemKey(db)) throw err;
+    }
+  }
+  db.exec(
+    'CREATE UNIQUE INDEX IF NOT EXISTS messages_idem ON messages (from_addr, idem_key) WHERE idem_key IS NOT NULL'
+  );
+}
+
+function hasIdemKey(db: SqliteDatabase): boolean {
+  return queryAll<{ name: string }>(db, 'PRAGMA table_info(messages)').some(
+    (c) => c.name === 'idem_key'
+  );
 }
 
 interface MessageRow {
@@ -143,11 +166,11 @@ export class SqliteMessageStore implements MessageStore {
     }
   }
 
-  insertMessage(m: Message): void {
+  insertMessage(m: Message, idemKey?: string): void {
     this.transaction(() => {
       this.db
         .prepare(
-          `INSERT INTO messages (id, thread, reply_to, from_addr, session, kind, body, refs_json, data_json, urgent, blocking, choices_json, choice, wake, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+          `INSERT INTO messages (id, thread, reply_to, from_addr, session, kind, body, refs_json, data_json, urgent, blocking, choices_json, choice, wake, created_at, idem_key) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         )
         .run(
           m.id,
@@ -164,7 +187,8 @@ export class SqliteMessageStore implements MessageStore {
           m.choices === undefined ? null : JSON.stringify(m.choices),
           m.choice ?? null,
           m.wake,
-          m.createdAt
+          m.createdAt,
+          idemKey ?? null
         );
       const insert = this.db.prepare(
         'INSERT INTO recipients (message_id, position, addr) VALUES (?,?,?)'
@@ -209,6 +233,46 @@ export class SqliteMessageStore implements MessageStore {
       [id]
     );
     return row === undefined ? null : this.toMessage(row);
+  }
+
+  byIdemKey(from: Address, key: string): Message | null {
+    const row = queryOne<MessageRow>(
+      this.db,
+      'SELECT * FROM messages WHERE from_addr = ? AND idem_key = ?',
+      [from, key]
+    );
+    return row === undefined ? null : this.toMessage(row);
+  }
+
+  // Chunked so a long history never exceeds SQLite's bound-parameter limit.
+  idemKeysFor(messageIds: string[]): Map<string, string> {
+    const out = new Map<string, string>();
+    for (let i = 0; i < messageIds.length; i += 500) {
+      const chunk = messageIds.slice(i, i + 500);
+      const rows = queryAll<{ id: string; idem_key: string }>(
+        this.db,
+        `SELECT id, idem_key FROM messages WHERE idem_key IS NOT NULL AND id IN (${chunk.map(() => '?').join(',')})`,
+        chunk
+      );
+      for (const r of rows) out.set(r.id, r.idem_key);
+    }
+    return out;
+  }
+
+  messagesFrom(
+    address: Address,
+    sinceIso: string,
+    kinds?: MessageKind[]
+  ): Message[] {
+    const byKind =
+      kinds === undefined
+        ? ''
+        : ` AND kind IN (${kinds.map(() => '?').join(',')})`;
+    return queryAll<MessageRow>(
+      this.db,
+      `SELECT * FROM messages WHERE from_addr = ? AND created_at >= ?${byKind} ORDER BY id`,
+      [address, sinceIso, ...(kinds ?? [])]
+    ).map((r) => this.toMessage(r));
   }
 
   thread(threadId: string): Message[] {
@@ -347,8 +411,7 @@ export class SqliteMessageStore implements MessageStore {
       const answer = this.getMessage(r.answer_id);
       if (question === null || answer === null || gateOf(question) === null)
         return [];
-      const data = answer.data as { type?: unknown } | undefined;
-      return data?.type === 'x-closed' ? [] : [{ question, answer }];
+      return isSystemMarker(answer, 'x-closed') ? [] : [{ question, answer }];
     });
   }
 
