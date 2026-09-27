@@ -79,6 +79,49 @@ describe('applyThreadEvent', () => {
     expect(qc.getQueryData(threadKey(PORT, 'm-05'))).toBeUndefined();
   });
 
+  it('keeps a message that arrives while the thread is first fetched', async () => {
+    const server = gatedThreadServer();
+    server.gated = true;
+    const { qc, result } = mount(() => useThread(server.client, PORT, 'm-01'));
+    await waitFor(() => {
+      expect(server.pending).toHaveLength(1);
+    });
+    server.post(qc, msg('m-02', { thread: 'm-01', replyTo: 'm-01' }));
+    server.gated = false;
+    server.release();
+    await waitFor(() => {
+      expect(qc.isFetching()).toBe(0);
+      expect(result.current.messages.map((m) => m.id)).toEqual([
+        'm-01',
+        'm-02',
+      ]);
+    });
+    expect(result.current.error).toBeNull();
+  });
+
+  it('keeps a message that arrives during a background refetch of the open thread', async () => {
+    const server = gatedThreadServer();
+    const { qc, result } = mount(() => useThread(server.client, PORT, 'm-01'));
+    await waitFor(() => {
+      expect(result.current.messages.map((m) => m.id)).toEqual(['m-01']);
+    });
+    server.gated = true;
+    applyThreadEvent(qc, PORT, { type: 'hello', version: '0.0.1' });
+    await waitFor(() => {
+      expect(server.pending).toHaveLength(1);
+    });
+    server.post(qc, msg('m-02', { thread: 'm-01', replyTo: 'm-01' }));
+    server.gated = false;
+    server.release();
+    await waitFor(() => {
+      expect(qc.isFetching()).toBe(0);
+      expect(result.current.messages.map((m) => m.id)).toEqual([
+        'm-01',
+        'm-02',
+      ]);
+    });
+  });
+
   it('marks the lists stale on a new message or a delivery change, and everything on reconnect', () => {
     const qc = new QueryClient();
     const mailbox = [...threadListsKey(PORT), 'rail', 'human:wyat', 'mailbox'];
@@ -267,6 +310,36 @@ function readingClient() {
     },
   };
   return { calls, client: client as unknown as ApiClient };
+}
+
+// One thread on a fake daemon: each getThread answers with the rows stored when
+// it was asked, held back while `gated` until the test releases it.
+function gatedThreadServer() {
+  const rows: Message[] = [msg('m-01')];
+  const pending: (() => void)[] = [];
+  const server = {
+    gated: false,
+    pending,
+    client: {
+      getMessage: (id: string) => Promise.resolve(msg(id, { thread: 'm-01' })),
+      getThread: () => {
+        const snapshot: ThreadDetail = { messages: [...rows], deliveries: [] };
+        if (!server.gated) return Promise.resolve(snapshot);
+        return new Promise<ThreadDetail>((resolve) => {
+          pending.push(() => resolve(snapshot));
+        });
+      },
+    } as unknown as ApiClient,
+    // Stores a message, then announces it the way the daemon does: after commit.
+    post(qc: QueryClient, message: Message) {
+      rows.push(message);
+      applyThreadEvent(qc, PORT, { type: 'message.new', message });
+    },
+    release() {
+      for (const resolve of pending.splice(0)) resolve();
+    },
+  };
+  return server;
 }
 
 function mount<T>(hook: () => T) {

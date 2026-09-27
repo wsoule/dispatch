@@ -68,13 +68,21 @@ export function applyThreadEvent(
 ): void {
   if (event.type === 'message.new') {
     const { message } = event;
-    queryClient.setQueryData<ThreadDetail>(
-      threadKey(port, message.thread),
-      (current) =>
-        current === undefined
-          ? current
-          : { ...current, messages: appendToThread(current.messages, message) }
+    const key = threadKey(port, message.thread);
+    queryClient.setQueryData<ThreadDetail>(key, (current) =>
+      current === undefined
+        ? current
+        : { ...current, messages: appendToThread(current.messages, message) }
     );
+    // A response in flight was read before this message: drop it and fetch
+    // again. Invalidating alone would reuse a first fetch that has no data.
+    if (queryClient.getQueryState(key)?.fetchStatus === 'fetching') {
+      void queryClient
+        .cancelQueries({ queryKey: key, exact: true })
+        .then(() =>
+          queryClient.invalidateQueries({ queryKey: key, exact: true })
+        );
+    }
     void queryClient.invalidateQueries({ queryKey: threadListsKey(port) });
   } else if (event.type === 'delivery.changed') {
     void queryClient.invalidateQueries({ queryKey: threadListsKey(port) });
