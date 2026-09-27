@@ -159,11 +159,14 @@ start. Vectors that test muting are `MAY` vectors with the capability
 
 ## 6.8 Presenting messages to models
 
-A host that puts messages into a model's context MUST present each one so that
-no line of its body can pass for a header or for a line the host writes: it
-writes the text of the body only on lines that start with `quotePrefix`, at
-least one such line for each line of the body, so no line of the body forms or
-starts the header or a host line. The host declares the forms it uses
+A host that pushes a message into a model's context MUST present it so that no
+line of its body can pass for a header or for a line the host writes: it writes
+the text of the body only on lines that start with `quotePrefix`, at least one
+such line for each line of the body, so no line of the body forms or starts the
+header or a host line. A host that notifies a session
+([§6.2](06-delivery.md#s6.2)) MUST give it a digest instead: the host's own text
+followed by at most the first line of the body, on one line, so the text of the
+body never starts a line. The host declares the forms of its pushes
 ([§12.4](12-conformance.md#s12.4)); `header` and `hostLines` are patterns,
 searched in a line as [§1.4](01-introduction.md#s1.4) says:
 
@@ -172,13 +175,13 @@ searched in a line as [§1.4](01-introduction.md#s1.4) says:
 - `hostLines`: patterns for the lines the host adds after the body, such as the
   message replied to, the choices, the choice, the refs and a prompt to answer.
 
-For a message whose sender is external ([§2.1](02-terminology.md#s2.1)), every
-line after the header MUST start with `quotePrefix`, including the host lines,
-because an external sender's choices and refs are its text too.
+For a pushed message whose sender is external ([§2.1](02-terminology.md#s2.1)),
+every line after the header MUST start with `quotePrefix`, including the host
+lines, because an external sender's choices and refs are its text too.
 
 The host's own text may repeat a body by chance: an answer whose body is
 `approve` also carries the choice `approve`. So the `render` vectors
-([§12.4.6](12-conformance.md#s12.4.6)) test the requirement on bodies whose
+([§12.4.6](12-conformance.md#s12.4.6)) test these requirements on bodies whose
 lines occur in no text the host writes for the message, such as a header naming
 another sender, where a line that contains a line of the body can only be
 carrying it. Splitting the rendered text and such a body into lines at every
@@ -192,6 +195,7 @@ these:
    body.
 
 Blank lines of the body are left out of rules 1, 2 and 4, since every line would
-contain them. A digest is the host's own text followed by at most the first line
-of the body, on one line. The Dispatch profile's exact forms are in
+contain them. On such a body, a digest MUST be one line, and each later line of
+the body that the digest contains MUST be blank or be contained in the body's
+first line. The Dispatch profile's exact forms are in
 [Appendix C](appendix-c-dispatch-profile.md#sC.6).

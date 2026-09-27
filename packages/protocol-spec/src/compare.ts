@@ -1,4 +1,4 @@
-import { checkRender } from './renderCheck.js';
+import { checkDigest, checkRender } from './renderCheck.js';
 import { CREATING_OPS } from './types.js';
 import type {
   CallRecord,
@@ -382,8 +382,8 @@ function checkChannels(
   if (failure !== null) failures.push(failure);
 }
 
-// Each `render` step not expected to fail must yield text that fits the
-// declared forms, and exactly `then.render`'s text where it names the step.
+// Each `render` step not expected to fail must fit the declared forms, or the
+// digest rule for a digest, and match `then.render`'s text where it names it.
 function checkRenders(
   vector: Vector,
   observation: Observation,
@@ -412,9 +412,16 @@ function checkRenders(
       );
       return;
     }
-    const external = step['external'] === true;
-    for (const f of checkRender(text, message.body, hello.render, external))
-      failures.push(`step ${n}: ${f}`);
+    const found =
+      step['form'] === 'digest'
+        ? checkDigest(text, message.body)
+        : checkRender(
+            text,
+            message.body,
+            hello.render,
+            step['external'] === true
+          );
+    for (const f of found) failures.push(`step ${n}: ${f}`);
   });
   for (const r of vector.then.render ?? []) {
     const want = resolveText(r.text, bound);

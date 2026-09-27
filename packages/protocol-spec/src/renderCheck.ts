@@ -41,3 +41,16 @@ export function checkRender(
     );
   return failures;
 }
+
+// Checks a digest against §6.8's digest rule: one line, holding no body line
+// after the first unless the first line already holds it.
+export function checkDigest(text: string, body: string): string[] {
+  const failures: string[] = [];
+  const lines = text.split(LINE_BREAK);
+  if (lines.length > 1) failures.push(`the digest spans ${lines.length} lines`);
+  const [first = '', ...later] = body.split(LINE_BREAK);
+  for (const line of later)
+    if (line.trim() !== '' && !first.includes(line) && text.includes(line))
+      failures.push(`the digest carries a body line after the first: ${line}`);
+  return failures;
+}

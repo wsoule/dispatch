@@ -113,8 +113,8 @@ waits for, its recipient ([§6.2](06-delivery.md#s6.2)).
 is a string that does not start with `x-`. The definition does not depend on the
 message's kind.
 
-**Gate.** A question or handoff with gate data whose type the host knows, or
-whose sender is the system address or a `human:` address
+**Gate.** A question or handoff with gate data, when the host knows `data.type`
+or the sender is the system address or a `human:` address
 ([§5.6](05-gates.md#s5.6)). Any other question or handoff with gate data is a
 plain one. A gate's **gate type** is `data.type`. A gate asks a deciding
 principal to choose, and the host applies the gate's **effect** when one does

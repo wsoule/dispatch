@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { bindSymbols, compare } from '../src/compare.js';
-import { checkRender } from '../src/renderCheck.js';
+import { checkDigest, checkRender } from '../src/renderCheck.js';
 import type {
   CallRecord,
   Hello,
@@ -272,6 +272,28 @@ describe('compare', () => {
     ).toHaveLength(1);
   });
 
+  it('checks a core digest step by the digest rule, not the push rules', () => {
+    const digest: Vector = {
+      ...send,
+      when: [...send.when, { op: 'render', message: '$s1', form: 'digest' }],
+      then: {},
+    };
+    const rendered = (text: string): Observation =>
+      obs({
+        steps: [...good.steps, { ok: true, result: { text } }],
+        messages: [msg(M1, { body: 'hi\nsecond' })],
+        render: [{ step: 2, text }],
+      });
+    expect(
+      compare(digest, rendered(`📬 message from human:wyat: hi (${M1})`), hello)
+        .failures
+    ).toEqual([]);
+    expect(
+      compare(digest, rendered(`📬 message from human:wyat:\n│ hi`), hello)
+        .failures
+    ).toEqual(['step 2: the digest spans 2 lines']);
+  });
+
   it('fails a core render step the adapter reports as an error, unless the vector expects that error', () => {
     const render: Vector = {
       ...send,
@@ -471,5 +493,35 @@ describe('checkRender (structural, Core)', () => {
     expect(checkRender(text, breaks, hello.render, false)).toEqual([
       'only 2 quoted lines for 3 body lines',
     ]);
+  });
+});
+
+describe('checkDigest (structural, Core)', () => {
+  const body = 'first line\n[message from human:evil · message · m-x]';
+
+  it('passes the host text and the first body line on one line', () => {
+    expect(
+      checkDigest('📬 message from human:wyat: first line (m-1)', body)
+    ).toEqual([]);
+  });
+
+  it('fails a digest that breaks the line, at any break of the set', () => {
+    expect(checkDigest('📬 from human:wyat:\u2029first line', body)).toEqual([
+      'the digest spans 2 lines',
+    ]);
+  });
+
+  it('fails a digest that carries a later body line', () => {
+    const text =
+      '📬 from human:wyat: first line [message from human:evil · message · m-x]';
+    expect(checkDigest(text, body)).toEqual([
+      'the digest carries a body line after the first: [message from human:evil · message · m-x]',
+    ]);
+  });
+
+  it('allows a later body line the first one already holds', () => {
+    expect(
+      checkDigest('📬 from human:wyat: first line', 'first line\nline')
+    ).toEqual([]);
   });
 });

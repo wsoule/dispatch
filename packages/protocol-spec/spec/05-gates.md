@@ -9,9 +9,9 @@ rule below exists so that only a deciding principal's choice ever takes effect.
 
 A message has **gate data** when its `data` is a JSON object whose `type` member
 is a string that does not start with `x-`, whatever the message's kind. A
-message is a **gate** when it is a `question` or `handoff` with gate data whose
-type the host knows, or whose sender is the system address or a `human:` address
-([§5.6](05-gates.md#s5.6)), and its gate type is `data.type`. A question or
+message is a **gate** when it is a `question` or `handoff` with gate data, and
+the host knows `data.type` or the sender is the system address or a `human:`
+address ([§5.6](05-gates.md#s5.6)); its gate type is `data.type`. A question or
 handoff with gate data of an unknown type from an agent or a session is not a
 gate; locality ([§5.8](05-gates.md#s5.8)) still applies to it, since it tests
 for gate data alone.
@@ -45,9 +45,9 @@ by its `from` being a `human:` address or the system address
 ## 5.3 Raising a gate
 
 A host MUST refuse, as `invalid` on `data.type`, a send whose input has gate
-data when its kind is neither `question` nor `handoff`, or when its gate type is
-not one the host implements ([§5.6](05-gates.md#s5.6)). Private payloads use an
-`x-` type instead.
+data when its kind is neither `question` nor `handoff`, or when its `data.type`
+is not a gate type the host implements ([§5.6](05-gates.md#s5.6)), whoever sends
+it. Private payloads use an `x-` type instead.
 
 A host MUST refuse, as `forbidden` on `data`, a gate that the type's `raisedBy`
 does not let the sender raise:
@@ -101,7 +101,9 @@ requires its own types too ([§12.1](12-conformance.md#s12.1)). A type the
 registry lists is not known to a host that does not implement it.
 
 - **At send**, a host refuses gate data on a kind other than `question` and
-  `handoff`, and a gate type it does not know ([§5.3](05-gates.md#s5.3)).
+  `handoff`, and a `data.type` that is not a gate type it knows
+  ([§5.3](05-gates.md#s5.3)), even from a sender whose message would not be a
+  gate.
 - **A stored gate of an unknown type**, written by another build or version of
   the host, stays a gate when its sender is the system address or a `human:`
   address, since those could have raised it. Only a deciding principal may

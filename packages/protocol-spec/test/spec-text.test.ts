@@ -2,7 +2,7 @@ import { describe, expect, it } from 'bun:test';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 import { loadVectors } from '../src/load.js';
-import { checkRender } from '../src/renderCheck.js';
+import { checkDigest, checkRender } from '../src/renderCheck.js';
 import { SECTION_NUMBER, sectionsOf, SPEC_DIR } from '../src/sections.js';
 
 const files = readdirSync(SPEC_DIR).filter(
@@ -139,10 +139,43 @@ describe('the DMP text and the kit', () => {
       expect(section(n)).toContain('occur in no text the host writes');
   });
 
+  it('holds pushes to the quoting rules and a digest to its own', () => {
+    // A correct digest carries the first body line after the host's text, so
+    // the push rules would fail it.
+    const digest = '📬 message from human:ada: hi (m-1)';
+    expect(checkRender(digest, 'hi', FORMS, false)).not.toEqual([]);
+    expect(checkDigest(digest, 'hi')).toEqual([]);
+    expect(checkDigest(`${digest}\n│ hi`, 'hi')).not.toEqual([]);
+    expect(section('6.2')).toContain('notified** with a digest');
+    const presenting = section('6.8');
+    expect(presenting).not.toContain(
+      "A host that puts messages into a model's context MUST"
+    );
+    expect(presenting).toContain(
+      "A host that pushes a message into a model's context MUST"
+    );
+    expect(presenting).toContain(
+      'followed by at most the first line of the body, on one line, so the text of the body never starts a line'
+    );
+    expect(section('12.4.6')).toContain(
+      'a pushed rendering against rules 1 to 4'
+    );
+    expect(section('12.4.6')).toContain('a digest against the digest rule');
+  });
+
   it('defines a gate as a known type, or one the system or a human sent', () => {
     const phrase =
-      'whose type the host knows, or whose sender is the system address or a `human:` address';
+      'the host knows `data.type` or the sender is the system address or a `human:` address';
     for (const n of ['2.5', '5.1']) expect(section(n)).toContain(phrase);
+  });
+
+  it('refuses a send whose data.type the host does not implement, gate or not', () => {
+    expect(section('5.3')).toContain(
+      'or when its `data.type` is not a gate type the host implements'
+    );
+    expect(section('5.6')).toContain(
+      'and a `data.type` that is not a gate type it knows'
+    );
   });
 
   it('counts neither created nor seeded messages as $gateN or $noticeN', () => {

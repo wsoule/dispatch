@@ -229,10 +229,12 @@ A `render` step renders a stored message as the host would push it (or, with
 text the host writes for the message ([§6.8](06-delivery.md#s6.8)): lines that
 imitate a header or a host line without repeating the host's own, every line
 break of [§1.4](01-introduction.md#s1.4) and, for external senders, choices and
-refs. They then check the rendered text against the forms the adapter declared:
-rules 1 to 4 of [§6.8](06-delivery.md#s6.8) and, with `external: true`, that
-every line after the header starts with `quotePrefix`. `dispatch`-profile
-vectors also compare the exact text.
+refs. They then check a pushed rendering against rules 1 to 4 of
+[§6.8](06-delivery.md#s6.8), using the forms the adapter declared, and, with
+`external: true`, that every line after the header starts with `quotePrefix`;
+and they check a digest against the digest rule of [§6.8](06-delivery.md#s6.8)
+alone, since a correct digest holds the body's first line on its only line.
+`dispatch`-profile vectors also compare the exact text.
 
 ### 12.4.7 Adapter messages
 

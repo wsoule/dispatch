@@ -109,9 +109,11 @@ Keyword: SHOULD. Not tested.
 
 ## 13.12 Injection-safe presentation
 
-A host that puts messages into a model's context MUST present them so that no
+A host that pushes a message into a model's context MUST present it so that no
 body line passes for a header or a host line, and MUST quote every line of an
-external sender's message after its header ([§6.8](06-delivery.md#s6.8)).
+external sender's message after its header. A digest MUST carry at most the
+body's first line, after the host's own text on one line, so no body text starts
+a line ([§6.8](06-delivery.md#s6.8)).
 
 Keyword: MUST. Vectors: `host-core` (structural), `dispatch` profile (exact
 text).
