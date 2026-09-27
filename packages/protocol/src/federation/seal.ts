@@ -11,6 +11,7 @@ import type { FederatedOp, Sealed } from './ops.js';
 const CONTENT_KEY_BYTES = 32;
 const NONCE_BYTES = 12;
 const X25519_PUBLIC_BYTES = 32;
+const FIELD_PRIME = 2n ** 255n - 19n;
 
 // Binds a ciphertext to its op, so it cannot be moved into another one.
 export function sealedAad(replica: string, seq: number, type: string): string {
@@ -53,12 +54,15 @@ export function sealPayload(input: {
   return { to, sealed: { nonce: b64u(nonce), ct: b64u(ct), keys }, key };
 }
 
-// True for 32 bytes HPKE can seal to, so never a low-order X25519 point. Pin
-// only keys it accepts: sealPayload fails the whole op on one it refuses.
+// True for a canonical X25519 key (bit 255 clear, u below p) not of low order.
+// Sealing to any other throws, or makes a wrap its owner cannot open.
 export function canSealTo(sealPub: string): boolean {
   try {
     const raw = fromB64u(sealPub);
     if (raw.length !== X25519_PUBLIC_BYTES) return false;
+    // Little-endian, so bit 255 set also lands at or above p.
+    const u = BigInt(`0x${Buffer.from(raw).reverse().toString('hex')}`);
+    if (u >= FIELD_PRIME) return false;
     encap(raw);
     return true;
   } catch {

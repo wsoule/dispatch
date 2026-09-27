@@ -98,4 +98,15 @@ describe('sealing', () => {
       })
     ).toThrow('eve-0000000e');
   });
+
+  // The owner derives the canonical bytes, which a wrap to any other spelling
+  // never binds, so it could not open one.
+  it('refuses a non-canonical sealPub: bit 255 set, or u at or above p', () => {
+    const highBit = Buffer.from(bob.sealPub, 'base64url');
+    highBit[31] = (highBit[31] ?? 0) | 0x80;
+    // 2^255 - 10 is p + 9, which reduces to the base point.
+    const aboveP = Buffer.from([0xf6, ...Buffer.alloc(30, 0xff), 0x7f]);
+    for (const bad of [highBit, aboveP])
+      expect(canSealTo(b64u(bad))).toBe(false);
+  });
 });
