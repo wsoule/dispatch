@@ -262,7 +262,9 @@ msvc
 musleabihf
 myconstant
 napi
+nbbbb
 ncarto
+ncccc
 neighbour
 neighbours
 neutralised
@@ -413,6 +415,7 @@ serialised
 serialises
 serialising
 sess
+setext
 shellout
 shiki
 shikijs
@@ -486,6 +489,7 @@ tybys
 typer
 typesafe
 uall
+überblick
 ulid
 ulids
 unanalysable
