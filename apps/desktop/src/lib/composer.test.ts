@@ -109,6 +109,22 @@ describe('send errors', () => {
     );
   });
 
+  it('names the field once when the daemon already led with it', () => {
+    const choice = sendProblem(
+      new ApiError(
+        'choice: choose one of accept, decline',
+        400,
+        undefined,
+        'choice'
+      )
+    );
+    expect(problemText(choice)).toBe('Choice: choose one of accept, decline');
+    const body = sendProblem(
+      new ApiError('body: required', 400, undefined, 'body')
+    );
+    expect(problemText(body)).toBe('Message: required');
+  });
+
   it('numbers indexed fields from one and names the rest, leaving unknown ones as sent', () => {
     expect(fieldLabel('refs[1]')).toBe('Reference 2');
     expect(fieldLabel('choices[0]')).toBe('Choice 1');

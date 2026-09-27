@@ -111,10 +111,13 @@ export function toSendInput(state: ComposeState): SendInput {
 /** A failed send as an inline problem, with the daemon's field and text when it sent them. */
 export function sendProblem(err: unknown): ComposeProblem {
   if (err instanceof ApiError) {
-    return {
-      field: err.field ?? (err.status === 409 ? 'replyTo' : 'send'),
-      message: err.message,
-    };
+    const field = err.field ?? (err.status === 409 ? 'replyTo' : 'send');
+    // Envelope errors lead with their field; problemText names it in words.
+    const lead = `${field}: `;
+    const message = err.message.startsWith(lead)
+      ? err.message.slice(lead.length)
+      : err.message;
+    return { field, message };
   }
   if (err instanceof Error) return { field: 'send', message: err.message };
   const message =
