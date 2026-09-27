@@ -196,6 +196,27 @@ describe('verifyEntry along a chain', () => {
     expect(run([key, reencoded]).failure).toBe('bad signature');
   });
 
+  it('refuses hostile entries parsed off a branch instead of throwing', () => {
+    const [key, task, mail] = chain();
+    // JSON.parse turns 1e400 into Infinity, which JCS cannot serialize.
+    const parsed = (e: LogEntry, from: RegExp, to: string) =>
+      JSON.parse(JSON.stringify(e).replace(from, to)) as LogEntry;
+    const bodyHash = /"bodyHash":"[0-9a-f]{64}"/;
+    const cases: LogEntry[][] = [
+      [key, parsed(task, bodyHash, '"bodyHash":1e400')],
+      [key, task, parsed(stubOf(mail), bodyHash, '"bodyHash":1e400')],
+      [key, parsed(task, /"prev":"[0-9a-f]{64}"/, '"prev":1e400')],
+      [key, parsed(task, /"sig":"[^"]+"/, '"sig":1e400')],
+      // Signed by its own key, with content no JCS can hash.
+      [parsed(key, /"build":"[^"]+"/, '"build":1e400')],
+      [key, JSON.parse('null') as LogEntry],
+      [key, JSON.parse('"op"') as LogEntry],
+      [key, JSON.parse('[]') as LogEntry],
+    ];
+    for (const entries of cases)
+      expect(run(entries).failure).toBe('malformed op');
+  });
+
   it('pins the fingerprint over both public keys', () => {
     expect(fingerprint(keys.signPub, keys.sealPub)).not.toBe(
       fingerprint(keys.signPub, peer.sealPub)

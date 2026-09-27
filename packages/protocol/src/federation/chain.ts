@@ -17,6 +17,7 @@ import {
 import type { FederatedOp, LogEntry, OpHeader, Sealed } from './ops.js';
 
 const TYPE = /^[a-z][a-z0-9-]{0,31}$/;
+const HEX64 = /^[0-9a-f]{64}$/;
 
 export interface ChainHead {
   seq: number;
@@ -80,14 +81,38 @@ function sameKeys(sorted: readonly string[], keys: string[]): boolean {
   );
 }
 
+const isHex64 = (v: unknown) => typeof v === 'string' && HEX64.test(v);
+
+// What JCS and the checks below need of an entry parsed off the branch: an
+// object with a string `sig` and hex hashes.
+function wellFormed(e: unknown): boolean {
+  if (typeof e !== 'object' || e === null || Array.isArray(e)) return false;
+  const { prev, bodyHash, sig } = e as Record<string, unknown>;
+  return typeof sig === 'string' && isHex64(prev) && isHex64(bodyHash);
+}
+
+// Null when JCS refuses the content, as it does a non-finite number.
+function contentHashOrNull(content: {
+  body?: JsonValue;
+  sealed?: Sealed;
+}): string | null {
+  try {
+    return contentHash(content);
+  } catch {
+    return null;
+  }
+}
+
 // Checks one entry against the chain so far: the grammar, the signature, the
 // content hash, prev, seq and hlc rising, and the stub and sealing rules. An
-// unknown type verifies; handling it is the caller's.
+// unknown type verifies; handling it is the caller's. Never throws, since
+// entries come off a branch anyone can write.
 export function verifyEntry(
   head: ChainHead | null,
   e: LogEntry,
   signPub: string
 ): { ok: true; head: ChainHead } | { ok: false; reason: string } {
+  if (!wellFormed(e)) return fail('malformed op');
   if (typeof e.replica !== 'string' || !REPLICA_ID.test(e.replica))
     return fail('replica id outside the grammar');
   if (e.v !== 2 || typeof e.type !== 'string' || !TYPE.test(e.type))
@@ -120,7 +145,9 @@ export function verifyEntry(
     const content: { body?: JsonValue; sealed?: Sealed } = {};
     if (e.body !== undefined) content.body = e.body;
     if (e.sealed !== undefined) content.sealed = e.sealed;
-    if (contentHash(content) !== e.bodyHash) return fail('bodyHash mismatch');
+    const hash = contentHashOrNull(content);
+    if (hash === null) return fail('malformed op');
+    if (hash !== e.bodyHash) return fail('bodyHash mismatch');
     const sealedType = SEALED_TYPES.has(e.type);
     if (sealedType && e.sealed === undefined)
       return fail('sealed types carry sealed content');
