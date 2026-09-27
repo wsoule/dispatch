@@ -252,7 +252,10 @@ export function openMessaging(deps: {
     const result = await host.wake(target, first);
     if (result.ok) return;
     if (hasActiveRun(taskId)) {
-      blockedWakes.set(taskId, held);
+      // Kept beside, never over, wakes that blocked during the await.
+      const waiting = blockedWakes.get(taskId) ?? [];
+      const newer = waiting.filter((m) => !held.some((h) => h.id === m.id));
+      blockedWakes.set(taskId, [...held, ...newer]);
       return;
     }
     for (const m of held)
