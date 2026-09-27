@@ -1253,6 +1253,7 @@ async function bootServer(
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
   });
+  orchestrator.setDocsPort(docs.service);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
@@ -2092,6 +2093,7 @@ async function bootServer(
       orchestrator.setMemoryPort(null);
       memory.close();
       messaging.close();
+      orchestrator.setDocsPort(null);
       docs.stop();
       stores.close();
     },

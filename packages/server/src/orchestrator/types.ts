@@ -110,6 +110,15 @@ export interface MemoryPromptPort {
   }): MemoryPromptSection;
 }
 
+/** Where the `## Docs` prompt section comes from (docs/service.ts). */
+export interface DocsPromptPort {
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): string | null;
+}
+
 export interface ExecutorRun {
   interrupt(): Promise<void>;
   /**

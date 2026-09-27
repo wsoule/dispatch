@@ -52,7 +52,9 @@ export function buildTaskPrompt(
   human: string | null = null,
   // Undefined: memory is not in use, so the ledger section renders. Null: in
   // use with nothing to show. A string is the rendered `## Memory` section.
-  memorySection?: string | null
+  memorySection?: string | null,
+  // The rendered `## Docs` section; null when docs are off or nothing links.
+  docsSection: string | null = null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -81,6 +83,7 @@ export function buildTaskPrompt(
     const ledgerSection = renderLedgerSection(ledgerEntries);
     if (ledgerSection !== null) sections.push(ledgerSection);
   }
+  if (docsSection !== null) sections.push(docsSection);
 
   // The orientation section answers the questions the two instructions below
   // would otherwise send the agent off to answer for itself, so when it is

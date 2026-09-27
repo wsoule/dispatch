@@ -166,7 +166,7 @@ export class FakeDocsHost implements DocsHost {
   }
 }
 
-const DEFAULT_TEST_CONFIG: DocsConfig = {
+export const DEFAULT_TEST_CONFIG: DocsConfig = {
   indexTokens: 400,
   inlineSpecBytes: 16384,
   coalesceMinutes: 10,

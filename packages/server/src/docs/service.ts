@@ -39,6 +39,8 @@ import type { DocChange, DocsHost } from './host.js';
 import type { DiffChunk } from './merge.js';
 import { diffChunks, merge3 } from './merge.js';
 import { applyOps } from './ops.js';
+import type { IndexLine, InlineSpec } from './prompt.js';
+import { renderDocsSection } from './prompt.js';
 import { carriesUnreviewed, unreviewedAtCreation } from './review.js';
 import {
   cutUtf8,
@@ -48,6 +50,7 @@ import {
   resolveSection,
   sectionText,
   splitLines,
+  summaryOf,
   utf8Bytes,
 } from './sections.js';
 import type {
@@ -1607,6 +1610,70 @@ export class DocsService {
         candidates.push({ row, rel: 'context', depth: 0, source: 'mention' });
     }
     return rankDocs(candidates);
+  }
+
+  // The ## Docs lines a run of `taskId` acting as `actor` would get.
+  indexLines(actor: DocsActor, taskId: string): IndexLine[] {
+    return this.toIndexLines(this.taskDocs(actor, taskId));
+  }
+
+  private toIndexLines(ranked: readonly RankedDoc[]): IndexLine[] {
+    return ranked.map((c) => {
+      const head = this.headOf(c.row);
+      let tag: string = c.rel;
+      if (c.depth === 1) tag = `parent ${c.rel}`;
+      else if (c.depth > 1) tag = `ancestor ${c.rel}`;
+      return {
+        tag,
+        handle: c.row.scope === 'personal' ? `~${c.row.handle}` : c.row.handle,
+        status: c.row.status,
+        unreviewed: c.row.unreviewed,
+        conflicted: c.row.conflicted,
+        you: c.row.scope === 'personal',
+        n: head.n ?? 0,
+        bytes: head.bytes,
+        title: c.row.title,
+        summary: summaryOf(head.body),
+        spec: c.depth === 0 && c.rel === 'spec',
+      };
+    });
+  }
+
+  // The section for a dispatch prompt; null when docs are unavailable or nothing links.
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): string | null {
+    if (!this.available) return null;
+    const actor = this.actorFor({
+      address: `run:${input.runId}`,
+      canDecide: false,
+      kind: 'run',
+    });
+    const ranked = this.taskDocs(actor, input.taskId);
+    const cfg = this.cfg();
+    let inline: InlineSpec | null = null;
+    // taskDocs ranks the task's own spec before ancestors', so this is the nearest.
+    const spec = input.dispatchTools
+      ? undefined
+      : ranked.find(
+          (c) => c.rel === 'spec' && (c.depth === 0 || !actor.a2aRun)
+        );
+    if (spec !== undefined) {
+      const head = this.headOf(spec.row);
+      inline = {
+        handle: spec.row.handle,
+        n: head.n ?? 0,
+        body: head.body,
+        maxBytes: cfg.inlineSpecBytes,
+      };
+    }
+    return renderDocsSection(this.toIndexLines(ranked), {
+      indexTokens: cfg.indexTokens,
+      dispatchTools: input.dispatchTools,
+      inline,
+    });
   }
 
   list(

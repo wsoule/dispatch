@@ -12,6 +12,7 @@ import { jsonResponse } from '../api/http.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
 import { readBoundedJson } from './http.js';
 import { parseOps } from './ops.js';
+import { indexLineText } from './prompt.js';
 import type { DocsActor, DocsService } from './service.js';
 
 // /api/docs* over DocsService. api.ts resolves the principal before this runs;
@@ -254,6 +255,14 @@ export async function handleDocsRoute(
         return jsonResponse({ docs: docs.linking(actor, target) });
       }
       if (head === 'health') return jsonResponse(docs.health(actor));
+      if (head === 'index') {
+        const taskId = url.searchParams.get('taskId');
+        if (taskId === null || taskId === '')
+          throw invalid('taskId', 'required');
+        return jsonResponse({
+          lines: docs.indexLines(actor, taskId).map(indexLineText),
+        });
+      }
     }
 
     const ref = decode(head, 'doc');

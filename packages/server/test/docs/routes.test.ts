@@ -231,6 +231,28 @@ describe('docs routes', () => {
     ]);
   });
 
+  it("answers a task's index lines, and a dispatched run's prompt carries them", async () => {
+    const task = await json<{ meta: { id: string } }>(
+      await post('/tasks', { title: 'Indexed task' })
+    );
+    const created = await post('/docs', {
+      title: 'Auth spec',
+      body: '# Auth\nSigned tokens.\n',
+      links: [{ target: `task:${task.meta.id}`, rel: 'spec' }],
+    });
+    expect(created.status).toBe(201);
+    const index = await fetch(`${base}/docs/index?taskId=${task.meta.id}`);
+    expect(index.status).toBe(200);
+    const specLine =
+      '- spec · auth-spec · draft · rev 1 · 1 KB: Auth spec: Signed tokens.';
+    expect((await json<{ lines: string[] }>(index)).lines).toEqual([specLine]);
+    expect((await fetch(`${base}/docs/index`)).status).toBe(400);
+    await post(`/tasks/${task.meta.id}/runs`, { executor: 'claude' });
+    await waitFor(() => executor.started.length === 1);
+    expect(executor.started[0].prompt).toContain(`## Docs\n`);
+    expect(executor.started[0].prompt).toContain(specLine);
+  });
+
   it('broadcasts doc.changed with the id for team docs, and nothing else', async () => {
     const ws = new WebSocket(wsUrl(handle));
     const frames: { type: string; scope?: string; id?: string }[] = [];
