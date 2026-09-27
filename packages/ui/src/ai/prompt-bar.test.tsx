@@ -81,6 +81,26 @@ describe('PromptBar', () => {
     expect(send.disabled).toBe(true);
   });
 
+  test('a caller-owned completion list is tied to the text box, with its active option', () => {
+    const { rerender } = render(
+      <PromptBar value="@t" onChange={() => {}} onSubmit={() => {}} />
+    );
+    const textarea = screen.getByRole('textbox');
+    expect(textarea.getAttribute('aria-controls')).toBeNull();
+    expect(textarea.getAttribute('aria-autocomplete')).toBeNull();
+    rerender(
+      <PromptBar
+        value="@t"
+        onChange={() => {}}
+        onSubmit={() => {}}
+        completion={{ listId: 'recipients', activeOptionId: 'recipients-1' }}
+      />
+    );
+    expect(textarea.getAttribute('aria-controls')).toBe('recipients');
+    expect(textarea.getAttribute('aria-autocomplete')).toBe('list');
+    expect(textarea.getAttribute('aria-activedescendant')).toBe('recipients-1');
+  });
+
   test('removing a reference chip calls onRemoveReference with its id', () => {
     let removedId: string | undefined;
     render(

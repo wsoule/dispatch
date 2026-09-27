@@ -54,6 +54,9 @@ export type PromptBarProps = {
    * more than one `PromptBar` on a page, or needs its own label for test/assistive-tech
    * lookup. */
   ariaLabel?: string;
+  /** A completion list the caller renders for what is being typed: the text box
+   *  names it and its highlighted option, so screen readers announce moves. */
+  completion?: { listId: string; activeOptionId?: string };
 };
 
 const MIN_ROWS = 1;
@@ -109,6 +112,7 @@ export function PromptBar({
   disabled = false,
   placeholder = 'Write a message…',
   ariaLabel = 'Prompt',
+  completion,
 }: PromptBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -162,6 +166,9 @@ export function PromptBar({
         placeholder={placeholder}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-autocomplete={completion === undefined ? undefined : 'list'}
+        aria-controls={completion?.listId}
+        aria-activedescendant={completion?.activeOptionId}
         className="text-foreground placeholder:text-muted-foreground min-h-7 w-full resize-none bg-transparent px-1 py-[5px] text-[13px] leading-[18px] [overflow-wrap:anywhere] outline-none"
       />
       {/* Anchored to the textarea rather than opened by a trigger of its own,
