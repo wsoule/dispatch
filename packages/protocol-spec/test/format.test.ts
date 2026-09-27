@@ -104,6 +104,100 @@ describe('parseVectorFile', () => {
     expect(parse(withVector({ then: { notes: [] } }))).toThrow('notes');
   });
 
+  it('refuses an expectation row that compare could not read', () => {
+    const render = { op: 'render', message: 'm-x' };
+    const cases: [Record<string, unknown>, string][] = [
+      [{ then: { steps: [{ ok: false }] } }, 'then.steps[0].error'],
+      [{ then: { steps: [{ ok: false, error: {} }] } }, 'then.steps[0].error'],
+      [
+        {
+          then: {
+            steps: [{ ok: false, error: { code: 'invalid', field: 3 } }],
+          },
+        },
+        'then.steps[0].error.field',
+      ],
+      [
+        { then: { steps: [{ ok: true, error: { code: 'invalid' } }] } },
+        'then.steps[0] has unknown field error',
+      ],
+      [
+        { then: { deliveries: [{ recipient: 'human:ada' }] } },
+        'then.deliveries[0].message',
+      ],
+      [
+        { then: { deliveries: [{ message: 'm-x' }] } },
+        'then.deliveries[0].recipient',
+      ],
+      [
+        { then: { deliveries: [{ message: 'm-x', recipient: 'x', via: 3 }] } },
+        'then.deliveries[0].via',
+      ],
+      [
+        {
+          then: {
+            deliveries: [{ message: 'm-x', recipient: 'x', session: 3 }],
+          },
+        },
+        'then.deliveries[0].session',
+      ],
+      [
+        {
+          then: {
+            deliveries: [{ message: 'm-x', recipient: 'x', status: 'held' }],
+          },
+        },
+        'then.deliveries[0] has unknown field status',
+      ],
+      [{ then: { channels: [{ name: 'auth' }] } }, 'then.channels[0]'],
+      [
+        { then: { channels: [{ name: 'auth', members: [1] }] } },
+        'then.channels[0]',
+      ],
+      [
+        { when: [render], then: { render: [{ step: 1 }] } },
+        'then.render[0].text',
+      ],
+      [
+        { when: [render], then: { render: [{ step: '1', text: 'x' }] } },
+        'then.render[0].step',
+      ],
+      [{ then: { render: [{ step: 1, text: 'x' }] } }, 'then.render[0].step'],
+      [
+        { when: [render], then: { render: [{ step: 2, text: 'x' }] } },
+        'then.render[0].step',
+      ],
+    ];
+    const refused = cases.map(([over, why]) => {
+      try {
+        parseVectorFile(withVector(over), 'basic.json');
+        return `accepted, expected ${why}`;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return message.includes(why) ? 'refused' : message;
+      }
+    });
+    expect(refused).toEqual(cases.map(() => 'refused'));
+    expect(
+      parseVectorFile(
+        withVector({
+          when: [render],
+          then: {
+            steps: [
+              { ok: false, error: { code: 'not-found', field: 'message' } },
+            ],
+            deliveries: [
+              { message: 'm-x', recipient: 'human:ada', session: null },
+            ],
+            channels: [{ name: 'auth', members: ['human:ada'] }],
+            render: [{ step: 1, text: '' }],
+          },
+        }),
+        'basic.json'
+      ).vectors
+    ).toHaveLength(1);
+  });
+
   it('accepts null placeholders in then.steps', () => {
     expect(
       parseVectorFile(withVector({ then: { steps: [null] } }), 'basic.json')

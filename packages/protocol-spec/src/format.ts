@@ -63,8 +63,10 @@ const THEN_KEYS = [
   'channels',
   'render',
 ];
+const DELIVERY_KEYS = ['message', 'recipient', 'via', 'state', 'session'];
 
 type Fail = (why: string) => never;
+type Row = Record<string, unknown>;
 
 function oneOf<T extends string>(list: readonly T[], v: unknown): v is T {
   return (list as readonly unknown[]).includes(v);
@@ -113,8 +115,59 @@ function checkSteps(when: unknown, fail: Fail): void {
   });
 }
 
-// Checks `then` against the expectation vocabulary.
-function checkThen(then: unknown, steps: number, fail: Fail): void {
+// Checks one expected step result, `{ ok: true, result? }` or
+// `{ ok: false, error: { code, field? } }`, so compare never reads a hole.
+function checkStepResult(r: unknown, at: string, fail: Fail): void {
+  if (r === null) return;
+  if (!isRecord(r) || typeof r['ok'] !== 'boolean')
+    fail(`${at} must be null or { ok, … }`);
+  if (r['ok'] === true) {
+    refuseUnknownKeys(r, ['ok', 'result'], at, fail);
+    return;
+  }
+  refuseUnknownKeys(r, ['ok', 'error'], at, fail);
+  const error = r['error'];
+  if (!isRecord(error) || !isText(error['code']))
+    fail(`${at}.error must be { code, field? } with a non-empty code`);
+  refuseUnknownKeys(error, ['code', 'field'], `${at}.error`, fail);
+  if (error['field'] !== undefined && typeof error['field'] !== 'string')
+    fail(`${at}.error.field must be a string`);
+}
+
+// Checks a delivery row: the message and recipient that name it, and the
+// optional fields compare reads, each of the type compare expects.
+function checkDeliveryRow(row: Row, at: string, fail: Fail): void {
+  refuseUnknownKeys(row, DELIVERY_KEYS, at, fail);
+  for (const key of ['message', 'recipient']) {
+    if (!isText(row[key])) fail(`${at}.${key} must be a non-empty string`);
+  }
+  for (const key of ['via', 'state']) {
+    if (row[key] !== undefined && typeof row[key] !== 'string')
+      fail(`${at}.${key} must be a string`);
+  }
+  const session = row['session'];
+  if (session !== undefined && session !== null && typeof session !== 'string')
+    fail(`${at}.session must be a string or null`);
+}
+
+// Checks an exact render row: it names a `render` step of `when` by number
+// and gives the text as a string.
+function checkRenderRow(
+  row: Row,
+  at: string,
+  when: readonly Row[],
+  fail: Fail
+): void {
+  refuseUnknownKeys(row, ['step', 'text'], at, fail);
+  const step = row['step'];
+  if (typeof step !== 'number' || when[step - 1]?.['op'] !== 'render')
+    fail(`${at}.step must be the number of a render step`);
+  if (typeof row['text'] !== 'string') fail(`${at}.text must be a string`);
+}
+
+// Checks `then` against the expectation vocabulary, down to each row compare
+// reads, so an authoring slip is a FormatError rather than a crash mid-run.
+function checkThen(then: unknown, when: readonly Row[], fail: Fail): void {
   if (!isRecord(then)) fail('then must be an object');
   const t = then;
   refuseUnknownKeys(t, THEN_KEYS, 'then', fail);
@@ -122,25 +175,27 @@ function checkThen(then: unknown, steps: number, fail: Fail): void {
   if (expected !== undefined) {
     if (!Array.isArray(expected)) fail('then.steps must be a list');
     const list = expected as unknown[];
-    if (list.length > steps)
-      fail(`then.steps lists ${list.length} results for ${steps} steps`);
-    list.forEach((r, i) => {
-      if (r !== null && !(isRecord(r) && typeof r['ok'] === 'boolean'))
-        fail(`then.steps[${i}] must be null or { ok, … }`);
-    });
+    if (list.length > when.length)
+      fail(`then.steps lists ${list.length} results for ${when.length} steps`);
+    list.forEach((r, i) => checkStepResult(r, `then.steps[${i}]`, fail));
   }
-  for (const key of [
-    'messages',
-    'deliveries',
-    'calls',
-    'callsInclude',
-    'channels',
-    'render',
-  ]) {
+  const rows = (key: string): [Row, string][] => {
     const list = t[key];
-    if (list !== undefined && !(Array.isArray(list) && list.every(isRecord)))
+    if (list === undefined) return [];
+    if (!Array.isArray(list) || !list.every(isRecord))
       fail(`then.${key} must be a list of objects`);
+    return list.map((row, i) => [row, `then.${key}[${i}]`]);
+  };
+  rows('messages');
+  rows('calls');
+  rows('callsInclude');
+  for (const [row, at] of rows('deliveries')) checkDeliveryRow(row, at, fail);
+  for (const [row, at] of rows('channels')) {
+    refuseUnknownKeys(row, ['name', 'members'], at, fail);
+    if (!isText(row['name']) || !isStringArray(row['members']))
+      fail(`${at} must be { name, members } with string members`);
   }
+  for (const [row, at] of rows('render')) checkRenderRow(row, at, when, fail);
   for (const key of ['gateEffects', 'voided']) {
     if (t[key] !== undefined && !isStringArray(t[key]))
       fail(`then.${key} must be a list of strings`);
@@ -196,7 +251,7 @@ function parseVector(
     fail('tags must be a list of strings');
   if (!isRecord(v['given'])) fail('given must be an object');
   checkSteps(v['when'], fail);
-  checkThen(v['then'], (v['when'] as unknown[]).length, fail);
+  checkThen(v['then'], v['when'] as Row[], fail);
   const vector = v as unknown as Vector;
   checkSymbols(vector, fail);
   return vector;
