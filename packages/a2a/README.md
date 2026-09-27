@@ -50,6 +50,9 @@ asserts the deviation directly.
   client can call once the project owner approves it, in Needs you or with
   `--approve`.
 - Send asks with `returnImmediately: true`, then stream, subscribe or poll.
+- A `message:stream` ends at `INPUT_REQUIRED`, where the client must answer
+  (§11.7). A `:subscribe` stream stays open until the task is terminal (§3.1.6).
+  Both stay open through `AUTH_REQUIRED`.
 
 ## Running the TCK
 

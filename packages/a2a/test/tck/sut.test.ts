@@ -1,6 +1,11 @@
 import { afterAll, beforeAll, expect, it } from 'bun:test';
 
-import type { MessageJson, PartJson, TaskJson } from '../../src/wire.js';
+import type {
+  MessageJson,
+  PartJson,
+  StreamResponseJson,
+  TaskJson,
+} from '../../src/wire.js';
 import { startSut } from './sut.js';
 
 let sut: ReturnType<typeof startSut>;
@@ -38,6 +43,24 @@ async function send(
 // The first part of the first artifact: all the TCK's DM-ART-001 tests read.
 function firstPart(task: TaskJson | undefined): PartJson | undefined {
   return task?.artifacts?.[0]?.parts[0];
+}
+
+// Every data event of an SSE response, read until the server ends it.
+async function sseEvents(res: Response): Promise<StreamResponseJson[]> {
+  return (await res.text())
+    .split('\n')
+    .filter((line) => line.startsWith('data: '))
+    .map(
+      (line) => JSON.parse(line.slice('data: '.length)) as StreamResponseJson
+    );
+}
+
+// The task state a stream event carries, if it carries one.
+function stateOf(event: StreamResponseJson | undefined): string | undefined {
+  if (event === undefined) return undefined;
+  if ('task' in event) return event.task.status.state;
+  if ('statusUpdate' in event) return event.statusUpdate.status.state;
+  return undefined;
 }
 
 it('serves a card whose interface is this SUT', async () => {
@@ -92,6 +115,22 @@ it('asks for input, then completes on the follow-up', async () => {
   });
   expect(next.task?.status.state).toBe('TASK_STATE_COMPLETED');
   expect(next.task?.status.message?.parts[0].text).toBe('Received: more');
+});
+
+// STREAM-SUB-002: the TCK subscribes to its input-required task, completes it
+// with a follow-up 0.5 s later, and expects the stream to end on that state.
+it('keeps a subscription open until a follow-up completes the task', async () => {
+  const { task } = await send('tck-input-required-sub');
+  const res = await fetch(`${base}/a2a/v1/tasks/${task?.id}:subscribe`, {
+    headers: HEADERS,
+  });
+  const followUp = Bun.sleep(500).then(() =>
+    send('tck-complete-task-sub', { taskId: task?.id })
+  );
+  const events = await sseEvents(res);
+  await followUp;
+  expect(stateOf(events[0])).toBe('TASK_STATE_INPUT_REQUIRED');
+  expect(stateOf(events.at(-1))).toBe('TASK_STATE_COMPLETED');
 });
 
 it('streams a chunked artifact to completion', async () => {
