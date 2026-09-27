@@ -207,19 +207,31 @@ export function rowControl(
   return { kind: 'choices', choices: message.choices ?? fallback, gate: false };
 }
 
+/** A row control that draws something to answer with. */
+type AnswerControl = Extract<
+  RowControl,
+  { kind: 'tool-approval' | 'scope' | 'choices' }
+>;
+
+/** Whether a row's control draws a gate card or at least one choice button:
+ *  the one rule `MessageRow` renders by and the reply box's footer reads. */
+export function offersAnswer(control: RowControl): control is AnswerControl {
+  if (control.kind === 'choices') return control.choices.length > 0;
+  return control.kind === 'tool-approval' || control.kind === 'scope';
+}
+
 /** Whether some open message in a thread gives this viewer buttons (or a
- *  gate card) to answer it with, as `MessageRow` renders its control. */
+ *  gate card) to answer it with. */
 export function hasAnswerButtons(
   messages: readonly Message[],
   ctx: { me: string; openIds: ReadonlySet<string>; access: MessageAccess }
 ): boolean {
-  return messages.some((message) => {
-    if (!ctx.openIds.has(message.id)) return false;
-    const { me, access } = ctx;
-    const control = rowControl(message, { me, open: true, access });
-    if (control.kind === 'choices') return control.choices.length > 0;
-    return control.kind === 'tool-approval' || control.kind === 'scope';
-  });
+  const { me, access } = ctx;
+  return messages.some(
+    (message) =>
+      ctx.openIds.has(message.id) &&
+      offersAnswer(rowControl(message, { me, open: true, access }))
+  );
 }
 
 /** `reply` answers an open question; `send` writes a plain message beside `replyTo`. */

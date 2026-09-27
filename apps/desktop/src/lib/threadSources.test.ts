@@ -9,6 +9,7 @@ import {
   knownAddresses,
   lookupsKey,
   mergeThreadSources,
+  offersAnswer,
   openRefWith,
   participantLabel,
   refAction,
@@ -252,6 +253,29 @@ describe('rowControl', () => {
 });
 
 describe('hasAnswerButtons', () => {
+  it('counts a gate card or at least one choice as something to answer with', () => {
+    expect(
+      offersAnswer({ kind: 'scope', paths: ['a.ts'], reason: 'needed' })
+    ).toBe(true);
+    expect(
+      offersAnswer({
+        kind: 'tool-approval',
+        tool: 'Bash',
+        input: {},
+        truncated: false,
+        call: null,
+      })
+    ).toBe(true);
+    expect(offersAnswer({ kind: 'choices', choices: ['a'], gate: false })).toBe(
+      true
+    );
+    expect(offersAnswer({ kind: 'choices', choices: [], gate: true })).toBe(
+      false
+    );
+    expect(offersAnswer({ kind: 'read-only', reason: 'why' })).toBe(false);
+    expect(offersAnswer({ kind: 'none' })).toBe(false);
+  });
+
   it('is true only when an open row gives this viewer buttons to answer with', () => {
     const open = new Set(['m-s']);
     expect(

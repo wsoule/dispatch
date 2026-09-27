@@ -13,6 +13,7 @@ import type {
 import {
   addressAction,
   kindLabel,
+  offersAnswer,
   participantLabel,
   refAction,
   rowControl,
@@ -151,13 +152,13 @@ function Control({
   answer: (reply: Reply) => Promise<void>;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
 }) {
+  if (control.kind === 'read-only') {
+    return (
+      <p className="text-muted-foreground text-[12px]">{control.reason}</p>
+    );
+  }
+  if (!offersAnswer(control)) return null;
   switch (control.kind) {
-    case 'none':
-      return null;
-    case 'read-only':
-      return (
-        <p className="text-muted-foreground text-[12px]">{control.reason}</p>
-      );
     case 'tool-approval': {
       const { call } = control;
       return (
@@ -187,7 +188,6 @@ function Control({
         />
       );
     case 'choices':
-      if (control.choices.length === 0) return null;
       return (
         <div
           role="group"
