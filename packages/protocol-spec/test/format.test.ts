@@ -190,6 +190,8 @@ describe('parseVectorFile', () => {
         { when: [render], then: { render: [{ step: 2, text: 'x' }] } },
         'then.render[0].step',
       ],
+      [{ then: { noDeliveries: 'm-x' } }, 'then.noDeliveries'],
+      [{ then: { noDeliveries: [1] } }, 'then.noDeliveries'],
     ];
     const refused = cases.map(([over, why]) => {
       try {
@@ -214,6 +216,7 @@ describe('parseVectorFile', () => {
             ],
             channels: [{ name: 'auth', members: ['human:ada'] }],
             render: [{ step: 1, text: '' }],
+            noDeliveries: ['m-x'],
           },
         }),
         'basic.json'

@@ -97,7 +97,10 @@ unknown. A send naming an unknown channel MUST fail `not-found` on the caller's
 own `to[i]`: `i` is the index of the channel in the `to` list the sender wrote,
 even when the rewriting of step 1 changed or collapsed other entries. Every
 other error about a recipient likewise names the first `to[i]`, as the sender
-wrote it, that resolved to that recipient. (pinned rule 2)
+wrote it, that resolved to that recipient. (pinned rule 2; vectors:
+`core.send.unknown-channel-names-the-callers-own-slot`,
+`core.send.an-ended-session-error-names-the-callers-own-slot`,
+`core.send.unknown-channel-is-not-found`)
 
 ## 3.6 Implicit members
 

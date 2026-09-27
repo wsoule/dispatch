@@ -156,7 +156,11 @@ for a work item, is rewritten to that work item, so the work item's live or next
 session hears the reply. Entries that become equal are collapsed, and the stored
 `to` is the rewritten list. A reply to an ended auxiliary session is not
 rewritten; its delivery is held on the session ([§6.1](06-delivery.md#s6.1)).
-(pinned rule 5)
+(pinned rule 5; vectors:
+`core.answers.a-reply-to-an-ended-session-goes-to-its-work-item`,
+`core.answers.a-reply-reaches-the-successor-session`,
+`core.answers.a-reply-rewrites-and-collapses-an-ended-session`,
+`core.answers.a-reply-to-an-ended-auxiliary-session-is-held-on-it`)
 
 **Replying to a message.** A host MAY offer a shorthand that replies to one
 message: it sends to the target's sender, as an `answer` when the target is a
@@ -180,7 +184,8 @@ vectors: `env.envelope.body-is-required-unless-an-answer-chooses`,
 `env.envelope.a-gate-answer-must-choose`,
 `env.envelope.a-handoff-answer-must-choose`,
 `env.envelope.a-choice-must-be-one-of-the-questions`,
-`env.envelope.free-text-may-answer-a-plain-question`)
+`env.envelope.free-text-may-answer-a-plain-question`,
+`core.answers.a-handoff-defaults-to-accept-or-decline`)
 
 Answering a gate needs a deciding principal ([§5.4](05-gates.md#s5.4)).
 

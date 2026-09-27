@@ -91,7 +91,10 @@ effect is left unrecorded for recovery to apply again
 ([§6.3](06-delivery.md#s6.3)). An effect may therefore run more than once for
 one answer, and a host MUST make every effect idempotent. Only answers from a
 `human:` address or the system address take effect ([§5.7](05-gates.md#s5.7)).
-(pinned rule 7)
+(pinned rule 7; vectors: `core.wake.approve-applies-before-publishing`,
+`core.answers.a-gate-effect-runs-before-the-answer-is-published`,
+`core.answers.a-failing-effect-still-commits-the-answer`,
+`core.recover.replays-an-unapplied-gate-effect`)
 
 ## 5.6 Unknown types fail closed
 

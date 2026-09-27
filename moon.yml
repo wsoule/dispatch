@@ -241,6 +241,15 @@ tasks:
       cache: false
       runInCI: 'always'
 
+  # Unit tests for the root scripts that guard CI and publishing. The root
+  # project excludes the inherited `test` task, so nothing else runs them.
+  test-scripts:
+    command: 'bun test scripts/check-ci-targets.test.ts'
+    inputs:
+      - 'scripts/check-ci-targets*.ts'
+    options:
+      runInCI: 'always'
+
   # Guards the build graph against tests that spawn their own build output
   # without an edge to it. cli:test and mcp:test raced their own builds on a
   # cold CI checkout while passing locally against a warm dist/.

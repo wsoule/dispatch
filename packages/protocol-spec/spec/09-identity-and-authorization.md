@@ -9,9 +9,10 @@ whether it may decide ([§9.2](09-identity-and-authorization.md#s9.2)).
 
 - A **human** sends as its `human:` address.
 - An **agent** sends as its `agent:` address. A host MUST refuse a send from an
-  agent whose registration is not `approved` (it is `pending` or `revoked`), as
-  `forbidden` on `from`. Every session of one agent install shares the install's
-  address; `session` records which one sent ([§4.1](04-messages.md#s4.1)).
+  agent that has no `approved` registration (it has none, or it is `pending` or
+  `revoked`), as `forbidden` on `from`. Every session of one agent install
+  shares the install's address; `session` records which one sent
+  ([§4.1](04-messages.md#s4.1)).
 - A **session** sends as its `run:` address, and acts for its work item and that
   work item's other sessions ([§2.2](02-terminology.md#s2.2)).
 - The **system address** is the host itself. Only the host's own code sends as

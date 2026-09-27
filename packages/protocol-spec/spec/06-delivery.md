@@ -66,7 +66,11 @@ the host dispatches each delivery:
 - A `notified` delivery to a human calls the host's notifier. A failing notifier
   never fails the send; the message is stored and readable.
 
-(pinned rule 4)
+(pinned rule 4; vectors: `core.send.direct-mail-pushes-to-the-live-session`,
+`core.send.channel-mail-notifies-the-live-session`,
+`core.send.urgent-channel-mail-is-pushed`, `core.send.human-mail-is-notified`,
+`core.send.a-failed-push-returns-to-held`,
+`core.send.a-failed-notify-returns-to-held`)
 
 ## 6.3 Outbox and recovery
 
@@ -89,7 +93,11 @@ run it at other times. Recovery:
    gate ([§5.7](05-gates.md#s5.7)).
 
 So a crash between commit and hook never loses a message or a decision. (pinned
-rule 10)
+rule 10; vectors: `core.recover.dispatches-sending-rows-whose-session-is-live`,
+`core.recover.returns-sending-rows-to-held`,
+`core.recover.leaves-settled-rows-alone`,
+`core.recover.replays-an-unapplied-gate-effect`,
+`core.recover.skips-applied-and-closed-gates`)
 
 ## 6.4 Session start
 
@@ -99,7 +107,10 @@ work item's earlier sessions: each is bound to the new session as `sending` and
 dispatched as [§6.2](06-delivery.md#s6.2) says (a direct delivery pushed, a
 channel one notified unless its message is urgent). Mail left on an ended
 session therefore reaches the work item's next session. Deliveries in any other
-state are not claimed. (pinned rule 11)
+state are not claimed. (pinned rule 11; vectors:
+`core.session-start.claims-held-mail-for-the-work-item`,
+`core.session-start.claims-mail-left-on-an-earlier-session`,
+`core.session-start.claims-only-held-mail`)
 
 ## 6.5 Wake policy
 
@@ -122,7 +133,15 @@ A failing wake, a failing policy and a failing notice never fail the send: the
 message is already committed. A notice to a sender that is an ended session goes
 to its work item, as a reply would ([§4.6](04-messages.md#s4.6)). Which targets
 a host allows, asks about or denies is its own policy; the Dispatch profile's is
-in [Appendix C](appendix-c-dispatch-profile.md#sC.8). (pinned rule 9)
+in [Appendix C](appendix-c-dispatch-profile.md#sC.8). (pinned rule 9; vectors:
+`core.wake.allow-wakes-the-held-work-item`,
+`core.wake.deny-leaves-the-message-held`,
+`core.wake.ask-raises-a-wake-gate-to-the-owner`,
+`core.wake.a-failed-wake-never-fails-the-send`,
+`core.wake.a-humans-wake-holds-mail-for-an-ended-session`,
+`core.wake.only-held-work-items-of-a-wake-request-are-considered`,
+`core.wake.a-failed-wake-tells-the-sender`, `core.wake.deny-tells-the-sender`,
+`core.wake.a-notice-to-an-ended-sender-goes-to-its-work-item`)
 
 ## 6.6 Guardrails
 
@@ -134,7 +153,10 @@ Dispatch profile's defaults are in
   `urgent` message, and its `urgent` messages created in the past hour already
   number at least the quota, the host MUST drop `urgent` from the new message
   and report the downgrade in the send's result (`downgraded: true`). Humans and
-  the system address have no quota. (pinned rule 13)
+  the system address have no quota. (pinned rule 13; vectors:
+  `core.guardrails.urgent-over-the-quota-is-downgraded`,
+  `core.guardrails.the-urgent-quota-window-slides`,
+  `core.guardrails.humans-have-no-urgent-quota`)
 - **The breaker.** Agent-authored messages are those from sessions and agents,
   never from the system address. When an agent-authored send replies into a
   thread whose agent-authored messages created in the past hour number at least
@@ -143,8 +165,10 @@ Dispatch profile's defaults are in
   address, replying to the target, with `data`
   `{ "type": "x-breaker", "thread": <thread id> }`; it sends none while the
   thread already has an `x-breaker` notice from the system address created in
-  the past hour. A human who replies in the thread is not limited. (pinned
-  rule 12)
+  the past hour. A human who replies in the thread is not limited. (pinned rule
+  12; vectors: `core.guardrails.breaker-refuses-the-next-agent-turn`,
+  `core.guardrails.breaker-tells-the-owner-once-per-window`,
+  `core.guardrails.a-human-is-not-limited`)
 
 The past hour is the hour ending at the host's current time; a message counts
 when its `createdAt` is at or after the start of that hour.

@@ -68,47 +68,47 @@ This section is generated from `registries/registries.json` by
 
 ## 11.6 Gate types
 
-| Value                | Scope    | Status      | Since         | Defined in                                  | Raised by         | Choices                        | Effect                                              | Vectors                                                                                       |
-| -------------------- | -------- | ----------- | ------------- | ------------------------------------------- | ----------------- | ------------------------------ | --------------------------------------------------- | --------------------------------------------------------------------------------------------- |
-| `wake`               | core     | provisional | 1.0.0-draft.1 | [§5.9](05-gates.md#s5.9)                    | system            | approve, deny                  | wake the target unless it no longer qualifies (5.9) | none                                                                                          |
-| `tool-approval`      | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, approve-session, deny | release or refuse the parked tool call (C.3)        | `env.envelope.agents-may-not-forge-tool-approval-gates`                                       |
-| `scope`              | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | session           | grant, deny                    | widen the session's writes (C.3)                    | `env.envelope.only-sessions-raise-scope-gates`, `env.envelope.scope-gates-have-a-fixed-shape` |
-| `agent-registration` | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, deny                  | approve or refuse the agent (C.3)                   | none                                                                                          |
-| `overseer-action`    | dispatch | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | confirm, cancel                | run or drop the overseer's action (C.3)             | none                                                                                          |
-| `memory`             | memory   | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system-or-decider | approve, reject                | apply or reject the memory proposal (C.3)           | none                                                                                          |
-| `task-proposal`      | a2a      | provisional | 1.0.0-draft.1 | [§8.6](08-a2a-binding.md#s8.6)              | system            | approve, decline               | promote or drop the drafted work item (8.6)         | none                                                                                          |
-| `doc`                | docs     | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, reject                | apply or reject the document change (C.3)           | none                                                                                          |
+| Value                | Scope    | Status      | Since         | Defined in                                  | Raised by         | Choices                        | Effect                                              | Vectors                                                                                                                   |
+| -------------------- | -------- | ----------- | ------------- | ------------------------------------------- | ----------------- | ------------------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `wake`               | core     | permanent   | 1.0.0-draft.1 | [§5.9](05-gates.md#s5.9)                    | system            | approve, deny                  | wake the target unless it no longer qualifies (5.9) | `core.wake.approve-applies-before-publishing`, `core.wake.ask-raises-a-wake-gate-to-the-owner`                            |
+| `tool-approval`      | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, approve-session, deny | release or refuse the parked tool call (C.3)        | `env.envelope.agents-may-not-forge-tool-approval-gates`, `core.answers.a-gate-effect-runs-before-the-answer-is-published` |
+| `scope`              | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | session           | grant, deny                    | widen the session's writes (C.3)                    | `env.envelope.only-sessions-raise-scope-gates`, `env.envelope.scope-gates-have-a-fixed-shape`                             |
+| `agent-registration` | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, deny                  | approve or refuse the agent (C.3)                   | `core.answers.a-human-decides-an-agent-registration-gate`                                                                 |
+| `overseer-action`    | dispatch | permanent   | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | confirm, cancel                | run or drop the overseer's action (C.3)             | `core.answers.a-human-decides-an-overseer-action-gate`                                                                    |
+| `memory`             | memory   | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system-or-decider | approve, reject                | apply or reject the memory proposal (C.3)           | none                                                                                                                      |
+| `task-proposal`      | a2a      | provisional | 1.0.0-draft.1 | [§8.6](08-a2a-binding.md#s8.6)              | system            | approve, decline               | promote or drop the drafted work item (8.6)         | none                                                                                                                      |
+| `doc`                | docs     | provisional | 1.0.0-draft.1 | [§C.3](appendix-c-dispatch-profile.md#sC.3) | system            | approve, reject                | apply or reject the document change (C.3)           | none                                                                                                                      |
 
 ## 11.7 System markers
 
-| Value       | Scope | Status      | Since         | Defined in                  | Vectors |
-| ----------- | ----- | ----------- | ------------- | --------------------------- | ------- |
-| `x-closed`  | core  | provisional | 1.0.0-draft.1 | [§4.8](04-messages.md#s4.8) | none    |
-| `x-breaker` | core  | provisional | 1.0.0-draft.1 | [§6.6](06-delivery.md#s6.6) | none    |
+| Value       | Scope | Status    | Since         | Defined in                  | Vectors                                                                                        |
+| ----------- | ----- | --------- | ------------- | --------------------------- | ---------------------------------------------------------------------------------------------- |
+| `x-closed`  | core  | permanent | 1.0.0-draft.1 | [§4.8](04-messages.md#s4.8) | `core.close.answers-without-effect-or-deliveries`, `core.close.moves-the-question-to-answered` |
+| `x-breaker` | core  | permanent | 1.0.0-draft.1 | [§6.6](06-delivery.md#s6.6) | `core.guardrails.breaker-tells-the-owner-once-per-window`                                      |
 
 ## 11.8 Delivery states
 
-| Value       | Scope      | Status      | Since         | Defined in                            | Internal | Vectors |
-| ----------- | ---------- | ----------- | ------------- | ------------------------------------- | -------- | ------- |
-| `held`      | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | none    |
-| `sending`   | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | yes      | none    |
-| `pushed`    | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | none    |
-| `notified`  | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | none    |
-| `read`      | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | none    |
-| `answered`  | core       | provisional | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | none    |
-| `forwarded` | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | no       | none    |
-| `refused`   | federation | appendix    | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | no       | none    |
+| Value       | Scope      | Status    | Since         | Defined in                            | Internal | Vectors                                                                                                     |
+| ----------- | ---------- | --------- | ------------- | ------------------------------------- | -------- | ----------------------------------------------------------------------------------------------------------- |
+| `held`      | core       | permanent | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | `core.send.task-held-without-live-session`, `core.recover.returns-sending-rows-to-held`                     |
+| `sending`   | core       | permanent | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | yes      | `core.recover.dispatches-sending-rows-whose-session-is-live`, `core.recover.returns-sending-rows-to-held`   |
+| `pushed`    | core       | permanent | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | `core.send.direct-mail-pushes-to-the-live-session`, `core.session-start.claims-held-mail-for-the-work-item` |
+| `notified`  | core       | permanent | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | `core.send.human-mail-is-notified`, `core.send.channel-mail-notifies-the-live-session`                      |
+| `read`      | core       | permanent | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | `core.mailbox.inbox-lists-and-mark-read-reads`, `core.mailbox.marking-read-leaves-answered-alone`           |
+| `answered`  | core       | permanent | 1.0.0-draft.1 | [§6.1](06-delivery.md#s6.1)           | no       | `core.answers.a-reply-answers-and-closes-the-question`, `core.close.moves-the-question-to-answered`         |
+| `forwarded` | federation | appendix  | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | no       | none                                                                                                        |
+| `refused`   | federation | appendix  | 1.0.0-draft.1 | [§F.4](appendix-f-federation.md#sF.4) | no       | none                                                                                                        |
 
 ## 11.9 Error codes
 
-| Value         | Scope  | Status      | Since         | Defined in                  | HTTP status | Vectors                                                 |
-| ------------- | ------ | ----------- | ------------- | --------------------------- | ----------- | ------------------------------------------------------- |
-| `invalid`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 400         | `env.envelope.unknown-kind-refused-x-kind-accepted`     |
-| `forbidden`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 403         | `env.envelope.a-gate-answer-needs-a-deciding-principal` |
-| `not-found`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 404         | `env.envelope.a-reply-to-no-message-is-not-found`       |
-| `conflict`    | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 409         | none                                                    |
-| `limited`     | core   | provisional | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 429         | none                                                    |
-| `unavailable` | memory | informative | 1.0.0-draft.1 | [§10.3](10-errors.md#s10.3) | 503         | none                                                    |
+| Value         | Scope  | Status      | Since         | Defined in                  | HTTP status | Vectors                                                                                 |
+| ------------- | ------ | ----------- | ------------- | --------------------------- | ----------- | --------------------------------------------------------------------------------------- |
+| `invalid`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 400         | `env.envelope.unknown-kind-refused-x-kind-accepted`                                     |
+| `forbidden`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 403         | `env.envelope.a-gate-answer-needs-a-deciding-principal`                                 |
+| `not-found`   | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 404         | `env.envelope.a-reply-to-no-message-is-not-found`                                       |
+| `conflict`    | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 409         | `core.answers.a-question-takes-one-answer`, `core.close.an-answered-question-conflicts` |
+| `limited`     | core   | permanent   | 1.0.0-draft.1 | [§10.1](10-errors.md#s10.1) | 429         | `core.guardrails.breaker-refuses-the-next-agent-turn`                                   |
+| `unavailable` | memory | informative | 1.0.0-draft.1 | [§10.3](10-errors.md#s10.3) | 503         | none                                                                                    |
 
 ## 11.10 Extension URIs
 

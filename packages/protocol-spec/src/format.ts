@@ -63,6 +63,7 @@ const THEN_KEYS = [
   'messages',
   'noOtherMessages',
   'deliveries',
+  'noDeliveries',
   'calls',
   'callsInclude',
   'gateEffects',
@@ -240,7 +241,7 @@ function checkThen(then: unknown, when: readonly Row[], fail: Fail): void {
       fail(`${at} must be { name, members } with string members`);
   }
   for (const [row, at] of rows('render')) checkRenderRow(row, at, when, fail);
-  for (const key of ['gateEffects', 'voided']) {
+  for (const key of ['noDeliveries', 'gateEffects', 'voided']) {
     if (t[key] !== undefined && !isStringArray(t[key]))
       fail(`then.${key} must be a list of strings`);
   }

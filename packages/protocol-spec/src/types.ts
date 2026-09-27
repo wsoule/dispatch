@@ -105,6 +105,7 @@ export interface Expectation {
     state?: string;
     session?: string | null;
   }[];
+  noDeliveries?: string[];
   calls?: JsonObject[];
   callsInclude?: JsonObject[];
   gateEffects?: string[];

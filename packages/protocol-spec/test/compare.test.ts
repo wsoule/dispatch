@@ -182,6 +182,12 @@ describe('compare', () => {
     ).toBe(false);
   });
 
+  it('fails a message noDeliveries lists when it has a delivery', () => {
+    const v: Vector = { ...send, then: { noDeliveries: ['$s1'] } };
+    expect(compare(v, good, hello).failures).toEqual(['$s1 has deliveries']);
+    expect(compare(v, { ...good, deliveries: [] }, hello).failures).toEqual([]);
+  });
+
   it('fails calls out of order and passes callsInclude as a subsequence', () => {
     const v = {
       ...send,

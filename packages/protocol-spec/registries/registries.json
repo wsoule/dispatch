@@ -358,14 +358,17 @@
     {
       "value": "wake",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "5.9",
       "raisedBy": "system",
       "choices": ["approve", "deny"],
       "data": { "target": "address", "message": "message id" },
       "effect": "wake the target unless it no longer qualifies (5.9)",
-      "vectors": []
+      "vectors": [
+        "core.wake.approve-applies-before-publishing",
+        "core.wake.ask-raises-a-wake-gate-to-the-owner"
+      ]
     },
     {
       "value": "tool-approval",
@@ -386,7 +389,10 @@
         "floor": "boolean"
       },
       "effect": "release or refuse the parked tool call (C.3)",
-      "vectors": ["env.envelope.agents-may-not-forge-tool-approval-gates"]
+      "vectors": [
+        "env.envelope.agents-may-not-forge-tool-approval-gates",
+        "core.answers.a-gate-effect-runs-before-the-answer-is-published"
+      ]
     },
     {
       "value": "scope",
@@ -407,7 +413,7 @@
     {
       "value": "agent-registration",
       "scope": "dispatch",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -419,12 +425,12 @@
         "requestedBy": "address, optional"
       },
       "effect": "approve or refuse the agent (C.3)",
-      "vectors": []
+      "vectors": ["core.answers.a-human-decides-an-agent-registration-gate"]
     },
     {
       "value": "overseer-action",
       "scope": "dispatch",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -436,7 +442,7 @@
         "summary": "string"
       },
       "effect": "run or drop the overseer's action (C.3)",
-      "vectors": []
+      "vectors": ["core.answers.a-human-decides-an-overseer-action-gate"]
     },
     {
       "value": "memory",
@@ -496,74 +502,95 @@
     {
       "value": "x-closed",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.8",
-      "vectors": []
+      "vectors": [
+        "core.close.answers-without-effect-or-deliveries",
+        "core.close.moves-the-question-to-answered"
+      ]
     },
     {
       "value": "x-breaker",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "6.6",
-      "vectors": []
+      "vectors": ["core.guardrails.breaker-tells-the-owner-once-per-window"]
     }
   ],
   "delivery-states": [
     {
       "value": "held",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "6.1",
       "internal": false,
-      "vectors": []
+      "vectors": [
+        "core.send.task-held-without-live-session",
+        "core.recover.returns-sending-rows-to-held"
+      ]
     },
     {
       "value": "sending",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "6.1",
       "internal": true,
-      "vectors": []
+      "vectors": [
+        "core.recover.dispatches-sending-rows-whose-session-is-live",
+        "core.recover.returns-sending-rows-to-held"
+      ]
     },
     {
       "value": "pushed",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "6.1",
       "internal": false,
-      "vectors": []
+      "vectors": [
+        "core.send.direct-mail-pushes-to-the-live-session",
+        "core.session-start.claims-held-mail-for-the-work-item"
+      ]
     },
     {
       "value": "notified",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "6.1",
       "internal": false,
-      "vectors": []
+      "vectors": [
+        "core.send.human-mail-is-notified",
+        "core.send.channel-mail-notifies-the-live-session"
+      ]
     },
     {
       "value": "read",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "6.1",
       "internal": false,
-      "vectors": []
+      "vectors": [
+        "core.mailbox.inbox-lists-and-mark-read-reads",
+        "core.mailbox.marking-read-leaves-answered-alone"
+      ]
     },
     {
       "value": "answered",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "6.1",
       "internal": false,
-      "vectors": []
+      "vectors": [
+        "core.answers.a-reply-answers-and-closes-the-question",
+        "core.close.moves-the-question-to-answered"
+      ]
     },
     {
       "value": "forwarded",
@@ -619,20 +646,23 @@
     {
       "value": "conflict",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "10.1",
       "httpStatus": 409,
-      "vectors": []
+      "vectors": [
+        "core.answers.a-question-takes-one-answer",
+        "core.close.an-answered-question-conflicts"
+      ]
     },
     {
       "value": "limited",
       "scope": "core",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "10.1",
       "httpStatus": 429,
-      "vectors": []
+      "vectors": ["core.guardrails.breaker-refuses-the-next-agent-turn"]
     },
     {
       "value": "unavailable",
