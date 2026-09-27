@@ -1,0 +1,90 @@
+{
+  "name": "basic",
+  "replica": "ada-0000000a",
+  "entries": [
+    {
+      "v": 2,
+      "replica": "ada-0000000a",
+      "seq": 1,
+      "prev": "0000000000000000000000000000000000000000000000000000000000000000",
+      "hlc": "1790000000000.0000.ada-0000000a",
+      "type": "key",
+      "bodyHash": "9230bdf9f0ba9ebc00c367b5b67ab21185d61d75408ae54d08e9acd91a868800",
+      "body": {
+        "handle": "ada",
+        "device": "laptop",
+        "build": "0.40.0",
+        "signPub": "ewfgLc5sWGf-J-3KBoNxul8n-qj-37AMozEgyo5SLbo",
+        "sealPub": "uQ_oKp9I4YNrah_IQ2Di4W2zpxWD3ZjhcVkww4s7kik",
+        "legacy": null
+      },
+      "sig": "Tdn9V7XuIyhqbUXA6SCa9p9YEdNsMkKgtTXZiTZN2IzHNAtN7xcfbZ928iBKes1_ceX4N3jkEdtZTzOT-s8iDw"
+    },
+    {
+      "v": 2,
+      "replica": "ada-0000000a",
+      "seq": 2,
+      "prev": "2b7d1232cafbaf4cb3ccde06a08c782b88bcd0a811f256ec6c523dcd20489823",
+      "hlc": "1790000000001.0000.ada-0000000a",
+      "type": "task",
+      "bodyHash": "b11566d2244286d89dd4dc6ca606dbac7864260962372c5e465cd78476558610",
+      "body": {
+        "task": "t-00000a01",
+        "kind": "put",
+        "fields": {
+          "n": 2
+        }
+      },
+      "sig": "8I1ECp4hv5spKI-OUhbTvZswMUQkATQdBsW0Y5jFxMLDkUlU3C5pTVl880aJt02DScfWHLQ8fboClG183DwmDw"
+    },
+    {
+      "v": 2,
+      "replica": "ada-0000000a",
+      "seq": 3,
+      "prev": "01f53f1c2aab22d0ff30bb49c864734b4c109a060b9e0f7e98971e770a2fbecd",
+      "hlc": "1790000000002.0000.ada-0000000a",
+      "type": "task",
+      "bodyHash": "3c32c7b3e2867d1e4ba60b26a1ac2bc20fbfba47ab4ce95221ff8443b482d7e5",
+      "body": {
+        "task": "t-00000a01",
+        "kind": "put",
+        "fields": {
+          "n": 3
+        }
+      },
+      "sig": "zYI6ZP_MEDr2JwxG-fI-py8owHY8pu5hdEqntd_9k8yuRDbEZ7p0H8MYWKZzB-VY8g-LEV15WxIdx-xXBzI5BA"
+    },
+    {
+      "v": 2,
+      "replica": "ada-0000000a",
+      "seq": 4,
+      "prev": "68957cbbd6969a1ef728f81f9b9b75abda37c8df6bebde2698e60e5a536822e1",
+      "hlc": "1790000000003.0000.ada-0000000a",
+      "type": "task",
+      "bodyHash": "79bb64f32773a85b275a0bc9cbf7273f823abdc91569d89726bbe48431a56b6d",
+      "body": {
+        "task": "t-00000a01",
+        "kind": "put",
+        "fields": {
+          "n": 4
+        }
+      },
+      "sig": "oc163aSHnBPfwqQs-xX-aZWqMY3b777dFvGXkHvkr-ft8WHM4M7inWw755zO7itOQQNegFakxAlct6Q9PSFbCw"
+    },
+    {
+      "v": 2,
+      "replica": "ada-0000000a",
+      "seq": 5,
+      "prev": "57a4d0836e22b4096b44f21da1db350d1072b61a068bb17b627348d2a5bd5391",
+      "hlc": "1790000000004.0000.ada-0000000a",
+      "type": "presence",
+      "bodyHash": "9b8e6fd7d2014ab649cff63f844b2b0a83b5e8275f98358eba68a9ef6f470b11",
+      "sig": "JVPWLq3bx-oHtzPopf_Q2AGa8cXQAVsjJTnvgR2_33gv8aHYyAJarPdc_oZ1pkh9atf747BlQXdfrMT932QjDg",
+      "pruned": true
+    }
+  ],
+  "expect": {
+    "accepted": [1, 2, 3, 4, 5],
+    "halted": null
+  }
+}

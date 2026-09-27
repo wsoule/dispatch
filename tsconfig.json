@@ -9,6 +9,9 @@
       "path": "packages/protocol/tsconfig.json"
     },
     {
+      "path": "packages/federation/tsconfig.json"
+    },
+    {
       "path": "packages/cli/tsconfig.json"
     },
     {

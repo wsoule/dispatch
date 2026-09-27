@@ -20,6 +20,7 @@
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "catalog:",
     "@dispatch/core": "workspace:*",
+    "@dispatch/federation": "workspace:*",
     "@dispatch/mcp": "workspace:*",
     "@dispatch/protocol": "workspace:*",
     "@typesafe-ai/sdk": "catalog:",

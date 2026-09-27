@@ -8,11 +8,11 @@ the Elastic License 2.0, on 2026-09-23.
 
 ## The split
 
-| Code                                                                                       | License                                  |
-| ------------------------------------------------------------------------------------------ | ---------------------------------------- |
-| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`                         | MIT                                      |
-| Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site) | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
-| Team features: `packages/server/src/team/` and `packages/server/test/team/`                | Elastic-2.0 (their own `LICENSE` files)  |
+| Code                                                                                               | License                                  |
+| -------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`                                 | MIT                                      |
+| Everything else in this repo (desktop app, `dispatchd` + orchestrator, web/ui, demo, site)         | FSL-1.1-ALv2 ([root `LICENSE`](LICENSE)) |
+| Team features: `packages/federation`, `packages/server/src/team/` and `packages/server/test/team/` | Elastic-2.0 (their own `LICENSE` files)  |
 
 Three tiers, one rule each:
 
@@ -51,10 +51,10 @@ Three tiers, one rule each:
   when seats are added. Nothing is deleted either way.
 - **The key.** An Ed25519-signed `dispatch1.…` string carrying the organization,
   seats and expiry, checked on the machine against the public key in
-  `team/license.ts` — no phone-home. Install it in Settings → License,
-  `dispatch license set <key>`, `$DISPATCH_HOME/.dispatch/license.key`, or the
-  `DISPATCH_LICENSE` environment variable. An expired or invalid key reads as
-  the free plan with the reason; it never locks anyone out.
+  `packages/federation/src/license.ts` — no phone-home. Install it in Settings →
+  License, `dispatch license set <key>`, `$DISPATCH_HOME/.dispatch/license.key`,
+  or the `DISPATCH_LICENSE` environment variable. An expired or invalid key
+  reads as the free plan with the reason; it never locks anyone out.
 - **Issuing keys.** `bun scripts/license-keygen.ts <path>` once, to make the
   signing key pair (paste the printed public key into `LICENSE_PUBLIC_KEY`);
   `bun scripts/license-issue.ts --key <path> --org … --seats … [--expires …]`
