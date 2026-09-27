@@ -1153,12 +1153,36 @@ export class MemoryEngine {
           },
         })
       );
-      this.deps.host.recordPolicyApproval(applied.proposal, ruling);
+      // The entry already stands, so a lost receipt is logged rather than thrown.
+      try {
+        this.deps.host.recordPolicyApproval(applied.proposal, ruling);
+      } catch (err) {
+        console.error(
+          'memory: the policy approval receipt was not written',
+          err
+        );
+      }
       this.afterApply(applied);
       return this.settled(store, stored.id);
     }
-    this.recordGate(store, stored.id, await this.deps.host.raiseGate(stored));
+    const gate = await this.raiseGateOrNull(stored);
+    if (gate !== null) this.recordGate(store, stored.id, gate);
     return this.settled(store, stored.id);
+  }
+
+  // A gate that cannot be sent now stays unset, for recover() to raise later.
+  private async raiseGateOrNull(
+    proposal: MemoryProposal
+  ): Promise<string | null> {
+    try {
+      return await this.deps.host.raiseGate(proposal);
+    } catch (err) {
+      console.error(
+        'memory: the proposal gate was not raised; recover raises it',
+        err
+      );
+      return null;
+    }
   }
 
   // A ruling that throws leaves the proposal for a human.

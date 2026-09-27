@@ -120,6 +120,27 @@ describe('proposals', () => {
     expect(t.host.activated.map((a) => a.authorRun)).toEqual(['r-9f2c01']);
   });
 
+  it('reports and announces an auto-approval whose receipt could not be written', async () => {
+    const t = setup();
+    t.host.ruling = AUTO;
+    t.host.failing.add('recordPolicyApproval');
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const out = await t.engine.save(RUN, team);
+      const [entry] = t.shared.listEntries();
+      expect(out).toEqual({
+        status: 'active',
+        id: entry.id,
+        handle: entry.handle,
+      });
+      expect(t.host.changes).toEqual([{ scope: 'team', id: entry.id }]);
+      expect(t.host.activated.map((a) => a.entry.id)).toEqual([entry.id]);
+      expect(String(errors.mock.calls[0]?.[0])).toContain('receipt');
+    } finally {
+      errors.mockRestore();
+    }
+  });
+
   it('never auto-approves content matching a personal entry of the operator', async () => {
     const t = setup();
     t.host.ruling = AUTO;
@@ -514,6 +535,25 @@ describe('proposals', () => {
     t.shared.updateProposal({ ...p, gate: null });
     expect(await t.engine.recover()).toEqual({ raised: 1 });
     expect(t.engine.proposals(OWNER, 'open')[0].gate).toMatch(/^m-gate-/);
+  });
+
+  it('returns an ungated proposal when its gate cannot be raised, and recover raises it', async () => {
+    const t = setup();
+    t.host.failing.add('raiseGate');
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await t.engine.save(RUN, team)).toEqual({
+        status: 'proposed',
+        proposal: expect.stringMatching(/^mp-/),
+        gate: null,
+      });
+      expect(String(errors.mock.calls[0]?.[0])).toContain('gate');
+    } finally {
+      errors.mockRestore();
+    }
+    t.host.failing.delete('raiseGate');
+    expect(await t.engine.recover()).toEqual({ raised: 1 });
+    expect(t.engine.proposals(OWNER, 'open')[0].gate).toBe('m-gate-1');
   });
 
   it('accepts an answer that arrives before the gate id is recorded', async () => {
