@@ -43,11 +43,11 @@ export type ProjectView =
   /** The blast-radius browser — `impactSubject` says which file/run/task, or
    * `null` for the picker with nothing preselected. */
   | 'impact'
-  /** One task, full-window, with Details/Chat/Diff tabs — `activeTaskId` says which. */
+  /** One task, full-window, with Details/Chat/Thread/Diff tabs — `activeTaskId` says which. */
   | 'task'
   | 'new-task';
 
-export type TaskTab = 'details' | 'chat' | 'diff' | 'preview';
+export type TaskTab = 'details' | 'chat' | 'thread' | 'diff' | 'preview';
 
 /** One file/run/task to show the blast radius of — what `ImpactView` fetches
  * and what the two "open in Impact" entry points (Review case panel, Git

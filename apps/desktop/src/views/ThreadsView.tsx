@@ -1,26 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { Composer } from '../components/threads/Composer';
 import { ThreadPane } from '../components/threads/ThreadPane';
 import { ThreadRail } from '../components/threads/ThreadRail';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useThreadPaneProps } from '../hooks/useThreadPaneProps';
 import type { OpenThread } from '../hooks/useThreads';
 import {
-  useAgentRoster,
-  useChannels,
   useThread,
   useThreadActions,
   useThreadRail,
 } from '../hooks/useThreads';
-import { availabilityKey } from '../lib/daemonAuth';
-import type { ParkedCall, RefAction } from '../lib/threadSources';
-import {
-  knownAddresses,
-  lookupsKey,
-  participantLabel,
-  replyRoute,
-  threadLookups,
-} from '../lib/threadSources';
+import type { RefAction } from '../lib/threadSources';
+import { participantLabel, replyRoute } from '../lib/threadSources';
 import { PageHeader } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
@@ -56,54 +48,15 @@ export function ThreadsView({
   const rail = useThreadRail(client, port, me, access);
   const open = useThread(client, port, focus, access);
   const actions = useThreadActions(client, port, me, access, data);
-  const agents = useAgentRoster(client, port);
-  const channels = useChannels(client, port, access.canMessage);
-  const lookups = useKeyed(lookupsKey(data.tasks, data.runs, agents), () =>
-    threadLookups(data.tasks, data.runs, agents)
-  );
-  const availability = useKeyed(
-    availabilityKey(data.scopeDecide),
-    () => data.scopeDecide
-  );
-  const known = useMemo(
-    () =>
-      knownAddresses({
-        tasks: data.tasks,
-        channels,
-        agents,
-        presence: data.presence,
-        me,
-      }),
-    [data.tasks, channels, agents, data.presence, me]
-  );
+  const {
+    lookups,
+    availability,
+    known,
+    onRestartDaemon,
+    onOpen,
+    loadApprovalInput,
+  } = useThreadPaneProps(data, onOpenRef);
   const [composing, setComposing] = useState(false);
-  // App re-renders on every event; a ref keeps the restart callback stable for memoised rows.
-  const latest = useRef(data);
-  useEffect(() => {
-    latest.current = data;
-  }, [data]);
-  const onRestartDaemon = useCallback(
-    () => latest.current.handleRestartDaemon(),
-    []
-  );
-  const openRef = useRef(onOpenRef);
-  useEffect(() => {
-    openRef.current = onOpenRef;
-  }, [onOpenRef]);
-  const onOpen = useCallback(
-    (action: RefAction) => openRef.current(action),
-    []
-  );
-  const loadApprovalInput = useCallback(
-    (call: ParkedCall) =>
-      'runId' in call
-        ? latest.current.fetchApprovalInput(call.runId, call.requestId)
-        : latest.current.fetchOverseerApprovalInput(
-            call.conversation,
-            call.requestId
-          ),
-    []
-  );
   const { markRead } = actions;
   useEffect(() => {
     markRead(open.deliveries);
@@ -212,16 +165,6 @@ export function ThreadsView({
       </div>
     </div>
   );
-}
-
-// What `build` makes, kept as the same object until `key` changes, so memoised
-// rows skip the run and board events that change nothing they show.
-function useKeyed<T>(key: string, build: () => T): T {
-  const [held, setHeld] = useState(() => ({ key, value: build() }));
-  if (held.key === key) return held.value;
-  const next = { key, value: build() };
-  setHeld(next);
-  return next.value;
 }
 
 // What the pane shows with no thread on screen: nothing while one loads, why

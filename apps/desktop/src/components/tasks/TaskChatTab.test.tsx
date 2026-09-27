@@ -5,6 +5,8 @@ import { expect, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
+import type { ShellActions } from '../shell/ShellActionsContext';
+import { ShellActionsProvider } from '../shell/ShellActionsContext';
 import { TaskChatTab } from './TaskChatTab';
 
 function run(id: string, state: RunMeta['state']): RunMeta {
@@ -89,6 +91,27 @@ function dataWith(
   } as unknown as DispatchProjectData;
 }
 
+// Only the thread link is exercised; it records where it led.
+function shellWith(log: string[]): ShellActions {
+  const noop = () => {};
+  return {
+    openTask: noop,
+    openThread: (messageId) => log.push(`thread:${messageId}`),
+    peekTask: noop,
+    openCreateTask: noop,
+    createPreset: null,
+    closeCreateTask: noop,
+    openPalette: noop,
+    toggleSidebar: noop,
+    sidebarHidden: false,
+    openOverseer: noop,
+    setProjectView: noop,
+    setGlobalView: noop,
+    openShortcuts: noop,
+    copyTaskId: noop,
+  };
+}
+
 function renderChat(
   runs: RunMeta[],
   selected: RunMeta,
@@ -96,12 +119,14 @@ function renderChat(
   entries: NormalizedEntry[] = []
 ) {
   return render(
-    <TaskChatTab
-      data={dataWith(runs, selected, log, entries)}
-      doc={{ meta: { id: 't-1' } } as TaskDoc}
-      selectedRun={selected}
-      onDispatch={() => {}}
-    />
+    <ShellActionsProvider value={shellWith(log)}>
+      <TaskChatTab
+        data={dataWith(runs, selected, log, entries)}
+        doc={{ meta: { id: 't-1' } } as TaskDoc}
+        selectedRun={selected}
+        onDispatch={() => {}}
+      />
+    </ShellActionsProvider>
   );
 }
 
@@ -158,4 +183,23 @@ test("the viewer's own message in the chat reads as You", () => {
   expect(screen.getByText('use the new cart')).toBeDefined();
   expect(screen.getByText('You')).toBeDefined();
   expect(screen.queryByText('human:wyat')).toBeNull();
+});
+
+test('a message delivered to the run opens its thread', () => {
+  const log: string[] = [];
+  const live = run('r-1', 'running');
+  renderChat([live], live, log, [
+    {
+      ts: '2026-09-26T00:04:00.000Z',
+      kind: 'message',
+      from: 'agent',
+      fromLabel: 'run:r-9',
+      messageId: 'm-9',
+      text: '[message from run:r-9 · question · m-9]\n│ Is the cart schema final?',
+    },
+  ]);
+  fireEvent.click(
+    screen.getByRole('button', { name: 'Open thread: question from run:r-9' })
+  );
+  expect(log).toEqual(['thread:m-9']);
 });
