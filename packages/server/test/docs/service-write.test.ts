@@ -377,7 +377,7 @@ describe('whole-body saves against a moved head', () => {
     ).toBe('unchanged');
   });
 
-  it('says unchanged when the clean merge equals the head, storing nothing', () => {
+  it('answers a stale save that changed nothing as merged into the head, storing nothing', () => {
     const made = service.create(as(OWNER), { title: 'A', body: 'a\nb\n' });
     service.seal(as(OWNER), 'a');
     const edited = service.edit(as(AGENT), 'a', {
@@ -389,7 +389,7 @@ describe('whole-body saves against a moved head', () => {
       body: 'a\nb\n',
     });
     expect(saved).toMatchObject({
-      status: 'unchanged',
+      status: 'merged',
       rev: { id: edited.rev.id, n: 2 },
       mine: { id: made.rev.id, n: 1 },
     });
@@ -399,6 +399,56 @@ describe('whole-body saves against a moved head', () => {
     expect(
       host.changes.slice(changesBefore).map((c) => [c.kind, c.author])
     ).toEqual([['sealed', AGENT.address]]);
+  });
+
+  it('answers a resend of a save that landed as unchanged, based on the head', () => {
+    const made = service.create(as(OWNER), { title: 'A', body: 'a\nb\n' });
+    service.seal(as(OWNER), 'a');
+    const input = { baseRev: made.rev.id, body: 'a\nB\n' };
+    const landed = service.saveBody(as(OWNER), 'a', input);
+    const resent = service.saveBody(as(OWNER), 'a', input);
+    expect(resent).toMatchObject({
+      status: 'unchanged',
+      rev: { id: landed.rev.id, n: 2 },
+    });
+    expect(resent.mine).toBeUndefined();
+    expect(service.revisions(as(OWNER), 'a', {})).toHaveLength(2);
+    // Typing on at the same spot saves against the answer's revision, not a conflict with itself.
+    const next = resent.mine ?? resent.rev;
+    const typed = service.saveBody(as(OWNER), 'a', {
+      baseRev: next.id,
+      baseHash: next.hash,
+      body: 'a\nBx\n',
+    });
+    expect(typed.status).toBe('saved');
+    expect(service.read(as(OWNER), 'a').text).toBe('a\nBx\n');
+  });
+
+  it("stores the writer's text and a merge when the head already holds its changes", () => {
+    const made = service.create(as(OWNER), { title: 'A', body: 'a\nb\nc\n' });
+    service.seal(as(OWNER), 'a');
+    service.edit(as(AGENT), 'a', {
+      ops: [
+        { op: 'replace', find: 'a\n', text: 'A\n' },
+        { op: 'replace', find: 'c\n', text: 'C\n' },
+      ],
+    });
+    const saved = service.saveBody(as(OWNER), 'a', {
+      baseRev: made.rev.id,
+      body: 'A\nb\nc\n',
+    });
+    expect(saved).toMatchObject({ status: 'merged', rev: { n: 4 } });
+    expect(saved.mine?.n).toBe(3);
+    expect(service.read(as(OWNER), 'a').text).toBe('A\nb\nC\n');
+    // Typing on the line both sides changed merges against the writer's own text.
+    const mine = saved.mine ?? saved.rev;
+    const typed = service.saveBody(as(OWNER), 'a', {
+      baseRev: mine.id,
+      baseHash: mine.hash,
+      body: 'Ax\nb\nc\n',
+    });
+    expect(typed.status).toBe('merged');
+    expect(service.read(as(OWNER), 'a').text).toBe('Ax\nb\nC\n');
   });
 
   it('refuses a base that is not a revision of this doc', () => {

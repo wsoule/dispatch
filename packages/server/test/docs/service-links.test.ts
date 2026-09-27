@@ -189,7 +189,7 @@ describe('review focus 4: link rules', () => {
     ).toBe(2);
   });
 
-  it('refuses a run linking a memory entry it can see', () => {
+  it('refuses a run linking a memory entry it can see to a team doc', () => {
     const mine = service.create(as(RUN), { title: 'Run draft', body: 'x\n' });
     expect(
       denied(() =>

@@ -781,7 +781,7 @@ export class DocsService {
       this.checkLinkTarget(actor, doc, l.target, l.rel, `links[${i}]`)
     );
     checked.forEach((target, i) =>
-      this.checkLinkAuthority(actor, target, links[i].rel, `links[${i}]`)
+      this.checkLinkAuthority(actor, doc, target, links[i].rel, `links[${i}]`)
     );
     return this.write(() => {
       const rev = this.makeRevision(doc.id, {
@@ -973,12 +973,15 @@ export class DocsService {
     }
     const mineTitle = title ?? base.title;
     const nextTitle = mineTitle !== base.title ? mineTitle : head.title;
-    // The head already holds everything the writer changed: store nothing, and
-    // keep the writer's base as the one its editor saves against next.
+    // The head gains nothing, so store nothing: a writer holding the head's text is
+    // based on it now, and one who changed nothing reloads it or keeps its base.
     if (merged.body === head.body && nextTitle === head.title) {
-      return this.result(doc, head, 'unchanged', {
-        mine: { id: base.id, n: base.n, hash: base.hash },
-      });
+      if (body === head.body) return this.result(doc, head, 'unchanged');
+      if (body === base.body) {
+        return this.result(doc, head, 'merged', {
+          mine: { id: base.id, n: base.n, hash: base.hash },
+        });
+      }
     }
     const headRev = head;
     const at = this.nowIso();
@@ -1292,10 +1295,11 @@ export class DocsService {
     return true;
   }
 
-  // Who may make a link: runs stay on their own task, run and threads, plus
-  // docs; agents add context only.
+  // Who may make a link: runs stay on their own task, run and threads, plus docs
+  // (memory only on personal docs); agents add context only.
   private checkLinkAuthority(
     actor: DocsActor,
+    doc: DocRow,
     target: LinkTarget,
     rel: LinkRel,
     field: string
@@ -1303,7 +1307,7 @@ export class DocsService {
     if (!this.mayWriteDrafts(actor))
       throw forbidden('you may not change links', field);
     if (actor.kind === 'run') {
-      if (target.type === 'memory')
+      if (target.type === 'memory' && doc.scope === 'team')
         throw forbidden(
           'a run links only its own task, run and threads, and docs',
           field
@@ -1423,13 +1427,13 @@ export class DocsService {
       input.rel,
       'link'
     );
-    this.checkLinkAuthority(actor, target, input.rel, 'link');
+    this.checkLinkAuthority(actor, doc, target, input.rel, 'link');
     // Changing a link's rel drops the old one, so it needs the right to remove it, as unlink does.
     const existing = this.store()
       .links({ docId: doc.id })
       .find((l) => l.targetType === target.type && l.targetId === target.id);
     if (existing !== undefined && existing.rel !== input.rel)
-      this.checkLinkAuthority(actor, target, existing.rel, 'rel');
+      this.checkLinkAuthority(actor, doc, target, existing.rel, 'rel');
     const at = this.nowIso();
     return this.write(() => {
       this.sealInTx(doc, this.headOf(doc));
@@ -1468,6 +1472,7 @@ export class DocsService {
       );
     this.checkLinkAuthority(
       actor,
+      doc,
       { type: target.type, id: targetId },
       existing.rel,
       'target'
