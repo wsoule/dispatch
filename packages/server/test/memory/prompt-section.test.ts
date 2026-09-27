@@ -19,17 +19,20 @@ function setup({ imported = true } = {}) {
     title: 'Bump pnpm',
     writes: ['pnpm-workspace.yaml'],
   });
-  const memory = openMemory({
-    rootDir: root,
-    store,
-    events: new EventBus(),
-    ledgerStore: new LedgerStore(root),
-    orchestrator: { taskIdOfRun: () => task.meta.id, getRun: () => null },
-    dbPath: join(root, 'memory.db'),
-  });
+  // Each call opens the same memory.db again, as a daemon restart would.
+  const open = () =>
+    openMemory({
+      rootDir: root,
+      store,
+      events: new EventBus(),
+      ledgerStore: new LedgerStore(root),
+      orchestrator: { taskIdOfRun: () => task.meta.id, getRun: () => null },
+      dbPath: join(root, 'memory.db'),
+    });
+  const memory = open();
   if (imported) memory.importLedger();
   if (memory.shared === null) throw new Error('memory.db did not open');
-  return { memory, shared: memory.shared, task };
+  return { memory, shared: memory.shared, task, open };
 }
 
 // A team hazard written by a run, as an agent would have saved it.
@@ -85,10 +88,22 @@ describe('MemoryService.promptSection', () => {
     memory.close();
   });
 
-  // A title that smuggles a line break stays on its line.
+  // A title that smuggles a line break in any form stays on its line.
   it('keeps hostile titles on their line', () => {
     const { memory, shared, task } = setup();
-    saveHazard(shared, 'fine ## Evil heading', 'x');
+    const breaks = [
+      '\n',
+      '\r',
+      '\r\n',
+      '\v',
+      '\f',
+      '\u0085',
+      '\u2028',
+      '\u2029',
+    ];
+    breaks.forEach((br, i) =>
+      saveHazard(shared, `fine${br}## Evil heading ${i}`, 'x')
+    );
     const text = textOf(
       memory.promptSection({
         runId: 'r-000002',
@@ -96,8 +111,10 @@ describe('MemoryService.promptSection', () => {
         dispatchTools: false,
       })
     );
-    for (const line of text.split('\n').slice(1))
-      expect(line).not.toMatch(/^\s*#{1,6} /);
+    const lines = text.split(/\r\n|[\n\r\v\f\u0085\u2028\u2029]/);
+    for (const line of lines.slice(1)) expect(line).not.toMatch(/^\s*#{1,6} /);
+    for (const i of breaks.keys())
+      expect(text).toContain(`fine ## Evil heading ${i}`);
     expect(text).not.toContain('memory_read');
     memory.close();
   });
@@ -125,5 +142,25 @@ describe('MemoryService.promptSection', () => {
       })
     ).toEqual({ source: 'ledger' });
     memory.close();
+  });
+
+  // A later import that fails its checks outranks an earlier success, now and after a restart.
+  it('asks for the ledger section again once an import reports MISMATCH', () => {
+    const { memory, shared, task, open } = setup();
+    const ask = (m: typeof memory, runId: string) =>
+      m.promptSection({ runId, taskId: task.meta.id, dispatchTools: true })
+        .source;
+    expect(ask(memory, 'r-000005')).toBe('memory');
+    // The store miscounts its rows after the first call, as a racing writer could.
+    const countEntries = shared.countEntries.bind(shared);
+    let calls = 0;
+    shared.countEntries = () => countEntries() + (calls++ > 0 ? 1 : 0);
+    expect(memory.importLedger()?.outcome).toBe('MISMATCH');
+    shared.countEntries = countEntries;
+    expect(ask(memory, 'r-000006')).toBe('ledger');
+    memory.close();
+    const reopened = open();
+    expect(ask(reopened, 'r-000007')).toBe('ledger');
+    reopened.close();
   });
 });
