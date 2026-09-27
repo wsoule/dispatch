@@ -327,6 +327,29 @@ describe('replyPlan', () => {
     });
   });
 
+  it('answers a blocking question put to me by what the thread holds, even when no open list names it', () => {
+    // A teammate's task tab loads no open lists, yet the question waits on them.
+    const q = msg('m-01', {
+      kind: 'question',
+      blocking: true,
+      choices: ['old', 'new'],
+    });
+    expect(replyPlan([q], ME, new Set())).toEqual({ kind: 'reply', target: q });
+    expect([...threadOpenIds([q], ME, new Set())]).toEqual(['m-01']);
+    const answer = msg('m-02', {
+      thread: 'm-01',
+      replyTo: 'm-01',
+      from: ME,
+      to: ['run:r-000001'],
+      kind: 'answer',
+      choice: 'new',
+    });
+    expect(replyPlan([q, answer], ME, new Set())).toMatchObject({
+      kind: 'send',
+    });
+    expect([...threadOpenIds([q, answer], ME, new Set())]).toEqual([]);
+  });
+
   it('answers a non-blocking question put to me until its thread holds an answer', () => {
     const q = msg('m-01', { kind: 'question' });
     expect(replyPlan([q], ME, new Set())).toEqual({ kind: 'reply', target: q });

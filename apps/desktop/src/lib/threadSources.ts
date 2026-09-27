@@ -253,7 +253,7 @@ export function replyPlan(
   // Text answers an open question put to me, whatever was said after it.
   const ask =
     channel === undefined
-      ? newestFirst.find((m) => asksMe(m, me, openIds, answered))
+      ? newestFirst.find((m) => asksMe(m, me, answered))
       : undefined;
   if (ask !== undefined) return { kind: 'reply', target: ask };
   const target = newestFirst.find(
@@ -281,8 +281,8 @@ export function replyPlan(
 }
 
 /** The ids a thread's rows treat as open: `openIds` less any the thread already
- *  answers (a list can lag an answer), plus each unanswered non-blocking
- *  question put to me, which its choices or typed text answer. */
+ *  answers (a list can lag an answer), plus each question put to me that it
+ *  holds no answer to, which its choices or typed text answer. */
 export function threadOpenIds(
   messages: readonly Message[],
   me: string,
@@ -290,7 +290,7 @@ export function threadOpenIds(
 ): ReadonlySet<string> {
   const answered = answeredIds(messages);
   const asks = messages.filter(
-    (m) => !openIds.has(m.id) && asksMe(m, me, openIds, answered)
+    (m) => !openIds.has(m.id) && asksMe(m, me, answered)
   );
   const settled = [...answered].filter((id) => openIds.has(id));
   if (asks.length === 0 && settled.length === 0) return openIds;
@@ -308,19 +308,15 @@ function answeredIds(messages: readonly Message[]): Set<string> {
   return ids;
 }
 
-// Whether `m` is a plain question put to me that still takes an answer: a
-// blocking one while it is listed open, any other until it is answered.
+// Whether `m` is a plain question put to me that still takes an answer: one
+// its thread holds no answer to, blocking or not.
 function asksMe(
   m: Message,
   me: string,
-  openIds: ReadonlySet<string>,
   answered: ReadonlySet<string>
 ): boolean {
   if (m.kind !== 'question' || m.from === me || m.from === SYSTEM) return false;
-  if (!m.to.includes(me) || gateOf(m) !== null || answered.has(m.id)) {
-    return false;
-  }
-  return !m.blocking || openIds.has(m.id);
+  return m.to.includes(me) && gateOf(m) === null && !answered.has(m.id);
 }
 
 export type ReplyRoute = 'bus' | 'overseer' | 'overseer-elsewhere';
