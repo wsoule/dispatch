@@ -64,6 +64,7 @@ const THEN_KEYS = [
   'render',
 ];
 const DELIVERY_KEYS = ['message', 'recipient', 'via', 'state', 'session'];
+const STORE_KEYS = ['messages', 'deliveries', 'appliedGates'];
 
 type Fail = (why: string) => never;
 type Row = Record<string, unknown>;
@@ -148,6 +149,30 @@ function checkDeliveryRow(row: Row, at: string, fail: Fail): void {
   const session = row['session'];
   if (session !== undefined && session !== null && typeof session !== 'string')
     fail(`${at}.session must be a string or null`);
+}
+
+// Checks `given.store`: seeded messages and deliveries are objects with string
+// ids and applied gates are ids, so compare never spreads or reads a hole.
+function checkStore(given: Row, fail: Fail): void {
+  const store = given['store'];
+  if (store === undefined) return;
+  if (!isRecord(store)) fail('given.store must be an object');
+  refuseUnknownKeys(store, STORE_KEYS, 'given.store', fail);
+  for (const key of ['messages', 'deliveries']) {
+    const rows = store[key];
+    if (rows === undefined) continue;
+    if (!Array.isArray(rows))
+      fail(`given.store.${key} must be a list of objects`);
+    (rows as unknown[]).forEach((row, i) => {
+      if (!isRecord(row) || !isText(row['id']))
+        fail(`given.store.${key}[${i}] must be an object with a string id`);
+    });
+  }
+  if (
+    store['appliedGates'] !== undefined &&
+    !isStringArray(store['appliedGates'])
+  )
+    fail('given.store.appliedGates must be a list of strings');
 }
 
 // Checks an exact render row: it names a `render` step of `when` by number
@@ -249,7 +274,9 @@ function parseVector(
     fail(`section ${JSON.stringify(badSection)} is not a section number`);
   if (v['tags'] !== undefined && !isStringArray(v['tags']))
     fail('tags must be a list of strings');
-  if (!isRecord(v['given'])) fail('given must be an object');
+  const given = v['given'];
+  if (!isRecord(given)) fail('given must be an object');
+  checkStore(given, fail);
   checkSteps(v['when'], fail);
   checkThen(v['then'], v['when'] as Row[], fail);
   const vector = v as unknown as Vector;

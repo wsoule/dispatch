@@ -199,6 +199,45 @@ describe('parseVectorFile', () => {
     ).toHaveLength(1);
   });
 
+  it('refuses a seeded store row compare could not read', () => {
+    const cases: [Record<string, unknown>, string][] = [
+      [{ store: [] }, 'given.store must be an object'],
+      [{ store: { rows: [] } }, 'given.store has unknown field rows'],
+      [{ store: { messages: {} } }, 'given.store.messages must be a list'],
+      [{ store: { messages: [null] } }, 'given.store.messages[0]'],
+      [{ store: { messages: [{ id: 3 }] } }, 'given.store.messages[0]'],
+      [
+        { store: { deliveries: [{ message: 'm-seed-x' }] } },
+        'given.store.deliveries[0]',
+      ],
+      [{ store: { appliedGates: [1] } }, 'given.store.appliedGates'],
+    ];
+    const refused = cases.map(([given, why]) => {
+      try {
+        parseVectorFile(withVector({ given }), 'basic.json');
+        return `accepted, expected ${why}`;
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        return message.includes(why) ? 'refused' : message;
+      }
+    });
+    expect(refused).toEqual(cases.map(() => 'refused'));
+    expect(
+      parseVectorFile(
+        withVector({
+          given: {
+            store: {
+              messages: [{ id: 'm-seed-x' }],
+              deliveries: [{ id: 'd-seed-x', message: 'm-seed-x' }],
+              appliedGates: ['m-seed-x'],
+            },
+          },
+        }),
+        'basic.json'
+      ).vectors
+    ).toHaveLength(1);
+  });
+
   it('accepts null placeholders in then.steps', () => {
     expect(
       parseVectorFile(withVector({ then: { steps: [null] } }), 'basic.json')
