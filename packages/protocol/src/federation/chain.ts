@@ -162,6 +162,8 @@ export function verifyEntry(
   if (isStub(e)) {
     if (!STUBBABLE_TYPES.has(e.type))
       return fail(`a ${e.type} op cannot be a stub`);
+    // Stub content is never hashed, so it could claim anything.
+    if ('body' in e || 'sealed' in e) return fail('a stub carries no content');
   } else {
     const content: { body?: JsonValue; sealed?: Sealed } = {};
     if (e.body !== undefined) content.body = e.body;

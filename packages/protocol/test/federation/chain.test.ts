@@ -383,6 +383,19 @@ describe('verifyEntry along a chain', () => {
     expect(run([key, task, below, again]).failure).toBe('hlc must rise');
   });
 
+  // Its content is never hashed, so it could say anything under the op's hash.
+  it('refuses a stub that carries a body or sealed content', () => {
+    const [key, task, mail, presence] = chain();
+    const runBody = { kind: 'run', live: true, waitingOn: 'bob' };
+    const cases = [
+      [key, task, mail, { ...stubOf(presence), body: runBody }],
+      [key, task, mail, { ...stubOf(presence), body: null }],
+      [key, task, { ...stubOf(mail), sealed: mail.sealed }],
+    ] as LogEntry[][];
+    for (const entries of cases)
+      expect(run(entries).failure).toBe('a stub carries no content');
+  });
+
   // Every peer would refuse such an op, halting this replica's log for good.
   it('buildOp refuses to sign a header outside the grammar', () => {
     const [key] = chain();
