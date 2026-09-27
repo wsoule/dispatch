@@ -51,6 +51,7 @@ member ([§7.3](07-mailboxes-and-channels.md#s7.3)). (pinned rule 3; vectors:
 `core.answers.a-reply-to-an-ended-auxiliary-session-is-held-on-it`,
 `core.wake.a-humans-wake-holds-mail-for-an-ended-session`,
 `core.wake.only-a-humans-wake-reaches-an-ended-session`,
+`core.wake.a-humans-wake-to-a-session-of-no-work-item-fails`,
 `core.channels.a-stored-channel-member-is-skipped`)
 
 **Transitions.** A delivery changes state only as follows:
