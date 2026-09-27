@@ -50,9 +50,8 @@ function leadIsBody(lead: string, lines: string[]): boolean {
   return lines.some((l) => l.trim() !== '' && lead.includes(l));
 }
 
-// Checks a digest against §6.8's digest rule: one line that opens with a match
-// of the declared lead, then holds no body line after the first unless the
-// first already holds it. Body text is judged only after the lead ends.
+// Checks a digest against §6.8: one line opening with the declared lead; after
+// the lead, no body line past the first unless the first already holds it.
 export function checkDigest(
   text: string,
   body: string,
