@@ -57,7 +57,8 @@ export function Composer({
   const [kind, setKind] = useState<ComposeKind>('message');
   const [urgent, setUrgent] = useState(false);
   const [wakeChoice, setWakeChoice] = useState<boolean | null>(null);
-  const [highlight, setHighlight] = useState(0);
+  // Null until arrow keys move it: Enter then takes an address typed in full.
+  const [highlight, setHighlight] = useState<number | null>(null);
   const [problem, setProblem] = useState<ComposeProblem | null>(null);
   const [sending, setSending] = useState(false);
 
@@ -73,9 +74,9 @@ export function Composer({
   const listed = query !== null && matches.length > 0;
   const noMatch = query !== null && !listed;
   // The list can shrink under the highlight when the known addresses change.
-  const active = Math.min(highlight, Math.max(matches.length - 1, 0));
+  const active = Math.min(highlight ?? 0, Math.max(matches.length - 1, 0));
 
-  const pick = (index: number) => {
+  const pick = (index: number | null) => {
     if (query === null) return;
     const outcome = resolveMention(query, matches, index);
     if (outcome.kind === 'problem') {
@@ -86,7 +87,7 @@ export function Composer({
       prev.includes(outcome.address) ? prev : [...prev, outcome.address]
     );
     setBody(dropTrailingMention(body));
-    setHighlight(0);
+    setHighlight(null);
     setProblem(null);
   };
 
@@ -97,8 +98,10 @@ export function Composer({
       event.preventDefault();
       event.stopPropagation();
       const step = event.key === 'ArrowDown' ? 1 : -1;
-      setHighlight((h) =>
-        matches.length === 0 ? 0 : (h + step + matches.length) % matches.length
+      setHighlight(
+        matches.length === 0
+          ? null
+          : (active + step + matches.length) % matches.length
       );
     } else if (
       event.key === 'Enter' ||
@@ -107,7 +110,7 @@ export function Composer({
     ) {
       event.preventDefault();
       event.stopPropagation();
-      pick(active);
+      pick(highlight === null ? null : active);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -187,7 +190,7 @@ export function Composer({
         onChange={(value) => {
           setBody(value);
           setProblem(null);
-          setHighlight(0);
+          setHighlight(null);
         }}
         onSubmit={() => void submit()}
         references={to.map((address) => ({

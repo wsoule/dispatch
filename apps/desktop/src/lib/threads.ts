@@ -253,8 +253,9 @@ function candidates(kind: CompletionKind, known: KnownAddresses): Candidate[] {
   }
 }
 
-// 0 when some key starts with the query, 1 when one only contains it.
+// -1 when some key is the query, 0 when one starts with it, 1 when one only contains it.
 function matchRank(keys: string[], query: string): number | null {
+  if (query !== '' && keys.includes(query)) return -1;
   if (keys.some((key) => key.startsWith(query))) return 0;
   if (keys.some((key) => key.includes(query))) return 1;
   return null;
@@ -263,7 +264,8 @@ function matchRank(keys: string[], query: string): number | null {
 /**
  * Suggests addresses for what follows an `@`. `#`, `channel:`, `task:`,
  * `agent:` and `human:` narrow to that kind (twenty at most); anything else
- * searches all kinds, five at most of each. Start-of-id or name matches lead.
+ * searches all kinds, five at most of each. An id or name typed in full leads
+ * every kind, then start-of-id or name matches.
  */
 export function completeAddress(
   prefix: string,
@@ -277,7 +279,8 @@ export function completeAddress(
   const query = scope === undefined ? typed : typed.slice(scope[0].length);
   const limit = scope === undefined ? BARE_LIMIT : SCOPED_LIMIT;
 
-  const out: AddressCompletion[] = [];
+  const exact: AddressCompletion[] = [];
+  const rest: AddressCompletion[] = [];
   for (const kind of kinds) {
     const ranked: { candidate: Candidate; rank: number }[] = [];
     for (const candidate of candidates(kind, known)) {
@@ -286,11 +289,12 @@ export function completeAddress(
     }
     // Array sort is stable, so equal ranks keep the order `known` gave.
     ranked.sort((a, b) => a.rank - b.rank);
-    for (const { candidate } of ranked.slice(0, limit)) {
-      out.push({ address: candidate.address, label: candidate.label });
+    for (const { candidate, rank } of ranked.slice(0, limit)) {
+      const { address, label } = candidate;
+      (rank < 0 ? exact : rest).push({ address, label });
     }
   }
-  return out;
+  return [...exact, ...rest];
 }
 
 /**

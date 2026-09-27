@@ -425,10 +425,26 @@ describe('completeAddress', () => {
       'task:t-3c4d',
       'channel:auth-refactor',
     ]);
+    // `ada` names the human exactly, so the human leads the agent it only starts.
     expect(completeAddress('@ada', known)).toEqual([
-      { address: 'agent:ada/codex', label: 'ada/codex' },
       { address: 'human:ada', label: 'ada' },
+      { address: 'agent:ada/codex', label: 'ada/codex' },
     ]);
+  });
+
+  test('puts an exactly typed name ahead of longer names it starts', () => {
+    const people = {
+      ...known,
+      agents: [],
+      humans: ['human:adam', 'human:ada'],
+    };
+    expect(addresses('@human:ada', people)).toEqual([
+      'human:ada',
+      'human:adam',
+    ]);
+    expect(addresses('@ada', people)).toEqual(['human:ada', 'human:adam']);
+    expect(addresses('@#releases')).toEqual(['channel:releases']);
+    expect(addresses('@T-1A2B')).toEqual(['task:t-1a2b']);
   });
 
   test('returns the top five of each kind for a bare @', () => {

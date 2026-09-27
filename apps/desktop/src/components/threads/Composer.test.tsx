@@ -39,6 +39,26 @@ describe('Composer', () => {
     expect(screen.getByText('task:t-1a2b3c')).toBeTruthy();
   });
 
+  it('adds the address typed in full rather than a longer one listed first, unless another is picked', () => {
+    const people = { ...KNOWN, humans: ['human:adam', 'human:ada'] };
+    render(
+      <Composer
+        known={people}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+      />
+    );
+    type('@human:ada');
+    press('Enter');
+    expect(screen.getByText('human:ada')).toBeTruthy();
+    expect(screen.queryByText('human:adam')).toBeNull();
+    type('@human:ada');
+    press('ArrowDown');
+    press('Enter');
+    expect(screen.getByText('human:adam')).toBeTruthy();
+  });
+
   it('blocks an @token that matches nothing, inline, and sends nothing', () => {
     const onSend = mock(() => Promise.resolve(SENT));
     render(
