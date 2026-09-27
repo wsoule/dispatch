@@ -35,6 +35,7 @@ import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
+import { isA2AClientToken } from './a2a/auth.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import { aiFilterTasks } from './api/aiFilter.js';
 import { amendTask } from './api/amendments.js';
@@ -4513,6 +4514,20 @@ export async function handleApi(
   if (untrusted !== null) return untrusted;
 
   const presented = presentedCredential(req, daemonCtx.sessionOrigins);
+
+  // An A2A client's bearer never works on /api, open routes included. Only a
+  // token the registry does not know reaches the messages.db lookup.
+  if (
+    presented !== null &&
+    daemonCtx.tokens.registry.lookup(presented).kind === 'unknown' &&
+    isA2AClientToken(daemonCtx.messaging.store, presented)
+  ) {
+    return authErrorResponse(
+      403,
+      'A2A client tokens work only on the A2A listener',
+      'auth_a2a_client'
+    );
+  }
 
   // Resolves and enforces the principal here, before dispatch, so every
   // self-authenticated route fails closed even with no handler behind it.

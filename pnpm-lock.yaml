@@ -551,6 +551,9 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 'catalog:'
         version: 0.3.207(@anthropic-ai/sdk@0.121.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
+      '@dispatch/a2a':
+        specifier: workspace:*
+        version: link:../a2a
       '@dispatch/core':
         specifier: workspace:*
         version: link:../core
