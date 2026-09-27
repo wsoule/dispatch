@@ -508,6 +508,9 @@ importers:
         specifier: workspace:*
         version: link:../core
     devDependencies:
+      '@dispatch/protocol-spec':
+        specifier: workspace:*
+        version: link:../protocol-spec
       '@types/bun':
         specifier: 'catalog:'
         version: 1.3.12

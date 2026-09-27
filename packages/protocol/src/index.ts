@@ -1,4 +1,3 @@
-export const PROTOCOL_VERSION = '0.1.0';
 export { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 export type { Address, ParsedAddress } from './address.js';
 export { DEFAULT_LIMITS, DeliveryEngine } from './engine.js';
@@ -51,3 +50,4 @@ export type {
   ThreadSummary,
 } from './store.js';
 export { createUlidFactory } from './ulid.js';
+export { PROTOCOL_VERSION } from './version.js';

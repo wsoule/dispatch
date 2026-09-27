@@ -3,3 +3,31 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 language: 'typescript'
 layer: 'library'
 tags: ['tsdown']
+
+tasks:
+  # The tests read the kit's registries and vectors at run time, which no build
+  # hashes; **/* is listed because an override replaces the default inputs.
+  test:
+    inputs:
+      - '**/*'
+      - '/packages/protocol-spec/registries/**/*'
+      - '/packages/protocol-spec/vectors/**/*'
+      - '/packages/protocol-spec/src/**/*'
+
+  # The published runner against the built reference adapter under Node
+  # (node:sqlite), which `bun test` never exercises; it claims Core and Dispatch.
+  conformance:
+    command:
+      'node ../protocol-spec/dist/bin.js --adapter "node
+      dist/conformance-adapter.js" --claim core --claim dispatch-profile
+      --report dist/dmp-conformance.json --junit dist/dmp-conformance.xml'
+    deps:
+      - 'build'
+      - 'protocol-spec:build'
+    inputs:
+      - 'src/**/*'
+      - '/packages/protocol-spec/vectors/**/*'
+      - '/packages/protocol-spec/registries/**/*'
+      - '/packages/protocol-spec/src/**/*'
+    options:
+      runInCI: 'always'
