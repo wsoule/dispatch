@@ -25,11 +25,16 @@ function readJson(path: string): unknown {
   }
 }
 
+// Node clamps a setTimeout delay above 2^31 - 1 ms to 1 ms.
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
 function parseTimeout(raw: string | undefined): number | undefined {
   if (raw === undefined) return undefined;
   const ms = Number(raw);
-  if (!Number.isInteger(ms) || ms <= 0)
-    throw new UsageError(`--timeout-ms must be a positive integer\n${USAGE}`);
+  if (!Number.isInteger(ms) || ms <= 0 || ms > MAX_TIMEOUT_MS)
+    throw new UsageError(
+      `--timeout-ms must be a positive integer up to ${MAX_TIMEOUT_MS}\n${USAGE}`
+    );
   return ms;
 }
 

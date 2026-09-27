@@ -74,6 +74,33 @@ it('exits 1 when a claim fails and 2 on a usage error', () => {
   expect([fail.status, usage.status, unknownFlag.status]).toEqual([1, 2, 2]);
 });
 
+it('refuses a --timeout-ms above what setTimeout can hold', () => {
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'dmp-bin-')));
+  const run = (ms: string) =>
+    spawnSync(
+      'node',
+      [
+        'dist/bin.js',
+        '--adapter',
+        'bun test/fixtures/adapters/fixture.ts pass',
+        '--timeout-ms',
+        ms,
+        '--report',
+        join(dir, 'r.json'),
+      ],
+      { cwd: pkg, encoding: 'utf8' }
+    );
+  const results = ['2147483648', '3000000000', '0'].map((ms) => {
+    const r = run(ms);
+    return [ms, r.status, r.stderr.startsWith('--timeout-ms must be')];
+  });
+  expect(results).toEqual([
+    ['2147483648', 2, true],
+    ['3000000000', 2, true],
+    ['0', 2, true],
+  ]);
+});
+
 it('carries U+2028 and U+2029 both ways under Node', () => {
   dir = realpathSync(mkdtempSync(join(tmpdir(), 'dmp-bin-')));
   const report = join(dir, 'r.json');
