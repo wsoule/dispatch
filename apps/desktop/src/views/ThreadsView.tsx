@@ -1,4 +1,3 @@
-import type { AgentSummary } from '@dispatch/client';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { Composer } from '../components/threads/Composer';
@@ -13,8 +12,8 @@ import {
   useThreadActions,
   useThreadRail,
 } from '../hooks/useThreads';
+import { availabilityKey } from '../lib/daemonAuth';
 import type { RefAction } from '../lib/threadSources';
-import type { ThreadLookups } from '../lib/threadSources';
 import {
   knownAddresses,
   lookupsKey,
@@ -59,7 +58,13 @@ export function ThreadsView({
   const actions = useThreadActions(client, port, me, access, data);
   const agents = useAgentRoster(client, port);
   const channels = useChannels(client, port, access.canMessage);
-  const lookups = useLookups(data.tasks, data.runs, agents);
+  const lookups = useKeyed(lookupsKey(data.tasks, data.runs, agents), () =>
+    threadLookups(data.tasks, data.runs, agents)
+  );
+  const availability = useKeyed(
+    availabilityKey(data.scopeDecide),
+    () => data.scopeDecide
+  );
   const known = useMemo(
     () =>
       knownAddresses({
@@ -184,7 +189,7 @@ export function ThreadsView({
               openIds={rail.openIds}
               access={access}
               lookups={lookups}
-              availability={data.scopeDecide}
+              availability={availability}
               onRestartDaemon={onRestartDaemon}
               onAnswer={actions.answer}
               onOpen={onOpen}
@@ -204,22 +209,14 @@ export function ThreadsView({
   );
 }
 
-// The label lookups, kept as the same object while nothing they read changed,
-// so memoised rows skip the run and board events that change no label.
-function useLookups(
-  tasks: DispatchProjectData['tasks'],
-  runs: DispatchProjectData['runs'],
-  agents: readonly AgentSummary[]
-): ThreadLookups {
-  const key = lookupsKey(tasks, runs, agents);
-  const [held, setHeld] = useState(() => ({
-    key,
-    lookups: threadLookups(tasks, runs, agents),
-  }));
-  if (held.key === key) return held.lookups;
-  const next = { key, lookups: threadLookups(tasks, runs, agents) };
+// What `build` makes, kept as the same object until `key` changes, so memoised
+// rows skip the run and board events that change nothing they show.
+function useKeyed<T>(key: string, build: () => T): T {
+  const [held, setHeld] = useState(() => ({ key, value: build() }));
+  if (held.key === key) return held.value;
+  const next = { key, value: build() };
   setHeld(next);
-  return next.lookups;
+  return next.value;
 }
 
 // What the pane shows with no thread on screen: nothing while one loads, why

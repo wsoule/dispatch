@@ -209,6 +209,19 @@ export interface DecideAvailability {
   restart: RestartReadiness | null;
 }
 
+/** Changes only when what a decide surface shows does: whether it is on, what
+ *  it says, and whether a restart is offered. */
+export function availabilityKey(availability: DecideAvailability): string {
+  const { enabled, notice, explanation, restart } = availability;
+  return JSON.stringify([
+    enabled,
+    notice,
+    explanation,
+    restart?.safe ?? null,
+    restart?.blockedReason ?? null,
+  ]);
+}
+
 export function decideAvailability(
   auth: DaemonAuth,
   runs: RunMeta[]

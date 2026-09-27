@@ -1,7 +1,8 @@
-import type { ApiClient, Message } from '@dispatch/client';
+import type { ApiClient, Message, RunMeta, RunState } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
+  act,
   fireEvent,
   render,
   screen,
@@ -11,6 +12,7 @@ import {
 import { expect, mock, test } from 'bun:test';
 
 import { dataWith } from '../components/settings/fixtures.test-helper';
+import { decideAvailability } from '../lib/daemonAuth';
 import { ThreadsView } from './ThreadsView';
 
 const question: Message = {
@@ -27,6 +29,12 @@ const question: Message = {
   choices: ['old cart', 'new cart'],
   wake: 'none',
   createdAt: '2026-09-25T10:00:00.000Z',
+};
+const DECIDES = {
+  enabled: true,
+  notice: null,
+  explanation: null,
+  restart: null,
 };
 const OVERSEER = {
   thread: null,
@@ -77,12 +85,7 @@ test('a question waiting on me is under Needs you, and its choice answers it', a
     port: 4000,
     me: 'human:wyat',
     messageAccess: { canDecide: true, canMessage: true, explanation: null },
-    scopeDecide: {
-      enabled: true,
-      notice: null,
-      explanation: null,
-      restart: null,
-    },
+    scopeDecide: DECIDES,
     tasks: [],
     runs: [],
     presence: [],
@@ -140,6 +143,10 @@ test('an attached agent-token window queries nothing and says why', () => {
       canMessage: false,
       explanation: 'This window cannot send messages.',
     },
+    scopeDecide: decideAvailability(
+      { token: 'agent', canDecide: false, canMessage: false },
+      []
+    ),
     tasks: [],
     runs: [],
     presence: [],
@@ -188,6 +195,10 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
       canMessage: true,
       explanation: 'Answering approvals needs the decide tier.',
     },
+    scopeDecide: decideAvailability(
+      { token: 'teammate', canDecide: false, canMessage: true },
+      []
+    ),
     tasks: [],
     runs: [],
     presence: [],
@@ -223,6 +234,89 @@ test('a teammate waits for the daemon to say who they are, with no reason given 
   ).toBe(true);
 });
 
+test('a run moving on re-renders no row of the open thread until what a row offers changes', async () => {
+  // A row reads its message's timestamp each time it renders, and nothing else reads it.
+  let timestampReads = 0;
+  const counted = (message: Message): Message =>
+    Object.defineProperty({ ...message }, 'createdAt', {
+      enumerable: true,
+      get: () => {
+        timestampReads += 1;
+        return message.createdAt;
+      },
+    });
+  const reply: Message = {
+    ...question,
+    id: 'm-r',
+    replyTo: 'm-q',
+    from: 'human:wyat',
+    to: ['run:r-000001'],
+    kind: 'message',
+    body: 'Looking now.',
+    blocking: false,
+    choices: undefined,
+  };
+  const thread = [counted(question), counted(reply)];
+  const client = {
+    getMailbox: mock(() => Promise.resolve({ items: [] })),
+    listRecentThreads: mock(() => Promise.resolve({ threads: [] })),
+    getMessage: mock(() => Promise.resolve(question)),
+    getThread: mock(() =>
+      Promise.resolve({ messages: thread, deliveries: [] })
+    ),
+    listChannels: mock(() => Promise.resolve({ channels: [] })),
+    listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
+  };
+  // An attached window: its restart offer depends on whether any run is live.
+  const auth = { token: 'agent', canDecide: false, canMessage: true };
+  const access = {
+    canDecide: false,
+    canMessage: true,
+    explanation: 'Answering approvals needs the decide tier.',
+  };
+  const tasks: never[] = [];
+  const presence: never[] = [];
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+  const view = (state: RunState) => {
+    const runs = [{ id: 'r-000001', taskId: 't-000001', state } as RunMeta];
+    return (
+      <QueryClientProvider client={queryClient}>
+        <ThreadsView
+          data={dataWith({
+            client: client as unknown as ApiClient,
+            port: 4000,
+            me: 'human:wyat',
+            messageAccess: access,
+            scopeDecide: decideAvailability(auth, runs),
+            tasks,
+            runs,
+            presence,
+          })}
+          projectName="storefront"
+          focus="m-q"
+          onFocus={() => {}}
+          onOpenRef={() => {}}
+          overseer={OVERSEER}
+        />
+      </QueryClientProvider>
+    );
+  };
+  const { rerender } = render(view('running'));
+  expect(await screen.findByText('Looking now.')).toBeTruthy();
+  await act(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  const settled = timestampReads;
+
+  // Still live, so the restart offer and every label read the same.
+  rerender(view('awaiting-approval'));
+  expect(timestampReads).toBe(settled);
+
+  // Nothing left in flight: a restart is safe now, which rows offer.
+  rerender(view('finished'));
+  expect(timestampReads).toBeGreaterThan(settled);
+});
+
 test('a focus that names no message says the thread did not load', async () => {
   const client = {
     getMailbox: mock(() => Promise.resolve({ items: [] })),
@@ -239,6 +333,7 @@ test('a focus that names no message says the thread did not load', async () => {
     port: 4000,
     me: 'human:wyat',
     messageAccess: { canDecide: true, canMessage: true, explanation: null },
+    scopeDecide: DECIDES,
     tasks: [],
     runs: [],
     presence: [],
