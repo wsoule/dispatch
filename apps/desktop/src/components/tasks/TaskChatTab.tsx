@@ -119,8 +119,9 @@ export function TaskChatTab({
         onRequestChanges={(text) =>
           data.handleRequestChanges(selectedRun.id, text)
         }
-        onOpenMessage={openThread}
+        onOpenMessage={data.messageAccess.canMessage ? openThread : null}
         me={data.me}
+        readsAllThreads={data.messageAccess.canDecide}
       />
     </div>
   );

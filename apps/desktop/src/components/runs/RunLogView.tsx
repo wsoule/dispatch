@@ -80,14 +80,24 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
   entry,
   me,
   onOpenMessage,
+  readsAllThreads,
 }: {
   entry: NormalizedEntry;
-  me: string | null | undefined;
-  onOpenMessage?: (messageId: string) => void;
+  me: string | null;
+  onOpenMessage: ((messageId: string) => void) | null;
+  readsAllThreads: boolean;
 }) {
   const text = entry.text ?? '';
-  const link = (messageId: string | undefined, about?: string) =>
-    messageId !== undefined && onOpenMessage !== undefined ? (
+  // Below decide a window reads only threads it took part in, and all the chat
+  // knows of a message is who sent it.
+  const link = (
+    messageId: string | undefined,
+    sender: string | undefined,
+    about?: string
+  ) =>
+    messageId !== undefined &&
+    onOpenMessage !== null &&
+    (readsAllThreads || (me !== null && sender === me)) ? (
       <OpenThread messageId={messageId} about={about} onOpen={onOpenMessage} />
     ) : null;
 
@@ -105,6 +115,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         </span>
         {link(
           entry.messageId ?? digest?.messageId,
+          digest?.from,
           digest === null ? undefined : `${digest.kind} from ${digest.from}`
         )}
       </div>
@@ -122,7 +133,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
           <Megaphone className="size-3" />
           To you
           <span className="text-muted-foreground font-book">from {sender}</span>
-          {link(entry.messageId, `to you from ${sender}`)}
+          {link(entry.messageId, sender, `to you from ${sender}`)}
         </div>
         <Markdown content={text} className="font-book text-[13px]" />
       </div>
@@ -166,6 +177,7 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
         {delivered?.urgent === true && <Pill>Urgent</Pill>}
         {link(
           entry.messageId,
+          sender,
           `${kind ?? 'message'} from ${sender ?? 'another agent'}`
         )}
       </div>
@@ -215,11 +227,15 @@ interface RunLogViewProps {
    * works the same way (one composer, always in the same place) whether the run is still
    * going or already finished. */
   onRequestChanges: (text: string) => Promise<void>;
-  /** Opens the Threads view on a delivered message's thread; without it, no links. */
-  onOpenMessage?: (messageId: string) => void;
+  /** Opens the Threads view on a delivered message's thread; null in a window that
+   * cannot open threads, which then shows no links. */
+  onOpenMessage: ((messageId: string) => void) | null;
   /** The viewer's address (`human:<handle>`): a human sender matching it reads as "You".
    * While it is unknown, every addressed human sender shows its address. */
-  me?: string | null;
+  me: string | null;
+  /** Whether this window can read every thread (the decide tier); below it, only a
+   * message the viewer sent links to its thread. */
+  readsAllThreads: boolean;
 }
 
 /** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
@@ -243,6 +259,7 @@ export function RunLogView({
   onRequestChanges,
   onOpenMessage,
   me,
+  readsAllThreads,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -363,6 +380,7 @@ export function RunLogView({
                 entry={group.entries[0]}
                 me={me}
                 onOpenMessage={onOpenMessage}
+                readsAllThreads={readsAllThreads}
               />
             ) : (
               <TranscriptRow
