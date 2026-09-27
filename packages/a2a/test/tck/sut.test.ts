@@ -86,6 +86,19 @@ it('answers the core scenarios by messageId prefix', async () => {
   );
 });
 
+// CORE-MULTI-002a (§3.4.1): a client contextId is kept or refused, never
+// replaced; the TCK passes it only when the send succeeds.
+it('keeps a client contextId on a new task instead of minting one', async () => {
+  const { task } = await send('tck-complete-task-ctx', {
+    contextId: 'tck-client-context-rejected-001',
+  });
+  expect(task?.status.state).toBe('TASK_STATE_COMPLETED');
+  expect(task?.contextId).toBe('tck-client-context-rejected-001');
+  expect(task?.status.message?.contextId).toBe(
+    'tck-client-context-rejected-001'
+  );
+});
+
 it("puts each artifact scenario's artifact first, where the TCK reads it", async () => {
   expect(firstPart((await send('tck-artifact-text-001')).task)).toMatchObject({
     text: 'Generated text content',

@@ -34,6 +34,16 @@ A green TCK run says nothing about this deviation: the TCK's test server
 completes every scenario at once, well inside the wait. `test/wait.test.ts`
 asserts the deviation directly.
 
+**dispatchd refuses a `contextId` it does not know**, which the TCK's
+`CORE-MULTI-002a` counts as a failure. dispatchd reads a client's `contextId` as
+a Dispatch thread. A new task may name only a thread the client is in; any other
+gets 400 `INVALID_ARGUMENT` on `message.contextId`, and dispatchd never replaces
+it with a `contextId` of its own. A2A §3.4.1 allows this: an agent that cannot
+accept a client's `contextId` rejects the request. The TCK's test sends an
+unknown `contextId` and passes only when the send succeeds, so a TCK run against
+dispatchd would fail it. The SUT keeps any client `contextId`, the other
+behaviour §3.4.1 allows, and `test/tck/sut.test.ts` checks it is never replaced.
+
 ## SHOULD deviations
 
 - **Responses are `application/json`**, not `application/a2a+json` (§11.1). The

@@ -112,17 +112,20 @@ export class TckBridgePort implements BridgePort {
     return f;
   }
 
+  // A client's contextId is kept, never replaced (§3.4.1); dispatchd refuses
+  // one that is not a thread the client is in.
   private begin(input: OpenInput): TaskFacts {
-    const root = message({
+    const asked = message({
       from: CALLER.address,
       to: [OWNER],
       kind: 'question',
       blocking: true,
       body: input.body,
     });
+    const root = { ...asked, thread: input.contextId ?? asked.id };
     const f: TaskFacts = {
       id: root.id,
-      contextId: root.id,
+      contextId: root.thread,
       skill: 'ask',
       client: CALLER.address,
       createdAt: root.createdAt,
@@ -150,7 +153,12 @@ export class TckBridgePort implements BridgePort {
     hostArtifacts: ArtifactJson[] = []
   ): void {
     const cur = this.current(id);
-    const answer = message({ thread: id, replyTo: id, kind: 'answer', body });
+    const answer = message({
+      thread: cur.contextId,
+      replyTo: id,
+      kind: 'answer',
+      body,
+    });
     this.put({
       ...cur,
       answer,
@@ -167,12 +175,12 @@ export class TckBridgePort implements BridgePort {
         kind: 'reply',
         text: 'Direct message response',
       });
-    const { id } = this.begin(input);
+    const { id, contextId } = this.begin(input);
     const later = (ms: number, fn: () => void) => void setTimeout(fn, ms);
     const text = TEXT.find(([prefix]) => key.startsWith(prefix))?.[1];
     if (key.startsWith('tck-input-required')) {
       const q = message({
-        thread: id,
+        thread: contextId,
         replyTo: id,
         kind: 'question',
         blocking: true,
@@ -183,7 +191,7 @@ export class TckBridgePort implements BridgePort {
     } else if (key.startsWith('tck-reject-task')) {
       const cur = this.current(id);
       const answer = message({
-        thread: id,
+        thread: contextId,
         replyTo: id,
         kind: 'answer',
         body: 'rejected',
