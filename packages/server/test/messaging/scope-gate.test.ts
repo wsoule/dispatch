@@ -1,5 +1,5 @@
 import type { Message, Sender } from '@dispatch/protocol';
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -26,18 +26,29 @@ function setPolicy(yaml: string): void {
   writeFileSync(join(project.root(), '.dispatch', 'config.yml'), yaml);
 }
 
-async function liveRun(risk?: 'critical') {
-  const { orchestrator, store } = makeOrchestrator(project.root());
+async function liveRun(
+  risk?: 'critical',
+  extra: Parameters<typeof openRecovered>[4] = {}
+) {
+  const { orchestrator, store, events } = makeOrchestrator(project.root());
   const stalling = new StallingExecutor();
   orchestrator.registerExecutor('stalling', stalling);
-  const messaging = await openRecovered(project.root(), orchestrator, store);
+  const broadcast: string[] = [];
+  events.subscribe((e) => broadcast.push(e.type));
+  const messaging = await openRecovered(
+    project.root(),
+    orchestrator,
+    store,
+    events,
+    extra
+  );
   const task = store.create({
     title: 'Touches routes',
     ...(risk === undefined ? {} : { risk }),
   });
   const meta = await orchestrator.dispatch(task.meta.id, 'stalling', {});
   const run: Sender = { address: `run:${meta.id}`, canDecide: false };
-  return { orchestrator, messaging, meta, run, task, stalling };
+  return { orchestrator, messaging, meta, run, task, stalling, broadcast };
 }
 
 function askScope(
@@ -83,16 +94,18 @@ describe('scope gates', () => {
 
   it('policy auto-grants at rung 2 as the system, once, even when replayed', async () => {
     setPolicy('policy:\n  rung: 2\n');
-    const { orchestrator, messaging, meta, run } = await liveRun();
+    const { orchestrator, messaging, meta, run, broadcast } = await liveRun();
     const { message: gate } = await askScope(messaging, run);
     await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
     const answer = messaging.engine.answerOf(gate.id);
     expect(answer).toMatchObject({
       from: 'agent:dispatch',
       choice: 'grant',
-      data: { type: 'x-policy' },
+      data: { type: 'x-policy', gate: 'scope', rung: 2 },
     });
     expect(ledger()).toHaveLength(1);
+    expect(ledger()[0]?.authoredBy).toBe('human:wyat');
+    expect(broadcast).toContain('ledger.changed');
     expect(activity).toHaveLength(1);
     expect(activity[0].text).toStartWith(
       `[policy] Scope extended for run ${meta.id}`
@@ -100,6 +113,41 @@ describe('scope gates', () => {
     if (answer !== null) await messaging.gates.handle(gate, answer);
     expect(ledger()).toHaveLength(1);
     expect(activity).toHaveLength(1);
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  // The live grant can fail, or a crash can land between the question and
+  // it; the sweep grants what policy covers instead of leaving it to expire.
+  it("the daemon's sweep grants a scope gate whose policy grant did not land", async () => {
+    setPolicy('policy:\n  rung: 2\n');
+    const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
+      scopeExpiry: { sweepMs: 10 },
+    });
+    const reply = messaging.engine.reply.bind(messaging.engine);
+    let failures = 0;
+    const replies = spyOn(messaging.engine, 'reply').mockImplementation(
+      (id, input, sender) => {
+        if (failures > 0) return reply(id, input, sender);
+        failures++;
+        return Promise.reject(new Error('disk full'));
+      }
+    );
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      const { message: gate } = await askScope(messaging, run);
+      await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
+      expect(failures).toBe(1);
+      expect(messaging.engine.answerOf(gate.id)).toMatchObject({
+        from: 'agent:dispatch',
+        choice: 'grant',
+        data: { type: 'x-policy', gate: 'scope', rung: 2 },
+      });
+      expect(ledger()).toHaveLength(1);
+    } finally {
+      replies.mockRestore();
+      logged.mockRestore();
+    }
     await orchestrator.cancel(meta.id);
     messaging.close();
   });
@@ -230,7 +278,51 @@ describe('scope gates', () => {
       choice: 'deny',
       data: { type: 'x-expired' },
     });
+    expect(messaging.engine.answerOf(gate.id)?.body).toStartWith(
+      `Expired: no one decided within ${SCOPE_GATE_TTL_MS / 60_000} minutes.`
+    );
     expect(ledger()).toEqual([]);
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it("the daemon's own sweep denies a scope gate once its clock passes the TTL", async () => {
+    const { orchestrator, messaging, meta, run } = await liveRun(undefined, {
+      scopeExpiry: {
+        sweepMs: 10,
+        now: () => Date.now() + SCOPE_GATE_TTL_MS + 1000,
+      },
+    });
+    const { message: gate } = await askScope(messaging, run);
+    await waitFor(() => messaging.engine.answerOf(gate.id) !== null);
+    expect(messaging.engine.answerOf(gate.id)?.data).toEqual({
+      type: 'x-expired',
+    });
+    await orchestrator.cancel(meta.id);
+    messaging.close();
+  });
+
+  it('a scope gate that cannot be denied does not stop the rest expiring', async () => {
+    const { orchestrator, messaging, meta, run } = await liveRun();
+    const { message: first } = await askScope(messaging, run, ['a.ts']);
+    const { message: second } = await askScope(messaging, run, ['b.ts']);
+    const reply = messaging.engine.reply.bind(messaging.engine);
+    const replies = spyOn(messaging.engine, 'reply').mockImplementation(
+      (id, input, sender) =>
+        id === first.id
+          ? Promise.reject(new Error('disk full'))
+          : reply(id, input, sender)
+    );
+    const expired = await expireScopeGates(
+      messaging.engine,
+      Date.parse(second.createdAt) + SCOPE_GATE_TTL_MS + 1
+    );
+    replies.mockRestore();
+    expect(expired).toBe(1);
+    expect(messaging.engine.answerOf(first.id)).toBeNull();
+    expect(messaging.engine.answerOf(second.id)?.data).toEqual({
+      type: 'x-expired',
+    });
     await orchestrator.cancel(meta.id);
     messaging.close();
   });

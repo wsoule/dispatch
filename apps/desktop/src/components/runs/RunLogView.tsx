@@ -2,17 +2,20 @@ import type { NormalizedEntry, RunMeta } from '@dispatch/client';
 import { foldSubagents } from '@dispatch/core/browser';
 import {
   Info,
+  Mail,
   Megaphone,
   MessageSquare,
   MessageSquarePlus,
   Play,
 } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { memo, useMemo, useState } from 'react';
 
 import { useStickToBottom } from '../../hooks/useStickToBottom';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
+import type { PendingApproval } from '../../lib/pendingApprovals';
 import { groupLogEntries } from '../../lib/runLog';
+import { parseDeliveredText, parseDigestLine } from '../../lib/runMessages';
 import {
   continueMessage,
   deriveRunDisposition,
@@ -27,6 +30,7 @@ import { SubagentTree } from './SubagentTree';
 import { TranscriptRow } from './TranscriptRow';
 import { cn } from '@/lib/utils';
 import { LoadingState } from '@/ui/ai/loading-state';
+import { Pill } from '@/ui/ai/pill';
 import { PromptBar } from '@/ui/ai/prompt-bar';
 import { Alert, AlertDescription } from '@/ui/alert';
 import { Button } from '@/ui/button';
@@ -40,28 +44,108 @@ const SENDABLE_STATES = new Set<RunMeta['state']>([
   'awaiting-approval',
 ]);
 
-function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
+const KIND_LABEL: Record<string, string> = {
+  question: 'Question',
+  handoff: 'Handoff',
+  notice: 'Notice',
+  answer: 'Answer',
+};
+// The agent-facing prompt to answer with msg_reply; a person reading the chat has no use for it.
+const WAITING_NOTE = 'The sender is waiting.';
+
+// `about` names the message, so a list of these links reads apart for a screen reader.
+function OpenThread({
+  messageId,
+  about,
+  onOpen,
+}: {
+  messageId: string;
+  about: string | undefined;
+  onOpen: (messageId: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={about === undefined ? undefined : `Open thread: ${about}`}
+      className="text-muted-foreground hover:text-foreground ml-auto text-[12px] font-normal hover:underline"
+      onClick={() => onOpen(messageId)}
+    >
+      Open thread
+    </button>
+  );
+}
+
+// Memoized so a run.log append re-renders only the new row; entries keep their identity.
+const ChatMessageBubble = memo(function ChatMessageBubble({
+  entry,
+  me,
+  onOpenMessage,
+}: {
+  entry: NormalizedEntry;
+  me: string | null | undefined;
+  onOpenMessage?: (messageId: string) => void;
+}) {
+  const text = entry.text ?? '';
+  const link = (messageId: string | undefined, about?: string) =>
+    messageId !== undefined && onOpenMessage !== undefined ? (
+      <OpenThread messageId={messageId} about={about} onOpen={onOpenMessage} />
+    ) : null;
+
+  if (entry.digest === true) {
+    const digest = parseDigestLine(text);
+    const line =
+      digest === null
+        ? text
+        : `${digest.channel === null ? '' : `#${digest.channel} · `}${digest.kind} from ${digest.from}: ${digest.summary}`;
+    return (
+      <div className="text-muted-foreground font-book flex items-center gap-1.5 px-1 text-[12px]">
+        <Mail className="size-3 shrink-0" />
+        <span className="min-w-0 flex-1 truncate" title={line}>
+          {line}
+        </span>
+        {link(
+          entry.messageId ?? digest?.messageId,
+          digest === null ? undefined : `${digest.kind} from ${digest.from}`
+        )}
+      </div>
+    );
+  }
+
   const fromUser = entry.from === 'user';
   const toUser = entry.from === 'agent' && entry.toUser === true;
 
   if (toUser) {
+    const sender = entry.fromLabel ?? 'an agent';
     return (
       <div className="bg-surface-quaternary border-border-strong rounded-card flex w-full flex-col gap-0.5 border-[0.5px] px-3 py-2">
         <div className="flex items-center gap-1.5 text-[12px] font-medium text-(--text-secondary)">
           <Megaphone className="size-3" />
           To you
-          <span className="text-muted-foreground font-book">
-            from {entry.fromLabel ?? 'an agent'}
-          </span>
+          <span className="text-muted-foreground font-book">from {sender}</span>
+          {link(entry.messageId, `to you from ${sender}`)}
         </div>
-        <Markdown
-          content={entry.text ?? ''}
-          className="font-book text-[13px]"
-        />
+        <Markdown content={text} className="font-book text-[13px]" />
       </div>
     );
   }
 
+  // A pushed bus message is stored as the agent saw it; show its body, not the framing.
+  const delivered =
+    entry.messageId === undefined ? null : parseDeliveredText(text);
+  const notes =
+    delivered?.notes.filter((line) => !line.startsWith(WAITING_NOTE)) ?? [];
+  const kind = delivered?.kind;
+  const kindLabel =
+    kind === undefined || kind === 'message'
+      ? undefined
+      : (KIND_LABEL[kind] ?? kind);
+  const sender = entry.fromLabel ?? delivered?.from;
+  // A human sender reads as "You" only when it is the viewer, or composer text with no sender.
+  const heading = fromUser
+    ? sender === undefined || sender === me
+      ? 'You'
+      : sender
+    : `↳ ${sender ?? 'another agent'}`;
   return (
     <div
       className={cn(
@@ -73,32 +157,46 @@ function ChatMessageBubble({ entry }: { entry: NormalizedEntry }) {
     >
       <div
         className={cn(
-          'text-[12px] font-medium',
+          'flex items-center gap-1.5 text-[12px] font-medium',
           fromUser ? 'text-muted-foreground' : 'text-state-waiting'
         )}
       >
-        {fromUser ? 'You' : `↳ ${entry.fromLabel ?? 'another agent'}`}
+        {heading}
+        {kindLabel !== undefined && <Pill>{kindLabel}</Pill>}
+        {delivered?.urgent === true && <Pill>Urgent</Pill>}
+        {link(
+          entry.messageId,
+          `${kind ?? 'message'} from ${sender ?? 'another agent'}`
+        )}
       </div>
-      <Markdown content={entry.text ?? ''} className="font-book text-[13px]" />
+      <Markdown
+        content={delivered?.body ?? text}
+        className="font-book text-[13px]"
+      />
+      {notes.length > 0 && (
+        <div className="text-muted-foreground font-book text-[12px]">
+          {notes.map((line, i) => (
+            <p key={i}>{line}</p>
+          ))}
+        </div>
+      )}
     </div>
   );
-}
+});
 
 interface RunLogViewProps {
   meta: RunMeta;
   entries: NormalizedEntry[];
-  /** The approval this run is parked on, from its open gate, or `null`. A parked run can
-   * show `null` when this window cannot read gates; the banner below covers that case. */
-  pendingApproval: {
-    requestId: string;
-    toolName: string;
-    input?: unknown;
-  } | null;
+  /** Each tool call this run is parked on, oldest first, one card per call. Empty while
+   * this window cannot read gates or the list has not loaded; a banner covers that. */
+  pendingApprovals: readonly PendingApproval[];
   onApprove: (
     requestId: string,
     allow: boolean,
     opts?: { scope?: 'once' | 'session'; reason?: string }
   ) => Promise<void>;
+  /** Reads a parked call's full input, for a card whose gate carries only a preview. */
+  onLoadApprovalInput?: (requestId: string) => Promise<unknown>;
   onSendMessage: (text: string) => Promise<void>;
   /** Blocking questions this run's agent sent a human, oldest first. Usually one, but an
    * agent can send several in a single turn. */
@@ -117,6 +215,11 @@ interface RunLogViewProps {
    * works the same way (one composer, always in the same place) whether the run is still
    * going or already finished. */
   onRequestChanges: (text: string) => Promise<void>;
+  /** Opens the Threads view on a delivered message's thread; without it, no links. */
+  onOpenMessage?: (messageId: string) => void;
+  /** The viewer's address (`human:<handle>`): a human sender matching it reads as "You".
+   * While it is unknown, every addressed human sender shows its address. */
+  me?: string | null;
 }
 
 /** The run's transcript: chat-style normalized log, the approval gate when one is pending, and
@@ -127,8 +230,9 @@ interface RunLogViewProps {
 export function RunLogView({
   meta,
   entries,
-  pendingApproval,
+  pendingApprovals,
   onApprove,
+  onLoadApprovalInput,
   onSendMessage,
   openQuestions,
   onAnswerQuestion,
@@ -137,6 +241,8 @@ export function RunLogView({
   scopeDecide,
   onRestartDaemon,
   onRequestChanges,
+  onOpenMessage,
+  me,
 }: RunLogViewProps) {
   const [draft, setDraft] = useState('');
   const [sending, setSending] = useState(false);
@@ -171,18 +277,6 @@ export function RunLogView({
   // resume gate checks, so the button never offers what would 400.
   const canContinue = deriveRunDisposition(meta) === 'stopped-short';
   const orphanWork = postFailWorkLabel(meta);
-
-  // The approval card's input preview: the gate's own preview when it carried
-  // one, else a best-effort lookup of the most recent matching tool-log entry.
-  const pendingApprovalInput =
-    pendingApproval !== null
-      ? (pendingApproval.input ??
-        entries
-          .filter(
-            (e) => e.kind === 'tool' && e.toolName === pendingApproval.toolName
-          )
-          .at(-1)?.toolInput)
-      : undefined;
 
   async function send(text: string, resume: boolean) {
     setSending(true);
@@ -264,7 +358,12 @@ export function RunLogView({
                 ))}
               </div>
             ) : group.entries[0].kind === 'message' ? (
-              <ChatMessageBubble key={i} entry={group.entries[0]} />
+              <ChatMessageBubble
+                key={i}
+                entry={group.entries[0]}
+                me={me}
+                onOpenMessage={onOpenMessage}
+              />
             ) : (
               <TranscriptRow
                 key={i}
@@ -327,29 +426,32 @@ export function RunLogView({
               pinned below it, so it scrolls with the transcript and the surrounding work stays
               readable while you decide. */}
           {meta.state === 'awaiting-approval' &&
-            (pendingApproval !== null ? (
-              <ApprovalCard
-                toolName={pendingApproval.toolName}
-                toolInput={pendingApprovalInput}
-                frozenSince={meta.updatedAt}
-                onDecide={(allow, opts) =>
-                  onApprove(pendingApproval.requestId, allow, opts)
-                }
-                availability={scopeDecide}
-                onRestartDaemon={onRestartDaemon}
-              />
+            (pendingApprovals.length > 0 ? (
+              pendingApprovals.map((approval) => (
+                <ApprovalCard
+                  key={approval.requestId}
+                  toolName={approval.toolName}
+                  toolInput={approval.input}
+                  truncated={approval.truncated}
+                  loadFullInput={
+                    onLoadApprovalInput === undefined
+                      ? undefined
+                      : () => onLoadApprovalInput(approval.requestId)
+                  }
+                  frozenSince={meta.updatedAt}
+                  onDecide={(allow, opts) =>
+                    onApprove(approval.requestId, allow, opts)
+                  }
+                  availability={scopeDecide}
+                  onRestartDaemon={onRestartDaemon}
+                />
+              ))
             ) : (
               <div className="bg-surface-quaternary text-muted-foreground rounded-card border-border font-book flex items-start gap-2 border-[0.5px] px-3 py-2 text-[12px]">
                 <Info className="size-3.5 shrink-0 translate-y-0.5" />
                 {/* A window that cannot decide cannot read open gates, so it says why. */}
-                {scopeDecide.explanation ?? (
-                  <>
-                    This run is waiting on an approval this window didn&rsquo;t
-                    see live — reopen it from a session that was connected when
-                    the approval was requested, or check the run&rsquo;s process
-                    directly.
-                  </>
-                )}
+                {scopeDecide.explanation ??
+                  'This run is waiting on an approval that has not reached this window yet; it will appear here shortly.'}
               </div>
             ))}
         </div>

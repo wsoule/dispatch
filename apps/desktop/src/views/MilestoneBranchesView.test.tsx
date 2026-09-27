@@ -100,6 +100,7 @@ function shellWith(log: ShellLog) {
   const noop = () => {};
   const actions = {
     openTask: noop,
+    openThread: noop,
     peekTask: (id: string) => log.peeked.push(id),
     openCreateTask: (preset?: CreateTaskPreset) =>
       log.presets.push(preset ?? {}),

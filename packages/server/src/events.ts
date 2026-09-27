@@ -73,7 +73,7 @@ export type ServerEvent =
   | { type: 'git.changed' }
   // A finding's verdict/ruling changed, or a review run raised a new one.
   | { type: 'finding.changed' }
-  // A decision/hazard/constraint/handoff was added to the ledger.
+  // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
   // Memory changed. A bare refetch signal; a personal change carries no id,
   // since every request-tier client hears it.

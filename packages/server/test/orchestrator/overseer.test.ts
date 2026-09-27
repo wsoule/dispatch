@@ -1,6 +1,6 @@
 import { TaskStore, updateConfig } from '@dispatch/core';
 import type { JsonValue, Message, Sender } from '@dispatch/protocol';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { appendFileSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -1331,6 +1331,7 @@ describe('overseer on the bus', () => {
       conversation: started.id,
       tool: 'Bash',
       input: { command: 'git status' },
+      floor: false,
     });
     expect(gate?.choices).toEqual(['approve', 'approve-session', 'deny']);
 
@@ -1342,6 +1343,30 @@ describe('overseer on the bus', () => {
     await waitFor(() => manager.get(started.id).state === 'ready');
     expect(gated.decisions).toEqual([
       { toolName: 'Bash', allow: true, scope: 'session' },
+    ]);
+    messaging.close();
+  });
+
+  it('denies a parked built-in call whose gate cannot be written', async () => {
+    const base = makeHarness();
+    const gated = new GatedBackend([
+      { toolName: 'Bash', input: { command: 'git status' } },
+    ]);
+    const { messaging, manager } = await openBus(base, gated);
+    const send = messaging.engine.send.bind(messaging.engine);
+    spyOn(messaging.engine, 'send').mockImplementation((input, sender) =>
+      (input.data as { type?: string } | undefined)?.type === 'tool-approval'
+        ? Promise.reject(new Error('disk full'))
+        : send(input, sender)
+    );
+    const started = manager.start('hi', 'fake', undefined, undefined, WYAT);
+    await waitFor(() => manager.get(started.id).state === 'ready');
+    expect(gated.decisions).toEqual([
+      {
+        toolName: 'Bash',
+        allow: false,
+        reason: 'Dispatch could not ask a human: disk full',
+      },
     ]);
     messaging.close();
   });

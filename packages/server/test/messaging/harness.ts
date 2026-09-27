@@ -105,7 +105,8 @@ export async function openRecovered(
   root: string,
   orchestrator: Orchestrator,
   store: TaskStorePort,
-  events: EventBus = new EventBus()
+  events: EventBus = new EventBus(),
+  extra: Pick<Parameters<typeof openMessaging>[0], 'scopeExpiry'> = {}
 ): Promise<Messaging> {
   const messaging = openMessaging({
     rootDir: root,
@@ -116,6 +117,7 @@ export async function openRecovered(
     dbPath: join(root, 'messages.db'),
     ledgerStore: new LedgerStore(root),
     appendPolicyActivity: (taskId, text) => activity.push({ taskId, text }),
+    ...extra,
   });
   await messaging.recover();
   return messaging;

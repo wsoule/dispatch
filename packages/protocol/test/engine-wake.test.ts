@@ -140,3 +140,66 @@ describe('wake', () => {
     expect(host.hooks('decide')).toHaveLength(0);
   });
 });
+
+describe('waking one ended run', () => {
+  const human = { address: 'human:wyat', canDecide: true };
+  const toEndedRun = (sender: typeof human, wake?: 'request') =>
+    engine.send(
+      { to: ['run:r-00000a'], kind: 'message', body: 'rename foo', wake },
+      sender
+    );
+
+  beforeEach(() => {
+    host.runTasks.set('r-00000a', 't-000002');
+  });
+
+  it("holds a human's wake for the run and asks the host to wake exactly it", async () => {
+    host.ruling = 'allow';
+    const { message, deliveries } = await toEndedRun(human, 'request');
+    expect(deliveries).toMatchObject([
+      { recipient: 'run:r-00000a', state: 'held', runId: null },
+    ]);
+    expect(host.hooks('decide')).toEqual([['wake', 'run:r-00000a']]);
+    expect(host.hooks('wake')).toEqual([['run:r-00000a', message.id]]);
+  });
+
+  it('tells the human why the run could not be continued', async () => {
+    host.ruling = 'allow';
+    host.wakeResult = { ok: false, reason: 'run has been merged' };
+    await toEndedRun(human, 'request');
+    const [notice] = engine
+      .inbox('human:wyat')
+      .filter((e) => e.message.from === SYSTEM_ADDRESS);
+    expect(notice.message.body).toContain('run has been merged');
+  });
+
+  // Held mail to a run is only ever delivered through its task, so a run the
+  // host cannot place would hold the message forever.
+  it("refuses a human's wake of a run that belongs to no task", async () => {
+    host.ruling = 'allow';
+    await expect(
+      engine.send(
+        {
+          to: ['task:t-000002', 'run:r-0000ff'],
+          kind: 'message',
+          body: 'rename foo',
+          wake: 'request',
+        },
+        human
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'to[1]' });
+    expect(host.hooks('wake')).toEqual([]);
+  });
+
+  it("refuses an agent's wake or a human's plain message to it as not live", async () => {
+    await expect(toEndedRun(run1, 'request')).rejects.toMatchObject({
+      code: 'invalid',
+      field: 'to[0]',
+    });
+    await expect(toEndedRun(human)).rejects.toMatchObject({
+      code: 'invalid',
+      field: 'to[0]',
+    });
+    expect(host.hooks('wake')).toEqual([]);
+  });
+});

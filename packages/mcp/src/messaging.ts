@@ -415,8 +415,8 @@ interface InboxReadArgs {
 }
 
 const DEFAULT_INBOX_LIMIT = 50;
-// Asked for when no `state` is given, so read items never crowd unread ones
-// out of the limit.
+// Asked for when `state` is omitted or empty, so read items never crowd
+// unread ones out of the limit.
 const UNREAD_DELIVERY_STATES = ['held', 'notified', 'pushed'];
 
 // GET /api/mailbox, trimmed here to the newest `limit` items (the route has no
@@ -601,10 +601,11 @@ export function registerMessagingTools(
         'question stays open, and a late answer still reaches you. Inside a ' +
         'dispatch run, any answer this call DOES receive is also pushed to ' +
         'your session; outside one it also waits in your inbox. Do not act ' +
-        'on it twice. To edit outside your declared writes, send kind ' +
-        '"question", blocking true, choices ["grant","deny"], data { type: ' +
-        '"scope", paths, reason } to your human; no decision in time (29 ' +
-        'minutes) means denied. Your human: inside a run, the address in ' +
+        'on it twice. Inside a dispatch run, to edit outside your declared ' +
+        'writes, send kind "question", blocking true, choices ' +
+        '["grant","deny"], data { type: "scope", paths, reason } to your ' +
+        'human; no decision before the wait ends means denied. Your human: ' +
+        'inside a run, the address in ' +
         'your task prompt; otherwise human:<handle> from your own ' +
         'agent:<handle>/<name>.',
       inputSchema: {
@@ -662,7 +663,7 @@ export function registerMessagingTools(
       description:
         'List your own mailbox, newest first: at most `limit` items (50 by ' +
         'default) in the given delivery `state`s — only unread ones ' +
-        '(held, notified, pushed) when `state` is omitted. Marks every ' +
+        '(held, notified, pushed) when `state` is omitted or empty. Marks every ' +
         'returned unread item (held, notified, pushed) read unless ' +
         '`markRead: false` is passed.',
       inputSchema: {

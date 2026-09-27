@@ -472,6 +472,9 @@ importers:
       '@dispatch/core':
         specifier: workspace:*
         version: link:../core
+      '@dispatch/protocol':
+        specifier: workspace:*
+        version: link:../protocol
     devDependencies:
       '@dispatch/server':
         specifier: workspace:*

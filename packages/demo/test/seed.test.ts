@@ -103,6 +103,7 @@ describe('seedSession', () => {
     const runs = readdirSync(runsDir(paths.root, paths.home));
     expect(runs.some((f) => f.endsWith('.jsonl'))).toBe(true);
     expect(runs).toContain('r-2e91aa.diff.json');
+    expect(runs).toContain('messages.db');
 
     // visitor is on the roster and owns the identity
     const team = readFileSync(

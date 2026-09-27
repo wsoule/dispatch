@@ -759,6 +759,58 @@ describe('messaging HTTP routes', () => {
     expect(body.threads[0]).toHaveProperty('count');
   });
 
+  it('GET /api/threads?about=task:<id> lists only threads the task or its runs took part in', async () => {
+    const { taskId } = await liveRun('About run');
+    const runToken = executor.lastRunToken;
+    expect(runToken).toBeDefined();
+    const post = (headers: Record<string, string>, body: unknown) =>
+      fetch(`${baseUrl}/api/messages`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+      });
+
+    const fromRun = await json<{ message: { thread: string } }>(
+      await post(authHeaders(runToken!), {
+        to: ['human:test'],
+        kind: 'message',
+        body: 'from the run',
+      })
+    );
+    const toTask = await json<{ message: { thread: string } }>(
+      await post(
+        { 'content-type': 'application/json' },
+        { to: [`task:${taskId}`], kind: 'message', body: 'to the task' }
+      )
+    );
+    const other = await registerAndApprove('about-other');
+    await post(
+      { 'content-type': 'application/json' },
+      { to: [other.address], kind: 'message', body: 'unrelated' }
+    );
+
+    const res = await fetch(
+      `${baseUrl}/api/threads?about=${encodeURIComponent(`task:${taskId}`)}`
+    );
+    expect(res.status).toBe(200);
+    const body = await json<{ threads: { thread: string }[] }>(res);
+    expect(body.threads.map((t) => t.thread).sort()).toEqual(
+      [fromRun.message.thread, toTask.message.thread].sort()
+    );
+  });
+
+  it('GET /api/threads?about= takes only a task address, and names the field when it is wrong', async () => {
+    for (const about of ['channel:general', 'task:nope']) {
+      const res = await fetch(
+        `${baseUrl}/api/threads?about=${encodeURIComponent(about)}`
+      );
+      expect(res.status).toBe(400);
+      expect(await json<{ field?: string }>(res)).toMatchObject({
+        field: 'about',
+      });
+    }
+  });
+
   it('GET /api/decisions/open is for deciding humans only', async () => {
     const a = await registerAndApprove('decisions-agent');
     const asAgent = await fetch(`${baseUrl}/api/decisions/open`, {
@@ -1333,7 +1385,7 @@ describe('messaging HTTP routes', () => {
   });
 
   it('the old question, scope, approval and message routes are gone', async () => {
-    // A real live run, so each old route reaches its handler today instead of 404ing on an unknown run.
+    // A live run, so a surviving route would answer 400, not 404.
     const { runId } = await liveRun('Old routes');
     const run = `/api/runs/${runId}`;
     for (const [method, path] of [

@@ -112,7 +112,11 @@ export function policyDecisionClassifier(
     if (item.state === 'open') return 'blocking';
     const gate = DECISION_KIND_GATES[item.kind];
     if (gate === undefined) return 'blocking';
-    if (gate === 'approval' && opts.approvalFloor === undefined) {
+    // Policy answers only tool approvals; a human decided every other approval.
+    if (
+      gate === 'approval' &&
+      (opts.approvalFloor === undefined || item.reason !== 'tool-approval')
+    ) {
       return 'blocking';
     }
     // A scope request outside the repo or into .git/ is the floor's own
@@ -157,7 +161,8 @@ interface PolicyEngineRuns {
   list(): RunMeta[];
   onRunTerminal(callback: (meta: RunMeta) => void): () => void;
   pendingApprovalFor(
-    runId: string
+    runId: string,
+    requestId: string
   ): { requestId: string; toolName: string; input: unknown } | undefined;
   /** The run's working diff against its base — what auto-merge would land. */
   diff(runId: string): { files: { path: string; status: string }[] };
@@ -327,8 +332,8 @@ export class PolicyEngine {
   ): Promise<void> {
     const floor = this.ctx.approvalFloor;
     if (floor === undefined) return;
-    const pending = this.ctx.orchestrator.pendingApprovalFor(runId);
-    if (pending === undefined || pending.requestId !== requestId) return;
+    const pending = this.ctx.orchestrator.pendingApprovalFor(runId, requestId);
+    if (pending === undefined) return;
     const taskId = this.ctx.orchestrator
       .list()
       .find((r) => r.id === runId)?.taskId;

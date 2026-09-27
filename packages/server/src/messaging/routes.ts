@@ -11,7 +11,12 @@ import type {
   SendInput,
   SendResult,
 } from '@dispatch/protocol';
-import { DELIVERY_STATES, gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import {
+  DELIVERY_STATES,
+  gateOf,
+  parseAddress,
+  SYSTEM_ADDRESS,
+} from '@dispatch/protocol';
 import { createHash, randomBytes } from 'node:crypto';
 
 import type { ApiContext } from '../api.js';
@@ -25,7 +30,7 @@ import {
 } from '../api/http.js';
 import { openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
-import { isInternalAgent } from './overseerBus.js';
+import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
 import type { Messaging } from './service.js';
 
@@ -499,8 +504,7 @@ export function getThreadById(ctx: ApiContext, threadId: string): Response {
 const DEFAULT_RECENT_THREADS = 50;
 const MAX_RECENT_THREADS = 200;
 
-// GET /api/threads?limit=N — the most recently active threads project-wide,
-// so only a deciding human may list them.
+// GET /api/threads?limit=N[&about=task:<id>] — deciding humans only.
 export function listRecentThreads(ctx: ApiContext, url: URL): Response {
   const principal = requirePrincipal(ctx);
   if (principal.kind !== 'human' || !principal.canDecide) {
@@ -512,7 +516,25 @@ export function listRecentThreads(ctx: ApiContext, url: URL): Response {
     parsedLimit.value ?? DEFAULT_RECENT_THREADS,
     MAX_RECENT_THREADS
   );
-  return jsonResponse({ threads: ctx.messaging.store.recentThreads(limit) });
+  const about = url.searchParams.get('about');
+  if (about === null) {
+    return jsonResponse({ threads: ctx.messaging.store.recentThreads(limit) });
+  }
+  // A malformed address throws a MessagingError naming `about` (400).
+  const parsed = parseAddress(about, 'about');
+  if (parsed.kind !== 'task') {
+    return invalidField(
+      'about',
+      `invalid about ${JSON.stringify(about)}: expected task:<id>`
+    );
+  }
+  const runs = ctx.orchestrator
+    .list()
+    .filter((run) => run.taskId === parsed.id)
+    .map((run) => `run:${run.id}`);
+  return jsonResponse({
+    threads: ctx.messaging.store.recentThreads(limit, [about, ...runs]),
+  });
 }
 
 // A run's own mailbox: its address, its task, and deliveries bound to it by
@@ -788,7 +810,7 @@ export async function registerAgent(
   if (existing !== null && isInternalAgent(existing)) {
     return errorResponse(
       409,
-      `${address} is Dispatch's own agent — approve it in Agents instead`
+      `${address} is Dispatch's own agent; register under another name`
     );
   }
   if (

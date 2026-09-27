@@ -86,6 +86,7 @@ export type GateData =
       tool: string;
       input: JsonValue; // at most an 8 KiB preview; the executor holds the real input
       truncated?: true; // set when `input` was cut to fit
+      floor: boolean; // the irreversibility floor holds the call, judged on its full input
     }
   | { type: 'scope'; paths: string[]; reason: string }
   | { type: 'wake'; target: Address; message: string }

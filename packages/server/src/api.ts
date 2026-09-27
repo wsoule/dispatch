@@ -4241,6 +4241,13 @@ const ELEVATED_ROUTES: ReadonlyArray<{
   // run, not a command of the caller's choosing.
   { method: 'POST', segments: ['runs', '*', 'preview'], tier: 'decide' },
   { method: 'DELETE', segments: ['runs', '*', 'preview'], tier: 'decide' },
+  // A parked call's full input is what its approval gate previews; only a
+  // human who may answer that gate reads it whole.
+  {
+    method: 'GET',
+    segments: ['runs', '*', 'approvals', '*'],
+    tier: 'decide',
+  },
   // Handing out a credential is an adjudication: on the request tier an agent
   // holding the on-disk agent token could mint itself a second identity, and
   // listing holders tells it whose to go looking for. team/routes.ts further
@@ -5215,6 +5222,24 @@ export async function handleApi(
       }
       if (segments.length === 3 && segments[2] === 'diff' && method === 'GET') {
         return jsonResponse(ctx.orchestrator.diff(segments[1]));
+      }
+      // GET /api/runs/:id/approvals/:requestId — the full input of a call the
+      // run is parked on; its gate carries only a preview.
+      if (
+        segments.length === 4 &&
+        segments[2] === 'approvals' &&
+        method === 'GET'
+      ) {
+        const parked = ctx.orchestrator.pendingApprovalFor(
+          segments[1],
+          segments[3]
+        );
+        return parked === undefined
+          ? errorResponse(
+              404,
+              `run ${segments[1]} is not parked on ${segments[3]}`
+            )
+          : jsonResponse({ tool: parked.toolName, input: parked.input });
       }
       // GET /api/runs/:id/checklist — the run's requirement checklist; 404
       // until the finish hook has written one (or ever, without a client).

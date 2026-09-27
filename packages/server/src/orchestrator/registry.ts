@@ -10,7 +10,8 @@ export interface PendingApproval {
 interface RunRecord {
   meta: RunMeta;
   executorRun?: ExecutorRun;
-  pendingApproval?: PendingApproval;
+  // Tool calls parked on a human, by requestId, in the order they parked.
+  pendingApprovals: Map<string, PendingApproval>;
 }
 
 /**
@@ -25,7 +26,7 @@ export class RunRegistry {
   private readonly runs = new Map<string, RunRecord>();
 
   create(meta: RunMeta): void {
-    this.runs.set(meta.id, { meta });
+    this.runs.set(meta.id, { meta, pendingApprovals: new Map() });
   }
 
   get(id: string): RunMeta | undefined {
@@ -41,13 +42,32 @@ export class RunRegistry {
     if (record !== undefined) record.executorRun = executorRun;
   }
 
-  getPendingApproval(id: string): PendingApproval | undefined {
-    return this.runs.get(id)?.pendingApproval;
+  pendingApprovals(id: string): PendingApproval[] {
+    return [...(this.runs.get(id)?.pendingApprovals.values() ?? [])];
   }
 
-  setPendingApproval(id: string, approval: PendingApproval | undefined): void {
+  getPendingApproval(
+    id: string,
+    requestId: string
+  ): PendingApproval | undefined {
+    return this.runs.get(id)?.pendingApprovals.get(requestId);
+  }
+
+  addPendingApproval(id: string, approval: PendingApproval): void {
+    this.runs.get(id)?.pendingApprovals.set(approval.requestId, approval);
+  }
+
+  removePendingApproval(id: string, requestId: string): void {
+    this.runs.get(id)?.pendingApprovals.delete(requestId);
+  }
+
+  // Forgets every call parked on the run and returns them, oldest first.
+  clearPendingApprovals(id: string): PendingApproval[] {
     const record = this.runs.get(id);
-    if (record !== undefined) record.pendingApproval = approval;
+    if (record === undefined) return [];
+    const parked = [...record.pendingApprovals.values()];
+    record.pendingApprovals.clear();
+    return parked;
   }
 
   // Merges `patch` into a run's meta and returns the updated meta, or

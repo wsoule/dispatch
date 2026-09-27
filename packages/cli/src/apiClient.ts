@@ -655,6 +655,10 @@ export interface ApiClient {
     body: string;
     wake?: 'none' | 'request';
   }): Promise<SendResult>;
+  /** The caller's own mail in the given delivery states. */
+  getMailbox(
+    states: string[]
+  ): Promise<{ items: { delivery: { id: string }; message: Message }[] }>;
   /** Decide-tier: build the client on the app token. */
   issueTeamToken(input: {
     email?: string;
@@ -855,6 +859,11 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
         jsonBody(input)
       ),
     sendMessage: (input) => request(target, '/api/messages', jsonBody(input)),
+    getMailbox: (states) =>
+      request(
+        target,
+        `/api/mailbox?${new URLSearchParams({ state: states.join(',') }).toString()}`
+      ),
     issueTeamToken: (input) =>
       request(target, '/api/team/tokens', jsonBody(input)),
     listTeamTokens: () => request(target, '/api/team/tokens'),

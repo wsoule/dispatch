@@ -89,6 +89,7 @@ export function OverviewView({
         mergeQueue: data.mergeQueue,
         pendingApprovals: data.pendingApprovals,
         openQuestions: data.openQuestions,
+        openScopeRequests: data.pendingScopeRequests,
         fixLoops: data.fixLoops,
         query,
         activeStates,
@@ -103,6 +104,7 @@ export function OverviewView({
       data.mergeQueue,
       data.pendingApprovals,
       data.openQuestions,
+      data.pendingScopeRequests,
       data.fixLoops,
       query,
       activeStates,
@@ -161,14 +163,14 @@ export function OverviewView({
     onRule: (row) => onOpenTask(row.taskId),
     onStopFixLoop: (row) => void data.handleStopFixLoop(row.taskId),
     onApprove: (row, allow) => {
-      const pending = data.pendingApprovals.get(row.runId);
-      // Without the request id there is nothing to answer (the gate is not listed yet, or this
-      // window cannot read gates), so open the run, where the log says why.
-      if (pending === undefined) {
+      const calls = data.pendingApprovals.get(row.runId) ?? [];
+      // A row answers only a lone parked call. Several need their own cards, and none means
+      // the gate is not listed (yet, or in this window), so open the run to see which.
+      if (calls.length !== 1) {
         onOpenRun(row.runId);
         return;
       }
-      void data.handleApprove(row.runId, pending.requestId, allow);
+      void data.handleApprove(row.runId, calls[0].requestId, allow);
     },
     onRetry: (row) => void data.handleDispatch(row.taskId),
     onReview: (row) => onReviewRun(row.runId),

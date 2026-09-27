@@ -59,6 +59,7 @@ import { useDispatchProject } from './hooks/useDispatchProject';
 import { useGlobalKeyboard } from './hooks/useGlobalKeyboard';
 import { useOverseerSession } from './hooks/useOverseerSession';
 import { useSavedViews } from './hooks/useSavedViews';
+import { useThreadRail } from './hooks/useThreads';
 import { withActionFeedback } from './lib/actionFeedback';
 import type {
   GlobalView,
@@ -91,6 +92,7 @@ import {
   readTeamSession,
   signOutOfTeam,
 } from './lib/teamLocal';
+import { openRefWith } from './lib/threadSources';
 import { checkForUpdate, installUpdateAndRelaunch } from './lib/updater';
 import { applyZoomFactor, loadZoomFactor, stepZoomFactor } from './lib/zoom';
 import { AllAgentsView } from './views/AllAgentsView';
@@ -115,6 +117,7 @@ import { SessionsHubView } from './views/SessionsHubView';
 import { SettingsView } from './views/SettingsView';
 import { TaskView } from './views/TaskView';
 import { TerminalsView } from './views/TerminalsView';
+import { ThreadsView } from './views/ThreadsView';
 import { cn } from '@/lib/utils';
 import { PageHeaderShellContext } from '@/ui/ai/page-header';
 import { Button } from '@/ui/button';
@@ -498,6 +501,31 @@ function App() {
     [rawData.latestRunByTaskId]
   );
 
+  // Where a ref chip or a sender name in a thread leads.
+  const openRef = useMemo(
+    () =>
+      openRefWith({
+        openTask: (taskId, tab, runId) => openTaskView(taskId, tab, runId),
+        openThread: (messageId) =>
+          dispatchNav({ type: 'openThread', messageId }),
+        openImpact: (subject) => dispatchNav({ type: 'openImpact', subject }),
+      }),
+    [openTaskView]
+  );
+  const openThread = useCallback(
+    (messageId: string | null) =>
+      dispatchNav({ type: 'openThread', messageId }),
+    []
+  );
+
+  // The Threads rail count; the view reads the same queries, so this adds no fetch.
+  const threadRail = useThreadRail(
+    rawData.client,
+    rawData.port,
+    rawData.me,
+    rawData.messageAccess
+  );
+
   // The project's saved views and favorites, one instance shared through
   // `SavedViewsProvider` by the Tasks header's tabs, the task page's star and the rail.
   const savedViews = useSavedViews(activeProject?.path ?? null);
@@ -591,6 +619,7 @@ function App() {
         mergeQueue: data.mergeQueue,
         pendingApprovals: data.pendingApprovals,
         openQuestions: data.openQuestions,
+        openScopeRequests: data.pendingScopeRequests,
         fixLoops: data.fixLoops,
         me: data.me,
       }),
@@ -603,6 +632,7 @@ function App() {
       data.mergeQueue,
       data.pendingApprovals,
       data.openQuestions,
+      data.pendingScopeRequests,
       data.fixLoops,
     ]
   );
@@ -880,6 +910,7 @@ function App() {
   const shellActions = useMemo<ShellActions>(
     () => ({
       openTask: openTaskView,
+      openThread,
       peekTask,
       openCreateTask,
       createPreset,
@@ -895,6 +926,7 @@ function App() {
     }),
     [
       openTaskView,
+      openThread,
       peekTask,
       openCreateTask,
       createPreset,
@@ -1057,6 +1089,9 @@ function App() {
                       onOpenPalette={() => dispatchNav({ type: 'openPalette' })}
                       onNewTask={() => openCreateTask()}
                       inboxCount={inboxData.total}
+                      threadsNeedsYouCount={
+                        threadRail.groups['needs-you'].length
+                      }
                       overseerPendingCount={
                         (overseer.record?.pendingActions.length ?? 0) +
                         (overseer.record?.pendingApprovals.length ?? 0)
@@ -1257,6 +1292,23 @@ function App() {
                                   onOpenPr={(number) =>
                                     dispatchNav({ type: 'openPr', number })
                                   }
+                                />
+                              )}
+                              {navState.projectView === 'threads' && (
+                                <ThreadsView
+                                  data={data}
+                                  projectName={activeProject?.name ?? null}
+                                  focus={navState.threadFocus}
+                                  onFocus={openThread}
+                                  onOpenRef={openRef}
+                                  overseer={{
+                                    thread: overseer.record?.thread ?? null,
+                                    busy:
+                                      overseer.sending ||
+                                      overseer.record?.state === 'running',
+                                    submit: overseer.reply,
+                                    open: () => setGlobalView('overseer'),
+                                  }}
                                 />
                               )}
                               {navState.projectView === 'landing' && (

@@ -18,6 +18,8 @@ export type PromptBarReference = {
   id: string;
   label: string;
   icon?: ReactNode;
+  /** Shown without a remove button, such as a recipient the caller fixes. */
+  locked?: boolean;
 };
 
 export type PromptBarCommand = {
@@ -54,6 +56,9 @@ export type PromptBarProps = {
    * more than one `PromptBar` on a page, or needs its own label for test/assistive-tech
    * lookup. */
   ariaLabel?: string;
+  /** A completion list the caller renders for what is being typed: the text box
+   *  names it and its highlighted option, so screen readers announce moves. */
+  completion?: { listId: string; activeOptionId?: string };
 };
 
 const MIN_ROWS = 1;
@@ -109,6 +114,7 @@ export function PromptBar({
   disabled = false,
   placeholder = 'Write a message…',
   ariaLabel = 'Prompt',
+  completion,
 }: PromptBarProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
@@ -137,17 +143,22 @@ export function PromptBar({
       {references.length > 0 && (
         <div className="flex flex-wrap gap-1.5 px-0.5 pt-0.5">
           {references.map((reference) => (
-            <Pill key={reference.id} className="pr-1">
+            <Pill
+              key={reference.id}
+              className={reference.locked === true ? undefined : 'pr-1'}
+            >
               {reference.icon}
               <span className="min-w-0 truncate">{reference.label}</span>
-              <button
-                type="button"
-                aria-label={`Remove ${reference.label}`}
-                onClick={() => onRemoveReference?.(reference.id)}
-                className="text-muted-foreground hover:bg-surface-active hover:text-foreground ease-out-expo rounded-pill flex size-4 shrink-0 items-center justify-center transition-colors duration-100"
-              >
-                <XIcon aria-hidden className="size-3" />
-              </button>
+              {reference.locked !== true && (
+                <button
+                  type="button"
+                  aria-label={`Remove ${reference.label}`}
+                  onClick={() => onRemoveReference?.(reference.id)}
+                  className="text-muted-foreground hover:bg-surface-active hover:text-foreground ease-out-expo rounded-pill flex size-4 shrink-0 items-center justify-center transition-colors duration-100"
+                >
+                  <XIcon aria-hidden className="size-3" />
+                </button>
+              )}
             </Pill>
           ))}
         </div>
@@ -162,6 +173,9 @@ export function PromptBar({
         placeholder={placeholder}
         disabled={disabled}
         aria-label={ariaLabel}
+        aria-autocomplete={completion === undefined ? undefined : 'list'}
+        aria-controls={completion?.listId}
+        aria-activedescendant={completion?.activeOptionId}
         className="text-foreground placeholder:text-muted-foreground min-h-7 w-full resize-none bg-transparent px-1 py-[5px] text-[13px] leading-[18px] [overflow-wrap:anywhere] outline-none"
       />
       {/* Anchored to the textarea rather than opened by a trigger of its own,

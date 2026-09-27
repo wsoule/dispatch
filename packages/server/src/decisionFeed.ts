@@ -1,10 +1,14 @@
 import type { FloorCheck, NotificationKind } from '@dispatch/core';
 import { notificationKindForMessage } from '@dispatch/core';
-import type { Message } from '@dispatch/protocol';
+import type { GateData, Message } from '@dispatch/protocol';
 import { gateOf } from '@dispatch/protocol';
 
 import type { EventBus, ServerEvent } from './events.js';
-import { floorCheckForToolInput, isBudgetCapFailure } from './floor.js';
+import {
+  floorCheckForCommand,
+  floorCheckForToolInput,
+  isBudgetCapFailure,
+} from './floor.js';
 import type { FixLoopState } from './orchestrator/fixLoop.js';
 import type { RunMeta } from './orchestrator/types.js';
 import { runKind } from './orchestrator/types.js';
@@ -56,7 +60,8 @@ export interface DecisionItem {
    *  that have no room to render the whole item. */
   summary: string;
   /** Which flavour of `kind` this is, when the kind alone is ambiguous: the
-   *  fix loop's stop reason, or why a run counts as stalled. */
+   *  fix loop's stop reason, why a run counts as stalled, or the gate type
+   *  behind an approval. */
   reason?: string;
   /** `scope-request` only: every path the agent asked for, untruncated, so a
    *  classifier can judge the request and a surface can list it in full. */
@@ -77,9 +82,10 @@ export interface DecisionItem {
    * Set when this item is held by the irreversibility floor (core/policy.ts).
    * A floor item is `blocking` unconditionally — `list()` never consults the
    * policy classifier for it, so no rung or override can demote it. Surfaces
-   * in both lenses render the hold from this field.
+   * in both lenses render the hold from this field. `'unknown'` is a gate
+   * raised as a floor hold whose check can no longer be named.
    */
-  floor?: FloorCheck;
+  floor?: FloorCheck | 'unknown';
   /** ActorRef of the human whose run this came from — see withOwner. Absent
    *  means nobody in particular, so everyone. */
   owner?: string;
@@ -103,14 +109,15 @@ export type DecisionPolicy = (
  * it documents that the feed only ever observes runs, and it lets a test
  * exercise the aggregation without standing up worktrees and executors.
  * `Orchestrator` satisfies it structurally, so index.ts passes the real one.
- * `pendingApprovalFor` is the executor's full tool input, which the floor is
- * checked against instead of a gate's truncated preview.
+ * `pendingApprovalFor` is the executor's full tool input, which names a floor
+ * hold instead of a gate's truncated preview.
  */
 interface DecisionFeedRuns {
   list(): RunMeta[];
   pendingApprovalFor(
-    runId: string
-  ): { requestId: string; input: unknown } | undefined;
+    runId: string,
+    requestId: string
+  ): { input: unknown } | undefined;
 }
 
 /** The slice of TaskCache this feed reads: a task id to its title. */
@@ -130,6 +137,11 @@ export interface DecisionFeedContext {
   fixLoopStore: DecisionFeedLoops;
   cache: DecisionFeedTitles;
   events: Pick<EventBus, 'subscribe' | 'broadcast'>;
+  /** The full input of a call an overseer conversation is parked on. */
+  conversationApprovalInput?: (
+    conversation: string,
+    requestId: string
+  ) => unknown;
   /** Defaults to "everything here blocks" — see DecisionDisposition. */
   policy?: DecisionPolicy;
   /** Test seam. Defaults to `Date.now`. */
@@ -418,8 +430,7 @@ export class DecisionFeed {
     return this.ctx.cache.get(taskId)?.meta.title;
   }
 
-  // One item per open gate a human is asked. A tool approval's floor is read
-  // off the executor's full input while that call is still the one parked.
+  // One item per open gate a human is asked.
   private gateItems(
     nowMs: number,
     runs: Map<string, RunMeta>
@@ -449,18 +460,13 @@ export class DecisionFeed {
         since: message.createdAt,
         ageMs: ageSince(message.createdAt, nowMs),
         state: 'open' as const,
+        ...(kind === 'approval' && gate !== null ? { reason: gate.type } : {}),
       };
       if (gate?.type === 'tool-approval') {
-        const pending =
-          runId === undefined
-            ? undefined
-            : this.ctx.orchestrator.pendingApprovalFor(runId);
-        const input =
-          pending?.requestId === gate.requestId ? pending.input : gate.input;
         items.push({
           ...base,
           summary: `${taskTitle ?? runId ?? gate.conversation ?? 'Dispatch'}: agent is waiting for permission to use ${gate.tool}`,
-          floor: floorCheckForToolInput(input) ?? undefined,
+          floor: this.toolApprovalFloor(gate),
         });
       } else if (gate?.type === 'scope') {
         const paths =
@@ -478,6 +484,31 @@ export class DecisionFeed {
       }
     }
     return items;
+  }
+
+  // Whether a tool approval is a floor hold is the flag its gate was raised
+  // with; the check it names comes from the parked call's full input.
+  private toolApprovalFloor(
+    gate: Extract<GateData, { type: 'tool-approval' }>
+  ): DecisionItem['floor'] {
+    if (gate.floor !== true) return undefined;
+    const full =
+      gate.runId !== undefined
+        ? this.ctx.orchestrator.pendingApprovalFor(gate.runId, gate.requestId)
+            ?.input
+        : gate.conversation !== undefined
+          ? this.ctx.conversationApprovalInput?.(
+              gate.conversation,
+              gate.requestId
+            )
+          : undefined;
+    return (
+      floorCheckForToolInput(full ?? gate.input) ??
+      (typeof gate.input === 'string'
+        ? floorCheckForCommand(gate.input)
+        : null) ??
+      'unknown'
+    );
   }
 
   private fixLoopItems(nowMs: number): UnclassifiedDecisionItem[] {

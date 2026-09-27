@@ -176,6 +176,77 @@ describe('FakeExecutor', () => {
     expect(finishes).toEqual([]);
   });
 
+  it('parks on awaitMessage until a message is sent, then plays the rest', async () => {
+    const repo = initGitRepo();
+    const executor = new FakeExecutor({
+      steps: [
+        { entry: { ts: 't1', kind: 'assistant', text: 'asking' } },
+        { awaitMessage: true },
+        { entry: { ts: 't2', kind: 'assistant', text: 'resumed' } },
+      ],
+      finish: { state: 'finished', turns: 2 },
+    });
+    const { events, entries, finishes } = collectEvents();
+    const run = executor.start({ ...baseOpts, cwd: repo }, events);
+
+    await Bun.sleep(20);
+    expect(entries.map((e) => e.text)).toEqual(['asking']);
+    expect(finishes).toEqual([]);
+
+    run.send('[message from human:wyat · answer · m-1]\n│ yes');
+    await Bun.sleep(20);
+    expect(entries.map((e) => e.text)).toEqual(['asking', 'resumed']);
+    expect(run.received).toEqual([
+      '[message from human:wyat · answer · m-1]\n│ yes',
+    ]);
+    expect(finishes).toEqual([{ state: 'finished', turns: 2 }]);
+  });
+
+  it('a message that arrived before the step still releases it', async () => {
+    const repo = initGitRepo();
+    const executor = new FakeExecutor({
+      steps: [{ delayMs: 60 }, { awaitMessage: true }],
+      finish: { state: 'finished' },
+    });
+    const { events, finishes } = collectEvents();
+    const run = executor.start({ ...baseOpts, cwd: repo }, events);
+    run.send('early');
+    await Bun.sleep(150);
+    expect(finishes).toEqual([{ state: 'finished' }]);
+  });
+
+  it('an interrupt releases a run parked on awaitMessage without finishing it', async () => {
+    const repo = initGitRepo();
+    const executor = new FakeExecutor({
+      steps: [{ awaitMessage: true }],
+      finish: { state: 'finished' },
+    });
+    const { events, finishes } = collectEvents();
+    const run = executor.start({ ...baseOpts, cwd: repo }, events);
+    await Bun.sleep(10);
+    await run.interrupt();
+    await Bun.sleep(10);
+    expect(finishes).toEqual([]);
+  });
+
+  it('a graceful stop releases a run parked on awaitMessage and skips the rest', async () => {
+    const repo = initGitRepo();
+    const executor = new FakeExecutor({
+      steps: [
+        { awaitMessage: true },
+        { entry: { ts: 't1', kind: 'assistant', text: 'unreachable' } },
+      ],
+      finish: { state: 'finished' },
+    });
+    const { events, entries, finishes } = collectEvents();
+    const run = executor.start({ ...baseOpts, cwd: repo }, events);
+    await Bun.sleep(10);
+    run.requestStop();
+    await Bun.sleep(10);
+    expect(entries).toEqual([]);
+    expect(finishes).toEqual([{ state: 'finished' }]);
+  });
+
   // I6: a scripted step throwing (e.g. `write` pointed at a path that
   // doesn't exist) must never leave the run silently stuck mid-script —
   // that's a zombie run, "running" forever with nothing actually running it.
