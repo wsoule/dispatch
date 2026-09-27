@@ -1,15 +1,21 @@
 #!/usr/bin/env node
-// The reference adapter over stdio: one JSON object per line each way, and
-// nothing else on stdout. An error other than an unsupported op exits 1,
-// which fails the vector in flight.
+// The reference adapter over stdio: one JSON line each way and nothing else on
+// stdout; an error other than an unsupported op exits 1, failing the vector.
 import type { RunnableVector } from '@dispatch/protocol-spec';
-import { createInterface } from 'node:readline';
 
 import { REFERENCE_HELLO, runVector } from './adapter.js';
 import { UnsupportedOp } from './errors.js';
 
+const SEPARATORS = /[\u2028\u2029]/g;
+
+// Writes one JSON line with U+2028 and U+2029 escaped (the same JSON value),
+// so a reader that breaks lines at them still sees whole lines.
 function out(msg: unknown): void {
-  process.stdout.write(`${JSON.stringify(msg)}\n`);
+  const text = JSON.stringify(msg).replace(
+    SEPARATORS,
+    (c) => `\\u${c.charCodeAt(0).toString(16)}`
+  );
+  process.stdout.write(`${text}\n`);
 }
 
 async function handle(line: string): Promise<void> {
@@ -30,7 +36,7 @@ async function handle(line: string): Promise<void> {
 
 // Lines are handled one at a time, in order, so each answer follows its run.
 let queue: Promise<void> = Promise.resolve();
-createInterface({ input: process.stdin }).on('line', (line) => {
+function enqueue(line: string): void {
   queue = queue
     .then(() => handle(line))
     .catch((err: unknown) => {
@@ -38,4 +44,18 @@ createInterface({ input: process.stdin }).on('line', (line) => {
         err instanceof Error ? (err.stack ?? err.message) : String(err);
       process.stderr.write(`${why}\n`, () => process.exit(1));
     });
+}
+
+// Splits stdin at LF alone (a CR before it is dropped), so U+2028 and U+2029
+// inside a JSON string never end a line.
+let buffered = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk: string) => {
+  const lines = (buffered + chunk).split('\n');
+  buffered = lines.pop() ?? '';
+  for (const line of lines)
+    enqueue(line.endsWith('\r') ? line.slice(0, -1) : line);
+});
+process.stdin.on('end', () => {
+  if (buffered !== '') enqueue(buffered);
 });

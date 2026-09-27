@@ -5,9 +5,11 @@ layer: 'library'
 tags: ['tsdown']
 
 tasks:
-  # The tests read the kit's registries and vectors at run time, which no build
-  # hashes; **/* is listed because an override replaces the default inputs.
+  # The tests read the kit's files (no build hashes them) and run this build's
+  # dist under Node; **/* is listed because an override replaces the defaults.
   test:
+    deps:
+      - 'build'
     inputs:
       - '**/*'
       - '/packages/protocol-spec/registries/**/*'
