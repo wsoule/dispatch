@@ -504,9 +504,9 @@ export class DeliveryEngine {
     return message !== null && this.participates(message, sender);
   }
 
-  // A thread is readable when any of its messages is, and then all of it is.
+  // A thread is readable when any of its messages is, and then all of it is;
+  // an absent thread has no messages, so no one reads it.
   canReadThread(threadId: string, sender: Sender): boolean {
-    if (decides(sender)) return true;
     return this.store
       .thread(threadId)
       .some((m) => this.participates(m, sender));
