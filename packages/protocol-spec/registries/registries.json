@@ -209,7 +209,10 @@
       "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.1",
-      "vectors": ["env.envelope.a-choice-must-be-one-of-the-questions"]
+      "vectors": [
+        "env.envelope.a-choice-must-be-one-of-the-questions",
+        "env.envelope.a-gate-answer-must-choose"
+      ]
     },
     {
       "value": "wake",
@@ -285,7 +288,10 @@
       "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "4.2",
-      "vectors": ["env.envelope.blocking-only-on-questions-and-handoffs"]
+      "vectors": [
+        "env.envelope.blocking-only-on-questions-and-handoffs",
+        "env.envelope.a-handoff-answer-must-choose"
+      ]
     },
     {
       "value": "notice",

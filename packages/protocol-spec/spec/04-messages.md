@@ -178,6 +178,7 @@ which MUST be one of the question's `choices`; it may instead answer in its body
 alone. A choice that breaks this fails `invalid` on `choice`. (pinned rule 6;
 vectors: `env.envelope.body-is-required-unless-an-answer-chooses`,
 `env.envelope.a-gate-answer-must-choose`,
+`env.envelope.a-handoff-answer-must-choose`,
 `env.envelope.a-choice-must-be-one-of-the-questions`,
 `env.envelope.free-text-may-answer-a-plain-question`)
 

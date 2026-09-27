@@ -144,12 +144,24 @@
             "replyTo": "m-seed-q",
             "choice": "yes"
           }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "replyTarget": "m-seed-q",
+          "input": {
+            "to": ["run:r-9f2c01"],
+            "kind": "answer",
+            "body": "  ",
+            "replyTo": "m-seed-q"
+          }
         }
       ],
       "then": {
         "steps": [
           { "ok": false, "error": { "code": "invalid", "field": "body" } },
-          { "ok": true }
+          { "ok": true },
+          { "ok": false, "error": { "code": "invalid", "field": "body" } }
         ]
       }
     },
@@ -500,7 +512,7 @@
     },
     {
       "id": "env.envelope.a-gate-answer-must-choose",
-      "title": "An answer to a gate with choices carries one of them",
+      "title": "An answer to a gate carries one of its choices, and none when it has none",
       "class": "envelope",
       "level": "MUST",
       "profile": "core",
@@ -521,6 +533,19 @@
                 "target": "task:t-4a8cce",
                 "message": "m-seed-held"
               }
+            },
+            {
+              "id": "m-seed-bare-gate",
+              "from": "$system",
+              "to": ["human:wyat"],
+              "kind": "question",
+              "body": "wake t-4a8cce?",
+              "blocking": true,
+              "data": {
+                "type": "wake",
+                "target": "task:t-4a8cce",
+                "message": "m-seed-held"
+              }
             }
           ]
         }
@@ -536,11 +561,78 @@
             "body": "hi",
             "replyTo": "m-seed-gate"
           }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "replyTarget": "m-seed-bare-gate",
+          "input": {
+            "to": ["$system"],
+            "kind": "answer",
+            "body": "hi",
+            "replyTo": "m-seed-bare-gate",
+            "choice": "approve"
+          }
         }
       ],
       "then": {
         "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "choice" } },
           { "ok": false, "error": { "code": "invalid", "field": "choice" } }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.a-handoff-answer-must-choose",
+      "title": "An answer to a handoff carries one of its choices",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.7"],
+      "given": {
+        "store": {
+          "messages": [
+            {
+              "id": "m-seed-handoff",
+              "from": "run:r-9f2c01",
+              "to": ["human:wyat"],
+              "kind": "handoff",
+              "body": "take over the migration?",
+              "blocking": true,
+              "choices": ["accept", "decline"]
+            }
+          ]
+        }
+      },
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "replyTarget": "m-seed-handoff",
+          "input": {
+            "to": ["run:r-9f2c01"],
+            "kind": "answer",
+            "body": "sure",
+            "replyTo": "m-seed-handoff"
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "replyTarget": "m-seed-handoff",
+          "input": {
+            "to": ["run:r-9f2c01"],
+            "kind": "answer",
+            "body": "sure",
+            "replyTo": "m-seed-handoff",
+            "choice": "accept"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "choice" } },
+          { "ok": true }
         ]
       }
     },

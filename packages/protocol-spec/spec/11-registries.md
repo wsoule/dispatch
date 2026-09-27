@@ -38,7 +38,7 @@ This section is generated from `registries/registries.json` by
 | `urgent`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`, `core.render.dispatch-push-format`             |
 | `blocking`       | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.blocking-only-on-questions-and-handoffs`                                           |
 | `choices`        | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.choices-only-on-questions-and-handoffs`, `env.envelope.choices-are-distinct`       |
-| `choice`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-choice-must-be-one-of-the-questions`                                             |
+| `choice`         | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `env.envelope.a-choice-must-be-one-of-the-questions`, `env.envelope.a-gate-answer-must-choose`   |
 | `wake`           | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
 | `createdAt`      | core       | permanent   | 1.0.0-draft.1 | [§4.1](04-messages.md#s4.1)           | `core.render.body-lines-never-pass-for-a-header`                                                 |
 | `idempotencyKey` | core       | provisional | 1.0.0-draft.1 | [§4.9](04-messages.md#s4.9)           | none                                                                                             |
@@ -47,13 +47,13 @@ This section is generated from `registries/registries.json` by
 
 ## 11.4 Kinds
 
-| Value      | Scope | Status    | Since         | Defined in                  | Vectors                                                |
-| ---------- | ----- | --------- | ------------- | --------------------------- | ------------------------------------------------------ |
-| `message`  | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.accepts-a-plain-message`                 |
-| `question` | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.blocking-only-on-questions-and-handoffs` |
-| `answer`   | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.an-answer-needs-reply-to`                |
-| `handoff`  | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.blocking-only-on-questions-and-handoffs` |
-| `notice`   | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.choices-only-on-questions-and-handoffs`  |
+| Value      | Scope | Status    | Since         | Defined in                  | Vectors                                                                                             |
+| ---------- | ----- | --------- | ------------- | --------------------------- | --------------------------------------------------------------------------------------------------- |
+| `message`  | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.accepts-a-plain-message`                                                              |
+| `question` | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.blocking-only-on-questions-and-handoffs`                                              |
+| `answer`   | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.an-answer-needs-reply-to`                                                             |
+| `handoff`  | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.blocking-only-on-questions-and-handoffs`, `env.envelope.a-handoff-answer-must-choose` |
+| `notice`   | core  | permanent | 1.0.0-draft.1 | [§4.2](04-messages.md#s4.2) | `env.envelope.choices-only-on-questions-and-handoffs`                                               |
 
 ## 11.5 Ref types
 
