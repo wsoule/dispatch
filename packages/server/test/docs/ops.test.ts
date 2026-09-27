@@ -107,7 +107,27 @@ describe('applyOps', () => {
     ).toBeLessThanOrEqual(200);
   });
 
-  it('never returns a body that starts with a BOM', () => {
+  it('keeps a BOM in op text that lands inside the body', () => {
+    const doc = { title: 'T', body: '# T\na b c\n' };
+    expect(
+      applyOps(doc, [{ op: 'replace', find: 'b', text: '\uFEFFb' }]).body
+    ).toBe('# T\na \uFEFFb c\n');
+    expect(
+      applyOps(doc, [{ op: 'append', section: 'T', text: '\uFEFFd' }]).body
+    ).toBe('# T\na b c\n\uFEFFd\n');
+  });
+
+  it('keeps the leading BOM the head already had', () => {
+    const doc = { title: 'T', body: '\uFEFFx\n' };
+    expect(applyOps(doc, [{ op: 'set_title', title: 'U' }]).body).toBe(
+      '\uFEFFx\n'
+    );
+    expect(
+      applyOps(doc, [{ op: 'replace', find: 'x', text: '\uFEFFy' }]).body
+    ).toBe('\uFEFFy\n');
+  });
+
+  it('strips the leading BOMs an ops call adds', () => {
     expect(
       applyOps({ title: 'T', body: '' }, [
         { op: 'append', text: '\uFEFF\uFEFFx' },

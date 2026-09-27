@@ -1,5 +1,5 @@
 import type { DocOp } from '@dispatch/core';
-import { DOCS_LIMITS, docTitleProblem, normalizeDocText } from '@dispatch/core';
+import { DOCS_LIMITS, docTitleProblem } from '@dispatch/core';
 
 import { DocsError } from './errors.js';
 import {
@@ -88,10 +88,23 @@ export function parseOps(value: unknown): DocOp[] {
   });
 }
 
+// Op text with CRLF and lone CR as LF. A BOM in it is text like any other,
+// since the text may land anywhere in the body.
+function foldLineEndings(text: string): string {
+  return text.replace(/\r\n?/g, '\n');
+}
+
 // Text an op adds as whole lines: a missing final newline is added.
 function wholeLines(text: string): string {
-  const normal = normalizeDocText(text);
-  return normal === '' || normal.endsWith('\n') ? normal : `${normal}\n`;
+  const folded = foldLineEndings(text);
+  return folded === '' || folded.endsWith('\n') ? folded : `${folded}\n`;
+}
+
+// How many BOMs `text` starts with.
+function byteOrderMarks(text: string): number {
+  let n = 0;
+  while (text.charCodeAt(n) === 0xfeff) n++;
+  return n;
 }
 
 // head + text + tail, adding the newline head's last line lacks when more follows.
@@ -186,7 +199,7 @@ export function applyOps(
         break;
       }
       case 'replace': {
-        const find = op.find.replace(/\r\n?/g, '\n');
+        const find = foldLineEndings(op.find);
         if (find === '') invalid(`${field}.find`, '1 byte to 8 KiB');
         spend(Math.ceil(body.length / FIND_CHARS_PER_WORK));
         const hits = occurrences(body, find, 1000);
@@ -207,7 +220,7 @@ export function applyOps(
         }
         body =
           body.slice(0, hits[0]) +
-          normalizeDocText(op.text) +
+          foldLineEndings(op.text) +
           body.slice(hits[0] + find.length);
         parts.push('replaced text');
         break;
@@ -256,7 +269,10 @@ export function applyOps(
       );
   });
   return {
-    body: body.replace(/^\uFEFF+/, ''),
+    // Like any write, the leading BOMs the ops added go; the head's stay.
+    body: body.slice(
+      Math.max(0, byteOrderMarks(body) - byteOrderMarks(doc.body))
+    ),
     title,
     summary: cutUtf8(parts.join('; '), DOCS_LIMITS.summaryBytes),
   };
