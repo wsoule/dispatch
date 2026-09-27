@@ -76,6 +76,8 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
+import { openMemory } from './memory/service.js';
+import type { MemoryService } from './memory/service.js';
 import {
   closeOrphanedGates,
   openHumanDecisions,
@@ -181,6 +183,8 @@ export interface ServerHandle {
   // Task 7: exposed the same way prManager is — tests assert against real
   // git state (create/sync/removeIfClean/list) without going through HTTP.
   prWorktrees: PrWorktreeManager;
+  // Exposed for tests, as mergeQueue is: they reach the memory store directly.
+  memory: MemoryService;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
@@ -1288,6 +1292,24 @@ async function bootServer(
   await messaging.recover();
   // Runs force-failed above left their gates open; nobody can act on them now.
   closeOrphanedGates(messaging.engine, orchestrator);
+  // Memory opens after messaging and before HTTP serves; the boot import
+  // carries every ledger lesson in before the first dispatch.
+  const memory = openMemory({
+    rootDir,
+    store,
+    orchestrator,
+    events,
+    ledgerStore,
+    watchLedgerFile:
+      stores.records === null
+        ? join(rootDir, '.dispatch', 'ledger.jsonl')
+        : null,
+  });
+  try {
+    memory.importLedger();
+  } catch (err) {
+    console.error('dispatchd: boot ledger import failed', err);
+  }
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -1707,6 +1729,7 @@ async function bootServer(
     overseerManager,
     epicEngine,
     messaging,
+    memory,
     prManager,
     prWorktrees,
     mergeQueue,
@@ -1999,6 +2022,7 @@ async function bootServer(
     orchestrator,
     prManager,
     prWorktrees,
+    memory,
     async stop() {
       watchdog.stop();
       idle?.stop();
@@ -2043,6 +2067,7 @@ async function bootServer(
       // than let it finish. A no-op on the file backend.
       boardSync?.stop();
       syncLedger?.close();
+      memory.close();
       messaging.close();
       stores.close();
     },

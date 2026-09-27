@@ -30,6 +30,7 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
+import { MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
 import { createHash, randomBytes } from 'node:crypto';
@@ -148,6 +149,16 @@ import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
+import {
+  getMemory,
+  importLedgerRoute,
+  listMemory,
+  memoryHealthRoute,
+  memoryIndexRoute,
+  memoryRecallsRoute,
+  searchMemory,
+} from './memory/routes.js';
+import type { MemoryService } from './memory/service.js';
 import type { Principal } from './messaging/principal.js';
 import { resolvePrincipal } from './messaging/principal.js';
 import {
@@ -260,6 +271,8 @@ export interface ApiContext {
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
+  /** The memory store and engine (memory/service.ts). */
+  memory: MemoryService;
   prManager: PrManager;
   // Task 7: PR review worktrees — cut on demand, kept in sync by
   // PrManager's poll, listed here for GET /api/landing's worktree column.
@@ -4351,6 +4364,9 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'DELETE', segments: ['channels', '*', 'members'] },
   { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
   { method: 'GET', segments: ['decisions', 'open'] },
+  { method: 'GET', segments: ['memory'] },
+  { method: 'GET', segments: ['memory', '*'] },
+  { method: 'POST', segments: ['memory', 'import', 'ledger'] },
 ];
 
 /** Whether `/api/<segments>` is a messaging route that authenticates by
@@ -5427,6 +5443,28 @@ export async function handleApi(
       }
     }
 
+    // Memory routes read ctx.principal, like messaging's (memory/routes.ts).
+    if (segments[0] === 'memory') {
+      if (segments.length === 1 && method === 'GET') {
+        return listMemory(ctx, url);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        if (segments[1] === 'search') return searchMemory(ctx, url);
+        if (segments[1] === 'health') return memoryHealthRoute(ctx);
+        if (segments[1] === 'index') return memoryIndexRoute(ctx, url);
+        if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
+        return getMemory(ctx, segments[1]);
+      }
+      if (
+        segments.length === 3 &&
+        segments[1] === 'import' &&
+        segments[2] === 'ledger' &&
+        method === 'POST'
+      ) {
+        return importLedgerRoute(ctx, url);
+      }
+    }
+
     if (
       segments[0] === 'decisions' &&
       segments.length === 2 &&
@@ -6124,6 +6162,12 @@ export async function handleApi(
       const body: { error: string; field?: string } = { error: err.message };
       if (err.field !== undefined) body.field = err.field;
       return jsonResponse(body, status[err.code]);
+    }
+    // Memory routes do the same with MemoryError, which also has `unavailable` (503).
+    if (err instanceof MemoryError) {
+      const body: { error: string; field?: string } = { error: err.message };
+      if (err.field !== undefined) body.field = err.field;
+      return jsonResponse(body, err.status);
     }
     throw err;
   }

@@ -869,6 +869,12 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision/hazard/constraint/handoff was added to the ledger.
   | { type: 'ledger.changed' }
+  // Memory changed: a bare refetch signal, with no id for a personal change.
+  | {
+      type: 'memory.changed';
+      scope: 'personal' | 'project' | 'team';
+      id?: string;
+    }
   // A task's fix loop moved between states, or stopped. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'fixloop.changed'; taskId: string }
