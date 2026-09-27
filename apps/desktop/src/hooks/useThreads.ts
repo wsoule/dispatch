@@ -395,23 +395,21 @@ export function useThreadActions(
     [sendDraft]
   );
 
+  // An answer goes as a keyed send, as the reply route would build it, so a
+  // resend after a lost response replays rather than 409s.
   const reply = useCallback(
-    async (plan: ReplyPlan, body: string): Promise<SendResult> => {
-      if (plan.kind === 'send') {
-        return sendDraft({
-          to: plan.to,
-          kind: 'message',
-          body,
-          replyTo: plan.replyTo,
-        });
-      }
-      const result = await messenger().replyToMessage(plan.target.id, {
-        body,
-      });
-      refresh();
-      return result;
-    },
-    [messenger, refresh, sendDraft]
+    (plan: ReplyPlan, body: string): Promise<SendResult> =>
+      sendDraft(
+        plan.kind === 'send'
+          ? { to: plan.to, kind: 'message', body, replyTo: plan.replyTo }
+          : {
+              to: [plan.target.from],
+              kind: 'answer',
+              body,
+              replyTo: plan.target.id,
+            }
+      ),
+    [sendDraft]
   );
 
   const answer = useCallback(

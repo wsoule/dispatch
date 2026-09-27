@@ -341,13 +341,19 @@ describe('useThreadActions', () => {
     expect(keys[2]).not.toBe(keys[0]);
   });
 
-  it('replies to the target of a reply plan, and sends a send plan as a plain message beside its replyTo', async () => {
+  it('answers the target of a reply plan, and sends a send plan as a plain message beside its replyTo, both keyed', async () => {
     const { client, actions } = setup(DECIDER);
     await actions.reply({ kind: 'reply', target: msg('m-01') }, 'on it');
-    expect(client.replyToMessage).toHaveBeenCalledWith('m-01', {
-      body: 'on it',
-    });
-    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(client.sendMessage).toHaveBeenCalledWith(
+      {
+        to: ['run:r-000001'],
+        kind: 'answer',
+        body: 'on it',
+        replyTo: 'm-01',
+      },
+      { idempotencyKey: expect.any(String) }
+    );
+    expect(client.replyToMessage).not.toHaveBeenCalled();
     await actions.reply(
       { kind: 'send', to: ['channel:general'], replyTo: 'm-01' },
       'noted'

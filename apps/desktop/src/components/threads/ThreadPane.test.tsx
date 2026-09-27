@@ -113,6 +113,55 @@ test('a non-blocking question put to me offers its choices as answers', async ()
   );
 });
 
+test('resending after a lost response repeats the first plan, even once the answer has arrived', async () => {
+  const q = msg('m-01', { kind: 'question', blocking: true });
+  const onReply = mock((_plan: ReplyPlan, _body: string) => Promise.resolve());
+  onReply.mockImplementationOnce(() =>
+    Promise.reject(new TypeError('Failed to fetch'))
+  );
+  const pane = (messages: Message[], openIds: ReadonlySet<string>) => (
+    <ThreadPane
+      messages={messages}
+      me={ME}
+      openIds={openIds}
+      access={DECIDER}
+      lookups={threadLookups([], [], [])}
+      availability={{
+        enabled: true,
+        notice: null,
+        explanation: null,
+        restart: null,
+      }}
+      onRestartDaemon={() => Promise.resolve()}
+      onAnswer={() => Promise.resolve()}
+      onOpen={() => {}}
+      loadApprovalInput={() => Promise.resolve(undefined)}
+      route="bus"
+      onReply={onReply}
+      onOverseerReply={() => Promise.resolve()}
+      overseerBusy={false}
+      onOpenOverseer={() => {}}
+    />
+  );
+  const { rerender } = render(pane([q], new Set(['m-01'])));
+  fireEvent.change(replyBox(), { target: { value: 'the new cart' } });
+  fireEvent.keyDown(replyBox(), { key: 'Enter' });
+  await waitFor(() => expect(screen.getByRole('alert')).toBeTruthy());
+  // The first send landed; its answer arrives while the response was lost.
+  const answer = msg('m-02', {
+    from: ME,
+    to: ['run:r-000001'],
+    kind: 'answer',
+    replyTo: 'm-01',
+    body: 'the new cart',
+  });
+  rerender(pane([q, answer], new Set()));
+  fireEvent.keyDown(replyBox(), { key: 'Enter' });
+  await waitFor(() => expect(onReply).toHaveBeenCalledTimes(2));
+  expect(onReply.mock.calls[1]?.[0]).toBe(onReply.mock.calls[0]?.[0]);
+  await waitFor(() => expect(replyBox().value).toBe(''));
+});
+
 test('an open gate is answered with its buttons, not a typed reply', () => {
   renderPane({ messages: [wake], openIds: new Set(['m-01']) });
   expect(screen.getByText('Answer with the buttons above.')).toBeTruthy();

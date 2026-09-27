@@ -1,4 +1,5 @@
 import type { Message } from '@dispatch/client';
+import { ApiError } from '@dispatch/client';
 import { useMemo, useState } from 'react';
 
 import type { ComposeProblem } from '../../lib/composer';
@@ -87,6 +88,11 @@ function ReplyBox({
   const [body, setBody] = useState('');
   const [problem, setProblem] = useState<ComposeProblem | null>(null);
   const [sending, setSending] = useState(false);
+  // A send whose response was lost may have landed, so resending the same
+  // text repeats its plan (and idempotency key) even if the thread moved on.
+  const [lost, setLost] = useState<{ plan: ReplyPlan; body: string } | null>(
+    null
+  );
   if (!access.canMessage) {
     return (
       <p className="text-muted-foreground text-[12px]">{access.explanation}</p>
@@ -102,7 +108,7 @@ function ReplyBox({
       </p>
     );
   }
-  if (route === 'bus' && plan === null) {
+  if (route === 'bus' && plan === null && lost === null) {
     return (
       <p className="text-muted-foreground text-[12px]">
         {messages.some((m) => openIds.has(m.id))
@@ -114,14 +120,22 @@ function ReplyBox({
   const waiting = route === 'overseer' && overseerBusy;
   const submit = async () => {
     if (waiting) return;
+    const text = body.trim();
+    const sent = lost !== null && lost.body === text ? lost.plan : plan;
     setSending(true);
     setProblem(null);
     try {
-      if (route === 'overseer') await onOverseerReply(body.trim());
-      else if (plan !== null) await onReply(plan, body.trim());
+      if (route === 'overseer') await onOverseerReply(text);
+      else if (sent !== null) await onReply(sent, text);
       setBody('');
+      setLost(null);
     } catch (err) {
       setProblem(sendProblem(err));
+      // The daemon answering with an error means nothing landed.
+      const mayHaveLanded = route === 'bus' && !(err instanceof ApiError);
+      setLost(
+        mayHaveLanded && sent !== null ? { plan: sent, body: text } : null
+      );
     } finally {
       setSending(false);
     }
