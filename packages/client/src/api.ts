@@ -931,7 +931,9 @@ export type ServerEvent =
   | { type: 'message.new'; message: Message }
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   // Mirrors packages/server/src/events.ts exactly.
-  | { type: 'delivery.changed'; deliveryId: string; messageId: string };
+  | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // The A2A bridge's clients, tasks or listener changed; go refetch.
+  | { type: 'a2a.changed' };
 
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {

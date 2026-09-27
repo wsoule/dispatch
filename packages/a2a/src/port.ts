@@ -9,6 +9,7 @@ import type {
 
 import type { GateTypeName, WorkArtifactV1, WorkRequestV1 } from './ext.js';
 import type { TaskStateName } from './states.js';
+import type { ArtifactJson } from './wire.js';
 
 // The one seam between the A2A handler and a host: the host gathers facts and
 // applies effects, the handler decides.
@@ -94,6 +95,9 @@ export interface TaskFacts {
     evidence?: WorkArtifactV1;
   };
   clientIds: Record<string, string>;
+  // Artifacts a host publishes as they are, ahead of Dispatch's own;
+  // dispatchd sets none.
+  hostArtifacts?: ArtifactJson[];
 }
 
 export interface ListQuery {

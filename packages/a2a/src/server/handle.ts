@@ -315,12 +315,15 @@ async function admitStream(op: Op): Promise<(() => void) | Response> {
 }
 
 // Hands the admitted slot to an SSE stream of the task, which releases it.
+// A subscription runs until the task is terminal; a streamed send ends at
+// INPUT_REQUIRED too.
 function openStream(
   op: Op,
   release: () => void,
   taskId: string,
   view: ProjectionView,
-  reask: string | null
+  reask: string | null,
+  untilTerminal: boolean
 ): Response {
   op.options.setRequestTimeout?.(0);
   return withExtensions(
@@ -331,6 +334,7 @@ function openStream(
       taskId,
       view,
       reask,
+      untilTerminal,
       release,
       signal: op.req.signal,
     }),
@@ -402,7 +406,8 @@ async function send(op: Op, streaming: boolean): Promise<Response> {
     release?.();
     throw err;
   }
-  if (release !== null) return openStream(op, release, taskId, view, reask);
+  if (release !== null)
+    return openStream(op, release, taskId, view, reask, false);
   const facts =
     request.configuration?.returnImmediately === true
       ? await mustFacts(op, taskId)
@@ -432,7 +437,8 @@ async function subscribe(op: Op, id: string): Promise<Response> {
     admitted,
     id,
     taskView(op, extensions, null, true),
-    null
+    null,
+    true
   );
 }
 

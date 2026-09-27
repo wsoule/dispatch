@@ -1,5 +1,7 @@
-import { createHash, timingSafeEqual } from 'node:crypto';
+import { isClientAddress } from '@dispatch/a2a';
+import { timingSafeEqual } from 'node:crypto';
 
+import { tokenHash } from '../a2a/auth.js';
 import type { ApiContext } from '../api.js';
 import { expiredTokenMessage, sha256 } from '../identity.js';
 import { tierAllows } from '../tiers.js';
@@ -17,12 +19,6 @@ export interface Principal {
 export type PrincipalResult =
   | { ok: true; principal: Principal }
   | { ok: false; status: 401 | 403; error: string; code: string };
-
-// The hex digest `agentByTokenHash` looks agents up by — sha256 of the raw
-// token, matching how an agent's token is hashed at registration.
-function tokenHash(token: string): string {
-  return createHash('sha256').update(token).digest('hex');
-}
 
 /** Resolves a messaging caller's token to a teammate, run or agent. The shared
  *  agentToken is refused, or any agent could send as the owner. */
@@ -89,6 +85,14 @@ export function resolvePrincipal(
   }
   const agent = ctx.messaging.store.agentByTokenHash(tokenHash(presented));
   if (agent !== null) {
+    if (isClientAddress(agent.address)) {
+      return {
+        ok: false,
+        status: 403,
+        error: 'A2A client tokens work only on the A2A listener',
+        code: 'auth_a2a_client',
+      };
+    }
     if (agent.status === 'approved') {
       return {
         ok: true,

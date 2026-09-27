@@ -120,6 +120,11 @@ export function buildCard(inputs: CardInputs): AgentCard {
   return AgentCard.fromJSON(buildCardJson(inputs));
 }
 
+// The card exactly as the listener serves it, for GET /api/a2a/card.
+export function cardJson(inputs: CardInputs): unknown {
+  return AgentCard.toJSON(buildCard(inputs));
+}
+
 // A strong ETag over the canonical card, so a changed card busts caches.
 export function cardEtag(card: AgentCard): string {
   const digest = createHash('sha256')
