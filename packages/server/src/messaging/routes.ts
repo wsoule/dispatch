@@ -9,7 +9,6 @@ import type {
   MessageKind,
   Ref,
   SendInput,
-  SendResult,
 } from '@dispatch/protocol';
 import {
   DELIVERY_STATES,
@@ -32,7 +31,6 @@ import { openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
-import type { Messaging } from './service.js';
 
 // Narrows ctx.principal (api.ts resolves it before every self-authenticated
 // route) instead of scattering `!` assertions.
@@ -315,44 +313,8 @@ function parseReplyInput(raw: unknown):
   return { ok: true, value };
 }
 
-// Sends by idempotency key, per Messaging instance. The promise is cached so
-// a concurrent retry awaits the first send instead of racing a second one.
-const idempotencyCaches = new WeakMap<
-  Messaging,
-  Map<string, Promise<SendResult>>
->();
-const MAX_IDEMPOTENCY_KEYS = 500;
-
-function idempotencyCacheFor(
-  messaging: Messaging
-): Map<string, Promise<SendResult>> {
-  let cache = idempotencyCaches.get(messaging);
-  if (cache === undefined) {
-    cache = new Map();
-    idempotencyCaches.set(messaging, cache);
-  }
-  return cache;
-}
-
-// Caches a send's promise, evicting the oldest key (Map keeps insertion order)
-// past the bound. A failed send drops its entry so a retry really retries.
-function rememberIdempotent(
-  cache: Map<string, Promise<SendResult>>,
-  key: string,
-  promise: Promise<SendResult>
-): void {
-  cache.set(key, promise);
-  if (cache.size > MAX_IDEMPOTENCY_KEYS) {
-    const oldest = cache.keys().next().value;
-    if (oldest !== undefined) cache.delete(oldest);
-  }
-  promise.catch(() => {
-    if (cache.get(key) === promise) cache.delete(key);
-  });
-}
-
 // POST /api/messages as the resolved principal. The same principal repeating
-// an `Idempotency-Key` gets the first attempt's result with 200, not 201.
+// an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
   req: Request,
   ctx: ApiContext
@@ -363,28 +325,16 @@ export async function sendMessage(
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
 
+  // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
+  // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
-  if (idemKey === null) {
-    const result = await ctx.messaging.engine.send(parsedInput.value, {
-      address: principal.address,
-      canDecide: principal.canDecide,
-    });
-    return jsonResponse(result, 201);
-  }
-
-  const cache = idempotencyCacheFor(ctx.messaging);
-  const cacheKey = `${principal.address}:${idemKey}`;
-  const existing = cache.get(cacheKey);
-  if (existing !== undefined) return jsonResponse(await existing, 200);
-
-  // No `await` between the cache miss above and this set: nothing yields the
-  // event loop in between, so a concurrent request can never also miss.
-  const sendPromise = ctx.messaging.engine.send(parsedInput.value, {
-    address: principal.address,
-    canDecide: principal.canDecide,
-  });
-  rememberIdempotent(cache, cacheKey, sendPromise);
-  return jsonResponse(await sendPromise, 201);
+  const result = await ctx.messaging.engine.send(
+    idemKey === null
+      ? parsedInput.value
+      : { ...parsedInput.value, idempotencyKey: idemKey },
+    { address: principal.address, canDecide: principal.canDecide }
+  );
+  return jsonResponse(result, result.replayed === true ? 200 : 201);
 }
 
 // GET /api/messages/:id
