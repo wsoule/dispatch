@@ -170,17 +170,14 @@ describe('verifyEntry along a chain', () => {
         [
           key,
           task,
-          buildOp(
-            {
-              replica: R,
-              seq: 7,
-              prev: opHash(task),
-              hlc: hlc(1001),
-              type: 'mail',
-              body: { m: 1 },
-            },
-            keys.signPriv
-          ),
+          forge({
+            replica: R,
+            seq: 7,
+            prev: opHash(task),
+            hlc: hlc(1001),
+            type: 'mail',
+            body: { m: 1 },
+          }),
         ],
       ],
     ];
@@ -202,10 +199,7 @@ describe('verifyEntry along a chain', () => {
         type: 'mail',
         sealed: { ...sealed, keys: wraps },
       };
-      return buildOp(
-        to === undefined ? fields : { ...fields, to },
-        keys.signPriv
-      );
+      return forge(to === undefined ? fields : { ...fields, to });
     };
     for (const forged of [
       resealed(undefined),
@@ -453,6 +447,40 @@ describe('verifyEntry along a chain', () => {
         `cannot sign: ${reason}`
       );
     expect(run([key, buildOp(base, keys.signPriv)]).failure).toBeNull();
+  });
+
+  it('buildOp refuses to sign content every peer would refuse', () => {
+    const [key, task, mail] = chain();
+    const { to, sealed } = mail;
+    if (to === undefined || sealed === undefined) throw new Error('unsealed');
+    const base: OpFields = {
+      replica: R,
+      seq: 7,
+      prev: opHash(task),
+      hlc: hlc(1001),
+      type: 'mail',
+    };
+    const cases: [string, Partial<OpFields>][] = [
+      ['sealed types carry sealed content', { body: { m: 1 } }],
+      ['sealed types carry sealed content', { type: 'state', to }],
+      [
+        'state ops carry only sealed content',
+        { type: 'state', body: {}, to, sealed },
+      ],
+      ['only mail and state are sealed', { type: 'task', body: {}, to }],
+      ['only mail and state are sealed', { type: 'task', body: {}, sealed }],
+      ['keys must equal to', { sealed }],
+      ['keys must equal to', { to: ['cy-0000000c'], sealed }],
+    ];
+    for (const [reason, change] of cases) {
+      const fields = { ...base, ...change };
+      expect(() => buildOp(fields, keys.signPriv)).toThrow(
+        `cannot sign: ${reason}`
+      );
+      expect(run([key, task, forge(fields)]).failure).toBe(reason);
+    }
+    const signed = buildOp({ ...base, to, sealed }, keys.signPriv);
+    expect(run([key, task, signed]).failure).toBeNull();
   });
 
   it('buildOp throws a CanonicalizeError for content JCS cannot write', () => {

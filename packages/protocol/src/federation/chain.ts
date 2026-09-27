@@ -26,9 +26,8 @@ export interface ChainHead {
   hlc: string;
 }
 
-// Signs a new op: the signature covers the header, which commits to the
-// content through `bodyHash`. Throws CanonicalizeError for content JCS
-// refuses, and a RangeError for a header every peer would refuse.
+// Signs an op. Throws CanonicalizeError for content JCS refuses, and a
+// RangeError for a grammar or sealing rule peers enforce; callers check size.
 export function buildOp(
   fields: {
     replica: string;
@@ -42,7 +41,7 @@ export function buildOp(
   },
   signPriv: string
 ): FederatedOp {
-  const problem = headerProblem(fields);
+  const problem = headerProblem(fields) ?? contentProblem(fields);
   if (problem !== null) throw new RangeError(`cannot sign: ${problem}`);
   const content: { body?: JsonValue; sealed?: Sealed } = {};
   if (fields.body !== undefined) content.body = fields.body;
@@ -111,6 +110,30 @@ function headerProblem(h: {
   return null;
 }
 
+// Which content each type carries: what buildOp checks before signing and
+// verifyEntry after the content hash. Null when the op passes.
+function contentProblem(e: {
+  type: string;
+  body?: JsonValue;
+  to?: string[];
+  sealed?: Sealed;
+}): string | null {
+  const sealedType = SEALED_TYPES.has(e.type);
+  if (sealedType && e.sealed === undefined)
+    return 'sealed types carry sealed content';
+  if (e.type === 'state' && e.body !== undefined)
+    return 'state ops carry only sealed content';
+  if (!sealedType && (e.sealed !== undefined || e.to !== undefined))
+    return 'only mail and state are sealed';
+  // A forward is a mail op with both a clear body and sealed content.
+  if (
+    sealedType &&
+    (e.to === undefined || !sameKeys(e.to, Object.keys(e.sealed?.keys ?? {})))
+  )
+    return 'keys must equal to';
+  return null;
+}
+
 // What JCS and the checks below need of an entry parsed off the branch: an
 // object with a string `sig` and hex hashes.
 function wellFormed(e: unknown): boolean {
@@ -171,19 +194,8 @@ export function verifyEntry(
     const hash = orNull(() => contentHash(content));
     if (hash === null) return fail('malformed op');
     if (hash !== e.bodyHash) return fail('bodyHash mismatch');
-    const sealedType = SEALED_TYPES.has(e.type);
-    if (sealedType && e.sealed === undefined)
-      return fail('sealed types carry sealed content');
-    if (e.type === 'state' && e.body !== undefined)
-      return fail('state ops carry only sealed content');
-    if (!sealedType && (e.sealed !== undefined || e.to !== undefined))
-      return fail('only mail and state are sealed');
-    // A forward is a mail op with both a clear body and sealed content.
-    if (
-      sealedType &&
-      (e.to === undefined || !sameKeys(e.to, Object.keys(e.sealed?.keys ?? {})))
-    )
-      return fail('keys must equal to');
+    const broken = contentProblem(e);
+    if (broken !== null) return fail(broken);
   }
   return { ok: true, head: { seq: e.seq, hash: opHash(e), hlc: e.hlc } };
 }
