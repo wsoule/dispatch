@@ -5,6 +5,7 @@ import {
   openMemoryDb,
   SqliteMemoryStore,
 } from '@dispatch/memory';
+import type { MemoryStore } from '@dispatch/memory';
 import { describe, expect, it } from 'bun:test';
 
 import {
@@ -32,6 +33,22 @@ function row(over: Partial<LedgerEntry> = {}): LedgerEntry {
   };
 }
 const fresh = () => new SqliteMemoryStore(openMemoryDb(':memory:'));
+// Answers the overridden methods itself; every other method keeps its `this`.
+function wrapStore(
+  store: SqliteMemoryStore,
+  override: Partial<MemoryStore>
+): MemoryStore {
+  return new Proxy(store, {
+    get(target, prop) {
+      if (Object.hasOwn(override, prop))
+        return override[prop as keyof MemoryStore];
+      const value = Reflect.get(target, prop, target) as unknown;
+      return typeof value === 'function'
+        ? (value as (...args: unknown[]) => unknown).bind(target)
+        : value;
+    },
+  });
+}
 const run = (
   store: SqliteMemoryStore,
   rows: LedgerEntry[],
@@ -241,6 +258,63 @@ describe('importLedger', () => {
     expect(store.listEntries().map((e) => e.kind)).toEqual(['hazard']);
   });
 
+  // Core's reader leaves these fields unchecked, so a hand-edited line can
+  // carry any JSON there; neither side of the cutover may store or throw on it.
+  for (const [field, value] of [
+    ['epicId', ['e-123456']],
+    ['sourceTaskId', ['t-123456']],
+    ['authoredBy', 5],
+  ] as const) {
+    it(`counts a row whose ${field} is not a string as damaged`, () => {
+      for (const cutoverAt of [null, '2026-01-01T00:00:00.000Z']) {
+        const store = fresh();
+        const odd = { ...row(), [field]: value } as unknown as LedgerEntry;
+        const report = run(store, [odd, row()], { cutoverAt });
+        expect(report).toMatchObject({
+          outcome: 'ok',
+          read: 2,
+          damaged: 1,
+          memory: { total: 1 },
+        });
+        expect(store.countEntries() + store.countOpenProposals()).toBe(1);
+      }
+    });
+  }
+
+  // In the ledger such a row reached no task; imported with an empty list it
+  // would reach its whole epic or project.
+  it('counts a row whose appliesTo names no task id as damaged', () => {
+    const store = fresh();
+    const report = run(store, [
+      row({ appliesTo: ['not a task', 'T-1A2B3C'] }),
+      row({ appliesTo: ['not a task', 't-abcdef'] }),
+    ]);
+    expect(report).toMatchObject({
+      outcome: 'ok',
+      read: 2,
+      damaged: 1,
+      memory: { total: 1, imported: 1 },
+    });
+    expect(store.listEntries()[0].appliesTo).toEqual(['t-abcdef']);
+  });
+
+  it('keeps the first 50 distinct targets and counts a longer list as truncated', () => {
+    const ids = Array.from(
+      { length: 60 },
+      (_, i) => `t-${i.toString(16).padStart(6, '0')}`
+    );
+    const store = fresh();
+    const report = run(store, [
+      row({ appliesTo: ids.slice(0, 50).flatMap((id) => [id, id]) }),
+      row({ appliesTo: ids }),
+    ]);
+    expect(report.memory).toMatchObject({ imported: 2, truncated: 1 });
+    expect(store.listEntries().map((e) => e.appliesTo)).toEqual([
+      ids.slice(0, 50),
+      ids.slice(0, 50),
+    ]);
+  });
+
   it('keeps a title on one line and drops an author or task that is not a valid id', () => {
     const store = fresh();
     run(store, [
@@ -261,13 +335,8 @@ describe('importLedger', () => {
   it('rolls back and reports MISMATCH when a check fails', () => {
     const store = fresh();
     let calls = 0;
-    const lying = new Proxy(store, {
-      get(target, prop) {
-        if (prop === 'countEntries')
-          return () => target.countEntries() + (calls++ > 0 ? 1 : 0);
-        const value = Reflect.get(target, prop, target) as unknown;
-        return typeof value === 'function' ? value.bind(target) : value;
-      },
+    const lying = wrapStore(store, {
+      countEntries: () => store.countEntries() + (calls++ > 0 ? 1 : 0),
     });
     const report = importLedger({
       rows: [row()],
@@ -280,6 +349,33 @@ describe('importLedger', () => {
     expect(report.outcome).toBe('MISMATCH');
     expect(report.mismatches[0]).toContain('memory rows');
     expect(store.countEntries()).toBe(0);
+  });
+
+  // A second process can write between a count taken outside the
+  // transaction and its BEGIN, which would read as a false MISMATCH.
+  it('takes the before counts inside the import’s own transaction', () => {
+    const store = fresh();
+    let raced = false;
+    const racing = wrapStore(store, {
+      transaction: <T>(fn: () => T): T => {
+        if (!raced) {
+          raced = true;
+          run(store, [row()]);
+        }
+        return store.transaction(fn);
+      },
+    });
+    const report = importLedger({
+      rows: [row()],
+      damaged: 0,
+      store: racing,
+      ids: createMemoryIds(),
+      now: NOW,
+      cutoverAt: null,
+    });
+    expect(report.outcome).toBe('ok');
+    expect(report.memoryRows).toEqual({ before: 1, after: 2 });
+    expect(store.countEntries()).toBe(2);
   });
 
   it('renders the report in the spec’s shape', () => {

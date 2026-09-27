@@ -64,6 +64,21 @@ function isLedgerKind(kind: string): kind is LedgerKind {
   return (LEDGER_KIND_ORDER as readonly string[]).includes(kind);
 }
 
+const isText = (value: unknown): boolean => typeof value === 'string';
+
+// Core's reader leaves the ids and author unchecked, so a hand-edited line can
+// hold any JSON there; a row naming targets but no task id reached no task.
+function isDamaged(row: LedgerEntry): boolean {
+  if (!isLedgerKind(row.kind)) return true;
+  if (row.epicId !== null && !isText(row.epicId)) return true;
+  if (row.sourceTaskId !== null && !isText(row.sourceTaskId)) return true;
+  if (!isText(row.authoredBy)) return true;
+  return (
+    row.appliesTo.length > 0 &&
+    !row.appliesTo.some((id) => TASK_ID_PATTERN.test(id))
+  );
+}
+
 function oneLine(text: string): string {
   return text.split(LINE_BREAK).join(' ').trim();
 }
@@ -101,6 +116,7 @@ export interface LedgerImportReport {
     total: number;
     imported: number;
     proposed: number;
+    /** Rows cut to fit: a body over 8 KiB or more than 50 distinct targets. */
     truncated: number;
     alreadyImported: number;
     alreadyDeleted: number;
@@ -123,7 +139,10 @@ export interface LedgerImportInput {
   dryRun?: boolean;
 }
 
-/** Imports every lesson row once, in one transaction, and proves count parity or rolls back. */
+/**
+ * Imports every lesson row once, in one transaction, and proves count parity or rolls back.
+ * Call it outside any transaction: nested, its rollback would leave its writes to the outer commit.
+ */
 export function importLedger(input: LedgerImportInput): LedgerImportReport {
   const { store, ids, cutoverAt } = input;
   const at = input.now.toISOString();
@@ -153,16 +172,14 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
   };
   const read = input.rows.length + input.damaged;
   let damaged = input.damaged;
-  const before = {
-    rows: store.countEntries(),
-    open: store.countOpenProposals(),
-  };
+  let before = { rows: 0, open: 0 };
   let after = before;
   const mismatches: string[] = [];
   try {
     store.transaction(() => {
+      before = { rows: store.countEntries(), open: store.countOpenProposals() };
       for (const row of input.rows) {
-        if (!isLedgerKind(row.kind)) {
+        if (isDamaged(row)) {
           damaged += 1;
           continue;
         }
@@ -188,7 +205,6 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
           continue;
         }
         const content = ledgerContent(row);
-        if (content.truncated) memory.truncated += 1;
         const kind = row.kind as Exclude<LedgerKind, 'handoff'>;
         const taskId =
           row.sourceTaskId !== null && TASK_ID_PATTERN.test(row.sourceTaskId)
@@ -200,9 +216,12 @@ export function importLedger(input: LedgerImportInput): LedgerImportReport {
           row.epicId !== null && TASK_ID_PATTERN.test(row.epicId)
             ? row.epicId
             : null;
-        const appliesTo = row.appliesTo
-          .filter((id) => TASK_ID_PATTERN.test(id))
-          .slice(0, MEMORY_LIMITS.appliesTo);
+        const targets = [
+          ...new Set(row.appliesTo.filter((id) => TASK_ID_PATTERN.test(id))),
+        ];
+        const appliesTo = targets.slice(0, MEMORY_LIMITS.appliesTo);
+        if (content.truncated || targets.length > appliesTo.length)
+          memory.truncated += 1;
         if (cutoverAt !== null && row.createdAt > cutoverAt) {
           // The row's claimed author rides in `reason` as untrusted text; the
           // proposal itself is the system's.
