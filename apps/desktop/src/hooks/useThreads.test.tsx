@@ -303,7 +303,7 @@ describe('useThreadActions', () => {
     expect(new Set(keys).size).toBe(2);
   });
 
-  it('resends a draft whose response was lost under its first idempotency key', async () => {
+  it('sends a draft again under its first idempotency key when the response was lost', async () => {
     const { client, actions } = setup(DECIDER);
     const lost = () => Promise.reject(new TypeError('Failed to fetch'));
     const settled = (p: Promise<unknown>) =>
