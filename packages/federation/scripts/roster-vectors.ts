@@ -328,6 +328,11 @@ export const SCENARIOS: readonly RosterScenario[] = [
   ]),
   scenario('unknown-action', [op(A, 2, 100, { action: 'teleport' })]),
   scenario('unknown-rv', [admit(A, 2, 100, B, 'member', { rv: 2 })]),
+  scenario('unknown-at-recover', [
+    op(C, 2, 100, { action: 'recover', proof: 'p', rv: 2 }),
+    op(D, 2, 100, { action: 'recover', proof: 'p' }),
+    op(D, 3, 150, { action: 'teleport' }),
+  ]),
   scenario('unknown-above-cut', [
     admit(A, 2, 100, B, 'admin'),
     revoke(A, 3, 300, B, 5),

@@ -146,6 +146,8 @@ interface Context {
   found: { op: RosterOpRef; body: Action<'found'> };
   teamId: string;
   deadlineMs: number;
+  /** Each replica's lowest roster op seq, where a pending recover goes. */
+  firstSeq: ReadonlyMap<string, number>;
 }
 
 // Everything one walk over the ops in fold order derives, given the removals
@@ -300,12 +302,19 @@ function contextOf(input: FoldInput): Context {
       `the founding op ${input.founder.replica}:${input.founder.seq} is not among the roster ops`
     );
   }
+  const firstSeq = new Map<string, number>();
+  for (const { op } of items)
+    firstSeq.set(
+      op.replica,
+      Math.min(op.seq, firstSeq.get(op.replica) ?? op.seq)
+    );
   return {
     input,
     items,
     found: { op: found.op, body: found.body },
     teamId: found.op.hash.slice(0, 32),
     deadlineMs: (hlcWallMs(found.op.hlc) ?? 0) + LEGACY_WINDOW_MS,
+    firstSeq,
   };
 }
 
@@ -564,9 +573,12 @@ function step(
     return;
   }
   if (body === 'unknown') {
-    // Only a publisher with rights at the op pauses the fold, so a revoked or
-    // pending replica cannot stop every daemon with one junk op.
-    if (!rightsAt(ev, op.replica, op.seq, op).member) {
+    // Only a publisher with rights at the op, or a pending one where its
+    // recover goes, pauses the fold, so no other stops every daemon with junk.
+    if (
+      !rightsAt(ev, op.replica, op.seq, op).member &&
+      !atRecover(ctx, ev, op)
+    ) {
       refuse(
         `${op.replica} lacks the right to publish roster ops at seq ${op.seq}; ignored`
       );
@@ -655,6 +667,17 @@ function step(
       // A removal, which the resolution loop decides.
       return;
   }
+}
+
+// Whether op is an unrevoked pending replica's first roster op, where its
+// recover goes, since a recover must directly follow the key op.
+function atRecover(ctx: Context, ev: Evaluation, op: RosterOpRef): boolean {
+  if (ev.holders.has(op.replica) || !ctx.input.keys.has(op.replica))
+    return false;
+  if (ctx.firstSeq.get(op.replica) !== op.seq) return false;
+  return !ev.cuts.some(
+    (c) => c.kind === 'all' && c.target === op.replica && c.afterSeq < op.seq
+  );
 }
 
 function foundStep(

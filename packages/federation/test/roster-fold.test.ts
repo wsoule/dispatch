@@ -365,12 +365,27 @@ describe('foldRoster', () => {
       subject: `op:${B}:6`,
       message: `${B} lacks the right to publish roster ops at seq 6; ignored`,
     });
-    // A pending replica was never admitted, so it cannot pause anyone either.
-    expect(fold([op(C, 2, 100, { action: 'teleport' })]).unknown).toBeNull();
     // At or below the cut, B's op still pauses the fold.
     expect(
       fold([...base, op(B, 5, 200, { action: 'teleport' })]).unknown?.seq
     ).toBe(5);
+  });
+
+  it("pauses on a pending replica's unreadable op only where its recover goes", () => {
+    // A pending replica's first roster op is where its recover goes.
+    const newer = op(C, 2, 100, { action: 'recover', proof: 'p', rv: 2 });
+    expect(fold([newer]).unknown?.seq).toBe(2);
+    const later = fold([
+      op(C, 2, 100, { action: 'recover', proof: 'p' }),
+      op(C, 3, 150, { action: 'teleport' }),
+    ]);
+    expect(later.unknown).toBeNull();
+    expect(later.problems).toContainEqual({
+      subject: `op:${C}:3`,
+      message: `${C} lacks the right to publish roster ops at seq 3; ignored`,
+    });
+    // Revoking the pending replica below that op lifts the pause.
+    expect(fold([newer, revoke(A, 2, 200, C, 1)]).unknown).toBeNull();
   });
 
   it('closes the legacy window: an admin any time, anyone admitted after the deadline, first valid wins', () => {
