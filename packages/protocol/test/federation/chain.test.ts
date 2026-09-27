@@ -307,7 +307,11 @@ describe('verifyEntry along a chain', () => {
     const parsed = (e: LogEntry, from: RegExp, to: string) =>
       JSON.parse(JSON.stringify(e).replace(from, to)) as LogEntry;
     const bodyHash = /"bodyHash":"[0-9a-f]{64}"/;
+    // Too deep for JSON.stringify's recursion, yet far under MAX_OP_BYTES.
+    const deep = `${'['.repeat(100_000)}${']'.repeat(100_000)}`;
     const cases: LogEntry[][] = [
+      [key, parsed(task, /"fields":\{[^}]*\}/, `"fields":${deep}`)],
+      [key, task, parsed(stubOf(mail), /^\{/, `{"junk":${deep},`)],
       [key, parsed(task, bodyHash, '"bodyHash":1e400')],
       [key, task, parsed(stubOf(mail), bodyHash, '"bodyHash":1e400')],
       [key, parsed(task, /"prev":"[0-9a-f]{64}"/, '"prev":1e400')],

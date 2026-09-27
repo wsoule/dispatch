@@ -1,5 +1,6 @@
 import type { JsonValue } from '../envelope.js';
 import { compareHlc, parseOpHlc } from './hlc.js';
+import { canonicalize } from './jcs.js';
 import { signText, verifyText } from './keys.js';
 import {
   contentHash,
@@ -91,22 +92,18 @@ function wellFormed(e: unknown): boolean {
   return typeof sig === 'string' && isHex64(prev) && isHex64(bodyHash);
 }
 
-// Null when JCS refuses the content, as it does a non-finite number.
-function contentHashOrNull(content: {
-  body?: JsonValue;
-  sealed?: Sealed;
-}): string | null {
+// Null in place of a throw: JCS refuses a non-finite number or a lone
+// surrogate, and runs out of stack on deep nesting.
+function orNull<T>(step: () => T): T | null {
   try {
-    return contentHash(content);
+    return step();
   } catch {
     return null;
   }
 }
 
-// Checks one entry against the chain so far: the grammar, the signature, the
-// content hash, prev, seq and hlc rising, and the stub and sealing rules. An
-// unknown type verifies; handling it is the caller's. Never throws, since
-// entries come off a branch anyone can write.
+// Checks an entry's grammar, signature, content hash and chain links, but not
+// what its type means. Never throws: anyone can write the branch it came off.
 export function verifyEntry(
   head: ChainHead | null,
   e: LogEntry,
@@ -118,8 +115,11 @@ export function verifyEntry(
   if (e.v !== 2 || typeof e.type !== 'string' || !TYPE.test(e.type))
     return fail('not a v2 op');
   if (!Number.isSafeInteger(e.seq) || e.seq < 1) return fail('seq must rise');
-  if (Buffer.byteLength(JSON.stringify(e)) > MAX_OP_BYTES)
-    return fail('over MAX_OP_BYTES');
+  // JCS writes JSON.stringify's bytes in another key order, and fails fast on
+  // deep nesting where the native stringify spends seconds.
+  const bytes = orNull(() => Buffer.byteLength(canonicalize(e)));
+  if (bytes === null) return fail('malformed op');
+  if (bytes > MAX_OP_BYTES) return fail('over MAX_OP_BYTES');
   const clock = typeof e.hlc === 'string' ? parseOpHlc(e.hlc) : null;
   if (clock === null || clock.replica !== e.replica)
     return fail('hlc must name its own replica');
@@ -145,7 +145,7 @@ export function verifyEntry(
     const content: { body?: JsonValue; sealed?: Sealed } = {};
     if (e.body !== undefined) content.body = e.body;
     if (e.sealed !== undefined) content.sealed = e.sealed;
-    const hash = contentHashOrNull(content);
+    const hash = orNull(() => contentHash(content));
     if (hash === null) return fail('malformed op');
     if (hash !== e.bodyHash) return fail('bodyHash mismatch');
     const sealedType = SEALED_TYPES.has(e.type);
