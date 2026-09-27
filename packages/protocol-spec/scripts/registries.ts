@@ -14,16 +14,17 @@ const pkg = JSON.parse(
 const target = fileURLToPath(
   new URL('../spec/11-registries.md', import.meta.url)
 );
-
-const fmt = spawnSync(
-  'pnpm',
-  ['exec', 'oxfmt', '--stdin-filepath=spec/11-registries.md'],
-  {
-    cwd: pkgDir,
-    input: renderRegistries(loadRegistry(), pkg.version),
-    encoding: 'utf8',
-  }
+// Not `pnpm exec`: stdout is the file, and the proto shim or a pre-run
+// install can print there first.
+const oxfmt = fileURLToPath(
+  new URL('../../../node_modules/.bin/oxfmt', import.meta.url)
 );
+
+const fmt = spawnSync(oxfmt, ['--stdin-filepath=spec/11-registries.md'], {
+  cwd: pkgDir,
+  input: renderRegistries(loadRegistry(), pkg.version),
+  encoding: 'utf8',
+});
 if (fmt.status !== 0)
   throw new Error(`oxfmt failed: ${fmt.error?.message ?? fmt.stderr}`);
 if (process.argv.includes('--check')) {
