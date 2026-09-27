@@ -504,3 +504,54 @@ describe('addressLabel', () => {
     expect(addressLabel('pager:support', lookups)).toBe('pager:support');
   });
 });
+
+describe('behaviors the thread surfaces rely on', () => {
+  const m = (id: string, over: Partial<Message> = {}): Message => ({
+    id,
+    thread: 'm-01',
+    replyTo: null,
+    from: 'run:r-000001',
+    to: ['human:wyat'],
+    kind: 'message',
+    body: id,
+    refs: [],
+    urgent: false,
+    blocking: false,
+    wake: 'none',
+    createdAt: '2026-09-25T10:00:00.000Z',
+    ...over,
+  });
+
+  test('uses the earliest fetched message as root when the root itself was not fetched', () => {
+    const [summary] = summarizeThreads(
+      [m('m-03', { replyTo: 'm-01' }), m('m-02', { replyTo: 'm-01' })],
+      [],
+      'human:wyat',
+      new Set()
+    );
+    expect(summary?.thread).toBe('m-01');
+    expect(summary?.root.id).toBe('m-02');
+    expect(summary?.last.id).toBe('m-03');
+  });
+
+  test('a plain blocking question whose id is in the open set needs me, like a gate', () => {
+    const question = m('m-01', {
+      kind: 'question',
+      blocking: true,
+      choices: ['a', 'b'],
+    });
+    const [summary] = summarizeThreads(
+      [question],
+      [],
+      'human:wyat',
+      new Set(['m-01'])
+    );
+    expect(summary?.needsYou).toBe(true);
+  });
+
+  test('appending keeps the existing message objects, so rendered rows keep their identity', () => {
+    const a = m('m-01');
+    const next = appendToThread([a], m('m-02'));
+    expect(next[0]).toBe(a);
+  });
+});
