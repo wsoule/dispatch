@@ -22,6 +22,7 @@ import {
   OverseerToolRegistry,
 } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
+import { makeService as makeDocsService } from '../docs/fakeHost.js';
 import { initGitRepo, lateBoundOverseerMessaging } from './helpers.js';
 
 let fakeHome: string;
@@ -115,7 +116,9 @@ interface Harness extends OverseerToolContext {
  * immediately, one that stays live long enough to be cancelled or messaged,
  * and one that parks on an approval gate.
  */
-function makeHarness(): Harness {
+function makeHarness(
+  opts: { docs?: OverseerToolContext['docs'] } = {}
+): Harness {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
   cache.rebuild(store);
@@ -173,6 +176,7 @@ function makeHarness(): Harness {
     defaultExecutor: 'fake',
     messaging: lateMessaging.port,
     ownerRef: 'human:test',
+    docs: opts.docs ?? null,
   };
   return {
     ...ctx,
@@ -266,6 +270,8 @@ describe('overseer tool sets', () => {
 
   it('covers every status and mutating tool the overseer is specified to have', () => {
     expect(OVERSEER_STATUS_TOOLS.map((t) => t.name).sort()).toEqual([
+      'doc_list',
+      'doc_read',
       'ledger_entries',
       'list_blocked_tasks',
       'list_ready_tasks',
@@ -282,6 +288,28 @@ describe('overseer tool sets', () => {
       'dispatch_task',
       'message_run',
     ]);
+  });
+
+  it('reads team docs for the overseer and never writes them', () => {
+    const { service } = makeDocsService();
+    service.create(
+      service.actorFor({
+        address: 'human:wyat',
+        canDecide: true,
+        kind: 'human',
+      }),
+      { title: 'Plan', body: '# Plan\n## Steps\nONE\n' }
+    );
+    const h = makeHarness({ docs: service });
+    const out = h.registry.callStatusTool('doc_read', {
+      doc: 'plan',
+      section: 'Steps',
+    }) as { text: string };
+    expect(out.text).toContain('## Steps\nONE\n');
+    expect(out.text).toMatch(/^~+ doc plan rev 1 ~+$/m);
+    expect(
+      h.registry.mutatingTools().some((t) => t.name.startsWith('doc_'))
+    ).toBe(false);
   });
 
   it('rejects an unknown tool name on both call paths', () => {

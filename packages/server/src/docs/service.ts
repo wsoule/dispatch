@@ -1623,8 +1623,16 @@ export class DocsService {
     if (q.status !== undefined) statuses = [q.status];
     else if (q.includeArchived === true)
       statuses = ['draft', 'accepted', 'archived'];
-    if (q.taskId !== undefined) {
-      const ranked = this.taskDocs(actor, q.taskId, true).filter(
+    // doc_list from a run that names nothing lists its own task's docs, in index order.
+    const bare =
+      q.query === undefined && q.scope === undefined && q.status === undefined;
+    const taskId =
+      q.taskId ??
+      (bare && actor.kind === 'run' && actor.taskId !== null
+        ? actor.taskId
+        : undefined);
+    if (taskId !== undefined) {
+      const ranked = this.taskDocs(actor, taskId, true).filter(
         (c) =>
           statuses.includes(c.row.status) &&
           (q.unreviewed !== true || c.row.unreviewed) &&

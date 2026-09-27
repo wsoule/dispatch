@@ -1489,6 +1489,7 @@ async function bootServer(
       ledgerStore,
       messaging: overseerToolMessaging(messaging.engine),
       ownerRef: actorContext.humanRef,
+      docs: docs.service,
     }),
     events,
     bus: createOverseerBus(messaging.engine, messaging.store, {

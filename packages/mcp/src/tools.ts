@@ -29,6 +29,7 @@ import {
   requestDeadline,
   startDaemon,
 } from './daemon.js';
+import { registerDocTools, taskDocLines } from './docs.js';
 import { registerMemoryTools } from './memory.js';
 import { registerMessagingTools } from './messaging.js';
 import type { MessageBlockingTiming, ToolOutcome } from './toolKit.js';
@@ -390,7 +391,11 @@ async function taskList(
   });
 }
 
-async function taskGet(rootDir: string, id: string): Promise<ToolOutcome> {
+async function taskGet(
+  rootDir: string,
+  server: McpServer,
+  id: string
+): Promise<ToolOutcome> {
   const route = await resolveStoreRoute(rootDir);
   if (route.via === 'refused') return toolError(route.message);
 
@@ -400,7 +405,12 @@ async function taskGet(rootDir: string, id: string): Promise<ToolOutcome> {
         route.daemon,
         `/api/tasks/${encodeURIComponent(id)}`
       );
-      return toolResult({ meta: doc.meta, body: doc.body });
+      const docs = await taskDocLines(rootDir, server, id);
+      return toolResult({
+        meta: doc.meta,
+        body: doc.body,
+        ...(docs === undefined ? {} : { docs }),
+      });
     } catch (err) {
       // A 404 has two very different causes on the file backend, and the
       // daemon cannot tell them apart in this response: the task really does
@@ -937,6 +947,7 @@ export function registerDispatchTools(
     blockingTiming: opts.blockingTiming,
   });
   registerMemoryTools(server, rootDir);
+  registerDocTools(server, rootDir);
   server.registerTool(
     'task_list',
     {
@@ -968,10 +979,14 @@ export function registerDispatchTools(
       description:
         'Fetch a single task by id, including its full markdown body.',
       inputSchema: { id: z.string() },
-      outputSchema: { meta: z.object(taskMetaShape), body: z.string() },
+      outputSchema: {
+        meta: z.object(taskMetaShape),
+        body: z.string(),
+        docs: z.array(z.string()).optional(),
+      },
       annotations: { readOnlyHint: true },
     },
-    ({ id }) => wrapAsync(() => taskGet(rootDir, id))
+    ({ id }) => wrapAsync(() => taskGet(rootDir, server, id))
   );
 
   server.registerTool(

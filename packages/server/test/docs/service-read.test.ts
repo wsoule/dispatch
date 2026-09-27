@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 
 import { DocsError } from '../../src/docs/errors.js';
-import { makeService, OWNER, TEAMMATE } from './fakeHost.js';
+import { makeService, OWNER, RUN, TEAMMATE } from './fakeHost.js';
 
 describe('read', () => {
   it('pages a body and a section with an outline, and 404s the invisible', () => {
@@ -110,5 +110,27 @@ describe('health', () => {
         })
       ).orphans
     ).toBeUndefined();
+  });
+});
+
+describe('doc_list from a run', () => {
+  it("lists the run's own task's docs when it names no task", () => {
+    const { service } = makeService();
+    service.create(service.actorFor(OWNER), {
+      title: 'Spec',
+      body: 'x\n',
+      links: [{ target: { type: 'task', id: 't-1' }, rel: 'spec' }],
+    });
+    service.create(service.actorFor(OWNER), {
+      title: 'Unrelated',
+      body: 'x\n',
+    });
+    const run = service.actorFor(RUN);
+    expect(service.list(run, {}).docs.map((d) => [d.handle, d.rel])).toEqual([
+      ['spec', 'spec'],
+    ]);
+    expect(
+      service.list(run, { query: 'related' }).docs.map((d) => d.handle)
+    ).toEqual(['unrelated']);
   });
 });
