@@ -185,7 +185,7 @@ function checkSteps(
   });
 }
 
-// The named messages exist, in order, with the listed fields; with
+// The named messages exist once each, in order, with the listed fields; with
 // noOtherMessages, anything else must be seeded or a system notice.
 function checkMessages(
   vector: Vector,
@@ -209,7 +209,12 @@ function checkMessages(
       failures.push(`message ${symbol} was not created`);
       continue;
     }
-    listed.add(ids[index] ?? '');
+    const found = ids[index] ?? '';
+    if (listed.has(found)) {
+      failures.push(`message ${symbol} is listed twice`);
+      continue;
+    }
+    listed.add(found);
     if (index < last) failures.push(`message ${symbol} is out of order`);
     last = index;
     const actual = observation.messages[index] as unknown as Record<
@@ -377,8 +382,9 @@ function checkChannels(
   if (failure !== null) failures.push(failure);
 }
 
-// Every `render` step of a core vector is checked structurally against the
-// adapter's declared forms; a step `then.render` names must match exactly.
+// Every `render` step must produce text unless the vector expects it to fail;
+// a core vector's text is checked structurally against the adapter's declared
+// forms, and a step `then.render` names must match exactly.
 function checkRenders(
   vector: Vector,
   observation: Observation,
@@ -391,8 +397,7 @@ function checkRenders(
   vector.when.forEach((step, i) => {
     if (step.op !== 'render') return;
     const n = i + 1;
-    const result = observation.steps[i];
-    if (result !== undefined && !result.ok) return;
+    if (vector.then.steps?.[i]?.ok === false) return;
     const text = textOf(n);
     if (text === undefined) {
       failures.push(`step ${n}: no rendered text`);

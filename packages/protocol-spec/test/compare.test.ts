@@ -272,6 +272,36 @@ describe('compare', () => {
     ).toHaveLength(1);
   });
 
+  it('fails a core render step the adapter reports as an error, unless the vector expects that error', () => {
+    const render: Vector = {
+      ...send,
+      when: [...send.when, { op: 'render', message: '$s1' }],
+      then: {},
+    };
+    const errored = obs({
+      steps: [...good.steps, { ok: false, error: { code: 'internal' } }],
+      messages: [msg(M1)],
+    });
+    expect(compare(render, errored, hello).failures).toEqual([
+      'step 2: no rendered text',
+    ]);
+    const expectsError: Vector = {
+      ...render,
+      then: { steps: [null, { ok: false, error: { code: 'internal' } }] },
+    };
+    expect(compare(expectsError, errored, hello).failures).toEqual([]);
+  });
+
+  it('fails a message then lists twice', () => {
+    const twice: Vector = {
+      ...send,
+      then: { messages: [{ id: '$s1' }, { id: '$s1' }] },
+    };
+    expect(compare(twice, good, hello).failures).toEqual([
+      'message $s1 is listed twice',
+    ]);
+  });
+
   it('fails a gate effect or voided answer set that differs', () => {
     const v: Vector = { ...send, then: { gateEffects: ['$s1'], voided: [] } };
     expect(compare(v, { ...good, gateEffects: [M1] }, hello).failures).toEqual(
