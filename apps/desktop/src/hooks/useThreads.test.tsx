@@ -5,6 +5,7 @@ import type {
   DeliveryState,
   MailboxItem,
   Message,
+  SendInput,
   ThreadDetail,
 } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -156,6 +157,10 @@ describe('applyThreadEvent', () => {
     const mailbox = [...threadListsKey(PORT), 'mailbox', ME];
     qc.setQueryData(mailbox, { items: [] });
     qc.setQueryData(threadKey(PORT, 'm-01'), { messages: [], deliveries: [] });
+    applyThreadEvent(qc, PORT, { type: 'message.new', message: msg('m-07') });
+    expect(stale(qc, mailbox)).toBe(true);
+    qc.setQueryData(mailbox, { items: [] });
+    expect(stale(qc, mailbox)).toBe(false);
     applyThreadEvent(qc, PORT, {
       type: 'delivery.changed',
       deliveryId: 'd-1',
@@ -168,7 +173,7 @@ describe('applyThreadEvent', () => {
   });
 });
 
-describe('useThreadActions.answer', () => {
+describe('useThreadActions', () => {
   const approval = msg('m-a', {
     from: 'agent:dispatch',
     kind: 'question',
@@ -202,14 +207,12 @@ describe('useThreadActions.answer', () => {
   });
 
   function setup(access: MessageAccess) {
+    const sent = () =>
+      Promise.resolve({ message: question, deliveries: [], downgraded: false });
     const client = {
-      replyToMessage: mock(() =>
-        Promise.resolve({
-          message: question,
-          deliveries: [],
-          downgraded: false,
-        })
-      ),
+      replyToMessage: mock(sent),
+      sendMessage: mock(sent),
+      markDeliveryRead: mock((id: string) => Promise.resolve({ id })),
     };
     const handlers = {
       handleApprove: mock(() => Promise.resolve()),
@@ -270,6 +273,112 @@ describe('useThreadActions.answer', () => {
     expect(await failed()).toBe('rejected');
     expect(await failed('maybe')).toBe('rejected');
     expect(handlers.handleApprove).toHaveBeenCalledTimes(1);
+  });
+
+  it('sends a draft as its send input, each with a fresh idempotency key', async () => {
+    const { client, actions } = setup(DECIDER);
+    const draft = {
+      to: ['task:t-000001'],
+      body: ' ship it? ',
+      kind: 'question' as const,
+      urgent: false,
+      wake: true,
+    };
+    await actions.send(draft);
+    await actions.send(draft);
+    const calls = client.sendMessage.mock.calls as unknown as [
+      SendInput,
+      { idempotencyKey: string },
+    ][];
+    expect(calls[0]?.[0]).toEqual({
+      to: ['task:t-000001'],
+      kind: 'question',
+      body: 'ship it?',
+      blocking: true,
+      wake: 'request',
+    });
+    const keys = calls.map(([, opts]) => opts.idempotencyKey);
+    expect(keys).toHaveLength(2);
+    expect(new Set(keys).size).toBe(2);
+  });
+
+  it('replies to the target of a reply plan, and sends a send plan as a plain message beside its replyTo', async () => {
+    const { client, actions } = setup(DECIDER);
+    await actions.reply({ kind: 'reply', target: msg('m-01') }, 'on it');
+    expect(client.replyToMessage).toHaveBeenCalledWith('m-01', {
+      body: 'on it',
+    });
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    await actions.reply(
+      { kind: 'send', to: ['channel:general'], replyTo: 'm-01' },
+      'noted'
+    );
+    expect(client.sendMessage).toHaveBeenCalledWith(
+      {
+        to: ['channel:general'],
+        kind: 'message',
+        body: 'noted',
+        replyTo: 'm-01',
+      },
+      { idempotencyKey: expect.any(String) }
+    );
+  });
+
+  it('sends and replies nothing from a window that cannot message, and says why', async () => {
+    const { client, actions } = setup(AGENT_WINDOW);
+    const outcome = (p: Promise<unknown>) =>
+      p.then(
+        () => 'resolved',
+        (err: unknown) => (err instanceof Error ? err.message : 'not an Error')
+      );
+    expect(
+      await outcome(
+        actions.send({
+          to: ['task:t-000001'],
+          body: 'hi',
+          kind: 'message',
+          urgent: false,
+          wake: false,
+        })
+      )
+    ).toBe('cannot message');
+    expect(
+      await outcome(actions.reply({ kind: 'reply', target: msg('m-01') }, 'x'))
+    ).toBe('cannot message');
+    expect(client.sendMessage).not.toHaveBeenCalled();
+    expect(client.replyToMessage).not.toHaveBeenCalled();
+  });
+
+  it('marks only my unread deliveries read, and nothing from an agent window', () => {
+    const delivery = (
+      id: string,
+      state: DeliveryState,
+      recipient = ME
+    ): Delivery => ({
+      id,
+      messageId: 'm-01',
+      recipient,
+      runId: null,
+      via: 'direct',
+      state,
+      updatedAt: '2026-09-25T10:00:00.000Z',
+    });
+    const deliveries = [
+      delivery('d-held', 'held'),
+      delivery('d-notified', 'notified'),
+      delivery('d-pushed', 'pushed'),
+      delivery('d-read', 'read'),
+      delivery('d-answered', 'answered'),
+      delivery('d-ada', 'notified', 'human:ada'),
+    ];
+    const decider = setup(DECIDER);
+    decider.actions.markRead(deliveries);
+    expect(
+      decider.client.markDeliveryRead.mock.calls.map(([id]) => id)
+    ).toEqual(['d-held', 'd-notified', 'd-pushed']);
+    const agentWindow = setup(AGENT_WINDOW);
+    agentWindow.actions.markRead(deliveries);
+    expect(agentWindow.client.markDeliveryRead).not.toHaveBeenCalled();
   });
 
   it('refuses a gate answer without decide, and lets a teammate answer a question put to them', async () => {
