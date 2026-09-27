@@ -1,0 +1,79 @@
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+
+import { createDocsApi } from '../src/docsApi.js';
+
+let server: ReturnType<typeof Bun.serve>;
+let seen: {
+  method: string;
+  path: string;
+  auth: string | null;
+  body: string;
+}[] = [];
+beforeEach(() => {
+  seen = [];
+  server = Bun.serve({
+    port: 0,
+    hostname: '127.0.0.1',
+    fetch: async (req) => {
+      const url = new URL(req.url);
+      seen.push({
+        method: req.method,
+        path: `${url.pathname}${url.search}`,
+        auth: req.headers.get('authorization'),
+        body: await req.text(),
+      });
+      if (url.pathname.endsWith('/body')) {
+        return Response.json(
+          {
+            code: 'conflict',
+            reason: 'base-changed',
+            head: {
+              id: 'rev-2',
+              n: 2,
+              hash: 'h2',
+              body: 'new',
+              author: 'human:x',
+            },
+            base: null,
+            hunks: [],
+            marked: 'new',
+            error: 'e',
+          },
+          { status: 409 }
+        );
+      }
+      if (url.pathname === '/api/docs/missing') {
+        return Response.json(
+          { error: 'doc missing not found', code: 'not-found', field: 'doc' },
+          { status: 404 }
+        );
+      }
+      return Response.json({ ok: true });
+    },
+  });
+});
+afterEach(() => void server.stop(true));
+
+describe('createDocsApi', () => {
+  it('sends the token and turns 409 into a conflict value', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    const out = await api.saveBody('spec', {
+      baseRev: 'rev-1',
+      baseHash: 'h1',
+      body: 'mine',
+    });
+    expect(out.ok).toBe(false);
+    expect(seen[0]).toMatchObject({
+      method: 'PUT',
+      path: '/api/docs/spec/body',
+      auth: 'Bearer app-token',
+    });
+  });
+
+  it('throws a CliError naming the field for other failures', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await expect(api.get('missing')).rejects.toThrow(
+      'doc missing not found (field: doc)'
+    );
+  });
+});
