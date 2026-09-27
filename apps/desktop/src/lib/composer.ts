@@ -116,6 +116,16 @@ export function toSendInput(state: ComposeState): SendInput {
   };
 }
 
+/** The recipients without `id`, unless it is locked (a task tab's own task),
+ *  which stays however its removal was asked for. */
+export function withoutRecipient(
+  to: string[],
+  id: string,
+  locked: readonly string[]
+): string[] {
+  return locked.includes(id) ? to : to.filter((address) => address !== id);
+}
+
 /** A failed send as an inline problem, with the daemon's field and text when it sent them. */
 export function sendProblem(err: unknown): ComposeProblem {
   if (err instanceof ApiError) {

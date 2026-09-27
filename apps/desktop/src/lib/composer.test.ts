@@ -12,6 +12,7 @@ import {
   toSendInput,
   trailingMention,
   wakeDefault,
+  withoutRecipient,
 } from './composer';
 
 describe('mentions', () => {
@@ -69,6 +70,18 @@ describe('mentions', () => {
       kind: 'address',
       address: 'channel:general',
     });
+  });
+});
+
+describe('recipients', () => {
+  it('removes a recipient, but never a locked one, whatever asked for it', () => {
+    const to = ['task:t-1a2b3c', 'human:wyat'];
+    const locked = ['task:t-1a2b3c'];
+    expect(withoutRecipient(to, 'human:wyat', locked)).toEqual([
+      'task:t-1a2b3c',
+    ]);
+    expect(withoutRecipient(to, 'task:t-1a2b3c', locked)).toBe(to);
+    expect(withoutRecipient(to, 'channel:general', locked)).toEqual(to);
   });
 });
 

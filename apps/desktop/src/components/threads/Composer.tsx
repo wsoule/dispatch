@@ -16,6 +16,7 @@ import {
   sendProblem,
   trailingMention,
   wakeDefault,
+  withoutRecipient,
 } from '../../lib/composer';
 import type { KnownAddresses } from '../../lib/threads';
 import { completeAddress } from '../../lib/threads';
@@ -205,7 +206,7 @@ export function Composer({
           locked: locked.includes(address),
         }))}
         onRemoveReference={(id) => {
-          setTo((prev) => prev.filter((a) => a !== id));
+          setTo((prev) => withoutRecipient(prev, id, locked));
           renewKey();
         }}
         disabled={disabledReason !== null || sending}
