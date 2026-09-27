@@ -449,15 +449,27 @@ export function useThreadActions(
     [access, client, messenger, refresh]
   );
 
+  // Deliveries marked read or being marked. A thread refetched mid-mark still
+  // lists them unread; only a failed mark is sent again.
+  const marked = useRef(new Set<string>());
   const markRead = useCallback(
     (deliveries: readonly Delivery[]): void => {
       if (client === null || me === null || !access.canMessage) return;
       const unread = deliveries.filter(
-        (d) => d.recipient === me && UNREAD.has(d.state)
+        (d) =>
+          d.recipient === me && UNREAD.has(d.state) && !marked.current.has(d.id)
       );
       if (unread.length === 0) return;
-      void Promise.allSettled(
-        unread.map((d) => client.markDeliveryRead(d.id))
+      for (const d of unread) marked.current.add(d.id);
+      void Promise.all(
+        unread.map((d) =>
+          client.markDeliveryRead(d.id).then(
+            () => {},
+            () => {
+              marked.current.delete(d.id);
+            }
+          )
+        )
       ).then(() => {
         void queryClient.invalidateQueries({ queryKey: threadListsKey(port) });
       });

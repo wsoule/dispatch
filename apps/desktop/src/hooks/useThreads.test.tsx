@@ -419,6 +419,32 @@ describe('useThreadActions', () => {
     expect(agentWindow.client.markDeliveryRead).not.toHaveBeenCalled();
   });
 
+  it('marks a delivery read once while its mark is in flight, and again only if that mark failed', async () => {
+    const { client, actions } = setup(DECIDER);
+    const unread = (id: string): Delivery => ({
+      id,
+      messageId: 'm-01',
+      recipient: ME,
+      runId: null,
+      via: 'direct',
+      state: 'notified',
+      updatedAt: '2026-09-25T10:00:00.000Z',
+    });
+    const deliveries = [unread('d-1'), unread('d-2')];
+    client.markDeliveryRead.mockImplementationOnce(() =>
+      Promise.reject(new Error('daemon unreachable'))
+    );
+    actions.markRead(deliveries);
+    actions.markRead(deliveries);
+    const marked = () => client.markDeliveryRead.mock.calls.map(([id]) => id);
+    expect(marked()).toEqual(['d-1', 'd-2']);
+    // Still unread in a stale thread: only the failed mark goes again.
+    await waitFor(() => {
+      actions.markRead(deliveries);
+      expect(marked()).toEqual(['d-1', 'd-2', 'd-1']);
+    });
+  });
+
   it('refuses a gate answer without decide, and lets a teammate answer a question put to them', async () => {
     const { client, actions } = setup(TEAMMATE);
     const refused = await actions
