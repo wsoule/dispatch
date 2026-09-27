@@ -304,3 +304,85 @@ export function docSlug(title: string): string {
     RESERVED_DOC_SLUGS.includes(base);
   return refused ? fitSlug(`the-${base}`) : base;
 }
+
+// A doc as a markdown file: frontmatter whose values are JSON scalars and
+// arrays (valid YAML 1.2, so they round-trip exactly), then the body verbatim.
+export interface DocFileMeta {
+  id: string;
+  slug: string;
+  title: string;
+  status: DocStatus;
+  rev: string;
+  n: number;
+  parents: string[];
+  author: string;
+  cause: RevisionCause;
+  createdAt: string;
+  hash: string;
+  links: { target: string; rel: LinkRel }[];
+  authors: string[];
+  updatedAt: string;
+}
+
+const DOC_FILE_FIELDS: readonly (keyof DocFileMeta)[] = [
+  'id',
+  'slug',
+  'title',
+  'status',
+  'rev',
+  'n',
+  'parents',
+  'author',
+  'cause',
+  'createdAt',
+  'hash',
+  'links',
+  'authors',
+  'updatedAt',
+];
+
+const DOC_FILE_ARRAYS: ReadonlySet<keyof DocFileMeta> = new Set([
+  'parents',
+  'links',
+  'authors',
+]);
+
+export function renderDocFile(meta: DocFileMeta, body: string): string {
+  const lines = DOC_FILE_FIELDS.map((k) => `${k}: ${JSON.stringify(meta[k])}`);
+  return `---\n${lines.join('\n')}\n---\n${body}`;
+}
+
+// The inverse of renderDocFile: every field present with its JSON type, or why not.
+export function parseDocFile(
+  text: string
+): { meta: DocFileMeta; body: string } | { error: string } {
+  if (!text.startsWith('---\n')) return { error: 'no frontmatter' };
+  const end = text.indexOf('\n---\n', 3);
+  if (end === -1) return { error: 'unterminated frontmatter' };
+  const fields = new Map<string, unknown>();
+  for (const line of text.slice(4, end).split('\n')) {
+    const colon = line.indexOf(': ');
+    if (colon === -1)
+      return { error: `bad frontmatter line: ${line.slice(0, 40)}` };
+    try {
+      fields.set(line.slice(0, colon), JSON.parse(line.slice(colon + 2)));
+    } catch {
+      return { error: `${line.slice(0, colon)} is not JSON` };
+    }
+  }
+  for (const key of DOC_FILE_FIELDS) {
+    const value = fields.get(key);
+    let want = 'string';
+    if (key === 'n') want = 'number';
+    else if (DOC_FILE_ARRAYS.has(key)) want = 'array';
+    const is = Array.isArray(value) ? 'array' : typeof value;
+    if (is !== want)
+      return {
+        error: `${key} must be ${want === 'array' ? 'an' : 'a'} ${want}`,
+      };
+  }
+  const meta = Object.fromEntries(
+    DOC_FILE_FIELDS.map((k) => [k, fields.get(k)])
+  ) as unknown as DocFileMeta;
+  return { meta, body: text.slice(end + 5) };
+}

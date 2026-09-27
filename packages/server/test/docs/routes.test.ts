@@ -198,6 +198,62 @@ describe('docs routes', () => {
     expect(res.status).toBe(413);
   });
 
+  it('takes import contents only as application/octet-stream (P6)', async () => {
+    const bytes = new TextEncoder().encode('# A\n');
+    const hash = new Bun.CryptoHasher('sha256').update(bytes).digest('hex');
+    const opened = await json<{ id: string; need: string[] }>(
+      await post('/docs/imports', {
+        files: [
+          {
+            path: '/x/a.md',
+            name: 'a.md',
+            mtime: '2026-09-26T10:00:00.000Z',
+            bytes: bytes.byteLength,
+            hash,
+          },
+        ],
+      })
+    );
+    expect(opened.need).toEqual([hash]);
+    const put = (headers: Record<string, string>) =>
+      fetch(`${base}/docs/imports/${opened.id}/contents/${hash}`, {
+        method: 'PUT',
+        headers,
+        body: bytes,
+      });
+    expect((await put({ 'content-type': 'text/plain' })).status).toBe(415);
+    expect((await put({})).status).toBe(415);
+    expect(
+      (await put({ 'content-type': 'application/x-www-form-urlencoded' }))
+        .status
+    ).toBe(415);
+    expect(
+      (await put({ 'content-type': 'application/octet-stream' })).status
+    ).toBe(204);
+    const commit = await post(`/docs/imports/${opened.id}/commit`, {});
+    expect(await json<unknown>(commit)).toMatchObject({
+      dryRun: false,
+      docsCreated: 1,
+      parity: { files: true, names: true },
+    });
+    const read = await json<{ text: string }>(await fetch(`${base}/docs/a`));
+    expect(read.text).toBe('# A\n');
+    const gone = await fetch(`${base}/docs/imports/${opened.id}`, {
+      method: 'DELETE',
+    });
+    expect(gone.status).toBe(404);
+  });
+
+  it('refuses an import manifest entry without an ISO mtime', async () => {
+    const res = await post('/docs/imports', {
+      files: [
+        { path: 'a.md', name: 'a.md', mtime: 'yesterday', bytes: 1, hash: 'h' },
+      ],
+    });
+    expect(res.status).toBe(400);
+    expect((await json<{ field: string }>(res)).field).toBe('files[0].mtime');
+  });
+
   it('lets a run create a doc linked to its own task, with its run token', async () => {
     const task = await json<{ meta: { id: string } }>(
       await post('/tasks', { title: 'Docs task' })

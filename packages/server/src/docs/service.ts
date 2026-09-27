@@ -61,6 +61,13 @@ import type {
   SectionRow,
   SqliteDocStore,
 } from './store.js';
+import type {
+  ImportFile,
+  ImportReport,
+  ImportText,
+  NamePlan,
+} from './transfer.js';
+import { nameSlug, planImport } from './transfer.js';
 
 // Every docs rule in one place: who may do what, the write path with open
 // revisions and three-way merges, links, lifecycle, reads, lists and search.
@@ -237,6 +244,34 @@ function toInfo(r: RevisionMeta): DocRevisionInfo {
     via: r.via,
     createdAt: r.createdAt,
     updatedAt: r.updatedAt,
+  };
+}
+
+// The origin an imported name's part k carries; part 1 is the name itself.
+function importOrigin(slug: string, k: number): string {
+  return k === 1 ? `import:${slug}` : `import:${slug}/part-${k}`;
+}
+
+// Part k's slug, `<slug>-part-<k>`, with the slug cut so the whole fits 64 characters.
+function partSlug(slug: string, k: number): string {
+  const suffix = `-part-${k}`;
+  const head = slug.slice(0, DOCS_LIMITS.slugChars - suffix.length);
+  return `${head.replace(/-+$/, '')}${suffix}`;
+}
+
+// Part k's title, `<title> (part k of n)`, with the title cut so the whole fits 200 bytes.
+function partTitle(title: string, k: number, n: number): string {
+  const suffix = ` (part ${k} of ${n})`;
+  const room = DOCS_LIMITS.titleBytes - utf8Bytes(suffix);
+  return `${cutUtf8(title, room).trim()}${suffix}`;
+}
+
+// A stored `type:id` link target back into its parts.
+function parseLinkText(text: string): LinkTarget {
+  const colon = text.indexOf(':');
+  return {
+    type: text.slice(0, colon) as LinkTarget['type'],
+    id: text.slice(colon + 1),
   };
 }
 
@@ -1568,6 +1603,308 @@ export class DocsService {
     });
   }
 
+  // ---- import ---------------------------------------------------------------
+
+  // Import backdates history and bypasses the create limit, so it is decide tier.
+  private requireImporter(actor: DocsActor): void {
+    if (!actor.decider)
+      throw forbidden('import needs a decide-tier human', 'import');
+  }
+
+  // The session's link, checked as a context link from a new team doc.
+  private checkImportLink(actor: DocsActor, target: LinkTarget): LinkTarget {
+    const probe = this.importDocRow(actor, 'probe', 1, '', this.nowIso());
+    const checked = this.checkLinkTarget(
+      actor,
+      probe,
+      target,
+      'context',
+      'link'
+    );
+    this.checkLinkAuthority(actor, probe, checked, 'context', 'link');
+    return checked;
+  }
+
+  // Opens a session (replacing this human's open one) and names the contents it still needs.
+  openImport(
+    actor: DocsActor,
+    input: { files: ImportFile[]; link: LinkTarget | null }
+  ): { id: string; need: string[] } {
+    this.requireImporter(actor);
+    const store = this.store();
+    const link =
+      input.link === null ? null : this.checkImportLink(actor, input.link);
+    const at = this.nowIso();
+    const id = `imp-${ulid(this.host.now().getTime())}`;
+    this.write(() => {
+      for (const old of store.importSessionsBy(actor.address))
+        store.deleteImportSession(old);
+      store.putImportSession({
+        id,
+        createdBy: actor.address,
+        createdAt: at,
+        touchedAt: at,
+        manifest: JSON.stringify(input.files),
+        link: link === null ? null : `${link.type}:${link.id}`,
+      });
+    });
+    const need = new Set<string>();
+    for (const f of input.files) {
+      const fits = f.bytes <= DOCS_LIMITS.importContentBytes;
+      if (fits && !store.isImported('team', nameSlug(f.name), f.hash))
+        need.add(f.hash);
+    }
+    return { id, need: [...need] };
+  }
+
+  // The caller's own open session; anyone else's answers as missing.
+  private importSessionOf(actor: DocsActor, id: string) {
+    const s = this.store().importSession(id);
+    if (s === null || s.createdBy !== actor.address)
+      throw new DocsError(
+        'not-found',
+        `import session ${id} not found`,
+        'import'
+      );
+    return s;
+  }
+
+  putImportContent(
+    actor: DocsActor,
+    id: string,
+    hash: string,
+    bytes: Uint8Array
+  ): void {
+    this.requireImporter(actor);
+    const store = this.store();
+    const s = this.importSessionOf(actor, id);
+    const files = JSON.parse(s.manifest) as ImportFile[];
+    if (!files.some((f) => f.hash === hash)) {
+      throw new DocsError(
+        'invalid',
+        `content ${hash.slice(0, 64)} is not in this import`,
+        'hash'
+      );
+    }
+    if (createHash('sha256').update(bytes).digest('hex') !== hash)
+      throw new DocsError(
+        'invalid',
+        'the content does not match its sha256',
+        'hash'
+      );
+    const held = store.importContentBytes(id, hash);
+    if (held + bytes.byteLength > DOCS_LIMITS.importSessionBytes)
+      throw new DocsError(
+        'limited',
+        'an import session holds at most 64 MiB',
+        'import'
+      );
+    this.write(() => {
+      store.putImportContent(id, hash, bytes);
+      store.touchImportSession(id, this.nowIso());
+    });
+  }
+
+  deleteImport(actor: DocsActor, id: string): void {
+    this.requireImporter(actor);
+    this.importSessionOf(actor, id);
+    this.store().deleteImportSession(id);
+  }
+
+  // Plans the session and, unless a dry run, writes it all in one transaction
+  // and closes it. A parity mismatch is a conflict and writes nothing.
+  commitImport(actor: DocsActor, id: string, dryRun: boolean): ImportReport {
+    this.requireImporter(actor);
+    const store = this.store();
+    const s = this.importSessionOf(actor, id);
+    const files = JSON.parse(s.manifest) as ImportFile[];
+    const texts = new Map<string, ImportText>();
+    for (const hash of new Set(files.map((f) => f.hash))) {
+      const bytes = store.importContent(id, hash);
+      if (bytes === null) continue;
+      let text: string;
+      try {
+        const decoder = new TextDecoder('utf-8', { fatal: true });
+        text = normalizeDocText(decoder.decode(bytes));
+      } catch {
+        texts.set(hash, {
+          error: 'not UTF-8',
+          detail: 'the file is not UTF-8',
+        });
+        continue;
+      }
+      texts.set(
+        hash,
+        text.includes('\u0000')
+          ? { error: 'invalid', detail: 'the file contains NUL' }
+          : { text }
+      );
+    }
+    const { names, report } = planImport(files, texts, {
+      imported: (slug, hash) => store.isImported('team', slug, hash),
+      tombstoned: (slug) => store.tombstonedOrigin(importOrigin(slug, 1)),
+      exists: (slug) => store.docByOrigin(importOrigin(slug, 1)) !== null,
+      partExists: (slug, k) =>
+        store.docByOrigin(importOrigin(slug, k)) !== null,
+    });
+    report.dryRun = dryRun;
+    if (!report.parity.files || !report.parity.names) {
+      throw new DocsError(
+        'conflict',
+        `import parity mismatch: ${JSON.stringify(report.parity)}`,
+        'import'
+      );
+    }
+    if (dryRun) return report;
+    const link =
+      s.link === null
+        ? null
+        : this.checkImportLink(actor, parseLinkText(s.link));
+    this.write(() => {
+      for (const name of names) {
+        if (name.contents.length > 0) this.writeImported(actor, name, link);
+      }
+      store.setMeta('import:last', JSON.stringify(report));
+      store.deleteImportSession(id);
+    });
+    return report;
+  }
+
+  // One name's contents as revisions of its part docs, oldest first, each part
+  // linked to its neighbours and the session's link. Runs in commitImport's transaction.
+  private writeImported(
+    actor: DocsActor,
+    name: NamePlan,
+    link: LinkTarget | null
+  ): void {
+    const store = this.store();
+    const total = Math.max(...name.contents.map((c) => c.parts.length));
+    const parts: { doc: DocRow; created: boolean }[] = [];
+    for (let k = 1; k <= total; k++) {
+      const origin = importOrigin(name.slug, k);
+      const found = store.docByOrigin(origin);
+      if (found !== null) {
+        parts.push({ doc: found, created: false });
+        continue;
+      }
+      const doc = this.importDocRow(
+        actor,
+        name.slug,
+        k,
+        origin,
+        name.contents[0].mtime
+      );
+      // Stored at once, so the next part's slug is picked against this one.
+      store.putDoc(doc);
+      parts.push({ doc, created: true });
+    }
+    for (const content of name.contents) {
+      content.parts.forEach((body, i) => {
+        const { doc } = parts[i];
+        const rev = this.makeRevision(doc.id, {
+          parents: doc.headId === '' ? [] : [doc.headId],
+          title:
+            i === 0
+              ? name.title
+              : partTitle(name.title, i + 1, content.parts.length),
+          body,
+          author: actor.address,
+          cause: 'import',
+          summary: `imported ${content.hash.slice(0, 12)}`,
+          sealed: true,
+          numbered: true,
+          at: content.mtime,
+        });
+        store.insertRevision(rev);
+        this.setHead(doc, rev, actor.address, content.mtime);
+        store.putDoc(doc);
+      });
+      store.markImported(
+        'team',
+        name.slug,
+        content.hash,
+        parts[0].doc.id,
+        this.nowIso()
+      );
+    }
+    const at = this.nowIso();
+    parts.forEach(({ doc, created }, i) => {
+      const head = this.headOf(doc);
+      this.reindex(doc, head);
+      this.rebuildMentions(doc, head);
+      const targets: LinkTarget[] = [];
+      if (i > 0) targets.push({ type: 'doc', id: parts[i - 1].doc.id });
+      if (i + 1 < parts.length)
+        targets.push({ type: 'doc', id: parts[i + 1].doc.id });
+      if (link !== null && !(link.type === 'doc' && link.id === doc.id))
+        targets.push(link);
+      // A link that already exists keeps its rel, so a re-import never demotes a spec.
+      const linked = store.links({ docId: doc.id });
+      for (const target of targets) {
+        const has = linked.some(
+          (l) =>
+            l.source === 'manual' &&
+            l.targetType === target.type &&
+            l.targetId === target.id
+        );
+        if (!has) this.putLink(actor, doc, target, 'context', false, at);
+      }
+      store.putDoc(doc);
+      this.outbox.push({
+        doc: doc.id,
+        scope: 'team',
+        kind: created ? 'created' : 'sealed',
+        author: actor.address,
+        rev: head.id,
+        summary: 'imported',
+      });
+    });
+  }
+
+  // A new doc row for an import; its head is set by its first revision.
+  private importDocRow(
+    actor: DocsActor,
+    slug: string,
+    k: number,
+    origin: string,
+    at: string
+  ): DocRow {
+    // pickSlug derives from a "title" through docSlug, which leaves a valid slug as it is.
+    const handle = this.pickSlug(
+      'team',
+      undefined,
+      k === 1 ? slug : partSlug(slug, k)
+    );
+    return {
+      id: this.newId('doc'),
+      ns: 'team',
+      slug: handle,
+      handle,
+      title: slug,
+      scope: 'team',
+      ownerIdentity: null,
+      ownerHuman: null,
+      status: 'draft',
+      archivedFrom: null,
+      restoredStatus: null,
+      restoredAt: null,
+      headId: '',
+      reviewedRev: null,
+      unreviewed: false,
+      conflicted: false,
+      origin,
+      publishedPath: null,
+      publishedRev: null,
+      publishedTask: null,
+      publishedCommit: null,
+      createdBy: actor.address,
+      createdAt: at,
+      updatedBy: actor.address,
+      updatedAt: at,
+      indexedHash: null,
+    };
+  }
+
   // ---- reads ----------------------------------------------------------------
 
   read(
@@ -2020,6 +2357,9 @@ export class DocsService {
       });
       reindexed++;
     }
+    const dayAgo = new Date(now.getTime() - 24 * HOUR_MS).toISOString();
+    for (const id of store.idleImportSessions(dayAgo))
+      store.deleteImportSession(id);
     store.setMeta('sweep:last', now.toISOString());
     return { sealed, reindexed };
   }

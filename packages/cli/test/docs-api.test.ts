@@ -8,6 +8,7 @@ let seen: {
   method: string;
   path: string;
   auth: string | null;
+  type: string | null;
   body: string;
 }[] = [];
 beforeEach(() => {
@@ -21,6 +22,7 @@ beforeEach(() => {
         method: req.method,
         path: `${url.pathname}${url.search}`,
         auth: req.headers.get('authorization'),
+        type: req.headers.get('content-type'),
         body: await req.text(),
       });
       if (url.pathname === '/api/docs/archived/body') {
@@ -93,6 +95,30 @@ describe('createDocsApi', () => {
     expect(err).toMatchObject({
       message: 'archived; restore it first (field: doc)',
     });
+  });
+
+  it('uploads import contents as raw octet-stream bytes and commits a dry run', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await api.putImportContent(
+      'imp-1',
+      'abc',
+      new TextEncoder().encode('# A\n')
+    );
+    await api.commitImport('imp-1', true);
+    expect(seen.map((s) => [s.method, s.path, s.type, s.body])).toEqual([
+      [
+        'PUT',
+        '/api/docs/imports/imp-1/contents/abc',
+        'application/octet-stream',
+        '# A\n',
+      ],
+      [
+        'POST',
+        '/api/docs/imports/imp-1/commit?dryRun=1',
+        'application/json',
+        '{}',
+      ],
+    ]);
   });
 
   it('throws a CliError naming the field for other failures', async () => {

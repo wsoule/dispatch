@@ -3,7 +3,7 @@ import { DOCS_LIMITS } from '@dispatch/core';
 import { errorResponse, requireJsonContentType } from '../api/http.js';
 
 // Reads a request body without ever holding more than `maxBytes` of it.
-async function readBoundedBytes(
+export async function readBoundedBytes(
   req: Request,
   maxBytes: number
 ): Promise<Uint8Array | Response> {

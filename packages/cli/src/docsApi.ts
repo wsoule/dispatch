@@ -20,6 +20,40 @@ type DocSaveOutcome =
   | { ok: true; result: DocSaveResult }
   | { ok: false; conflict: DocConflict };
 
+// One file of an import manifest, as the daemon's import takes it.
+interface ImportFileInfo {
+  path: string;
+  name: string;
+  mtime: string;
+  bytes: number;
+  hash: string;
+}
+
+// The import's count-parity report, mirrored from the daemon's (the CLI cannot import the server).
+export interface ImportReportInfo {
+  dryRun: boolean;
+  files: number;
+  names: number;
+  distinctContents: number;
+  docsCreated: number;
+  docsExisting: number;
+  partDocsCreated: number;
+  contentsImported: number;
+  splitContents: number;
+  revisionsCreated: number;
+  duplicates: number;
+  alreadyPresent: number;
+  tombstoned: number;
+  tombstonedNames: number;
+  failedNames: number;
+  errors: {
+    path: string;
+    reason: 'invalid' | 'too-large' | 'not UTF-8' | 'missing';
+    detail: string;
+  }[];
+  parity: { files: boolean; names: boolean };
+}
+
 export interface DocsApi {
   list(params?: {
     taskId?: string;
@@ -76,6 +110,13 @@ export interface DocsApi {
   setStatus(ref: string, status: DocStatus): Promise<DocRecord>;
   reviewed(ref: string): Promise<DocRecord>;
   remove(ref: string): Promise<void>;
+  openImport(
+    files: ImportFileInfo[],
+    link?: string
+  ): Promise<{ id: string; need: string[] }>;
+  putImportContent(id: string, hash: string, bytes: Uint8Array): Promise<void>;
+  commitImport(id: string, dryRun: boolean): Promise<ImportReportInfo>;
+  deleteImport(id: string): Promise<void>;
 }
 
 const docPath = (ref: string): string => `/api/docs/${encodeURIComponent(ref)}`;
@@ -181,6 +222,37 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
     reviewed: (ref) => json('POST', `${docPath(ref)}/reviewed`, {}),
     remove: async (ref) => {
       await call('DELETE', docPath(ref));
+    },
+    openImport: (files, link) =>
+      json(
+        'POST',
+        '/api/docs/imports',
+        link === undefined ? { files } : { files, link }
+      ),
+    // Raw bytes, not JSON: the daemon takes contents only as octet-stream.
+    putImportContent: async (id, hash, bytes) => {
+      const res = await fetch(
+        `${baseUrl}/api/docs/imports/${encodeURIComponent(id)}/contents/${encodeURIComponent(hash)}`,
+        {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/octet-stream',
+            authorization: `Bearer ${token}`,
+          },
+          body: bytes,
+        }
+      );
+      if (!res.ok)
+        throw cliError(res.status, await res.json().catch(() => null));
+    },
+    commitImport: (id, dryRun) =>
+      json(
+        'POST',
+        `/api/docs/imports/${encodeURIComponent(id)}/commit${dryRun ? '?dryRun=1' : ''}`,
+        {}
+      ),
+    deleteImport: async (id) => {
+      await call('DELETE', `/api/docs/imports/${encodeURIComponent(id)}`);
     },
   };
 }

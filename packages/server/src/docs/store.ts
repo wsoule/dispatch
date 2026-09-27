@@ -928,6 +928,128 @@ export class SqliteDocStore {
     ).map((r) => ({ doc: toDoc(r), body: r.head_body }));
   }
 
+  // Import sessions: a manifest and its uploaded contents, plus what earlier imports brought in.
+
+  putImportSession(s: {
+    id: string;
+    createdBy: string;
+    createdAt: string;
+    touchedAt: string;
+    manifest: string;
+    link: string | null;
+  }): void {
+    this.run(
+      'INSERT OR REPLACE INTO import_sessions (id, created_by, created_at, touched_at, manifest_json, link) VALUES (?, ?, ?, ?, ?, ?)',
+      [s.id, s.createdBy, s.createdAt, s.touchedAt, s.manifest, s.link]
+    );
+  }
+
+  // An open import: who opened it, when it was last used, its manifest as JSON
+  // and the `type:id` every imported doc links as context.
+  importSession(id: string): {
+    id: string;
+    createdBy: string;
+    touchedAt: string;
+    manifest: string;
+    link: string | null;
+  } | null {
+    const r = this.one<{
+      id: string;
+      created_by: string;
+      touched_at: string;
+      manifest_json: string;
+      link: string | null;
+    }>(
+      'SELECT id, created_by, touched_at, manifest_json, link FROM import_sessions WHERE id = ?',
+      [id]
+    );
+    return r === undefined
+      ? null
+      : {
+          id: r.id,
+          createdBy: r.created_by,
+          touchedAt: r.touched_at,
+          manifest: r.manifest_json,
+          link: r.link,
+        };
+  }
+
+  importSessionsBy(by: string): string[] {
+    return this.all<{ id: string }>(
+      'SELECT id FROM import_sessions WHERE created_by = ?',
+      [by]
+    ).map((r) => r.id);
+  }
+
+  idleImportSessions(beforeIso: string): string[] {
+    return this.all<{ id: string }>(
+      'SELECT id FROM import_sessions WHERE touched_at < ?',
+      [beforeIso]
+    ).map((r) => r.id);
+  }
+
+  deleteImportSession(id: string): void {
+    this.transaction(() => {
+      this.run('DELETE FROM import_contents WHERE import_id = ?', [id]);
+      this.run('DELETE FROM import_sessions WHERE id = ?', [id]);
+    });
+  }
+
+  touchImportSession(id: string, at: string): void {
+    this.run('UPDATE import_sessions SET touched_at = ? WHERE id = ?', [
+      at,
+      id,
+    ]);
+  }
+
+  putImportContent(id: string, hash: string, bytes: Uint8Array): void {
+    this.run(
+      'INSERT OR REPLACE INTO import_contents (import_id, hash, body) VALUES (?, ?, ?)',
+      [id, hash, bytes]
+    );
+  }
+
+  importContent(id: string, hash: string): Uint8Array | null {
+    return (
+      this.one<{ body: Uint8Array }>(
+        'SELECT body FROM import_contents WHERE import_id = ? AND hash = ?',
+        [id, hash]
+      )?.body ?? null
+    );
+  }
+
+  // Bytes already uploaded to a session, other than `except`'s, for its 64 MiB bound.
+  importContentBytes(id: string, except = ''): number {
+    return (
+      this.one<{ b: number | null }>(
+        'SELECT SUM(LENGTH(body)) AS b FROM import_contents WHERE import_id = ? AND hash != ?',
+        [id, except]
+      )?.b ?? 0
+    );
+  }
+
+  isImported(ns: string, slug: string, hash: string): boolean {
+    return (
+      (this.one<{ c: number }>(
+        'SELECT COUNT(*) AS c FROM imported WHERE ns = ? AND slug = ? AND hash = ?',
+        [ns, slug, hash]
+      )?.c ?? 0) > 0
+    );
+  }
+
+  markImported(
+    ns: string,
+    slug: string,
+    hash: string,
+    docId: string,
+    at: string
+  ): void {
+    this.run(
+      'INSERT OR IGNORE INTO imported (ns, slug, hash, doc_id, at) VALUES (?, ?, ?, ?, ?)',
+      [ns, slug, hash, docId, at]
+    );
+  }
+
   meta(key: string): string | null {
     return (
       this.one<{ value: string }>('SELECT value FROM meta WHERE key = ?', [key])

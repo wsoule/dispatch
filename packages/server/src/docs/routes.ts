@@ -5,15 +5,21 @@ import type {
   LinkTarget,
   LinkTargetType,
 } from '@dispatch/core';
-import { DOC_STATUSES, LINK_RELS, LINK_TARGET_TYPES } from '@dispatch/core';
+import {
+  DOC_STATUSES,
+  DOCS_LIMITS,
+  LINK_RELS,
+  LINK_TARGET_TYPES,
+} from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
-import { jsonResponse } from '../api/http.js';
+import { errorResponse, jsonResponse } from '../api/http.js';
 import { DocConflictError, DOCS_ERROR_STATUS, DocsError } from './errors.js';
-import { readBoundedJson } from './http.js';
+import { readBoundedBytes, readBoundedJson } from './http.js';
 import { parseOps } from './ops.js';
 import { indexLineText } from './prompt.js';
 import type { DocsActor, DocsService } from './service.js';
+import type { ImportFile } from './transfer.js';
 
 // /api/docs* over DocsService. api.ts resolves the principal before this runs;
 // every DocsError maps to its status here.
@@ -129,6 +135,84 @@ function links(
   });
 }
 
+// An ISO-8601 timestamp, returned in its canonical toISOString form.
+function isoTime(value: unknown, field: string): string {
+  const ms = Date.parse(str(value, field));
+  if (Number.isNaN(ms)) throw invalid(field, 'expected an ISO timestamp');
+  return new Date(ms).toISOString();
+}
+
+// An import manifest: [{ path, name, mtime, bytes, hash }].
+function importManifest(value: unknown): ImportFile[] {
+  if (!Array.isArray(value)) throw invalid('files', 'expected a list');
+  return value.map((raw: unknown, i) => {
+    const field = `files[${i}]`;
+    if (typeof raw !== 'object' || raw === null) {
+      throw invalid(field, 'expected an object');
+    }
+    const f = raw as Record<string, unknown>;
+    if (
+      typeof f.bytes !== 'number' ||
+      !Number.isInteger(f.bytes) ||
+      f.bytes < 0
+    ) {
+      throw invalid(`${field}.bytes`, 'expected a byte count');
+    }
+    return {
+      path: str(f.path, `${field}.path`),
+      name: str(f.name, `${field}.name`),
+      mtime: isoTime(f.mtime, `${field}.mtime`),
+      bytes: f.bytes,
+      hash: str(f.hash, `${field}.hash`),
+    };
+  });
+}
+
+// /api/docs/imports*: open a session, upload raw contents, commit or drop it.
+async function importRoute(
+  req: Request,
+  docs: DocsService,
+  actor: DocsActor,
+  rest: readonly string[],
+  url: URL,
+  body: () => Promise<Record<string, unknown>>
+): Promise<Response | null> {
+  const method = req.method;
+  if (rest.length === 1 && method === 'POST') {
+    const b = await body();
+    const link = b.link === undefined ? null : parseTarget(b.link, 'link');
+    const opened = docs.openImport(actor, {
+      files: importManifest(b.files),
+      link,
+    });
+    return jsonResponse(opened, 201);
+  }
+  if (rest.length < 2) return null;
+  const id = decode(rest[1], 'import');
+  if (rest.length === 4 && rest[2] === 'contents' && method === 'PUT') {
+    // A cross-origin page cannot send this content type without a preflight.
+    if (req.headers.get('content-type') !== 'application/octet-stream') {
+      return errorResponse(
+        415,
+        'expected content-type: application/octet-stream'
+      );
+    }
+    const bytes = await readBoundedBytes(req, DOCS_LIMITS.importContentBytes);
+    if (bytes instanceof Response) return bytes;
+    docs.putImportContent(actor, id, decode(rest[3], 'hash'), bytes);
+    return new Response(null, { status: 204 });
+  }
+  if (rest.length === 3 && rest[2] === 'commit' && method === 'POST') {
+    await body();
+    return jsonResponse(docs.commitImport(actor, id, flag(url, 'dryRun')));
+  }
+  if (rest.length === 2 && method === 'DELETE') {
+    docs.deleteImport(actor, id);
+    return new Response(null, { status: 204 });
+  }
+  return null;
+}
+
 function errorFor(err: DocsError): Response {
   const body: Record<string, unknown> = { error: err.message, code: err.code };
   if (err.field !== undefined) body.field = err.field;
@@ -240,6 +324,8 @@ export async function handleDocsRoute(
     }
 
     const head = rest[0];
+    if (head === 'imports')
+      return await importRoute(req, docs, actor, rest, url, body);
     if (rest.length === 1 && method === 'GET') {
       if (head === 'search') {
         const hits = docs.search(actor, {
