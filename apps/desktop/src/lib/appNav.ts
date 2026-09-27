@@ -277,6 +277,7 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         activePrNumber: null,
         impactSubject: null,
         activeTaskId: null,
+        threadFocus: null,
       };
     case 'setProjectView': {
       const view = normalizeProjectView(action.view);

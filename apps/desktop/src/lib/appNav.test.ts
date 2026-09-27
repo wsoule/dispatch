@@ -686,4 +686,14 @@ describe('threads navigation', () => {
     expect(state.threadFocus).toBe('m-02');
     expect(state.history).toHaveLength(depth);
   });
+
+  test("switching projects drops the open thread, which belongs to the old project's daemon", () => {
+    let state = navReducer(initialNavState, {
+      type: 'openThread',
+      messageId: 'm-01',
+    });
+    state = navReducer(state, { type: 'selectProject', projectId: 'other' });
+    state = navReducer(state, { type: 'setProjectView', view: 'threads' });
+    expect(state.threadFocus).toBeNull();
+  });
 });
