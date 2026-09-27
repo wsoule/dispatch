@@ -124,6 +124,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Previews',
     'Notifications',
     'Members',
+    'Connected agents',
     'Board sync',
     'Linear',
     'License',
@@ -409,6 +410,20 @@ function tierData(
       syncBoardNow: () => Promise.resolve(sync),
       fetchTeamTokens: () => Promise.resolve([]),
       fetchTeamAddress: () => Promise.resolve({ origins: [] }),
+      listAgentRoster: () =>
+        Promise.resolve({
+          agents: [
+            {
+              address: 'agent:wyat/cursor.macbook',
+              displayName: 'cursor.macbook',
+              client: 'cursor',
+              status: 'pending',
+              muted: false,
+              approvedBy: null,
+              createdAt: '2026-09-20T10:00:00.000Z',
+            },
+          ],
+        }),
     } as unknown as ApiClient,
     presence: [],
     ...rest,
@@ -693,6 +708,33 @@ describe('below the decide tier, what has its own route stays usable', () => {
     ]) {
       expect(isDisabled(control)).toBe(false);
     }
+  });
+});
+
+// Anyone can read the roster; approving, muting and revoking need decide.
+describe('Connected agents', () => {
+  const PENDING = 'agent:wyat/cursor.macbook';
+  const actions = () =>
+    ['Approve', 'Mute', 'Revoke'].map((name) => ({
+      name,
+      disabled: isDisabled(
+        screen.getByRole('button', { name: `${name} ${PENDING}` })
+      ),
+    }));
+
+  test('below decide, the roster shows with its actions locked and the reason', async () => {
+    renderAt(tierData({ myTier: 'request' }), 'connected-agents');
+    expect(await screen.findByText(PENDING)).toBeDefined();
+    expect(screen.queryByRole('note')).toBeNull();
+    expect(headingLock('Agents')).toBe(NEEDS_DECIDE);
+    expect(actions().every((a) => a.disabled)).toBe(true);
+  });
+
+  test('at decide, every action is open', async () => {
+    renderAt(tierData({ myTier: 'decide' }), 'connected-agents');
+    expect(await screen.findByText(PENDING)).toBeDefined();
+    expect(headingLock('Agents')).toBeNull();
+    expect(actions().some((a) => a.disabled)).toBe(false);
   });
 });
 

@@ -78,6 +78,7 @@ export type SettingsPage =
   | 'previews'
   | 'notifications'
   | 'team'
+  | 'connected-agents'
   | 'sync'
   | 'integrations'
   | 'license'

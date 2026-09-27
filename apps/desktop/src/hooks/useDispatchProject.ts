@@ -45,6 +45,7 @@ import type { QueryClient } from '@tanstack/react-query';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
+import { agentRosterKey, mayChangeAgentRoster } from '../lib/agentRoster';
 import { hideArchivedRuns } from '../lib/archiveFilter';
 import {
   configChangedQueryKeys,
@@ -1460,6 +1461,12 @@ export function useDispatchProject(
               : null;
             if (note !== null && !foldsIntoOpenApproval(message, openNow)) {
               void notify(note.title, note.body, note.kind);
+            }
+            // A registration gate adds a pending agent; any answer may settle one.
+            if (mayChangeAgentRoster(message)) {
+              void queryClient.invalidateQueries({
+                queryKey: agentRosterKey(port),
+              });
             }
           } else if (event.type === 'plan.changed') {
             void queryClient.invalidateQueries({
