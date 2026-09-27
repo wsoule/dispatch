@@ -134,6 +134,49 @@ describe('Composer', () => {
     expect(screen.queryByText('task:t-1a2b3c')).toBeNull();
   });
 
+  it('ties the recipient list to the text box, so the highlighted recipient is announced', () => {
+    render(
+      <Composer
+        known={KNOWN}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+      />
+    );
+    type('@');
+    const list = screen.getByRole('listbox', { name: 'Recipients' });
+    expect(box().getAttribute('aria-controls')).toBe(list.id);
+    expect(box().getAttribute('aria-autocomplete')).toBe('list');
+    const options = screen.getAllByRole('option');
+    expect(options.length).toBeGreaterThan(1);
+    expect(box().getAttribute('aria-activedescendant')).toBe(options[0]?.id);
+    press('ArrowDown');
+    expect(box().getAttribute('aria-activedescendant')).toBe(options[1]?.id);
+    press('Escape');
+    expect(box().getAttribute('aria-activedescendant')).toBeNull();
+  });
+
+  it('says there is no match outside the list, and lets Tab and Shift+Tab leave', () => {
+    render(
+      <Composer
+        known={KNOWN}
+        disabledReason={null}
+        label={label}
+        onSend={mock(() => Promise.resolve(SENT))}
+      />
+    );
+    type('@zzz');
+    expect(screen.queryByRole('listbox') === null).toBe(true);
+    expect(
+      screen.getByText('No match. Type kind:id, then Enter.')
+    ).toBeTruthy();
+    // fireEvent returns false when a handler kept the key from moving focus.
+    expect(fireEvent.keyDown(box(), { key: 'Tab' })).toBe(true);
+    type('@t-1a');
+    expect(fireEvent.keyDown(box(), { key: 'Tab', shiftKey: true })).toBe(true);
+    expect(box().value).toBe('@t-1a');
+  });
+
   it('Escape drops the @token being completed', () => {
     render(
       <Composer

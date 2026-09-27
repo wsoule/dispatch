@@ -1,6 +1,6 @@
 import type { SendResult } from '@dispatch/client';
 import type { KeyboardEvent } from 'react';
-import { useMemo, useState } from 'react';
+import { useId, useMemo, useState } from 'react';
 
 import type {
   ComposeKind,
@@ -68,6 +68,11 @@ export function Composer({
     [query, known]
   );
   const wake = wakeChoice ?? wakeDefault(to);
+  const listId = useId();
+  const optionId = (index: number) => `${listId}-option-${index}`;
+  const listed = query !== null && matches.length > 0;
+  // The list can shrink under the highlight when the known addresses change.
+  const active = Math.min(highlight, Math.max(matches.length - 1, 0));
 
   const pick = (index: number) => {
     if (query === null) return;
@@ -94,10 +99,14 @@ export function Composer({
       setHighlight((h) =>
         matches.length === 0 ? 0 : (h + step + matches.length) % matches.length
       );
-    } else if (event.key === 'Enter' || event.key === 'Tab') {
+    } else if (
+      event.key === 'Enter' ||
+      // Tab picks a listed match; with none, or with Shift, it moves focus as usual.
+      (event.key === 'Tab' && !event.shiftKey && matches.length > 0)
+    ) {
       event.preventDefault();
       event.stopPropagation();
-      pick(highlight);
+      pick(active);
     } else if (event.key === 'Escape') {
       event.preventDefault();
       event.stopPropagation();
@@ -134,36 +143,40 @@ export function Composer({
       className="flex flex-col gap-1.5"
       onKeyDownCapture={onKeyDownCapture}
     >
-      {query !== null && (
+      {listed && (
         <ul
+          id={listId}
           role="listbox"
           aria-label="Recipients"
           className="bg-surface-quaternary rounded-card border-border-strong max-h-48 overflow-y-auto border-[0.5px] p-1 text-[13px]"
         >
-          {matches.length === 0 ? (
-            <li className="text-muted-foreground px-2 py-1">
-              No match. Type kind:id, then Enter.
+          {matches.map((match, i) => (
+            <li
+              key={match.address}
+              id={optionId(i)}
+              role="option"
+              aria-selected={i === active}
+              className={cn(
+                'rounded-control cursor-pointer px-2 py-1',
+                i === active && 'bg-surface-hover'
+              )}
+              onMouseDown={(event) => {
+                event.preventDefault();
+                pick(i);
+              }}
+            >
+              {match.label}
             </li>
-          ) : (
-            matches.map((match, i) => (
-              <li
-                key={match.address}
-                role="option"
-                aria-selected={i === highlight}
-                className={cn(
-                  'rounded-control cursor-pointer px-2 py-1',
-                  i === highlight && 'bg-surface-hover'
-                )}
-                onMouseDown={(event) => {
-                  event.preventDefault();
-                  pick(i);
-                }}
-              >
-                {match.label}
-              </li>
-            ))
-          )}
+          ))}
         </ul>
+      )}
+      {query !== null && !listed && (
+        <p
+          role="status"
+          className="bg-surface-quaternary rounded-card border-border-strong text-muted-foreground border-[0.5px] px-3 py-2 text-[13px]"
+        >
+          No match. Type kind:id, then Enter.
+        </p>
       )}
       <PromptBar
         value={body}
@@ -184,6 +197,9 @@ export function Composer({
         disabled={disabledReason !== null || sending}
         placeholder="Write a message… type @ to add a recipient"
         ariaLabel="New message"
+        completion={
+          listed ? { listId, activeOptionId: optionId(active) } : undefined
+        }
       />
       <div className="flex flex-wrap items-center gap-3">
         <SegmentedControl
