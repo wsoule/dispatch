@@ -151,16 +151,20 @@ input is validated. A non-participant therefore cannot tell a message that
 exists from one that does not ([§13.5](13-security-and-privacy.md#s13.5)).
 
 **Replies to an ended session.** In a reply, an entry of `to` that is the reply
-target's sender, when that sender is a session that is no longer live and stands
-for a work item, is rewritten to that work item, so the work item's live or next
-session hears the reply. Entries that become equal are collapsed, and the stored
-`to` is the rewritten list. A reply to an ended auxiliary session is not
-rewritten; its delivery is held on the session ([§6.1](06-delivery.md#s6.1)).
-(pinned rule 5; vectors:
+target's sender or one of the target's `to` addresses, when that entry is a
+session that is no longer live and stands for a work item, is rewritten to that
+work item, so the work item's live or next session hears the reply. Entries that
+become equal are collapsed, and the stored `to` is the rewritten list. A reply
+to an ended auxiliary session is not rewritten; its delivery is held on the
+session ([§6.1](06-delivery.md#s6.1)). Any other ended session a reply names
+fails as [§6.1](06-delivery.md#s6.1) says. (pinned rule 5; vectors:
 `core.answers.a-reply-to-an-ended-session-goes-to-its-work-item`,
 `core.answers.a-reply-reaches-the-successor-session`,
 `core.answers.a-reply-rewrites-and-collapses-an-ended-session`,
-`core.answers.a-reply-to-an-ended-auxiliary-session-is-held-on-it`)
+`core.answers.a-reply-to-an-ended-auxiliary-session-is-held-on-it`,
+`core.answers.a-reply-to-an-ended-recipient-goes-to-its-work-item`,
+`core.answers.a-reply-to-an-ended-recipient-reaches-the-successor-session`,
+`core.answers.a-reply-naming-an-ended-session-its-target-never-reached-fails`)
 
 **Replying to a message.** A host MAY offer a shorthand that replies to one
 message: it sends to the target's sender, as an `answer` when the target is a

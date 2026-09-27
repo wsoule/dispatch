@@ -830,6 +830,42 @@
         "noOtherMessages": true,
         "calls": []
       }
+    },
+    {
+      "id": "core.wake.a-humans-wake-to-a-session-of-no-work-item-fails",
+      "title": "A human's wake request naming an ended session that stands for no work item fails invalid on its to[] slot, and nothing is woken",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["6.1", "6.5"],
+      "given": {
+        "workItems": [
+          { "id": "t-000001", "liveSession": "run:r-000001" },
+          { "id": "t-000002" }
+        ],
+        "owner": "human:wyat",
+        "rulings": { "task:t-000002": "allow", "run:r-0000ff": "allow" },
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["task:t-000002", "run:r-0000ff"],
+            "kind": "message",
+            "body": "rename foo",
+            "wake": "request"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "to[1]" } }
+        ],
+        "noOtherMessages": true,
+        "calls": []
+      }
     }
   ]
 }
