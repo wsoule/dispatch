@@ -111,6 +111,11 @@ function fold(
     licensePublicKey: extra.licensePublicKey ?? null,
   });
 }
+const recoveryProof = (replica: string) =>
+  signText(
+    RECOVERY.signPriv,
+    `${TAG.recovery}\n${FOUND.hash.slice(0, 32)}\n${replica}\n${keys.get(replica)?.signPub ?? ''}`
+  );
 const roles = (v: ReturnType<typeof fold>) =>
   Object.fromEntries([...v.members.values()].map((m) => [m.replica, m.role]));
 
@@ -259,6 +264,49 @@ describe('foldRoster', () => {
     ]);
     expect(v.members.has(A2)).toBe(false);
     expect(v.recoveryPub).toBe(next.signPub);
+  });
+
+  it("reads a pending replica's recover only as its first roster op", () => {
+    const v = fold([
+      op(C, 2, 100, {
+        action: 'invite',
+        id: 'i-cy',
+        pub: 'P',
+        handle: 'cy',
+        expires: '2026-10-03T00:00:00.000Z',
+      }),
+      op(C, 3, 200, { action: 'recover', proof: recoveryProof(C) }),
+    ]);
+    expect(v.members.has(C)).toBe(false);
+    expect(v.problems).toContainEqual({
+      subject: `op:${C}:3`,
+      message: `${C}'s recover is not its first roster op; ignored`,
+    });
+  });
+
+  it('ignores a recover above a revocation of its replica, wherever it is positioned', () => {
+    const cut = revoke(A, 2, 200, C, 1);
+    const byD = op(D, 2, 300, { action: 'recover', proof: recoveryProof(D) });
+    const v = fold([
+      op(C, 2, 100, { action: 'recover', proof: recoveryProof(C) }),
+      cut,
+      byD,
+    ]);
+    expect(v.revoked.get(C)?.handle).toBeNull();
+    // C never used the code, so D's recover admits D.
+    expect(v.members.get(D)).toMatchObject({ role: 'admin', recovered: true });
+    // A build that cannot read C's recover reaches the same roster.
+    const older = fold([
+      op(C, 2, 100, { action: 'recover', proof: 'p', rv: 2 }),
+      cut,
+      byD,
+    ]);
+    expect(older.unknown).toBeNull();
+    expect([...older.members.keys()].sort()).toEqual(
+      [...v.members.keys()].sort()
+    );
+    expect(older.revoked).toEqual(v.revoked);
+    expect(older.people).toEqual(v.people);
   });
 
   it('takes seats from the roster license and counts people and hosts, not observers', () => {

@@ -669,13 +669,17 @@ function step(
   }
 }
 
-// Whether op is an unrevoked pending replica's first roster op, where its
-// recover goes, since a recover must directly follow the key op.
+// Whether op is an unrevoked pending replica's first roster op, the one place
+// the fold reads its recover.
 function atRecover(ctx: Context, ev: Evaluation, op: RosterOpRef): boolean {
   if (ev.holders.has(op.replica) || !ctx.input.keys.has(op.replica))
     return false;
-  if (ctx.firstSeq.get(op.replica) !== op.seq) return false;
-  return !ev.cuts.some(
+  return ctx.firstSeq.get(op.replica) === op.seq && !cutBySeq(ev, op);
+}
+
+// Whether an accepted revocation of op's publisher cuts op, by seq alone.
+function cutBySeq(ev: Evaluation, op: RosterOpRef): boolean {
+  return ev.cuts.some(
     (c) => c.kind === 'all' && c.target === op.replica && c.afterSeq < op.seq
   );
 }
@@ -812,8 +816,8 @@ function hostsStep(
   if (!target.observer) addPeople(ev, body.hosts);
 }
 
-// A pending replica's recover op admits it as an admin when its proof verifies
-// against the recovery key current at that position, once per key.
+// A pending replica's recover, its first roster op, admits it as an admin
+// when its proof verifies against the recovery key current there, once per key.
 function recoverStep(
   ctx: Context,
   ev: Evaluation,
@@ -826,8 +830,12 @@ function recoverStep(
     refuse(`${op.replica} is already admitted; its recover is ignored`);
     return;
   }
-  if (revokedBefore(ev, op.replica, op)) {
+  if (revokedBefore(ev, op.replica, op) || cutBySeq(ev, op)) {
     refuse(`${op.replica} was revoked and is never admitted again`);
+    return;
+  }
+  if (ctx.firstSeq.get(op.replica) !== op.seq) {
+    refuse(`${op.replica}'s recover is not its first roster op; ignored`);
     return;
   }
   if (key === undefined) {
