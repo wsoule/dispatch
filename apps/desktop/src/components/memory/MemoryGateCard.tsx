@@ -2,7 +2,7 @@ import type { ApiClient } from '@dispatch/client';
 import { useEffect, useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
-import type { ProposalCardModel } from '../../lib/memory';
+import type { EntryVersion, ProposalCardModel } from '../../lib/memory';
 import { proposalCardModel } from '../../lib/memory';
 import { DecideUnavailableNotice } from '../runs/DecideUnavailableNotice';
 import { Markdown } from '../runs/Markdown';
@@ -143,22 +143,34 @@ export function MemoryGateCard({
 function ProposalDetail({ model }: { model: ProposalCardModel }) {
   return (
     <div className="flex flex-col gap-2">
-      <div className="text-foreground font-medium">{model.title}</div>
       {model.diff === null ? (
-        <Markdown content={model.body} />
+        <>
+          <div className="text-foreground font-medium">{model.title}</div>
+          <Markdown content={model.body} />
+        </>
       ) : (
         <>
-          {model.diff.base !== null && (
-            <>
+          {model.diff.retired ? (
+            <span className="text-foreground">
+              This entry was retired after this was proposed; approving saves
+              this version as a new entry.
+            </span>
+          ) : (
+            model.diff.base !== null && (
               <span className="text-foreground">
                 This entry changed after this was proposed; approving replaces
                 the version it has now.
               </span>
-              <Version label="Proposed against" body={model.diff.base} />
-            </>
+            )
           )}
-          <Version label="Now" body={model.diff.current} />
-          <Version label="Proposed" body={model.diff.proposed} />
+          {model.diff.base !== null && (
+            <Version label="Proposed against" version={model.diff.base} />
+          )}
+          <Version
+            label={model.diff.retired ? 'Now (retired)' : 'Now'}
+            version={model.diff.current}
+          />
+          <Version label="Proposed" version={model.diff.proposed} />
         </>
       )}
       <span>Reaches {model.reach}</span>
@@ -184,17 +196,18 @@ function ProposalDetail({ model }: { model: ProposalCardModel }) {
   );
 }
 
-// One version of a superseded entry's body, labelled.
-function Version({ label, body }: { label: string; body: string }) {
+// One labelled version of a superseded entry: its title, then its body.
+function Version({ label, version }: { label: string; version: EntryVersion }) {
   return (
     <div
       data-slot="memory-version"
       className="rounded-control border-border-chip border-[0.5px] px-2.5 py-2"
     >
-      <div className="text-foreground mb-1 text-[11px] font-medium">
+      <div className="text-muted-foreground mb-1 text-[11px] font-medium">
         {label}
       </div>
-      <Markdown content={body} />
+      <div className="text-foreground font-medium">{version.title}</div>
+      <Markdown content={version.body} />
     </div>
   );
 }

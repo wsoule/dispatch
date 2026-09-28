@@ -27,6 +27,12 @@ export function memoryQueryKey(
 /** A proposal with its target as proposed against (`base`) and as it is now. */
 export type ProposalRead = Awaited<ReturnType<ApiClient['getMemoryProposal']>>;
 
+/** One version of an entry, as a supersede's card shows it. */
+export interface EntryVersion {
+  title: string;
+  body: string;
+}
+
 export interface ProposalCardModel {
   action: MemoryProposalView['action'];
   /** The card's question, e.g. "Save this hazard to team memory?". */
@@ -39,9 +45,15 @@ export interface ProposalCardModel {
   body: string;
   author: string;
   sourceTask: string | null;
-  /** A supersede's body now and as proposed, plus the revision it was
-   *  proposed against once the entry changed since; null for other actions. */
-  diff: { current: string; base: string | null; proposed: string } | null;
+  /** A supersede's entry now and as proposed, plus the version it was proposed
+   *  against once its title or body changed since; null for other actions. */
+  diff: {
+    current: EntryVersion;
+    base: EntryVersion | null;
+    proposed: EntryVersion;
+    /** Retired since it was proposed, so approving adds a new entry instead. */
+    retired: boolean;
+  } | null;
   /** The proposal matches a personal entry of the author's operator. */
   matchedPersonal: boolean;
   /** Author-written text: why to retire, or what a late ledger row claims. */
@@ -63,6 +75,10 @@ function reachOf(
   return 'every run in this project, and teammates’';
 }
 
+function versionOf(entry: EntryVersion): EntryVersion {
+  return { title: entry.title, body: entry.body };
+}
+
 /** What a memory gate's card shows: the proposed entry, or for a retire the
  *  entry it would retire, never the personal entry it may match. */
 export function proposalCardModel(view: ProposalRead): ProposalCardModel {
@@ -76,13 +92,15 @@ export function proposalCardModel(view: ProposalRead): ProposalCardModel {
       : proposal.action === 'supersede'
         ? `Replace a ${proposal.scope} ${kind} with this version?`
         : `Retire this ${proposal.scope} ${kind}?`;
-  const currentBody = (view.current ?? view.base)?.body;
-  // A later revision means approving replaces a change the proposal never saw.
+  const now = view.current ?? view.base;
+  // Only a changed title or body is a change the proposal never saw; a pin,
+  // confirm or decay flip adds a revision too.
   const baseIfChanged =
     view.base !== null &&
     view.current !== null &&
-    view.base.rev !== view.current.rev
-      ? view.base.body
+    (view.base.title !== view.current.title ||
+      view.base.body !== view.current.body)
+      ? versionOf(view.base)
       : null;
   return {
     action: proposal.action,
@@ -97,11 +115,12 @@ export function proposalCardModel(view: ProposalRead): ProposalCardModel {
     diff:
       proposal.action === 'supersede' &&
       proposal.content !== null &&
-      currentBody !== undefined
+      now !== null
         ? {
-            current: currentBody,
+            current: versionOf(now),
             base: baseIfChanged,
-            proposed: proposal.content.body,
+            proposed: versionOf(proposal.content),
+            retired: view.current?.status === 'retired',
           }
         : null,
     matchedPersonal: proposal.matchedPersonal,

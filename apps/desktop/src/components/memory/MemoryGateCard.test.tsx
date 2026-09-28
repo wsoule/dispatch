@@ -112,6 +112,62 @@ describe('MemoryGateCard', () => {
     expect(screen.getByText(/changed after this was proposed/)).toBeTruthy();
   });
 
+  it('names each version’s title, so a title-only change shows', async () => {
+    renderCard(() =>
+      Promise.resolve(
+        read({
+          proposal: proposalView({
+            action: 'supersede',
+            target: 'mem-000001',
+            baseRev: 1,
+            content: content({ body: 'the agent version' }),
+          }),
+          base: entry({ rev: 1, title: 'pnpm builds' }),
+          current: entry({ rev: 2, title: 'pnpm 11 builds' }),
+        })
+      )
+    );
+    const against = await screen.findByText('pnpm builds');
+    expect(
+      against.closest('[data-slot="memory-version"]')?.textContent
+    ).toContain('Proposed against');
+    expect(
+      screen.getByText('pnpm 11 builds').closest('[data-slot="memory-version"]')
+        ?.textContent
+    ).toContain('Now');
+  });
+
+  it('says approving adds a new entry once the entry was retired since', async () => {
+    renderCard(() =>
+      Promise.resolve(
+        read({
+          proposal: proposalView({
+            action: 'supersede',
+            target: 'mem-000001',
+            baseRev: 1,
+            content: content({ body: 'the agent version' }),
+          }),
+          base: entry({ rev: 1, body: 'the old advice' }),
+          current: entry({
+            rev: 2,
+            body: 'the old advice',
+            status: 'retired',
+            statusReason: 'forgotten',
+            state: 'retired',
+          }),
+        })
+      )
+    );
+    const now = await screen.findByText('the old advice');
+    expect(now.closest('[data-slot="memory-version"]')?.textContent).toContain(
+      'Now (retired)'
+    );
+    expect(
+      screen.getByText(/retired after this was proposed/).textContent
+    ).toContain('as a new entry');
+    expect(screen.queryByText(/replaces the version it has now/)).toBeNull();
+  });
+
   it('says a personal match exists, and why a retire was asked for', async () => {
     renderCard(() =>
       Promise.resolve(

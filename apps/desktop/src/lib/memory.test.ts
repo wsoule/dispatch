@@ -44,7 +44,12 @@ describe('proposalCardModel', () => {
       current: entry({ body: 'old' }),
     });
     expect(model.ask).toBe('Replace a team hazard with this version?');
-    expect(model.diff).toEqual({ current: 'old', base: null, proposed: 'new' });
+    expect(model.diff).toEqual({
+      current: { title: 'pnpm builds', body: 'old' },
+      base: null,
+      proposed: { title: 'pnpm 11 ignores onlyBuiltDependencies', body: 'new' },
+      retired: false,
+    });
   });
 
   it('shows the version proposed against beside the current one once the entry changed', () => {
@@ -58,11 +63,68 @@ describe('proposalCardModel', () => {
       base: entry({ rev: 1, body: 'old' }),
       current: entry({ rev: 2, body: 'human fix' }),
     });
-    expect(model.diff).toEqual({
-      current: 'human fix',
-      base: 'old',
-      proposed: 'agent version',
+    expect(model.diff).toMatchObject({
+      current: { body: 'human fix' },
+      base: { body: 'old' },
+      proposed: { body: 'agent version' },
     });
+  });
+
+  // Pinning, confirming and decay each add a revision but change nothing shown.
+  it('shows no version proposed against when only the revision moved', () => {
+    const model = proposalCardModel({
+      proposal: proposal({
+        action: 'supersede',
+        target: 'mem-000001',
+        baseRev: 1,
+        content: content({ body: 'agent version' }),
+      }),
+      base: entry({ rev: 1 }),
+      current: entry({
+        rev: 4,
+        pinned: true,
+        trust: 'confirmed',
+        decay: 'stale',
+      }),
+    });
+    expect(model.diff?.base).toBeNull();
+  });
+
+  it('shows the version proposed against when only its title changed', () => {
+    const model = proposalCardModel({
+      proposal: proposal({
+        action: 'supersede',
+        target: 'mem-000001',
+        baseRev: 1,
+        content: content({ body: 'agent version' }),
+      }),
+      base: entry({ rev: 1, title: 'pnpm builds' }),
+      current: entry({ rev: 2, title: 'pnpm 11 builds' }),
+    });
+    expect(model.diff).toMatchObject({
+      base: { title: 'pnpm builds', body: 'old' },
+      current: { title: 'pnpm 11 builds', body: 'old' },
+    });
+  });
+
+  // Approving retires the target only while it is active, so nothing is replaced.
+  it('says a supersede’s entry was retired since it was proposed', () => {
+    const model = proposalCardModel({
+      proposal: proposal({
+        action: 'supersede',
+        target: 'mem-000001',
+        baseRev: 1,
+        content: content({ body: 'agent version' }),
+      }),
+      base: entry({ rev: 1 }),
+      current: entry({
+        rev: 2,
+        status: 'retired',
+        statusReason: 'forgotten',
+        state: 'retired',
+      }),
+    });
+    expect(model.diff).toMatchObject({ base: null, retired: true });
   });
 
   it('shows a retire as the entry it would retire, and why', () => {
