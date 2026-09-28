@@ -47,6 +47,7 @@ import { basename } from 'node:path';
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { answerRoot, approvedTasksOf, openHandoff } from './handoff.js';
@@ -81,6 +82,8 @@ export interface BridgeDeps {
   runEvidence(runId: string): readonly CommandEvidence[];
   runPatch(runId: string): string | null;
   prOpen(url: string): boolean;
+  // Those evidence and patch reads, kept per task's latest settled run.
+  runResults: RunResultsMemo;
   now?: () => Date;
 }
 
@@ -149,7 +152,8 @@ export class DaemonBridgePort implements BridgePort {
     const visible = new Set<string>(this.approvedTasks(caller));
     for (const row of this.deps.store.tasksOf(caller.address)) {
       visible.add(row.id);
-      for (const m of gatherFacts(this.deps, row).scope) visible.add(m.id);
+      for (const m of gatherFacts(this.deps, row, { work: false }).scope)
+        visible.add(m.id);
     }
     refs.forEach((ref, i) => {
       if (!visible.has(ref.id))
@@ -348,7 +352,7 @@ export class DaemonBridgePort implements BridgePort {
       return { reask: null };
     this.checkDurableLimits(caller, false);
     this.checkRefs(caller, input.refs);
-    const facts = gatherFacts(this.deps, row);
+    const facts = gatherFacts(this.deps, row, { work: false });
     const decision = decideState(facts);
     const common = {
       body: input.body,
@@ -478,7 +482,8 @@ export class DaemonBridgePort implements BridgePort {
   async cancel(caller: Caller, taskId: string): Promise<void> {
     const row = this.ownedRow(caller, taskId);
     if (row.canceledAt !== null) return;
-    if (TERMINAL_STATES.has(decideState(gatherFacts(this.deps, row)).state)) {
+    const facts = gatherFacts(this.deps, row, { work: false });
+    if (TERMINAL_STATES.has(decideState(facts).state)) {
       throw new A2AError(
         'TASK_NOT_CANCELABLE',
         'this task is already finished'

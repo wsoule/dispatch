@@ -79,7 +79,12 @@ function openGatesOf(
 
 // Everything the projection needs about one A2A task, read fresh. A dropped
 // recipient task fails only an unanswered ask, so a finished task stays final.
-export function gatherFacts(deps: BridgeDeps, row: TaskRow): TaskFacts {
+// `work: false` leaves out the run results, for a caller that only decides.
+export function gatherFacts(
+  deps: BridgeDeps,
+  row: TaskRow,
+  opts: { work?: boolean } = {}
+): TaskFacts {
   const root = deps.engine.getMessage(row.id);
   if (root === null) throw new Error(`a2a task ${row.id} has no root message`);
   const thread = deps.engine.thread(root.thread);
@@ -140,7 +145,10 @@ export function gatherFacts(deps: BridgeDeps, row: TaskRow): TaskFacts {
       ),
     // An approved handoff's run results; a draft or a declined one shares none.
     work:
-      task !== null && task !== 'deleted' && task.approved
+      opts.work !== false &&
+      task !== null &&
+      task !== 'deleted' &&
+      task.approved
         ? workFacts(deps, task.id, task.status)
         : {},
     clientIds: Object.fromEntries(deps.messages.idemKeysFor(own)),

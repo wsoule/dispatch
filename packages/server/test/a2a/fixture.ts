@@ -2,6 +2,7 @@ import { openA2ADb, SqliteA2AStore } from '@dispatch/a2a';
 import type { A2AConfig } from '@dispatch/core';
 import { CANONICAL_STATUSES, DEFAULT_A2A } from '@dispatch/core';
 
+import { RunResultsMemo } from '../../src/a2a/artifacts.js';
 import { tokenHash } from '../../src/a2a/auth.js';
 import { bridgeExternalPolicy } from '../../src/a2a/external.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
@@ -47,6 +48,7 @@ export async function bridgeFixture(
     runEvidence: () => [],
     runPatch: () => null,
     prOpen: () => false,
+    runResults: new RunResultsMemo(),
   };
   const changed: string[] = [];
   const watch = new BridgeWatch({
@@ -133,16 +135,22 @@ export async function approvedHandoff(f: Fixture, clientMessageId = 'c-h1') {
   };
 }
 
-// Makes deps.runs.list() report one extra RunMeta, as a landed run would leave it.
+// Makes deps.runs.list() report one extra RunMeta, as a landed run would leave
+// it (finished unless `state` says otherwise); returns that meta to mutate.
 export function stubRun(
   f: Fixture,
-  meta: Pick<RunMeta, 'id' | 'taskId' | 'kind' | 'createdAt'> & {
-    prUrl?: string;
-  }
-): void {
+  meta: Pick<RunMeta, 'id' | 'taskId' | 'kind' | 'createdAt'> &
+    Partial<Pick<RunMeta, 'state' | 'updatedAt' | 'prUrl'>>
+): RunMeta {
+  const run = {
+    state: 'finished',
+    updatedAt: meta.createdAt,
+    ...meta,
+  } as RunMeta;
   const real = f.deps.runs;
   f.deps.runs = {
-    list: () => [...real.list(), meta as RunMeta],
-    taskIdOfRun: (id) => (id === meta.id ? meta.taskId : real.taskIdOfRun(id)),
+    list: () => [...real.list(), run],
+    taskIdOfRun: (id) => (id === run.id ? run.taskId : real.taskIdOfRun(id)),
   };
+  return run;
 }

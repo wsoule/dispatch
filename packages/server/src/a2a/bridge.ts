@@ -13,8 +13,10 @@ import type { EventBus } from '../events.js';
 import { closeGate } from '../messaging/gates.js';
 import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
-import { runsDir } from '../orchestrator/paths.js';
+import { runsDir, transcriptPath } from '../orchestrator/paths.js';
+import { replayTranscript } from '../orchestrator/transcript.js';
 import type { AuthTier } from '../tiers.js';
+import { RunResultsMemo } from './artifacts.js';
 import { bridgeExternalPolicy } from './external.js';
 import type { GuardDeps, PatchGuard } from './guards.js';
 import {
@@ -180,7 +182,10 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       validateTask: deps.validateTask,
       createTask: deps.createTask,
       updateTask: deps.updateTask,
-      runEvidence: (id) => deps.orchestrator.getRun(id)?.evidence ?? [],
+      // Straight from the transcript: getRun would also recheck a failed run
+      // as though someone had opened it.
+      runEvidence: (id) =>
+        replayTranscript(transcriptPath(rootDir, id))?.evidence ?? [],
       // A run whose worktree and diff snapshot are both gone has no patch.
       runPatch: (id) => {
         try {
@@ -190,6 +195,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         }
       },
       prOpen: deps.prOpen,
+      runResults: new RunResultsMemo(),
     };
     const hub = new BridgeWatch({
       ...bridgeDeps,
