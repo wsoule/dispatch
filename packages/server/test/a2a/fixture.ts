@@ -10,6 +10,7 @@ import { DaemonBridgePort } from '../../src/a2a/port.js';
 import { BridgeWatch } from '../../src/a2a/watch.js';
 import { validateTaskInput } from '../../src/api.js';
 import { TaskCache } from '../../src/cache.js';
+import type { RunMeta } from '../../src/orchestrator/types.js';
 import { makeOrchestrator, openRecovered } from '../messaging/harness.js';
 
 // A bridge over a real engine and task store, with one approved client.
@@ -43,6 +44,9 @@ export async function bridgeFixture(
     validateTask: (input) => validateTaskInput(root, { ...input }),
     createTask: (input) => write(() => tasks.create(input)),
     updateTask: (id, patch) => write(() => tasks.update(id, patch)),
+    runEvidence: () => [],
+    runPatch: () => null,
+    prOpen: () => false,
   };
   const changed: string[] = [];
   const watch = new BridgeWatch({
@@ -98,5 +102,47 @@ export async function bridgeFixture(
       messaging.close();
       store.close();
     },
+  };
+}
+
+type Fixture = Awaited<ReturnType<typeof bridgeFixture>>;
+
+// A handoff the owner has approved; returns the A2A task id, its row and the draft.
+export async function approvedHandoff(f: Fixture, clientMessageId = 'c-h1') {
+  const opened = await f.port.open(f.caller, {
+    clientMessageId,
+    contextId: null,
+    kind: 'handoff',
+    to: null,
+    replyTo: null,
+    body: 'Please add limits.',
+    refs: [],
+    work: { skill: 'handoff', title: 'Rate-limit uploads' },
+  });
+  if (opened.kind !== 'task') throw new Error('expected a task');
+  const row = f.store.getTask(opened.taskId)!;
+  await f.messaging.engine.reply(
+    row.gate!,
+    { body: '', choice: 'approve' },
+    { address: 'human:wyat', canDecide: true }
+  );
+  return {
+    id: opened.taskId,
+    row: f.store.getTask(opened.taskId)!,
+    draft: f.tasks.get(row.dispatchTask!)!,
+  };
+}
+
+// Makes deps.runs.list() report one extra RunMeta, as a landed run would leave it.
+export function stubRun(
+  f: Fixture,
+  meta: Pick<RunMeta, 'id' | 'taskId' | 'kind' | 'createdAt'> & {
+    prUrl?: string;
+  }
+): void {
+  const real = f.deps.runs;
+  f.deps.runs = {
+    list: () => [...real.list(), meta as RunMeta],
+    taskIdOfRun: (id) => (id === meta.id ? meta.taskId : real.taskIdOfRun(id)),
   };
 }

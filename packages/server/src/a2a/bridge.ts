@@ -92,6 +92,8 @@ interface OpenBridgeDeps {
   validateTask: BridgeDeps['validateTask'];
   createTask: BridgeDeps['createTask'];
   updateTask: BridgeDeps['updateTask'];
+  // Whether the PR poll lists a URL as open; false until its first poll.
+  prOpen: BridgeDeps['prOpen'];
   orchestrator: Orchestrator;
   events: EventBus;
   ownerRef: string;
@@ -178,6 +180,16 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       validateTask: deps.validateTask,
       createTask: deps.createTask,
       updateTask: deps.updateTask,
+      runEvidence: (id) => deps.orchestrator.getRun(id)?.evidence ?? [],
+      // A run whose worktree and diff snapshot are both gone has no patch.
+      runPatch: (id) => {
+        try {
+          return deps.orchestrator.diff(id).patch;
+        } catch {
+          return null;
+        }
+      },
+      prOpen: deps.prOpen,
     };
     const hub = new BridgeWatch({
       ...bridgeDeps,

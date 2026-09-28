@@ -10,6 +10,7 @@ import { canonicalStatus } from '@dispatch/core';
 import type { Delivery, Message } from '@dispatch/protocol';
 import { gateOf } from '@dispatch/protocol';
 
+import { workFacts } from './artifacts.js';
 import { linkOf } from './handoff.js';
 import type { BridgeDeps } from './port.js';
 
@@ -137,7 +138,11 @@ export function gatherFacts(deps: BridgeDeps, row: TaskRow): TaskFacts {
           a.startsWith('task:') &&
           deps.tasks.get(a.slice('task:'.length))?.meta.status === 'dropped'
       ),
-    work: {},
+    // An approved handoff's run results; a draft or a declined one shares none.
+    work:
+      task !== null && task !== 'deleted' && task.approved
+        ? workFacts(deps, task.id, task.status)
+        : {},
     clientIds: Object.fromEntries(deps.messages.idemKeysFor(own)),
   };
 }

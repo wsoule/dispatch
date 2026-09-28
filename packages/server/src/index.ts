@@ -1370,6 +1370,8 @@ async function bootServer(
   orchestrator.setMemoryPort(memory);
   // After recovery, so the bridge reconciles against settled messaging state;
   // its listener opens only once the daemon's own ports are known (below).
+  // PrManager is built further down; until it is, no PR counts as open.
+  let prLookup: PrManager | null = null;
   const a2a = openA2ABridge({
     rootDir,
     messaging,
@@ -1390,6 +1392,7 @@ async function bootServer(
       events.broadcast({ type: 'task.changed' });
       return doc;
     },
+    prOpen: (url) => prLookup?.cachedPrByUrl(url) !== undefined,
     orchestrator,
     events,
     ownerRef: actorContext.humanRef,
@@ -1514,6 +1517,7 @@ async function bootServer(
     prCapability,
     opts.prCommandRunner
   );
+  prLookup = prManager;
 
   // Hand-merged run branches (a git merge/squash done in a plain checkout,
   // outside review() and outside any PR) never get their reviewedAt set by

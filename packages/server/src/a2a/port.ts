@@ -28,6 +28,7 @@ import {
 } from '@dispatch/a2a';
 import type {
   A2AConfig,
+  CommandEvidence,
   CreateInput,
   TaskDoc,
   TaskStorePort,
@@ -75,6 +76,11 @@ export interface BridgeDeps {
   validateTask(input: CreateInput): string | null;
   createTask(input: CreateInput): TaskDoc;
   updateTask(id: string, patch: UpdatePatch): TaskDoc;
+  // What a handoff's work artifacts read: a run's recorded command evidence,
+  // its patch against its base (null once it has none) and PR poll state.
+  runEvidence(runId: string): readonly CommandEvidence[];
+  runPatch(runId: string): string | null;
+  prOpen(url: string): boolean;
   now?: () => Date;
 }
 
