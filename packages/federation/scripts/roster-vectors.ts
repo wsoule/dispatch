@@ -259,6 +259,20 @@ function fightGrantsRight(first: string, second: string): RosterOpRef[] {
   ];
 }
 
+const REVOKED_ADMIN_CUTTER = [
+  admit(A, 2, 11, OBS, 'admin'),
+  revoke(A, 3, 17, OBS, 1),
+  admit(A, 5, 20, D, 'admin'),
+  admit(A, 6, 21, A2, 'admin'),
+  admit(A, 7, 25, C, 'admin'),
+  admit(A2, 2, 30, B, 'member'),
+  admit(C, 2, 33, B, 'admin'),
+  revoke(OBS, 2, 45, B, 1),
+  demote(B, 4, 50, D, 1),
+  demote(A, 8, 52, A2, 1),
+  revoke(D, 2, 57, A, 7),
+];
+
 export const SCENARIOS: readonly RosterScenario[] = [
   scenario('founding', []),
   scenario('fingerprint-mismatch', [
@@ -423,18 +437,13 @@ export const SCENARIOS: readonly RosterScenario[] = [
   ]),
   // OBS, an admin the founder revokes after its key op, revokes B; that must
   // not let D's revoke of the founder stand.
-  scenario('revoked-admin-cutter', [
-    admit(A, 2, 11, OBS, 'admin'),
-    revoke(A, 3, 17, OBS, 1),
-    admit(A, 5, 20, D, 'admin'),
-    admit(A, 6, 21, A2, 'admin'),
-    admit(A, 7, 25, C, 'admin'),
-    admit(A2, 2, 30, B, 'member'),
-    admit(C, 2, 33, B, 'admin'),
-    revoke(OBS, 2, 45, B, 1),
-    demote(B, 4, 50, D, 1),
-    demote(A, 8, 52, A2, 1),
-    revoke(D, 2, 57, A, 7),
+  scenario('revoked-admin-cutter', REVOKED_ADMIN_CUTTER),
+  // B2, pinned but never admitted, admits itself as an admin and then revokes
+  // the founder; the admit is void, so neither op moves the fight.
+  scenario('void-grant-cutter', [
+    ...REVOKED_ADMIN_CUTTER,
+    admit(B2, 2, 40, B2, 'admin'),
+    revoke(B2, 3, 41, A, 2),
   ]),
   // All accepted, these leave no admin: B's revoke of D, which makes C an
   // admin, is voided, and the re-run voids C's revoke of the founder too.

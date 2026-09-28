@@ -195,6 +195,8 @@ interface Context {
   reach: (replica: string) => ReadonlySet<string>;
   /** comparePositions, by index for the ops being folded. */
   order: (a: Position, b: Position) => number;
+  /** Whether a recover's proof verifies against a recovery key, memoized. */
+  proves: (recover: RosterOpRef, proof: string, pub: string) => boolean;
 }
 
 // Everything one walk over the ops in fold order derives, given the removals
@@ -219,6 +221,18 @@ interface Evaluation {
   /** Whether this evaluation keeps problems; only the one the view shows does. */
   notes: boolean;
   problems: Problem[];
+}
+
+// What reading a replica's rights needs: its grants, the cuts on it, the order.
+type Granted = Pick<Evaluation, 'cutsOn' | 'order' | 'grants'>;
+
+// The rights some fold accepting at least a given set of cuts could give:
+// every grant whose publisher could hold its right, shadowed or not.
+interface Reachable extends Granted {
+  /** Every handle each replica could hold. */
+  handles: Map<string, Set<string>>;
+  /** Each replica's earliest op that could admit it, an observer's admit included. */
+  first: Map<string, RosterOpRef>;
 }
 
 // One fold of every op but `without`, its removals resolved.
@@ -315,9 +329,9 @@ function validIn(ev: Evaluation, { item, named }: Eligible): boolean {
 // accepted ones.
 function resolve(ctx: Context): Resolved {
   const all = ctx.items.map(removalOf).filter((r): r is Removal => r !== null);
-  // Only Known(1) removals whose publisher can hold the right fight; a later
-  // one never changes a right, so it is decided on the result.
-  const known = all.filter((r) => !r.later && !rightless(ctx, r));
+  // Only Known(1) removals fight; a later one never changes a right, so it is
+  // decided on the result.
+  const known = all.filter((r) => !r.later);
   // A result with no admin voids its latest-ranked accepted removal, and the
   // fight is fought again with every removal so voided held void.
   const held: Removal[] = [];
@@ -364,6 +378,10 @@ function decide(
   // or the removals they beat would return and never settle; and those sent back.
   const won = new Set<Removal>();
   const demoted = new Set<Removal>();
+  // Fight winners and removals accepted before any fight: their cuts hold in
+  // every outcome.
+  const settled = new Set<Removal>();
+  const uncut = reachable(ctx, []);
 
   for (;;) {
     // One accepted on a worst case that failed can lose its right: it waits
@@ -381,12 +399,27 @@ function decide(
     }
     const accepted = having('accepted');
     const ev = evaluate(ctx, accepted);
-    // A removal whose publisher lacks the right waits: accepting another can
-    // grant it, as a cut first admit lets a later admit stand.
-    for (const r of having('open', 'waiting'))
-      status.set(r, hadRight(ctx, ev, r) ? 'open' : 'waiting');
+    const could = reachable(ctx, [...settled]);
+    // A removal whose publisher lacks the right waits while some outcome could
+    // give it, as a cut first admit lets a later admit stand; else it is void.
+    for (const r of having('open', 'waiting')) {
+      if (hadRight(ctx, ev, r)) status.set(r, 'open');
+      else status.set(r, couldHold(ctx, could, r) ? 'waiting' : 'void');
+    }
     const open = having('open');
     if (open.length === 0) break;
+    // One whose publisher holds its right however the undecided ones fall is
+    // accepted first, so a removal its cut leaves no right never counts.
+    const threats = having('accepted', 'open', 'waiting');
+    const sure = robustRights(ctx, uncut, threats);
+    const first = open.filter(
+      (r) => rightsAt(sure, r.op.replica, r.op.seq, r.op).admin
+    );
+    for (const r of first) {
+      status.set(r, 'accepted');
+      settled.add(r);
+    }
+    if (first.length > 0) continue;
     let progress = false;
     // A removal that would undo the accepted removals its own right rests on
     // is void,
@@ -428,6 +461,7 @@ function decide(
     const pick = live.reduce((best, r) => (byRank(ev, r, best) < 0 ? r : best));
     status.set(pick, 'accepted');
     won.add(pick);
+    settled.add(pick);
   }
   return { accepted: having('accepted'), won };
 }
@@ -533,6 +567,23 @@ function sharedOf(input: FoldInput, all: readonly Item[]): Shared {
       if (ia === undefined || ib === undefined) return comparePositions(a, b);
       return ia - ib;
     },
+    proves: provesOf(input, found.op.hash.slice(0, 32)),
+  };
+}
+
+// Checks a recover's proof against a recovery key once per pair, since the
+// resolution asks again of every key an admin could have set.
+function provesOf(input: FoldInput, teamId: string): Context['proves'] {
+  const seen = new Map<string, boolean>();
+  return (recover, proof, pub) => {
+    const id = `${recover.hash}\n${pub}`;
+    const known = seen.get(id);
+    if (known !== undefined) return known;
+    const key = input.keys.get(recover.replica);
+    const signed = `${TAG.recovery}\n${teamId}\n${recover.replica}\n${key?.signPub ?? ''}`;
+    const ok = key !== undefined && verifyText(pub, signed, proof);
+    seen.set(id, ok);
+    return ok;
   };
 }
 
@@ -771,7 +822,7 @@ interface Rights {
 // null). A cut kills, for the target's ops above its afterSeq, only the grants
 // positioned before it, so a later promotion restores admin.
 function rightsAt(
-  ev: Evaluation,
+  ev: Granted,
   replica: string,
   seq: number,
   pos: Position | null
@@ -799,11 +850,7 @@ function rightsAt(
   return { member, admin: firstAdmin !== null, firstGrant, firstAdmin };
 }
 
-function revokedBefore(
-  ev: Evaluation,
-  replica: string,
-  pos: Position
-): boolean {
+function revokedBefore(ev: Granted, replica: string, pos: Position): boolean {
   return (ev.cutsOn.get(replica) ?? []).some(
     (c) => c.kind === 'all' && ev.order(c.op, pos) < 0
   );
@@ -813,7 +860,7 @@ function admittedAt(ev: Evaluation, replica: string, pos: Position): boolean {
   return ev.holders.has(replica) && !revokedBefore(ev, replica, pos);
 }
 
-function grant(ev: Evaluation, replica: string, g: Grant): void {
+function grant(ev: Granted, replica: string, g: Grant): void {
   const list = ev.grants.get(replica);
   if (list === undefined) ev.grants.set(replica, [g]);
   else list.push(g);
@@ -989,7 +1036,7 @@ function step(
 }
 
 // Whether an accepted revocation of op's publisher cuts op, by seq alone.
-function cutBySeq(ev: Evaluation, op: RosterOpRef): boolean {
+function cutBySeq(ev: Granted, op: RosterOpRef): boolean {
   return (ev.cutsOn.get(op.replica) ?? []).some(
     (c) => c.kind === 'all' && c.afterSeq < op.seq
   );
@@ -1162,8 +1209,7 @@ function recoverStep(
     );
     return;
   }
-  const signed = `${TAG.recovery}\n${ctx.teamId}\n${op.replica}\n${key.signPub}`;
-  if (!verifyText(ev.recoveryPub, signed, body.proof)) {
+  if (!ctx.proves(op, body.proof, ev.recoveryPub)) {
     note(
       ev,
       op,
@@ -1221,8 +1267,8 @@ function undoes(
   return !hadRight(ctx, evaluate(ctx, kept), r);
 }
 
-// The waiting removals whose publisher holds its right, own cut included, with
-// every open removal accepted or with none; no other ever cuts in a fight.
+// The waiting removals that cut in a worst case: those whose publisher holds
+// its right, own cut included, with every open removal accepted or with none.
 function couldCut(
   ctx: Context,
   accepted: readonly Removal[],
@@ -1291,35 +1337,127 @@ function cutBelow(accepted: readonly Removal[], r: Removal): boolean {
   );
 }
 
-// Whether no fold gives r's publisher its right at r: no op before r grants one
-// but an observer's, or only a member's where r needs an admin.
-function rightless(ctx: Context, r: Removal): boolean {
-  const by = r.op.replica;
-  let member = false;
+// Every grant valid in some fold whose accepted removals include `cuts`: one
+// whose publisher could hold its right there, never an observer's, and a
+// recover whose proof verifies against a recovery key an admin could have set.
+function reachable(ctx: Context, cuts: readonly Removal[]): Reachable {
+  const p: Reachable = {
+    cutsOn: byTarget(cuts),
+    order: ctx.order,
+    grants: new Map(),
+    handles: new Map(),
+    first: new Map(),
+  };
+  // An admission: an observer's sets who holds its replica but grants nothing.
+  const admits = (
+    replica: string,
+    op: RosterOpRef,
+    g: Grant | null,
+    handle: string
+  ): void => {
+    if (!p.first.has(replica)) p.first.set(replica, op);
+    if (g === null) return;
+    grant(p, replica, g);
+    const set = p.handles.get(replica);
+    if (set === undefined) p.handles.set(replica, new Set([handle]));
+    else set.add(handle);
+  };
+  const found = ctx.found.op;
+  const admin = (pos: RosterOpRef, source: Grant['source']): Grant => ({
+    pos,
+    admin: true,
+    source,
+  });
+  admits(
+    found.replica,
+    found,
+    admin(found, 'found'),
+    handleOf(ctx, found.replica)
+  );
+  const pubs = new Set([ctx.found.body.recoveryPub]);
   for (const { op, body } of ctx.items) {
-    if (ctx.order(op, r.op) >= 0) break;
-    const admits = isAction(body, 'admit') && body.replica === by;
-    if (op === ctx.found.op && op.replica === by) return false;
-    if (isAction(body, 'recover') && op.replica === by) return false;
-    if (admits && body.observer === true) continue;
-    if (admits && body.role === 'admin') return false;
-    if (isAction(body, 'role') && body.replica === by && body.role === 'admin')
-      return false;
-    if (admits) member = true;
+    if (typeof body !== 'object' || ctx.order(op, found) <= 0) continue;
+    const rights = rightsAt(p, op.replica, op.seq, op);
+    if (isAction(body, 'admit')) {
+      const key = ctx.input.keys.get(body.replica);
+      if (key === undefined || key.fingerprint !== body.fingerprint) continue;
+      if (revokedBefore(p, body.replica, op)) continue;
+      const observer = body.observer === true;
+      if (observer && body.role === 'admin') continue;
+      const ownDevice =
+        rights.member &&
+        body.role === 'member' &&
+        (body.hosts ?? []).length === 0 &&
+        !observer &&
+        body.handle === key.handle &&
+        p.handles.get(op.replica)?.has(key.handle) === true;
+      if (!rights.admin && !ownDevice) continue;
+      const g: Grant = {
+        pos: op,
+        admin: body.role === 'admin',
+        source: 'grant',
+      };
+      admits(body.replica, op, observer ? null : g, body.handle);
+    } else if (isAction(body, 'role')) {
+      const admitted =
+        p.grants.has(body.replica) && !revokedBefore(p, body.replica, op);
+      if (body.role === 'admin' && rights.admin && admitted)
+        grant(p, body.replica, admin(op, 'grant'));
+    } else if (isAction(body, 'recovery-key')) {
+      if (rights.admin) pubs.add(body.pub);
+    } else if (isAction(body, 'recover')) {
+      const key = ctx.input.keys.get(op.replica);
+      if (key === undefined || ctx.firstSeq.get(op.replica) !== op.seq)
+        continue;
+      if (revokedBefore(p, op.replica, op) || cutBySeq(p, op)) continue;
+      if ([...pubs].some((pub) => ctx.proves(op, body.proof, pub)))
+        admits(op.replica, op, admin(op, 'recover'), key.handle);
+    }
   }
-  if (!member) return true;
-  if (r.kind !== 'all') return true;
-  const theirs = handlesOf(ctx, r.target);
-  return [...handlesOf(ctx, by)].every((h) => !theirs.has(h));
+  return p;
 }
 
-// Every handle `replica` could hold: its key's, and each admit's that names it.
-function handlesOf(ctx: Context, replica: string): Set<string> {
-  const out = new Set([handleOf(ctx, replica)]);
-  for (const { body } of ctx.items)
-    if (isAction(body, 'admit') && body.replica === replica)
-      out.add(body.handle);
-  return out;
+// Whether some fold `p` covers gives r's publisher the right r needs at r.
+function couldHold(ctx: Context, p: Reachable, r: Removal): boolean {
+  const rights = rightsAt(p, r.op.replica, r.op.seq, r.op);
+  if (rights.admin) return true;
+  if (!rights.member || r.kind !== 'all') return false;
+  const target = new Set(p.handles.get(r.target));
+  target.add(handleOf(ctx, r.target));
+  return [...(p.handles.get(r.op.replica) ?? [])].some((h) => target.has(h));
+}
+
+// The admin grants valid in every fold that accepts any of `cuts`, none resting
+// on a cut: the founding, an admin's admit that is the first op any fold could
+// admit its replica with, and an admin's promotion of a replica so admitted.
+function robustRights(
+  ctx: Context,
+  uncut: Reachable,
+  cuts: readonly Removal[]
+): Granted {
+  const s: Granted = {
+    cutsOn: byTarget(cuts),
+    order: ctx.order,
+    grants: new Map(),
+  };
+  const found = ctx.found.op;
+  grant(s, found.replica, { pos: found, admin: true, source: 'found' });
+  for (const { op, body } of ctx.items) {
+    let target: string;
+    if (isAction(body, 'admit')) {
+      if (uncut.first.get(body.replica) !== op || body.observer === true)
+        continue;
+      target = body.replica;
+    } else if (isAction(body, 'role') && body.role === 'admin') {
+      if (!s.grants.has(body.replica)) continue;
+      target = body.replica;
+    } else continue;
+    if (!rightsAt(s, op.replica, op.seq, op).admin) continue;
+    if (revokedBefore(s, target, op)) continue;
+    const admin = !isAction(body, 'admit') || body.role === 'admin';
+    grant(s, target, { pos: op, admin, source: 'grant' });
+  }
+  return s;
 }
 
 // A member may revoke replicas with their own handle; every other removal

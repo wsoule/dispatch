@@ -1,4 +1,4 @@
-import { ed25519FromSeed } from '@dispatch/protocol/federation';
+import { ed25519FromSeed, signText, TAG } from '@dispatch/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
 import { foldRosterAt, KNOWN_ROSTER_PAIRS } from '../src/roster.js';
@@ -40,6 +40,7 @@ const M = 'mo-0000000e'; // a hosts cut's target
 const ALL = [A, ...MEMBERS, O, P, Q] as const;
 const t = team(A, keysFor([...ALL, M]));
 const OTHER = ed25519FromSeed(Buffer.alloc(32, 9));
+const WRONG = ed25519FromSeed(Buffer.alloc(32, 13));
 
 // An op body's (action, rv), or null when it has none.
 function pairOf(body: unknown): string | null {
@@ -971,7 +972,8 @@ describe('a later removal among a revocation fight', () => {
 
 const Z = 'zed-00000014'; // pinned, never admitted
 const X = 'xi-00000015'; // an admin the founder revokes after its key op
-const u = team(A, keysFor([...ALL, M, Z, X]));
+const M2 = 'mo-00000017'; // a second device of M's handle, never admitted
+const u = team(A, keysFor([...ALL, M, Z, X, M2]));
 
 // Each removal's decision, for the removals among `ops`.
 const decided = (v: RosterView, ops: readonly RosterOpRef[]) =>
@@ -980,8 +982,18 @@ const decided = (v: RosterView, ops: readonly RosterOpRef[]) =>
     return d === undefined ? [] : [[o.hash, d]];
   });
 
+// A recover signed with a code no admin ever set.
+const wrongRecover = (by: string): Record<string, unknown> => ({
+  action: 'recover',
+  proof: signText(
+    WRONG.signPriv,
+    `${TAG.recovery}\n${u.found.hash.slice(0, 32)}\n${by}\nsign-${by}`
+  ),
+});
+
 // A hinge fight with key rotations, and ops no right backs in any fold: a
-// stranger's, an observer's, a plain member's, a revoked admin's, early ones.
+// stranger's, an observer's, a plain member's, a revoked admin's, early ones,
+// and grants each makes to itself or a stranger.
 function rightlessOps(rand: () => number): {
   ops: RosterOpRef[];
   rightless: RosterOpRef[];
@@ -1053,14 +1065,17 @@ function rightlessOps(rand: () => number): {
       ? { action: 'revoke', reason: 'r', ...cut }
       : { action: 'role', role: 'member', ...cut };
   };
-  // Any roster op but a recover, aimed at another handle; X never cuts the
-  // founder below its revocation of X, which would be a fight.
+  // Any roster op aimed at another handle, or a grant to the publisher itself
+  // or to a pinned stranger, which no right backs. X never cuts the founder
+  // below its revocation of X, which would be a fight, and never admits a
+  // stranger, whom that would give a right until X's revocation is decided.
   const stray = (by: string, k: number): Record<string, unknown> => {
     const target = pick(joined.filter((r) => r !== by));
+    const stranger = by === X ? P : pick([Z, Q].filter((r) => r !== by));
     const x = rand();
-    if (x < 0.55)
+    if (x < 0.45)
       return removal(target, rand() < 0.5 && !(by === X && target === A));
-    if (x < 0.62)
+    if (x < 0.5)
       return {
         action: 'hosts',
         replica: target,
@@ -1068,8 +1083,11 @@ function rightlessOps(rand: () => number): {
         afterSeq: 1,
         afterHash: `h-${target}-1`,
       };
-    if (x < 0.7) return { action: 'role', replica: target, role: 'admin' };
-    if (x < 0.78) return admitOf(pick([P, Q]), pick(['member', 'admin']));
+    if (x < 0.55) return { action: 'role', replica: target, role: 'admin' };
+    if (x < 0.62) return { action: 'role', replica: by, role: 'admin' };
+    if (x < 0.69) return admitOf(by, 'admin');
+    if (x < 0.75) return admitOf(stranger, pick(['member', 'admin']));
+    if (x < 0.8) return wrongRecover(by);
     if (x < 0.84) return { action: 'recovery-key', pub: OTHER.signPub };
     if (x < 0.9) return { action: 'transport', kind: 'relay', url: `u-${k}` };
     if (x < 0.95)
@@ -1082,16 +1100,35 @@ function rightlessOps(rand: () => number): {
       };
     return { action: 'license', key: `k-${k}` };
   };
+  // A grant no right backs that names `by`, from `by` itself or another
+  // replica with no right.
+  const voidGrant = (by: string): [string, Record<string, unknown>] => {
+    const x = rand();
+    if (x < 0.3) return [by, admitOf(by, 'admin')];
+    if (x < 0.55) return [by, { action: 'role', replica: by, role: 'admin' }];
+    if (x < 0.75) return [by, wrongRecover(by)];
+    return [pick([Z, Q, O, M].filter((r) => r !== by)), admitOf(by, 'admin')];
+  };
   const n = 6 + Math.floor(rand() * 10);
   for (let k = 0; k < n; k++) {
     const x = rand();
     if (x < 0.4) {
-      const by = pick([Z, O, M, X]);
+      const by = pick([Z, Q, O, M, X]);
       const when = rand();
       let ms: number | undefined;
       if (when < 0.15) ms = -5000 - k;
       else if (when < 0.25) ms = 10 ** 9 + k;
-      rightless.push(mk(by, stray(by, k), ms));
+      if (rand() < 0.5) {
+        rightless.push(mk(by, stray(by, k), ms));
+        continue;
+      }
+      // A void grant to the publisher, then its cut, mostly of a hinge admitter.
+      const [grantor, grant] = voidGrant(by);
+      rightless.push(mk(grantor, grant, ms));
+      const others = joined.filter((r) => r !== by);
+      const hinged = others.filter((r) => hinges.has(r));
+      const target = pick(hinged.length > 0 && rand() < 0.8 ? hinged : others);
+      rightless.push(mk(by, removal(target), ms));
       continue;
     }
     const by = pick(joined);
@@ -1108,7 +1145,7 @@ function rightlessOps(rand: () => number): {
 }
 
 describe('a removal whose publisher holds no right at it', () => {
-  const [B, C] = MEMBERS;
+  const [B, C, D] = MEMBERS;
   // P is an admin only once the founder's revoke of C cuts C's member admit of
   // P; the founder then wins the fight over B's revocation of it.
   const FIGHT = [
@@ -1170,115 +1207,117 @@ describe('a removal whose publisher holds no right at it', () => {
     }
   });
 
+  // D's revoke of C would save the founder from C's revoke of it, but D's
+  // right to it rests on a cut of B's member admit of D.
+  const C_REVOKES_FOUNDER = [
+    admit(A, 3, 10, C, 'admin'),
+    admit(C, 2, 16, B, 'member'),
+    admit(A, 4, 18, B, 'admin'),
+    admit(B, 2, 20, D, 'member'),
+    admit(A, 5, 26, D, 'admin'),
+    revoke(D, 2, 33, C, 1),
+    demote(B, 3, 35, C, 1),
+    revoke(C, 4, 46, A, 7),
+  ];
+  const strays = new Set<RosterOpRef>();
+  const stray = (o: RosterOpRef): RosterOpRef => {
+    strays.add(o);
+    return o;
+  };
+  // Each shrunk to the ops that let its stray op move a fight under an
+  // earlier rule; X is the admin the founder revokes after its key op.
+  const SETS: [string, RosterOpRef[]][] = [
+    [
+      "X's revoke of B cannot let D revoke the founder",
+      [
+        admit(A, 2, 11, X, 'admin'),
+        revoke(A, 3, 17, X, 1),
+        admit(A, 5, 20, D, 'admin'),
+        admit(A, 6, 21, P, 'admin'),
+        admit(A, 7, 25, C, 'admin'),
+        admit(P, 2, 30, B, 'member'),
+        admit(C, 2, 33, B, 'admin'),
+        stray(revoke(X, 2, 45, B, 1)),
+        demote(B, 4, 50, D, 1),
+        demote(A, 8, 52, P, 1),
+        revoke(D, 2, 57, A, 7),
+      ],
+    ],
+    [
+      "X's revoke of P cannot keep B an admin",
+      [
+        admit(A, 2, 7, X, 'admin'),
+        revoke(A, 3, 8, X, 1),
+        admit(A, 6, 12, B, 'admin'),
+        admit(A, 7, 16, C, 'admin'),
+        admit(B, 2, 21, P, 'member'),
+        admit(C, 2, 25, P, 'admin'),
+        admit(P, 2, 31, D, 'member'),
+        admit(C, 3, 33, D, 'admin'),
+        revoke(D, 2, 51, C, 3),
+        revoke(P, 5, 54, B, 1),
+        stray(revoke(X, 3, 67, P, 1)),
+        demote(C, 5, 71, B, 3),
+      ],
+    ],
+    [
+      "X's revoke of the founder cannot decide B's fight with D",
+      [
+        admit(A, 2, 9, X, 'admin'),
+        revoke(A, 3, 13, X, 1),
+        admit(A, 5, 21, P, 'admin'),
+        admit(P, 2, 26, C, 'member'),
+        admit(A, 6, 30, C, 'admin'),
+        admit(C, 2, 34, B, 'admin'),
+        admit(A, 7, 37, D, 'admin'),
+        revoke(B, 2, 54, D, 1),
+        revoke(D, 2, 59, B, 1),
+        stray(revoke(X, 2, 67, A, 6)),
+        revoke(P, 4, 69, P, 1),
+      ],
+    ],
+    [
+      "X's demotion of P cannot let C revoke P",
+      [
+        admit(A, 2, 9, X, 'admin'),
+        revoke(A, 3, 14, X, 1),
+        admit(A, 5, 26, P, 'admin'),
+        admit(P, 2, 31, D, 'admin'),
+        admit(P, 3, 36, B, 'member'),
+        admit(D, 2, 40, B, 'admin'),
+        admit(B, 2, 45, C, 'member'),
+        admit(A, 6, 50, C, 'admin'),
+        stray(demote(X, 2, 64, P, 1)),
+        demote(P, 4, 75, P, 2),
+        revoke(C, 3, 81, P, 2),
+      ],
+    ],
+    [
+      "X's revoke of B cannot decide C's demotions of D",
+      [
+        admit(A, 2, 11, X, 'admin'),
+        revoke(A, 3, 17, X, 1),
+        admit(A, 5, 27, C, 'admin'),
+        admit(C, 2, 28, B, 'member'),
+        admit(A, 6, 33, B, 'admin'),
+        admit(B, 2, 36, D, 'member'),
+        admit(A, 7, 39, D, 'admin'),
+        admit(B, 3, 41, P, 'admin'),
+        demote(D, 2, 58, C, 1),
+        stray(revoke(X, 3, 78, B, 1)),
+        revoke(D, 3, 79, D, 3),
+        revoke(D, 4, 82, P, 1),
+        revoke(P, 2, 87, A, 6),
+        demote(C, 5, 91, D, 4),
+      ],
+    ],
+    [
+      "a stranger's revoke of B cannot save the founder from C",
+      [...C_REVOKES_FOUNDER, stray(revoke(Z, 3, 40, B, 1))],
+    ],
+  ];
+
   it('decides no fight in the sets a search found, at every level and on the relay', () => {
-    const [B, C, D] = MEMBERS;
-    const strays = new Set<RosterOpRef>();
-    const stray = (o: RosterOpRef): RosterOpRef => {
-      strays.add(o);
-      return o;
-    };
-    // Each shrunk to the ops that let its stray op move a fight under an
-    // earlier rule; X is the admin the founder revokes after its key op.
-    const SETS: [string, RosterOpRef[]][] = [
-      [
-        "X's revoke of B cannot let D revoke the founder",
-        [
-          admit(A, 2, 11, X, 'admin'),
-          revoke(A, 3, 17, X, 1),
-          admit(A, 5, 20, D, 'admin'),
-          admit(A, 6, 21, P, 'admin'),
-          admit(A, 7, 25, C, 'admin'),
-          admit(P, 2, 30, B, 'member'),
-          admit(C, 2, 33, B, 'admin'),
-          stray(revoke(X, 2, 45, B, 1)),
-          demote(B, 4, 50, D, 1),
-          demote(A, 8, 52, P, 1),
-          revoke(D, 2, 57, A, 7),
-        ],
-      ],
-      [
-        "X's revoke of P cannot keep B an admin",
-        [
-          admit(A, 2, 7, X, 'admin'),
-          revoke(A, 3, 8, X, 1),
-          admit(A, 6, 12, B, 'admin'),
-          admit(A, 7, 16, C, 'admin'),
-          admit(B, 2, 21, P, 'member'),
-          admit(C, 2, 25, P, 'admin'),
-          admit(P, 2, 31, D, 'member'),
-          admit(C, 3, 33, D, 'admin'),
-          revoke(D, 2, 51, C, 3),
-          revoke(P, 5, 54, B, 1),
-          stray(revoke(X, 3, 67, P, 1)),
-          demote(C, 5, 71, B, 3),
-        ],
-      ],
-      [
-        "X's revoke of the founder cannot decide B's fight with D",
-        [
-          admit(A, 2, 9, X, 'admin'),
-          revoke(A, 3, 13, X, 1),
-          admit(A, 5, 21, P, 'admin'),
-          admit(P, 2, 26, C, 'member'),
-          admit(A, 6, 30, C, 'admin'),
-          admit(C, 2, 34, B, 'admin'),
-          admit(A, 7, 37, D, 'admin'),
-          revoke(B, 2, 54, D, 1),
-          revoke(D, 2, 59, B, 1),
-          stray(revoke(X, 2, 67, A, 6)),
-          revoke(P, 4, 69, P, 1),
-        ],
-      ],
-      [
-        "X's demotion of P cannot let C revoke P",
-        [
-          admit(A, 2, 9, X, 'admin'),
-          revoke(A, 3, 14, X, 1),
-          admit(A, 5, 26, P, 'admin'),
-          admit(P, 2, 31, D, 'admin'),
-          admit(P, 3, 36, B, 'member'),
-          admit(D, 2, 40, B, 'admin'),
-          admit(B, 2, 45, C, 'member'),
-          admit(A, 6, 50, C, 'admin'),
-          stray(demote(X, 2, 64, P, 1)),
-          demote(P, 4, 75, P, 2),
-          revoke(C, 3, 81, P, 2),
-        ],
-      ],
-      [
-        "X's revoke of B cannot decide C's demotions of D",
-        [
-          admit(A, 2, 11, X, 'admin'),
-          revoke(A, 3, 17, X, 1),
-          admit(A, 5, 27, C, 'admin'),
-          admit(C, 2, 28, B, 'member'),
-          admit(A, 6, 33, B, 'admin'),
-          admit(B, 2, 36, D, 'member'),
-          admit(A, 7, 39, D, 'admin'),
-          admit(B, 3, 41, P, 'admin'),
-          demote(D, 2, 58, C, 1),
-          stray(revoke(X, 3, 78, B, 1)),
-          revoke(D, 3, 79, D, 3),
-          revoke(D, 4, 82, P, 1),
-          revoke(P, 2, 87, A, 6),
-          demote(C, 5, 91, D, 4),
-        ],
-      ],
-      [
-        "a stranger's revoke of B cannot save the founder from C",
-        [
-          admit(A, 3, 10, C, 'admin'),
-          admit(C, 2, 16, B, 'member'),
-          admit(A, 4, 18, B, 'admin'),
-          admit(B, 2, 20, D, 'member'),
-          admit(A, 5, 26, D, 'admin'),
-          revoke(D, 2, 33, C, 1),
-          demote(B, 3, 35, C, 1),
-          stray(revoke(Z, 3, 40, B, 1)),
-          revoke(C, 4, 46, A, 7),
-        ],
-      ],
-    ];
     for (const [name, ops] of SETS) {
       const kept = ops.filter((o) => !strays.has(o));
       for (const level of AT)
@@ -1302,6 +1341,320 @@ describe('a removal whose publisher holds no right at it', () => {
     }
   });
 
+  // The founder's demotion of B cuts B's member admit of P, so P's member
+  // admit of D stands and D cannot revoke the founder.
+  const FOUNDER_KEEPS = [
+    admit(A, 2, 10, B, 'admin'),
+    admit(B, 2, 20, P, 'member'),
+    admit(A, 3, 30, P, 'admin'),
+    admit(P, 2, 40, D, 'member'),
+    admit(A, 4, 50, D, 'admin'),
+    revoke(D, 2, 60, A, 4),
+    demote(A, 5, 70, B, 1),
+  ];
+  // The same fight a seq later, below an observer's or a plain member's admit.
+  const below = (first: RosterOpRef): RosterOpRef[] => [
+    first,
+    admit(A, 3, 10, B, 'admin'),
+    admit(B, 2, 20, P, 'member'),
+    admit(A, 4, 30, P, 'admin'),
+    admit(P, 2, 40, D, 'member'),
+    admit(A, 5, 50, D, 'admin'),
+    revoke(D, 2, 60, A, 5),
+    demote(A, 6, 70, B, 1),
+  ];
+  const selfPromotion = (by: string, seq: number, ms: number) =>
+    op(by, seq, ms, { action: 'role', replica: by, role: 'admin' });
+  const wrongCode = (by: string, seq: number, ms: number) =>
+    op(by, seq, ms, wrongRecover(by));
+  // Each kept set, and a grant no right backs with a removal it would enable.
+  const GRANTS: [string, RosterOpRef[], RosterOpRef[]][] = [
+    [
+      "the founder's promotion of a replica it never admitted",
+      C_REVOKES_FOUNDER,
+      [
+        op(A, 6, 38, { action: 'role', replica: Z, role: 'admin' }),
+        revoke(Z, 2, 40, B, 1),
+      ],
+    ],
+    [
+      "the founder's promotion of an observer",
+      [admit(A, 2, 5, O, 'member', { observer: true }), ...C_REVOKES_FOUNDER],
+      [
+        op(A, 6, 38, { action: 'role', replica: O, role: 'admin' }),
+        revoke(O, 2, 40, B, 1),
+      ],
+    ],
+    [
+      "the founder's admission again of a member it revoked",
+      [
+        admit(A, 2, 3, X, 'member'),
+        revoke(A, 6, 4, X, 5),
+        ...C_REVOKES_FOUNDER,
+      ],
+      [admit(A, 7, 38, X, 'admin'), revoke(X, 2, 40, B, 1)],
+    ],
+    [
+      "a plain member's admit of its own device under another handle",
+      [admit(A, 2, 5, M), ...C_REVOKES_FOUNDER],
+      [
+        admit(M, 2, 38, M2, 'member', { handle: handleOf(B) }),
+        revoke(M2, 2, 40, B, 1),
+      ],
+    ],
+    [
+      "a stranger's admit of itself",
+      C_REVOKES_FOUNDER,
+      [admit(Z, 2, 39, Z, 'admin'), revoke(Z, 3, 40, B, 1)],
+    ],
+    [
+      "a stranger's promotion of itself",
+      C_REVOKES_FOUNDER,
+      [selfPromotion(Z, 2, 39), revoke(Z, 3, 40, B, 1)],
+    ],
+    [
+      "a stranger's recover with a wrong code",
+      C_REVOKES_FOUNDER,
+      [wrongCode(Z, 2, 39), revoke(Z, 3, 40, B, 1)],
+    ],
+    [
+      "an observer's promotion of itself",
+      [admit(A, 2, 5, O, 'member', { observer: true }), ...C_REVOKES_FOUNDER],
+      [selfPromotion(O, 2, 39), revoke(O, 3, 40, B, 1)],
+    ],
+    [
+      "a plain member's promotion of itself",
+      [admit(A, 2, 5, M), ...C_REVOKES_FOUNDER],
+      [selfPromotion(M, 2, 39), revoke(M, 3, 40, B, 1)],
+    ],
+    [
+      "a plain member's admit of a stranger",
+      [admit(A, 2, 5, M), ...C_REVOKES_FOUNDER],
+      [admit(M, 2, 39, Z, 'admin'), revoke(Z, 3, 40, B, 1)],
+    ],
+    [
+      "a revoked admin's admit of a stranger",
+      [admit(A, 2, 3, X, 'admin'), revoke(A, 6, 4, X, 1), ...C_REVOKES_FOUNDER],
+      [admit(X, 2, 39, Z, 'admin'), revoke(Z, 3, 40, B, 1)],
+    ],
+    [
+      "a stranger's promotion of itself, against the founder",
+      FOUNDER_KEEPS,
+      [selfPromotion(Z, 2, 55), demote(Z, 3, 65, P, 1)],
+    ],
+    [
+      "a stranger's admit of itself, against the founder",
+      FOUNDER_KEEPS,
+      [admit(Z, 2, 55, Z, 'admin'), demote(Z, 3, 65, P, 1)],
+    ],
+    [
+      "a stranger's wrong code, against the founder",
+      FOUNDER_KEEPS,
+      [wrongCode(Z, 2, 55), demote(Z, 3, 65, P, 1)],
+    ],
+    [
+      "a stranger's admit of another, against the founder",
+      FOUNDER_KEEPS,
+      [admit(Q, 2, 45, Z, 'admin'), demote(Z, 3, 65, P, 1)],
+    ],
+    [
+      "an observer's promotion of itself, against the founder",
+      below(admit(A, 2, 5, O, 'member', { observer: true })),
+      [selfPromotion(O, 2, 55), demote(O, 3, 65, P, 1)],
+    ],
+    [
+      "a plain member's promotion of itself, against the founder",
+      below(admit(A, 2, 5, M)),
+      [selfPromotion(M, 2, 55), revoke(M, 3, 65, P, 1)],
+    ],
+    [
+      "a revoked admin's promotion of C, which would make C's revoke of B stand",
+      [
+        admit(A, 2, 10, X, 'admin'),
+        revoke(A, 3, 14, X, 1),
+        admit(A, 6, 27, D, 'admin'),
+        admit(A, 7, 29, B, 'admin'),
+        admit(B, 3, 41, C, 'member'),
+        admit(A, 9, 46, C, 'admin'),
+        demote(D, 2, 56, B, 1),
+        demote(D, 3, 83, D, 1),
+        revoke(C, 2, 87, B, 4),
+        revoke(B, 6, 89, D, 2),
+      ],
+      [op(X, 2, 52, { action: 'role', replica: C, role: 'admin' })],
+    ],
+    [
+      "a stranger's admit of itself, against P's fight",
+      [
+        admit(A, 2, 21, P, 'admin'),
+        admit(P, 2, 27, D, 'member'),
+        admit(A, 3, 30, D, 'admin'),
+        admit(D, 2, 32, B, 'member'),
+        admit(A, 4, 35, B, 'admin'),
+        revoke(B, 2, 42, A, 3),
+        demote(A, 5, 68, P, 1),
+      ],
+      [admit(Z, 2, 48, Z, 'admin'), demote(Z, 3, 51, D, 1)],
+    ],
+    [
+      "an observer's admit of itself, against the founder's revoke of D",
+      [
+        admit(A, 4, 11, O, 'member', { observer: true }),
+        admit(A, 6, 14, P, 'admin'),
+        admit(P, 2, 16, C, 'admin'),
+        admit(C, 2, 20, B, 'member'),
+        admit(A, 7, 26, B, 'admin'),
+        admit(B, 2, 27, D, 'member'),
+        admit(A, 8, 33, D, 'admin'),
+        revoke(B, 3, 36, C, 1),
+        revoke(D, 2, 41, A, 7),
+        revoke(A, 9, 60, D, 2),
+      ],
+      [admit(O, 2, 54, O, 'admin'), demote(O, 3, 57, B, 1)],
+    ],
+    [
+      "a plain member's admit of the founder under its own handle",
+      [
+        admit(A, 5, 22, M),
+        admit(A, 6, 28, C, 'admin'),
+        admit(C, 2, 31, D, 'member'),
+        admit(A, 7, 35, D, 'admin'),
+        admit(D, 2, 38, B, 'member'),
+        admit(A, 8, 39, B, 'admin'),
+        revoke(B, 3, 47, P, 1),
+        demote(D, 3, 54, C, 1),
+        revoke(C, 3, 68, D, 1),
+        demote(B, 4, 69, C, 1),
+        revoke(A, 9, 83, C, 2),
+      ],
+      [
+        admit(M, 2, 57, A, 'member', { handle: handleOf(M) }),
+        revoke(M, 3, 59, A, 1),
+      ],
+    ],
+    [
+      'a grant and a removal placed before the founding',
+      [
+        admit(A, 6, 24, B, 'admin'),
+        admit(A, 7, 25, C, 'admin'),
+        admit(B, 2, 31, D, 'member'),
+        admit(A, 8, 34, D, 'admin'),
+        admit(D, 2, 35, P, 'member'),
+        admit(C, 2, 39, P, 'admin'),
+        revoke(P, 5, 66, B, 1),
+        revoke(D, 3, 70, B, 1),
+        revoke(B, 3, 73, C, 4),
+      ],
+      [admit(P, 3, -6005, P, 'admin'), revoke(P, 4, -5005, D, 1)],
+    ],
+  ];
+
+  it('gives no right to a grant no right backs, at every level and on the relay', () => {
+    const removal = (o: RosterOpRef): boolean =>
+      o.body.action === 'revoke' ||
+      (o.body.action === 'role' && o.body.role === 'member');
+    for (const [name, kept, grants] of GRANTS) {
+      const ops = [...kept, ...grants];
+      for (const level of AT)
+        for (const relay of [false, true]) {
+          const v = u.at(level, ops, { relay });
+          const w = u.at(level, kept, { relay });
+          expect({
+            name,
+            level,
+            relay,
+            s: standingOf(v),
+            fights: decided(v, kept),
+            void: grants.filter(removal).map((o) => v.resolution.get(o.hash)),
+          }).toEqual({
+            name,
+            level,
+            relay,
+            s: standingOf(w),
+            fights: decided(w, kept),
+            void: grants.filter(removal).map(() => 'void'),
+          });
+        }
+    }
+  });
+
+  it("lets no stranger's grant to itself and one cut move a set a search found", () => {
+    const T0 = Date.parse('2026-09-26T00:00:00.000Z');
+    const grants = [
+      (ms: number) => admit(Q, 2, ms, Q, 'admin'),
+      (ms: number) => selfPromotion(Q, 2, ms),
+      (ms: number) => wrongCode(Q, 2, ms),
+    ];
+    const fights: [string, RosterOpRef[]][] = [
+      ["the founder's fight with B", FIGHT],
+      ...SETS,
+    ];
+    for (const [name, ops] of fights) {
+      const base = u.fold(ops);
+      const last = Math.max(...ops.map((o) => Number(o.hlc.slice(0, 13)))) - T0;
+      const seqOf = (r: string) =>
+        Math.max(1, ...ops.filter((o) => o.replica === r).map((o) => o.seq));
+      for (const target of [A, B, C, D, P, X])
+        for (let after = 0; after <= seqOf(target); after++)
+          for (const ms of [5, Math.floor(last / 2), last + 5])
+            for (const cut of [revoke, demote])
+              for (const grant of grants) {
+                const v = u.fold([
+                  ...ops,
+                  grant(ms),
+                  cut(Q, 3, ms + 1, target, after),
+                ]);
+                expect({
+                  name,
+                  target,
+                  after,
+                  ms,
+                  s: standingOf(v),
+                  fights: decided(v, ops),
+                  pending: v.pending.includes(Q),
+                }).toEqual({
+                  name,
+                  target,
+                  after,
+                  ms,
+                  s: standingOf(base),
+                  fights: decided(base, ops),
+                  pending: true,
+                });
+              }
+    }
+  }, 60_000);
+
+  // P's demotion of the founder contests the founder's revoke of X, so X holds
+  // its right until that fight is decided, and its removal counts until then.
+  it('counts a removal by an admin whose revocation is still contested', () => {
+    const contested = [
+      admit(A, 2, 16, P, 'admin'),
+      admit(P, 2, 20, C, 'member'),
+      admit(A, 3, 22, C, 'admin'),
+      admit(A, 4, 36, X, 'admin'),
+      revoke(A, 5, 40, X, 1),
+      demote(P, 3, 42, A, 4),
+      revoke(C, 2, 64, P, 2),
+      demote(P, 4, 69, P, 1),
+    ];
+    const byX = demote(X, 2, 48, C, 1);
+    for (const level of AT)
+      for (const relay of [false, true]) {
+        expect({
+          level,
+          relay,
+          with: summary(u.at(level, [...contested, byX], { relay })),
+          without: summary(u.at(level, contested, { relay })),
+        }).toEqual({
+          level,
+          relay,
+          with: { admins: [A, C], members: [P], revoked: [[X, 1]] },
+          without: { admins: [C], members: [A, P], revoked: [[X, 1]] },
+        });
+      }
+  });
+
   it('leaves standing the recovery key the founder rotates after winning', () => {
     const rotate = op(A, 5, 80, { action: 'recovery-key', pub: OTHER.signPub });
     for (const level of AT)
@@ -1313,7 +1666,7 @@ describe('a removal whose publisher holds no right at it', () => {
   });
 
   it('changes no right, rank, revocation, fight winner or recovery key when dropped', () => {
-    const RIGHTLESS_SEEDS = 3000;
+    const RIGHTLESS_SEEDS = 8000;
     let changed = 0;
     for (let seed = 1; seed <= RIGHTLESS_SEEDS; seed++) {
       const { ops, rightless } = rightlessOps(mulberry32(seed));
@@ -1338,6 +1691,50 @@ describe('a removal whose publisher holds no right at it', () => {
     // Enough fights must revoke someone besides X for the check to mean something.
     expect(changed).toBeGreaterThan(RIGHTLESS_SEEDS / 3);
   }, 120_000);
+});
+
+describe('a revocation sure to stand', () => {
+  const [B, C, D] = MEMBERS;
+  // Each set's standing, the same at every level and on the relay.
+  const SURE: [string, RosterOpRef[], ReturnType<typeof summary>][] = [
+    [
+      'never takes a replica revoked before its admission as sure of its right',
+      [
+        admit(A, 2, 5, B, 'admin'),
+        revoke(B, 2, 10, D, 0),
+        admit(A, 3, 20, D, 'admin'),
+        revoke(D, 2, 30, B, 1),
+      ],
+      { admins: [A, B], members: [], revoked: [[D, 0]] },
+    ],
+    [
+      'never takes a promotion as sure before the admission it promotes is',
+      [
+        admit(A, 2, 5, C, 'admin'),
+        admit(A, 3, 8, B, 'admin'),
+        admit(C, 2, 10, D, 'member'),
+        op(A, 4, 15, { action: 'role', replica: D, role: 'admin' }),
+        revoke(B, 2, 30, C, 1),
+        revoke(D, 2, 35, B, 1),
+      ],
+      { admins: [A, B], members: [], revoked: [[C, 1]] },
+    ],
+  ];
+
+  for (const [name, ops, expected] of SURE)
+    it(name, () => {
+      for (const level of AT)
+        for (const relay of [false, true])
+          expect({
+            level,
+            relay,
+            s: summary(t.at(level, ops, { relay })),
+          }).toEqual({
+            level,
+            relay,
+            s: expected,
+          });
+    });
 });
 
 // Hinge chains where most admins end cut, some by themselves, so the
