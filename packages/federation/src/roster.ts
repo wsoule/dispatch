@@ -235,6 +235,8 @@ interface Resolved {
   won: ReadonlySet<Removal>;
 }
 
+const NO_ADMIN = 'would leave the team with no admin; void';
+
 const NEWER_ROSTER =
   "a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue";
 
@@ -315,7 +317,46 @@ function resolve(ctx: Context): Resolved {
   const all = ctx.items.map(removalOf).filter((r): r is Removal => r !== null);
   // Only Known(1) removals fight; a later one never changes a right, so it
   // takes no pick and buys no pass, and is decided on the result.
-  const removals = all.filter((r) => !r.later);
+  const known = all.filter((r) => !r.later);
+  // A result with no admin voids its latest-ranked accepted removal, and the
+  // fight is fought again with every removal so voided held void.
+  const held: Removal[] = [];
+  let fight = decide(ctx, known);
+  let ev = evaluate(ctx, fight.accepted);
+  while (adminsOf(ev).length === 0 && fight.accepted.length > 0) {
+    const last = fight.accepted.reduce((w, r) =>
+      byRank(ev, r, w) > 0 ? r : w
+    );
+    held.push(last);
+    fight = decide(
+      ctx,
+      known.filter((r) => !held.includes(r))
+    );
+    ev = evaluate(ctx, fight.accepted);
+  }
+  // A later removal stands only where its publisher holds its right in the
+  // result, where a build that cannot read it pauses rather than differs.
+  const upheld = new Set<Removal>(fight.accepted);
+  for (const r of all) if (r.later && hadRight(ctx, ev, r)) upheld.add(r);
+  const accepted = all.filter((r) => upheld.has(r));
+  const resolution = new Map<string, Resolution>();
+  for (const r of all)
+    resolution.set(r.op.hash, upheld.has(r) ? 'accepted' : 'void');
+  const final = evaluate(ctx, accepted, true);
+  for (const r of held)
+    note(
+      final,
+      r.op,
+      `${r.op.replica}'s removal at seq ${r.op.seq} ${NO_ADMIN}`
+    );
+  return { ev: final, resolution, accepted, won: fight.won };
+}
+
+// The fight over `removals`: which it accepts, and which of those won a pick.
+function decide(
+  ctx: Context,
+  removals: readonly Removal[]
+): { accepted: Removal[]; won: ReadonlySet<Removal> } {
   const status = new Map<Removal, Status>(removals.map((r) => [r, 'open']));
   const having = (...wanted: Status[]) =>
     removals.filter((r) => wanted.includes(status.get(r) ?? 'void'));
@@ -325,9 +366,8 @@ function resolve(ctx: Context): Resolved {
   const demoted = new Set<Removal>();
 
   for (;;) {
-    // Rights can grow with accepted removals, so one accepted on a worst case
-    // that failed can lose its right: it waits again; a second loss voids it.
-    // A loss can take the right of one checked before it, so repeat until none.
+    // One accepted on a worst case that failed can lose its right: it waits
+    // again, a second loss voids it, and checks repeat until none loses.
     for (let lost = true; lost; ) {
       lost = false;
       for (const s of having('accepted')) {
@@ -385,29 +425,7 @@ function resolve(ctx: Context): Resolved {
     status.set(pick, 'accepted');
     won.add(pick);
   }
-  for (const r of having('waiting')) status.set(r, 'void');
-
-  let ev = evaluate(ctx, having('accepted'));
-  // A result with no admin voids accepted removals, latest publisher rank first.
-  while (adminsOf(ev).length === 0 && having('accepted').length > 0) {
-    const worst = having('accepted').reduce((w, r) =>
-      byRank(ev, r, w) > 0 ? r : w
-    );
-    status.set(worst, 'void');
-    ev = evaluate(ctx, having('accepted'));
-  }
-  // A later removal stands only where its publisher holds its right in the
-  // result, where a build that cannot read it pauses rather than differs.
-  for (const r of all)
-    if (r.later) status.set(r, hadRight(ctx, ev, r) ? 'accepted' : 'void');
-  const resolution = new Map<string, Resolution>();
-  for (const r of all)
-    resolution.set(
-      r.op.hash,
-      status.get(r) === 'accepted' ? 'accepted' : 'void'
-    );
-  const accepted = all.filter((r) => status.get(r) === 'accepted');
-  return { ev: evaluate(ctx, accepted, true), resolution, accepted, won };
+  return { accepted: having('accepted'), won };
 }
 
 // Every Known(1) dismiss, and the op it names among the deduplicated ops.

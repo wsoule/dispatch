@@ -359,6 +359,40 @@ const blank = (o: RosterOpRef): RosterOpRef =>
 
 const SEEDS = 700;
 
+// All accepted, these removals leave no admin; P's revoke of B is what makes C
+// an admin, so voiding it voids C's revoke of the founder too.
+const NO_ADMIN_LEFT = (() => {
+  const [B, C, D] = MEMBERS;
+  return [
+    admit(A, 2, 5, M, 'member', { hosts: ['mx', 'my'] }),
+    admit(A, 3, 10, B, 'admin'),
+    admit(B, 2, 20, C, 'member'),
+    admit(A, 4, 30, C, 'admin'),
+    revoke(C, 2, 35, A, 8),
+    admit(C, 3, 40, D, 'admin'),
+    admit(A, 5, 45, P, 'admin'),
+    revoke(P, 2, 50, B, 1),
+    revoke(A, 6, 70, P, 2),
+    demote(A, 7, 75, D, 2),
+    revoke(A, 8, 80, C, 3),
+  ];
+})();
+
+// Admins by rank, members, and each revoked replica's cut.
+function summary(v: RosterView) {
+  const all = [...v.members.values()];
+  return {
+    admins: all
+      .filter((m) => m.rank !== null)
+      .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+      .map((m) => m.replica),
+    members: all.filter((m) => m.rank === null).map((m) => m.replica),
+    revoked: [...v.revoked]
+      .sort(([a], [b]) => (a < b ? -1 : 1))
+      .map(([r, c]) => [r, c.afterSeq]),
+  };
+}
+
 describe('the level table', () => {
   it('keeps Known(1) verbatim', () => {
     expect([...KNOWN_ROSTER_PAIRS]).toEqual([
@@ -602,19 +636,7 @@ describe('the level table', () => {
         // With no admin left, P's revoke is voided, and D, the cut's
         // publisher, ends pending.
         later: cutBy(D, 2, 60),
-        rest: [
-          admit(A, 2, 5, M, 'member', { hosts: ['mx', 'my'] }),
-          admit(A, 3, 10, B, 'admin'),
-          admit(B, 2, 20, C, 'member'),
-          admit(A, 4, 30, C, 'admin'),
-          revoke(C, 2, 35, A, 8),
-          admit(C, 3, 40, D, 'admin'),
-          admit(A, 5, 45, P, 'admin'),
-          revoke(P, 2, 50, B, 1),
-          revoke(A, 6, 70, P, 2),
-          demote(A, 7, 75, D, 2),
-          revoke(A, 8, 80, C, 3),
-        ],
+        rest: NO_ADMIN_LEFT,
         target: M,
         hosts: ['mx', 'my'],
         pauses: false,
@@ -869,20 +891,6 @@ describe('a later removal among a revocation fight', () => {
     expected: { admins: [A, P, B], members: [C], revoked: [[D, 2]] },
   };
   const SPLITS = [PICK, PASS];
-  // Admins by rank, members, and each revoked replica's cut.
-  const summary = (v: RosterView) => {
-    const all = [...v.members.values()];
-    return {
-      admins: all
-        .filter((m) => m.rank !== null)
-        .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
-        .map((m) => m.replica),
-      members: all.filter((m) => m.rank === null).map((m) => m.replica),
-      revoked: [...v.revoked]
-        .sort(([a], [b]) => (a < b ? -1 : 1))
-        .map(([r, c]) => [r, c.afterSeq]),
-    };
-  };
 
   it('re-checks until no accepted removal rests on one a pass demoted', () => {
     for (const { later, rest } of SPLITS)
@@ -959,4 +967,197 @@ describe('a later removal among a revocation fight', () => {
           s: standingOf(t.at(level, [...ops, blank(named)])),
         });
   });
+});
+
+// Hinge chains where most admins end cut, some by themselves, so the
+// resolution often leaves no admin; later hosts cuts of M ride along.
+function adminlessOps(rand: () => number): RosterOpRef[] {
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
+  const seqs = new Map<string, number>();
+  const hinges = new Map<string, number[]>();
+  let now = 5;
+  const ops: RosterOpRef[] = [];
+  const mk = (by: string, body: Record<string, unknown>) => {
+    const seq = (seqs.get(by) ?? 1) + 1;
+    seqs.set(by, seq);
+    now += 1 + Math.floor(rand() * 6);
+    const o = op(by, seq, now, body);
+    ops.push(o);
+    return o;
+  };
+  const admitOf = (
+    r: string,
+    role: string,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    action: 'admit',
+    replica: r,
+    handle: handleOf(r),
+    role,
+    fingerprint: `FP-${r}`,
+    ...extra,
+  });
+  const joined: string[] = [A];
+  for (const r of shuffled(rand, [...MEMBERS, P])) {
+    const by = pick(joined);
+    if (by !== A && rand() < 0.7) {
+      const first = rand() < 0.75 ? 'member' : 'admin';
+      const hinge = mk(by, admitOf(r, first));
+      hinges.set(by, [...(hinges.get(by) ?? []), hinge.seq]);
+      const second = first === 'member' ? 'admin' : 'member';
+      mk(pick(joined.filter((j) => j !== by)), admitOf(r, second));
+    } else mk(pick(joined), admitOf(r, rand() < 0.8 ? 'admin' : 'member'));
+    joined.push(r);
+  }
+  if (rand() < 0.5) mk(A, admitOf(M, 'member', { hosts: ['mx', 'my'] }));
+  const n = 4 + Math.floor(rand() * 10);
+  for (let k = 0; k < n; k++) {
+    const by = pick(joined);
+    if (rand() < 0.12) {
+      mk(by, {
+        rv: 2,
+        action: 'hosts',
+        replica: M,
+        hosts: [],
+        afterSeq: 1,
+        afterHash: `h-${M}-1`,
+      });
+      continue;
+    }
+    const target = rand() < 0.2 ? by : pick(joined.filter((r) => r !== by));
+    const below = hinges.get(target) ?? [];
+    const afterSeq =
+      below.length > 0 && rand() < 0.6
+        ? pick(below) - 1
+        : Math.max(1, (seqs.get(target) ?? 1) + Math.floor(rand() * 4) - 1);
+    const cut = {
+      replica: target,
+      afterSeq,
+      afterHash: `h-${target}-${afterSeq}`,
+    };
+    if (rand() < 0.55) mk(by, { action: 'revoke', reason: 'r', ...cut });
+    else mk(by, { action: 'role', role: 'member', ...cut });
+  }
+  return ops;
+}
+
+const NO_ADMIN = 'would leave the team with no admin; void';
+
+describe('a resolution that would leave no admin', () => {
+  const [B, C, D] = MEMBERS;
+  // Sets whose removals, all accepted, leave no admin, and what each folds to.
+  const SETS: [string, RosterOpRef[], ReturnType<typeof summary> | null][] = [
+    [
+      'one voided revoke made C an admin',
+      NO_ADMIN_LEFT,
+      {
+        admins: [A, B],
+        members: [M],
+        revoked: [
+          [C, 3],
+          [P, 2],
+        ],
+      },
+    ],
+    [
+      "D's revoke of B makes C an admin, and C admits P as one",
+      [
+        admit(A, 2, 10, B, 'admin'),
+        admit(B, 2, 20, C, 'member'),
+        admit(A, 3, 30, C, 'admin'),
+        admit(C, 2, 47, P, 'admin'),
+        admit(A, 4, 48, D, 'admin'),
+        revoke(D, 2, 49, B, 1),
+        revoke(P, 2, 50, A, 6),
+        demote(P, 3, 52, D, 2),
+        demote(A, 5, 60, C, 2),
+        demote(A, 6, 62, P, 3),
+      ],
+      { admins: [A, B, D], members: [C], revoked: [] },
+    ],
+    [
+      "D's revoke of B makes C an admin",
+      [
+        admit(A, 2, 10, B, 'admin'),
+        admit(B, 2, 20, C, 'member'),
+        admit(A, 3, 30, C, 'admin'),
+        admit(A, 4, 40, D, 'admin'),
+        revoke(D, 2, 45, B, 1),
+        revoke(C, 2, 50, A, 5),
+        demote(C, 3, 55, D, 2),
+        demote(A, 5, 60, C, 3),
+      ],
+      { admins: [A, B, D], members: [C], revoked: [] },
+    ],
+    [
+      "B's revoke of D, a fight's pick, makes C an admin",
+      [
+        admit(A, 2, 9, D, 'admin'),
+        admit(D, 2, 15, C, 'member'),
+        admit(A, 3, 16, C, 'admin'),
+        admit(C, 3, 26, B, 'member'),
+        admit(A, 5, 27, B, 'admin'),
+        revoke(C, 4, 31, A, 7),
+        revoke(B, 2, 43, D, 1),
+        demote(A, 6, 51, C, 4),
+      ],
+      { admins: [A, D, B], members: [C], revoked: [] },
+    ],
+    ['a generated hinge chain', opsFor(55610, mulberry32(55610)), null],
+  ];
+
+  it('voids the latest-ranked removal and re-runs, leaving none unfounded', () => {
+    for (const [name, ops, expected] of SETS)
+      for (const level of AT)
+        for (const relay of [false, true]) {
+          const v = t.at(level, ops, { relay });
+          expect({
+            name,
+            level,
+            relay,
+            voided: v.problems.some((p) => p.message.endsWith(NO_ADMIN)),
+            unfounded: t.unfounded(level, ops, { relay }),
+          }).toEqual({ name, level, relay, voided: true, unfounded: [] });
+          if (expected !== null) expect(summary(v)).toEqual(expected);
+          else expect(summary(v).admins.length).toBeGreaterThan(0);
+        }
+  });
+
+  it('leaves no removal unfounded on generated sets, in any order and with duplicates, at every level and on the relay', () => {
+    const seeds = [
+      ...Array.from({ length: 5000 }, (_, i) => i + 1),
+      ...Array.from({ length: 21 }, (_, i) => 55600 + i),
+    ];
+    let adminless = 0;
+    for (const seed of seeds) {
+      const rand = mulberry32(seed);
+      const ops = seed > 5000 ? opsFor(seed, rand) : adminlessOps(rand);
+      const again = [
+        ...shuffled(rand, ops),
+        ops[Math.floor(rand() * ops.length)],
+      ];
+      // Every fourth set is also folded whole, in both orders and on the relay.
+      const whole = seed % 4 === 0 || seed > 5000;
+      for (const level of AT) {
+        expect({
+          seed,
+          level,
+          daemon: t.unfounded(level, ops),
+          relay: t.unfounded(level, again, { relay: true }),
+        }).toEqual({ seed, level, daemon: [], relay: [] });
+        if (!whole) continue;
+        const v = t.at(level, ops);
+        if (level === 1 && v.problems.some((p) => p.message.endsWith(NO_ADMIN)))
+          adminless++;
+        expect({
+          seed,
+          level,
+          daemon: rosterOf(t.at(level, again)),
+          relay: rosterOf(t.at(level, again, { relay: true })),
+        }).toEqual({ seed, level, daemon: rosterOf(v), relay: rosterOf(v) });
+      }
+    }
+    // Enough sets must end with no admin for the check to mean something.
+    expect(adminless).toBeGreaterThan(80);
+  }, 300_000);
 });

@@ -409,6 +409,18 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(D, 3, 429, D, 1),
     revoke(A2, 2, 441, B, 1),
   ]),
+  // All accepted, these leave no admin: B's revoke of D, which makes C an
+  // admin, is voided, and the re-run voids C's revoke of the founder too.
+  scenario('no-admin-rerun', [
+    admit(A, 2, 9, D, 'admin'),
+    admit(D, 2, 15, C, 'member'),
+    admit(A, 3, 16, C, 'admin'),
+    admit(C, 3, 26, B, 'member'),
+    admit(A, 5, 27, B, 'admin'),
+    revoke(C, 4, 31, A, 7),
+    revoke(B, 2, 43, D, 1),
+    demote(A, 6, 51, C, 4),
+  ]),
   scenario('demotion-then-promotion', [
     admit(A, 2, 100, B, 'admin'),
     admit(B, 2, 150, C),
