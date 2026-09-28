@@ -1660,6 +1660,9 @@ export function useDispatchProject(
                 },
               ]);
             }
+          } else if (event.type === 'a2a.changed') {
+            // Every Settings → A2A query shares this prefix (lib/a2a.ts).
+            void queryClient.invalidateQueries({ queryKey: ['dispatch-a2a'] });
           } else if (event.type === 'verification.changed') {
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),

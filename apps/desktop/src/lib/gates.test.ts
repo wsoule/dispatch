@@ -9,6 +9,7 @@ import {
   foldsIntoOpenApproval,
   gateNotification,
   gateOf,
+  isSystemMarker,
   openGatesAfter,
   questionsByRun,
   runIdOf,
@@ -308,5 +309,43 @@ describe('gateOf', () => {
     expect(gateOf(question)).toBeNull();
     expect(gateOf({ ...question, data: { type: 'x-closed' } })).toBeNull();
     expect(gateOf({ ...question, data: ['scope'] })).toBeNull();
+  });
+});
+
+describe('isSystemMarker', () => {
+  it('reads x-closed and x-breaker only from agent:dispatch', () => {
+    expect(
+      isSystemMarker(
+        { from: 'agent:dispatch', data: { type: 'x-closed' } },
+        'x-closed'
+      )
+    ).toBe(true);
+    expect(
+      isSystemMarker(
+        { from: 'agent:dispatch', data: { type: 'x-breaker' } },
+        'x-breaker'
+      )
+    ).toBe(true);
+    expect(
+      isSystemMarker(
+        { from: 'agent:dispatch', data: { type: 'x-closed' } },
+        'x-breaker'
+      )
+    ).toBe(false);
+    expect(
+      isSystemMarker(
+        { from: 'agent:wyat/a2a.acme', data: { type: 'x-closed' } },
+        'x-closed'
+      )
+    ).toBe(false);
+    expect(
+      isSystemMarker(
+        { from: 'a2a:acme', data: { type: 'x-breaker' } },
+        'x-breaker'
+      )
+    ).toBe(false);
+    expect(
+      isSystemMarker({ from: 'agent:dispatch', data: 'x-closed' }, 'x-closed')
+    ).toBe(false);
   });
 });

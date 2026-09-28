@@ -84,6 +84,7 @@ export type SettingsPage =
   | 'connected-agents'
   | 'sync'
   | 'integrations'
+  | 'a2a'
   | 'license'
   | 'remotes'
   | 'daemon'

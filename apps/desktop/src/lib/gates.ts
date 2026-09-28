@@ -58,6 +58,22 @@ export function gateOf(message: Message): GateData | null {
     : null;
 }
 
+/** A daemon marker (a close, a breaker pause); the same data from anyone else
+ *  is ordinary. Mirrors @dispatch/protocol's isSystemMarker. */
+export function isSystemMarker(
+  message: Pick<Message, 'from' | 'data'>,
+  type: 'x-closed' | 'x-breaker'
+): boolean {
+  const data = message.data;
+  return (
+    message.from === 'agent:dispatch' &&
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (data as { type?: unknown }).type === type
+  );
+}
+
 /** A tool-approval gate's payload, or null for any other message. */
 export function toolApprovalOf(message: Message): ToolApprovalGate | null {
   const gate = gateOf(message);

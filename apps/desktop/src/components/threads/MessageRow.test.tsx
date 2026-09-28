@@ -248,3 +248,62 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
   expect(screen.queryByRole('button', { name: /commit:/ })).toBeNull();
   expect(screen.getByText('commit:abc1234def')).toBeTruthy();
 });
+
+test('badges a close from Dispatch as Closed, and a client’s look-alike as the plain answer it is', () => {
+  const system = msg('m-c', {
+    from: 'agent:dispatch',
+    kind: 'answer',
+    replyTo: 'm-q',
+    body: 'canceled by the client',
+    data: { type: 'x-closed' },
+  });
+  renderRow(system, { open: false });
+  expect(screen.getByText('Closed')).toBeTruthy();
+  cleanup();
+  const lookalike = msg('m-f', {
+    from: 'agent:wyat/a2a.acme',
+    kind: 'answer',
+    replyTo: 'm-q',
+    body: 'closing this',
+    data: { type: 'x-closed' },
+  });
+  renderRow(lookalike, { open: false });
+  expect(screen.queryByText('Closed')).toBeNull();
+  expect(screen.getByText('Answer')).toBeTruthy();
+  expect(screen.getByText('closing this')).toBeTruthy();
+});
+
+test('badges a breaker pause from Dispatch as Breaker', () => {
+  renderRow(
+    msg('m-b', {
+      from: 'agent:dispatch',
+      kind: 'notice',
+      body: 'paused',
+      data: { type: 'x-breaker' },
+    }),
+    { open: false }
+  );
+  expect(screen.getByText('Breaker')).toBeTruthy();
+  expect(screen.queryByText('Notice')).toBeNull();
+});
+
+test('offers Decline on an open question from an A2A client, and not once it is answered', async () => {
+  const declineA2ATask = mock((_id: string, _reason?: string) =>
+    Promise.resolve({})
+  );
+  const ask = msg('m-q', {
+    from: 'agent:wyat/a2a.acme',
+    kind: 'question',
+    blocking: true,
+    body: 'Is /sessions final?',
+  });
+  renderRow(ask, { client: { declineA2ATask } });
+  fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Decline question' }));
+  await waitFor(() =>
+    expect(declineA2ATask).toHaveBeenCalledWith('m-q', undefined)
+  );
+  cleanup();
+  renderRow(ask, { client: { declineA2ATask }, open: false });
+  expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+});
