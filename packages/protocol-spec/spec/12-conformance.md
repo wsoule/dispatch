@@ -251,6 +251,10 @@ its recipient, never by its id.
 | `channels`        | every channel and its explicit members, as sets                                                                                                                                                                 |
 | `render`          | for a `render` step, its exact text (used by `dispatch`-profile vectors)                                                                                                                                        |
 
+Matched as a subset, an object checks only the members it lists, each matched
+the same way, while any other value compares exactly as a JSON value: a list
+item by item, and an object inside a list with the same members, in any order.
+
 The hook calls are `push { session, message }`, `notify { session, message }`,
 `notifyHuman { actor, message }`, `wake { target, message }`,
 `decide { target, message }`, `onAnswered { question, answer }`,

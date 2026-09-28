@@ -101,6 +101,31 @@ function symbolize(value: unknown, bound: Bound): string {
   return text;
 }
 
+// Equal as JSON values: lists item by item, objects member by member in any
+// order, since hosts in other languages may write members in another order.
+function sameJson(a: unknown, b: unknown): boolean {
+  if (Array.isArray(a) || Array.isArray(b))
+    return (
+      Array.isArray(a) &&
+      Array.isArray(b) &&
+      a.length === b.length &&
+      a.every((item, i) => sameJson(item, b[i]))
+    );
+  if (
+    a === null ||
+    b === null ||
+    typeof a !== 'object' ||
+    typeof b !== 'object'
+  )
+    return a === b;
+  const left = Object.entries(a).filter(([, v]) => v !== undefined);
+  const right = new Map(Object.entries(b).filter(([, v]) => v !== undefined));
+  return (
+    left.length === right.size &&
+    left.every(([k, v]) => right.has(k) && sameJson(v, right.get(k)))
+  );
+}
+
 // Expected fields must match; fields the vector does not list are free.
 function subset(
   expected: Json | undefined,
@@ -133,7 +158,7 @@ function subset(
       );
     return;
   }
-  if (JSON.stringify(expected) !== JSON.stringify(actual)) {
+  if (!sameJson(expected, actual)) {
     failures.push(
       `${path}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`
     );

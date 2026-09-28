@@ -5,6 +5,7 @@ import { checkDigest, checkRender } from '../src/renderCheck.js';
 import type {
   CallRecord,
   Hello,
+  Json,
   Observation,
   ObservedMessage,
   Vector,
@@ -149,6 +150,25 @@ describe('compare', () => {
         hello
       ).ok
     ).toBe(false);
+  });
+
+  it('matches a list in a result exactly, in whatever order its objects write their members', () => {
+    const v = {
+      ...send,
+      then: {
+        steps: [
+          {
+            ok: true as const,
+            result: { gates: [{ id: 'm-g', type: 'wake' }] },
+          },
+        ],
+      },
+    };
+    const withGates = (gates: Json[]) =>
+      compare(v, obs({ steps: [{ ok: true, result: { gates } }] }), hello);
+    expect(withGates([{ type: 'wake', id: 'm-g' }]).failures).toEqual([]);
+    expect(withGates([{ type: 'wake', id: 'm-g', body: 'x' }]).ok).toBe(false);
+    expect(withGates([{ id: 'm-g', type: 'scope' }]).ok).toBe(false);
   });
 
   it('fails a missing named message', () => {
