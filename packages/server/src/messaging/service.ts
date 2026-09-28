@@ -57,6 +57,7 @@ const DISPATCH_GATE_TYPES = [
   'wake',
   'agent-registration',
   'overseer-action',
+  'memory',
 ] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.

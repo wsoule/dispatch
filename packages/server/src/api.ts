@@ -153,13 +153,21 @@ import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import {
+  completeLinkRoute,
+  deleteMemoryRoute,
   getMemory,
+  getProposalRoute,
   importLedgerRoute,
   listMemory,
+  listProposalsRoute,
+  memoryActionRoute,
+  memoryActivityRoute,
   memoryHealthRoute,
   memoryIndexRoute,
   memoryRecallsRoute,
+  saveMemoryRoute,
   searchMemory,
+  startLinkRoute,
 } from './memory/routes.js';
 import type { MemoryService } from './memory/service.js';
 import type { Principal } from './messaging/principal.js';
@@ -4407,6 +4415,12 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['memory'] },
   { method: 'GET', segments: ['memory', '*'] },
   { method: 'POST', segments: ['memory', 'import', 'ledger'] },
+  { method: 'POST', segments: ['memory'] },
+  { method: 'POST', segments: ['memory', 'link'] },
+  { method: 'POST', segments: ['memory', 'link', '*'] },
+  { method: 'POST', segments: ['memory', '*', '*'] },
+  { method: 'DELETE', segments: ['memory', '*'] },
+  { method: 'GET', segments: ['memory', 'proposals', '*'] },
 ];
 
 /** Whether `/api/<segments>` is a messaging route that authenticates by
@@ -5530,20 +5544,43 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return listMemory(ctx, url);
       }
+      if (segments.length === 1 && method === 'POST') {
+        return await saveMemoryRoute(req, ctx);
+      }
       if (segments.length === 2 && method === 'GET') {
         if (segments[1] === 'search') return searchMemory(ctx, url);
         if (segments[1] === 'health') return memoryHealthRoute(ctx);
         if (segments[1] === 'index') return memoryIndexRoute(ctx, url);
         if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
+        if (segments[1] === 'proposals') return listProposalsRoute(ctx, url);
+        if (segments[1] === 'activity') return memoryActivityRoute(ctx, url);
         return getMemory(ctx, segments[1]);
       }
-      if (
-        segments.length === 3 &&
-        segments[1] === 'import' &&
-        segments[2] === 'ledger' &&
-        method === 'POST'
-      ) {
-        return importLedgerRoute(ctx, url);
+      if (segments.length === 2 && method === 'POST') {
+        if (segments[1] === 'link') return await startLinkRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        return deleteMemoryRoute(ctx, segments[1]);
+      }
+      if (segments.length === 3 && method === 'GET') {
+        if (segments[1] === 'proposals') {
+          return getProposalRoute(ctx, segments[2]);
+        }
+      }
+      if (segments.length === 3 && method === 'POST') {
+        if (segments[1] === 'import' && segments[2] === 'ledger') {
+          return importLedgerRoute(ctx, url);
+        }
+        if (segments[1] === 'link') {
+          return await completeLinkRoute(req, ctx, segments[2]);
+        }
+        const acted = await memoryActionRoute(
+          req,
+          ctx,
+          segments[1],
+          segments[2]
+        );
+        if (acted !== null) return acted;
       }
     }
 

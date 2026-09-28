@@ -2161,6 +2161,11 @@ export class Orchestrator {
     return this.ctx.isA2ATask?.(taskId) ?? false;
   }
 
+  // The same answer for memory, which keeps project scope from A2A runs.
+  isA2ATask(taskId: string): boolean {
+    return this.a2a(taskId);
+  }
+
   // Who the task's latest execute run acts for: the operator of a wake, review,
   // verify or fix-loop run of the same task.
   operatorForTask(taskId: string): string | null {

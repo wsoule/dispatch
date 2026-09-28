@@ -1270,6 +1270,7 @@ async function bootServer(
   }
   // Messaging opens once the orchestrator exists (it mints run tokens and
   // hears onRunStarted); its recover() waits for reconcileOnBoot() below.
+  const appendPolicyActivity = policyActivityAppender({ store, cache, events });
   const messaging = openMessaging({
     rootDir,
     orchestrator,
@@ -1277,7 +1278,23 @@ async function bootServer(
     events,
     ownerRef: actorContext.humanRef,
     ledgerStore,
-    appendPolicyActivity: policyActivityAppender({ store, cache, events }),
+    appendPolicyActivity,
+  });
+  // Memory opens before messaging.recover() because it registers the memory
+  // gate's handler: an answer replayed with no handler is marked applied and lost.
+  const memory = openMemory({
+    rootDir,
+    store,
+    orchestrator,
+    events,
+    ledgerStore,
+    messaging,
+    ownerRef: actorContext.humanRef,
+    appendPolicyActivity,
+    watchLedgerFile:
+      stores.records === null
+        ? join(rootDir, '.dispatch', 'ledger.jsonl')
+        : null,
   });
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
@@ -1311,23 +1328,17 @@ async function bootServer(
   await messaging.recover();
   // Runs force-failed above left their gates open; nobody can act on them now.
   closeOrphanedGates(messaging.engine, orchestrator);
-  // Memory opens after messaging and before HTTP serves; the boot import
-  // carries every ledger lesson in before the first dispatch.
-  const memory = openMemory({
-    rootDir,
-    store,
-    orchestrator,
-    events,
-    ledgerStore,
-    watchLedgerFile:
-      stores.records === null
-        ? join(rootDir, '.dispatch', 'ledger.jsonl')
-        : null,
-  });
+  // Before HTTP serves: the boot import carries every ledger lesson in before
+  // the first dispatch, then proposals a crash left without a gate get one.
   try {
     memory.importLedger();
   } catch (err) {
     console.error('dispatchd: boot ledger import failed', err);
+  }
+  try {
+    await memory.recover();
+  } catch (err) {
+    console.error('dispatchd: memory gate recovery failed', err);
   }
   orchestrator.setMemoryPort(memory);
   // After recovery, so the bridge reconciles against settled messaging state;

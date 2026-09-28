@@ -10,6 +10,7 @@ import { EventBus } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { openMemory } from '../../src/memory/service.js';
 import type { MemoryPromptSection } from '../../src/orchestrator/types.js';
+import { quietDaemon } from './fixtures.js';
 
 // A project with one task and memory.db beside it; `imported` runs the ledger import.
 function setup({ imported = true } = {}) {
@@ -26,7 +27,7 @@ function setup({ imported = true } = {}) {
       store,
       events: new EventBus(),
       ledgerStore: new LedgerStore(root),
-      orchestrator: { taskIdOfRun: () => task.meta.id, getRun: () => null },
+      ...quietDaemon(root, { taskIdOfRun: () => task.meta.id }),
       dbPath: join(root, 'memory.db'),
     });
   const memory = open();

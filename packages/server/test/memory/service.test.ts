@@ -8,8 +8,7 @@ import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { openMemory } from '../../src/memory/service.js';
-
-const noRuns = { taskIdOfRun: () => null, getRun: () => null };
+import { quietDaemon } from './fixtures.js';
 
 function setup() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'memory-service-')));
@@ -23,7 +22,7 @@ function setup() {
     store,
     events,
     ledgerStore,
-    orchestrator: noRuns,
+    ...quietDaemon(root),
     dbPath: join(root, 'memory.db'),
   });
   return { root, memory, ledgerStore, events, seen };
@@ -62,14 +61,14 @@ describe('openMemory', () => {
       store: TaskStore.init(t.root),
       events: new EventBus(),
       ledgerStore: t.ledgerStore,
-      orchestrator: noRuns,
+      ...quietDaemon(t.root),
       dbPath: join(t.root, 'memory.db'),
     });
     expect(reopened.lastLedgerImport()).toMatchObject({
       outcome: 'ok',
       memory: { imported: 1 },
     });
-    expect(reopened.health()).toMatchObject({
+    expect(reopened.health(null)).toMatchObject({
       available: true,
       entries: 1,
       openProposals: 0,
@@ -87,11 +86,11 @@ describe('openMemory', () => {
       store: TaskStore.init(root),
       events: new EventBus(),
       ledgerStore: new LedgerStore(root),
-      orchestrator: noRuns,
+      ...quietDaemon(root),
       dbPath,
     });
     expect(memory.engine).toBeNull();
-    expect(memory.health()).toMatchObject({ available: false });
+    expect(memory.health(null)).toMatchObject({ available: false });
     expect(() => memory.requireEngine()).toThrow(/unavailable|will not open/);
     expect(memory.importLedger()).toBeNull();
     memory.close();
