@@ -3254,7 +3254,7 @@ export interface ApiClient {
     base: MemoryEntryView | null;
     current: MemoryEntryView | null;
   }>;
-  /** The caller's own personal activity; the last day when `since` is absent. */
+  /** The caller's own personal activity, oldest first; the last day when `since` is absent. */
   memoryActivity(since?: string): Promise<{ activity: MemoryActivityRow[] }>;
   memoryIdentity(): Promise<{
     identity: string;

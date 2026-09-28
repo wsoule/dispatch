@@ -77,6 +77,16 @@ describe('personal writes', () => {
     ).toMatchObject({ trust: 'human', projectKey: 'aaaaaaaaaaaa' });
   });
 
+  // The desktop Inbox reverses this order and offers Undo on each entry's last row.
+  it('lists the operator’s activity oldest first', async () => {
+    const t = setup();
+    const e = (await t.engine.save(RUN, hazard)) as { id: string };
+    await t.engine.edit(RUN, e.id, { body: 'v2', cause: 'ingest' });
+    expect(
+      t.engine.activity(OWNER, '1970-01-01T00:00:00.000Z').map((a) => a.kind)
+    ).toEqual(['saved', 'ingested']);
+  });
+
   it('refuses a run with no operator', async () => {
     const t = setup();
     expect(await code(t.engine.save(NO_OP_RUN, hazard))).toBe('forbidden');

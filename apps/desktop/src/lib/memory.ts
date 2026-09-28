@@ -128,14 +128,14 @@ const UNDOABLE: ReadonlySet<MemoryActivityRow['kind']> = new Set([
   'ingested',
 ]);
 
-/** The caller's personal activity as Inbox lines, in the daemon's order
- *  (newest first). Undo reverts an entry's latest revision, so only the
- *  newest change to each entry offers it; notices never do. */
+/** The caller's personal activity as Inbox lines, newest first (the daemon
+ *  lists it oldest first). Undo reverts an entry's latest revision, so only
+ *  the newest change to each entry offers it; notices never do. */
 export function activityItems(
   rows: readonly MemoryActivityRow[]
 ): MemoryActivityItem[] {
   const seen = new Set<string>();
-  return rows.map((row) => {
+  return [...rows].reverse().map((row) => {
     const newest = row.memoryId !== null && !seen.has(row.memoryId);
     if (row.memoryId !== null) seen.add(row.memoryId);
     return {

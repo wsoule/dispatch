@@ -171,24 +171,27 @@ describe('activityItems', () => {
       const r = row(k);
       return r.memoryId === null ? r : { ...r, memoryId: `mem-${i}` };
     });
-    expect(activityItems(rows).map((i) => i.undoable)).toEqual([
-      true,
-      true,
-      true,
-      true,
-      false,
-      false,
-    ]);
+    expect(
+      Object.fromEntries(activityItems(rows).map((i) => [i.id, i.undoable]))
+    ).toEqual({
+      'ma-saved': true,
+      'ma-edited': true,
+      'ma-retired': true,
+      'ma-ingested': true,
+      'ma-throttled': false,
+      'ma-ingest-problem': false,
+    });
   });
 
-  it('keeps the daemon’s order and its summary as the line', () => {
+  it('lists the daemon’s oldest-first rows newest first, its summary as the line', () => {
     const items = activityItems([
-      row('saved', { id: 'ma-2', summary: 'run:r-1 saved to your memory: B' }),
       row('edited', {
         id: 'ma-1',
+        at: '2026-09-25T09:00:00.000Z',
         memoryId: 'mem-2',
         summary: 'run:r-1 changed your memory: A',
       }),
+      row('saved', { id: 'ma-2', summary: 'run:r-1 saved to your memory: B' }),
     ]);
     expect(items).toEqual([
       {
@@ -202,7 +205,7 @@ describe('activityItems', () => {
         id: 'ma-1',
         memoryId: 'mem-2',
         text: 'run:r-1 changed your memory: A',
-        at: '2026-09-25T10:00:00.000Z',
+        at: '2026-09-25T09:00:00.000Z',
         undoable: true,
       },
     ]);
@@ -210,14 +213,40 @@ describe('activityItems', () => {
 
   it('offers Undo only on the newest change to each entry, since undo reverts the latest', () => {
     const items = activityItems([
-      row('edited', { id: 'ma-3', memoryId: 'mem-1' }),
-      row('saved', { id: 'ma-2', memoryId: 'mem-2' }),
       row('saved', { id: 'ma-1', memoryId: 'mem-1' }),
+      row('saved', { id: 'ma-2', memoryId: 'mem-2' }),
+      row('edited', { id: 'ma-3', memoryId: 'mem-1' }),
     ]);
     expect(items.map((i) => [i.id, i.undoable])).toEqual([
       ['ma-3', true],
       ['ma-2', true],
       ['ma-1', false],
+    ]);
+  });
+
+  // What `MemoryEngine.activity` returns after a run saves an entry, then changes it.
+  it('puts Undo on the change undo reverts, given rows as the daemon returns them', () => {
+    const daemon: MemoryActivityRow[] = [
+      {
+        id: 'ma-01',
+        at: '2026-09-25T10:00:00.000Z',
+        kind: 'saved',
+        memoryId: 'mem-01',
+        runId: 'r-9f2c01',
+        summary: 'run:r-9f2c01 saved to your memory: pnpm builds',
+      },
+      {
+        id: 'ma-02',
+        at: '2026-09-25T10:00:00.000Z',
+        kind: 'ingested',
+        memoryId: 'mem-01',
+        runId: 'r-9f2c01',
+        summary: 'run:r-9f2c01 changed your memory: pnpm builds',
+      },
+    ];
+    expect(activityItems(daemon).map((i) => [i.text, i.undoable])).toEqual([
+      ['run:r-9f2c01 changed your memory: pnpm builds', true],
+      ['run:r-9f2c01 saved to your memory: pnpm builds', false],
     ]);
   });
 
