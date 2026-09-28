@@ -1,7 +1,7 @@
-import { RotateCw } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
+import { DecideUnavailableNotice } from './DecideUnavailableNotice';
 import { formatRelativeTimeFromIso } from '@/lib/format';
 import type { ApprovalCardOption } from '@/ui/ai/approval-card';
 import { ApprovalCard as AiApprovalCard } from '@/ui/ai/approval-card';
@@ -130,7 +130,6 @@ export function ApprovalCard({
   );
   const showsPreview = truncated && full === null;
   const [deciding, setDeciding] = useState(false);
-  const [restarting, setRestarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | undefined>();
   // Denying opens a reason box rather than firing immediately. The button says "tell it why",
@@ -153,19 +152,6 @@ export function ApprovalCard({
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDeciding(false);
-    }
-  }
-
-  async function restart() {
-    if (onRestartDaemon === undefined) return;
-    setRestarting(true);
-    setError(null);
-    try {
-      await onRestartDaemon();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setRestarting(false);
     }
   }
 
@@ -241,32 +227,10 @@ export function ApprovalCard({
           )}
         </div>
       )}
-      {/* Same block the scope card shows: this window attached to a daemon it did not start,
-          so it never saw the app token approving needs. */}
-      {!availability.enabled && (
-        <div className="rounded-control border-border-chip bg-surface-quaternary flex flex-col gap-1.5 border-[0.5px] px-2.5 py-2">
-          <span className="text-[13px] font-medium">{availability.notice}</span>
-          <span className="font-book text-muted-foreground text-[12px]">
-            {availability.explanation}
-          </span>
-          {availability.restart?.safe === true &&
-          onRestartDaemon !== undefined ? (
-            <Button
-              variant="secondary"
-              className="self-start"
-              disabled={restarting}
-              onClick={() => void restart()}
-            >
-              <RotateCw className="size-3" />
-              {restarting ? 'Restarting…' : 'Restart daemon'}
-            </Button>
-          ) : (
-            <span className="font-book text-muted-foreground text-[12px]">
-              {availability.restart?.blockedReason}
-            </span>
-          )}
-        </div>
-      )}
+      <DecideUnavailableNotice
+        availability={availability}
+        onRestartDaemon={onRestartDaemon}
+      />
       {error !== null && <div className="text-red text-[12px]">{error}</div>}
       {/* `denying` drives a real Collapsible rather than a plain conditional — no chevron
           here, just the reveal/animate-in behavior for the reason box. */}
