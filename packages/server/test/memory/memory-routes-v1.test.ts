@@ -5,6 +5,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { FakeOverseer } from '../../src/orchestrator/overseers/fake.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth, wsUrl } from '../testAuth.js';
 
@@ -39,6 +40,15 @@ let handle: ServerHandle;
 let base: string;
 let executor: StallingExecutor;
 const originalHome = process.env.DISPATCH_HOME;
+// The memory id every overseer turn reads, after searching all memory.
+let overseerReads = '';
+const overseer = new FakeOverseer({
+  ok: true,
+  calls: [
+    { tool: 'memory_search', input: { query: '' } },
+    { tool: 'memory_read', input: () => ({ id: overseerReads }) },
+  ],
+});
 
 function boot(): Promise<ServerHandle> {
   return startServer({
@@ -48,6 +58,9 @@ function boot(): Promise<ServerHandle> {
     writeDaemonFile: false,
     registerExecutors: (orchestrator) => {
       orchestrator.registerExecutor('claude', executor);
+    },
+    registerOverseers: (overseers) => {
+      overseers.registerBackend('claude', overseer);
     },
   });
 }
@@ -261,6 +274,63 @@ describe('personal privacy', () => {
       expect(text).not.toContain(personal.handle);
     }
     hook.stop();
+  });
+
+  // Every request-tier caller can start an overseer conversation and read its transcript.
+  it('an overseer conversation never carries a personal entry, whoever starts it', async () => {
+    const personal = await json<{ id: string; handle: string }>(
+      await fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'personal',
+          kind: 'fact',
+          title: 'SECRET-OVERSEER-title',
+          body: 'SECRET-OVERSEER-body',
+        }),
+      })
+    );
+    await fetch(`${base}/api/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        scope: 'project',
+        kind: 'convention',
+        title: 'overseer-visible convention',
+        body: 'b',
+      }),
+    });
+    overseerReads = personal.id;
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    for (const token of [null, ada, handle.tokens.agentToken]) {
+      const headers =
+        token === null
+          ? { 'content-type': 'application/json' }
+          : authHeaders(token);
+      const started = await json<{ id: string }>(
+        await fetch(`${base}/api/overseer`, {
+          method: 'POST',
+          headers,
+          body: JSON.stringify({ prompt: 'what do you remember?' }),
+        })
+      );
+      let transcript = '';
+      await waitFor(async () => {
+        transcript = await (
+          await fetch(`${base}/api/overseer/${started.id}`, { headers })
+        ).text();
+        return (
+          (JSON.parse(transcript) as { state: string }).state !== 'running'
+        );
+      });
+      expect(transcript).toContain('overseer-visible convention');
+      for (const secret of [
+        'SECRET-OVERSEER-title',
+        'SECRET-OVERSEER-body',
+        personal.handle,
+      ])
+        expect(transcript).not.toContain(secret);
+    }
   });
 
   // origin and cause belong to the importer, amendments and ingest.

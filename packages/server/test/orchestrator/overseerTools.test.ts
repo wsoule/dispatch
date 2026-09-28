@@ -612,6 +612,13 @@ describe('overseer status tools', () => {
     expect(() =>
       registry.callStatusTool('memory_search', { query: 'x', kind: 'rumour' })
     ).toThrow(OverseerToolError);
+    // The overseer has no personal scope to offer.
+    expect(() =>
+      registry.callStatusTool('memory_search', {
+        query: 'x',
+        scope: 'personal',
+      })
+    ).toThrow(OverseerToolError);
   });
 
   it('memory tools say memory is unavailable when the context has none', () => {

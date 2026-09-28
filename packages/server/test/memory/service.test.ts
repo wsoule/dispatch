@@ -1,4 +1,5 @@
 import { TaskStore } from '@dispatch/core';
+import type { Principal } from '@dispatch/memory';
 import { describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,7 +8,7 @@ import { join } from 'node:path';
 import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
-import { openMemory } from '../../src/memory/service.js';
+import { openMemory, overseerMemory } from '../../src/memory/service.js';
 import { BEFORE_CUTOVER, quietDaemon, seedLedger } from './fixtures.js';
 
 function setup() {
@@ -112,6 +113,41 @@ describe('openMemory', () => {
       scope: 'personal',
     });
     expect(JSON.stringify(t.seen)).not.toContain('mem-secret');
+    t.memory.close();
+  });
+});
+
+describe('overseerMemory', () => {
+  it('reads project and team memory, never its owner’s personal entries', async () => {
+    const t = setup();
+    const engine = t.memory.requireEngine();
+    const owner: Principal = {
+      address: 'human:wyat',
+      canDecide: true,
+      kind: 'human',
+    };
+    const personal = await engine.save(owner, {
+      scope: 'personal',
+      kind: 'fact',
+      title: 'SECRET-OVERSEER-title',
+      body: 'SECRET-OVERSEER-body',
+    });
+    if (personal.status !== 'active') throw new Error('expected an entry');
+    await engine.save(owner, {
+      scope: 'project',
+      kind: 'convention',
+      title: 'overseer-visible convention',
+      body: 'b',
+    });
+    const port = overseerMemory(t.memory);
+    const all = JSON.stringify(port.search({ query: '' }));
+    expect(all).toContain('overseer-visible convention');
+    expect(all).not.toContain('SECRET-OVERSEER-title');
+    expect(JSON.stringify(port.search({ query: 'SECRET' }))).not.toContain(
+      personal.id
+    );
+    for (const ref of [personal.id, personal.handle])
+      expect(() => port.read(ref)).toThrow(/you can see/);
     t.memory.close();
   });
 });

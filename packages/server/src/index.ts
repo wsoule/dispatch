@@ -1518,7 +1518,7 @@ async function bootServer(
       mergeQueue,
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
-      memory: overseerMemory(memory, overseerAddress),
+      memory: overseerMemory(memory),
       messaging: overseerToolMessaging(messaging.engine),
       ownerRef: actorContext.humanRef,
     }),

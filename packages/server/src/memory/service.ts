@@ -9,6 +9,7 @@ import {
   SqliteMemoryStore,
 } from '@dispatch/memory';
 import type { MemoryStores, Principal } from '@dispatch/memory';
+import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { unwatchFile, watchFile } from 'node:fs';
 import { join } from 'node:path';
 
@@ -373,13 +374,16 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   };
 }
 
-// The overseer's memory reads, as its own agent principal: it sees what its
-// owner's agents see and never decides.
+// Every request-tier caller can read an overseer transcript, so the overseer
+// reads as Dispatch itself, which acts for no human: project and team only.
 export function overseerMemory(
-  memory: Pick<MemoryService, 'requireEngine'>,
-  address: string
+  memory: Pick<MemoryService, 'requireEngine'>
 ): NonNullable<OverseerToolContext['memory']> {
-  const principal: Principal = { address, canDecide: false, kind: 'agent' };
+  const principal: Principal = {
+    address: SYSTEM_ADDRESS,
+    canDecide: false,
+    kind: 'agent',
+  };
   return {
     search: (input) => {
       const engine = memory.requireEngine();

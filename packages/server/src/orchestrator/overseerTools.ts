@@ -1,7 +1,7 @@
 import { notificationKindForMessage, untrustedInline } from '@dispatch/core';
 import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
-import { MEMORY_KINDS, MEMORY_SCOPES } from '@dispatch/memory';
-import type { MemoryKind, MemoryScope } from '@dispatch/memory';
+import { MEMORY_KINDS } from '@dispatch/memory';
+import type { MemoryKind, SharedScope } from '@dispatch/memory';
 import type { Message } from '@dispatch/protocol';
 import { gateOf } from '@dispatch/protocol';
 import { randomBytes } from 'node:crypto';
@@ -64,11 +64,11 @@ export interface OverseerToolContext {
   /** Open blocking questions addressed to a human (see openHumanDecisions). */
   openGates: () => Message[];
   ledgerStore: LedgerStorePort;
-  /** Memory reads as the owner's overseer (agent:<owner>/overseer). */
+  /** Project and team memory reads; the overseer has no personal scope. */
   memory?: {
     search(input: {
       query: string;
-      scope?: MemoryScope;
+      scope?: SharedScope;
       kind?: MemoryKind;
       limit?: number;
     }): unknown;
@@ -454,7 +454,7 @@ const memorySearchInput = z.object({
   query: z
     .string()
     .describe('Words to search for. Empty returns the top entries.'),
-  scope: z.enum(MEMORY_SCOPES).optional(),
+  scope: z.enum(['project', 'team']).optional(),
   kind: z.enum(MEMORY_KINDS).optional(),
   limit: z.number().int().min(1).max(50).optional(),
 });
@@ -463,7 +463,7 @@ const memorySearchTool: OverseerStatusTool<z.infer<typeof memorySearchInput>> =
   {
     name: 'memory_search',
     description:
-      'Search the lessons, conventions and preferences Dispatch remembers, stale ones included.',
+      'Search the project and team lessons, conventions and preferences Dispatch remembers, stale ones included.',
     inputSchema: memorySearchInput,
     read(ctx, input) {
       return requireMemory(ctx).search(input);
@@ -476,7 +476,8 @@ const memoryReadInput = z.object({
 
 const memoryReadTool: OverseerStatusTool<z.infer<typeof memoryReadInput>> = {
   name: 'memory_read',
-  description: 'Open one memory: its body, who wrote it, and its revisions.',
+  description:
+    'Open one project or team memory: its body, who wrote it, and its revisions.',
   inputSchema: memoryReadInput,
   read(ctx, input) {
     // Handles are stored upper-case; the model may type one in any case.
