@@ -76,6 +76,28 @@ it('lets the task itself message the client', async () => {
   ).toContain(message.id);
 });
 
+it('refuses the task of a handoff still awaiting its proposal', async () => {
+  const opened = await f.port.open(f.caller, {
+    clientMessageId: 'c-h2',
+    contextId: null,
+    kind: 'handoff',
+    to: null,
+    replyTo: null,
+    body: 'Also add quotas.',
+    refs: [],
+    work: { skill: 'handoff', title: 'Upload quotas' },
+  });
+  if (opened.kind !== 'task') throw new Error('expected a task');
+  const pending = f.store.getTask(opened.taskId)!.dispatchTask!;
+  // Sent as the draft task, as a human acting as it would.
+  await expect(
+    f.messaging.engine.send(
+      { to: [f.caller.address], kind: 'message', body: 'Starting early.' },
+      { address: `task:${pending}`, canDecide: false }
+    )
+  ).rejects.toMatchObject({ code: 'invalid', field: 'to[0]' });
+});
+
 it('refuses a run of an unrelated task reaching the client', async () => {
   const other = f.tasks.create({ title: 'unrelated work', status: 'ready' });
   const otherRun = await f.orchestrator.dispatch(other.meta.id, 'park');
@@ -127,6 +149,8 @@ it('shows the run’s tool-approval gate as AUTH_REQUIRED without its payload', 
 
 // The watch reacts to the linked task's traffic, not only the A2A thread's.
 it('fires watchers and rewrites the ListTasks state cache when the run asks', async () => {
+  // The dispatch's own recompute lands first, so only the question can fire.
+  await waitFor(() => f.store.getTask(rootId)?.state === 'WORKING');
   let fired = 0;
   const stop = f.port.watch(f.caller, rootId, () => {
     fired += 1;

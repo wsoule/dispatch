@@ -24,8 +24,8 @@ function inClientScope(
   );
 }
 
-// Whether `sender` is `task:<t>` or a run of <t>, where <t> is the Dispatch
-// task of one of `client`'s approved handoffs that has not finished.
+// Whether `sender` is `task:<t>` or an execute run of <t> (never a review or
+// verify run), where <t> is the task of `client`'s approved, unfinished handoff.
 function fromApprovedLinkedTask(
   deps: BridgeDeps,
   client: Address,
