@@ -32,6 +32,11 @@ const link = (
     fromParent,
   }) as unknown as DocLinking;
 
+const personal = (handle: string, rel: DocLinking['rel']): DocLinking => {
+  const l = link(handle, rel);
+  return { ...l, doc: { ...l.doc, scope: 'personal' } };
+};
+
 const summary = (handle: string, title: string): DocSummary =>
   ({
     id: `doc-${handle}`,
@@ -67,6 +72,10 @@ function mount(
   );
 }
 
+// Button names in the block; a list of strings reports a failure plainly.
+const buttons = () =>
+  screen.queryAllByRole('button').map((b) => b.textContent ?? '');
+
 describe('groupTaskDocs', () => {
   test('puts the spec first, then plans, context and docs from parents', () => {
     const g = groupTaskDocs([
@@ -75,11 +84,26 @@ describe('groupTaskDocs', () => {
       link('c', 'context'),
       link('ps', 'spec', true),
     ]);
-    expect(g.spec?.doc.handle).toBe('s');
+    expect(g.specs.map((l) => l.doc.handle)).toEqual(['s']);
     expect(g.plans.map((l) => l.doc.handle)).toEqual(['p']);
     expect(g.context.map((l) => l.doc.handle)).toEqual(['c']);
     expect(g.fromParents.map((l) => l.doc.handle)).toEqual(['ps']);
   });
+
+  test('keeps a personal spec beside the team spec, team first', () => {
+    const g = groupTaskDocs([personal('mine', 'spec'), link('s', 'spec')]);
+    expect(g.specs.map((l) => l.doc.handle)).toEqual(['s', 'mine']);
+  });
+});
+
+test('a task with only a personal spec lists it and still offers New spec', async () => {
+  const client = {
+    docsLinking: () => Promise.resolve({ docs: [personal('mine', 'spec')] }),
+  } as unknown as ApiClient;
+  mount(client);
+  await waitFor(() =>
+    expect(buttons()).toEqual(['New spec', 'Link doc', 'specMINEpersonal'])
+  );
 });
 
 test('offers New spec when the task has none, and creates it linked as spec', async () => {
@@ -202,10 +226,6 @@ test('Link doc also finds docs by their text through the daemon search', async (
     expect(linked).toEqual([['doc-rl', { target: 'task:t-1', rel: 'context' }]])
   );
 });
-
-// Button names in the block; a list of strings reports a failure plainly.
-const buttons = () =>
-  screen.queryAllByRole('button').map((b) => b.textContent ?? '');
 
 test("offers New spec and Link doc only once the task's links have loaded", async () => {
   let answer: (docs: DocLinking[]) => void = () => undefined;

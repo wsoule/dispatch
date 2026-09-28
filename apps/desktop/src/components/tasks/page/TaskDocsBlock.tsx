@@ -21,16 +21,21 @@ const PICKER_HITS = 20;
 // How long typing must pause before the picker searches the daemon.
 const PICKER_SEARCH_MS = 150;
 
-// A task's own links by role; links it inherits from its epics come last.
+// A task's own links by role, its team spec before a personal one (one spec per
+// namespace); links it inherits from its epics come last.
 export function groupTaskDocs(linking: readonly DocLinking[]): {
-  spec: DocLinking | null;
+  specs: DocLinking[];
   plans: DocLinking[];
   context: DocLinking[];
   fromParents: DocLinking[];
 } {
   const own = linking.filter((l) => !l.fromParent);
+  const specs = own.filter((l) => l.rel === 'spec');
   return {
-    spec: own.find((l) => l.rel === 'spec') ?? null,
+    specs: [
+      ...specs.filter((l) => l.doc.scope === 'team'),
+      ...specs.filter((l) => l.doc.scope !== 'team'),
+    ],
     plans: own.filter((l) => l.rel === 'plan'),
     context: own.filter((l) => l.rel === 'context'),
     fromParents: linking.filter((l) => l.fromParent),
@@ -105,7 +110,9 @@ export function TaskDocsBlock({
         </span>
         <span className="truncate">{l.doc.title}</span>
         {docBadges(l.doc)
-          .filter((b) => b === 'unreviewed' || b === 'accepted')
+          .filter(
+            (b) => b === 'personal' || b === 'unreviewed' || b === 'accepted'
+          )
           .map((b) => (
             <span
               key={b}
@@ -123,7 +130,7 @@ export function TaskDocsBlock({
       trailing={
         mayAct ? (
           <>
-            {g.spec === null && (
+            {!g.specs.some((l) => l.doc.scope === 'team') && (
               <Button size="xs" variant="ghost" onClick={newSpec}>
                 New spec
               </Button>
@@ -162,7 +169,7 @@ export function TaskDocsBlock({
       )}
       {linking.length > 0 && (
         <ul className="flex flex-col">
-          {g.spec !== null && row(g.spec, 'spec')}
+          {g.specs.map((l) => row(l, 'spec'))}
           {g.plans.map((l) => row(l, 'plan'))}
           {g.context.map((l) => row(l, 'context'))}
           {g.fromParents.map((l) => row(l, `from parent · ${l.rel}`))}
