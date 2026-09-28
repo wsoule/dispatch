@@ -425,6 +425,8 @@ rusqlite
 rustls
 rustup
 sandboxing
+satteri
+Sätteri
 scandir
 scannability
 schedulable

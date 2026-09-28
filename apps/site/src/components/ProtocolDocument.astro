@@ -1,0 +1,75 @@
+---
+import { getCollection, render } from 'astro:content';
+
+// One frozen version's whole text, file by file, after a list of its top-level
+// sections. A version with no frozen files fails the build.
+interface Props {
+  version: string;
+}
+const { version } = Astro.props;
+const prefix = `${version}/spec/`;
+const entries = (
+  await getCollection('protocol', (entry) => entry.id.startsWith(prefix))
+).sort((a, b) => (a.id < b.id ? -1 : 1));
+if (entries.length === 0) throw new Error(`DMP ${version} has no frozen text`);
+const sections = await Promise.all(
+  entries.map(async (entry) => {
+    const { Content, headings } = await render(entry);
+    return { Content, top: headings.find((h) => h.depth === 1) };
+  })
+);
+---
+
+<nav class="protocol-toc" aria-label="Sections">
+  <p class="toc-title">Dispatch Messaging Protocol {version}</p>
+  <ul>
+    {
+      sections.map(({ top }) =>
+        top === undefined ? null : (
+          <li>
+            <a href={`#${top.slug}`}>{top.text}</a>
+          </li>
+        )
+      )
+    }
+  </ul>
+</nav>
+{
+  sections.map(({ Content }) => (
+    <section class="spec-text">
+      <Content />
+    </section>
+  ))
+}
+
+<style>
+  .protocol-toc {
+    padding: var(--space-5) var(--space-6);
+    border: 1px solid var(--border-default);
+    border-radius: var(--radius-card);
+    background: var(--surface-card);
+    font-size: var(--site-text-sm);
+  }
+  .toc-title {
+    margin-bottom: var(--space-3);
+    font-weight: 600;
+  }
+  ul {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    columns: 2 16rem;
+    column-gap: var(--space-6);
+  }
+  li {
+    padding: var(--space-1) 0;
+    break-inside: avoid;
+  }
+  a {
+    color: var(--text-secondary);
+    text-decoration: none;
+  }
+  a:hover {
+    color: var(--text-primary);
+  }
+</style>
