@@ -137,10 +137,8 @@ export interface MemoryStore {
   addIngestProblem(row: IngestProblemRow): void;
   /** Newest first, without the kept content. */
   ingestProblems(limit: number): IngestProblem[];
-  /** Removes the problem and returns what accepting it needs. */
-  takeIngestProblem(
-    id: string
-  ): Pick<IngestProblemRow, 'lineage' | 'file' | 'content'> | null;
+  /** Removes the problem and returns it whole, so a failed accept can put it back. */
+  takeIngestProblem(id: string): IngestProblemRow | null;
   /** Writes a 0600 copy to `path`, replacing the previous one; not inside a transaction. */
   backup(path: string): void;
   close(): void;

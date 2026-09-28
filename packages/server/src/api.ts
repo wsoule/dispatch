@@ -152,16 +152,19 @@ import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import {
+  acceptIngestProblemRoute,
   completeLinkRoute,
   deleteMemoryRoute,
   getMemory,
   getProposalRoute,
   importLedgerRoute,
+  ingestProblemsRoute,
   listMemory,
   listProposalsRoute,
   memoryActionRoute,
   memoryActivityRoute,
   memoryHealthRoute,
+  memoryIdentityRoute,
   memoryIndexRoute,
   memoryRecallsRoute,
   saveMemoryRoute,
@@ -4419,6 +4422,7 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'POST', segments: ['memory', '*', '*'] },
   { method: 'DELETE', segments: ['memory', '*'] },
   { method: 'GET', segments: ['memory', 'proposals', '*'] },
+  { method: 'POST', segments: ['memory', 'ingest-problems', '*', 'accept'] },
 ];
 
 /** Whether `/api/<segments>` is a messaging route that authenticates by
@@ -5552,6 +5556,8 @@ export async function handleApi(
         if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
         if (segments[1] === 'proposals') return listProposalsRoute(ctx, url);
         if (segments[1] === 'activity') return memoryActivityRoute(ctx, url);
+        if (segments[1] === 'identity') return memoryIdentityRoute(ctx);
+        if (segments[1] === 'ingest-problems') return ingestProblemsRoute(ctx);
         return getMemory(ctx, segments[1]);
       }
       if (segments.length === 2 && method === 'POST') {
@@ -5579,6 +5585,14 @@ export async function handleApi(
           segments[2]
         );
         if (acted !== null) return acted;
+      }
+      if (
+        segments.length === 4 &&
+        method === 'POST' &&
+        segments[1] === 'ingest-problems' &&
+        segments[3] === 'accept'
+      ) {
+        return await acceptIngestProblemRoute(ctx, segments[2]);
       }
     }
 

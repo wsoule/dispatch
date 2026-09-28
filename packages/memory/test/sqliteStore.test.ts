@@ -265,11 +265,10 @@ describe('SqliteMemoryStore', () => {
       },
     ]);
     expect(s.ingestProblems(1).map((p) => p.id)).toEqual(['p2']);
-    expect(s.takeIngestProblem('p1')).toEqual({
-      lineage: 'r-1',
-      file: 'p1.md',
-      content: 'first 8 KiB',
-    });
+    // Whole, so a failed accept can put it back as it was.
+    expect(s.takeIngestProblem('p1')).toEqual(
+      problem('p1', NOW, 'first 8 KiB')
+    );
     expect(s.takeIngestProblem('p1')).toBeNull();
     expect(s.ingestProblems(10).map((p) => p.id)).toEqual(['p2']);
   });

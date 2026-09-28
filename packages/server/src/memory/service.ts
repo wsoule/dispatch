@@ -65,6 +65,8 @@ export interface MemoryService extends MemoryPromptPort {
   /** Null when identities.db would not open. */
   readonly identities: MemoryIdentities | null;
   readonly personal: PersonalStores;
+  /** The engine's stores: a reused handle answers 409, a down identities.db 503. */
+  readonly stores: MemoryStores;
   /** Throws MemoryError('unavailable') with the open failure. */
   requireEngine(): MemoryEngine;
   importLedger(opts?: { dryRun?: boolean }): LedgerImportReport | null;
@@ -349,6 +351,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     host,
     identities,
     personal,
+    stores,
     requireEngine: () => {
       if (engine === null) throw unavailable();
       return engine;

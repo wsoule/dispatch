@@ -62,6 +62,9 @@ export interface ListQuery {
   kind?: MemoryKind;
   state?: DisplayState | 'all';
   taskId?: string;
+  // Entries imported from that source: an origin of `ledger:…`, `claude:…` or `amendment:…`.
+  origin?: 'ledger' | 'claude' | 'amendment';
+  trust?: MemoryTrust;
   limit?: number;
 }
 
@@ -346,7 +349,11 @@ export class MemoryEngine {
       q.scope
     )
       .filter(
-        ({ entry }) => q.taskId === undefined || reaches(entry, ctx, projectKey)
+        ({ entry }) =>
+          (q.taskId === undefined || reaches(entry, ctx, projectKey)) &&
+          (q.origin === undefined ||
+            entry.origin?.startsWith(`${q.origin}:`) === true) &&
+          (q.trust === undefined || entry.trust === q.trust)
       )
       .map(({ entry }) => ({ entry, matched: false, score: 0 }));
     return rankEntries(items, ctx)

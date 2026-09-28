@@ -76,6 +76,23 @@ describe('MemoryEngine reads', () => {
     expect(listed).toContainEqual([mine.id, 'active']);
   });
 
+  it('filters by origin source and trust before the limit', () => {
+    const t = setup();
+    const lesson = put(t.shared, { origin: 'ledger:l-1@2026-09-01' });
+    put(t.shared, { origin: 'ledger:l-2@2026-09-01', trust: 'human' });
+    put(t.shared, { origin: 'claude:aaaaaaaaaaaa/a.md', pinned: true });
+    put(t.shared, { origin: 'ledgers:l-3', pinned: true });
+    put(t.shared, { title: 'no origin', pinned: true });
+    const listed = (q: Parameters<typeof t.engine.list>[1]) =>
+      t.engine.list(RUN, q).map((e) => e.id);
+    expect(listed({ origin: 'ledger', trust: 'agent', limit: 1 })).toEqual([
+      lesson.id,
+    ]);
+    expect(listed({ origin: 'ledger' })).toHaveLength(2);
+    expect(listed({ trust: 'agent' })).toHaveLength(4);
+    expect(listed({ origin: 'amendment' })).toEqual([]);
+  });
+
   // Another identity's personal entry is invisible, and a decide-tier
   // non-owner asking by id gets 403, not the entry.
   it('never returns another identity’s entry', () => {

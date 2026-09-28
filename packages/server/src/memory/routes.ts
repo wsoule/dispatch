@@ -1,8 +1,11 @@
 import {
+  kindFromClaudeType,
   MEMORY_KINDS,
   MEMORY_SCOPES,
   MemoryError,
+  parseMemoryFile,
   personalIdentityFor,
+  projectOnlyForClaudeType,
   rankEntries,
   refuseA2A,
   renderIndex,
@@ -10,6 +13,7 @@ import {
 import type {
   MemoryEntry,
   MemoryStore,
+  MemoryTrust,
   Principal,
   ProposalState,
   RankContext,
@@ -20,6 +24,7 @@ import type {
   SqliteMemoryStore,
 } from '@dispatch/memory';
 import type { Ref } from '@dispatch/protocol';
+import { basename } from 'node:path';
 
 import type { ApiContext } from '../api.js';
 import {
@@ -35,6 +40,11 @@ import type { MemoryService } from './service.js';
 // Every line of a rebuilt index was already inside the budget when the run got it.
 const RECALLED_INDEX_TOKENS = 4000;
 const LIST_STATES = ['active', 'stale', 'retired', 'all'] as const;
+const ORIGIN_SOURCES = ['ledger', 'claude', 'amendment'] as const;
+const TRUST_LEVELS: readonly MemoryTrust[] = ['human', 'confirmed', 'agent'];
+const INGEST_PROBLEMS_SHOWN = 200;
+// The roster email `dispatch init` writes, which tells no two people apart.
+const PLACEHOLDER_EMAIL = 'local@localhost';
 const PROPOSAL_STATES: readonly ProposalState[] = [
   'open',
   'approved',
@@ -356,6 +366,8 @@ export function listMemory(ctx: ApiContext, url: URL): Response {
     kind: oneOf(url, 'kind', MEMORY_KINDS),
     state: oneOf(url, 'state', LIST_STATES),
     taskId: url.searchParams.get('taskId') ?? undefined,
+    origin: oneOf(url, 'origin', ORIGIN_SOURCES),
+    trust: oneOf(url, 'trust', TRUST_LEVELS),
     limit: count(url, 'limit'),
   });
   return jsonResponse({ entries });
@@ -570,19 +582,105 @@ export function memoryActivityRoute(ctx: ApiContext, url: URL): Response {
   });
 }
 
-// The calling human's handle in this project; links are for humans only.
-function linkingHuman(ctx: ApiContext): { human: string; handle: string } {
+// The calling human and their handle in this project; `does` names what only a human does.
+function callingHuman(
+  ctx: ApiContext,
+  does: string
+): { principal: Principal; handle: string } {
   const principal = requireMemoryPrincipal(ctx);
   if (principal.kind !== 'human')
+    throw new MemoryError('forbidden', `only a human ${does}`, 'principal');
+  return { principal, handle: principal.address.slice('human:'.length) };
+}
+
+// The calling human's identity and personal store, refused as every personal
+// read is: 409 for a reused handle, 503 while identities.db is down.
+function ownPersonal(
+  ctx: ApiContext,
+  principal: Principal
+): { identity: string; store: MemoryStore } {
+  const identity = ctx.memory.host.operatorOf(principal)?.identity;
+  if (identity === undefined)
     throw new MemoryError(
       'forbidden',
-      'only a human links personal memory',
+      'this principal has no personal memory',
       'principal'
     );
-  return {
-    human: principal.address,
-    handle: principal.address.slice('human:'.length),
-  };
+  return { identity, store: ctx.memory.stores.personal(identity) };
+}
+
+// GET /api/memory/identity — the caller's personal identity, the handles bound
+// to it, and whether their roster email is the placeholder that cannot tell people apart.
+export function memoryIdentityRoute(ctx: ApiContext): Response {
+  const { principal, handle } = callingHuman(ctx, 'has a memory identity');
+  const identities = requireIdentities(ctx);
+  const { identity } = ownPersonal(ctx, principal);
+  const email = rosterEmailOf(ctx.rootDir, handle);
+  return jsonResponse({
+    identity,
+    aliases: identities.aliasesOf(identity),
+    placeholderEmail: email?.trim().toLowerCase() === PLACEHOLDER_EMAIL,
+  });
+}
+
+// GET /api/memory/ingest-problems — the caller's skipped Claude files, newest first.
+export function ingestProblemsRoute(ctx: ApiContext): Response {
+  const { principal } = callingHuman(ctx, 'reviews skipped memory files');
+  const { store } = ownPersonal(ctx, principal);
+  return jsonResponse({
+    problems: store.ingestProblems(INGEST_PROBLEMS_SHOWN),
+  });
+}
+
+// POST /api/memory/ingest-problems/:id/accept — saves a skipped file's kept
+// content to the caller's memory with agent trust: an agent wrote it, not the human.
+export async function acceptIngestProblemRoute(
+  ctx: ApiContext,
+  segment: string
+): Promise<Response> {
+  const { principal, handle } = callingHuman(
+    ctx,
+    'accepts skipped memory files'
+  );
+  const engine = ctx.memory.requireEngine();
+  const { store } = ownPersonal(ctx, principal);
+  const id = refOf(segment);
+  // A throw inside the transaction leaves the problem where it was.
+  const problem = store.transaction(() => {
+    const taken = store.takeIngestProblem(id);
+    if (taken === null)
+      throw new MemoryError('not-found', `id: no skipped file ${id}`, 'id');
+    if (taken.content === null)
+      throw new MemoryError(
+        'invalid',
+        `id: nothing of ${taken.file} was kept to accept`,
+        'id'
+      );
+    return { row: taken, content: taken.content };
+  });
+  const parsed = parseMemoryFile(problem.content, basename(problem.row.file));
+  try {
+    const result = await engine.save(
+      {
+        address: `agent:${handle}/claude-code`,
+        canDecide: false,
+        kind: 'agent',
+      },
+      {
+        scope: 'personal',
+        kind: kindFromClaudeType(parsed.type),
+        projectOnly: projectOnlyForClaudeType(parsed.type),
+        title: parsed.title,
+        body: parsed.body,
+        cause: 'ingest',
+      }
+    );
+    return jsonResponse(result, 201);
+  } catch (err) {
+    // Refused (the hourly write limit, say): the file stays listed to accept later.
+    store.addIngestProblem(problem.row);
+    throw err;
+  }
 }
 
 // POST /api/memory/link — a one-time code for linking another project's
@@ -591,7 +689,7 @@ export async function startLinkRoute(
   req: Request,
   ctx: ApiContext
 ): Promise<Response> {
-  const { human, handle } = linkingHuman(ctx);
+  const { principal, handle } = callingHuman(ctx, 'links personal memory');
   const parsed = await bodyOf(req, true);
   if (!parsed.ok) return parsed.response;
   const identities = requireIdentities(ctx);
@@ -602,7 +700,7 @@ export async function startLinkRoute(
   };
   if (optionalBoolean(parsed.value, 'fresh') !== true)
     return jsonResponse(identities.startLink(alias));
-  if (human === ctx.actorContext.humanRef)
+  if (principal.address === ctx.actorContext.humanRef)
     throw new MemoryError(
       'invalid',
       "fresh: the owner's personal memory always stays its own",
@@ -620,7 +718,7 @@ export async function completeLinkRoute(
   ctx: ApiContext,
   code: string
 ): Promise<Response> {
-  const { handle } = linkingHuman(ctx);
+  const { handle } = callingHuman(ctx, 'links personal memory');
   const parsed = await bodyOf(req, true);
   if (!parsed.ok) return parsed.response;
   const identities = requireIdentities(ctx);

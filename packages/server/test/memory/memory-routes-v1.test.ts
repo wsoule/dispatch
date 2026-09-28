@@ -669,3 +669,189 @@ describe('identities over HTTP', () => {
     expect((await personal('again')).status).toBe(201);
   });
 });
+
+describe('Settings → Memory routes', () => {
+  const OWNER = {
+    address: 'human:test',
+    canDecide: true,
+    kind: 'human',
+  } as const;
+  const CLAUDE_AGENT = {
+    address: 'agent:test/claude-code',
+    canDecide: false,
+    kind: 'agent',
+  } as const;
+
+  function post(path: string, token?: string): Promise<Response> {
+    const init = {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+    };
+    return token === undefined
+      ? fetch(`${base}${path}`, init)
+      : rawFetch(`${base}${path}`, { ...init, headers: authHeaders(token) });
+  }
+
+  it('filters the list by origin and trust', async () => {
+    const engine = handle.memory.engine!;
+    await engine.save(CLAUDE_AGENT, {
+      scope: 'personal',
+      kind: 'fact',
+      title: 'from claude',
+      body: '',
+      origin: 'claude:aaaaaaaaaaaa/a.md',
+    });
+    await engine.save(CLAUDE_AGENT, {
+      scope: 'personal',
+      kind: 'fact',
+      title: 'agent note with no origin',
+      body: '',
+    });
+    await engine.save(OWNER, {
+      scope: 'personal',
+      kind: 'fact',
+      title: 'owner note from claude',
+      body: '',
+      origin: 'claude:aaaaaaaaaaaa/b.md',
+    });
+    const listed = await json<{ entries: { title: string }[] }>(
+      await fetch(`${base}/api/memory?origin=claude&trust=agent`)
+    );
+    expect(listed.entries.map((e) => e.title)).toEqual(['from claude']);
+    expect((await fetch(`${base}/api/memory?origin=docs`)).status).toBe(400);
+    expect((await fetch(`${base}/api/memory?trust=sure`)).status).toBe(400);
+  });
+
+  it('lists skipped Claude files and accepts one as an agent-trust personal entry', async () => {
+    const self = handle.memory.personal.personal('self');
+    self.addIngestProblem({
+      id: 'ip-1',
+      lineage: 'r-9f2c01',
+      file: 'notes/proto-shims.md',
+      reason: 'too-large',
+      size: 70_000,
+      sha256: 'a'.repeat(64),
+      content:
+        '---\nname: proto shims live in ~/.proto/shims\nmetadata:\n  type: project\n---\nexport PATH first',
+      at: '2026-09-25T10:00:00.000Z',
+    });
+    self.addIngestProblem({
+      id: 'ip-2',
+      lineage: 'r-9f2c01',
+      file: 'link.md',
+      reason: 'symlink',
+      size: 0,
+      sha256: 'b'.repeat(64),
+      content: null,
+      at: '2026-09-25T09:00:00.000Z',
+    });
+    const problems = async (token?: string) =>
+      (
+        await json<{ problems: Record<string, unknown>[] }>(
+          token === undefined
+            ? await fetch(`${base}/api/memory/ingest-problems`)
+            : await rawFetch(`${base}/api/memory/ingest-problems`, {
+                headers: authHeaders(token),
+              })
+        )
+      ).problems;
+    const listed = await problems();
+    expect(listed.map((p) => [p.id, p.reason])).toEqual([
+      ['ip-1', 'too-large'],
+      ['ip-2', 'symlink'],
+    ]);
+    expect(listed[0]).not.toHaveProperty('content');
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    expect(await problems(ada)).toEqual([]);
+
+    const accepted = await post('/api/memory/ingest-problems/ip-1/accept');
+    expect(accepted.status).toBe(201);
+    const saved = await json<{ status: string; id: string }>(accepted);
+    expect(saved.status).toBe('active');
+    const read = await json<{ entry: Record<string, unknown> }>(
+      await fetch(`${base}/api/memory/${saved.id}`)
+    );
+    expect(read.entry).toMatchObject({
+      scope: 'personal',
+      kind: 'fact',
+      trust: 'agent',
+      author: 'agent:test/claude-code',
+      title: 'proto shims live in ~/.proto/shims',
+      body: 'export PATH first',
+    });
+    expect(read.entry.projectKey).not.toBeNull();
+
+    // Nothing of a symlink was kept, so it stays listed for the human to see.
+    expect((await post('/api/memory/ingest-problems/ip-2/accept')).status).toBe(
+      400
+    );
+    expect((await problems()).map((p) => p.id)).toEqual(['ip-2']);
+    expect((await post('/api/memory/ingest-problems/ip-1/accept')).status).toBe(
+      404
+    );
+    expect(
+      (await post('/api/memory/ingest-problems/ip-2/accept', ada)).status
+    ).toBe(404);
+  });
+
+  it('keeps a skipped file listed when saving it is refused', async () => {
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'memory:\n  personalWritesPerHour: 1\n'
+    );
+    const self = handle.memory.personal.personal('self');
+    for (const id of ['ip-1', 'ip-2'])
+      self.addIngestProblem({
+        id,
+        lineage: 'r-9f2c01',
+        file: `${id}.md`,
+        reason: 'too-large',
+        size: 70_000,
+        sha256: 'c'.repeat(64),
+        content: `kept from ${id}`,
+        at: '2026-09-25T10:00:00.000Z',
+      });
+    expect((await post('/api/memory/ingest-problems/ip-1/accept')).status).toBe(
+      201
+    );
+    expect((await post('/api/memory/ingest-problems/ip-2/accept')).status).toBe(
+      429
+    );
+    expect(self.ingestProblems(10)).toEqual([
+      {
+        id: 'ip-2',
+        lineage: 'r-9f2c01',
+        file: 'ip-2.md',
+        reason: 'too-large',
+        size: 70_000,
+        at: '2026-09-25T10:00:00.000Z',
+      },
+    ]);
+  });
+
+  it('names the caller’s identity, its aliases and a placeholder roster email', async () => {
+    writeFileSync(
+      join(root, '.dispatch', 'team.yml'),
+      'members:\n  - handle: ada\n    email: local@localhost\n    displayName: Ada\n    emails: []\n'
+    );
+    type Identity = {
+      identity: string;
+      aliases: { projectKey: string; handle: string }[];
+      placeholderEmail: boolean;
+    };
+    const own = await json<Identity>(
+      await fetch(`${base}/api/memory/identity`)
+    );
+    expect(own).toMatchObject({ identity: 'self', placeholderEmail: false });
+    expect(own.aliases.map((a) => a.handle)).toEqual(['test']);
+    const ada = handle.team.teammates.issue('ada', 'request');
+    const theirs = await json<Identity>(
+      await rawFetch(`${base}/api/memory/identity`, {
+        headers: authHeaders(ada),
+      })
+    );
+    expect(theirs.identity).toMatch(/^pid-/);
+    expect(theirs.aliases.map((a) => a.handle)).toEqual(['ada']);
+    expect(theirs.placeholderEmail).toBe(true);
+  });
+});

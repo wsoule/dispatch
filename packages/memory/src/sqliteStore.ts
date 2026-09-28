@@ -707,20 +707,16 @@ export class SqliteMemoryStore implements MemoryStore {
     );
   }
 
-  takeIngestProblem(
-    id: string
-  ): Pick<IngestProblemRow, 'lineage' | 'file' | 'content'> | null {
+  takeIngestProblem(id: string): IngestProblemRow | null {
     return this.transaction(() => {
-      const row = queryOne<
-        Pick<IngestProblemRow, 'lineage' | 'file' | 'content'>
-      >(
+      const row = queryOne<IngestProblemRow>(
         this.db,
-        'SELECT lineage, file, content FROM ingest_problems WHERE id = ?',
+        'SELECT id, lineage, file, reason, size, sha256, content, at FROM ingest_problems WHERE id = ?',
         [id]
       );
       if (row === undefined) return null;
       this.db.prepare('DELETE FROM ingest_problems WHERE id = ?').run(id);
-      return { lineage: row.lineage, file: row.file, content: row.content };
+      return row;
     });
   }
 
