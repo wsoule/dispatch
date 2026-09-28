@@ -50,6 +50,31 @@ describe('the kit', () => {
           });
   });
 
+  // A provisional entry has no vectors yet (§11.11), so it lists none and no
+  // vector tests only sections that provisional entries alone define.
+  it('tests no provisional entry', () => {
+    const registry = loadRegistry();
+    const statuses = new Map<string, Set<string>>();
+    const listed: string[] = [];
+    for (const name of REGISTRY_NAMES)
+      for (const e of registry[name]) {
+        statuses.set(
+          e.section,
+          (statuses.get(e.section) ?? new Set()).add(e.status)
+        );
+        if (e.status === 'provisional')
+          listed.push(...e.vectors.map((id) => `${e.value}: ${id}`));
+      }
+    expect(listed).toEqual([]);
+    const provisional = (s: string) => {
+      const found = statuses.get(s);
+      return found?.size === 1 && found.has('provisional');
+    };
+    expect(
+      vectors.filter((v) => v.sections.every(provisional)).map((v) => v.id)
+    ).toEqual([]);
+  });
+
   // Raw, these three are invisible in a diff and some editors strip them.
   it('writes NEL, U+2028 and U+2029 in vector files as JSON escapes', () => {
     const files = readdirSync(VECTORS_DIR, {

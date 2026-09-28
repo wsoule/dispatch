@@ -317,6 +317,10 @@
         },
         "body": { "type": "string" },
         "parts": { "type": "array" },
+        "answers": {
+          "description": "For a2a.inbound, the open question the message answers, standing for its task's taskId.",
+          "type": "string"
+        },
         "change": { "$ref": "#/$defs/change" }
       },
       "required": ["op"],

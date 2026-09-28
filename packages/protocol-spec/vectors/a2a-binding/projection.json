@@ -465,6 +465,47 @@
       }
     },
     {
+      "id": "a2a.projection.row-8-gate-v1-lists-id-type-and-time",
+      "title": "Row 8's gate/v1 metadata names each open gate by its id, type and opening time, waiting on the owner, and carries nothing else",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.5", "8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "openGates": [
+              {
+                "id": "m-gate",
+                "type": "wake",
+                "openedAt": "2026-09-23T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "AUTH_REQUIRED",
+              "gates": [
+                {
+                  "id": "m-gate",
+                  "type": "wake",
+                  "openedAt": "2026-09-23T11:00:00.000Z",
+                  "waitingOn": "owner"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
       "id": "a2a.projection.row-8-an-open-question-comes-first",
       "title": "Rows are taken in order: an open question to the client (row 7) comes before an open gate (row 8)",
       "class": "a2a-binding",

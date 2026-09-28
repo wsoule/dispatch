@@ -6,8 +6,8 @@ const stdio = fileURLToPath(
   new URL('../src/conformance/stdio.ts', import.meta.url)
 );
 
-// The kit's own runner over the adapter's stdio loop, on every a2a-binding
-// vector; no TCK attestation, so the claim is judged on vectors alone.
+// The kit's runner over the stdio adapter, judged on vectors alone; the claim
+// runs the whole kit, which takes longer than bun's 5 s default under load.
 it('passes the a2a-binding vectors through the stdio adapter', async () => {
   const report = await runConformance({
     adapter: `bun ${stdio}`,
@@ -18,4 +18,4 @@ it('passes the a2a-binding vectors through the stdio adapter', async () => {
   expect(report.claims['a2a-binding']).toBe('vectors-only');
   expect(report.classes['a2a-binding']?.fail).toBe(0);
   expect(report.classes['a2a-binding']?.pass).toBeGreaterThan(0);
-});
+}, 30_000);

@@ -1,4 +1,6 @@
-import type { JsonValue, Message, Ref, SendInput } from '@dispatch/protocol';
+import { Message as A2AMessage } from '@a2a-js/sdk';
+import { MessagingError } from '@dispatch/protocol';
+import type { Address, Message, SendInput } from '@dispatch/protocol';
 import type {
   Hello,
   Json,
@@ -15,10 +17,12 @@ import {
 import type { OpContext, OpHandler } from '@dispatch/protocol/conformance';
 
 import packageJson from '../../package.json';
-import { parseEnvelopeExt, parseWorkExt } from '../ext.js';
-import type { TaskFacts } from '../port.js';
-import { decideState } from '../projection.js';
-import { sanitizeExternal } from '../sanitize.js';
+import { decodeInbound } from '../codec.js';
+import { checkMetadataBudget, parseEnvelopeExt, parseWorkExt } from '../ext.js';
+import { checkInboundRecipients } from '../policy.js';
+import type { ContinueInput, OpenInput, TaskFacts } from '../port.js';
+import { decideState, project } from '../projection.js';
+import { ENVELOPE_URI, GATE_URI, WORK_URI } from '../uris.js';
 
 // The reference engine's declarations plus the A2A binding's vector class.
 export const A2A_HELLO: Hello = {
@@ -119,7 +123,7 @@ function textOf(step: Step, key: string): string {
     : malformed(`${step.op}.${key}`, 'expected a string');
 }
 
-function partsOf(step: Step): JsonValue[] {
+function partsOf(step: Step): Json[] {
   const parts = step['parts'];
   if (parts === undefined) return [];
   return Array.isArray(parts)
@@ -127,57 +131,130 @@ function partsOf(step: Step): JsonValue[] {
     : malformed(`${step.op}.parts`, 'expected a list');
 }
 
-// A client's message through the binding's inbound mapping: the envelope's
-// from, id and thread are ignored (the bearer decides), its content passes the
-// external-content rules, and it is sent as the client with no decide power.
-async function inbound(step: Step, ctx: OpContext): Promise<Json> {
-  const as = textOf(step, 'as');
-  const ext = parseEnvelopeExt(step['envelope']);
-  const content = sanitizeExternal(
-    {
-      body: textOf(step, 'body'),
-      data: partsOf(step),
-      ...(ext.choices === undefined ? {} : { choices: ext.choices }),
-      // parseEnvelopeExt admits only task and message refs.
-      ...(ext.refs === undefined ? {} : { refs: ext.refs as Ref[] }),
-    },
-    ctx.host.world.external.get(as) ?? 'client'
-  );
-  // An absent kind is the ask skill's question, and a client's question blocks.
-  const kind = ext.kind ?? 'question';
-  const input: SendInput = {
-    to: ext.to ?? [ctx.host.world.owner],
-    kind,
-    body: content.body,
-    refs: content.refs,
-    ...(content.data === undefined ? {} : { data: content.data }),
-    ...(ext.replyTo === undefined ? {} : { replyTo: ext.replyTo }),
-    ...(kind === 'question' ? { blocking: true } : {}),
-    ...(content.choices === undefined ? {} : { choices: content.choices }),
-    ...(ext.choice === undefined ? {} : { choice: ext.choice }),
+// The A2A message an `a2a.inbound` step stands for; `answers` becomes the
+// taskId, so decodeInbound takes the continuation path it names.
+function a2aMessageOf(step: Step): A2AMessage {
+  const envelope = step['envelope'];
+  const answers = step['answers'];
+  return A2AMessage.fromJSON({
+    role: 'ROLE_USER',
+    messageId: 'kit-inbound',
+    ...(answers === undefined ? {} : { taskId: textOf(step, 'answers') }),
+    parts: [
+      { text: textOf(step, 'body') },
+      ...partsOf(step).map((data) => ({ data })),
+    ],
+    ...(envelope === null || envelope === undefined
+      ? {}
+      : { metadata: { [ENVELOPE_URI]: envelope } }),
+  });
+}
+
+// A message that opens a task, as the host opens one: the scripted host's
+// client reaches the owner alone and has no approved handoffs.
+function openingInput(input: OpenInput, owner: Address): SendInput {
+  if (input.kind === 'handoff' || input.kind === 'status')
+    throw new MessagingError(
+      'invalid',
+      'this host takes no handoffs',
+      'work.skill'
+    );
+  const to = input.to ?? [owner];
+  checkInboundRecipients(to, {
+    allowedHumans: [owner],
+    approvedTasks: new Set(),
+  });
+  const common = {
+    to,
+    body: input.body,
+    refs: input.refs,
+    replyTo: input.replyTo,
+    ...(input.data === undefined ? {} : { data: input.data }),
   };
+  if (input.kind !== 'ask') return { ...common, kind: input.kind };
+  return {
+    ...common,
+    kind: 'question',
+    blocking: true,
+    ...(input.choices === undefined ? {} : { choices: input.choices }),
+  };
+}
+
+// A continuation answers the open question its task waits on; `answers`
+// names that question directly.
+function answerInput(input: ContinueInput, ctx: OpContext): SendInput {
+  const question = ctx.store.getMessage(input.taskId);
+  if (question === null)
+    throw new MessagingError('not-found', 'task not found', 'taskId');
+  return {
+    to: [question.from],
+    kind: 'answer',
+    replyTo: question.id,
+    body: input.body,
+    refs: input.refs,
+    ...(input.data === undefined ? {} : { data: input.data }),
+    ...(input.choice === undefined ? {} : { choice: input.choice }),
+  };
+}
+
+// A client's message through the binding's inbound mapping (decodeInbound),
+// sent as the client with no decide power.
+async function inbound(step: Step, ctx: OpContext): Promise<Json> {
+  const decoded = decodeInbound(a2aMessageOf(step));
+  const input =
+    decoded.kind === 'continue'
+      ? answerInput(decoded.input, ctx)
+      : openingInput(decoded.input, ctx.host.world.owner);
   const { message, downgraded } = await ctx.engine.send(input, {
-    address: as,
+    address: textOf(step, 'as'),
     canDecide: false,
   });
   return { message: message.id, downgraded };
 }
 
+// An extension's metadata as one message's metadata: the budget, then its rules.
+function validateExtension(step: Step): Json {
+  const extension = step['extension'];
+  const uri =
+    extension === 'envelope'
+      ? ENVELOPE_URI
+      : extension === 'work'
+        ? WORK_URI
+        : null;
+  if (uri === null)
+    throw new UnsupportedOp(`no extension ${JSON.stringify(extension)}`);
+  checkMetadataBudget({ [uri]: step['raw'] });
+  if (uri === ENVELOPE_URI) parseEnvelopeExt(step['raw']);
+  else parseWorkExt(step['raw']);
+  return {};
+}
+
+// The decided state and stage, and in AUTH_REQUIRED the gate/v1 list the
+// host writes on status.message when the client activated it.
+function projectFacts(step: Step): Json {
+  const facts = withDefaults(step['facts']);
+  const decision = decideState(facts);
+  const result: JsonObject = { state: decision.state };
+  if (decision.stage !== undefined) result['stage'] = decision.stage;
+  if (decision.state === 'AUTH_REQUIRED') {
+    const task = project(facts, {
+      client: facts.client,
+      extensions: new Set([GATE_URI]),
+      textMediaType: 'text/markdown',
+      historyLength: 0,
+      includeArtifacts: false,
+    });
+    const gate = task.status.message?.metadata?.[GATE_URI];
+    if (isObject(gate) && gate['gates'] !== undefined)
+      result['gates'] = gate['gates'];
+  }
+  return result;
+}
+
 // The binding's pure pieces as vector ops; everything else is the reference engine.
 const OPS: Record<string, OpHandler> = {
-  'a2a.validate': (step) => {
-    const extension = step['extension'];
-    if (extension === 'envelope') parseEnvelopeExt(step['raw']);
-    else if (extension === 'work') parseWorkExt(step['raw']);
-    else throw new UnsupportedOp(`no extension ${JSON.stringify(extension)}`);
-    return {};
-  },
-  'a2a.project': (step) => {
-    const decision = decideState(withDefaults(step['facts']));
-    const result: JsonObject = { state: decision.state };
-    if (decision.stage !== undefined) result['stage'] = decision.stage;
-    return result;
-  },
+  'a2a.validate': validateExtension,
+  'a2a.project': projectFacts,
   'a2a.inbound': inbound,
 };
 

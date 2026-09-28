@@ -115,7 +115,8 @@ All metadata on one message together MUST be at most 64 KiB as JSON; a host
 refuses more as `invalid` on `message.metadata`. The extensions fit well inside
 it: `work/v1` tops out near 36 KB and `envelope/v1` near 15 KB with inbound refs
 restricted as [§8.4](08-a2a-binding.md#s8.4) says. Body (64 KiB), data (64 KiB),
-metadata (64 KiB) and A2A's framing fit a 256 KiB request.
+metadata (64 KiB) and A2A's framing fit a 256 KiB request. Vectors:
+`a2a.envelope-ext.refuses-metadata-over-64-kib`.
 
 Each extension is versioned by its URI: a breaking change mints a new URI ending
 `/v2` ([§14.4](14-versioning.md#s14.4)). The registry of extension URIs is
@@ -153,6 +154,12 @@ message, and MUST apply these rules on top of [§4.5](04-messages.md#s4.5):
 - An `x-` kind is refused as `forbidden` on `kind`, so a client cannot put an
   uninterpreted kind in front of a human; any other kind outside the list above
   is `invalid` on `kind`.
+- A message without a `taskId` opens a task, and is never an `answer` or a
+  `handoff`: either kind is `invalid` on `kind`. A client answers a question put
+  to it by continuing the task that asks it, with that task's `taskId`
+  ([§8.2](08-a2a-binding.md#s8.2)), and proposes work with `work/v1`
+  ([§8.6](08-a2a-binding.md#s8.6)). Of a continuation's envelope only `choice`
+  and `refs` count.
 - Each `to` entry is one line of at most 512 bytes, at most 50 of them; each
   choice and the choice are one line of at most 200 bytes, at most 20 choices;
   `blocking` is a boolean. A violation is `invalid` on the field or its slot.
@@ -163,8 +170,11 @@ message, and MUST apply these rules on top of [§4.5](04-messages.md#s4.5):
   a client nothing about who exists.
 - Refs name only `task` and `message` ids the client may already see: its own
   tasks and the messages in their scope ([§8.7](08-a2a-binding.md#s8.7)), and
-  the work items of its approved handoffs; a ref carries no `at`. Any other ref
-  is `invalid` on `refs[i]`, the same for an absent id and a hidden one.
+  the work items of its approved handoffs. A ref that is not an object is
+  `invalid` on `refs[i]`; one of another type is `invalid` on `refs[i].type`,
+  one that carries an `at` on `refs[i].at`, and one whose `id` is not one line
+  of at most 512 bytes on `refs[i].id`. An id the client may not see is
+  `not-found` on `refs[i]`, as an absent one is.
 - Without an envelope, the message is a blocking question to the owner.
 
 Vectors: `a2a.envelope-ext.accepts-recipients-choices-and-message-refs`,
@@ -179,7 +189,10 @@ Vectors: `a2a.envelope-ext.accepts-recipients-choices-and-message-refs`,
 `a2a.envelope-ext.refuses-a-choice-over-200-bytes`,
 `a2a.envelope-ext.refuses-blocking-that-is-not-a-boolean`,
 `a2a.external.the-host-sets-id-thread-and-from`,
-`a2a.external.defaults-to-a-blocking-question-to-the-owner`.
+`a2a.external.defaults-to-a-blocking-question-to-the-owner`,
+`a2a.external.a-client-reaches-only-the-owner`,
+`a2a.external.an-opening-answer-or-handoff-is-refused`,
+`a2a.external.an-answer-from-a-client-is-never-a-close`.
 
 **Outbound.** A host MUST NOT write `to` to a client. To a peer it writes only
 the peer's own address, so no other recipient leaves the host. Refs are written
@@ -220,6 +233,7 @@ body. The Dispatch profile's sentences:
 - `wake`: "Waiting for the project owner to approve waking the task."
 
 Vectors: `a2a.projection.row-8-an-open-gate-needs-authorization`,
+`a2a.projection.row-8-gate-v1-lists-id-type-and-time`,
 `a2a.egress.gate-data-never-reaches-a-client`,
 `a2a.egress.a-reply-to-a-gate-never-reaches-a-client`.
 
@@ -228,7 +242,7 @@ Vectors: `a2a.projection.row-8-an-open-gate-needs-authorization`,
 `https://dispatch.foo/a2a/ext/work/v1` is a profile plus a sub-state of
 `TASK_STATE_WORKING`. It is registered as provisional
 ([§11.10](11-registries.md#s11.10)) until the `task-proposal` gate it relies on
-is permanent.
+is permanent, and until then no vector tests it.
 
 A client sends a request on `Message.metadata`; it selects the skill, and its
 absence means `ask`:
@@ -249,18 +263,7 @@ type WorkRequestV1 =
 A host MUST refuse a request that breaks these limits as `invalid` on the field
 or its slot, under `work.` (`work.title`, `work.writes[1]`). Lengths are UTF-8
 bytes. A write is relative to the repository: an absolute path, a drive letter,
-a backslash or a `..` segment is refused. Vectors:
-`a2a.work-ext.accepts-a-handoff`, `a2a.work-ext.accepts-a-status-request`,
-`a2a.work-ext.refuses-an-unknown-skill`,
-`a2a.work-ext.refuses-a-handoff-without-a-title`,
-`a2a.work-ext.counts-the-title-in-bytes`,
-`a2a.work-ext.refuses-a-two-line-acceptance-entry`,
-`a2a.work-ext.refuses-more-than-50-writes`,
-`a2a.work-ext.refuses-an-absolute-write`,
-`a2a.work-ext.refuses-a-write-that-climbs-out`,
-`a2a.work-ext.refuses-a-windows-path`,
-`a2a.work-ext.refuses-an-unknown-priority`,
-`a2a.work-ext.refuses-a-label-over-50-bytes`.
+a backslash or a `..` segment is refused.
 
 **Handoffs.** A handoff becomes a draft work item that a deciding principal
 approves before anything runs. The host raises a `task-proposal` gate for it
@@ -399,8 +402,10 @@ whether to deliver to it, skip it or refuse the send
 ([§2.1](02-terminology.md#s2.1)). A direct recipient it refuses fails the send
 with that error; a recipient reached through a channel that it refuses is
 skipped, as a session that is not live is when a channel reaches it
-([§3.5](03-addresses.md#s3.5)). Vectors:
-`a2a.egress.plain-mail-to-a-client-is-admitted-by-the-host`.
+([§3.5](03-addresses.md#s3.5)). Which recipients it admits is the host's own
+policy; the vectors script a host that admits every one
+([§12.4.2](12-conformance.md#s12.4.2)) and check that the decision is asked for.
+Vectors: `a2a.egress.plain-mail-to-a-client-is-admitted-by-the-host`.
 
 **Gate data never goes external.** A send in which the message, or the message
 it replies to, has gate data ([§5.1](05-gates.md#s5.1)) while any resolved
@@ -566,8 +571,8 @@ binding declares on purpose; any other fails the claim
   since the TCK's scenarios finish inside any bound, so a host tests it on its
   own.
 - **`application-json`**, a SHOULD deviation from A2A §11.1. Responses are
-  `application/json`, not `application/a2a+json`, which the pinned TCK's
-  `HTTP_JSON-SVC-001` requires; requests may use either.
+  `application/json`, which the pinned TCK's `HTTP_JSON-SVC-001` requires, not
+  the `application/a2a+json` that A2A §11.1 recommends; requests may use either.
 
 Refusing a `contextId` the client does not take part in is not a deviation: A2A
 §3.4.1 lets an agent reject a `contextId` it cannot accept, and this binding
