@@ -9,6 +9,7 @@ import {
   foldsIntoOpenApproval,
   gateNotification,
   gateOf,
+  isSystemMarker,
   openGatesAfter,
   questionsByRun,
   runIdOf,
@@ -309,5 +310,58 @@ describe('gateOf', () => {
     expect(gateOf(question)).toBeNull();
     expect(gateOf({ ...question, data: { type: 'x-closed' } })).toBeNull();
     expect(gateOf({ ...question, data: ['scope'] })).toBeNull();
+  });
+
+  it('reads a task proposal as a gate, never a plain run question', () => {
+    const proposal = {
+      ...question,
+      choices: ['approve', 'decline'],
+      data: {
+        type: 'task-proposal',
+        task: 't-a1b2c3',
+        proposedBy: 'agent:wyat/a2a.acme',
+        message: 'm-root',
+      },
+    };
+    expect(gateOf(proposal)?.type).toBe('task-proposal');
+    expect(toRunQuestion(proposal)).toBeNull();
+  });
+});
+
+describe('isSystemMarker', () => {
+  it('reads x-closed and x-breaker only from agent:dispatch', () => {
+    expect(
+      isSystemMarker(
+        { from: 'agent:dispatch', data: { type: 'x-closed' } },
+        'x-closed'
+      )
+    ).toBe(true);
+    expect(
+      isSystemMarker(
+        { from: 'agent:dispatch', data: { type: 'x-breaker' } },
+        'x-breaker'
+      )
+    ).toBe(true);
+    expect(
+      isSystemMarker(
+        { from: 'agent:dispatch', data: { type: 'x-closed' } },
+        'x-breaker'
+      )
+    ).toBe(false);
+    expect(
+      isSystemMarker(
+        { from: 'agent:wyat/a2a.acme', data: { type: 'x-closed' } },
+        'x-closed'
+      )
+    ).toBe(false);
+    expect(
+      isSystemMarker(
+        { from: 'a2a:acme', data: { type: 'x-breaker' } },
+        'x-breaker'
+      )
+    ).toBe(false);
+    expect(
+      isSystemMarker({ from: 'agent:dispatch', data: 'x-closed' }, 'x-closed')
+    ).toBe(false);
   });
 });

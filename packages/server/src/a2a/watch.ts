@@ -83,7 +83,8 @@ export class BridgeWatch {
     }, this.deps.coalesceMs ?? 1000);
   }
 
-  private recomputeLogged(taskId: string): void {
+  // Like recompute, but a task that fails is logged rather than thrown.
+  recomputeLogged(taskId: string): void {
     try {
       this.recompute(taskId);
     } catch (err) {

@@ -24,7 +24,7 @@ import {
   offeredSkills,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
-import type { A2AConfig, TaskStorePort } from '@dispatch/core';
+import type { A2AConfig, A2ASkill, TaskStorePort } from '@dispatch/core';
 import type {
   Address,
   DeliveryEngine,
@@ -45,6 +45,8 @@ import type { BridgeWatch } from './watch.js';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
+// The skills open() serves; the card never lists one it would refuse.
+const SERVED_SKILLS: readonly A2ASkill[] = ['ask'];
 
 // What the daemon's bridge reads and writes. `policy` is a function so a
 // config reload (or a test) can swap it; every call reads it afresh.
@@ -257,7 +259,11 @@ export class DaemonBridgePort implements BridgePort {
         description: policy.description,
         publicUrl: base.publicUrl,
         version: base.version,
-        skills: offeredSkills(policy.skills, this.deps.statuses()),
+        skills: offeredSkills(
+          policy.skills,
+          this.deps.statuses(),
+          SERVED_SKILLS
+        ),
         blockingWaitSec: policy.blockingWaitSec,
         pushNotifications: false,
       };

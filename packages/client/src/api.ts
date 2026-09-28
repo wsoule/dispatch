@@ -785,6 +785,13 @@ export type GateData =
       action: 'add' | 'supersede' | 'retire';
       scope: 'project' | 'team';
       kind: MemoryKind;
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: string;
+      message: string;
     };
 
 // Structural mirrors of @dispatch/memory's views and the memory routes'
@@ -1176,6 +1183,60 @@ export type ServerEvent =
   | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
   // The A2A bridge's clients, tasks or listener changed; go refetch.
   | { type: 'a2a.changed' };
+
+// The A2A listener's machine-local settings, the body of PUT /api/a2a/listener.
+// Mirrors ListenerSettings in packages/server/src/a2a/settings.ts.
+export interface A2AListenerSettings {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  publicUrl: string | null;
+  tls: { certPath: string; keyPath: string } | null;
+  trustForwardedFor: boolean;
+  standalone: boolean;
+}
+
+// GET /api/a2a/listener's body. Mirrors ListenerStatus in
+// packages/server/src/a2a/bridge.ts.
+export interface A2AListenerStatus {
+  enabled: boolean;
+  listening: boolean;
+  url: string | null;
+  error: string | null;
+  // config.yml `a2a:` keys that fell back to their defaults.
+  warnings: string[];
+  // Approved a2a.* agents with no clients row, registered before the bridge.
+  legacyClients: string[];
+  // What the listener opens from: the file plus any one-boot flags.
+  settings: A2AListenerSettings;
+  // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
+  teamTls: { certPath: string; keyPath: string } | null;
+}
+
+// One row of GET /api/a2a/clients: the clients row plus its agent's status.
+export interface A2AClientSummary {
+  address: string;
+  name: string;
+  recipients: string[];
+  createdBy: string;
+  createdAt: string;
+  status: AgentStatus;
+}
+
+// One row of GET /api/a2a/tasks. Mirrors TaskRow in @dispatch/a2a's store.
+export interface A2ATaskSummary {
+  id: string;
+  client: string;
+  contextId: string;
+  skill: 'ask' | 'handoff';
+  dispatchTask: string | null;
+  gate: string | null;
+  state: string;
+  statusAt: string;
+  canceledAt: string | null;
+  declinedAt: string | null;
+  createdAt: string;
+}
 
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {
@@ -3385,6 +3446,25 @@ export interface ApiClient {
     opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
   ): Promise<{ hits: DocHit[] }>;
   docsHealth(): Promise<DocsHealth>;
+  a2aListener(): Promise<A2AListenerStatus>;
+  /** Writes the listener settings and (re)opens it (operator tier). */
+  setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
+  /** Closes the listener, keeping its other settings (operator tier). */
+  disableA2AListener(): Promise<A2AListenerStatus>;
+  /** The agent card exactly as the listener serves it. */
+  a2aCard(): Promise<Record<string, unknown>>;
+  a2aClients(): Promise<{ clients: A2AClientSummary[] }>;
+  /** `approve` needs the decide tier; the token is returned only here. */
+  addA2AClient(input: {
+    name: string;
+    to?: string[];
+    approve?: boolean;
+  }): Promise<{ address: string; token: string; status: string }>;
+  /** `name` is the client's address, `a2a.` name, or name as typed. */
+  rotateA2AClient(name: string): Promise<{ token: string }>;
+  a2aTasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
+  /** Closes an unanswered ask; the client sees REJECTED with the reason. */
+  declineA2ATask(id: string, reason?: string): Promise<unknown>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -4320,6 +4400,37 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       return request(target, `/api/docs/search?${params.toString()}`);
     },
     docsHealth: () => request(target, '/api/docs/health'),
+    a2aListener: () => request(target, '/api/a2a/listener'),
+    setA2AListener: (settings) =>
+      request(target, '/api/a2a/listener', {
+        method: 'PUT',
+        ...jsonBody(settings),
+      }),
+    disableA2AListener: () =>
+      request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    a2aCard: () => request(target, '/api/a2a/card'),
+    a2aClients: () => request(target, '/api/a2a/clients'),
+    addA2AClient: (input) =>
+      request(target, '/api/a2a/clients', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    rotateA2AClient: (name) =>
+      request(target, `/api/a2a/clients/${encodeURIComponent(name)}/rotate`, {
+        method: 'POST',
+      }),
+    a2aTasks: (client) =>
+      request(
+        target,
+        client === undefined
+          ? '/api/a2a/tasks'
+          : `/api/a2a/tasks?${new URLSearchParams({ client }).toString()}`
+      ),
+    declineA2ATask: (id, reason) =>
+      request(target, `/api/a2a/tasks/${encodeURIComponent(id)}/decline`, {
+        method: 'POST',
+        ...jsonBody(reason === undefined ? {} : { reason }),
+      }),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

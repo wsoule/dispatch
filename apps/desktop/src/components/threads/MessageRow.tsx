@@ -1,8 +1,8 @@
-import type { Message } from '@dispatch/client';
+import type { ApiClient, Message } from '@dispatch/client';
 import { memo, useState } from 'react';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
-import { approvalReply } from '../../lib/gates';
+import { approvalReply, isSystemMarker } from '../../lib/gates';
 import { formatShortDate } from '../../lib/taskDates';
 import type {
   ParkedCall,
@@ -21,6 +21,7 @@ import {
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
+import { A2ADeclineAction } from './A2ADeclineAction';
 import { cn } from '@/lib/utils';
 import { ChatMessage } from '@/ui/ai/chat';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
@@ -50,6 +51,8 @@ export interface MessageRowProps {
   onOpen: (action: RefAction) => void;
   /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
   loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
+  /** Declines an open question from an A2A client; without it there is no Decline. */
+  client?: Pick<ApiClient, 'declineA2ATask'> | null;
 }
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
@@ -65,13 +68,19 @@ export const MessageRow = memo(function MessageRow({
   onAnswer,
   onOpen,
   loadApprovalInput,
+  client = null,
 }: MessageRowProps) {
   const [error, setError] = useState<string | null>(null);
   const mine = message.from === me;
   const sender = participantLabel(message.from, lookups);
   const senderAction = addressAction(message.from, lookups);
   const status = lookups.agentStatus(message.from);
-  const badge = kindLabel(message.kind);
+  // Only the daemon's own close or breaker marker earns its badge.
+  const badge = isSystemMarker(message, 'x-closed')
+    ? 'Closed'
+    : isSystemMarker(message, 'x-breaker')
+      ? 'Breaker'
+      : kindLabel(message.kind);
   const answer = async (reply: Reply): Promise<void> => {
     setError(null);
     try {
@@ -144,6 +153,13 @@ export const MessageRow = memo(function MessageRow({
             answer={answer}
             loadApprovalInput={loadApprovalInput}
           />
+          {open && (
+            <A2ADeclineAction
+              message={message}
+              client={client}
+              canDecide={access.canDecide}
+            />
+          )}
           {error !== null && (
             <p role="alert" className="text-destructive text-[12px]">
               {error}

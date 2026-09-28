@@ -804,6 +804,17 @@ export async function registerAgentRow(
       ),
     };
   }
+  // Revoking cannot free a name that refuses any existing row, so that mode
+  // answers every existing row with the one "choose a new name" 409.
+  if (existing !== null && reg.refuseAnyExisting) {
+    return {
+      ok: false,
+      response: errorResponse(
+        409,
+        `${address} was registered before; choose a new name`
+      ),
+    };
+  }
   if (
     existing !== null &&
     (existing.status === 'approved' || existing.status === 'pending')
@@ -813,15 +824,6 @@ export async function registerAgentRow(
       response: errorResponse(
         409,
         `${address} is already registered (${existing.status}) — ask a human to revoke it first`
-      ),
-    };
-  }
-  if (existing !== null && reg.refuseAnyExisting) {
-    return {
-      ok: false,
-      response: errorResponse(
-        409,
-        `${address} was registered before; choose a new name`
       ),
     };
   }
@@ -857,8 +859,8 @@ export async function registerAgentRow(
       { address: SYSTEM_ADDRESS, canDecide: true }
     );
   } catch (err) {
-    // Without its gate nobody can approve the row, so revoke it: a retry can
-    // then re-register instead of hitting the 409 above forever.
+    // Without its gate nobody can approve the row, so revoke it. An ordinary
+    // agent can then re-register; with refuseAnyExisting the name stays spent.
     ctx.messaging.store.putAgent({ ...record, status: 'revoked' });
     return {
       ok: false,

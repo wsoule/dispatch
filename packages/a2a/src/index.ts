@@ -1,4 +1,11 @@
-export { answerArtifact } from './artifacts.js';
+export {
+  answerArtifact,
+  diffstatFromPatch,
+  evidenceFact,
+  MAX_ARTIFACT_BYTES,
+  prFact,
+  workArtifacts,
+} from './artifacts.js';
 export {
   BUILT_SKILLS,
   buildCard,
@@ -21,6 +28,13 @@ export type {
   MessageView,
   TextMediaType,
 } from './codec.js';
+export {
+  hasA2AProvenance,
+  PROVENANCE_PREFIX,
+  provenanceLine,
+  shapeDraft,
+} from './draft.js';
+export type { HandoffRequest } from './draft.js';
 export {
   A2AError,
   a2aFieldPath,
@@ -110,6 +124,8 @@ export {
   wireState,
 } from './states.js';
 export type { TaskStateName, WireTaskState } from './states.js';
+export { statusReply } from './statusSkill.js';
+export type { StatusEntry } from './statusSkill.js';
 export { A2A_DB_VERSION, openA2ADb, SqliteA2AStore } from './store/sqlite.js';
 export type {
   A2AStore,

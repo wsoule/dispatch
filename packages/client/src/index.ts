@@ -14,6 +14,10 @@ export {
   wsUrl,
 } from './api';
 export type {
+  A2AClientSummary,
+  A2AListenerSettings,
+  A2AListenerStatus,
+  A2ATaskSummary,
   AdjudicateFindingInput,
   AdjudicateFindingResult,
   AdvanceFixLoopInput,

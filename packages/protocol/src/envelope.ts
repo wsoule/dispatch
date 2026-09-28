@@ -84,6 +84,7 @@ export const GATE_TYPES = [
   'agent-registration',
   'overseer-action',
   'memory',
+  'task-proposal',
 ] as const;
 
 // The kinds a memory gate may name; @dispatch/memory pins its MEMORY_KINDS to
@@ -132,6 +133,13 @@ export type GateData =
       action: 'add' | 'supersede' | 'retire';
       scope: 'project' | 'team';
       kind: (typeof MEMORY_GATE_KINDS)[number];
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: Address;
+      message: string;
     };
 
 /** How validateSendInput judges gates. */

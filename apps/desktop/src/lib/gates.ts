@@ -38,6 +38,7 @@ const GATE_TYPES: ReadonlySet<string> = new Set([
   'agent-registration',
   'overseer-action',
   'memory',
+  'task-proposal',
 ]);
 
 /** The open gates query (`GET /api/decisions/open`): what a deciding human is asked. */
@@ -57,6 +58,22 @@ export function gateOf(message: Message): GateData | null {
   return typeof type === 'string' && GATE_TYPES.has(type)
     ? (data as GateData)
     : null;
+}
+
+/** A daemon marker (a close, a breaker pause); the same data from anyone else
+ *  is ordinary. Mirrors @dispatch/protocol's isSystemMarker. */
+export function isSystemMarker(
+  message: Pick<Message, 'from' | 'data'>,
+  type: 'x-closed' | 'x-breaker'
+): boolean {
+  const data = message.data;
+  return (
+    message.from === 'agent:dispatch' &&
+    typeof data === 'object' &&
+    data !== null &&
+    !Array.isArray(data) &&
+    (data as { type?: unknown }).type === type
+  );
 }
 
 /** A tool-approval gate's payload, or null for any other message. */

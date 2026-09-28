@@ -24,7 +24,8 @@ export function rowFor(client: string, m: Message): TaskRow {
 }
 
 // Boot: gives every keyed question or handoff a client sent its row, which a
-// crash between the engine's commit and a2a.db can lose, then recomputes open tasks.
+// crash between the engine's commit and a2a.db can lose, then recomputes open
+// tasks; one that cannot be recomputed is logged and skipped.
 export function reconcileA2A(
   deps: BridgeDeps,
   watch: BridgeWatch
@@ -47,6 +48,6 @@ export function reconcileA2A(
     }
   }
   const open = deps.store.openTasks();
-  for (const row of open) watch.recompute(row.id);
+  for (const row of open) watch.recomputeLogged(row.id);
   return { created, recomputed: open.length };
 }

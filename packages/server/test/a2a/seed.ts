@@ -1,5 +1,6 @@
 import type { AgentStatus } from '@dispatch/protocol';
 import { openMessagesDb, SqliteMessageStore } from '@dispatch/protocol';
+import { expect } from 'bun:test';
 import { join } from 'node:path';
 
 import { tokenHash } from '../../src/a2a/auth.js';
@@ -37,6 +38,35 @@ export async function freePort(): Promise<number> {
   const port = probe.port ?? 0;
   await probe.stop(true);
   return port;
+}
+
+// A throwaway self-signed certificate for localhost, valid one day.
+export async function selfSigned(
+  dir: string
+): Promise<{ cert: string; key: string }> {
+  const cert = join(dir, 'cert.pem');
+  const key = join(dir, 'key.pem');
+  const proc = Bun.spawn(
+    [
+      'openssl',
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      key,
+      '-out',
+      cert,
+      '-days',
+      '1',
+      '-subj',
+      '/CN=localhost',
+    ],
+    { stdout: 'ignore', stderr: 'ignore' }
+  );
+  expect(await proc.exited).toBe(0);
+  return { cert, key };
 }
 
 let seedBase = '';

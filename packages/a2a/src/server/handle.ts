@@ -314,9 +314,9 @@ async function admitStream(op: Op): Promise<(() => void) | Response> {
   return admitted.release ?? (() => {});
 }
 
-// Hands the admitted slot to an SSE stream of the task, which releases it.
-// A subscription runs until the task is terminal; a streamed send ends at
-// INPUT_REQUIRED too.
+// Hands the admitted slot to an SSE stream of the task, which releases it, or
+// frees it here if the stream cannot start. A subscription runs until the task
+// is terminal; a streamed send ends at INPUT_REQUIRED too.
 function openStream(
   op: Op,
   release: () => void,
@@ -326,20 +326,31 @@ function openStream(
   untilTerminal: boolean
 ): Response {
   op.options.setRequestTimeout?.(0);
-  return withExtensions(
-    taskEventStream({
-      port: op.port,
-      caller: op.caller,
-      bearer: op.bearer,
-      taskId,
-      view,
-      reask,
-      untilTerminal,
-      release,
-      signal: op.req.signal,
-    }),
-    view.extensions
-  );
+  let released = false;
+  const releaseOnce = () => {
+    if (released) return;
+    released = true;
+    release();
+  };
+  try {
+    return withExtensions(
+      taskEventStream({
+        port: op.port,
+        caller: op.caller,
+        bearer: op.bearer,
+        taskId,
+        view,
+        reask,
+        untilTerminal,
+        release: releaseOnce,
+        signal: op.req.signal,
+      }),
+      view.extensions
+    );
+  } catch (err) {
+    releaseOnce();
+    throw err;
+  }
 }
 
 // SendMessage and SendStreamingMessage: a taskId continues that open task,

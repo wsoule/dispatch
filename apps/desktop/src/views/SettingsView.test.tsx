@@ -127,6 +127,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Connected agents',
     'Board sync',
     'Linear',
+    'A2A',
     'License',
     'Remotes',
     'Background',
