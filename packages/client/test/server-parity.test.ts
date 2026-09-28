@@ -271,3 +271,37 @@ describe('overseer types mirror dispatchd', () => {
     expect(client).toEqual(server);
   });
 });
+
+describe('A2A types mirror dispatchd', () => {
+  // The daemon keeps ListenerStatus file-private, so `export` is optional.
+  const fieldsOf = (source: string, name: string): string[] | null => {
+    const body = new RegExp(
+      `(?:export )?interface ${name} \\{([\\s\\S]*?)\\n\\}`
+    ).exec(source)?.[1];
+    if (body === undefined) return null;
+    return [...body.matchAll(/\n {2}(\w+\??):/g)].map((m) => m[1]);
+  };
+
+  for (const [client, server, file] of [
+    ['A2AListenerSettings', 'ListenerSettings', ['a2a', 'settings.ts']],
+    ['A2AListenerStatus', 'ListenerStatus', ['a2a', 'bridge.ts']],
+  ] as const) {
+    it(`${client} declares the fields of the server's ${server}`, () => {
+      const theirs = fieldsOf(serverSource(...file), server);
+      expect(theirs).not.toBeNull();
+      expect(fieldsOf(clientSource(), client)).toEqual(theirs);
+    });
+  }
+
+  it("A2ATaskSummary declares the fields of @dispatch/a2a's TaskRow", () => {
+    const theirs = fieldsOf(
+      readFileSync(
+        join(import.meta.dir, '..', '..', 'a2a', 'src', 'store', 'sqlite.ts'),
+        'utf8'
+      ),
+      'TaskRow'
+    );
+    expect(theirs).not.toBeNull();
+    expect(fieldsOf(clientSource(), 'A2ATaskSummary')).toEqual(theirs);
+  });
+});
