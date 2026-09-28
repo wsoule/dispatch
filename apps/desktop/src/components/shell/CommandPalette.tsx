@@ -42,6 +42,11 @@ interface CommandPaletteProps {
 // How long typing must pause before the palette searches docs.
 const DOC_SEARCH_DEBOUNCE_MS = 150;
 
+const NO_DOC_HITS: { query: string; entries: PaletteEntry[] } = {
+  query: '',
+  entries: [],
+};
+
 /** The 14px glyph a row shows when its entry brings none: one per section, with the
  * "Dispatch …" task rows (`dispatch-<task id>` in `buildPaletteEntries`) getting a play
  * glyph so they read as verbs. */
@@ -92,18 +97,16 @@ export function CommandPalette({
     if (!isOpen) setQuery('');
   }, [isOpen]);
 
-  // The daemon's doc hits for the query, which keep their own rank after the local rows.
-  const [docEntries, setDocEntries] = useState<PaletteEntry[]>([]);
+  // The daemon's doc hits and the query they answer; they keep their own rank
+  // after the local rows, and hits for an earlier query are never shown or run.
+  const [docHits, setDocHits] = useState(NO_DOC_HITS);
   useEffect(() => {
     const q = query.trim();
-    if (searchDocs === undefined || q === '') {
-      setDocEntries([]);
-      return;
-    }
+    if (searchDocs === undefined || q === '') return;
     let live = true;
     const timer = setTimeout(() => {
       const show = (found: PaletteEntry[]): void => {
-        if (live) setDocEntries(found);
+        if (live) setDocHits({ query: q, entries: found });
       };
       searchDocs(q).then(show, () => show([]));
     }, DOC_SEARCH_DEBOUNCE_MS);
@@ -112,6 +115,10 @@ export function CommandPalette({
       clearTimeout(timer);
     };
   }, [query, searchDocs]);
+  const docEntries =
+    searchDocs !== undefined && docHits.query === query.trim()
+      ? docHits.entries
+      : NO_DOC_HITS.entries;
 
   const sections = useMemo(
     () =>

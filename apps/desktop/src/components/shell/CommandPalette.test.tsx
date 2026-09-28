@@ -313,3 +313,27 @@ test('a query also searches docs, listing the hits under Docs after the local ro
   fireEvent.click(row);
   expect(ran).toEqual(['doc-1#columns']);
 });
+
+test('doc rows for an earlier query go as soon as the query changes', async () => {
+  const ran: string[] = [];
+  mount({
+    ran,
+    searchDocs: (query) =>
+      Promise.resolve([
+        {
+          id: `doc:doc-1#${query}`,
+          label: `Board spec › ${query}`,
+          kind: 'doc',
+          section: 'docs',
+          run: () => ran.push(query),
+        },
+      ]),
+  });
+  fireEvent.change(input(), { target: { value: 'kanban' } });
+  await screen.findByText('Board spec › kanban');
+  fireEvent.change(input(), { target: { value: 'swimlane' } });
+  expect(headings()).toEqual([]);
+  fireEvent.keyDown(input(), { key: 'Enter' });
+  expect(ran).toEqual([]);
+  expect(await screen.findByText('Board spec › swimlane')).toBeDefined();
+});
