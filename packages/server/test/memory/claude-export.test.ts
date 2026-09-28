@@ -2,18 +2,22 @@ import { DEFAULT_MEMORY, TaskStore } from '@dispatch/core';
 import {
   createMemoryIds,
   insertFresh,
+  MemoryError,
   newMemoryEntry,
   parsedHash,
   parseMemoryFile,
 } from '@dispatch/memory';
 import type {
+  MemoryEngine,
   MemoryEntry,
+  MemoryStore,
   Principal,
   SqliteMemoryStore,
 } from '@dispatch/memory';
 import type { DeliveryEngine } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  chmodSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -37,11 +41,17 @@ import {
   overseerLineageOpen,
   runLineageOpen,
 } from '../../src/memory/claudeExport.js';
-import type { ExportTarget } from '../../src/memory/claudeExport.js';
+import type {
+  ClaudeExportDeps,
+  ExportTarget,
+} from '../../src/memory/claudeExport.js';
 import { PersonalStores } from '../../src/memory/personalStores.js';
 import { openMemory } from '../../src/memory/service.js';
 import { GateHandlers } from '../../src/messaging/gates.js';
-import { claudeMemoryDir } from '../../src/orchestrator/paths.js';
+import {
+  claudeMemoryDir,
+  claudeMemoryRoot,
+} from '../../src/orchestrator/paths.js';
 import type { RunMeta } from '../../src/orchestrator/types.js';
 import { waitFor } from '../messaging/harness.js';
 import { quietDaemon, testEngine, TestMemoryHost } from './fixtures.js';
@@ -61,11 +71,43 @@ const EPOCH = '1970-01-01T00:00:00.000Z';
 let home: string;
 let root: string;
 let personalStores: PersonalStores;
+let host: TestMemoryHost;
+let engine: MemoryEngine;
 let shared: SqliteMemoryStore;
 let projectKey: string;
 let mgr: ClaudeExportManager;
+const managers: ClaudeExportManager[] = [];
 
 const personal = (identity: string) => personalStores.personal(identity);
+
+// `obj` with some methods replaced, the way a busy database or a refusing engine behaves.
+function withOverrides<T extends object>(obj: T, over: Partial<T>): T {
+  return new Proxy(obj, {
+    get: (t, prop) => {
+      if (Object.hasOwn(over, prop)) return over[prop as keyof T];
+      const value: unknown = Reflect.get(t, prop, t);
+      if (typeof value !== 'function') return value;
+      return (value as (...args: unknown[]) => unknown).bind(t);
+    },
+  });
+}
+
+// Another manager over the same stores: a restarted daemon, or one with a dependency swapped.
+function managerWith(
+  over: Partial<ClaudeExportDeps> = {}
+): ClaudeExportManager {
+  const m = new ClaudeExportManager({
+    rootDir: root,
+    engine,
+    shared,
+    personalStore: () => personal('self'),
+    config: () => DEFAULT_MEMORY,
+    pollMs: 10,
+    ...over,
+  });
+  managers.push(m);
+  return m;
+}
 
 beforeEach(() => {
   home = realpathSync(mkdtempSync(join(tmpdir(), 'claude-export-')));
@@ -73,7 +115,7 @@ beforeEach(() => {
   root = join(home, 'project');
   mkdirSync(root);
   personalStores = new PersonalStores({ dir: join(home, 'personal') });
-  const host = new TestMemoryHost();
+  host = new TestMemoryHost();
   host.operators.set(RUN.address, { human: 'human:wyat', identity: 'self' });
   host.runTasks.set('r-9f2c01', TASK);
   host.tasks.set(TASK, {
@@ -88,19 +130,13 @@ beforeEach(() => {
   host.raise = (p) => Promise.resolve(`msg-${p.id}`);
   const t = testEngine({ host, dbPath: join(home, 'memory.db'), personal });
   shared = t.shared;
+  engine = t.engine;
   projectKey = host.projectKey();
-  mgr = new ClaudeExportManager({
-    rootDir: root,
-    engine: t.engine,
-    shared,
-    personalStore: () => personal('self'),
-    config: () => DEFAULT_MEMORY,
-    pollMs: 10,
-  });
+  mgr = managerWith();
 });
 
 afterEach(() => {
-  mgr.close();
+  for (const m of managers.splice(0)) m.close();
   shared.close();
   personalStores.close();
   if (originalHome === undefined) delete process.env.DISPATCH_HOME;
@@ -472,6 +508,170 @@ describe('ClaudeExportManager', () => {
         .listEntries()
         .map((e) => e.title)
     ).toEqual(['kept note']);
+  });
+
+  it('reads nothing as deleted when the lineage directory is gone', async () => {
+    const team = saveTeam('keep the team lesson');
+    const mine = savePersonal('keep my fact');
+    const { dir } = mgr.prepare(target);
+    rmSync(dir, { recursive: true, force: true });
+    expect(await mgr.ingest(target)).toMatchObject({ proposed: 0, retired: 0 });
+    expect(shared.getEntry(team.id)?.status).toBe('active');
+    expect(personal('self').getEntry(mine.id)?.status).toBe('active');
+    expect(shared.listProposals()).toEqual([]);
+    expect(shared.manifest(lineage)).toHaveLength(2);
+  });
+
+  // Root reads any directory, so only another user can see this refusal.
+  it.skipIf(process.getuid?.() === 0)(
+    'reads nothing as deleted when the lineage directory will not list',
+    async () => {
+      const mine = savePersonal('keep my fact');
+      const { dir } = mgr.prepare(target);
+      chmodSync(dir, 0o000);
+      try {
+        expect(await mgr.ingest(target)).toMatchObject({
+          retired: 0,
+          problems: ['.: unreadable'],
+        });
+      } finally {
+        chmodSync(dir, 0o700);
+      }
+      expect(personal('self').getEntry(mine.id)?.status).toBe('active');
+    }
+  );
+
+  it('closes a lineage whose directory is gone without reading its manifest as deletions', async () => {
+    saveTeam('keep the team lesson');
+    const mine = savePersonal('keep my fact');
+    const { dir } = mgr.prepare(target);
+    rmSync(dir, { recursive: true, force: true });
+    expect(
+      await mgr.sweep({ targetOf: () => target, isOpen: () => false })
+    ).toEqual({ scanned: 0, closed: 1 });
+    expect(personal('self').getEntry(mine.id)?.status).toBe('active');
+    expect(shared.listProposals()).toEqual([]);
+    expect(shared.manifest(lineage)).toEqual([]);
+  });
+
+  it('leaves nothing readable as deleted when a close fails before its manifest clears', async () => {
+    const team = saveTeam('keep the team lesson');
+    const mine = savePersonal('keep my fact');
+    const { dir } = mgr.prepare(target);
+    const busy = managerWith({
+      shared: withOverrides(shared, {
+        replaceManifest: () => {
+          throw new Error('database is locked');
+        },
+      }),
+    });
+    await expect(busy.closeLineage(lineage, target)).rejects.toThrow(
+      'database is locked'
+    );
+    expect(existsSync(dir)).toBe(false);
+    expect(await mgr.ingest(target)).toMatchObject({ proposed: 0, retired: 0 });
+    expect(shared.getEntry(team.id)?.status).toBe('active');
+    expect(personal('self').getEntry(mine.id)?.status).toBe('active');
+    expect(shared.listProposals()).toEqual([]);
+    // The next sweep finishes the close and leaves nothing behind.
+    expect(
+      await mgr.sweep({ targetOf: () => target, isOpen: () => false })
+    ).toEqual({ scanned: 0, closed: 1 });
+    expect(shared.manifest(lineage)).toEqual([]);
+    expect(readdirSync(claudeMemoryRoot(root))).toEqual([]);
+  });
+
+  it('never shows exported files beside a manifest that does not name them', () => {
+    saveTeam('pnpm 11 ignores onlyBuiltDependencies');
+    const dir = claudeMemoryDir(root, lineage);
+    // What a crash just before each manifest write would leave at the lineage path.
+    const atManifestWrite: (string[] | null)[] = [];
+    const watched = managerWith({
+      shared: withOverrides(shared, {
+        replaceManifest: (name, rows) => {
+          atManifestWrite.push(existsSync(dir) ? readdirSync(dir) : null);
+          shared.replaceManifest(name, rows);
+        },
+      }),
+    });
+    watched.prepare(target);
+    watched.prepare(target);
+    expect(atManifestWrite).toEqual([null, null]);
+    expect(readdirSync(dir)).toHaveLength(2);
+  });
+
+  it('keeps a lineage a resume reopened while its close was waiting on the final scan', async () => {
+    const team = saveTeam('retire me later');
+    const { dir } = mgr.prepare(target);
+    rmSync(join(dir, `${team.id}.md`));
+    // The final scan proposes a retire whose gate this test holds open.
+    const release: (() => void)[] = [];
+    host.raise = (p) =>
+      new Promise((resolve) => release.push(() => resolve(`msg-${p.id}`)));
+    const closing = mgr.closeLineage(lineage, target);
+    await waitFor(() => release.length === 1);
+    mgr.prepare(target);
+    for (const r of release) r();
+    await closing;
+    expect(existsSync(join(dir, 'MEMORY.md'))).toBe(true);
+    expect(shared.manifest(lineage).map((r) => r.memoryId)).toEqual([team.id]);
+    expect(shared.meta(`export-index:${lineage}`)).not.toBeNull();
+  });
+
+  it('remembers recorded refusals across a restart: none is recorded twice, and a refused new file is not retried', async () => {
+    const { dir } = mgr.prepare(target);
+    symlinkSync('/etc/hosts', join(dir, 'link.md'));
+    writeFileSync(join(dir, 'new.md'), 'refused once');
+    const limited = managerWith({
+      engine: withOverrides(engine, {
+        save: () => Promise.reject(new MemoryError('limited', 'slow down')),
+      }),
+    });
+    expect((await limited.ingest(target)).problems.sort()).toEqual([
+      'link.md: symlink',
+      'new.md: limited',
+    ]);
+    limited.close();
+    const restarted = managerWith();
+    expect(await restarted.ingest(target)).toMatchObject({
+      saved: 0,
+      problems: [],
+    });
+    expect(personal('self').ingestProblems(10)).toHaveLength(2);
+    expect(personal('self').listEntries()).toEqual([]);
+  });
+
+  it('records a refusal on a later scan when recording it failed', async () => {
+    const { dir } = mgr.prepare(target);
+    symlinkSync('/etc/hosts', join(dir, 'link.md'));
+    const self = personal('self');
+    let busy = true;
+    const flaky = managerWith({
+      personalStore: () =>
+        withOverrides<MemoryStore>(self, {
+          transaction: <T>(fn: () => T): T => {
+            if (busy) {
+              busy = false;
+              throw new Error('database is locked');
+            }
+            return self.transaction(fn);
+          },
+        }),
+    });
+    await expect(flaky.ingest(target)).rejects.toThrow('database is locked');
+    expect((await flaky.ingest(target)).problems).toEqual(['link.md: symlink']);
+    expect(self.ingestProblems(10)).toHaveLength(1);
+  });
+
+  it('keeps a too-large file’s first 8 KiB whole, cut on a character boundary', async () => {
+    const { dir } = mgr.prepare(target);
+    writeFileSync(join(dir, 'wide.md'), `x${'é'.repeat(35_000)}`);
+    expect((await mgr.ingest(target)).problems).toEqual(['wide.md: too-large']);
+    const self = personal('self');
+    const [wide] = self.ingestProblems(10);
+    expect(self.takeIngestProblem(wide.id)?.content).toBe(
+      `x${'é'.repeat(4095)}`
+    );
   });
 });
 

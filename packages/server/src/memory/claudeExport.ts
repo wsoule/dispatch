@@ -17,7 +17,6 @@ import {
   utf8Bytes,
 } from '@dispatch/memory';
 import type {
-  ExportChange,
   ManifestRow,
   MemoryEngine,
   MemoryStore,
@@ -40,6 +39,7 @@ import {
   openSync,
   readdirSync,
   readSync,
+  renameSync,
   rmSync,
   writeSync,
 } from 'node:fs';
@@ -64,6 +64,8 @@ const RUN_LINEAGE_DAYS = 7;
 const OVERSEER_LINEAGE_HOURS = 24;
 // A lineage id or `o-<conversation>`: one plain path segment.
 const NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
+// An export being written, or a directory moved out of the way to be deleted.
+const SET_ASIDE_PATTERN = /^\.(staging|closing)-/;
 
 export interface ExportTarget {
   // A run lineage id, or `o-<conversation>` for an overseer conversation.
@@ -91,6 +93,8 @@ interface Problem {
 }
 
 interface Scan {
+  // The directory is missing, so no file in it was seen.
+  missing: boolean;
   files: ScannedFile[];
   // Each scanned file's text, kept for a problem row if saving it is refused.
   text: Map<string, string>;
@@ -116,6 +120,8 @@ interface ScanRun {
   state: LineageState;
   generation: number;
   refused: Problem[];
+  // Keys of new files the engine refused, so no later scan tries them again.
+  refusedNew: string[];
   effects: Promise<void>[];
   summary: IngestSummary;
 }
@@ -125,7 +131,7 @@ interface LineageState {
   generation: number;
   // Files whose effect is still settling, so no other scan repeats it.
   inFlight: Set<string>;
-  // Refusals already recorded, so a poll does not record them again.
+  // Refusals already recorded, kept in meta so no later scan records them again.
   reported: Set<string>;
   queue: Promise<unknown>;
   stopWatch: (() => void) | null;
@@ -149,6 +155,8 @@ const decode = (bytes: Uint8Array): string => new TextDecoder().decode(bytes);
 
 const indexKey = (name: string): string => `export-index:${name}`;
 
+const reportedKey = (name: string): string => `export-reported:${name}`;
+
 const runIdOf = (principal: Principal): string | null =>
   principal.kind === 'run' ? principal.address.slice('run:'.length) : null;
 
@@ -156,15 +164,9 @@ function problem(
   file: string,
   reason: string,
   size: number,
-  kept: Uint8Array | null
+  kept: string | null
 ): Problem {
-  return {
-    file,
-    reason,
-    size,
-    sha256: sha256(kept ?? ''),
-    content: kept === null ? null : decode(kept),
-  };
+  return { file, reason, size, sha256: sha256(kept ?? ''), content: kept };
 }
 
 const problemKey = (p: Pick<Problem, 'file' | 'reason' | 'sha256'>): string =>
@@ -254,6 +256,7 @@ function readBounded(path: string, n: number): Uint8Array | null {
 // Walks the export directory without following links; every refusal is recorded, never thrown.
 function scanExport(dir: string): Scan {
   const scan: Scan = {
+    missing: false,
     files: [],
     text: new Map(),
     problems: [],
@@ -264,6 +267,7 @@ function scanExport(dir: string): Scan {
   try {
     root = lstatSync(dir);
   } catch {
+    scan.missing = true;
     return scan;
   }
   if (!root.isDirectory()) {
@@ -271,7 +275,14 @@ function scanExport(dir: string): Scan {
     scan.problems.push(problem('.', reason, root.size, null));
     return scan;
   }
-  const { entries, unlisted, stoppedAt } = walkTree(dir);
+  let tree: ReturnType<typeof walkTree>;
+  try {
+    tree = walkTree(dir);
+  } catch {
+    scan.problems.push(problem('.', 'unreadable', root.size, null));
+    return scan;
+  }
+  const { entries, unlisted, stoppedAt } = tree;
   for (const file of unlisted)
     scan.problems.push(problem(file, 'unreadable', 0, null));
   for (const { file, stat, tooDeep } of entries) {
@@ -300,9 +311,8 @@ function scanExport(dir: string): Scan {
       continue;
     }
     if (bytes.byteLength > MAX_READ) {
-      scan.problems.push(
-        problem(file, 'too-large', stat.size, bytes.subarray(0, KEPT_BYTES))
-      );
+      const kept = cutUtf8(decode(bytes), KEPT_BYTES);
+      scan.problems.push(problem(file, 'too-large', stat.size, kept));
       continue;
     }
     const text = decode(bytes);
@@ -321,12 +331,13 @@ function scanExport(dir: string): Scan {
   return scan;
 }
 
-// Whether a scan could not see `file`: refused, under a refused directory, or
-// past where a cut-short walk stopped. Such a file is never read as deleted.
+// Whether a scan could not see `file`: refused, under a refused or missing directory,
+// or past where a cut-short walk stopped. Such a file is never read as deleted.
 function hiddenFrom(scan: Scan): (file: string) => boolean {
   const seen = new Set(scan.files.map((f) => f.file));
   const refused = scan.problems.map((p) => p.file);
   return (file) =>
+    scan.missing ||
     (scan.cutShort && !seen.has(file)) ||
     refused.some((r) => r === '.' || file === r || file.startsWith(`${r}/`));
 }
@@ -362,20 +373,26 @@ function writePrivate(path: string, text: string): void {
   }
 }
 
-// Removes `file` under `dir` unless a directory on its way is a link that could lead outside.
-function removeInside(dir: string, file: string): void {
-  const parts = file.split('/');
-  if (parts.some((p) => p === '' || p === '.' || p === '..')) return;
-  let at = dir;
-  for (const part of parts.slice(0, -1)) {
-    at = join(at, part);
-    try {
-      if (!lstatSync(at).isDirectory()) return;
-    } catch {
-      return;
-    }
+// Deletes `path` and everything under it, links unfollowed; a failure is logged for the next sweep.
+function removeQuietly(path: string): void {
+  try {
+    rmSync(path, { recursive: true, force: true });
+  } catch (err) {
+    console.error(`memory: removing ${path} failed`, err);
   }
-  rmSync(join(dir, file), { force: true, recursive: true });
+}
+
+// Refusal keys a lineage recorded before; anything unparseable reads as none.
+function parseReported(raw: string | null): string[] {
+  if (raw === null) return [];
+  try {
+    const keys: unknown = JSON.parse(raw);
+    return Array.isArray(keys)
+      ? keys.filter((k): k is string => typeof k === 'string')
+      : [];
+  } catch {
+    return [];
+  }
 }
 
 // Exports memory into one Claude auto-memory directory per session lineage
@@ -390,26 +407,23 @@ export class ClaudeExportManager {
     this.pollMs = deps.pollMs ?? POLL_MS;
   }
 
-  // Ingests anything left in the directory, then writes the ranked export and
+  // Ingests anything left in the directory, then swaps in the ranked export and
   // its manifest; throws when the directory cannot be written.
   prepare(target: ExportTarget): { dir: string; indexText: string } {
     const dir = this.dirOf(target.name);
     ensurePrivateDir(claudeMemoryRoot(this.deps.rootDir));
-    ensurePrivateDir(dir);
     const state = this.state(target.name);
     const leftovers = this.scanAndApply(target, state);
     state.generation += 1;
-    leftovers.settled.catch((err: unknown) =>
+    leftovers.catch((err: unknown) =>
       console.error(`memory: ingesting ${target.name}'s leftovers failed`, err)
     );
-    // Leftovers now live in entries, which re-export under their own names.
-    for (const change of leftovers.changes)
-      if (change.type === 'new' || change.type === 'renamed')
-        removeInside(dir, change.file);
+    // The old directory goes whole: its leftovers now live in entries, which
+    // re-export under their own names.
     try {
-      return this.writeExport(target, dir);
+      return this.writeExport(target, dir, state);
     } catch (err) {
-      this.discard(target.name, dir);
+      this.discard(target.name, state);
       throw err;
     }
   }
@@ -417,10 +431,7 @@ export class ClaudeExportManager {
   async ingest(target: ExportTarget): Promise<IngestSummary> {
     this.dirOf(target.name);
     const state = this.state(target.name);
-    return await this.enqueue(
-      state,
-      () => this.scanAndApply(target, state).settled
-    );
+    return await this.enqueue(state, () => this.scanAndApply(target, state));
   }
 
   // Polls the directory's paths, sizes and modification times while a run is
@@ -454,22 +465,26 @@ export class ClaudeExportManager {
     return stop;
   }
 
-  // A final scan when there is someone to attribute it to, then the
-  // directory, its manifest and its stored index go.
+  // A final scan when there is someone to attribute it to, then the directory,
+  // its manifest and its stored index go, unless a prepare reopened it meanwhile.
   async closeLineage(name: string, target: ExportTarget | null): Promise<void> {
-    const dir = this.dirOf(name);
+    this.dirOf(name);
     const state = this.state(name);
     state.stopWatch?.();
-    await this.enqueue(state, async () => {
-      if (target !== null) await this.scanAndApply(target, state).settled;
+    const judged = state.generation;
+    const closed = await this.enqueue(state, async () => {
+      if (state.generation !== judged) return false;
+      if (target !== null) await this.scanAndApply(target, state);
+      if (state.generation !== judged) return false;
       state.generation += 1;
-      rmSync(dir, { recursive: true, force: true });
-      this.deps.shared.transaction(() => {
-        this.deps.shared.replaceManifest(name, []);
-        this.deps.shared.deleteMeta(indexKey(name));
-      });
+      this.removeExport(name, state);
+      return true;
     });
-    if (this.lineages.get(name) === state && state.inFlight.size === 0)
+    if (
+      closed &&
+      this.lineages.get(name) === state &&
+      state.inFlight.size === 0
+    )
       this.lineages.delete(name);
   }
 
@@ -478,6 +493,7 @@ export class ClaudeExportManager {
     targetOf(name: string): ExportTarget | null;
     isOpen(name: string): boolean;
   }): Promise<{ scanned: number; closed: number }> {
+    this.clearSetAside();
     const names = new Set(this.deps.shared.manifestLineages());
     for (const name of this.directoryNames()) names.add(name);
     let scanned = 0;
@@ -487,7 +503,7 @@ export class ClaudeExportManager {
         const target = input.targetOf(name);
         const scannable = target !== null && existsSync(this.dirOf(name));
         if (!input.isOpen(name)) {
-          await this.closeLineage(name, target);
+          await this.closeLineage(name, scannable ? target : null);
           closed += 1;
           if (scannable) scanned += 1;
         } else if (target !== null && scannable) {
@@ -578,7 +594,9 @@ export class ClaudeExportManager {
       state = {
         generation: 0,
         inFlight: new Set(),
-        reported: new Set(),
+        reported: new Set(
+          parseReported(this.deps.shared.meta(reportedKey(name)))
+        ),
         queue: Promise.resolve(),
         stopWatch: null,
       };
@@ -606,6 +624,46 @@ export class ClaudeExportManager {
       .map((d) => d.name);
   }
 
+  // Deletes what an interrupted export or removal left set aside; no scan ever reads it.
+  private clearSetAside(): void {
+    const root = claudeMemoryRoot(this.deps.rootDir);
+    if (!existsSync(root)) return;
+    for (const name of readdirSync(root))
+      if (SET_ASIDE_PATTERN.test(name)) removeQuietly(join(root, name));
+  }
+
+  // A fresh path beside the lineage directories that no scan or sweep reads as a lineage.
+  private asidePath(kind: 'staging' | 'closing', name: string): string {
+    const id = this.ulid(this.now().getTime());
+    return join(claudeMemoryRoot(this.deps.rootDir), `.${kind}-${name}-${id}`);
+  }
+
+  // Renames the lineage directory out of every scan's way; null when there was none.
+  private setAside(name: string): string | null {
+    const aside = this.asidePath('closing', name);
+    try {
+      renameSync(this.dirOf(name), aside);
+      return aside;
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
+      throw err;
+    }
+  }
+
+  // The directory moves aside before its manifest, index and refusals clear, so a
+  // crash at any step leaves no manifest row that a scan could read as deleted.
+  private removeExport(name: string, state: LineageState): void {
+    const aside = this.setAside(name);
+    const { shared } = this.deps;
+    shared.transaction(() => {
+      shared.replaceManifest(name, []);
+      shared.deleteMeta(indexKey(name));
+      shared.deleteMeta(reportedKey(name));
+    });
+    state.reported.clear();
+    if (aside !== null) removeQuietly(aside);
+  }
+
   // The identity whose personal store the principal writes, or null.
   private identityOf(principal: Principal): string | null {
     try {
@@ -617,11 +675,11 @@ export class ClaudeExportManager {
   }
 
   // Scans the directory and starts every effect at once: each engine write
-  // lands before this returns, and `settled` resolves when the effects have.
+  // lands before this returns, and the promise resolves when the effects have.
   private scanAndApply(
     target: ExportTarget,
     state: LineageState
-  ): { changes: ExportChange[]; settled: Promise<IngestSummary> } {
+  ): Promise<IngestSummary> {
     const { shared, engine } = this.deps;
     const scan = scanExport(this.dirOf(target.name));
     const run: ScanRun = {
@@ -629,6 +687,7 @@ export class ClaudeExportManager {
       state,
       generation: state.generation,
       refused: scan.problems.filter((p) => !state.reported.has(problemKey(p))),
+      refusedNew: [],
       effects: [],
       summary: {
         saved: 0,
@@ -670,7 +729,7 @@ export class ClaudeExportManager {
             }),
           (result, current) => {
             if (result === null) {
-              state.reported.add(refusedKey(file, hash));
+              run.refusedNew.push(refusedKey(file, hash));
               return;
             }
             if (result.status !== 'active') return;
@@ -745,11 +804,10 @@ export class ClaudeExportManager {
       );
     }
     this.applyIndexLines(run, scan, manifest);
-    const settled = Promise.all(run.effects).then(() => {
+    return Promise.all(run.effects).then(() => {
       this.report(run);
       return summary;
     });
-    return { changes, settled };
   }
 
   // Starts one engine write for `file`; a refusal is kept as a problem with
@@ -838,17 +896,16 @@ export class ClaudeExportManager {
   }
 
   // Refused files go to the operator's ingest_problems, with one activity row naming them.
-  private report({ target, state, refused, summary }: ScanRun): void {
+  private report(run: ScanRun): void {
+    const { target, refused, summary } = run;
     if (refused.length === 0) return;
-    for (const p of refused) {
-      state.reported.add(problemKey(p));
-      summary.problems.push(`${p.file}: ${p.reason}`);
-    }
+    for (const p of refused) summary.problems.push(`${p.file}: ${p.reason}`);
     const store = this.deps.personalStore(target.principal);
     if (store === null) {
       console.error(
         `memory: ${target.principal.address} has no personal memory for its skipped Claude files: ${summary.problems.join(', ')}`
       );
+      this.markReported(run);
       return;
     }
     const now = this.now();
@@ -878,11 +935,28 @@ export class ClaudeExportManager {
         summary: `${target.principal.address} left Claude memory files unsaved: ${named.join(', ')}${more > 0 ? `, and ${more} more` : ''}`,
       });
     });
+    this.markReported(run);
   }
 
+  // Once recorded, a scan's refusals are kept in meta, so no later scan (after a restart
+  // too) records them again or retries a refused new file; a prepare since then starts afresh.
+  private markReported(run: ScanRun): void {
+    const { target, state, generation, refused, refusedNew } = run;
+    if (state.generation !== generation) return;
+    for (const p of refused) state.reported.add(problemKey(p));
+    for (const key of refusedNew) state.reported.add(key);
+    this.deps.shared.setMeta(
+      reportedKey(target.name),
+      JSON.stringify([...state.reported])
+    );
+  }
+
+  // Writes the export beside the lineage directory, sets the old one aside, moves the
+  // manifest on, then renames the new one in: a crash never leaves files the manifest does not name.
   private writeExport(
     target: ExportTarget,
-    dir: string
+    dir: string,
+    state: LineageState
   ): { dir: string; indexText: string } {
     const { engine, shared } = this.deps;
     const ranked = engine.rank(target.principal, target.taskId);
@@ -909,14 +983,24 @@ export class ClaudeExportManager {
       ranked.ctx,
       this.deps.config().indexTokens
     );
-    for (const row of shared.manifest(target.name))
-      if (!texts.has(row.file)) removeInside(dir, row.file);
-    for (const [file, text] of texts) writePrivate(join(dir, file), text);
-    writePrivate(join(dir, INDEX_FILE), index.text);
-    shared.transaction(() => {
-      shared.replaceManifest(target.name, rows);
-      shared.setMeta(indexKey(target.name), index.text);
-    });
+    const staging = this.asidePath('staging', target.name);
+    try {
+      ensurePrivateDir(staging);
+      for (const [file, text] of texts) writePrivate(join(staging, file), text);
+      writePrivate(join(staging, INDEX_FILE), index.text);
+      const aside = this.setAside(target.name);
+      shared.transaction(() => {
+        shared.replaceManifest(target.name, rows);
+        shared.setMeta(indexKey(target.name), index.text);
+        shared.deleteMeta(reportedKey(target.name));
+      });
+      state.reported.clear();
+      renameSync(staging, dir);
+      if (aside !== null) removeQuietly(aside);
+    } catch (err) {
+      removeQuietly(staging);
+      throw err;
+    }
     const runId = runIdOf(target.principal);
     if (runId !== null) {
       try {
@@ -936,14 +1020,11 @@ export class ClaudeExportManager {
     return { dir, indexText: index.text };
   }
 
-  // A half-written export is dropped whole, so no later scan reads it as deletions.
-  private discard(name: string, dir: string): void {
+  // A failed export drops the lineage whole, so no later scan reads its ingested
+  // leftovers as new again.
+  private discard(name: string, state: LineageState): void {
     try {
-      rmSync(dir, { recursive: true, force: true });
-      this.deps.shared.transaction(() => {
-        this.deps.shared.replaceManifest(name, []);
-        this.deps.shared.deleteMeta(indexKey(name));
-      });
+      this.removeExport(name, state);
     } catch (err) {
       console.error(`memory: dropping the failed export ${name} failed`, err);
     }
