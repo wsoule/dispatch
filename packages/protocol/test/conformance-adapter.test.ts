@@ -6,6 +6,7 @@ import {
 } from '@dispatch/protocol-spec';
 import type { Vector } from '@dispatch/protocol-spec';
 import { describe, expect, it } from 'bun:test';
+import { readFileSync } from 'node:fs';
 
 import {
   REFERENCE_HELLO,
@@ -388,5 +389,22 @@ describe('REFERENCE_HELLO', () => {
       '📬 question from agent:wyat/peer (external): hello (m-01abd)'
     );
     expect(checkDigest(text, m.body, REFERENCE_HELLO.render)).toEqual([]);
+  });
+});
+
+describe('App. C.6', () => {
+  it('prints the render forms the reference declares', () => {
+    const appendix = readFileSync(
+      new URL(
+        '../../protocol-spec/spec/appendix-c-dispatch-profile.md',
+        import.meta.url
+      ),
+      'utf8'
+    );
+    const block = /\*\*Declared forms\.\*\*[\s\S]*?```json\n([\s\S]*?)```/.exec(
+      appendix
+    )?.[1];
+    expect(block).toBeDefined();
+    expect(JSON.parse(block ?? 'null')).toEqual(REFERENCE_HELLO.render);
   });
 });
