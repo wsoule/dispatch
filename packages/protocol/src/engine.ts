@@ -1149,6 +1149,8 @@ export class DeliveryEngine {
   ): Promise<ReceiveResult> {
     const fed = this.requireFederation();
     checkReceivedEnvelope(message);
+    // Before the duplicate path too, so a forward never reaches such a target.
+    checkReceivedTargets(origin);
     const stored = this.store.getMessage(message.id);
     if (stored !== null) {
       if (!sameSignedContent(stored, this.store.settledAs(stored.id), message))
@@ -1169,20 +1171,13 @@ export class DeliveryEngine {
       message.thread === message.id
         ? null
         : this.store.getMessage(message.thread);
-    const local =
-      localOnlyReason(message, replyTarget, root) ??
-      (origin.targets.some((t) => isFederationLocalAddress(t.recipient))
-        ? 'participant'
-        : null);
+    const local = localOnlyReason(message, replyTarget, root);
     if (local !== null)
       throw new MessagingError(
         'forbidden',
         LOCAL_ONLY_TEXT[local],
         local === 'gate' ? 'data' : 'to'
       );
-    origin.targets.forEach((t, i) =>
-      parseAddress(t.recipient, `targets[${i}]`)
-    );
     const { muted } = this.authorizeRemote(message, origin.replica);
     if (replyTarget !== null)
       this.authorizeRemoteReply(replyTarget, message.from, origin, fed);
@@ -1329,7 +1324,7 @@ export class DeliveryEngine {
   }
 
   // A forward of a message already stored here: delivers its one target here,
-  // once, retiring that target's remote row in the same write.
+  // once, and only in place of its remote row, which the same write retires.
   private async applyForward(
     stored: Message,
     origin: RemoteOrigin
@@ -1350,7 +1345,7 @@ export class DeliveryEngine {
         recipient: planned.recipient,
       });
       if (existing.length > 0) return false;
-      this.store.deleteRemote(stored.id, target.recipient);
+      if (!this.store.deleteRemote(stored.id, target.recipient)) return false;
       this.store.insertDelivery(planned);
       return true;
     });
@@ -2102,6 +2097,16 @@ function checkReceivedEnvelope(m: Message): void {
     malformed('blocking', 'expected a boolean');
   if (m.wake !== 'none' && m.wake !== 'request')
     malformed('wake', 'expected none or request');
+}
+
+// The origin's resolution may name only addresses that parse and may leave
+// their machine; a target that fails either refuses the whole message.
+function checkReceivedTargets(origin: RemoteOrigin): void {
+  origin.targets.forEach((t, i) => {
+    if (isFederationLocalAddress(t.recipient))
+      throw new MessagingError('forbidden', LOCAL_ONLY_TEXT.participant, 'to');
+    parseAddress(t.recipient, `targets[${i}]`);
+  });
 }
 
 // A root is its own thread and a reply joins its target's, as every honest

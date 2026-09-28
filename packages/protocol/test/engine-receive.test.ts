@@ -656,6 +656,32 @@ describe('receive refuses a malformed or overreaching envelope', () => {
     expect(store.thread(secret.id).map((m) => m.id)).toEqual([secret.id]);
   });
 
+  it('refuses a forward of a held message to a local-only, malformed or never-forwarded target', async () => {
+    const m = remote('m-01');
+    await engine.receive(m, fromBob([here('human:wyat')]));
+    for (const recipient of ['agent:wyat/overseer', 'a2a:acme'])
+      await expect(
+        engine.receive(
+          m,
+          fromBob([here('human:wyat'), there(recipient, [ME])], recipient)
+        )
+      ).rejects.toMatchObject({ code: 'forbidden' });
+    await expect(
+      engine.receive(
+        m,
+        fromBob([here('human:wyat'), there('nobody', [ME])], 'nobody')
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'targets[1]' });
+    const unlisted = await engine.receive(
+      m,
+      fromBob([here('human:wyat'), there('human:cy', [ME])], 'human:cy')
+    );
+    expect(unlisted).toEqual({ status: 'duplicate', deliveries: [] });
+    expect(
+      store.deliveries({ messageId: 'm-01' }).map((d) => d.recipient)
+    ).toEqual(['human:wyat']);
+  });
+
   it('refuses a remote agent:dispatch notice that names no message', async () => {
     await expect(
       engine.receive(
