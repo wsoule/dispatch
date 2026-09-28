@@ -1,0 +1,47 @@
+{
+  "aliases": {
+    "draft": "1.0.0-draft.1",
+    "latest": "1.0.0-draft.1"
+  },
+  "extensions": {
+    "envelope": "1.0.0-draft.1",
+    "gate": "1.0.0-draft.1",
+    "work": "1.0.0-draft.1"
+  },
+  "versions": {
+    "1.0.0-draft.1": {
+      "date": "2026-09-28",
+      "files": {
+        "registries/registries.json": "2286dbab023342a65c673c66574d70625eacf14422849fe891f4321650556f12",
+        "schemas/adapter.schema.json": "d2306c23c2af541fe97c122c4a9237736ebd3342770236e921b14bfe576601c0",
+        "schemas/delivery.schema.json": "6d4fc5b048c5a50c6caec601c9d288d8c44684da05c7867d9447141d2d557775",
+        "schemas/gate-data.schema.json": "49e991648b859b96228302dbab3d8daaef800ff629e3e12d3bf7538b5315e791",
+        "schemas/message.schema.json": "021156fec1ce8e4fbeb031a439c42eddd57feb31f47ca0bf7272a656a18ad29d",
+        "schemas/ref.schema.json": "d98f18f32d711286304bd73fc97f7c8646198b7fea9c48938feeaa5142058352",
+        "schemas/send-input.schema.json": "4a4f3743df66a1a1192f7c612294848061a4aed1f097a508da6873cc40c1694f",
+        "schemas/vector.schema.json": "a198974cdce230465fa1064fa323b7fa12e1384694746b95da251ed07467c0ed",
+        "spec/00-front-matter.md": "0417e2199782ebfc9088831bff81d01e198f8b52da789084058ded8b893c4715",
+        "spec/01-introduction.md": "a5852fc58a4d9116267d024265ef34651638ebfbe2d257ed34bddeabb2c8f232",
+        "spec/02-terminology.md": "77c740aef4cf029745b0d88889ae9197fe76fb86c7dacbc516b0c08869246524",
+        "spec/03-addresses.md": "ddd8b10a571897cee21c0dac4edf872089526c500dd6d724178ed813d769188a",
+        "spec/04-messages.md": "5f82be8ea44b1c7740f71389ad8a718c1aa6fc88cc099f2e7158fd093e05b645",
+        "spec/05-gates.md": "d46b00c40e0c96cf5e2983b01e7064acf45cce24238e2bb94328a3cf6d141b2f",
+        "spec/06-delivery.md": "d9cd0b2d4cec1a0d40989483c4f860bb6417cfddeef53712fc01ad709471d040",
+        "spec/07-mailboxes-and-channels.md": "241358c7c94fd85b5242a6a914aee6dcdf372addeb0a80c93473da2146937c15",
+        "spec/08-a2a-binding.md": "fe5cdb6e99961b1997687eae0bfdea77c9f6ea57b2c1fe1a34d668ab57e51f0a",
+        "spec/09-identity-and-authorization.md": "01b0915d3a8f38efb7cb45a2785968b16061fd62518951b00cd0d71f4c339408",
+        "spec/10-errors.md": "5d45ec065e620ca34399fb4bdd96dcf035ed249e1d665b7ca1e0719e3ace6eec",
+        "spec/11-registries.md": "6cf4e4caaec56ca21e0faf20442a91de2e049b073c87743b24b17877bfa8e9d7",
+        "spec/12-conformance.md": "31f03e02980bbbfbc275b596f18fc4f11f934038c2c51740b9a1d29a87b40348",
+        "spec/13-security-and-privacy.md": "ac98182d2eeb53cb2e893851e73142d52c657865192c561bf9701233b4144276",
+        "spec/14-versioning.md": "630743ac6ab642e6144c126892a973d299546696810da2c6be0cf926a238dfd7",
+        "spec/appendix-a-daemon-api.md": "52d3f73c7be87cfd41201ceec2d9d49d48f4fd46f3b3b6a80b32fcf90de97a2d",
+        "spec/appendix-b-agent-tools.md": "2f04d71b93a2e53dbce0e367193eec455f27011007575b79004b2020b1ae2e0f",
+        "spec/appendix-c-dispatch-profile.md": "92c1f79187cb1991fa2e1caa80cd0add835b9b283ea275bcd4ff28ef472231ef",
+        "spec/appendix-d-json-schemas.md": "33536ae43843f613d237fcc43aa344570625a6b041c5de8f637410bdeed6439e",
+        "spec/appendix-e-examples.md": "d195a0135b79e1f2bbc762c63e797bfc891667d4d159e9156e9d00ef4140db19",
+        "spec/appendix-f-federation.md": "7d71868ee58f6eb1f8011a24514609a971a48264ce2fe00b21570aeac5d12d1e"
+      }
+    }
+  }
+}

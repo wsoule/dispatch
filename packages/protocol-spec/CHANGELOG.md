@@ -6,6 +6,8 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+## 1.0.0-draft.1 (2026-09-28)
+
 - [editorial] The core text: §0-7, §9-14.
 - [breaking] Gate data travels only on questions and handoffs, and a gate of a
   type the host does not implement is refused; a stored gate of an unknown type
