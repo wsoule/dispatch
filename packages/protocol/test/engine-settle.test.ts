@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SYSTEM_ADDRESS } from '../src/address.js';
 import { DeliveryEngine } from '../src/engine.js';
+import type { EngineEvent } from '../src/engine.js';
 import type { Message } from '../src/envelope.js';
 import type { RemoteTarget } from '../src/host.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
@@ -619,10 +620,17 @@ describe('applyState and claims', () => {
       remote('m-01', { to: [TASK] }),
       fromBob([there(TASK)])
     );
+    const events: EngineEvent[] = [];
+    engine.subscribe((e) => events.push(e));
     const claimed = engine.claimRemote(TASK_ID);
     expect(claimed.map((d) => [d.recipient, d.state])).toEqual([
       [TASK, 'held'],
     ]);
     expect(store.remoteDeliveries({ recipient: TASK })).toEqual([]);
+    expect(events).toContainEqual({
+      type: 'remote',
+      messageId: 'm-01',
+      recipient: TASK,
+    });
   });
 });

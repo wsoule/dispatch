@@ -1356,6 +1356,11 @@ export class DeliveryEngine {
       return true;
     });
     if (!inserted) return [];
+    this.emit({
+      type: 'remote',
+      messageId: stored.id,
+      recipient: target.recipient,
+    });
     return [(await this.dispatch(planned, stored)).delivery];
   }
 
@@ -1770,6 +1775,7 @@ export class DeliveryEngine {
   claimRemote(taskId: string): Delivery[] {
     const recipient = `task:${taskId}`;
     const now = this.nowIso();
+    const retired: string[] = [];
     const claimed = this.store.transaction(() => {
       const out: Delivery[] = [];
       for (const row of this.store.remoteDeliveries({
@@ -1777,7 +1783,8 @@ export class DeliveryEngine {
         states: ['forwarded', 'held'],
       })) {
         if (this.store.getMessage(row.messageId) === null) continue;
-        this.store.deleteRemote(row.messageId, recipient);
+        if (this.store.deleteRemote(row.messageId, recipient))
+          retired.push(row.messageId);
         const existing = this.store.deliveries({
           messageId: row.messageId,
           recipient,
@@ -1797,6 +1804,8 @@ export class DeliveryEngine {
       }
       return out;
     });
+    for (const messageId of retired)
+      this.emit({ type: 'remote', messageId, recipient });
     for (const d of claimed) this.emit({ type: 'delivery', delivery: d });
     return claimed;
   }

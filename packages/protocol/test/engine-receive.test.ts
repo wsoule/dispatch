@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 
 import { SYSTEM_ADDRESS } from '../src/address.js';
 import { DeliveryEngine } from '../src/engine.js';
+import type { EngineEvent } from '../src/engine.js';
 import type { Message } from '../src/envelope.js';
 import type { RemoteOrigin, RemoteTarget } from '../src/host.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
@@ -130,11 +131,19 @@ describe('receive', () => {
     const m = remote('m-01', { to: [TASK] });
     await engine.receive(m, fromBob([there(TASK)]));
     host.startRun(TASK_ID, 'r-000000000009');
+    const events: EngineEvent[] = [];
+    engine.subscribe((e) => events.push(e));
     const again = await engine.receive(m, fromBob([there(TASK)], TASK));
     expect(again.status).toBe('duplicate');
     expect(again.deliveries.map((d) => [d.recipient, d.state])).toEqual([
       [TASK, 'pushed'],
     ]);
+    expect(store.remoteDeliveries({ messageId: 'm-01' })).toEqual([]);
+    expect(events).toContainEqual({
+      type: 'remote',
+      messageId: 'm-01',
+      recipient: TASK,
+    });
   });
 
   it('refuses gate data of a type this build does not implement', async () => {
