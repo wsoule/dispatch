@@ -1,5 +1,6 @@
 import type {
   ApiClient,
+  DocLinking,
   DocListParams,
   DocRead,
   DocSummary,
@@ -55,6 +56,7 @@ export async function refetchDocAfterSave(
 }
 
 const NO_DOCS: DocSummary[] = [];
+const NO_LINKING: DocLinking[] = [];
 
 function ready(client: ApiClient | null): ApiClient {
   if (client === null) throw new Error('dispatchd client not ready');
@@ -89,4 +91,18 @@ export function useDoc(
     queryFn: (): Promise<DocRead> => ready(client).getDoc(ref ?? ''),
   });
   return { read: q.data ?? null, loading: q.isLoading, error: q.error };
+}
+
+// The docs linked to `target` (`task:t-1`), with how each is linked.
+export function useDocsLinking(
+  client: ApiClient | null,
+  port: number | undefined,
+  target: string | null
+): DocLinking[] {
+  const q = useQuery({
+    queryKey: [...docsKey(port), 'links', target],
+    enabled: client !== null && target !== null,
+    queryFn: () => ready(client).docsLinking(target ?? ''),
+  });
+  return q.data?.docs ?? NO_LINKING;
 }

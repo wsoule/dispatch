@@ -542,3 +542,66 @@ test('a 409 loads the marked text under the banner', async () => {
   ).toBeDefined();
   expect(editor.value).toBe('<<<<<<< head (rev 2, run:r-1)\n');
 });
+
+// The view as App mounts it: the doc and section navigation names, and each
+// list pick reported back so navigation keeps naming the open doc.
+function renderNamed(initialDoc: string | null, initialAnchor: string | null) {
+  const picked: string[] = [];
+  const body = '# Auth\nintro\n## API\nroutes\n';
+  const client = {
+    listDocs: () => Promise.resolve({ docs: [summary, other], total: 2 }),
+    getDoc: (ref: string) =>
+      Promise.resolve({
+        ...read,
+        doc: ref === 'doc-2' ? other : summary,
+        text: body,
+        outline: [
+          { ord: 0, level: 0, heading: '', anchor: '', bytes: 0 },
+          { ord: 1, level: 1, heading: 'Auth', anchor: 'auth', bytes: 13 },
+          { ord: 2, level: 2, heading: 'API', anchor: 'api', bytes: 14 },
+        ],
+      }),
+  } as unknown as ApiClient;
+  const data = {
+    client,
+    port: 1,
+    messageAccess: { canDecide: true, canMessage: true, explanation: null },
+  } as unknown as DispatchProjectData;
+  const queryClient = new QueryClient();
+  const view = (doc: string | null, anchor: string | null) => (
+    <QueryClientProvider client={queryClient}>
+      <DocsView
+        data={data}
+        initialDoc={doc}
+        initialAnchor={anchor}
+        onSelectDoc={(id) => picked.push(id)}
+      />
+    </QueryClientProvider>
+  );
+  const { rerender } = render(view(initialDoc, initialAnchor));
+  return {
+    picked,
+    body,
+    rename: (doc: string | null, anchor: string | null) =>
+      rerender(view(doc, anchor)),
+  };
+}
+
+test('opens the doc a link names with the caret on its section heading', async () => {
+  const { body } = renderNamed('doc-1', 'api');
+  const editor =
+    await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
+  await waitFor(() =>
+    expect(editor.selectionStart).toBe(body.indexOf('## API'))
+  );
+});
+
+test('a doc named later replaces the open one, and a list pick is reported', async () => {
+  const { picked, rename } = renderNamed('doc-1', null);
+  await screen.findByLabelText('Editing auth');
+  rename('doc-2', null);
+  expect(await screen.findByLabelText('Editing plan')).toBeDefined();
+  fireEvent.click(screen.getByText('Auth refactor'));
+  expect(await screen.findByLabelText('Editing auth')).toBeDefined();
+  expect(picked).toEqual(['doc-1']);
+});

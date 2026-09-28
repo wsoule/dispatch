@@ -120,6 +120,10 @@ export interface NavState {
   /** A message id whose thread the Threads view opens (a root id opens its own
    * thread), or `null`. Not kept in history: the view keeps its own selection. */
   threadFocus: string | null;
+  /** The doc the Docs view opens and the section it scrolls to, or `null`.
+   * Not kept in history, like `threadFocus`: the view keeps its own selection. */
+  activeDocId: string | null;
+  activeDocAnchor: string | null;
   /** Task id shown in the task full-window view, or `null` when it's not the current view. */
   activeTaskId: string | null;
   /** The current tab within the task view. */
@@ -175,6 +179,8 @@ export const initialNavState: NavState = {
   activePrNumber: null,
   impactSubject: null,
   threadFocus: null,
+  activeDocId: null,
+  activeDocAnchor: null,
   activeTaskId: null,
   taskTab: 'details',
   newTaskReturnView: 'board',
@@ -242,6 +248,9 @@ export type NavAction =
   /** Routes to Threads with the thread holding `messageId` open — a run chat's
    * message link, a ref chip, or a rail row. */
   | { type: 'openThread'; messageId: string | null }
+  /** Routes to Docs with one doc open, scrolled to `anchor`'s section when set —
+   * a task page's Docs row, a `doc:` ref chip, or a palette hit. */
+  | { type: 'openDoc'; docId: string; anchor: string | null }
   /** Routes to the task full-window view with a specific task, tab, and optional run. */
   | { type: 'openTask'; taskId: string; tab?: TaskTab; runId?: string | null }
   /** Switches the tab within the task view without adding a history entry. */
@@ -280,6 +289,8 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         impactSubject: null,
         activeTaskId: null,
         threadFocus: null,
+        activeDocId: null,
+        activeDocAnchor: null,
       };
     case 'setProjectView': {
       const view = normalizeProjectView(action.view);
@@ -415,6 +426,30 @@ export function navReducer(state: NavState, action: NavAction): NavState {
         {
           section: 'project',
           projectView: 'threads',
+          globalView: state.globalView,
+          activeRunId: state.activeRunId,
+          activeDraftId: state.activeDraftId,
+          activePrNumber: state.activePrNumber,
+          impactSubject: state.impactSubject,
+          activeTaskId: state.activeTaskId,
+          taskTab: state.taskTab,
+        }
+      );
+    case 'openDoc':
+      // Same rule as `openThread`: entries carry no doc, so back returns to
+      // the page the doc was opened from.
+      return pushHistory(
+        {
+          ...state,
+          section: 'project',
+          projectView: 'docs',
+          activeDocId: action.docId,
+          activeDocAnchor: action.anchor,
+          peekTaskId: null,
+        },
+        {
+          section: 'project',
+          projectView: 'docs',
           globalView: state.globalView,
           activeRunId: state.activeRunId,
           activeDraftId: state.activeDraftId,

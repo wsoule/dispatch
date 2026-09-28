@@ -74,7 +74,8 @@ import { projectViewForInboxTarget, unreadCount } from './lib/inbox';
 import { buildInbox } from './lib/inboxQueue';
 import { isLinearConfigured } from './lib/linearSettings';
 import { resolveExecuteModel } from './lib/models';
-import { buildPaletteEntries } from './lib/paletteEntries';
+import { buildPaletteEntries, docHitEntries } from './lib/paletteEntries';
+import { PALETTE_SECTION_CAPS } from './lib/paletteSections';
 import { basename } from './lib/projectName';
 import { prNumberFromUrl } from './lib/reviewTarget';
 import { isTerminalRunState } from './lib/runState';
@@ -502,6 +503,13 @@ function App() {
     [rawData.latestRunByTaskId]
   );
 
+  // The Docs view on one doc, scrolled to `anchor`'s section when set.
+  const openDoc = useCallback(
+    (docId: string, anchor: string | null) =>
+      dispatchNav({ type: 'openDoc', docId, anchor }),
+    []
+  );
+
   // Where a ref chip or a sender name in a thread leads.
   const openRef = useMemo(
     () =>
@@ -510,8 +518,9 @@ function App() {
         openThread: (messageId) =>
           dispatchNav({ type: 'openThread', messageId }),
         openImpact: (subject) => dispatchNav({ type: 'openImpact', subject }),
+        openDoc,
       }),
-    [openTaskView]
+    [openTaskView, openDoc]
   );
   const openThread = useCallback(
     (messageId: string | null) =>
@@ -762,6 +771,9 @@ function App() {
       client: data.client,
       port: data.port,
       fixLoopEscalation: data.config.fixLoop.escalation,
+      // Docs need a teammate or app token, as the Docs view does.
+      onOpenDoc: data.messageAccess.canMessage ? openDoc : undefined,
+      canLinkDocs: data.messageAccess.canMessage,
       headerTrailing: (
         <AlsoViewing
           viewers={data.presence.filter(
@@ -951,6 +963,19 @@ function App() {
       dragRegion: true,
     }),
     [sidebarCollapsed, toggleSidebar, trafficLightInset]
+  );
+
+  // The palette's Docs rows for a query; none without a token that reads docs.
+  const docsClient = rawData.messageAccess.canMessage ? rawData.client : null;
+  const searchDocs = useMemo(
+    () =>
+      docsClient === null
+        ? undefined
+        : (query: string) =>
+            docsClient
+              .searchDocs(query, { limit: PALETTE_SECTION_CAPS.docs })
+              .then((r) => docHitEntries(r.hits, openDoc)),
+    [docsClient, openDoc]
   );
 
   const paletteEntries = useMemo(
@@ -1417,6 +1442,7 @@ function App() {
                                         subject,
                                       })
                                     }
+                                    onOpenDoc={openDoc}
                                   />
                                 )}
                               {navState.projectView === 'branches' && (
@@ -1436,7 +1462,12 @@ function App() {
                                 <FilesView data={data} />
                               )}
                               {navState.projectView === 'docs' && (
-                                <DocsView data={data} />
+                                <DocsView
+                                  data={data}
+                                  initialDoc={navState.activeDocId}
+                                  initialAnchor={navState.activeDocAnchor}
+                                  onSelectDoc={(docId) => openDoc(docId, null)}
+                                />
                               )}
                               {navState.projectView === 'terminals' && (
                                 <TerminalsView data={data} />
@@ -1592,6 +1623,7 @@ function App() {
                     isOpen={navState.paletteOpen}
                     entries={paletteEntries}
                     onClose={() => dispatchNav({ type: 'closePalette' })}
+                    searchDocs={searchDocs}
                   />
                 </div>
               </PageHeaderShellContext.Provider>

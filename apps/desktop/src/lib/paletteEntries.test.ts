@@ -1,7 +1,8 @@
+import type { DocHit } from '@dispatch/client';
 import { describe, expect, test } from 'bun:test';
 
 import type { PaletteEntriesContext, PaletteSection } from './paletteEntries';
-import { buildPaletteEntries } from './paletteEntries';
+import { buildPaletteEntries, docHitEntries } from './paletteEntries';
 
 function context(over: Partial<PaletteEntriesContext> = {}) {
   const calls: string[] = [];
@@ -141,5 +142,55 @@ describe('buildPaletteEntries', () => {
     const rows = buildPaletteEntries(ctx).filter((e) => e.kind === 'go to');
     expect(rows[8]?.shortcut).toBe('⌘9');
     expect(rows[9]?.shortcut).toBeUndefined();
+  });
+});
+
+describe('docHitEntries', () => {
+  const hit = (anchor: string, heading: string): DocHit => ({
+    doc: 'doc-01K',
+    handle: 'auth',
+    title: 'Auth spec',
+    scope: 'team',
+    anchor,
+    heading,
+    snippet: '',
+    score: 1,
+  });
+
+  test('turns each search hit into a Docs row that opens its section', () => {
+    const opened: [string, string | null][] = [];
+    const rows = docHitEntries(
+      [hit('api', 'API'), hit('', '')],
+      (docId, anchor) => opened.push([docId, anchor])
+    );
+    expect(
+      rows.map(({ id, label, sublabel, kind, section }) => ({
+        id,
+        label,
+        sublabel,
+        kind,
+        section,
+      }))
+    ).toEqual([
+      {
+        id: 'doc:doc-01K#api',
+        label: 'Auth spec › API',
+        sublabel: 'auth',
+        kind: 'doc',
+        section: 'docs',
+      },
+      {
+        id: 'doc:doc-01K#',
+        label: 'Auth spec',
+        sublabel: 'auth',
+        kind: 'doc',
+        section: 'docs',
+      },
+    ]);
+    for (const row of rows) row.run();
+    expect(opened).toEqual([
+      ['doc-01K', 'api'],
+      ['doc-01K', null],
+    ]);
   });
 });

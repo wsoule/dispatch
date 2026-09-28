@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { openDocBuffer } from './docBuffer';
 import {
+  anchorLine,
   docBadges,
   docStatusLine,
   filterDocs,
@@ -97,5 +98,46 @@ describe('docs helpers', () => {
         openDocBuffer('doc-1', 'a', { rev: 'rev-2', n: 2, hash: 'h' })
       )
     ).toBe('Saved · rev 2');
+  });
+});
+
+describe('anchorLine', () => {
+  const entry = (
+    ord: number,
+    level: number,
+    heading: string,
+    anchor: string
+  ) => ({
+    ord,
+    level,
+    heading,
+    anchor,
+    bytes: 0,
+  });
+
+  it('finds the line of the section a ref names, skipping fenced headings', () => {
+    const text = [
+      'intro',
+      '```md',
+      '## API',
+      '```',
+      '## API',
+      'body',
+      '## API ##',
+      '',
+    ].join('\n');
+    const outline = [
+      entry(0, 0, '', ''),
+      entry(1, 2, 'API', 'api'),
+      entry(2, 2, 'API', 'api-1'),
+    ];
+    expect(anchorLine(text, outline, 'api')).toBe(4);
+    expect(anchorLine(text, outline, 'api-1')).toBe(6);
+  });
+
+  it('has no line for the preamble or an anchor the doc lacks', () => {
+    const outline = [entry(0, 0, '', ''), entry(1, 1, 'Title', 'title')];
+    expect(anchorLine('# Title\n', outline, '')).toBeNull();
+    expect(anchorLine('# Title\n', outline, 'gone')).toBeNull();
   });
 });

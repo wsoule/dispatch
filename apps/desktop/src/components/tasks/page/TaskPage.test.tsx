@@ -498,6 +498,50 @@ describe('TaskPage', () => {
     expect(acceptance?.nextElementSibling).toBe(row);
   });
 
+  test('the Docs block follows the attachments row and opens a linked doc', async () => {
+    const pending = () => new Promise<never>(() => {});
+    const client = new Proxy({} as ApiClient, {
+      get(_target, key) {
+        if (key === 'docsLinking') {
+          return () =>
+            Promise.resolve({
+              docs: [
+                {
+                  doc: { id: 'doc-1', title: 'Burgess spec', status: 'draft' },
+                  rel: 'spec',
+                  source: 'manual',
+                  fromParent: false,
+                },
+              ],
+            });
+        }
+        if (typeof key === 'symbol' || key === 'then') return undefined;
+        return pending;
+      },
+    });
+    const opened: [string, string | null][] = [];
+    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
+      client,
+      port: 4100,
+      canLinkDocs: true,
+      onOpenDoc: (id, anchor) => opened.push([id, anchor]),
+    });
+    fireEvent.click(
+      await screen.findByRole('button', { name: /Burgess spec/ })
+    );
+    expect(opened).toEqual([['doc-1', null]]);
+    const row = document.querySelector('[data-slot="attachments-row"]');
+    expect(row?.nextElementSibling?.textContent).toContain('Docs');
+  });
+
+  test('no Docs block for a caller who cannot read docs', () => {
+    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
+      client: clientRecordingUploads([]),
+      port: 4100,
+    });
+    expect(screen.queryByRole('heading', { name: 'Docs' })).toBeNull();
+  });
+
   // The content column is the drop target, so a drop that bubbles up from any
   // field on the page goes through the same upload as the row's picker.
   test('dropping a file on the page uploads it through the client', async () => {

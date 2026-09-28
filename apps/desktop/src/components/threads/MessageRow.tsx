@@ -29,6 +29,12 @@ import { Button } from '@/ui/button';
 
 type Reply = { body: string; choice?: string };
 
+// A ref chip's suffix: a doc's whole section anchor, or a commit's short sha.
+function refAt(ref: Message['refs'][number]): string {
+  if (ref.at === undefined) return '';
+  return ref.type === 'doc' ? `#${ref.at}` : `@${ref.at.slice(0, 7)}`;
+}
+
 export interface MessageRowProps {
   message: Message;
   me: string;
@@ -119,7 +125,7 @@ export const MessageRow = memo(function MessageRow({
             <div className="flex flex-wrap gap-1">
               {message.refs.map((ref, i) => {
                 const action = refAction(ref, lookups);
-                const text = `${ref.type}:${ref.id}${ref.at === undefined ? '' : `@${ref.at.slice(0, 7)}`}`;
+                const text = `${ref.type}:${ref.id}${refAt(ref)}`;
                 const key = `${text}:${i}`;
                 return action === null ? (
                   <Pill key={key}>{text}</Pill>

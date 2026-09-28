@@ -10,12 +10,17 @@ import type { DocFilter } from '../lib/docs';
 import { filterDocs } from '../lib/docs';
 
 // Team documents beside tasks: a filtered list on the left, the open doc on the right.
+// `initialDoc` and `initialAnchor` are what navigation names; `onSelectDoc` hears list picks.
 export function DocsView({
   data,
   initialDoc = null,
+  initialAnchor = null,
+  onSelectDoc,
 }: {
   data: DispatchProjectData;
   initialDoc?: string | null;
+  initialAnchor?: string | null;
+  onSelectDoc?: (docId: string) => void;
 }) {
   const { client, port, messageAccess } = data;
   const [filter, setFilter] = useState<DocFilter>({
@@ -25,6 +30,24 @@ export function DocsView({
     unreviewedOnly: false,
   });
   const [open, setOpen] = useState<string | null>(initialDoc);
+  const [anchor, setAnchor] = useState<string | null>(initialAnchor);
+  // A doc named while the view is up (a ref, a palette hit) replaces the open one.
+  const [named, setNamed] = useState({
+    doc: initialDoc,
+    anchor: initialAnchor,
+  });
+  if (named.doc !== initialDoc || named.anchor !== initialAnchor) {
+    setNamed({ doc: initialDoc, anchor: initialAnchor });
+    if (initialDoc !== null) {
+      setOpen(initialDoc);
+      setAnchor(initialAnchor);
+    }
+  }
+  const select = (id: string): void => {
+    setOpen(id);
+    setAnchor(null);
+    onSelectDoc?.(id);
+  };
   const { docs, error } = useDocList(
     messageAccess.canMessage ? client : null,
     port,
@@ -58,7 +81,7 @@ export function DocsView({
           filter={filter}
           onFilter={setFilter}
           selected={open}
-          onSelect={setOpen}
+          onSelect={select}
           error={error}
         />
       </aside>
@@ -75,6 +98,7 @@ export function DocsView({
             port={port}
             refId={open}
             canDecide={messageAccess.canDecide}
+            anchor={anchor}
           />
         )}
       </main>

@@ -380,7 +380,8 @@ export type RefAction =
   | { kind: 'task'; taskId: string }
   | { kind: 'run'; taskId: string; runId: string }
   | { kind: 'file'; path: string }
-  | { kind: 'message'; messageId: string };
+  | { kind: 'message'; messageId: string }
+  | { kind: 'doc'; docId: string; anchor: string | null };
 
 /** Where a ref chip leads, or null for one with no page (a commit, a run no longer listed). */
 export function refAction(
@@ -398,6 +399,8 @@ export function refAction(
       return { kind: 'file', path: ref.id };
     case 'message':
       return { kind: 'message', messageId: ref.id };
+    case 'doc':
+      return { kind: 'doc', docId: ref.id, anchor: ref.at ?? null };
     default:
       return null;
   }
@@ -425,6 +428,8 @@ export interface RefNavigation {
   openTask: (taskId: string, tab: 'details' | 'chat', runId?: string) => void;
   openThread: (messageId: string) => void;
   openImpact: (subject: { kind: 'file'; id: string }) => void;
+  /** The Docs view on one doc, scrolled to `anchor`'s section when set. */
+  openDoc: (docId: string, anchor: string | null) => void;
 }
 
 export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
@@ -434,6 +439,8 @@ export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
       nav.openTask(action.taskId, 'chat', action.runId);
     } else if (action.kind === 'file') {
       nav.openImpact({ kind: 'file', id: action.path });
+    } else if (action.kind === 'doc') {
+      nav.openDoc(action.docId, action.anchor);
     } else nav.openThread(action.messageId);
   };
 }

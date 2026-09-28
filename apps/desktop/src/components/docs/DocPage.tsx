@@ -19,6 +19,7 @@ import {
   reloadIfClean,
 } from '../../lib/docBuffer';
 import {
+  anchorLine,
   docBadges,
   docStatusLine,
   revisionsSinceReview,
@@ -33,6 +34,8 @@ interface DocPageProps {
   port: number | undefined;
   refId: string;
   canDecide: boolean;
+  /** The section a link named, whose heading the editor opens on. */
+  anchor?: string | null;
 }
 
 // The most saves one flush sends; a 409 on the way marks the text against the
@@ -41,7 +44,13 @@ const FLUSH_SAVES = 3;
 
 // One doc: badges and actions, the links rail, and a markdown source editor
 // with a preview toggle, autosaving with its base revision and body hash.
-export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
+export function DocPage({
+  client,
+  port,
+  refId,
+  canDecide,
+  anchor = null,
+}: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
   // The buffer lives in a ref so a save that lands after unmount still sees
@@ -54,6 +63,10 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
   // The revisions a Mark reviewed would cover, shown before it acts.
   const [confirming, setConfirming] = useState<DocRevisionInfo[] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  // Where the editor opens: placed once per named anchor, so later reads of
+  // the same doc never move the caret out from under typing.
+  const [placeAt, setPlaceAt] = useState<{ line: number } | null>(null);
+  const placedFor = useRef<string | null>(null);
 
   const update = useCallback((next: (b: DocBuffer) => DocBuffer): void => {
     if (bufRef.current === null) return;
@@ -70,6 +83,16 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
         : reloadIfClean(bufRef.current, read);
     setBuf(bufRef.current);
   }, [read]);
+
+  useEffect(() => {
+    if (anchor === null) placedFor.current = null;
+    if (read === null || anchor === null || placedFor.current === anchor) {
+      return;
+    }
+    placedFor.current = anchor;
+    const line = anchorLine(read.text, read.outline, anchor);
+    if (line !== null) setPlaceAt({ line });
+  }, [read, anchor]);
 
   // Sends the buffer once, unless there is nothing to send or a save is out.
   const save = useCallback((): Promise<void> => {
@@ -321,6 +344,7 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
             previewing={previewing}
             readOnly={archived}
             onChange={(text) => update((b) => editDocBuffer(b, text))}
+            placeAt={placeAt}
           />
         </main>
         <DocLinksRail links={read.links} />

@@ -90,6 +90,7 @@ import { PropertiesRail, type RailPicker } from './PropertiesRail';
 import { SessionsBlock } from './SessionsBlock';
 import { SubtasksBlock } from './SubtasksBlock';
 import { TaskDescription } from './TaskDescription';
+import { TaskDocsBlock } from './TaskDocsBlock';
 import { TaskTitle } from './TaskTitle';
 import { cn } from '@/lib/utils';
 import { IconButton } from '@/ui/ai/icon-button';
@@ -175,6 +176,11 @@ export interface TaskDetailPanelProps {
   fixLoopEscalation: EscalationStep[];
   /** Extra header actions, rendered before the side-panel toggle. */
   headerTrailing?: ReactNode;
+  /** Opens a linked doc in the Docs view; omitted hides the Docs block, for a
+   * caller who cannot read docs. */
+  onOpenDoc?: (docId: string, anchor: string | null) => void;
+  /** Whether the Docs block offers New spec and Link doc. */
+  canLinkDocs?: boolean;
 }
 
 interface TaskPageProps extends TaskDetailPanelProps {
@@ -269,6 +275,8 @@ export function TaskPage({
   port,
   fixLoopEscalation,
   headerTrailing,
+  onOpenDoc,
+  canLinkDocs = false,
 }: TaskPageProps) {
   const shell = useShellActions();
   const toasts = useToasts();
@@ -837,6 +845,16 @@ export function TaskPage({
         uploading={attachmentUpload.uploading}
         inputRef={attachmentInputRef}
       />
+
+      {client !== null && onOpenDoc !== undefined && (
+        <TaskDocsBlock
+          client={client}
+          port={port}
+          taskId={doc.meta.id}
+          canLink={canLinkDocs}
+          onOpenDoc={(id) => onOpenDoc(id, null)}
+        />
+      )}
 
       {amendments !== '' && (
         <MainSection title="Amendments">

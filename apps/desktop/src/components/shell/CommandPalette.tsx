@@ -1,5 +1,6 @@
 import {
   ArrowRightIcon,
+  BookTextIcon,
   CircleDashedIcon,
   InboxIcon,
   LayersIcon,
@@ -33,7 +34,13 @@ interface CommandPaletteProps {
   isOpen: boolean;
   entries: PaletteEntry[];
   onClose: () => void;
+  /** The Docs rows for a non-empty query, searched on the daemon; omitted when
+   * this caller cannot read docs. */
+  searchDocs?: (query: string) => Promise<PaletteEntry[]>;
 }
+
+// How long typing must pause before the palette searches docs.
+const DOC_SEARCH_DEBOUNCE_MS = 150;
 
 /** The 14px glyph a row shows when its entry brings none: one per section, with the
  * "Dispatch …" task rows (`dispatch-<task id>` in `buildPaletteEntries`) getting a play
@@ -45,6 +52,8 @@ function defaultIcon(entry: PaletteEntry): ReactNode {
       return <InboxIcon />;
     case 'tasks':
       return <CircleDashedIcon />;
+    case 'docs':
+      return <BookTextIcon />;
     case 'views':
       return <LayersIcon />;
     case 'navigation':
@@ -56,8 +65,9 @@ function defaultIcon(entry: PaletteEntry): ReactNode {
 
 /**
  * The ⌘K command menu: a 720×450 dialog pinned 121px from the top, fuzzy-matching task
- * ids/titles and app actions against one query and listing the hits in Linear's sections
- * (Inbox, Tasks, Views, Navigation, Actions) with per-section caps from
+ * ids/titles and app actions against one query (docs are searched on the daemon, after
+ * a short pause in typing) and listing the hits in Linear's sections
+ * (Inbox, Tasks, Docs, Views, Navigation, Actions) with per-section caps from
  * `lib/paletteSections`. Ranking stays `rankPaletteItems` (cmdk's own filtering is off,
  * `shouldFilter={false}`); cmdk owns arrow-key selection, wraparound and Enter; `Dialog`
  * owns the backdrop, focus trap and Escape, which reaches `onClose` once through
@@ -68,6 +78,7 @@ export function CommandPalette({
   isOpen,
   entries,
   onClose,
+  searchDocs,
 }: CommandPaletteProps) {
   const { openOverseer } = useShellActions();
   const [query, setQuery] = useState('');
@@ -81,13 +92,34 @@ export function CommandPalette({
     if (!isOpen) setQuery('');
   }, [isOpen]);
 
+  // The daemon's doc hits for the query, which keep their own rank after the local rows.
+  const [docEntries, setDocEntries] = useState<PaletteEntry[]>([]);
+  useEffect(() => {
+    const q = query.trim();
+    if (searchDocs === undefined || q === '') {
+      setDocEntries([]);
+      return;
+    }
+    let live = true;
+    const timer = setTimeout(() => {
+      const show = (found: PaletteEntry[]): void => {
+        if (live) setDocEntries(found);
+      };
+      searchDocs(q).then(show, () => show([]));
+    }, DOC_SEARCH_DEBOUNCE_MS);
+    return () => {
+      live = false;
+      clearTimeout(timer);
+    };
+  }, [query, searchDocs]);
+
   const sections = useMemo(
     () =>
-      groupPaletteSections(rankPaletteItems(entries, query), {
-        query,
-        recentIds,
-      }),
-    [entries, query, recentIds]
+      groupPaletteSections(
+        [...rankPaletteItems(entries, query), ...docEntries],
+        { query, recentIds }
+      ),
+    [entries, docEntries, query, recentIds]
   );
 
   function runEntry(entry: PaletteEntry) {

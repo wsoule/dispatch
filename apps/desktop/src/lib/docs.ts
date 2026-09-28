@@ -1,4 +1,9 @@
-import type { DocRecord, DocRevisionInfo, DocSummary } from '@dispatch/client';
+import type {
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSummary,
+} from '@dispatch/client';
 
 import type { DocBuffer } from './docBuffer';
 
@@ -76,4 +81,49 @@ export function docStatusLine(b: DocBuffer | null): string {
   if (b.buffer.status === 'dirty') return 'Unsaved';
   if (b.buffer.status === 'error') return b.buffer.error ?? 'Save failed';
   return b.base.n === null ? 'Saved' : `Saved · rev ${b.base.n}`;
+}
+
+const FENCE = /^ {0,3}(`{3,}|~{3,})/;
+const ATX = /^ {0,3}(#{1,3})(?:[ \t]+(.*))?$/;
+
+// The line a section's heading sits on, matched by level and text among the
+// headings outside fenced code; null for the preamble or an anchor the doc lacks.
+export function anchorLine(
+  text: string,
+  outline: DocRead['outline'],
+  anchor: string
+): number | null {
+  const target = outline.find((e) => e.anchor === anchor);
+  if (anchor === '' || target === undefined) return null;
+  let skip = outline.filter(
+    (e) =>
+      e.ord < target.ord &&
+      e.level === target.level &&
+      e.heading === target.heading
+  ).length;
+  let fence: string | null = null;
+  const lines = text.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    const open = FENCE.exec(lines[i]);
+    if (fence !== null) {
+      const closes =
+        open !== null &&
+        open[1][0] === fence[0] &&
+        open[1].length >= fence.length &&
+        lines[i].slice(open[0].length).trim() === '';
+      if (closes) fence = null;
+      continue;
+    }
+    if (open !== null) {
+      fence = open[1];
+      continue;
+    }
+    const head = ATX.exec(lines[i]);
+    if (head === null || head[1].length !== target.level) continue;
+    const heading = (head[2] ?? '').replace(/(?:^|[ \t]+)#+[ \t]*$/, '');
+    if (heading.trim() !== target.heading) continue;
+    if (skip === 0) return i;
+    skip -= 1;
+  }
+  return null;
 }
