@@ -26,6 +26,7 @@ import type {
   MemoryPromptPort,
   MemoryPromptSection,
 } from '../orchestrator/types.js';
+import { startDecayScheduler } from './decay.js';
 import { closeStrayMemoryGates, registerMemoryGate } from './gate.js';
 import {
   DaemonMemoryHost,
@@ -121,12 +122,11 @@ function readLastImport(
 export function openMemory(deps: OpenMemoryDeps): MemoryService {
   const now = deps.now ?? (() => new Date());
   const personalDir = deps.personalDir ?? personalMemoryDir();
+  const dbPath = deps.dbPath ?? memoryDbPath(deps.rootDir);
   let shared: SqliteMemoryStore | null = null;
   let reason: string | null = null;
   try {
-    shared = new SqliteMemoryStore(
-      openMemoryDb(deps.dbPath ?? memoryDbPath(deps.rootDir))
-    );
+    shared = new SqliteMemoryStore(openMemoryDb(dbPath));
   } catch (err) {
     reason = message(err);
     console.error(`dispatchd: memory unavailable: ${reason}`);
@@ -205,17 +205,18 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   else registerMemoryGate(deps.messaging, engine);
   const ids = createMemoryIds();
   let last = readLastImport(shared);
-  // One recovery at a time, so two never raise a gate for the same proposal.
-  let recovering: Promise<unknown> = Promise.resolve();
-  const raisePending = (): Promise<{ raised: number }> => {
-    if (engine === null) return Promise.resolve({ raised: 0 });
-    const next = recovering.then(
-      () => engine.recover(),
-      () => engine.recover()
-    );
-    recovering = next;
+  // Gate recovery and proposal expiry run one at a time, so a proposal is
+  // never expired while its gate is being raised, nor raised twice.
+  let queue: Promise<unknown> = Promise.resolve();
+  const serial = <T>(step: () => Promise<T>): Promise<T> => {
+    const next = queue.then(step, step);
+    queue = next;
     return next;
   };
+  const raisePending = (): Promise<{ raised: number }> =>
+    engine === null
+      ? Promise.resolve({ raised: 0 })
+      : serial(() => engine.recover());
 
   // A dry run reports without writing and leaves the stored report alone.
   const importLedger = (
@@ -330,6 +331,17 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   const watched = deps.watchLedgerFile ?? null;
   if (watched !== null)
     watchFile(watched, { interval: 5000, persistent: false }, importQuietly);
+  const decay = startDecayScheduler({
+    shared: () => shared,
+    personal,
+    engine: () => engine,
+    messaging: deps.messaging,
+    config,
+    host,
+    sharedPath: dbPath,
+    serial,
+    now,
+  });
 
   return {
     engine,
@@ -365,6 +377,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       pinnedOverflow: principal === null ? false : pinnedOverflow(principal),
     }),
     close: () => {
+      decay.stop();
       unsubscribe();
       if (watched !== null) unwatchFile(watched, importQuietly);
       shared?.close();

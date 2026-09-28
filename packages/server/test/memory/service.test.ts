@@ -1,7 +1,7 @@
 import { TaskStore } from '@dispatch/core';
 import type { Principal } from '@dispatch/memory';
 import { describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -9,6 +9,7 @@ import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { openMemory, overseerMemory } from '../../src/memory/service.js';
+import { waitFor } from '../messaging/harness.js';
 import { BEFORE_CUTOVER, quietDaemon, seedLedger } from './fixtures.js';
 
 function setup() {
@@ -103,6 +104,13 @@ describe('openMemory', () => {
     expect(() => memory.requireEngine()).toThrow(/unavailable|will not open/);
     expect(memory.importLedger()).toBeNull();
     memory.close();
+  });
+
+  it('sweeps memory.db when it opens and backs it up beside the file', async () => {
+    const t = setup();
+    expect(t.memory.health(null).lastDecayAt).not.toBeNull();
+    await waitFor(() => existsSync(join(t.root, 'memory.db.bak')));
+    t.memory.close();
   });
 
   it('never announces personal ids', () => {

@@ -1,10 +1,11 @@
 import type {
+  GateAnswer,
   MemoryEngine,
   MemoryKind,
   MemoryProposal,
   MemoryStore,
 } from '@dispatch/memory';
-import { gateOf } from '@dispatch/protocol';
+import { gateOf, isSystemMarker } from '@dispatch/protocol';
 import type { DeliveryEngine, Message, Ref } from '@dispatch/protocol';
 
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
@@ -69,6 +70,27 @@ export async function raiseMemoryGate(
   return sent.message.id;
 }
 
+// What an answer to a memory gate decides; the expiry sweep's reply, or a
+// system close, only expires the proposal. Null for any other gate.
+export function memoryGateAnswer(
+  question: Message,
+  answer: Message
+): GateAnswer | null {
+  const gate = gateOf(question);
+  if (gate?.type !== 'memory') return null;
+  const expired =
+    (answer.data as { type?: unknown } | undefined)?.type === 'x-expired' ||
+    isSystemMarker(answer, 'x-closed');
+  return {
+    proposalId: gate.proposalId,
+    gateId: question.id,
+    choice: answer.choice === 'approve' ? 'approve' : 'reject',
+    by: answer.from,
+    reason: answer.body,
+    expired,
+  };
+}
+
 // A deciding human's (or the expiry sweep's) answer applies the proposal
 // once; a throw leaves the gate unapplied, so messaging replays it at boot.
 export function registerMemoryGate(
@@ -77,18 +99,8 @@ export function registerMemoryGate(
 ): void {
   messaging.gates.register('memory', (question, answer) =>
     settle(() => {
-      const gate = gateOf(question);
-      if (gate?.type !== 'memory') return;
-      const expired =
-        (answer.data as { type?: unknown } | undefined)?.type === 'x-expired';
-      memory.applyGateAnswer({
-        proposalId: gate.proposalId,
-        gateId: question.id,
-        choice: answer.choice === 'approve' ? 'approve' : 'reject',
-        by: answer.from,
-        reason: answer.body,
-        expired,
-      });
+      const decided = memoryGateAnswer(question, answer);
+      if (decided !== null) memory.applyGateAnswer(decided);
     })
   );
 }

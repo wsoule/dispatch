@@ -101,6 +101,11 @@ export class PersonalStores {
     return [...this.stores.keys()].sort();
   }
 
+  // Where `identity`'s database lives, whether or not it is open.
+  pathOf(identity: string): string {
+    return join(this.dir, `${identity}.db`);
+  }
+
   // Empties `from` into `to`, returning how many entries left. `to` commits while
   // `from` stays locked, so a retry after a crash skips the ids `to` already holds.
   move(from: string, to: string): number {
@@ -143,7 +148,7 @@ export class PersonalStores {
       } catch {
         // A filesystem without POSIX modes is not a reason to refuse the store.
       }
-      const opened = openMemoryDb(join(this.dir, `${identity}.db`), {
+      const opened = openMemoryDb(this.pathOf(identity), {
         fts: this.fts,
       });
       const entry = { db: opened.db, store: new SqliteMemoryStore(opened) };
