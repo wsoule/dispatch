@@ -1,21 +1,9 @@
 import type { Address } from './address.js';
+import { DELIVERY_STATES } from './constants.js';
 import type { Message, MessageKind } from './envelope.js';
 
-export type DeliveryState =
-  | 'held'
-  | 'sending'
-  | 'pushed'
-  | 'notified'
-  | 'read'
-  | 'answered';
-export const DELIVERY_STATES: readonly DeliveryState[] = [
-  'held',
-  'sending',
-  'pushed',
-  'notified',
-  'read',
-  'answered',
-];
+export { DELIVERY_STATES };
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
 
 export type DeliveryVia = 'direct' | 'channel';
 

@@ -13,15 +13,16 @@ import type {
 } from '@dispatch/protocol-spec';
 
 import { parseAddress, SYSTEM_ADDRESS } from '../address.js';
+import { GATE_TYPES } from '../constants.js';
 import { DeliveryEngine } from '../engine.js';
-import type { Sender, SendResult } from '../engine.js';
-import { GATE_TYPES, validateSendInput } from '../envelope.js';
+import type { Sender, SendOptions, SendResult } from '../engine.js';
+import { validateSendInput } from '../envelope.js';
 import type { Message, SendInput } from '../envelope.js';
 import { MessagingError } from '../errors.js';
 import { renderDigestLine, renderForAgent } from '../render.js';
 import { openMessagesDb, SqliteMessageStore } from '../sqliteStore.js';
 import { DELIVERY_STATES } from '../store.js';
-import type { Delivery, DeliveryState } from '../store.js';
+import type { AgentStatus, Delivery, DeliveryState } from '../store.js';
 import { createUlidFactory } from '../ulid.js';
 import { PROTOCOL_VERSION } from '../version.js';
 import { UnsupportedOp } from './errors.js';
@@ -65,10 +66,18 @@ const CREATES: ReadonlySet<string> = new Set([
   'a2a.inbound',
 ]);
 const ROLE = /\$(?:s|gate|notice)[0-9]+\b/g;
+const ORIGINS: readonly NonNullable<SendOptions['origin']>[] = [
+  'local',
+  'received',
+];
+const AGENT_STATUSES: readonly AgentStatus[] = [
+  'pending',
+  'approved',
+  'revoked',
+];
 
-// What the reference adapter declares: both profiles, every gate type the
-// engine raises and applies, and the forms `renderForAgent` and
-// `renderDigestLine` produce.
+// What the reference declares: both profiles, every gate type the engine
+// raises and applies, and the forms renderForAgent and renderDigestLine write.
 export const REFERENCE_HELLO: Hello = {
   dmp: 'hello',
   implementation: { name: 'dispatch-reference', version: PROTOCOL_VERSION },
@@ -87,7 +96,7 @@ export const REFERENCE_HELLO: Hello = {
       '^refs: ',
       '^The sender is waiting\\. ',
     ],
-    digestLead: '^📬(?: #[^ ]+ ·)? [^ ]+ from [^ ]+: ',
+    digestLead: '^📬(?: #[^ ]+ ·)? [^ ]+ from [^ ]+(?: \\(external\\))?: ',
   },
 };
 
@@ -167,8 +176,43 @@ function inputOf(step: Step): SendInput {
   return asObject(step['input'], 'input') as unknown as SendInput;
 }
 
+// A send or validate step's `origin`: `received` for a message a binding
+// delivered, `local` (the default) otherwise.
+function originOf(step: Step): NonNullable<SendOptions['origin']> {
+  const origin = step['origin'] ?? 'local';
+  return (
+    ORIGINS.find((o) => o === origin) ??
+    malformed('origin', `expected one of ${ORIGINS.join(', ')}`)
+  );
+}
+
 function sendResult(r: SendResult): Json {
-  return { message: r.message.id, downgraded: r.downgraded };
+  const result: JsonObject = {
+    message: r.message.id,
+    downgraded: r.downgraded,
+  };
+  if (r.replayed === true) result['replayed'] = true;
+  return result;
+}
+
+// The `agentStatus` world change: a registered agent's status changes, which
+// needs the store, so the adapter applies it rather than applyWorld.
+function setAgentStatus(
+  store: SqliteMessageStore,
+  value: Json | undefined
+): void {
+  const where = 'world.agentStatus';
+  const change = asObject(value, where);
+  const address = text(change, 'address', where);
+  const status =
+    AGENT_STATUSES.find((s) => s === change['status']) ??
+    malformed(
+      `${where}.status`,
+      `expected one of ${AGENT_STATUSES.join(', ')}`
+    );
+  const agent =
+    store.getAgent(address) ?? malformed(`${where}.address`, 'no such agent');
+  store.putAgent({ ...agent, status });
 }
 
 function statesOf(step: Step): DeliveryState[] | undefined {
@@ -200,7 +244,11 @@ async function runStep(
   const { engine, store, host } = ctx;
   switch (step.op) {
     case 'send':
-      return sendResult(await engine.send(inputOf(step), senderOf(step)));
+      return sendResult(
+        await engine.send(inputOf(step), senderOf(step), {
+          origin: originOf(step),
+        })
+      );
     case 'reply':
       return sendResult(
         await engine.reply(
@@ -241,6 +289,13 @@ async function runStep(
           .thread(text(step, 'thread', 'thread'))
           .messages.map((m) => m.id),
       };
+    case 'canRead':
+      return {
+        readable: engine.canRead(
+          text(step, 'message', 'canRead'),
+          senderOf(step)
+        ),
+      };
     case 'openBlocking':
       return { messages: engine.openBlocking().map((m) => m.id) };
     case 'join':
@@ -280,7 +335,7 @@ async function runStep(
         as.address,
         as.canDecide,
         target === undefined ? null : store.getMessage(target),
-        { gateTypes: new Set(gateTypesOf(options)) }
+        { gateTypes: new Set(gateTypesOf(options)), origin: originOf(step) }
       );
       return {};
     }
@@ -289,16 +344,22 @@ async function runStep(
       const message = store.getMessage(id);
       if (message === null)
         throw new MessagingError('not-found', `no message ${id}`, 'message');
+      const external = step['external'] === true;
       const rendered =
         step['form'] === 'digest'
-          ? renderDigestLine(message)
-          : renderForAgent(message);
+          ? renderDigestLine(message, external)
+          : renderForAgent(message, external);
       record(rendered);
       return { text: rendered };
     }
-    case 'world':
-      applyWorld(host.world, asObject(step['change'], 'change'));
+    case 'world': {
+      const change = asObject(step['change'], 'change');
+      const keys = Object.keys(change);
+      if (keys.length === 1 && keys[0] === 'agentStatus')
+        setAgentStatus(store, change['agentStatus']);
+      else applyWorld(host.world, change);
       return undefined;
+    }
     default:
       throw new UnsupportedOp(`op ${step.op} is not implemented`);
   }

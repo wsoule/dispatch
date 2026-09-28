@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'bun:test';
 
+import { REF_TYPES } from '../src/constants.js';
 import { gateOf, validateSendInput } from '../src/envelope.js';
-import type { Message, SendInput } from '../src/envelope.js';
+import type { Message, Ref, RefType, SendInput } from '../src/envelope.js';
 
 const gate: Message = {
   id: 'm-g',
@@ -88,5 +89,28 @@ describe('doc refs', () => {
     expect(() => validateSendInput(input, 'run:r-000001', false, null)).toThrow(
       'refs[0].at'
     );
+  });
+});
+
+describe('Ref', () => {
+  it('types a received ref of a type this package does not know', () => {
+    // A message received through a binding keeps such a ref (§4.4).
+    const kept: Ref = { type: 'wiki', id: 'handbook', at: 's2' };
+    const known: Ref = { type: 'file', id: 'src/a.ts', at: 'abc123' };
+    expect([kept.type, known.type]).toEqual(['wiki', 'file']);
+  });
+
+  it('names the registered types, so code that branches on a ref type keeps a default', () => {
+    const registered: readonly RefType[] = REF_TYPES;
+    const label = (ref: Ref): string => {
+      switch (ref.type) {
+        case 'task':
+          return 'a task';
+        default:
+          return `a ${ref.type} ref`;
+      }
+    };
+    expect(registered).toContain('file');
+    expect(label({ type: 'wiki', id: 'handbook' })).toBe('a wiki ref');
   });
 });

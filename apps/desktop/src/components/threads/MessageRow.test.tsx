@@ -323,3 +323,11 @@ test('offers Decline on an open question from an A2A client, and not once it is 
   renderRow(ask, { client: { declineA2ATask }, open: false });
   expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
 });
+
+test('a ref of a type this build does not register is plain text, not a link', () => {
+  renderRow(msg('m-w', { refs: [{ type: 'wiki', id: 'handbook' }] }), {
+    open: false,
+  });
+  expect(screen.getByText('wiki:handbook')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'wiki:handbook' })).toBeNull();
+});

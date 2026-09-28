@@ -75,9 +75,11 @@ export type {
 } from './store.js';
 export {
   handleFromEmail,
+  MAX_HANDLE_BYTES,
   parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
 } from './team.js';
-export type { TeamMember } from './team.js';
+export type { DroppedEntry, TeamMember } from './team.js';

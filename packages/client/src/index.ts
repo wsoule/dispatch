@@ -152,6 +152,7 @@ export type {
   PrStatus,
   PrWorktreeState,
   Ref,
+  RefType,
   ReplyInput,
   RepoPr,
   ReviewComment,

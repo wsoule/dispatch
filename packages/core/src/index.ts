@@ -338,13 +338,16 @@ export {
 } from './registry.js';
 export type { RegisteredProject } from './registry.js';
 export {
+  describeDroppedEntry,
   handleFromEmail,
+  MAX_HANDLE_BYTES,
   parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
 } from './team.js';
-export type { TeamMember } from './team.js';
+export type { DroppedEntry, TeamMember } from './team.js';
 export { ActorContext } from './actorContext.js';
 export type { GitReader } from './actorContext.js';
 export {

@@ -663,10 +663,13 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// A task, run, file, commit, message or doc a message points at; mirrors
-// @dispatch/protocol's Ref.
+// The ref types @dispatch/protocol registers; mirrors its RefType.
+export type RefType = 'task' | 'run' | 'file' | 'commit' | 'message' | 'doc';
+
+// What a message points at; mirrors @dispatch/protocol's Ref. A message
+// received from a peer may carry any other identifier as its type.
 export interface Ref {
-  type: string;
+  type: RefType | (string & {});
   id: string;
   /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;

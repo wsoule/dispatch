@@ -383,7 +383,8 @@ export type RefAction =
   | { kind: 'message'; messageId: string }
   | { kind: 'doc'; docId: string; anchor: string | null };
 
-/** Where a ref chip leads, or null for one with no page (a commit, a run no longer listed). */
+/** Where a ref chip leads, or null for one with no page: a commit, a run no longer listed, or a
+ *  type this build does not register, which a peer's newer version may send. */
 export function refAction(
   ref: Ref,
   lookups: Pick<ThreadLookups, 'taskIdOfRun'>

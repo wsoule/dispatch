@@ -78,6 +78,19 @@ describe('decodeInbound', () => {
     expect(() => kind({ [ENVELOPE_URI]: { kind: 'answer' } })).toThrow(
       expect.objectContaining({ field: 'kind' })
     );
+    // A work skill decides before the envelope's kind is read (§8.4).
+    expect(
+      kind({
+        [ENVELOPE_URI]: { kind: 'handoff' },
+        [WORK_URI]: { skill: 'handoff', title: 'Do it' },
+      })
+    ).toBe('handoff');
+    expect(
+      kind({
+        [ENVELOPE_URI]: { kind: 'answer' },
+        [WORK_URI]: { skill: 'status' },
+      })
+    ).toBe('status');
   });
 
   it('refuses raw parts and non-text text media types as CONTENT_TYPE_NOT_SUPPORTED', () => {

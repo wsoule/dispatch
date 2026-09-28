@@ -1,0 +1,267 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "a2a-binding",
+  "area": "egress",
+  "vectors": [
+    {
+      "id": "a2a.egress.gate-data-never-reaches-a-client",
+      "title": "A gate addressed to an A2A client is refused on data",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.8", "13.9", "5.8"],
+      "given": {
+        "agents": [
+          {
+            "address": "agent:wyat/a2a.acme",
+            "status": "approved"
+          }
+        ],
+        "external": {
+          "agent:wyat/a2a.acme": "client"
+        },
+        "owner": "human:wyat",
+        "limits": {
+          "urgentPerHour": 10,
+          "agentTurnsPerThreadPerHour": 20
+        }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": {
+            "address": "$system",
+            "canDecide": true
+          },
+          "input": {
+            "to": ["agent:wyat/a2a.acme"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-x"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "forbidden",
+              "field": "data"
+            }
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "a2a.egress.a-gate-with-a-local-recipient-is-refused-whole",
+      "title": "A gate addressed to the owner and to an A2A client is refused before anything is stored, not sent to the owner alone",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.8", "13.9", "5.8"],
+      "given": {
+        "agents": [
+          {
+            "address": "agent:wyat/a2a.acme",
+            "status": "approved"
+          }
+        ],
+        "external": {
+          "agent:wyat/a2a.acme": "client"
+        },
+        "owner": "human:wyat",
+        "limits": {
+          "urgentPerHour": 10,
+          "agentTurnsPerThreadPerHour": 20
+        }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": {
+            "address": "$system",
+            "canDecide": true
+          },
+          "input": {
+            "to": ["human:wyat", "agent:wyat/a2a.acme"],
+            "kind": "question",
+            "blocking": true,
+            "choices": ["approve", "deny"],
+            "body": "wake?",
+            "data": {
+              "type": "wake",
+              "target": "task:t-000002",
+              "message": "m-x"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "forbidden",
+              "field": "data"
+            }
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "a2a.egress.a-reply-to-a-gate-never-reaches-a-client",
+      "title": "A human's reply to a gate, addressed to an A2A client, is refused on data: an answer to a gate leaves no more than the gate does",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.8", "13.9", "5.8"],
+      "given": {
+        "agents": [
+          {
+            "address": "agent:wyat/a2a.acme",
+            "status": "approved"
+          }
+        ],
+        "external": {
+          "agent:wyat/a2a.acme": "client"
+        },
+        "owner": "human:wyat",
+        "limits": {
+          "urgentPerHour": 10,
+          "agentTurnsPerThreadPerHour": 20
+        },
+        "store": {
+          "messages": [
+            {
+              "id": "m-gate",
+              "from": "$system",
+              "to": ["human:wyat"],
+              "kind": "question",
+              "body": "wake task:t-000002?",
+              "blocking": true,
+              "choices": ["approve", "deny"],
+              "data": {
+                "type": "wake",
+                "target": "task:t-000002",
+                "message": "m-x"
+              }
+            }
+          ],
+          "deliveries": [
+            {
+              "id": "d-gate",
+              "message": "m-gate",
+              "recipient": "human:wyat",
+              "state": "notified"
+            }
+          ]
+        }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": {
+            "address": "human:wyat",
+            "canDecide": true
+          },
+          "input": {
+            "to": ["agent:wyat/a2a.acme"],
+            "kind": "message",
+            "replyTo": "m-gate",
+            "body": "Approving this one."
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "forbidden",
+              "field": "data"
+            }
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "a2a.egress.plain-mail-to-a-client-is-admitted-by-the-host",
+      "title": "A plain message to an A2A client goes through the host's admission for that recipient and is held for the binding",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.8", "2.1"],
+      "given": {
+        "agents": [
+          {
+            "address": "agent:wyat/a2a.acme",
+            "status": "approved"
+          }
+        ],
+        "external": {
+          "agent:wyat/a2a.acme": "client"
+        },
+        "owner": "human:wyat",
+        "limits": {
+          "urgentPerHour": 10,
+          "agentTurnsPerThreadPerHour": 20
+        }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": {
+            "address": "human:wyat",
+            "canDecide": true
+          },
+          "input": {
+            "to": ["agent:wyat/a2a.acme"],
+            "kind": "message",
+            "body": "Shipped."
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "message": "$s1"
+            }
+          }
+        ],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "human:wyat",
+            "to": ["agent:wyat/a2a.acme"]
+          }
+        ],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "agent:wyat/a2a.acme",
+            "state": "held"
+          }
+        ],
+        "callsInclude": [
+          {
+            "hook": "admitExternal",
+            "recipient": "agent:wyat/a2a.acme",
+            "message": "$s1"
+          }
+        ]
+      }
+    }
+  ]
+}
