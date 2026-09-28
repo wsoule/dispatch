@@ -49,7 +49,9 @@ describe('navReducer', () => {
     });
     expect(docs.section).toBe('project');
     expect(docs.projectView).toBe('docs');
-    expect(navReducer(docs, { type: 'back' }).projectView).toBe('overview');
+    expect(navReducer(docs, { type: 'back' }).projectView).toBe(
+      initialNavState.projectView
+    );
   });
 
   test('openDoc switches to the Docs view on that doc and section', () => {
