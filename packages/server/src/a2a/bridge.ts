@@ -5,7 +5,7 @@ import {
   SqliteA2AStore,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
-import type { A2AConfig, TaskStorePort } from '@dispatch/core';
+import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
 import { CANONICAL_STATUSES, DEFAULT_A2A, loadConfig } from '@dispatch/core';
 import { join } from 'node:path';
 
@@ -14,7 +14,15 @@ import { closeGate } from '../messaging/gates.js';
 import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
+import type { AuthTier } from '../tiers.js';
 import { bridgeExternalPolicy } from './external.js';
+import type { GuardDeps, PatchGuard } from './guards.js';
+import {
+  dispatchRefusal,
+  guardTaskPatch,
+  openProposalFor,
+  ProposalGuard,
+} from './guards.js';
 import { handleProposal } from './handoff.js';
 import { A2AListener } from './listener.js';
 import type { BridgeDeps } from './port.js';
@@ -64,6 +72,15 @@ export interface A2ABridge {
   // Closes a revoked client's unanswered asks as the system ("client
   // revoked"); its handoff gates stay open for the owner.
   clientRevoked(address: string): void;
+  // The proposal guards; each works with a2a.db down.
+  guardTaskPatch(
+    taskId: string,
+    patch: UpdatePatch,
+    caller: { tier: AuthTier; ref: string }
+  ): Promise<PatchGuard>;
+  proposalOpen(taskId: string): boolean;
+  // Puts every gated draft something moved back in Draft; returns how many.
+  recheckProposals(): number;
   close(): Promise<void>;
 }
 
@@ -123,6 +140,20 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     console.error(`dispatchd: ${dbError}`);
   }
 
+  // Installed before the a2a.db branch: a gated draft stays held either way.
+  const guardDeps: GuardDeps = {
+    engine: messaging.engine,
+    tasks: deps.tasks,
+    ownerRef: deps.ownerRef,
+    updateTask: deps.updateTask,
+    store,
+  };
+  deps.orchestrator.setDispatchGuard((task) =>
+    dispatchRefusal(guardDeps, task)
+  );
+  const proposals = new ProposalGuard(guardDeps, deps.events);
+  const stopProposals = proposals.start();
+
   let port: DaemonBridgePort | null = null;
   let watch: BridgeWatch | null = null;
   let stopWatch: (() => void) | null = null;
@@ -172,6 +203,11 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     } catch (err) {
       console.error('dispatchd: A2A boot reconciliation failed', err);
     }
+  }
+  try {
+    proposals.recheck();
+  } catch (err) {
+    console.error('dispatchd: A2A proposal recheck failed', err);
   }
 
   let settings: ListenerSettings = readListenerSettings(rootDir).settings;
@@ -305,8 +341,14 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       }
       deps.events.broadcast({ type: 'a2a.changed' });
     },
+    guardTaskPatch: (taskId, patch, caller) =>
+      guardTaskPatch(guardDeps, taskId, patch, caller),
+    proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
+    recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
+        deps.orchestrator.setDispatchGuard(null);
+        stopProposals();
         stopWatch?.();
         stopWatch = null;
         await listener?.close();

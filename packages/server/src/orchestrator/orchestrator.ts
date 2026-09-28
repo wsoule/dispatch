@@ -387,6 +387,8 @@ export class Orchestrator {
   private memoryPort: MemoryPromptPort | null = null;
   // Renders each dispatch prompt's `## Docs` section (see setDocsPort); null leaves it out.
   private docsPort: DocsPromptPort | null = null;
+  // Why a task may not run right now, or null (see setDispatchGuard).
+  private dispatchGuard: ((task: TaskDoc) => string | null) | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -464,6 +466,18 @@ export class Orchestrator {
   // token file (runTokenPath) and passes the executor only that path.
   setRunTokenMinter(mint: (runId: string) => string): void {
     this.mintRunToken = mint;
+  }
+
+  // Installed by the A2A bridge: a gated handoff draft never runs, whoever
+  // asks. A returned string refuses the run with that reason.
+  setDispatchGuard(guard: ((task: TaskDoc) => string | null) | null): void {
+    this.dispatchGuard = guard;
+  }
+
+  // A gated A2A draft never runs, whichever entry point is asked.
+  private refuseGuarded(task: TaskDoc): void {
+    const refusal = this.dispatchGuard?.(task) ?? null;
+    if (refusal !== null) throw new OrchestratorConflictError(refusal);
   }
 
   // Called once at boot, before any run starts, to change how run ids are minted.
@@ -821,6 +835,7 @@ export class Orchestrator {
       throw new OrchestratorNotFoundError(`task not found: ${taskId}`);
     }
     refuseExecuteOnDerivedTask(task);
+    this.refuseGuarded(task);
     const live = this.registry.liveRunForTask(taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(
@@ -938,6 +953,8 @@ export class Orchestrator {
       throw new OrchestratorNotFoundError(`task not found: ${opts.taskId}`);
     }
     if (opts.kind === 'execute') refuseExecuteOnDerivedTask(task);
+    // Every kind: each one reads the draft's client-written description.
+    this.refuseGuarded(task);
     const live = this.registry.liveRunForTask(opts.taskId);
     if (live !== undefined) {
       throw new OrchestratorConflictError(

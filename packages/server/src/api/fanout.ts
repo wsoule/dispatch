@@ -23,7 +23,13 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 type FanoutRouteContext = Pick<
   ApiContext,
-  'store' | 'cache' | 'events' | 'orchestrator' | 'caller' | 'viaAgentToken'
+  | 'store'
+  | 'cache'
+  | 'events'
+  | 'orchestrator'
+  | 'caller'
+  | 'viaAgentToken'
+  | 'a2a'
 >;
 
 interface FanoutResult {
@@ -46,6 +52,14 @@ export async function fanoutTask(
 ): Promise<Response> {
   const source = ctx.store.get(taskId);
   if (source === null) return errorResponse(404, `task not found: ${taskId}`);
+  // Clones of a gated draft would run its client-written text; the dispatch
+  // guard alone sees only the clones.
+  if (ctx.a2a?.proposalOpen(taskId) === true) {
+    return errorResponse(
+      409,
+      `${taskId} is an A2A proposal awaiting the owner; answer it in Needs you`
+    );
+  }
 
   const parsed = await readJsonBody(req);
   if (!parsed.ok) return parsed.response;

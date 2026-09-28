@@ -689,6 +689,20 @@ async function updateTask(
   );
   if (fieldsError) return errorResponse(400, fieldsError);
 
+  // A gated A2A draft moves only through its gate; a decide-tier status
+  // change answers it.
+  if (ctx.a2a !== undefined) {
+    const caller = ctx.caller ?? {
+      tier: 'request' as const,
+      ref: humanActor(ctx),
+    };
+    const guard = await ctx.a2a.guardTaskPatch(id, patch, {
+      tier: caller.tier,
+      ref: caller.ref,
+    });
+    if (!guard.ok) return errorResponse(guard.status, guard.error);
+  }
+
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
   // credited to the human whose credential made the call, never whatever the
