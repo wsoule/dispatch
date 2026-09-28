@@ -248,3 +248,11 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
   expect(screen.queryByRole('button', { name: /commit:/ })).toBeNull();
   expect(screen.getByText('commit:abc1234def')).toBeTruthy();
 });
+
+test('a ref of a type this build does not register is plain text, not a link', () => {
+  renderRow(msg('m-w', { refs: [{ type: 'wiki', id: 'handbook' }] }), {
+    open: false,
+  });
+  expect(screen.getByText('wiki:handbook')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'wiki:handbook' })).toBeNull();
+});

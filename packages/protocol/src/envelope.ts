@@ -25,9 +25,12 @@ export { GATE_TYPES };
 export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 export type MessageKind = BuiltInKind | `x-${string}`;
 
+/** A ref type the registry lists; a received ref may carry any other identifier. */
+export type RefType = (typeof REF_TYPES)[number];
+
 export interface Ref {
   /** A registered ref type, or any identifier on a ref received from a peer (§4.4). */
-  type: (typeof REF_TYPES)[number] | (string & {});
+  type: RefType | (string & {});
   id: string;
   /** Commit sha for `file` refs. */
   at?: string;

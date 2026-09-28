@@ -37,6 +37,7 @@ export type {
   Message,
   MessageKind,
   Ref,
+  RefType,
   SendInput,
   ValidateOptions,
 } from './envelope.js';

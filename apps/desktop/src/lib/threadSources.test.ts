@@ -685,6 +685,11 @@ describe('replyRoute', () => {
 });
 
 describe('refs and labels', () => {
+  it('gives a ref of a type this build does not register no link', () => {
+    // A peer's newer version may send one; it stays a plain chip.
+    expect(refAction({ type: 'wiki', id: 'handbook' }, lookups)).toBeNull();
+  });
+
   it('routes each ref kind, and gives a commit or an unknown run no link', () => {
     expect(refAction({ type: 'task', id: 't-000001' }, lookups)).toEqual({
       kind: 'task',
