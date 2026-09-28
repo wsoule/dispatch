@@ -315,9 +315,9 @@ function validIn(ev: Evaluation, { item, named }: Eligible): boolean {
 // accepted ones.
 function resolve(ctx: Context): Resolved {
   const all = ctx.items.map(removalOf).filter((r): r is Removal => r !== null);
-  // Only Known(1) removals fight; a later one never changes a right, so it
-  // takes no pick and buys no pass, and is decided on the result.
-  const known = all.filter((r) => !r.later);
+  // Only Known(1) removals whose publisher can hold the right fight; a later
+  // one never changes a right, so it is decided on the result.
+  const known = all.filter((r) => !r.later && !rightless(ctx, r));
   // A result with no admin voids its latest-ranked accepted removal, and the
   // fight is fought again with every removal so voided held void.
   const held: Removal[] = [];
@@ -405,14 +405,18 @@ function decide(
       progress = true;
     }
     if (progress) continue;
-    // and one held even were every undecided removal that could cut it
-    // accepted is accepted.
+    // A removal a sure revocation cuts below never cuts in a worst case nor
+    // takes a pick,
+    const doomed = doomedBy(ctx, accepted, open, having('waiting'));
+    const live = open.filter((r) => !doomed.has(r));
+    // and one held were every undecided removal that could cut it accepted is.
+    const waiting = having('waiting').filter((r) => !doomed.has(r));
     const cutters = [
       ...accepted,
-      ...open,
-      ...couldCut(ctx, [...accepted, ...open], having('waiting')),
+      ...live,
+      ...couldCut(ctx, accepted, live, waiting),
     ];
-    for (const r of open) {
+    for (const r of live) {
       const worst = cutters.filter((o) => o !== r);
       if (!hadRight(ctx, evaluate(ctx, worst), r)) continue;
       status.set(r, 'accepted');
@@ -421,7 +425,7 @@ function decide(
     if (progress) continue;
     // Only removals that cut each other remain: the earliest-ranked publisher's
     // is accepted and wins the fight.
-    const pick = open.reduce((best, r) => (byRank(ev, r, best) < 0 ? r : best));
+    const pick = live.reduce((best, r) => (byRank(ev, r, best) < 0 ? r : best));
     status.set(pick, 'accepted');
     won.add(pick);
   }
@@ -1217,16 +1221,105 @@ function undoes(
   return !hadRight(ctx, evaluate(ctx, kept), r);
 }
 
-// The waiting removals that would hold their right, their own cut included, were
-// every undecided one accepted; any other is taken never to gain it.
+// The waiting removals whose publisher holds its right, own cut included, with
+// every open removal accepted or with none; no other ever cuts in a fight.
 function couldCut(
   ctx: Context,
-  others: readonly Removal[],
+  accepted: readonly Removal[],
+  open: readonly Removal[],
   waiting: readonly Removal[]
 ): Removal[] {
-  if (waiting.length === 0) return [];
-  const all = evaluate(ctx, [...others, ...waiting]);
-  return waiting.filter((w) => hadRight(ctx, all, w));
+  const holds = (w: Removal, cuts: readonly Removal[]): boolean =>
+    hadRight(ctx, evaluate(ctx, [...accepted, ...cuts, w]), w);
+  return waiting.filter(
+    (w) => !cutBelow(accepted, w) && (holds(w, open) || holds(w, []))
+  );
+}
+
+// The undecided removals a sure revocation cuts below: one held with no cut and
+// with every other undecided removal accepted, bar those other sure ones cut.
+function doomedBy(
+  ctx: Context,
+  accepted: readonly Removal[],
+  open: readonly Removal[],
+  waiting: readonly Removal[]
+): Set<Removal> {
+  const undecided = [...open, ...waiting].filter((r) => !cutBelow(accepted, r));
+  const cutBy = (by: readonly Removal[]): Set<Removal> =>
+    new Set(
+      undecided.filter((o) => by.some((u) => u !== o && cutBelow([u], o)))
+    );
+  const holds = (u: Removal, shut: ReadonlySet<Removal>): boolean => {
+    const others = undecided.filter((o) => o !== u && !shut.has(o));
+    return hadRight(ctx, evaluate(ctx, [...accepted, ...others]), u);
+  };
+  // Only a revocation that cuts another undecided removal below it can doom one.
+  const cutting = open.filter((u) => cutBy([u]).size > 0);
+  if (cutting.length === 0) return new Set();
+  const bare = evaluate(ctx, []);
+  const firm = cutting.filter((u) => hadRight(ctx, bare, u));
+  // Each pass starts from what the last one doomed, never left out of the check
+  // of a revocation that cuts it, and drops any revocation held only by a cut.
+  let doomed = new Set<Removal>();
+  for (let pass = 0; pass <= firm.length; pass++) {
+    const given = (u: Removal): Set<Removal> =>
+      new Set([...doomed].filter((o) => !cutBelow([u], o)));
+    let sure = firm.filter((u) => holds(u, given(u)));
+    for (;;) {
+      const held = sure.filter((u) => {
+        const others = cutBy(sure.filter((v) => v !== u));
+        return holds(u, new Set([...given(u), ...others]));
+      });
+      if (held.length === sure.length) break;
+      sure = held;
+    }
+    const next = cutBy(sure);
+    const same =
+      next.size === doomed.size && [...next].every((o) => doomed.has(o));
+    doomed = next;
+    if (same) break;
+  }
+  return doomed;
+}
+
+// Whether an accepted revocation cuts r's publisher below r, which then holds
+// no right at r in any fold: a revoked replica is never granted again.
+function cutBelow(accepted: readonly Removal[], r: Removal): boolean {
+  return accepted.some(
+    (c) =>
+      c.kind === 'all' && c.target === r.op.replica && c.afterSeq < r.op.seq
+  );
+}
+
+// Whether no fold gives r's publisher its right at r: no op before r grants one
+// but an observer's, or only a member's where r needs an admin.
+function rightless(ctx: Context, r: Removal): boolean {
+  const by = r.op.replica;
+  let member = false;
+  for (const { op, body } of ctx.items) {
+    if (ctx.order(op, r.op) >= 0) break;
+    const admits = isAction(body, 'admit') && body.replica === by;
+    if (op === ctx.found.op && op.replica === by) return false;
+    if (isAction(body, 'recover') && op.replica === by) return false;
+    if (admits && body.observer === true) continue;
+    if (admits && body.role === 'admin') return false;
+    if (isAction(body, 'role') && body.replica === by && body.role === 'admin')
+      return false;
+    if (admits) member = true;
+  }
+  if (!member) return true;
+  if (r.kind !== 'all') return true;
+  const theirs = handlesOf(ctx, r.target);
+  return [...handlesOf(ctx, by)].every((h) => !theirs.has(h));
+}
+
+// Every handle `replica` could hold: its key's, and each admit's that names it.
+function handlesOf(ctx: Context, replica: string): Set<string> {
+  const out = new Set([handleOf(ctx, replica)]);
+  for (const { body } of ctx.items)
+    if (isAction(body, 'admit') && body.replica === replica)
+      out.add(body.handle);
+  return out;
 }
 
 // A member may revoke replicas with their own handle; every other removal

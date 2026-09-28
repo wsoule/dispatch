@@ -403,6 +403,7 @@ retheme
 retuned
 reusify
 revset
+rightless
 riscv
 rkbeef
 rlib

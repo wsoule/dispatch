@@ -409,6 +409,33 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(D, 3, 429, D, 1),
     revoke(A2, 2, 441, B, 1),
   ]),
+  // D is an admin once the founder's revoke of C cuts C's member admit of D;
+  // A2, pinned but never admitted, revokes D, which moves nothing.
+  scenario('stranger-cutter', [
+    admit(A, 2, 10, B, 'admin'),
+    admit(B, 2, 13, C, 'admin'),
+    admit(C, 2, 25, D, 'member'),
+    admit(A, 3, 29, D, 'admin'),
+    revoke(D, 2, 53, B, 1),
+    revoke(B, 3, 64, A, 3),
+    revoke(A, 4, 75, C, 1),
+    revoke(A2, 2, 38, D, 1),
+  ]),
+  // OBS, an admin the founder revokes after its key op, revokes B; that must
+  // not let D's revoke of the founder stand.
+  scenario('revoked-admin-cutter', [
+    admit(A, 2, 11, OBS, 'admin'),
+    revoke(A, 3, 17, OBS, 1),
+    admit(A, 5, 20, D, 'admin'),
+    admit(A, 6, 21, A2, 'admin'),
+    admit(A, 7, 25, C, 'admin'),
+    admit(A2, 2, 30, B, 'member'),
+    admit(C, 2, 33, B, 'admin'),
+    revoke(OBS, 2, 45, B, 1),
+    demote(B, 4, 50, D, 1),
+    demote(A, 8, 52, A2, 1),
+    revoke(D, 2, 57, A, 7),
+  ]),
   // All accepted, these leave no admin: B's revoke of D, which makes C an
   // admin, is voided, and the re-run voids C's revoke of the founder too.
   scenario('no-admin-rerun', [
