@@ -1,7 +1,7 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { expect, it } from 'bun:test';
-import { mkdtempSync, readFileSync, realpathSync } from 'node:fs';
+import { afterEach, expect, it } from 'bun:test';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -28,10 +28,15 @@ function documented(): Map<string, string[]> {
   return out;
 }
 
+let root: string | null = null;
+afterEach(() => {
+  if (root !== null) rmSync(root, { recursive: true, force: true });
+  root = null;
+});
+
 it('App. B names exactly the registered messaging tools and their parameters', async () => {
-  const server = createDispatchMcpServer(
-    realpathSync(mkdtempSync(join(tmpdir(), 'dmp-appendix-b-')))
-  );
+  root = realpathSync(mkdtempSync(join(tmpdir(), 'dmp-appendix-b-')));
+  const server = createDispatchMcpServer(root);
   const client = new Client({ name: 'appendix-b', version: '1.0' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([client.connect(a), server.connect(b)]);
