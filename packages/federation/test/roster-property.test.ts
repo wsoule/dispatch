@@ -243,3 +243,58 @@ describe('an older build that cannot read some ops pauses or agrees with a newer
     expect(compared).toBeGreaterThan(200);
   });
 });
+
+describe('a dismiss from a replica that is never an admin', () => {
+  const OUTSIDER = 'zed-00000012';
+  const withOutsider = new Map(keys).set(OUTSIDER, {
+    replica: OUTSIDER,
+    handle: handleOf(OUTSIDER),
+    signPub: `sign-${OUTSIDER}`,
+    fingerprint: `FP-${OUTSIDER}`,
+  });
+  // Seeds rotate the outsider through pending, a plain member and a revoked one.
+  function outsiderOps(seed: number): RosterOpRef[] {
+    const founder = REPLICAS[0];
+    const admitted = op(founder, 1000, 1, {
+      action: 'admit',
+      replica: OUTSIDER,
+      handle: handleOf(OUTSIDER),
+      role: 'member',
+      fingerprint: `FP-${OUTSIDER}`,
+    });
+    const revoked = op(founder, 1001, 2, {
+      action: 'revoke',
+      replica: OUTSIDER,
+      afterSeq: 1,
+      afterHash: 'h',
+      reason: 'x',
+    });
+    return [[], [admitted], [admitted, revoked]][seed % 3] ?? [];
+  }
+
+  it('changes no roster on random rosters, whatever op it names', () => {
+    for (let seed = 1; seed <= 1200; seed++) {
+      const rand = mulberry32(seed);
+      const roster = randomRoster(rand);
+      const input = {
+        ...roster,
+        ops: [...roster.ops, ...outsiderOps(seed)],
+        keys: withOutsider,
+      };
+      const rest = roster.ops.slice(1);
+      const named = rest[Math.floor(rand() * rest.length)];
+      if (named === undefined) continue;
+      const dismiss = op(OUTSIDER, 2, 50 + Math.floor(rand() * 400), {
+        action: 'dismiss',
+        replica: named.replica,
+        seq: named.seq,
+        hash: named.hash,
+      });
+      const none = new Set<string>();
+      expect({
+        seed,
+        roster: rosterOf({ ...input, ops: [...input.ops, dismiss] }, none),
+      }).toEqual({ seed, roster: rosterOf(input, none) });
+    }
+  }, 60_000);
+});

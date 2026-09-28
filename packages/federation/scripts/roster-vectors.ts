@@ -151,6 +151,9 @@ const DISMISSED = [
   dismiss(A, 4, 500, PROMOTE),
 ];
 const JUNK = op(C, 2, 200, { action: 'teleport' });
+// B promotes D, and C, which outranks B, dismisses the promotion.
+const ADMIT_C = admit(A, 2, 100, C, 'admin');
+const B_PROMOTES = op(B, 2, 200, { action: 'role', replica: D, role: 'admin' });
 
 const ATTEST = [
   { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },
@@ -474,6 +477,16 @@ export const SCENARIOS: readonly RosterScenario[] = [
     JUNK,
     dismiss(A, 3, 300, JUNK),
     dismiss(A, 4, 310, dismiss(A, 3, 300, JUNK)),
+  ]),
+  // A2, a plain member, names C's admission, and C's dismiss still stands.
+  scenario('dismiss-member-veto', [
+    ADMIT_C,
+    admit(A, 3, 110, A2),
+    admit(A, 4, 120, D),
+    admit(A, 5, 130, B, 'admin'),
+    B_PROMOTES,
+    dismiss(C, 2, 300, B_PROMOTES),
+    dismiss(A2, 2, 310, ADMIT_C),
   ]),
   scenario('dismiss-outranked', [
     admit(A, 2, 100, C, 'admin'),

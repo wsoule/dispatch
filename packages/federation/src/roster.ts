@@ -223,27 +223,111 @@ export function foldRoster(input: FoldInput): RosterView {
     .sort(comparePositions)
     .map((op) => ({ op, body: readBody(op.body) }));
   const dismisses = dismissesOf(input, items);
-  // Each dismiss is judged in a fold without the ops the effective ones name;
-  // one whose publisher may not dismiss there stops standing, until none does.
-  let standing = dismisses.filter((d) => d.target !== null);
   // Every unreadable op some fold held pauses: this build judged dismisses there.
   const paused = new Set<Item>();
+  const folds = foldsWithout(input, items, paused);
+  // Each dismiss is judged in a fold without the ops the effective ones name;
+  // those that fail there stop standing, a few at a time, until none fails.
+  let standing = dismisses.filter((d) => d.target !== null);
   for (;;) {
-    const effect = effective(standing);
-    const named = new Set(effect.map((d) => d.target));
-    const ctx = contextOf(input, items, named);
-    const { ev, resolution } = resolve(ctx);
-    for (const i of ctx.items) if (i.body === 'unknown') paused.add(i);
-    const kept = standing.filter((d) => mayDismiss(ev, d));
-    if (kept.length === standing.length)
+    const round = folds(standing);
+    const failing = standing.filter((d) => !round.allows(d));
+    if (failing.length === 0) {
+      const { ctx, ev, resolution } = round.resolved();
       return viewOf(ctx, ev, resolution, {
         dismisses,
         standing,
-        effect,
+        effect: round.effect,
         paused,
       });
-    standing = kept;
+    }
+    const drop = new Set(
+      failing.length === 1 ? failing : hopeless(folds, standing, failing)
+    );
+    standing = standing.filter((d) => !drop.has(d));
   }
+}
+
+// A fold without the ops some standing dismisses take out, resolved on first
+// need, and whether it lets a dismiss's publisher dismiss what it names.
+interface Fold {
+  effect: readonly Dismiss[];
+  resolved: () => Resolved;
+  allows: (d: Dismiss) => boolean;
+}
+
+interface Resolved {
+  ctx: Context;
+  ev: Evaluation;
+  resolution: Map<string, Resolution>;
+}
+
+// Folds without what a set of standing dismisses takes out, each resolved once
+// however often the loop asks; every unreadable op one holds goes in `paused`.
+function foldsWithout(
+  input: FoldInput,
+  items: readonly Item[],
+  paused: Set<Item>
+): (standing: readonly Dismiss[]) => Fold {
+  const grants = adminGrants(items);
+  const seen = new Map<string, Resolved>();
+  return (standing) => {
+    const effect = effective(standing);
+    const named = new Set(effect.map((d) => d.target));
+    for (const i of items)
+      if (i.body === 'unknown' && !named.has(i)) paused.add(i);
+    const key = items.flatMap((i, n) => (named.has(i) ? [n] : [])).join(',');
+    const resolved = (): Resolved => {
+      const known = seen.get(key);
+      if (known !== undefined) return known;
+      const ctx = contextOf(input, items, named);
+      const fold = { ctx, ...resolve(ctx) };
+      seen.set(key, fold);
+      return fold;
+    };
+    // With no op left that could make the publisher an admin, it cannot pass.
+    const allows = (d: Dismiss): boolean =>
+      (grants.get(d.item.op.replica) ?? []).some((g) => !named.has(g)) &&
+      mayDismiss(resolved().ev, d);
+    return { effect, resolved, allows };
+  };
+}
+
+// Per replica, the ops that could make it an admin: its founding or recover,
+// and admissions and promotions naming it as one.
+function adminGrants(items: readonly Item[]): Map<string, Item[]> {
+  const out = new Map<string, Item[]>();
+  const add = (replica: string, item: Item): void => {
+    const list = out.get(replica);
+    if (list === undefined) out.set(replica, [item]);
+    else list.push(item);
+  };
+  for (const item of items) {
+    const { op, body } = item;
+    if (isAction(body, 'found') || isAction(body, 'recover'))
+      add(op.replica, item);
+    else if (
+      (isAction(body, 'admit') || isAction(body, 'role')) &&
+      body.role === 'admin'
+    )
+      add(body.replica, item);
+  }
+  return out;
+}
+
+// The failing dismisses to drop: those that still fail with the others' targets
+// back, so an invalid one never takes a valid one with it; else they all go.
+function hopeless(
+  folds: (standing: readonly Dismiss[]) => Fold,
+  standing: readonly Dismiss[],
+  failing: readonly Dismiss[]
+): readonly Dismiss[] {
+  const others = new Set(failing);
+  const still = failing.filter((d) => {
+    const alone = standing.filter((s) => s === d || !others.has(s));
+    return !folds(alone).allows(d);
+  });
+  return still.length > 0 ? still : failing;
 }
 
 // The standing dismisses that take effect: each unless an effective one names

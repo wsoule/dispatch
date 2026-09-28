@@ -667,6 +667,35 @@ describe('foldRoster', () => {
     expect(roles(v)[D]).toBe('admin');
   });
 
+  it("never lets a member's dismiss knock out an admin's by naming the admin's admission", () => {
+    const admitC = admit(A, 2, 100, C, 'admin');
+    const promote = op(B, 2, 200, {
+      action: 'role',
+      replica: D,
+      role: 'admin',
+    });
+    const base = [
+      admitC,
+      admit(A, 3, 110, A2),
+      admit(A, 4, 120, D),
+      admit(A, 5, 130, B, 'admin'),
+      promote,
+      dismiss(C, 2, 300, promote),
+    ];
+    const expected = fold(base);
+    expect(roles(expected)[D]).toBe('member');
+    expect(expected.dismissed).toEqual([
+      { replica: B, seq: 2, hash: promote.hash, by: C },
+    ]);
+    // A2 is a plain member, so its dismiss is invalid wherever it is judged.
+    const v = fold([...base, dismiss(A2, 2, 310, admitC)]);
+    expect(rosterOf(v)).toEqual(rosterOf(expected));
+    expect(v.problems).toContainEqual({
+      subject: `op:${A2}:2`,
+      message: `${A2} may not dismiss ${A}'s roster op at seq 2; ignored`,
+    });
+  });
+
   it('closes the legacy window: an admin any time, anyone admitted after the deadline, first valid wins', () => {
     const attest = [
       { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },
