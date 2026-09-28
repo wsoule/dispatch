@@ -276,4 +276,16 @@ describe('dispatch prompt memory', () => {
     expect(started?.memory).toEqual({ mode: 'prompt' });
     await t.orchestrator.cancel(meta.id);
   });
+
+  // Only the memory service may choose native, so a run before it is installed gets prompt.
+  it('starts an auto-memory run with auto memory off when no port is installed', async () => {
+    const { orchestrator, store } = makeOrchestrator(project.root());
+    const executor = new AutoMemoryExecutor();
+    orchestrator.registerExecutor('claude', executor);
+    const task = store.create({ title: 'no port yet' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'claude');
+    expect(executor.started[0].memory).toEqual({ mode: 'prompt' });
+    expect(meta.memoryMode).toBe('prompt');
+    await orchestrator.cancel(meta.id);
+  });
 });

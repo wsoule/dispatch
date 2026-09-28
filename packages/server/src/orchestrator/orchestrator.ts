@@ -297,6 +297,13 @@ function refuseExecuteOnDerivedTask(task: TaskDoc): void {
   );
 }
 
+// A run's memory with auto memory off and no section, for when the port cannot say.
+const PROMPT_ONLY: PreparedMemory = {
+  text: null,
+  indexSection: null,
+  memory: { mode: 'prompt' },
+};
+
 // A caller-built prompt with a memory section after it; unchanged when there is none.
 function withSection(prompt: string, section: string | null): string {
   return section === null ? prompt : `${prompt}\n\n${section}`;
@@ -5129,15 +5136,27 @@ export class Orchestrator {
     return prepared;
   }
 
-  // The port's answer for a new run, or null without a port. A throwing port
-  // costs the memory section, never the dispatch, and leaves auto memory off.
+  // How a new run carries memory, recorded on it; null for a non-Claude run
+  // with no port. A missing or throwing port leaves auto memory off.
   private prepareMemory(meta: RunMeta): PreparedMemory | null {
     const port = this.memoryPort;
-    if (port === null) return null;
     const profile = this.executorProfile(meta.executor);
-    let prepared: PreparedMemory;
+    // Only the port may choose native, so a Claude run started without one gets prompt.
+    if (port === null && profile.autoMemory !== true) return null;
+    const prepared =
+      port === null ? PROMPT_ONLY : this.askMemoryPort(port, meta, profile);
+    this.registry.updateMeta(meta.id, { memoryMode: prepared.memory.mode });
+    return prepared;
+  }
+
+  // The port's answer, or prompt mode with no section when it throws.
+  private askMemoryPort(
+    port: MemoryPromptPort,
+    meta: RunMeta,
+    profile: ExecutorProfile
+  ): PreparedMemory {
     try {
-      prepared = port.prepare({
+      return port.prepare({
         runId: meta.id,
         taskId: meta.taskId,
         lineage: runLineage(meta),
@@ -5150,10 +5169,8 @@ export class Orchestrator {
         `dispatchd: preparing memory for run ${meta.id} failed`,
         err
       );
-      prepared = { text: null, indexSection: null, memory: { mode: 'prompt' } };
+      return PROMPT_ONLY;
     }
-    this.registry.updateMeta(meta.id, { memoryMode: prepared.memory.mode });
-    return prepared;
   }
 
   // The start option a prepared run passes; export mode adds the prompt a

@@ -1299,6 +1299,9 @@ async function bootServer(
       ? {}
       : { preflight: opts.memoryPreflight }),
   });
+  // Before messaging.recover() too: a replayed wake or dispatch starts runs,
+  // and a run with no memory mode would load the host's native Claude memory.
+  orchestrator.setMemoryPort(memory);
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
@@ -1343,7 +1346,6 @@ async function bootServer(
   } catch (err) {
     console.error('dispatchd: memory gate recovery failed', err);
   }
-  orchestrator.setMemoryPort(memory);
   // After recovery, so the bridge reconciles against settled messaging state;
   // its listener opens only once the daemon's own ports are known (below).
   const a2a = openA2ABridge({
