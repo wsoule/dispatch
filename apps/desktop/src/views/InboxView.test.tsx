@@ -804,8 +804,8 @@ test('lists your memory activity under Your memory, each with its Undo', async (
   await waitFor(() => expect(undoMemory).toHaveBeenCalledWith('mem-1'));
 });
 
-// The list covers the last day, but undo has no time limit.
-test('says how to undo a memory change older than the list reaches', async () => {
+// The list covers the last day; the CLI reverts an older entry's latest change.
+test('says the list covers the last day and how to undo an entry changed earlier', async () => {
   const project = projectWith({
     port: 4321,
     client: {
@@ -826,8 +826,17 @@ test('says how to undo a memory change older than the list reaches', async () =>
   });
   renderInbox(dataWith([]), { project });
   const section = await screen.findByRole('region', { name: 'Your memory' });
-  expect(within(section).getByText(/last day/)).toBeTruthy();
-  expect(within(section).getByText('dispatch memory undo <ref>')).toBeTruthy();
+  expect(within(section).getByText(/last day/).textContent).toContain(
+    'Undo reverts an entry’s latest change'
+  );
+  expect(
+    within(section).getByText('dispatch memory undo <handle>')
+  ).toBeTruthy();
+  expect(
+    within(section).getByText(
+      'dispatch memory list --scope personal --state all'
+    )
+  ).toBeTruthy();
 });
 
 test('has no memory section while nothing was written to your memory', async () => {

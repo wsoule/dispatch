@@ -561,9 +561,9 @@ export function InboxView({
   );
 }
 
-/** The caller's own personal-memory activity from the last day, each change
- *  with an Undo. Hidden when there is none, or when the daemon answers no
- *  activity for this caller (no memory, or no human behind the window). */
+/** The caller's own personal-memory activity from the last day, each entry's
+ *  latest change with an Undo. Hidden when there is none, or when the daemon
+ *  answers no activity for this caller (no memory, or no human behind the window). */
 function YourMemory({
   client,
   port,
@@ -586,11 +586,16 @@ function YourMemory({
       <GroupHeader name="Your memory" count={items.length} />
       <MemoryActivityList items={items} client={client} />
       <p className="font-book text-muted-foreground px-2 py-1 text-[12px]">
-        Showing the last day. Undo an older change with{' '}
+        Showing the last day. Undo reverts an entry’s latest change. For one
+        changed earlier, run{' '}
         <code className="font-mono text-[12px]">
-          dispatch memory undo &lt;ref&gt;
+          dispatch memory undo &lt;handle&gt;
         </code>
-        .
+        ;{' '}
+        <code className="font-mono text-[12px]">
+          dispatch memory list --scope personal --state all
+        </code>{' '}
+        lists handles.
       </p>
     </section>
   );
