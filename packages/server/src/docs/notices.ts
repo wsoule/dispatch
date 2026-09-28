@@ -36,8 +36,8 @@ export function noticeLine(
 }
 
 export class DocNotices {
-  // Per run, the revision it last read of each doc, kept in process only.
-  private readonly reads = new Map<string, Map<string, string>>();
+  // Per run, every revision it has read of each doc, kept in process only.
+  private readonly reads = new Map<string, Map<string, Set<string>>>();
   private readonly windows = new Map<string, Map<string, NoticeWindow>>();
 
   constructor(
@@ -49,8 +49,10 @@ export class DocNotices {
   ) {}
 
   recordRead(runId: string, docId: string, revId: string): void {
-    const docs = this.reads.get(runId) ?? new Map<string, string>();
-    docs.set(docId, revId);
+    const docs = this.reads.get(runId) ?? new Map<string, Set<string>>();
+    const revs = docs.get(docId) ?? new Set<string>();
+    revs.add(revId);
+    docs.set(docId, revs);
     this.reads.set(runId, docs);
   }
 
@@ -138,7 +140,7 @@ export class DocNotices {
   }
 
   private hasRead(runId: string, docId: string, revId: string): boolean {
-    return this.reads.get(runId)?.get(docId) === revId;
+    return this.reads.get(runId)?.get(docId)?.has(revId) === true;
   }
 
   private cares(runId: string, taskId: string, docId: string): boolean {

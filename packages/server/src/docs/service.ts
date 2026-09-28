@@ -2085,12 +2085,6 @@ export class DocsService {
       opts.rev === undefined
         ? this.headOf(doc)
         : this.revisionOf(doc, opts.rev, 'rev');
-    // Recorded before the read seals the head, so no notice tells the run of it.
-    if (actor.runId !== null)
-      this.notices?.recordRead(actor.runId, doc.id, rev.id);
-    this.sealIfOtherReads(actor, doc, rev);
-    const store = this.store();
-    const current = store.revisionMeta(rev.id) ?? rev;
     const lines = splitLines(rev.body);
     const offsets = lineOffsets(lines);
     const sections = outline(rev.body, lines);
@@ -2108,6 +2102,13 @@ export class DocsService {
     const page = paged
       ? pageOf(text, opts.offset ?? 0, DOCS_LIMITS.readPageBytes)
       : { text, offset: 0, nextOffset: null, total: utf8Bytes(text) };
+    // Only a read that returns text counts or seals; recorded before the seal,
+    // so no notice tells the run of the revision it read.
+    if (actor.runId !== null)
+      this.notices?.recordRead(actor.runId, doc.id, rev.id);
+    this.sealIfOtherReads(actor, doc, rev);
+    const store = this.store();
+    const current = store.revisionMeta(rev.id) ?? rev;
     const fresh = store.doc(doc.id) ?? doc;
     return {
       doc: this.record(fresh),

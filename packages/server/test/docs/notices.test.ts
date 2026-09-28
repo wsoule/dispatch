@@ -89,6 +89,35 @@ describe('live notices', () => {
     ]);
   });
 
+  it("sends no trailing notice naming the run's own revision", () => {
+    service.create(as(OWNER), { title: 'Spec', body: 'v1\n', links: specLink });
+    closeWindows();
+    service.edit(as(OWNER), 'spec', append('v2'));
+    service.edit(as(OWNER), 'spec', append('v3'));
+    service.edit(as(RUN), 'spec', append('mine'));
+    host.advance(11);
+    notices.flush();
+    expect(host.runLines.map((l) => l.line)).toEqual([
+      line('spec', 2, 'human:wyat', 'appended'),
+    ]);
+  });
+
+  it("never tells a run of its own revert, which seals someone's open head first", () => {
+    start(10);
+    service.create(as(OWNER), { title: 'Spec', body: 'v1\n', links: specLink });
+    service.read(as(RUN), 'spec');
+    service.read(as(RUN2), 'spec');
+    service.edit(as(OWNER), 'spec', append('v2'));
+    service.revert(as(RUN), 'spec', 1);
+    expect(host.changes.slice(-2).map((c) => [c.kind, c.author])).toEqual([
+      ['sealed', 'human:wyat'],
+      ['sealed', 'run:r-1'],
+    ]);
+    expect(host.runLines).toEqual([
+      { runId: 'r-2', line: line('spec', 3, 'run:r-1', 'reverted to rev 1') },
+    ]);
+  });
+
   it('never tells a run about the revision its own read sealed', () => {
     start(10);
     service.create(as(OWNER), { title: 'Spec', body: 'v1\n', links: specLink });
@@ -114,6 +143,31 @@ describe('live notices', () => {
     ]);
   });
 
+  it('sends no trailing notice for a head the run read before an older revision', () => {
+    service.create(as(OWNER), { title: 'Spec', body: 'v1\n', links: specLink });
+    closeWindows();
+    service.edit(as(OWNER), 'spec', append('v2'));
+    service.edit(as(OWNER), 'spec', append('v3'));
+    service.read(as(RUN), 'spec');
+    service.read(as(RUN), 'spec', { rev: 1 });
+    host.advance(11);
+    notices.flush();
+    expect(host.runLines.map((l) => l.line)).toEqual([
+      line('spec', 2, 'human:wyat', 'appended'),
+    ]);
+  });
+
+  it('neither seals nor counts a read that fails, so the run still hears of the head', () => {
+    start(10);
+    service.create(as(OWNER), { title: 'Spec', body: 'v1\n', links: specLink });
+    expect(() => service.read(as(RUN), 'spec', { section: 'nope' })).toThrow();
+    expect(host.runLines).toEqual([]);
+    service.read(as(RUN2), 'spec');
+    expect(host.runLines).toEqual([
+      { runId: 'r-1', line: line('spec', 1, 'human:wyat', 'created') },
+    ]);
+  });
+
   it('covers a doc the run has read since it started', () => {
     service.create(as(OWNER), { title: 'Other', body: 'x\n' });
     service.read(as(RUN2), 'other');
@@ -129,6 +183,20 @@ describe('live notices', () => {
     notices.runEnded('r-2');
     service.edit(as(OWNER), 'other', append('y'));
     expect(host.runLines).toEqual([]);
+  });
+
+  it("forgets an ended run's notice windows, so no trailing notice follows", () => {
+    service.create(as(OWNER), { title: 'Spec', body: 'v1\n', links: specLink });
+    closeWindows();
+    service.edit(as(OWNER), 'spec', append('v2'));
+    service.edit(as(OWNER), 'spec', append('v3'));
+    host.live = host.live.filter((r) => r.runId !== 'r-1');
+    notices.runEnded('r-1');
+    host.advance(11);
+    notices.flush();
+    expect(host.runLines.map((l) => l.line)).toEqual([
+      line('spec', 2, 'human:wyat', 'appended'),
+    ]);
   });
 
   it('never tells a run about a doc it may no longer see, at once or trailing', () => {

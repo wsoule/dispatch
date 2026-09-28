@@ -10,6 +10,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { DaemonDocsHost } from '../../src/docs/host.js';
+import { DocNotices } from '../../src/docs/notices.js';
 import { openDocs } from '../../src/docs/open.js';
 import type { RunMeta } from '../../src/orchestrator/types.js';
 import { OWNER, RUN } from './fakeHost.js';
@@ -33,6 +34,7 @@ describe('openDocs', () => {
     mkdirSync(dbDir, { recursive: true });
     jest.useFakeTimers();
     const errors = spyOn(console, 'error').mockImplementation(() => undefined);
+    const ended = spyOn(DocNotices.prototype, 'runEnded');
     try {
       const lines: string[] = [];
       const terminal: ((meta: RunMeta) => void)[] = [];
@@ -81,10 +83,14 @@ describe('openDocs', () => {
       expect(lines).toEqual([told(2), told(3)]);
       // An ended run's reads are forgotten, so it hears of no later change.
       for (const callback of terminal) callback({ id: 'r-1' } as RunMeta);
+      expect(ended).toHaveBeenCalledTimes(1);
       jest.advanceTimersByTime(6 * 60_000);
       docs.service.edit(owner, 'spec', append('v4'));
       expect(lines).toEqual([told(2), told(3)]);
+      // After stop, neither run ends nor changes reach the notices.
       docs.stop();
+      for (const callback of terminal) callback({ id: 'r-1' } as RunMeta);
+      expect(ended).toHaveBeenCalledTimes(1);
       host.changed({
         doc: created.doc.id,
         scope: 'team',
@@ -95,6 +101,7 @@ describe('openDocs', () => {
       });
       expect(errors).not.toHaveBeenCalled();
     } finally {
+      ended.mockRestore();
       errors.mockRestore();
     }
   });
