@@ -128,6 +128,21 @@ export interface RankedDoc {
   source: 'manual' | 'mention';
 }
 
+// Live notices, told of each doc a run reads so they cover it.
+interface DocReadRecorder {
+  recordRead(runId: string, docId: string): void;
+}
+
+// What a live notice names about a team doc's head.
+export interface DocNoticeFacts {
+  handle: string;
+  rev: string;
+  n: number;
+  author: string;
+  summary: string;
+  sealed: boolean;
+}
+
 export interface DocsServiceDeps {
   store: SqliteDocStore | null;
   unavailable?: string;
@@ -294,6 +309,8 @@ function toLink(l: LinkRow): DocLink {
 
 export class DocsService {
   private outbox: DocChange[] = [];
+  // Attached once the daemon builds live notices.
+  private notices: DocReadRecorder | null = null;
 
   constructor(private readonly deps: DocsServiceDeps) {}
 
@@ -346,6 +363,10 @@ export class DocsService {
       this.outbox = [];
       throw err;
     }
+  }
+
+  attachNotices(notices: DocReadRecorder): void {
+    this.notices = notices;
   }
 
   // ---- actors and visibility ------------------------------------------------
@@ -2085,6 +2106,7 @@ export class DocsService {
       ? pageOf(text, opts.offset ?? 0, DOCS_LIMITS.readPageBytes)
       : { text, offset: 0, nextOffset: null, total: utf8Bytes(text) };
     const fresh = store.doc(doc.id) ?? doc;
+    if (actor.runId !== null) this.notices?.recordRead(actor.runId, doc.id);
     return {
       doc: this.record(fresh),
       rev: toInfo(current),
@@ -2158,6 +2180,49 @@ export class DocsService {
         candidates.push({ row, rel: 'context', depth: 0, source: 'mention' });
     }
     return rankDocs(candidates);
+  }
+
+  // A team doc's head for a live notice; null for a personal or missing doc,
+  // which never makes one.
+  noticeFacts(docId: string): DocNoticeFacts | null {
+    const store = this.deps.store;
+    const doc = store?.doc(docId) ?? null;
+    if (store === null || doc === null || doc.scope !== 'team') return null;
+    const head = store.revisionMeta(doc.headId);
+    if (head === null || head.n === null) return null;
+    return {
+      handle: doc.handle,
+      rev: head.id,
+      n: head.n,
+      author: head.author,
+      summary: head.summary,
+      sealed: head.sealed,
+    };
+  }
+
+  // Whether a live run hears of a doc's change: it may see the doc, and read it
+  // or finds it among its task's docs (the task or an ancestor links it).
+  runCaresAbout(
+    runId: string,
+    taskId: string,
+    docId: string,
+    read: boolean
+  ): boolean {
+    const doc = this.deps.store?.doc(docId) ?? null;
+    if (doc === null) return false;
+    const actor = this.actorFor({
+      address: `run:${runId}`,
+      canDecide: false,
+      kind: 'run',
+    });
+    if (!this.canSee(actor, doc)) return false;
+    if (read) return true;
+    try {
+      return this.taskDocs(actor, taskId).some((c) => c.row.id === docId);
+    } catch (err) {
+      if (err instanceof DocsError && err.code === 'not-found') return false;
+      throw err;
+    }
   }
 
   // The ## Docs lines a run of `taskId` acting as `actor` would get.

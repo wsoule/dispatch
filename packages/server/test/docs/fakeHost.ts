@@ -90,6 +90,12 @@ export class FakeDocsHost implements DocsHost {
   // Tasks an A2A client asked for.
   a2aTasks = new Set<string>();
   changes: DocChange[] = [];
+  // Called from `changed`, as DaemonDocsHost.onChange listeners are.
+  listeners: ((change: DocChange) => void)[] = [];
+  live: ReturnType<DocsHost['liveExecuteRuns']> = [];
+  // Runs whose notifyRun throws, as one that is not live or cannot take input does.
+  notifyThrows = new Set<string>();
+  runLines: { runId: string; line: string }[] = [];
   clock = new Date('2026-09-26T10:00:00.000Z');
 
   constructor() {
@@ -165,6 +171,15 @@ export class FakeDocsHost implements DocsHost {
   }
   changed(change: DocChange): void {
     this.changes.push(change);
+    for (const listener of this.listeners) listener(change);
+  }
+  liveExecuteRuns(): ReturnType<DocsHost['liveExecuteRuns']> {
+    return this.live;
+  }
+  notifyRun(runId: string, line: string): void {
+    if (this.notifyThrows.has(runId))
+      throw new Error(`run ${runId} cannot take a notice`);
+    this.runLines.push({ runId, line });
   }
   now(): Date {
     return this.clock;

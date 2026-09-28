@@ -63,12 +63,66 @@ describe('runs', () => {
           { id: 'r-rev', kind: 'review', taskId: 't-1' },
         ] as never,
       taskIdOfRun: (id) => (id === 'r-1' ? 't-1' : null),
+      notifyRun: () => undefined,
     });
     expect(host.runTaskOf(run('r-rev'))).toBe('t-1');
     expect(host.runTaskOf(run('r-1'))).toBe('t-1');
     expect(host.runTaskOf(run('r-gone'))).toBeNull();
     expect(host.taskOfPrincipal(run('r-rev'))).toBeNull();
     expect(host.runKind(run('r-rev'))).toBe('review');
+  });
+});
+
+describe('live runs', () => {
+  it('lists only live execute runs and hands notices to the orchestrator', () => {
+    const host = new DaemonDocsHost({
+      store: {} as never,
+      events: { broadcast: () => undefined } as never,
+    });
+    expect(host.liveExecuteRuns()).toEqual([]);
+    expect(() => host.notifyRun('r-1', 'line')).toThrow('not bound');
+    const lines: { runId: string; line: string }[] = [];
+    host.bindRuns({
+      list: () =>
+        [
+          { id: 'r-1', kind: 'execute', taskId: 't-1', state: 'running' },
+          { id: 'r-old', taskId: 't-2', state: 'awaiting-approval' },
+          { id: 'r-rev', kind: 'review', taskId: 't-1', state: 'running' },
+          { id: 'r-done', kind: 'execute', taskId: 't-3', state: 'finished' },
+          {
+            id: 'r-new',
+            kind: 'execute',
+            taskId: 't-4',
+            state: 'provisioning',
+          },
+        ] as never,
+      taskIdOfRun: () => null,
+      notifyRun: (runId, line) => {
+        lines.push({ runId, line });
+      },
+    });
+    expect(host.liveExecuteRuns()).toEqual([
+      { runId: 'r-1', taskId: 't-1', operator: null },
+      { runId: 'r-old', taskId: 't-2', operator: null },
+    ]);
+    host.notifyRun('r-1', '📄 doc · spec rev 2');
+    expect(lines).toEqual([{ runId: 'r-1', line: '📄 doc · spec rev 2' }]);
+  });
+
+  it('broadcasts doc.changed even when a change listener throws', () => {
+    const sent: unknown[] = [];
+    const host = new DaemonDocsHost({
+      store: {} as never,
+      events: { broadcast: (e: unknown) => sent.push(e) } as never,
+    });
+    const heard: string[] = [];
+    host.onChange(() => {
+      throw new Error('listener failed');
+    });
+    host.onChange((c) => heard.push(c.kind));
+    host.changed(change('sealed'));
+    expect(heard).toEqual(['sealed']);
+    expect(sent).toEqual([{ type: 'doc.changed', scope: 'team', id: 'doc-1' }]);
   });
 });
 

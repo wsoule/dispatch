@@ -1322,6 +1322,8 @@ async function bootServer(
   docsHost.bindRuns(orchestrator);
   docsHost.bindMessaging(messaging.store);
   docsHost.bindMemory(docsMemoryPort(memory));
+  // A run's reads and notice windows live only as long as the run.
+  orchestrator.onRunTerminal((meta) => docs.notices.runEnded(meta.id));
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the

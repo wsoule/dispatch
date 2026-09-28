@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 
 import { runsDir } from '../orchestrator/paths.js';
 import type { DaemonDocsHost } from './host.js';
+import { DocNotices } from './notices.js';
 import { DocsService } from './service.js';
 import { openDocsDb, SqliteDocStore } from './store.js';
 
@@ -11,6 +12,7 @@ const DOCS_SWEEP_MS = 60_000;
 
 interface OpenDocs {
   service: DocsService;
+  notices: DocNotices;
   stop(): void;
 }
 
@@ -82,9 +84,17 @@ export function openDocs(deps: {
     console.error(`dispatchd: docs unavailable: ${reason}`);
     service = new DocsService({ store: null, unavailable: reason, ...common });
   }
+  const notices = new DocNotices({
+    service,
+    host: deps.host,
+    minutes: () => config().config.noticeMinutes,
+  });
+  service.attachNotices(notices);
+  const unsubscribe = deps.host.onChange((c) => notices.onChange(c));
   const sweep = (): void => {
     try {
       service.sweep();
+      notices.flush();
       if (service.available) tightenModes(path);
     } catch (err) {
       console.error('dispatchd: docs sweep failed', err);
@@ -95,8 +105,10 @@ export function openDocs(deps: {
   timer.unref();
   return {
     service,
+    notices,
     stop() {
       clearInterval(timer);
+      unsubscribe();
       service.close();
     },
   };
