@@ -1164,6 +1164,7 @@ export class DeliveryEngine {
     }
     const replyTarget =
       message.replyTo === null ? null : this.store.getMessage(message.replyTo);
+    checkReceivedThread(message, replyTarget);
     const root =
       message.thread === message.id
         ? null
@@ -2101,6 +2102,21 @@ function checkReceivedEnvelope(m: Message): void {
     malformed('blocking', 'expected a boolean');
   if (m.wake !== 'none' && m.wake !== 'request')
     malformed('wake', 'expected none or request');
+}
+
+// A root is its own thread and a reply joins its target's, as every honest
+// sender files them; any other thread would skip participation and the breaker.
+function checkReceivedThread(m: Message, replyTarget: Message | null): void {
+  if (m.replyTo === null && m.thread !== m.id)
+    malformed(
+      'thread',
+      'a message that replies to nothing starts its own thread'
+    );
+  if (replyTarget !== null && m.thread !== replyTarget.thread)
+    malformed(
+      'thread',
+      `expected ${replyTarget.thread}, the thread of ${replyTarget.id}`
+    );
 }
 
 // The fields an origin signs; `origin` is this replica's own record of it.

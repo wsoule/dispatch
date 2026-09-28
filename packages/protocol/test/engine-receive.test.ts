@@ -616,6 +616,46 @@ describe('receive refuses a malformed or overreaching envelope', () => {
     }
   });
 
+  it('refuses a root whose thread names another thread', async () => {
+    fed.placements.set('human:ada', {
+      kind: 'remote',
+      homes: [CY],
+      alsoLocal: false,
+    });
+    const { message: secret } = await engine.send(
+      { to: ['human:ada'], kind: 'message', body: 'just us' },
+      wyat
+    );
+    await expect(
+      engine.receive(
+        remote('m-p1', { thread: secret.id }),
+        fromBob([here('human:wyat')])
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'thread' });
+    expect(store.thread(secret.id).map((m) => m.id)).toEqual([secret.id]);
+  });
+
+  it("refuses a reply whose thread is not its reply target's", async () => {
+    fed.placements.set('human:ada', {
+      kind: 'remote',
+      homes: [CY],
+      alsoLocal: false,
+    });
+    const { message: secret } = await engine.send(
+      { to: ['human:ada'], kind: 'message', body: 'just us' },
+      wyat
+    );
+    await engine.receive(remote('m-01'), fromBob([here('human:wyat')]));
+    await expect(
+      engine.receive(
+        remote('m-r1', { replyTo: 'm-01', thread: secret.id }),
+        fromBob([here('human:wyat')])
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'thread' });
+    expect(store.getMessage('m-r1')).toBeNull();
+    expect(store.thread(secret.id).map((m) => m.id)).toEqual([secret.id]);
+  });
+
   it('refuses a remote agent:dispatch notice that names no message', async () => {
     await expect(
       engine.receive(
