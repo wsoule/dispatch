@@ -1,4 +1,5 @@
-import type { RepoPr } from '@dispatch/client';
+import type { ApiClient, RepoPr } from '@dispatch/client';
+import { useQuery } from '@tanstack/react-query';
 import {
   AtSign,
   Check,
@@ -12,6 +13,7 @@ import {
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
+import { MemoryActivityList } from '../components/memory/MemoryActivityList';
 import { ApprovalCard } from '../components/runs/ApprovalCard';
 import { QuestionCard } from '../components/runs/QuestionCard';
 import { ScopeRequestCard } from '../components/runs/ScopeRequestCard';
@@ -48,6 +50,7 @@ import {
   unreadInboxCount,
 } from '../lib/inboxQueue';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { activityItems, memoryQueryKey } from '../lib/memory';
 import { latestFailedAttemptByRunId } from '../lib/queueHistory';
 import { cn } from '@/lib/utils';
 import { GroupHeader } from '@/ui/ai/group-header';
@@ -528,6 +531,7 @@ export function InboxView({
               ))
             )}
           </div>
+          <YourMemory client={client} port={project.port} />
         </div>
         <div
           data-slot="inbox-detail-pane"
@@ -554,6 +558,34 @@ export function InboxView({
         </div>
       </div>
     </div>
+  );
+}
+
+/** The caller's own personal-memory activity from the last day, each change
+ *  with an Undo. Hidden when there is none, or when the daemon answers no
+ *  activity for this caller (no memory, or no human behind the window). */
+function YourMemory({
+  client,
+  port,
+}: {
+  client: Pick<ApiClient, 'memoryActivity' | 'undoMemory'>;
+  port: number | undefined;
+}) {
+  const { data } = useQuery({
+    queryKey: memoryQueryKey(port, 'activity'),
+    queryFn: () => client.memoryActivity(),
+    retry: false,
+  });
+  const items = activityItems(data?.activity ?? []);
+  if (items.length === 0) return null;
+  return (
+    <section
+      aria-label="Your memory"
+      className="shadow-hairline-top flex max-h-[40%] min-h-0 shrink-0 flex-col overflow-y-auto px-2 py-1"
+    >
+      <GroupHeader name="Your memory" count={items.length} />
+      <MemoryActivityList items={items} client={client} />
+    </section>
   );
 }
 

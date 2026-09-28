@@ -1,7 +1,12 @@
-import type { MemoryProposalView } from '@dispatch/client';
+import type { MemoryActivityRow, MemoryProposalView } from '@dispatch/client';
 import { describe, expect, it } from 'bun:test';
 
-import { proposalCardModel } from './memory';
+import {
+  activityItems,
+  memoryQueryKey,
+  memoryQueryRootKey,
+  proposalCardModel,
+} from './memory';
 import type { Content } from './memory.test-helper';
 import { content, entry, proposal } from './memory.test-helper';
 
@@ -102,5 +107,76 @@ describe('proposalCardModel', () => {
     expect(decided('approved')).toBe('approved');
     expect(decided('expired')).toBe('expired');
     expect(decided('open')).toBeNull();
+  });
+});
+
+describe('memoryQueryKey', () => {
+  it('keeps every memory query of one daemon under one root', () => {
+    const root = memoryQueryRootKey(4321);
+    expect(memoryQueryKey(4321, 'activity').slice(0, root.length)).toEqual([
+      ...root,
+    ]);
+    expect(memoryQueryKey(4322, 'activity')).not.toEqual(
+      memoryQueryKey(4321, 'activity')
+    );
+  });
+});
+
+describe('activityItems', () => {
+  const row = (
+    kind: MemoryActivityRow['kind'],
+    over: Partial<MemoryActivityRow> = {}
+  ): MemoryActivityRow => ({
+    id: `ma-${kind}`,
+    at: '2026-09-25T10:00:00.000Z',
+    kind,
+    memoryId:
+      kind === 'throttled' || kind === 'ingest-problem' ? null : 'mem-1',
+    runId: 'r-9f2c01',
+    summary: `run:r-9f2c01 ${kind}`,
+    ...over,
+  });
+
+  it('offers Undo for saves, edits, retires and ingests, and not for notices', () => {
+    const kinds: MemoryActivityRow['kind'][] = [
+      'saved',
+      'edited',
+      'retired',
+      'ingested',
+      'throttled',
+      'ingest-problem',
+    ];
+    expect(
+      activityItems(kinds.map((k) => row(k))).map((i) => i.undoable)
+    ).toEqual([true, true, true, true, false, false]);
+  });
+
+  it('keeps the daemon’s order and its summary as the line', () => {
+    const items = activityItems([
+      row('saved', { id: 'ma-2', summary: 'run:r-1 saved to your memory: B' }),
+      row('edited', { id: 'ma-1', summary: 'run:r-1 changed your memory: A' }),
+    ]);
+    expect(items).toEqual([
+      {
+        id: 'ma-2',
+        memoryId: 'mem-1',
+        text: 'run:r-1 saved to your memory: B',
+        at: '2026-09-25T10:00:00.000Z',
+        undoable: true,
+      },
+      {
+        id: 'ma-1',
+        memoryId: 'mem-1',
+        text: 'run:r-1 changed your memory: A',
+        at: '2026-09-25T10:00:00.000Z',
+        undoable: true,
+      },
+    ]);
+  });
+
+  it('offers no Undo for a row that names no entry', () => {
+    expect(activityItems([row('saved', { memoryId: null })])[0]?.undoable).toBe(
+      false
+    );
   });
 });
