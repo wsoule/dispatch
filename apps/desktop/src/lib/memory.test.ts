@@ -166,15 +166,29 @@ describe('activityItems', () => {
       'throttled',
       'ingest-problem',
     ];
-    expect(
-      activityItems(kinds.map((k) => row(k))).map((i) => i.undoable)
-    ).toEqual([true, true, true, true, false, false]);
+    // Each change names its own entry; the notices name none.
+    const rows = kinds.map((k, i) => {
+      const r = row(k);
+      return r.memoryId === null ? r : { ...r, memoryId: `mem-${i}` };
+    });
+    expect(activityItems(rows).map((i) => i.undoable)).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+      false,
+    ]);
   });
 
   it('keeps the daemon’s order and its summary as the line', () => {
     const items = activityItems([
       row('saved', { id: 'ma-2', summary: 'run:r-1 saved to your memory: B' }),
-      row('edited', { id: 'ma-1', summary: 'run:r-1 changed your memory: A' }),
+      row('edited', {
+        id: 'ma-1',
+        memoryId: 'mem-2',
+        summary: 'run:r-1 changed your memory: A',
+      }),
     ]);
     expect(items).toEqual([
       {
@@ -186,11 +200,24 @@ describe('activityItems', () => {
       },
       {
         id: 'ma-1',
-        memoryId: 'mem-1',
+        memoryId: 'mem-2',
         text: 'run:r-1 changed your memory: A',
         at: '2026-09-25T10:00:00.000Z',
         undoable: true,
       },
+    ]);
+  });
+
+  it('offers Undo only on the newest change to each entry, since undo reverts the latest', () => {
+    const items = activityItems([
+      row('edited', { id: 'ma-3', memoryId: 'mem-1' }),
+      row('saved', { id: 'ma-2', memoryId: 'mem-2' }),
+      row('saved', { id: 'ma-1', memoryId: 'mem-1' }),
+    ]);
+    expect(items.map((i) => [i.id, i.undoable])).toEqual([
+      ['ma-3', true],
+      ['ma-2', true],
+      ['ma-1', false],
     ]);
   });
 

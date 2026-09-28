@@ -129,17 +129,23 @@ const UNDOABLE: ReadonlySet<MemoryActivityRow['kind']> = new Set([
 ]);
 
 /** The caller's personal activity as Inbox lines, in the daemon's order
- *  (newest first); notices such as a hit rate limit have no Undo. */
+ *  (newest first). Undo reverts an entry's latest revision, so only the
+ *  newest change to each entry offers it; notices never do. */
 export function activityItems(
   rows: readonly MemoryActivityRow[]
 ): MemoryActivityItem[] {
-  return rows.map((row) => ({
-    id: row.id,
-    memoryId: row.memoryId,
-    text: row.summary,
-    at: row.at,
-    undoable: row.memoryId !== null && UNDOABLE.has(row.kind),
-  }));
+  const seen = new Set<string>();
+  return rows.map((row) => {
+    const newest = row.memoryId !== null && !seen.has(row.memoryId);
+    if (row.memoryId !== null) seen.add(row.memoryId);
+    return {
+      id: row.id,
+      memoryId: row.memoryId,
+      text: row.summary,
+      at: row.at,
+      undoable: newest && UNDOABLE.has(row.kind),
+    };
+  });
 }
 
 /** What Settings → Memory shows about the store and the imports, from the
