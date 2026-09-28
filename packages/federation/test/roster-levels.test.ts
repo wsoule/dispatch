@@ -5,6 +5,7 @@ import { foldRoster, foldRosterAt, KNOWN_ROSTER_PAIRS } from '../src/roster.js';
 import type { LaterPairs, RosterOpRef, RosterView } from '../src/roster.js';
 import {
   admit,
+  demote,
   handleOf,
   keysFor,
   op,
@@ -327,6 +328,91 @@ describe('the level table', () => {
       }
     }
   }, 120_000);
+
+  it('voids a later removal whose publisher holds no right at it in the final roster', () => {
+    const [B, C, D] = MEMBERS;
+    const M = 'mo-0000000e';
+    const withM = team(A, keysFor([...ALL, M]));
+    // A hosts cut at rv 2, which levels 2 and 3 read as a removal.
+    const cutBy = (by: string, seq: number, ms: number) =>
+      op(by, seq, ms, {
+        rv: 2,
+        action: 'hosts',
+        replica: M,
+        hosts: ['mx'],
+        afterSeq: 1,
+        afterHash: `h-${M}-1`,
+      });
+    const cases = [
+      {
+        // C's cut wins a fight it takes no part in; B then revokes C below it.
+        later: cutBy(C, 2, 41),
+        rest: [
+          admit(A, 2, 15, C, 'admin'),
+          admit(A, 3, 25, B, 'admin'),
+          admit(A, 4, 28, P, 'admin'),
+          admit(A, 5, 37, M, 'member', { hosts: ['mx', 'my'] }),
+          revoke(B, 2, 47, P, 1),
+          revoke(P, 2, 64, B, 1),
+          revoke(B, 3, 78, C, 1),
+        ],
+        hosts: ['mx', 'my'],
+      },
+      {
+        // The founder's cut, above the revocation that cuts it after seq 3.
+        later: cutBy(A, 5, 55),
+        rest: [
+          admit(A, 2, 14, B, 'admin'),
+          admit(A, 4, 50, D, 'admin'),
+          admit(B, 2, 27, M),
+          revoke(D, 5, 64, B, 1),
+          revoke(B, 4, 50, A, 3),
+        ],
+        hosts: [],
+      },
+      {
+        // With no admin left, P's revoke is voided, and D, the cut's
+        // publisher, ends pending.
+        later: cutBy(D, 2, 60),
+        rest: [
+          admit(A, 2, 5, M, 'member', { hosts: ['mx', 'my'] }),
+          admit(A, 3, 10, B, 'admin'),
+          admit(B, 2, 20, C, 'member'),
+          admit(A, 4, 30, C, 'admin'),
+          revoke(C, 2, 35, A, 8),
+          admit(C, 3, 40, D, 'admin'),
+          admit(A, 5, 45, P, 'admin'),
+          revoke(P, 2, 50, B, 1),
+          revoke(A, 6, 70, P, 2),
+          demote(A, 7, 75, D, 2),
+          revoke(A, 8, 80, C, 3),
+        ],
+        hosts: ['mx', 'my'],
+      },
+    ];
+    for (const { later, rest, hosts } of cases) {
+      const ops = [...rest, later];
+      const known = new Set([withM.found, ...rest].map((o) => o.hash));
+      for (const level of [1, 2, 3]) {
+        const v = withM.at(level, ops);
+        expect({
+          later: later.hash,
+          level,
+          paused: v.unknown,
+          hosts: v.members.get(M)?.hosts,
+          cut: v.resolution.get(later.hash) ?? 'void',
+          v: agreed(v, known),
+        }).toEqual({
+          later: later.hash,
+          level,
+          paused: null,
+          hosts,
+          cut: 'void',
+          v: agreed(withM.at(level, rest), known),
+        });
+      }
+    }
+  });
 
   it('judges a dismiss in the base fold, where no op a dismiss names can empower it', () => {
     const [B, C] = MEMBERS;

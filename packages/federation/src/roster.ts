@@ -154,6 +154,8 @@ interface Removal {
   afterSeq: number;
   afterHash: string;
   kind: CutKind;
+  /** Read from a pair outside Known(1). */
+  later: boolean;
 }
 
 interface Grant {
@@ -361,6 +363,10 @@ function resolve(ctx: Context): {
     status.set(worst, 'void');
     ev = evaluate(ctx, having('accepted'));
   }
+  // A later removal stands only where its publisher stands in the result, as
+  // a build that cannot read it holds it inert everywhere else.
+  for (const r of having('accepted'))
+    if (r.later && !standsAt(ev, r.op)) status.set(r, 'void');
   const resolution = new Map<string, Resolution>();
   for (const r of removals)
     resolution.set(
@@ -643,13 +649,14 @@ function itemOf(op: RosterOpRef, later: LaterPairs): Item {
   return { op, kind, body: body ?? 'malformed' };
 }
 
-function removalOf({ op, body }: Item): Removal | null {
+function removalOf({ op, kind: read, body }: Item): Removal | null {
+  const later = read === 'later';
   const cut = (
     target: string,
     afterSeq: number,
     afterHash: string,
     kind: CutKind
-  ): Removal => ({ op, target, afterSeq, afterHash, kind });
+  ): Removal => ({ op, target, afterSeq, afterHash, kind, later });
   if (isAction(body, 'revoke'))
     return cut(body.replica, body.afterSeq, body.afterHash, 'all');
   if (
@@ -1221,9 +1228,9 @@ const standing = (replica: string): RankAt => ({
   pos: null,
 });
 
-// An unreadable op holds a build back only when its publisher was a member or
-// admin at it and not an observer; every other one is inert.
-function pauses(ev: Evaluation, op: RosterOpRef): boolean {
+// Whether op's publisher was a member or admin at it and not an observer: only
+// then does an unreadable op pause a build, or a later removal stand.
+function standsAt(ev: Evaluation, op: RosterOpRef): boolean {
   if (ev.holders.get(op.replica)?.observer === true) return false;
   return rightsAt(ev, op.replica, op.seq, op).member;
 }
@@ -1284,7 +1291,7 @@ function notesOf(
   if (ctx.input.relay === true) return { unknown: null, problems };
   let unknown: Paused | null = null;
   for (const { op, body } of ctx.items) {
-    if (body !== 'unknown' || !pauses(ev, op)) continue;
+    if (body !== 'unknown' || !standsAt(ev, op)) continue;
     unknown ??= { ...positionOf(op), hash: op.hash };
     const who = liftersOf(ev, admins, op);
     const named = `${op.replica}'s roster op at seq ${op.seq} (${op.hash})`;
