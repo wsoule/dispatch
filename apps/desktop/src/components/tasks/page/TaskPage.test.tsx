@@ -1,4 +1,9 @@
-import type { ApiClient, RunMeta } from '@dispatch/client';
+import type {
+  ApiClient,
+  LedgerEntry,
+  MemoryEntryView,
+  RunMeta,
+} from '@dispatch/client';
 import type {
   TaskAttachment,
   TaskDoc,
@@ -10,6 +15,7 @@ import { describe, expect, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 import type { SavedViewsApi } from '../../../hooks/useSavedViews';
+import { entry as memoryEntry } from '../../../lib/memory.test-helper';
 import type { FavoriteRef } from '../../../lib/savedViews';
 import { DeepLinkProvider } from '../../shell/DeepLinkContext';
 import { SavedViewsProvider } from '../../shell/SavedViewsContext';
@@ -230,6 +236,33 @@ function clientRecordingUploads(
         return (id: string, files: File[]) => {
           uploads.push({ id, names: files.map((f) => f.name) });
           return Promise.resolve({} as never);
+        };
+      }
+      if (typeof key === 'symbol' || key === 'then') return undefined;
+      return pending;
+    },
+  });
+}
+
+// A client whose ledger and memory reads record their filters and answer with
+// the given rows; every other fetch the page makes stays pending.
+function clientRecordingReads(
+  reads: { ledger: unknown[]; memory: unknown[] },
+  rows: { ledger: LedgerEntry[]; memory: MemoryEntryView[] }
+): ApiClient {
+  const pending = () => new Promise<never>(() => {});
+  return new Proxy({} as ApiClient, {
+    get(_target, key) {
+      if (key === 'fetchLedger') {
+        return (filter: unknown) => {
+          reads.ledger.push(filter);
+          return Promise.resolve(rows.ledger);
+        };
+      }
+      if (key === 'listMemory') {
+        return (q: unknown) => {
+          reads.memory.push(q);
+          return Promise.resolve({ entries: rows.memory });
         };
       }
       if (typeof key === 'symbol' || key === 'then') return undefined;
@@ -496,6 +529,37 @@ describe('TaskPage', () => {
       document.querySelectorAll('[data-slot="main-section"]')
     ).find((s) => s.textContent?.includes('Acceptance criteria'));
     expect(acceptance?.nextElementSibling).toBe(row);
+  });
+
+  // Lessons live in memory now: the page lists what reaches the task under
+  // Memory, and reads only the ledger's audit class for its Receipts.
+  test('splits the ledger into the memory that reaches the task and its receipts', async () => {
+    const reads = { ledger: [] as unknown[], memory: [] as unknown[] };
+    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
+      client: clientRecordingReads(reads, {
+        ledger: [
+          {
+            id: 'l-000001',
+            epicId: null,
+            sourceTaskId: 't-8f2a',
+            kind: 'decision',
+            title: 'Scope extended for run r-x',
+            detail: 'src/x.ts — needed',
+            appliesTo: [],
+            authoredBy: 'human:x',
+            createdAt: '2026-09-01T00:00:00.000Z',
+          },
+        ],
+        memory: [memoryEntry({ title: 'pnpm builds' })],
+      }),
+      port: 4100,
+    });
+    expect(await screen.findByText('pnpm builds')).toBeDefined();
+    expect(await screen.findByText('Scope extended for run r-x')).toBeDefined();
+    expect(screen.getByText('Receipts')).toBeDefined();
+    expect(screen.queryByText('Ledger')).toBeNull();
+    expect(reads.ledger).toEqual([{ epicId: null, class: 'audit' }]);
+    expect(reads.memory).toEqual([{ taskId: 't-8f2a' }]);
   });
 
   // The content column is the drop target, so a drop that bubbles up from any

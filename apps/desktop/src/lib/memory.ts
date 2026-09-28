@@ -221,3 +221,41 @@ export function memorySettingsModel(health: MemoryHealth): MemorySettingsModel {
     pinnedOverflow: health.pinnedOverflow,
   };
 }
+
+// Where an imported entry came from, by its origin's source prefix.
+const ORIGIN_TEXT: Record<string, string> = {
+  ledger: 'from the ledger',
+  claude: 'from your Claude notes',
+  amendment: 'from a task amendment',
+};
+
+/** One line on where an entry came from: scope and kind, its source or
+ *  author, who approved it, how far it is trusted, and whether it is stale
+ *  or pinned. */
+export function entryProvenance(entry: MemoryEntryView): string {
+  const scope = `${entry.scope.charAt(0).toUpperCase()}${entry.scope.slice(1)}`;
+  const source =
+    entry.origin === null
+      ? undefined
+      : ORIGIN_TEXT[entry.origin.slice(0, entry.origin.indexOf(':'))];
+  const parts = [`${scope} ${entry.kind}`, source ?? `by ${entry.author}`];
+  const approved =
+    entry.decidedBy !== null
+      ? `approved by ${entry.decidedBy}`
+      : entry.decidedByPolicy !== null
+        ? `approved by policy at rung ${entry.decidedByPolicy.rung}`
+        : null;
+  if (approved !== null) parts.push(approved);
+  parts.push(
+    entry.trust === 'human'
+      ? 'human-written'
+      : entry.trust === 'confirmed'
+        ? 'confirmed'
+        : approved === null
+          ? 'unreviewed'
+          : 'agent-written'
+  );
+  if (entry.state === 'stale') parts.push('stale');
+  if (entry.pinned) parts.push('pinned');
+  return parts.join(' · ');
+}

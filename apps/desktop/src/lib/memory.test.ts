@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   activityItems,
+  entryProvenance,
   memoryQueryKey,
   memoryQueryRootKey,
   memorySettingsModel,
@@ -281,5 +282,63 @@ open proposals    0 → 0`);
     expect(
       memorySettingsModel(health({ personal: null })).personalUnavailable
     ).toBeNull();
+  });
+});
+
+describe('entryProvenance', () => {
+  it('names the scope and kind, who wrote it, who approved it, and its trust', () => {
+    expect(
+      entryProvenance(
+        entry({
+          author: 'run:r-9f2c01',
+          trust: 'agent',
+          decidedBy: 'human:wyat',
+        })
+      )
+    ).toBe(
+      'Team hazard · by run:r-9f2c01 · approved by human:wyat · agent-written'
+    );
+    expect(
+      entryProvenance(
+        entry({
+          author: 'run:r-9f2c01',
+          trust: 'agent',
+          decidedByPolicy: { rung: 4, authorizedBy: 'rung' },
+        })
+      )
+    ).toBe(
+      'Team hazard · by run:r-9f2c01 · approved by policy at rung 4 · agent-written'
+    );
+    expect(entryProvenance(entry({ scope: 'project', kind: 'fact' }))).toBe(
+      'Project fact · by human:wyat · human-written'
+    );
+  });
+
+  it('says where an imported entry came from, and whether it is stale or pinned', () => {
+    expect(
+      entryProvenance(
+        entry({
+          origin: 'ledger:l-000001@2026-09-01T00:00:00.000Z',
+          author: 'agent:dispatch',
+          trust: 'agent',
+          state: 'stale',
+          pinned: true,
+        })
+      )
+    ).toBe('Team hazard · from the ledger · unreviewed · stale · pinned');
+    expect(
+      entryProvenance(
+        entry({
+          scope: 'personal',
+          origin: 'claude:dispatch/feedback.md',
+          trust: 'confirmed',
+        })
+      )
+    ).toBe('Personal hazard · from your Claude notes · confirmed');
+    expect(
+      entryProvenance(
+        entry({ origin: 'amendment:a-1@2026-09-01', trust: 'human' })
+      )
+    ).toBe('Team hazard · from a task amendment · human-written');
   });
 });

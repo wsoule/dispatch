@@ -78,8 +78,9 @@ import { useShellActions } from '../../shell/ShellActionsContext';
 import { useToasts } from '../../shell/Toasts';
 import { FindingsPanel } from '../detail/FindingsPanel';
 import { FixLoopSection } from '../detail/FixLoopSection';
-import { LedgerSection } from '../detail/LedgerSection';
 import { MainSection } from '../detail/MainSection';
+import { MemoryReachSection } from '../detail/MemoryReachSection';
+import { ReceiptsSection } from '../detail/ReceiptsSection';
 import { VerificationSection } from '../detail/VerificationSection';
 import { EnrichReview } from '../EnrichReview';
 import { EpicDagModal } from '../EpicDagModal';
@@ -865,10 +866,13 @@ export function TaskPage({
         />
       )}
 
-      {ledgerError !== null && (
-        <LoadError>Couldn&rsquo;t load the ledger: {ledgerError}</LoadError>
+      {client !== null && (
+        <MemoryReachSection client={client} port={port} taskId={doc.meta.id} />
       )}
-      <LedgerSection entries={ledgerEntries} />
+      {ledgerError !== null && (
+        <LoadError>Couldn&rsquo;t load receipts: {ledgerError}</LoadError>
+      )}
+      <ReceiptsSection entries={ledgerEntries} />
 
       {fixLoopError !== null && (
         <LoadError>Couldn&rsquo;t load the fix loop: {fixLoopError}</LoadError>
