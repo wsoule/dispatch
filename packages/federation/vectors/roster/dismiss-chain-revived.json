@@ -1,0 +1,294 @@
+{
+  "name": "dismiss-chain-revived",
+  "input": {
+    "founder": {
+      "replica": "ada-0000000a",
+      "seq": 1
+    },
+    "ops": [
+      {
+        "replica": "ada-0000000a",
+        "seq": 1,
+        "hlc": "1790380800000.0000.ada-0000000a",
+        "hash": "337864fcb4fc040ea3c81780466f6b0562ecc34d9107fd333e4ac9e5df35419a",
+        "body": {
+          "rv": 1,
+          "action": "found",
+          "name": "acme",
+          "legacy": [],
+          "recoveryPub": "6kpsY-KcUgq-9VB7Ey7F-ZVHdq6-vnuSQh7qaRRG0iw"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 2,
+        "hlc": "1790380800100.0000.ada-0000000a",
+        "hash": "106b56a79a67b057eaecfdaef2705e58e63f4b65cf92a1729760a6f662577c08",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "bob-0000000b",
+          "handle": "bob",
+          "role": "admin",
+          "fingerprint": "FP-bob-0000000b"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 3,
+        "hlc": "1790380800110.0000.ada-0000000a",
+        "hash": "af5bc19b2699c381ec921c64e6dc9b8b2f44586056c7bff6308181276328ed9f",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "cy-0000000c",
+          "handle": "cy",
+          "role": "admin",
+          "fingerprint": "FP-cy-0000000c"
+        }
+      },
+      {
+        "replica": "bob-0000000b",
+        "seq": 2,
+        "hlc": "1790380800200.0000.bob-0000000b",
+        "hash": "e5c12523b72d2f6e2f04758c1b03668cbfbf8b821018aa60e71cb61fd2450355",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "dee-0000000d",
+          "handle": "dee",
+          "role": "admin",
+          "fingerprint": "FP-dee-0000000d"
+        }
+      },
+      {
+        "replica": "dee-0000000d",
+        "seq": 2,
+        "hlc": "1790380800300.0000.dee-0000000d",
+        "hash": "175efc2e4a7467c0a4fe352b9d74e84d563dafb2a07e8a1c188012681c1228bf",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "bob-0000000f",
+          "handle": "bob",
+          "role": "member",
+          "fingerprint": "FP-bob-0000000f"
+        }
+      },
+      {
+        "replica": "cy-0000000c",
+        "seq": 2,
+        "hlc": "1790380800400.0000.cy-0000000c",
+        "hash": "c9d16c12d747f9bcd17329086797003c0072306e45a007201779e8e99d5ab848",
+        "body": {
+          "rv": 1,
+          "action": "role",
+          "replica": "dee-0000000d",
+          "role": "member",
+          "afterSeq": 2,
+          "afterHash": "h-dee-0000000d-2"
+        }
+      },
+      {
+        "replica": "bob-0000000b",
+        "seq": 3,
+        "hlc": "1790380800500.0000.bob-0000000b",
+        "hash": "e4d93074f27f00b44cf7f2c2e3e81440550a0927b758c1d1d74f4e15df0da90f",
+        "body": {
+          "rv": 1,
+          "action": "dismiss",
+          "replica": "cy-0000000c",
+          "seq": 2,
+          "hash": "c9d16c12d747f9bcd17329086797003c0072306e45a007201779e8e99d5ab848"
+        }
+      },
+      {
+        "replica": "dee-0000000d",
+        "seq": 3,
+        "hlc": "1790380800510.0000.dee-0000000d",
+        "hash": "f7c31ab3c7dd706e33c343b9b5a590ace67391099ce15b19ee8c7ba6eeb89a6f",
+        "body": {
+          "rv": 1,
+          "action": "dismiss",
+          "replica": "dee-0000000d",
+          "seq": 2,
+          "hash": "175efc2e4a7467c0a4fe352b9d74e84d563dafb2a07e8a1c188012681c1228bf"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 4,
+        "hlc": "1790380800120.0000.ada-0000000a",
+        "hash": "e182ae37247836fb62294c3bc9900ba64d6cdd5cde818824656ccd94af6d150a",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "ada-0000000e",
+          "handle": "ada",
+          "role": "admin",
+          "fingerprint": "FP-ada-0000000e"
+        }
+      },
+      {
+        "replica": "ada-0000000a",
+        "seq": 5,
+        "hlc": "1790380800130.0000.ada-0000000a",
+        "hash": "82f7c50c268d715e114fcaa135aff55b58616e935436af9d87df3b05a5d61cda",
+        "body": {
+          "rv": 1,
+          "action": "revoke",
+          "replica": "ada-0000000e",
+          "afterSeq": 1,
+          "afterHash": "h-ada-0000000e-1",
+          "reason": "test"
+        }
+      },
+      {
+        "replica": "ada-0000000e",
+        "seq": 2,
+        "hlc": "1790380800140.0000.ada-0000000e",
+        "hash": "016910247747420a9ba2e1fe10cef9a08427a585c724564c6fbd6f939ed352b7",
+        "body": {
+          "rv": 1,
+          "action": "admit",
+          "replica": "obs-00000010",
+          "handle": "obs",
+          "role": "admin",
+          "fingerprint": "FP-obs-00000010"
+        }
+      },
+      {
+        "replica": "obs-00000010",
+        "seq": 2,
+        "hlc": "1790380800520.0000.obs-00000010",
+        "hash": "0b7c23f8bc8ea0dfc559a5ec47f9d41d51cc8d9b4905d1f60424186077f47312",
+        "body": {
+          "rv": 1,
+          "action": "dismiss",
+          "replica": "ada-0000000a",
+          "seq": 2,
+          "hash": "106b56a79a67b057eaecfdaef2705e58e63f4b65cf92a1729760a6f662577c08"
+        }
+      }
+    ],
+    "keys": [
+      [
+        "ada-0000000a",
+        {
+          "replica": "ada-0000000a",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000a",
+          "fingerprint": "FP-ada-0000000a"
+        }
+      ],
+      [
+        "bob-0000000b",
+        {
+          "replica": "bob-0000000b",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000b",
+          "fingerprint": "FP-bob-0000000b"
+        }
+      ],
+      [
+        "cy-0000000c",
+        {
+          "replica": "cy-0000000c",
+          "handle": "cy",
+          "signPub": "sign-cy-0000000c",
+          "fingerprint": "FP-cy-0000000c"
+        }
+      ],
+      [
+        "dee-0000000d",
+        {
+          "replica": "dee-0000000d",
+          "handle": "dee",
+          "signPub": "sign-dee-0000000d",
+          "fingerprint": "FP-dee-0000000d"
+        }
+      ],
+      [
+        "bob-0000000f",
+        {
+          "replica": "bob-0000000f",
+          "handle": "bob",
+          "signPub": "sign-bob-0000000f",
+          "fingerprint": "FP-bob-0000000f"
+        }
+      ],
+      [
+        "ada-0000000e",
+        {
+          "replica": "ada-0000000e",
+          "handle": "ada",
+          "signPub": "sign-ada-0000000e",
+          "fingerprint": "FP-ada-0000000e"
+        }
+      ],
+      [
+        "obs-00000010",
+        {
+          "replica": "obs-00000010",
+          "handle": "obs",
+          "signPub": "sign-obs-00000010",
+          "fingerprint": "FP-obs-00000010"
+        }
+      ]
+    ],
+    "now": "2026-09-27T00:00:00.000Z",
+    "licensePublicKey": null
+  },
+  "expect": {
+    "members": [
+      ["ada-0000000a", "admin", 0, [], false, false],
+      ["bob-0000000b", "admin", 1, [], false, false],
+      ["cy-0000000c", "admin", 2, [], false, false],
+      ["dee-0000000d", "admin", 3, [], false, false]
+    ],
+    "revoked": [
+      [
+        "ada-0000000e",
+        {
+          "afterSeq": 1,
+          "afterHash": "h-ada-0000000e-1",
+          "handle": "ada",
+          "hosts": [],
+          "observer": false
+        }
+      ]
+    ],
+    "hostCuts": [],
+    "resolution": [
+      [
+        "82f7c50c268d715e114fcaa135aff55b58616e935436af9d87df3b05a5d61cda",
+        "accepted"
+      ]
+    ],
+    "pending": ["bob-0000000f", "obs-00000010"],
+    "invites": [],
+    "invitedBy": [],
+    "seats": 3,
+    "people": ["ada", "bob", "cy", "dee"],
+    "covered": ["ada", "bob", "cy"],
+    "closedBy": null,
+    "transport": {
+      "kind": "git"
+    },
+    "dismissed": [
+      {
+        "replica": "cy-0000000c",
+        "seq": 2,
+        "hash": "c9d16c12d747f9bcd17329086797003c0072306e45a007201779e8e99d5ab848",
+        "by": "bob-0000000b"
+      },
+      {
+        "replica": "dee-0000000d",
+        "seq": 2,
+        "hash": "175efc2e4a7467c0a4fe352b9d74e84d563dafb2a07e8a1c188012681c1228bf",
+        "by": "dee-0000000d"
+      }
+    ],
+    "unknown": null
+  }
+}

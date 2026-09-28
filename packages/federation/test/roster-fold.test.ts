@@ -697,6 +697,45 @@ describe('foldRoster', () => {
     });
   });
 
+  it('keeps a dismiss that rests on another dismiss an invalid one knocked out', () => {
+    const admitB = admit(A, 2, 100, B, 'admin');
+    const admitB2 = admit(D, 2, 300, B2);
+    const demotion = demote(C, 2, 400, D, 2);
+    const base = [
+      admitB,
+      admit(A, 3, 110, C, 'admin'),
+      admit(B, 2, 200, D, 'admin'),
+      admitB2,
+      demotion,
+      // B lifts D's demotion, so D may dismiss its own admission of B2.
+      dismiss(B, 3, 500, demotion),
+      dismiss(D, 3, 510, admitB2),
+    ];
+    // A2 as a plain member, and OBS, which only the revoked A2 made an admin.
+    const cases = [
+      { extra: [admit(A, 4, 120, A2)], invalid: dismiss(A2, 2, 520, admitB) },
+      {
+        extra: [
+          admit(A, 4, 120, A2, 'admin'),
+          revoke(A, 5, 130, A2, 1),
+          admit(A2, 2, 140, OBS, 'admin'),
+        ],
+        invalid: dismiss(OBS, 2, 520, admitB),
+      },
+    ];
+    for (const { extra, invalid } of cases) {
+      const expected = fold([...base, ...extra]);
+      expect(expected.members.has(B2)).toBe(false);
+      expect(expected.dismissed.map((d) => d.by)).toEqual([B, D]);
+      const v = fold([...base, ...extra, invalid]);
+      expect(rosterOf(v)).toEqual(rosterOf(expected));
+      expect(v.problems).toContainEqual({
+        subject: `op:${invalid.replica}:2`,
+        message: `${invalid.replica} may not dismiss ${A}'s roster op at seq 2; ignored`,
+      });
+    }
+  });
+
   it('gives a dismiss from a replica no admin ever made one no effect, the pause included', () => {
     // The founder hands admin to C and steps down; C dismissed the revoked B's junk.
     const admitC = admit(A, 2, 100, C, 'admin');

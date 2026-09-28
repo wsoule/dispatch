@@ -320,3 +320,57 @@ describe('a dismiss from a replica that is never an admin', () => {
     }
   }, 60_000);
 });
+
+// The dismisses a fold ignored, each named by its "may not dismiss" problem.
+function ignoredDismisses(input: FoldInput): RosterOpRef[] {
+  const subjects = new Set(
+    foldRoster(input)
+      .problems.filter((p) => p.message.includes(' may not dismiss '))
+      .map((p) => p.subject)
+  );
+  return input.ops.filter(
+    (o) =>
+      o.body.action === 'dismiss' && subjects.has(`op:${o.replica}:${o.seq}`)
+  );
+}
+
+// The roster, less the dismissal of `gone`, which names nothing once it is gone.
+function withoutOp(input: FoldInput, gone: RosterOpRef): unknown {
+  const v = foldRoster(input);
+  const dismissed = v.dismissed.filter((d) => d.hash !== gone.hash);
+  const { unknown: _paused, ...rest } = normalize({
+    ...v,
+    dismissed,
+  }) as Record<string, unknown>;
+  return rest;
+}
+
+describe('a dismiss the fold ignores', () => {
+  it('changes no roster on random rosters dense with dismisses', () => {
+    let checked = 0;
+    for (let seed = 1; seed <= 1500; seed++) {
+      const input = randomRoster(mulberry32(seed), 0.35);
+      for (const d of ignoredDismisses(input)) {
+        checked++;
+        // In its place, a dismiss naming no op, so the publisher's first op stays put.
+        const blank = op(d.replica, d.seq, 0, {
+          action: 'dismiss',
+          replica: d.replica,
+          seq: 0,
+          hash: 'f'.repeat(64),
+        });
+        const without = {
+          ...input,
+          ops: input.ops.map((o) => (o === d ? { ...blank, hlc: d.hlc } : o)),
+        };
+        expect({ seed, d: d.hash, roster: withoutOp(without, d) }).toEqual({
+          seed,
+          d: d.hash,
+          roster: withoutOp(input, d),
+        });
+      }
+    }
+    // Enough ignored dismisses must turn up for the check to mean something.
+    expect(checked).toBeGreaterThan(1000);
+  }, 120_000);
+});

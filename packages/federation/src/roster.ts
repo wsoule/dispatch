@@ -225,27 +225,18 @@ export function foldRoster(input: FoldInput): RosterView {
   const dismisses = dismissesOf(input, items);
   // Every unreadable op a resolved fold held pauses: dismisses were judged there.
   const paused = new Set<Item>();
-  const folds = foldsWithout(input, items, paused);
-  // Each dismiss is judged in a fold without the ops the effective ones name;
-  // those that fail there stop standing, a few at a time, until none fails.
-  let standing = dismisses.filter((d) => d.target !== null);
-  for (;;) {
-    const round = folds(standing);
-    const failing = standing.filter((d) => !round.allows(d));
-    if (failing.length === 0) {
-      const { ctx, ev, resolution } = round.resolved();
-      return viewOf(ctx, ev, resolution, {
-        dismisses,
-        standing,
-        effect: round.effect,
-        paused,
-      });
-    }
-    const drop = new Set(
-      failing.length === 1 ? failing : hopeless(folds, standing, failing)
-    );
-    standing = standing.filter((d) => !drop.has(d));
-  }
+  const { round, standing } = settle(
+    foldsWithout(input, items, paused),
+    dismisses,
+    dependence(items, dismisses)
+  );
+  const { ctx, ev, resolution } = round.resolved();
+  return viewOf(ctx, ev, resolution, {
+    dismisses,
+    standing,
+    effect: round.effect,
+    paused,
+  });
 }
 
 // A fold without the ops some standing dismisses take out, resolved on first
@@ -254,6 +245,8 @@ interface Fold {
   effect: readonly Dismiss[];
   resolved: () => Resolved;
   allows: (d: Dismiss) => boolean;
+  /** Whether a removal by one who outranks a dismiss's publisher cuts it here. */
+  held: (d: Dismiss) => boolean;
 }
 
 interface Resolved {
@@ -263,6 +256,8 @@ interface Resolved {
 }
 
 type Folds = (standing: readonly Dismiss[]) => Fold;
+// Whether restoring what `e` names can change whether `d` passes.
+type DependsOn = (d: Dismiss, e: Dismiss) => boolean;
 
 // Folds without what a set of standing dismisses takes out, each resolved once
 // however often the loop asks; every unreadable op one holds goes in `paused`.
@@ -291,7 +286,9 @@ function foldsWithout(
       (grants.get(d.item.op.replica) ?? []).some((g) => !named.has(g));
     const allows = (d: Dismiss): boolean =>
       granted(d) && mayDismiss(resolved().ev, d);
-    return { effect, resolved, allows };
+    const held = (d: Dismiss): boolean =>
+      granted(d) && heldDown(resolved().ev, d.item.op);
+    return { effect, resolved, allows, held };
   };
 }
 
@@ -323,19 +320,112 @@ function madeAdmin({ op, body }: Item): string | null {
   return null;
 }
 
-// The failing dismisses to drop: those that still fail with the other failing
-// ones' targets back, else all of them.
-function hopeless(
+// Whether another replica that outranked op's publisher where it cut it holds
+// an accepted revocation or demotion of it below op, which it cannot dismiss.
+function heldDown(ev: Evaluation, op: RosterOpRef): boolean {
+  return (ev.cutsOn.get(op.replica) ?? []).some(
+    (c) =>
+      c.kind !== 'hosts' &&
+      c.afterSeq < op.seq &&
+      c.op.replica !== op.replica &&
+      compareRank(
+        ev,
+        { replica: c.op.replica, seq: c.op.seq, pos: c.op },
+        { replica: op.replica, seq: c.afterSeq, pos: c.op }
+      ) < 0
+  );
+}
+
+// Drops the dismisses that fail in the fold the standing ones leave, and brings
+// back a dropped one that passes in the fold where it takes effect.
+function settle(
   folds: Folds,
+  dismisses: readonly Dismiss[],
+  dependsOn: DependsOn
+): { round: Fold; standing: readonly Dismiss[] } {
+  const all = dismisses.filter((d) => d.target !== null);
+  const drops = new Map<Dismiss, number>();
+  let standing: readonly Dismiss[] = all;
+  for (;;) {
+    const round = folds(standing);
+    const failing = standing.filter((d) => !round.allows(d));
+    if (failing.length > 0) {
+      const drop = toDrop(folds, round, standing, failing, dependsOn);
+      for (const d of drop) drops.set(d, (drops.get(d) ?? 0) + 1);
+      standing = standing.filter((d) => !drop.has(d));
+      continue;
+    }
+    // Each comes back once at most, so ones that knock each other out settle;
+    // one an outranking removal holds down stays out unchecked.
+    const kept = new Set(standing);
+    const back = all.filter(
+      (d) =>
+        !kept.has(d) &&
+        drops.get(d) === 1 &&
+        !round.held(d) &&
+        folds([...standing, d]).allows(d)
+    );
+    if (back.length === 0) return { round, standing };
+    for (const d of back) kept.add(d);
+    standing = all.filter((d) => kept.has(d));
+  }
+}
+
+// Of several failing dismisses, those an outranking removal holds down go
+// first, since they fail whatever the others name; else the hopeless ones.
+function toDrop(
+  folds: Folds,
+  round: Fold,
   standing: readonly Dismiss[],
-  failing: readonly Dismiss[]
-): readonly Dismiss[] {
-  const others = new Set(failing);
+  failing: readonly Dismiss[],
+  dependsOn: DependsOn
+): ReadonlySet<Dismiss> {
+  if (failing.length === 1) return new Set(failing);
+  const held = failing.filter((d) => round.held(d));
+  if (held.length > 0) return new Set(held);
+  // Those that still fail with the targets of the failing ones they depend on
+  // back, else all; settle brings back any the fold it reaches lets pass.
   const still = failing.filter((d) => {
-    const alone = standing.filter((s) => s === d || !others.has(s));
-    return !folds(alone).allows(d);
+    const back = new Set(failing.filter((e) => e !== d && dependsOn(d, e)));
+    return (
+      back.size === 0 || !folds(standing.filter((s) => !back.has(s))).allows(d)
+    );
   });
-  return still.length > 0 ? still : failing;
+  return new Set(still.length > 0 ? still : failing);
+}
+
+// A dismiss depends on another when what the other names can reach, through
+// admissions, promotions and removals, its publisher or the named op's.
+function dependence(
+  items: readonly Item[],
+  dismisses: readonly Dismiss[]
+): DependsOn {
+  const reach = reachOf(items, true);
+  const byItem = new Map(dismisses.map((d) => [d.item, d]));
+  // The replicas an op grants or cuts rights of; null when it could be any.
+  const subjects = (item: Item): readonly string[] | null => {
+    const { op, body } = item;
+    if (body === 'unknown' || isAction(body, 'recovery-key')) return null;
+    if (isAction(body, 'recover')) return [op.replica];
+    if (isAction(body, 'dismiss')) {
+      const named = byItem.get(item)?.target ?? null;
+      return named === null ? [] : subjects(named);
+    }
+    if (
+      isAction(body, 'admit') ||
+      isAction(body, 'role') ||
+      isAction(body, 'revoke')
+    )
+      return [body.replica];
+    return [];
+  };
+  return (d, e) => {
+    if (d.target === null || e.target === null) return false;
+    const of = subjects(e.target);
+    if (of === null) return true;
+    const who = [d.item.op.replica, d.target.op.replica];
+    return of.some((x) => who.some((w) => reach(x).has(w)));
+  };
 }
 
 // The standing dismisses that take effect: each unless an effective one names
@@ -375,9 +465,8 @@ function resolve(ctx: Context): {
   const status = new Map<Removal, Status>(removals.map((r) => [r, 'open']));
   const having = (...wanted: Status[]) =>
     removals.filter((r) => wanted.includes(status.get(r) ?? 'void'));
-  // Fight winners, which stand, and removals once sent back to waiting. A winner
-  // stays even if a removal accepted later cuts its publisher: voiding it would
-  // bring back the removal it beat, and the resolution would never settle.
+  // Fight winners stand, even if a later accepted removal cuts their publisher,
+  // or the removals they beat would return and never settle; and those sent back.
   const won = new Set<Removal>();
   const demoted = new Set<Removal>();
 
@@ -636,10 +725,11 @@ function contextOf(
   };
 }
 
-// Admissions and promotions link a publisher to their targets; a recover or a
-// recovery key links to every recovering replica, since they share one code.
+// Admissions, promotions and, with `revokes`, revocations link a publisher to
+// its targets; a recover or a recovery key links to every recovering replica.
 function reachOf(
-  items: readonly Item[]
+  items: readonly Item[],
+  revokes = false
 ): (replica: string) => ReadonlySet<string> {
   const links = new Map<string, Set<string>>();
   const link = (from: string, to: string): void => {
@@ -651,7 +741,11 @@ function reachOf(
     .filter((i) => isAction(i.body, 'recover'))
     .map((i) => i.op.replica);
   for (const { op, body } of items) {
-    if (isAction(body, 'admit') || isAction(body, 'role'))
+    if (
+      isAction(body, 'admit') ||
+      isAction(body, 'role') ||
+      (revokes && isAction(body, 'revoke'))
+    )
       link(op.replica, body.replica);
     else if (isAction(body, 'recover') || isAction(body, 'recovery-key'))
       for (const r of recovering) link(op.replica, r);

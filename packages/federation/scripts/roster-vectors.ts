@@ -157,6 +157,11 @@ const B_PROMOTES = op(B, 2, 200, { action: 'role', replica: D, role: 'admin' });
 // The revoked B's junk, which the founder dismisses.
 const B_JUNK = op(B, 2, 300, { action: 'teleport' });
 const JUNK_DISMISSED = dismiss(A, 4, 400, B_JUNK);
+// B lifts D's demotion, so D may dismiss its admission of B2; OBS, which only
+// the revoked A2 made an admin, names B's admission.
+const ADMIT_B = admit(A, 2, 100, B, 'admin');
+const ADMIT_B2 = admit(D, 2, 300, B2);
+const D_DEMOTED = demote(C, 2, 400, D, 2);
 // C dismisses its admission of D, and the founder undoes that dismiss.
 const ADMIT_D = admit(C, 2, 200, D);
 const C_DISMISSES_D = dismiss(C, 3, 300, ADMIT_D);
@@ -513,6 +518,19 @@ export const SCENARIOS: readonly RosterScenario[] = [
     JUNK_DISMISSED,
     dismiss(B, 3, 410, JUNK_DISMISSED),
     dismiss(C, 2, 440, JUNK_DISMISSED),
+  ]),
+  scenario('dismiss-chain-revived', [
+    ADMIT_B,
+    admit(A, 3, 110, C, 'admin'),
+    admit(B, 2, 200, D, 'admin'),
+    ADMIT_B2,
+    D_DEMOTED,
+    dismiss(B, 3, 500, D_DEMOTED),
+    dismiss(D, 3, 510, ADMIT_B2),
+    admit(A, 4, 120, A2, 'admin'),
+    revoke(A, 5, 130, A2, 1),
+    admit(A2, 2, 140, OBS, 'admin'),
+    dismiss(OBS, 2, 520, ADMIT_B),
   ]),
   // The founder handed admin to C; the revoked B, the member D and the pending
   // B2 each name C's admission, which pauses nothing.
