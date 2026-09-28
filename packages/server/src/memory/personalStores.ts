@@ -71,6 +71,7 @@ export class PersonalStores {
   private readonly dir: string;
   private readonly fts: 'auto' | 'off';
   private readonly stores = new Map<string, OpenStore>();
+  private readonly openers = new Set<() => void>();
 
   constructor(opts: { dir: string; fts?: 'auto' | 'off' }) {
     this.dir = opts.dir;
@@ -99,6 +100,14 @@ export class PersonalStores {
 
   opened(): string[] {
     return [...this.stores.keys()].sort();
+  }
+
+  /** Calls `listener` after each store opens from now on; returns its removal. */
+  onOpen(listener: () => void): () => void {
+    this.openers.add(listener);
+    return () => {
+      this.openers.delete(listener);
+    };
   }
 
   // Where `identity`'s database lives, whether or not it is open.
@@ -137,6 +146,13 @@ export class PersonalStores {
   private open(identity: string): OpenStore {
     const cached = this.stores.get(identity);
     if (cached !== undefined) return cached;
+    const entry = this.load(identity);
+    this.stores.set(identity, entry);
+    for (const listener of this.openers) listener();
+    return entry;
+  }
+
+  private load(identity: string): OpenStore {
     try {
       if (!IDENTITY_PATTERN.test(identity))
         throw new Error(
@@ -151,9 +167,7 @@ export class PersonalStores {
       const opened = openMemoryDb(this.pathOf(identity), {
         fts: this.fts,
       });
-      const entry = { db: opened.db, store: new SqliteMemoryStore(opened) };
-      this.stores.set(identity, entry);
-      return entry;
+      return { db: opened.db, store: new SqliteMemoryStore(opened) };
     } catch (err) {
       throw new MemoryError(
         'unavailable',

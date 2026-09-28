@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import type { Principal } from '@dispatch/memory';
+import type { DeliveryEngine } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -9,10 +10,31 @@ import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { openMemory, overseerMemory } from '../../src/memory/service.js';
+import type { OpenMemoryDeps } from '../../src/memory/service.js';
+import { GateHandlers } from '../../src/messaging/gates.js';
 import { waitFor } from '../messaging/harness.js';
 import { BEFORE_CUTOVER, quietDaemon, seedLedger } from './fixtures.js';
 
-function setup() {
+const pause = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
+// Messaging with no gate open, enough for recover()'s stray-gate check.
+function noOpenGates(): OpenMemoryDeps['messaging'] {
+  const engine = new Proxy(
+    {},
+    {
+      get: (_, prop) => {
+        if (prop === 'openBlocking') return () => [];
+        throw new Error('this test raises no gates');
+      },
+    }
+  ) as DeliveryEngine;
+  return { engine, gates: new GateHandlers() };
+}
+
+function setup(over: Partial<OpenMemoryDeps> = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'memory-service-')));
   const store = TaskStore.init(root);
   const events = new EventBus();
@@ -26,6 +48,7 @@ function setup() {
     ledgerStore,
     ...quietDaemon(root),
     dbPath: join(root, 'memory.db'),
+    ...over,
   });
   return { root, memory, ledgerStore, events, seen };
 }
@@ -106,11 +129,28 @@ describe('openMemory', () => {
     memory.close();
   });
 
-  it('sweeps memory.db when it opens and backs it up beside the file', async () => {
-    const t = setup();
+  // The first pass follows recover(), so it never races the gate recovery
+  // and messaging replay that boot runs before it.
+  it('sweeps memory.db once recover() has run, never before', async () => {
+    const t = setup({ messaging: noOpenGates() });
+    const bak = join(t.root, 'memory.db.bak');
+    await pause(30);
+    expect(existsSync(bak)).toBe(false);
+    expect(t.memory.health(null).lastDecayAt).toBeNull();
+    await t.memory.recover();
+    await waitFor(() => existsSync(bak));
     expect(t.memory.health(null).lastDecayAt).not.toBeNull();
-    await waitFor(() => existsSync(join(t.root, 'memory.db.bak')));
     t.memory.close();
+  });
+
+  it('sweeps nothing once closed', async () => {
+    const t = setup();
+    t.memory.close();
+    const reopened = t.memory.personal.personal('self');
+    await pause(30);
+    expect(reopened.meta('last_decay_at')).toBeNull();
+    expect(existsSync(join(t.root, 'personal', 'self.db.bak'))).toBe(false);
+    t.memory.personal.close();
   });
 
   it('never announces personal ids', () => {

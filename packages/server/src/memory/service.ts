@@ -69,7 +69,7 @@ export interface MemoryService extends MemoryPromptPort {
   requireEngine(): MemoryEngine;
   importLedger(opts?: { dryRun?: boolean }): LedgerImportReport | null;
   lastLedgerImport(): LedgerImportReport | null;
-  /** Boot, after messaging.recover(): raises gates a crash left unsent, then closes strays. */
+  /** Boot, after messaging.recover(): raises unsent gates, closes strays, then starts decay. */
   recover(): Promise<{ raised: number; closed: number }>;
   health(principal: Principal | null): MemoryHealth;
   close(): void;
@@ -357,12 +357,20 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     lastLedgerImport: () => last,
     promptSection,
     recover: async () => {
-      if (engine === null || shared === null) return { raised: 0, closed: 0 };
-      const { raised } = await raisePending();
-      return {
-        raised,
-        closed: closeStrayMemoryGates(deps.messaging.engine, shared),
-      };
+      try {
+        if (engine === null || shared === null) return { raised: 0, closed: 0 };
+        const { raised } = await raisePending();
+        return {
+          raised,
+          closed: closeStrayMemoryGates(deps.messaging.engine, shared),
+        };
+      } finally {
+        void decay
+          .runDue()
+          .catch((err: unknown) =>
+            console.error('dispatchd: memory decay pass failed', err)
+          );
+      }
     },
     health: (principal) => ({
       available: shared !== null,

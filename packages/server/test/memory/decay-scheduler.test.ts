@@ -1,6 +1,11 @@
 import { DEFAULT_MEMORY } from '@dispatch/core';
 import { createMemoryIds, insertFresh, newMemoryEntry } from '@dispatch/memory';
-import type { MemoryScope, MemoryStore, Principal } from '@dispatch/memory';
+import type {
+  MemoryEntry,
+  MemoryScope,
+  MemoryStore,
+  Principal,
+} from '@dispatch/memory';
 import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import type { DeliveryEngine, Message } from '@dispatch/protocol';
 import { describe, expect, it } from 'bun:test';
@@ -39,10 +44,21 @@ const later = (days: number) => () => new Date(Date.now() + days * DAY);
 const memoryGates = (engine: DeliveryEngine): Message[] =>
   engine.openBlocking().filter((m) => gateOf(m)?.type === 'memory');
 
+const OTHER = `pid-${'A'.repeat(26)}`;
+
+const pause = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 // An entry last changed `daysAgo` days ago, never recalled.
-function idle(store: MemoryStore, scope: MemoryScope, daysAgo: number): void {
+function idle(
+  store: MemoryStore,
+  scope: MemoryScope,
+  daysAgo: number
+): MemoryEntry {
   const at = new Date(Date.now() - daysAgo * DAY).toISOString();
-  insertFresh(
+  return insertFresh(
     store,
     createMemoryIds(),
     Date.now(),
@@ -65,6 +81,21 @@ function idle(store: MemoryStore, scope: MemoryScope, daysAgo: number): void {
 }
 
 type Deps = Parameters<typeof startDecayScheduler>[0];
+
+// A one-at-a-time queue like the service's, holding the step ahead of the
+// sweep's until released.
+function heldQueue() {
+  let release = () => {};
+  let queue: Promise<unknown> = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const serial = <T>(step: () => Promise<T>): Promise<T> => {
+    const next = queue.then(step, step);
+    queue = next;
+    return next;
+  };
+  return { serial, release: () => release() };
+}
 
 // Starts a scheduler, runs `passes` passes one after another, then stops it.
 async function sweep(deps: Deps, passes = 1) {
@@ -100,6 +131,7 @@ async function setup() {
     config: () => DEFAULT_MEMORY,
     host: t.host,
     sharedPath: dbPath,
+    serial: (step) => step(),
   };
   return {
     ...t,
@@ -242,7 +274,7 @@ describe('startDecayScheduler', () => {
     s.close();
   });
 
-  it('ages memory.db and every opened personal store, announcing one change per store', async () => {
+  it('ages memory.db and every opened personal store, announcing each scope that changed', async () => {
     const s = await setup();
     idle(s.shared, 'team', 61);
     idle(s.shared, 'project', 61);
@@ -254,7 +286,22 @@ describe('startDecayScheduler', () => {
       expired: 1,
       skipped: [],
     });
-    expect(s.host.changes).toEqual([{ scope: 'team' }, { scope: 'personal' }]);
+    expect(s.host.changes).toEqual([
+      { scope: 'project' },
+      { scope: 'team' },
+      { scope: 'personal' },
+    ]);
+    s.close();
+  });
+
+  it('announces a project change when only a project proposal expired', async () => {
+    const s = await setup();
+    const p = storedProposal(s.shared, 'a project lesson nobody decided');
+    s.shared.updateProposal({ ...p, scope: 'project' });
+    s.host.changes.length = 0;
+    await sweep({ ...s.deps, now: later(15) });
+    expect(s.shared.getProposal(p.id)?.state).toBe('expired');
+    expect(s.host.changes).toEqual([{ scope: 'project' }]);
     s.close();
   });
 
@@ -281,31 +328,115 @@ describe('startDecayScheduler', () => {
     s.close();
   });
 
-  it('sweeps at start only when memory.db was last swept over 24 hours ago', async () => {
+  it('treats a stamp from the future as due, and one under a day old as not', async () => {
     const s = await setup();
-    const recent = new Date(Date.now() - 23 * HOUR).toISOString();
-    s.shared.setMeta('last_decay_at', recent);
-    startDecayScheduler(s.deps).stop();
-    expect(s.shared.meta('last_decay_at')).toBe(recent);
-    const old = new Date(Date.now() - 25 * HOUR).toISOString();
-    s.shared.setMeta('last_decay_at', old);
+    const at = (hours: number) =>
+      new Date(Date.now() + hours * HOUR).toISOString();
+    s.personal.personal('self').setMeta('last_decay_at', at(2));
+    s.shared.setMeta('last_decay_at', at(-23));
     const scheduler = startDecayScheduler(s.deps);
-    await waitFor(() => existsSync(join(s.root, 'memory.db.bak')));
+    expect(await scheduler.runDue()).toMatchObject({ stores: 1, skipped: [] });
+    expect(existsSync(join(s.root, 'memory.db.bak'))).toBe(false);
+    s.shared.setMeta('last_decay_at', at(2));
+    expect(await scheduler.runDue()).toMatchObject({ stores: 1 });
+    expect(existsSync(join(s.root, 'memory.db.bak'))).toBe(true);
+    expect(await scheduler.runDue()).toMatchObject({ stores: 0 });
     scheduler.stop();
-    expect(s.shared.meta('last_decay_at')).not.toBe(old);
     s.close();
   });
 
-  it('sweeps again every intervalMs until stopped', async () => {
+  it('sweeps each store on the tick after its own stamp turns a day old, however long it has run', async () => {
+    const s = await setup();
+    let now = Date.now();
+    s.shared.setMeta('last_decay_at', new Date(now).toISOString());
+    s.personal
+      .personal('self')
+      .setMeta('last_decay_at', new Date(now).toISOString());
+    const bakFiles = [
+      join(s.root, 'memory.db.bak'),
+      join(s.root, 'personal', 'self.db.bak'),
+    ];
+    const present = () => bakFiles.filter((f) => existsSync(f));
+    const scheduler = startDecayScheduler({
+      ...s.deps,
+      now: () => new Date(now),
+      intervalMs: 10,
+    });
+    await pause(60);
+    expect(present()).toEqual([]);
+    now += 25 * HOUR;
+    await waitFor(() => present().length === bakFiles.length);
+    scheduler.stop();
+    for (const f of bakFiles) rmSync(f);
+    now += 25 * HOUR;
+    await pause(60);
+    expect(present()).toEqual([]);
+    s.close();
+  });
+
+  // A daemon rarely stays up a whole day, so a personal database cannot wait
+  // for a daily tick: it is swept as it opens once its own stamp is a day old.
+  it('sweeps a personal database as it first opens, unless someone swept it within the day', async () => {
+    const s = await setup();
+    const dir = join(s.root, 'personal');
+    const earlier = new PersonalStores({ dir });
+    const old = idle(earlier.personal('self'), 'personal', 200);
+    earlier.personal(OTHER).setMeta('last_decay_at', new Date().toISOString());
+    earlier.close();
+    s.shared.setMeta('last_decay_at', new Date().toISOString());
+    const scheduler = startDecayScheduler(s.deps);
+    await scheduler.runDue();
+    await scheduler.runNow();
+    expect(existsSync(join(dir, 'self.db.bak'))).toBe(false);
+    const self = s.personal.personal('self');
+    s.personal.personal(OTHER);
+    await waitFor(() => existsSync(join(dir, 'self.db.bak')));
+    expect(self.getEntry(old.id)?.decay).toBe('expired');
+    await pause(30);
+    expect(existsSync(join(dir, `${OTHER}.db.bak`))).toBe(false);
+    scheduler.stop();
+    s.close();
+  });
+
+  it('raises, on every tick, a gate that a failed send left off a young proposal', async () => {
     const s = await setup();
     s.shared.setMeta('last_decay_at', new Date().toISOString());
-    const bak = join(s.root, 'memory.db.bak');
-    const scheduler = startDecayScheduler({ ...s.deps, intervalMs: 10 });
-    await waitFor(() => existsSync(bak));
+    const p = storedProposal(s.shared, 'its gate never went out');
+    const scheduler = startDecayScheduler(s.deps);
+    expect(await scheduler.runDue()).toMatchObject({ stores: 0 });
     scheduler.stop();
-    rmSync(bak);
-    await new Promise((resolve) => setTimeout(resolve, 60));
-    expect(existsSync(bak)).toBe(false);
+    expect(s.shared.getProposal(p.id)?.gate).not.toBeNull();
+    expect(memoryGates(s.messaging.engine)).toHaveLength(1);
+    s.close();
+  });
+
+  it('expires proposals only once the steps queued ahead of it finish', async () => {
+    const s = await setup();
+    const p = storedProposal(s.shared, 'waiting behind gate recovery');
+    const held = heldQueue();
+    const scheduler = startDecayScheduler({
+      ...s.deps,
+      serial: held.serial,
+      now: later(15),
+    });
+    const pass = scheduler.runNow();
+    await pause(20);
+    expect(s.shared.getProposal(p.id)?.state).toBe('open');
+    held.release();
+    expect((await pass).proposalsExpired).toBe(1);
+    scheduler.stop();
+    s.close();
+  });
+
+  it('backs nothing up when stopped while expiry waits its turn', async () => {
+    const s = await setup();
+    const held = heldQueue();
+    const scheduler = startDecayScheduler({ ...s.deps, serial: held.serial });
+    const pass = scheduler.runNow();
+    scheduler.stop();
+    held.release();
+    expect((await pass).backups).toBe(0);
+    expect(existsSync(join(s.root, 'memory.db.bak'))).toBe(false);
     s.close();
   });
 });
