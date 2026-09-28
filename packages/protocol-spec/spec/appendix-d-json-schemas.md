@@ -34,9 +34,10 @@ another by a relative reference, so the schemas of one version refer only to
 each other.
 
 What the vector schema leaves to the runner: a file's class is its directory,
-ids are unique across the kit and never reused, each `$sN` names an earlier step
-that created a message, and a `render` row names a `render` step
-([§12.4](12-conformance.md#s12.4)).
+each vector's `class` is its file's, ids are unique across the kit and never
+reused, `then.steps` lists no more results than `when` has steps, each `$sN`
+names an earlier step that created a message, and a `render` row names a
+`render` step ([§12.4](12-conformance.md#s12.4)).
 
 ## D.2 Adapter messages
 

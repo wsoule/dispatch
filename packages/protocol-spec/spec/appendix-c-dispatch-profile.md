@@ -292,11 +292,14 @@ the sender why not. Either way the gate's effect is recorded as applied.
 
 The notices a wake sends its sender are:
 
-| Case                           | Body                                                                 |
-| ------------------------------ | -------------------------------------------------------------------- |
-| the wake failed                | `Could not wake <target>: <reason>. Your message is waiting for it.` |
-| the policy denied it           | `Waking <target> was not allowed. Your message is waiting for it.`   |
-| an approved gate found it done | `Not woken: task <id> is <state>.`                                   |
+| Case                                      | Body                                                                 |
+| ----------------------------------------- | -------------------------------------------------------------------- |
+| the wake failed                           | `Could not wake <target>: <reason>. Your message is waiting for it.` |
+| the policy denied it                      | `Waking <target> was not allowed. Your message is waiting for it.`   |
+| an approved gate found it cannot be woken | `Not woken: task <id> is <state>.`                                   |
+| an approved gate could not read it        | `Not woken: task <id> could not be read: <error>.`                   |
+
+`<state>` is `missing`, `an epic`, `landed` or `dropped`.
 
 Vectors: `core.wake.a-failed-wake-notice-names-the-reason`,
 `core.wake.deny-notice-says-waking-was-not-allowed`,
