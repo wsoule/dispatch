@@ -23,6 +23,12 @@ describe('notificationKindForMessage', () => {
     expect(notificationKindForMessage(q({ type: 'x-poll' }))).toBe('question');
   });
 
+  it('notifies a task proposal under approval', () => {
+    expect(notificationKindForMessage(q({ type: 'task-proposal' }))).toBe(
+      'approval'
+    );
+  });
+
   it('is null for anything that is not a blocking question', () => {
     expect(
       notificationKindForMessage({ kind: 'question', blocking: false })

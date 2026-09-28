@@ -121,6 +121,27 @@ describe('events mirror dispatchd', () => {
   });
 });
 
+// The client's GateData is hand-copied from @dispatch/protocol, which this
+// package does not import, so the protocol source is read as text too.
+describe('gate payloads mirror @dispatch/protocol', () => {
+  it('GateData has one variant per protocol GATE_TYPES entry', () => {
+    const envelope = readFileSync(
+      join(import.meta.dir, '..', '..', 'protocol', 'src', 'envelope.ts'),
+      'utf8'
+    );
+    const protocol = literals(
+      envelope,
+      /export const GATE_TYPES = \[([^\]]*)\]/
+    );
+    // The union runs to the first blank line; its members' own `;` would end a lazier match.
+    const body =
+      /export type GateData =([\s\S]*?)\n\n/.exec(clientSource())?.[1] ?? '';
+    const client = [...body.matchAll(/type: '([^']+)'/g)].map((m) => m[1]);
+    expect(protocol).not.toBeNull();
+    expect([...client].sort()).toEqual([...(protocol ?? [])].sort());
+  });
+});
+
 describe('plan types mirror dispatchd', () => {
   it('PlanSummary carries the fields the server list() map emits', () => {
     // The server's PlanSummary is defined by what list() actually maps, so

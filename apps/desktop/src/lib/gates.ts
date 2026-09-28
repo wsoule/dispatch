@@ -37,6 +37,7 @@ const GATE_TYPES: ReadonlySet<string> = new Set([
   'wake',
   'agent-registration',
   'overseer-action',
+  'task-proposal',
 ]);
 
 /** The open gates query (`GET /api/decisions/open`): what a deciding human is asked. */

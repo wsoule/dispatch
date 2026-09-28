@@ -76,6 +76,7 @@ export const GATE_TYPES = [
   'wake',
   'agent-registration',
   'overseer-action',
+  'task-proposal',
 ] as const;
 export type GateData =
   | {
@@ -102,6 +103,13 @@ export type GateData =
       conversation: string;
       actionId: string;
       summary: string;
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: Address;
+      message: string;
     };
 
 /** How validateSendInput judges gates. */

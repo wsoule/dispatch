@@ -774,6 +774,13 @@ export type GateData =
       conversation: string;
       actionId: string;
       summary: string;
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: string;
+      message: string;
     };
 
 export type AgentStatus = 'pending' | 'approved' | 'revoked';

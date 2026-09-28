@@ -356,6 +356,7 @@ const APPROVAL_GATES: ReadonlySet<string> = new Set([
   'wake',
   'agent-registration',
   'overseer-action',
+  'task-proposal',
 ]);
 
 /** The toggle a message notifies under; null when no human is being asked. */

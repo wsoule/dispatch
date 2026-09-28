@@ -35,4 +35,14 @@ describe('gateOf', () => {
     expect(gateOf({ data: [1] })).toBeNull();
     expect(gateOf({})).toBeNull();
   });
+
+  it('reads a task proposal as a gate', () => {
+    const data = {
+      type: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      message: 'm-root',
+    };
+    expect(gateOf({ data })?.type).toBe('task-proposal');
+  });
 });

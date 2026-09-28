@@ -310,6 +310,21 @@ describe('gateOf', () => {
     expect(gateOf({ ...question, data: { type: 'x-closed' } })).toBeNull();
     expect(gateOf({ ...question, data: ['scope'] })).toBeNull();
   });
+
+  it('reads a task proposal as a gate, never a plain run question', () => {
+    const proposal = {
+      ...question,
+      choices: ['approve', 'decline'],
+      data: {
+        type: 'task-proposal',
+        task: 't-a1b2c3',
+        proposedBy: 'agent:wyat/a2a.acme',
+        message: 'm-root',
+      },
+    };
+    expect(gateOf(proposal)?.type).toBe('task-proposal');
+    expect(toRunQuestion(proposal)).toBeNull();
+  });
 });
 
 describe('isSystemMarker', () => {

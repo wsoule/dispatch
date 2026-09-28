@@ -342,6 +342,28 @@ describe('deciding principals and raise authority (C5)', () => {
     await engine.send(wake, system);
   });
 
+  it('refuses a deciding human raising task-proposal, and lets the system', () => {
+    const proposal = {
+      to: ['human:wyat'],
+      kind: 'question' as const,
+      blocking: true,
+      choices: ['approve', 'decline'],
+      body: 'approve?',
+      data: {
+        type: 'task-proposal',
+        task: 't-a1b2c3',
+        proposedBy: 'agent:wyat/a2a.acme',
+        message: 'm-root',
+      },
+    };
+    expect(() => validateSendInput(proposal, 'human:wyat', true, null)).toThrow(
+      expect.objectContaining({ code: 'forbidden', field: 'data' })
+    );
+    expect(() =>
+      validateSendInput(proposal, SYSTEM_ADDRESS, true, null)
+    ).not.toThrow();
+  });
+
   it('keeps scope to sessions and widens memory to deciding humans', () => {
     expect(GATE_RAISERS).toMatchObject({
       scope: 'session',
