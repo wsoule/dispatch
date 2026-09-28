@@ -4,3 +4,11 @@ language: 'typescript'
 # Imported by cli/mcp/demo (library-layer packages), so graph-wise this is a
 # library despite running standalone under bun.
 layer: 'library'
+
+tasks:
+  # **/* is written out: an override that listed only the appendix would
+  # replace the inherited default inputs.
+  test:
+    inputs:
+      - '**/*'
+      - '/packages/protocol-spec/spec/appendix-a-daemon-api.md'

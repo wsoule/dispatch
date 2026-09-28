@@ -777,7 +777,7 @@ describe('messaging queries', () => {
         calls.push(`message ${id}`);
         return id === 'm-gone'
           ? Promise.resolve(msg(id))
-          : Promise.reject(new ApiError(`cannot read message ${id}`, 403));
+          : Promise.reject(new ApiError(`no message ${id}`, 404));
       },
       getThread: (id: string) => {
         calls.push(`thread ${id}`);
@@ -797,9 +797,7 @@ describe('messaging queries', () => {
       wrapper,
     });
     await waitFor(() => {
-      expect(hidden.result.current.error?.message).toBe(
-        'cannot read message m-hidden'
-      );
+      expect(hidden.result.current.error?.message).toBe('no message m-hidden');
       expect(gone.result.current.error?.message).toBe('no thread m-gone');
     });
     // m-hidden is also tried as a thread id once, which fails the same way.
@@ -818,7 +816,7 @@ describe('messaging queries', () => {
     const client = {
       getMessage: (id: string) => {
         calls.push(`message ${id}`);
-        return Promise.reject(new ApiError(`cannot read message ${id}`, 403));
+        return Promise.reject(new ApiError(`no message ${id}`, 404));
       },
       getThread: (id: string) => {
         calls.push(`thread ${id}`);

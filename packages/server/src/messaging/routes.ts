@@ -9,6 +9,7 @@ import type {
   Message,
   MessageKind,
   Ref,
+  Sender,
   SendInput,
 } from '@dispatch/protocol';
 import {
@@ -83,17 +84,9 @@ function canActAs(
   );
 }
 
-// Whether `principal` may read `message`: it or its task sent or received it
-// (canActAs already lets a deciding human act for any address).
-function isParticipant(
-  ctx: ApiContext,
-  principal: Principal,
-  message: Message
-): boolean {
-  if (canActAs(ctx, principal, message.from)) return true;
-  return ctx.messaging.store
-    .deliveries({ messageId: message.id })
-    .some((d) => canActAs(ctx, principal, d.recipient));
+// The engine's view of a principal, for its read rule and every send.
+function senderOf(principal: Principal): Sender {
+  return { address: principal.address, canDecide: principal.canDecide };
 }
 
 function isStringArray(value: unknown): value is string[] {
@@ -334,18 +327,21 @@ export async function sendMessage(
     idemKey === null
       ? parsedInput.value
       : { ...parsedInput.value, idempotencyKey: idemKey },
-    { address: principal.address, canDecide: principal.canDecide }
+    senderOf(principal)
   );
   return jsonResponse(result, result.replayed === true ? 200 : 201);
 }
 
-// GET /api/messages/:id
+// GET /api/messages/:id — a message the caller may not read answers exactly
+// as an absent id does, so its existence is not disclosed.
 export function getMessageById(ctx: ApiContext, id: string): Response {
   const principal = requirePrincipal(ctx);
   const message = ctx.messaging.engine.getMessage(id);
-  if (message === null) return errorResponse(404, `no message ${id}`);
-  if (!isParticipant(ctx, principal, message)) {
-    return errorResponse(403, `cannot read message ${id}`);
+  if (
+    message === null ||
+    !ctx.messaging.engine.canRead(id, senderOf(principal))
+  ) {
+    return errorResponse(404, `no message ${id}`);
   }
   return jsonResponse(message);
 }
@@ -362,10 +358,11 @@ export async function replyToMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseReplyInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
-  const result = await ctx.messaging.engine.reply(id, parsedInput.value, {
-    address: principal.address,
-    canDecide: principal.canDecide,
-  });
+  const result = await ctx.messaging.engine.reply(
+    id,
+    parsedInput.value,
+    senderOf(principal)
+  );
   return jsonResponse(result, 201);
 }
 
@@ -383,13 +380,11 @@ export function waitForAnswer(
 ): Promise<Response> {
   const principal = requirePrincipal(ctx);
   const question = ctx.messaging.engine.getMessage(id);
-  if (question === null) {
+  if (
+    question === null ||
+    !ctx.messaging.engine.canRead(id, senderOf(principal))
+  ) {
     return Promise.resolve(errorResponse(404, `no message ${id}`));
-  }
-  if (!isParticipant(ctx, principal, question)) {
-    return Promise.resolve(
-      errorResponse(403, `cannot read the answer to ${id}`)
-    );
   }
   const wait = url.searchParams.get('wait') === '1';
   if (wait && !canActAs(ctx, principal, question.from)) {
@@ -438,19 +433,14 @@ export function waitForAnswer(
   });
 }
 
-// GET /api/threads/:id — for a participant of any message in the thread, or a
-// deciding human, who can read any thread, even an empty or unknown one.
+// GET /api/threads/:id — for a deciding human or a participant of any message
+// in it; anyone else, and every caller of an empty thread, gets the absent-id 404.
 export function getThreadById(ctx: ApiContext, threadId: string): Response {
   const principal = requirePrincipal(ctx);
-  const thread = ctx.messaging.engine.thread(threadId);
-  const decidingHuman = principal.kind === 'human' && principal.canDecide;
-  if (
-    !decidingHuman &&
-    !thread.messages.some((m) => isParticipant(ctx, principal, m))
-  ) {
-    return errorResponse(403, `cannot read thread ${threadId}`);
+  if (!ctx.messaging.engine.canReadThread(threadId, senderOf(principal))) {
+    return errorResponse(404, `no message ${threadId}`);
   }
-  return jsonResponse(thread);
+  return jsonResponse(ctx.messaging.engine.thread(threadId));
 }
 
 const DEFAULT_RECENT_THREADS = 50;
