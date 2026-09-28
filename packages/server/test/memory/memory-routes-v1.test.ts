@@ -397,6 +397,48 @@ describe('A2A provenance', () => {
     );
     expect(await operatorOf(asked.runId)).toBeNull();
   });
+
+  it('a review run of an a2a-labelled task lists no project memory either', async () => {
+    await fetch(`${base}/api/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        scope: 'project',
+        kind: 'convention',
+        title: 'PROJECT-ONLY convention',
+        body: 'b',
+      }),
+    });
+    // Starts a review run on a fresh task and lists memory with its token.
+    const reviewTitles = async (labels: string[]): Promise<string[]> => {
+      const task = await json<{ meta: { id: string } }>(
+        await fetch(`${base}/api/tasks`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ title: 'reviewed', labels }),
+        })
+      );
+      await handle.orchestrator.dispatchAuxRun({
+        taskId: task.meta.id,
+        kind: 'review',
+        head: 'main',
+        executor: 'claude',
+        buildPrompt: () => 'review this',
+      });
+      return (
+        await json<{ entries: { title: string }[] }>(
+          await rawFetch(`${base}/api/memory`, {
+            headers: authHeaders(runToken()),
+          })
+        )
+      ).entries.map((e) => e.title);
+    };
+
+    expect(await reviewTitles([])).toContain('PROJECT-ONLY convention');
+    expect(await reviewTitles(['a2a'])).not.toContain(
+      'PROJECT-ONLY convention'
+    );
+  });
 });
 
 describe('the memory gate', () => {

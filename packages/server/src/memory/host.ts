@@ -23,6 +23,7 @@ import type { EventBus } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import type { RunMeta } from '../orchestrator/types.js';
 import { runOperator } from '../orchestrator/types.js';
 import { consultProjectPolicy } from '../policyEngine.js';
 import { memoryGateKind, raiseMemoryGate } from './gate.js';
@@ -92,8 +93,7 @@ export class DaemonMemoryHost implements MemoryHost {
     if (isA2AAgent(principal.address)) return null;
     if (principal.kind === 'human') return this.bind(principal.address);
     if (principal.kind === 'run') {
-      const runId = principal.address.slice('run:'.length);
-      const run = this.deps.orchestrator.list().find((r) => r.id === runId);
+      const run = this.runOf(principal);
       const op = run === undefined ? null : runOperator(run);
       return op === null ? null : this.bind(op);
     }
@@ -125,6 +125,17 @@ export class DaemonMemoryHost implements MemoryHost {
           principal.address.slice('run:'.length)
         )
       : null;
+  }
+
+  runTaskOf(principal: Principal): string | null {
+    return this.runOf(principal)?.taskId ?? null;
+  }
+
+  // A run principal's RunMeta, whatever its kind; undefined for anyone else.
+  private runOf(principal: Principal): RunMeta | undefined {
+    if (principal.kind !== 'run') return undefined;
+    const runId = principal.address.slice('run:'.length);
+    return this.deps.orchestrator.list().find((r) => r.id === runId);
   }
 
   // A bare refetch signal; personal changes never carry an id (spec, Privacy).
