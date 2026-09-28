@@ -4,10 +4,11 @@ import { describe, expect, it } from 'bun:test';
 import {
   autosaveDelay,
   beginDocSave,
+  CONFLICT_HOLD_MS,
   docSaveConflicted,
   docSaveFailed,
   docSaveSucceeded,
-  docShouldFlush,
+  docSealProblem,
   docShouldSave,
   editDocBuffer,
   isRefusal,
@@ -141,16 +142,26 @@ describe('docBuffer', () => {
     );
   });
 
-  it('holds autosave while the marked blocks remain, and resumes once they are resolved', () => {
+  it('review focus 1: holds autosave for a few idle seconds while the marked blocks remain, then saves them as they stand', () => {
     const conflict = conflictOf(
       'merge-conflict',
       { id: 'rev-5', n: 5, hash: 'h5', body: 'head\n', author: 'run:r-1' },
       '<<<<<<< head (rev 5, run:r-1)\nhead\n||||||| base (rev 1)\na\n=======\nmine\n>>>>>>> yours\n'
     );
     const b = docSaveConflicted(sent('mine\n'), conflict);
-    expect(docShouldSave(b)).toBe(false);
+    // A 409 stored nothing, so the marked text still saves once the hold runs out.
+    expect(docShouldSave(b)).toBe(true);
+    expect(autosaveDelay(b)).toBe(CONFLICT_HOLD_MS);
+    // A save in flight is waited out, not doubled.
+    expect(docShouldSave(beginDocSave(b))).toBe(false);
+    // Saves failing for longer than the hold keep their own backoff.
+    let failing = b;
+    for (let i = 0; i < 6; i += 1) {
+      failing = docSaveFailed(beginDocSave(failing), 'daemon went away', false);
+    }
+    expect(autosaveDelay(failing)).toBe(AUTOSAVE_DEBOUNCE_MS * 64);
     const resolved = editDocBuffer(b, 'head\nmine\n');
-    expect(docShouldSave(resolved)).toBe(true);
+    expect(autosaveDelay(resolved)).toBe(AUTOSAVE_DEBOUNCE_MS);
     const saved = docSaveSucceeded(
       beginDocSave(resolved),
       result('saved', { id: 'rev-6', n: 6, hash: 'h6' }),
@@ -163,17 +174,69 @@ describe('docBuffer', () => {
     expect(docShouldSave(tookHead)).toBe(false);
   });
 
-  it('review focus 1: leaving sends the held marked text rather than dropping it', () => {
+  it('keeps the banner up after the marked text saves, until the marker lines are gone', () => {
+    const marked =
+      '<<<<<<< head (rev 5, run:r-1)\nhead\n=======\nmine\n>>>>>>> yours\n';
+    const conflict = conflictOf(
+      'merge-conflict',
+      { id: 'rev-5', n: 5, hash: 'h5', body: 'head\n', author: 'run:r-1' },
+      marked
+    );
+    const banner = { headN: 5, headAuthor: 'run:r-1' };
+    const b = docSaveConflicted(sent('mine\n'), conflict);
+    const saved = docSaveSucceeded(
+      beginDocSave(b),
+      result('amended', { id: 'rev-6', n: 6, hash: 'h6' }),
+      null
+    );
+    expect(saved.buffer.status).toBe('clean');
+    expect(saved.conflict).toEqual(banner);
+    expect(editDocBuffer(editDocBuffer(saved, 'x\n'), marked).conflict).toEqual(
+      banner
+    );
+    const newer = {
+      rev: { id: 'rev-7', n: 7, hash: 'h7' },
+      text: `${marked}agent\n`,
+    };
+    expect(reloadIfClean(saved, newer).conflict).toEqual(banner);
+    const merged = docSaveSucceeded(
+      beginDocSave(b),
+      result(
+        'merged',
+        { id: 'rev-8', n: 8, hash: 'h8' },
+        { id: 'rev-6', n: 6, hash: 'h6' }
+      ),
+      `${marked}agent\n`
+    );
+    expect(merged.buffer.text).toBe(`${marked}agent\n`);
+    expect(merged.conflict).toEqual(banner);
+    const resolved = docSaveSucceeded(
+      beginDocSave(editDocBuffer(saved, 'head\nmine\n')),
+      result('amended', { id: 'rev-6', n: 6, hash: 'h9' }),
+      null
+    );
+    expect(resolved.conflict).toBeNull();
+  });
+
+  it('seals only once every save has landed and no marked blocks remain', () => {
+    const clean = openDocBuffer('doc-1', 'a\n', BASE);
+    expect(docSealProblem(clean)).toBeNull();
+    expect(docSealProblem(editDocBuffer(clean, 'a\nb\n'))).toBe(
+      'The latest text has not saved yet, so no version was saved.'
+    );
     const conflict = conflictOf(
       'merge-conflict',
       { id: 'rev-5', n: 5, hash: 'h5', body: 'head\n', author: 'run:r-1' },
       '<<<<<<< head (rev 5, run:r-1)\nhead\n=======\nmine\n>>>>>>> yours\n'
     );
-    const b = docSaveConflicted(sent('mine\n'), conflict);
-    expect(docShouldSave(b)).toBe(false);
-    expect(docShouldFlush(b)).toBe(true);
-    // A save in flight is waited out, not doubled.
-    expect(docShouldFlush(beginDocSave(b))).toBe(false);
+    const saved = docSaveSucceeded(
+      beginDocSave(docSaveConflicted(sent('mine\n'), conflict)),
+      result('amended', { id: 'rev-6', n: 6, hash: 'h6' }),
+      null
+    );
+    expect(docSealProblem(saved)).toBe(
+      'Resolve the marked blocks before saving a version.'
+    );
   });
 
   it('a failed save keeps the text and reports why', () => {
@@ -206,7 +269,6 @@ describe('docBuffer', () => {
   it('a refused save waits for the next keystroke instead of retrying', () => {
     const b = docSaveFailed(sent('mine\n'), 'archived; restore it first', true);
     expect(docShouldSave(b)).toBe(false);
-    expect(docShouldFlush(b)).toBe(false);
     const typed = editDocBuffer(b, 'mine\nmore\n');
     expect(docShouldSave(typed)).toBe(true);
     expect(autosaveDelay(typed)).toBe(AUTOSAVE_DEBOUNCE_MS);

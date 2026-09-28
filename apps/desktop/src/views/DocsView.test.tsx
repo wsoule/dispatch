@@ -5,6 +5,8 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { CONFLICT_HOLD_MS } from '../lib/docBuffer';
+import { AUTOSAVE_DEBOUNCE_MS } from '../lib/editorBuffer';
 import { DocsView } from './DocsView';
 
 const summary = {
@@ -210,11 +212,14 @@ interface Sent {
 }
 
 // Two docs in the list; every save is recorded, and `answer` replies to the nth.
+// A seal records how many saves had been sent by then; `reconnect` re-renders
+// the view with a new client, as a changed daemon connection does.
 function renderTwoDocs(
   answer: (n: number) => Promise<unknown>,
   getDoc?: (ref: string) => Promise<DocRead>
 ) {
   const saves: Sent[] = [];
+  const seals: number[] = [];
   const queryClient = new QueryClient();
   const client = {
     listDocs: () => Promise.resolve({ docs: [summary, other], total: 2 }),
@@ -226,19 +231,79 @@ function renderTwoDocs(
       saves.push({ ref, ...input });
       return answer(saves.length);
     },
+    sealDoc: () => {
+      seals.push(saves.length);
+      return Promise.resolve(summary);
+    },
   } as unknown as ApiClient;
-  const data = {
-    client,
-    port: 1,
-    messageAccess: { canDecide: true, canMessage: true, explanation: null },
-  } as unknown as DispatchProjectData;
-  render(
+  const view = (c: ApiClient) => (
     <QueryClientProvider client={queryClient}>
-      <DocsView data={data} />
+      <DocsView
+        data={
+          {
+            client: c,
+            port: 1,
+            messageAccess: {
+              canDecide: true,
+              canMessage: true,
+              explanation: null,
+            },
+          } as unknown as DispatchProjectData
+        }
+      />
     </QueryClientProvider>
   );
-  return { saves, queryClient };
+  const { rerender } = render(view(client));
+  const reconnect = () => rerender(view({ ...client } as ApiClient));
+  return { saves, seals, queryClient, reconnect };
 }
+
+const BANNER =
+  'Rev 2 by run:r-1 changed the same lines. Resolve the marked blocks, then save.';
+const MARKED =
+  '<<<<<<< head (rev 2, run:r-1)\nx\n=======\n# Auth\nmine\n>>>>>>> yours\n';
+
+// The first save answers 409 with MARKED against rev 2; later ones amend.
+const conflictThenAmend = (n: number) =>
+  Promise.resolve(
+    n === 1
+      ? {
+          ok: false,
+          conflict: {
+            code: 'conflict',
+            reason: 'merge-conflict',
+            head: {
+              id: 'rev-2',
+              n: 2,
+              hash: 'h2',
+              body: 'x\n',
+              author: 'run:r-1',
+            },
+            base: { id: 'rev-1', n: 1 },
+            hunks: [],
+            marked: MARKED,
+          },
+        }
+      : amended('h3')
+  );
+
+// Opens doc-1 as unsealed so Save version shows.
+const unsealed = (ref: string) =>
+  Promise.resolve({
+    ...read,
+    doc:
+      ref === 'doc-2'
+        ? other
+        : ({
+            ...summary,
+            head: { ...summary.head, sealed: false },
+          } as DocSummary),
+  } as DocRead);
+
+const wait = (ms: number) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 
 test('switching docs saves typing the debounce still held', async () => {
   const { saves } = renderTwoDocs(() => Promise.resolve(amended('h2')));
@@ -290,39 +355,11 @@ test('switching docs mid-save still saves what was typed after it', async () => 
 });
 
 test('review focus 1: switching docs under the conflict banner saves the marked text', async () => {
-  const marked =
-    '<<<<<<< head (rev 2, run:r-1)\nx\n=======\n# Auth\nmine\n>>>>>>> yours\n';
-  const { saves } = renderTwoDocs((n) =>
-    Promise.resolve(
-      n === 1
-        ? {
-            ok: false,
-            conflict: {
-              code: 'conflict',
-              reason: 'merge-conflict',
-              head: {
-                id: 'rev-2',
-                n: 2,
-                hash: 'h2',
-                body: 'x\n',
-                author: 'run:r-1',
-              },
-              base: { id: 'rev-1', n: 1 },
-              hunks: [],
-              marked,
-            },
-          }
-        : amended('h3')
-    )
-  );
+  const { saves } = renderTwoDocs(conflictThenAmend);
   fireEvent.click(await screen.findByText('Auth refactor'));
   const editor = await screen.findByLabelText('Editing auth');
   fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
-  await screen.findByText(
-    'Rev 2 by run:r-1 changed the same lines. Resolve the marked blocks, then save.',
-    {},
-    { timeout: 3000 }
-  );
+  await screen.findByText(BANNER, {}, { timeout: 3000 });
   fireEvent.click(screen.getByRole('button', { name: 'Plan' }));
   await screen.findByLabelText('Editing plan');
   await waitFor(() =>
@@ -333,9 +370,101 @@ test('review focus 1: switching docs under the conflict banner saves the marked 
         baseRev: 'rev-1',
         baseHash: 'h1',
       },
-      { ref: 'doc-1', body: marked, baseRev: 'rev-2', baseHash: 'h2' },
+      { ref: 'doc-1', body: MARKED, baseRev: 'rev-2', baseHash: 'h2' },
     ])
   );
+});
+
+test(
+  'review focus 1: the marked text saves after a few idle seconds, with the banner still up',
+  async () => {
+    const { saves } = renderTwoDocs(conflictThenAmend);
+    fireEvent.click(await screen.findByText('Auth refactor'));
+    const editor =
+      await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
+    fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
+    await screen.findByText(BANNER, {}, { timeout: 3000 });
+    // The hold outlasts the ordinary debounce, so resolving can start first.
+    await wait(AUTOSAVE_DEBOUNCE_MS * 2);
+    expect(saves.length).toBe(1);
+    await waitFor(() => expect(saves.length).toBe(2), {
+      timeout: CONFLICT_HOLD_MS + 1000,
+    });
+    expect(saves[1]).toEqual({
+      ref: 'doc-1',
+      body: MARKED,
+      baseRev: 'rev-2',
+      baseHash: 'h2',
+    });
+    await waitFor(() =>
+      expect(screen.getByText('Saved · rev 1')).toBeDefined()
+    );
+    expect(screen.getByText(BANNER)).toBeDefined();
+    expect(editor.value).toBe(MARKED);
+  },
+  CONFLICT_HOLD_MS + 5000
+);
+
+test('a changed daemon connection leaves the conflict hold in place', async () => {
+  const { saves, reconnect } = renderTwoDocs(conflictThenAmend);
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  const editor = await screen.findByLabelText('Editing auth');
+  fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
+  await screen.findByText(BANNER, {}, { timeout: 3000 });
+  reconnect();
+  await wait(AUTOSAVE_DEBOUNCE_MS);
+  expect(saves.length).toBe(1);
+  expect(screen.getByText(BANNER)).toBeDefined();
+});
+
+test('Save version waits out a save in flight, then seals what was typed', async () => {
+  let land: () => void = () => {};
+  const { saves, seals } = renderTwoDocs(
+    (n) =>
+      n === 1
+        ? new Promise((resolve) => {
+            land = () => resolve(amended('h2'));
+          })
+        : Promise.resolve(amended('h3')),
+    unsealed
+  );
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  const editor = await screen.findByLabelText('Editing auth');
+  fireEvent.change(editor, { target: { value: 'first\n' } });
+  await waitFor(() => expect(saves.length).toBe(1), { timeout: 3000 });
+  fireEvent.change(editor, { target: { value: 'first\nsecond\n' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save version' }));
+  await wait(50);
+  expect(seals).toEqual([]);
+  land();
+  await waitFor(() => expect(seals).toEqual([2]));
+  expect(saves[1]).toEqual({
+    ref: 'doc-1',
+    body: 'first\nsecond\n',
+    baseRev: 'rev-1',
+    baseHash: 'h2',
+  });
+});
+
+test('Save version under the conflict banner saves the marked text but seals nothing', async () => {
+  const { saves, seals } = renderTwoDocs(conflictThenAmend, unsealed);
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  const editor = await screen.findByLabelText('Editing auth');
+  fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
+  await screen.findByText(BANNER, {}, { timeout: 3000 });
+  fireEvent.click(screen.getByRole('button', { name: 'Save version' }));
+  expect(
+    await screen.findByText(
+      'Resolve the marked blocks before saving a version.'
+    )
+  ).toBeDefined();
+  expect(saves[1]).toEqual({
+    ref: 'doc-1',
+    body: MARKED,
+    baseRev: 'rev-2',
+    baseHash: 'h2',
+  });
+  expect(seals).toEqual([]);
 });
 
 test('a newer head that arrives mid-save shows once the save lands', async () => {

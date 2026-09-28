@@ -5,6 +5,7 @@ import {
   AUTOSAVE_DEBOUNCE_MS,
   beginSave,
   editBuffer,
+  hasUnsavedChanges,
   openBuffer,
   saveFailed,
   saveSucceeded,
@@ -31,9 +32,18 @@ export interface DocBuffer {
   refused: boolean;
 }
 
-// The marker lines a 409's text carries (Merge's labels), so autosave waits for
-// them to be resolved instead of saving them into the doc.
+// The marker lines a 409's text carries (Merge's labels), which hold autosave
+// and keep the banner up until they are resolved.
 const CONFLICT_MARKER = /^(?:<{7} head \(rev |\|{7} base \(rev |>{7} yours$)/m;
+
+// How long autosave waits idle before sending text that still has marker lines,
+// so resolving can start first; a 409 stored nothing, so it does send then.
+export const CONFLICT_HOLD_MS = 5_000;
+
+// The banner, kept while `text` still carries a 409's marker lines.
+function bannerIfMarked(b: DocBuffer, text: string): DocBuffer['conflict'] {
+  return b.conflict !== null && CONFLICT_MARKER.test(text) ? b.conflict : null;
+}
 
 export function openDocBuffer(
   doc: string,
@@ -50,33 +60,41 @@ export function openDocBuffer(
   };
 }
 
-// A keystroke, which also retries a refused save. Editing back to the head's
-// text settles a conflict: nothing is left to save.
+// A keystroke, which also retries a refused save. Editing back to saved text
+// with no marker lines settles a conflict: nothing is left to save.
 export function editDocBuffer(b: DocBuffer, text: string): DocBuffer {
   const buffer = editBuffer(b.buffer, text);
   return {
     ...b,
     buffer,
-    conflict: buffer.status === 'clean' ? null : b.conflict,
+    conflict: buffer.status === 'clean' ? bannerIfMarked(b, text) : b.conflict,
     failures: 0,
     refused: false,
   };
 }
 
-// Whether leaving the doc should send its text: marked blocks and all, since a
-// 409 stored nothing and the buffer is the only copy of the caller's side.
-export function docShouldFlush(b: DocBuffer): boolean {
+export function docShouldSave(b: DocBuffer): boolean {
   return !b.refused && shouldSave(b.buffer);
 }
 
-export function docShouldSave(b: DocBuffer): boolean {
-  if (b.conflict !== null && CONFLICT_MARKER.test(b.buffer.text)) return false;
-  return docShouldFlush(b);
+// The autosave wait: the debounce, doubled per failed save up to about 40 s,
+// and at least the conflict hold while marker lines remain.
+export function autosaveDelay(b: DocBuffer): number {
+  const backoff = AUTOSAVE_DEBOUNCE_MS * 2 ** Math.min(b.failures, 6);
+  return bannerIfMarked(b, b.buffer.text) === null
+    ? backoff
+    : Math.max(backoff, CONFLICT_HOLD_MS);
 }
 
-// The autosave wait: the debounce, doubled per failed save up to about 40 s.
-export function autosaveDelay(b: DocBuffer): number {
-  return AUTOSAVE_DEBOUNCE_MS * 2 ** Math.min(b.failures, 6);
+// Why Save version must not seal the head yet, or null when it may.
+export function docSealProblem(b: DocBuffer): string | null {
+  if (hasUnsavedChanges(b.buffer)) {
+    return 'The latest text has not saved yet, so no version was saved.';
+  }
+  if (b.conflict !== null) {
+    return 'Resolve the marked blocks before saving a version.';
+  }
+  return null;
 }
 
 // A 4xx other than 429 is the daemon refusing the save (archived, deleted,
@@ -106,18 +124,21 @@ export function docSaveSucceeded(
   const typedSince = b.buffer.text !== b.buffer.inFlightText;
   if (result.status === 'merged') {
     if (!typedSince && headBody !== null) {
-      return openDocBuffer(b.doc, headBody, {
-        rev: result.rev.id,
-        n: result.rev.n,
-        hash: result.rev.hash,
-      });
+      return {
+        ...openDocBuffer(b.doc, headBody, {
+          rev: result.rev.id,
+          n: result.rev.n,
+          hash: result.rev.hash,
+        }),
+        conflict: bannerIfMarked(b, headBody),
+      };
     }
     const mine = result.mine ?? result.rev;
     return {
       ...b,
       buffer: saveSucceeded(b.buffer),
       base: { rev: mine.id, n: mine.n, hash: mine.hash },
-      conflict: null,
+      conflict: bannerIfMarked(b, b.buffer.text),
       failures: 0,
     };
   }
@@ -125,7 +146,7 @@ export function docSaveSucceeded(
     ...b,
     buffer: saveSucceeded(b.buffer),
     base: { rev: result.rev.id, n: result.rev.n, hash: result.rev.hash },
-    conflict: null,
+    conflict: bannerIfMarked(b, b.buffer.text),
     failures: 0,
   };
 }
@@ -191,9 +212,12 @@ export function reloadIfClean(
   ) {
     return b;
   }
-  return openDocBuffer(b.doc, read.text, {
-    rev: read.rev.id,
-    n: read.rev.n,
-    hash: read.rev.hash,
-  });
+  return {
+    ...openDocBuffer(b.doc, read.text, {
+      rev: read.rev.id,
+      n: read.rev.n,
+      hash: read.rev.hash,
+    }),
+    conflict: bannerIfMarked(b, read.text),
+  };
 }

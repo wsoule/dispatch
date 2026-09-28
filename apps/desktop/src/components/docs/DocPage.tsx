@@ -11,7 +11,7 @@ import {
   docSaveConflicted,
   docSaveFailed,
   docSaveSucceeded,
-  docShouldFlush,
+  docSealProblem,
   docShouldSave,
   editDocBuffer,
   isRefusal,
@@ -35,9 +35,9 @@ interface DocPageProps {
   canDecide: boolean;
 }
 
-// The most saves a page sends once it unmounts; a 409 on the way out marks
-// the text against the new head, which then goes out again.
-const LEAVE_SAVES = 3;
+// The most saves one flush sends; a 409 on the way marks the text against the
+// new head, which then goes out again.
+const FLUSH_SAVES = 3;
 
 // One doc: badges and actions, the links rail, and a markdown source editor
 // with a preview toggle, autosaving with its base revision and body hash.
@@ -71,59 +71,52 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
     setBuf(bufRef.current);
   }, [read]);
 
-  // Sends the buffer once. `leaving` also sends text the conflict hold keeps.
-  const save = useCallback(
-    (leaving = false): Promise<void> => {
-      const current = bufRef.current;
-      if (current === null) return Promise.resolve();
-      if (!(leaving ? docShouldFlush(current) : docShouldSave(current))) {
-        return Promise.resolve();
-      }
-      const sending = beginDocSave(current);
-      bufRef.current = sending;
-      setBuf(sending);
-      const since = Date.now();
-      const run = async (): Promise<void> => {
-        try {
-          const out = await client.saveDocBody(refId, {
-            baseRev: sending.base.rev,
-            baseHash: sending.base.hash,
-            body: sending.buffer.text,
-          });
-          // `in` narrows here: this app compiles without strictNullChecks, where `ok` does not.
-          if ('conflict' in out) {
-            const { conflict } = out;
-            update((b) => docSaveConflicted(b, conflict));
-          } else {
-            const { result } = out;
-            // The save landed either way; without the merged text the buffer keeps its own.
-            const head =
-              result.status === 'merged'
-                ? await client.getDoc(refId, { rev: result.rev.id }).then(
-                    (r) => r.text,
-                    () => null
-                  )
-                : null;
-            update((b) => docSaveSucceeded(b, result, head));
-          }
-        } catch (err) {
-          update((b) => docSaveFailed(b, describeError(err), isRefusal(err)));
+  // Sends the buffer once, unless there is nothing to send or a save is out.
+  const save = useCallback((): Promise<void> => {
+    const current = bufRef.current;
+    if (current === null || !docShouldSave(current)) {
+      return Promise.resolve();
+    }
+    const sending = beginDocSave(current);
+    bufRef.current = sending;
+    setBuf(sending);
+    const since = Date.now();
+    const run = async (): Promise<void> => {
+      try {
+        const out = await client.saveDocBody(refId, {
+          baseRev: sending.base.rev,
+          baseHash: sending.base.hash,
+          body: sending.buffer.text,
+        });
+        // `in` narrows here: this app compiles without strictNullChecks, where `ok` does not.
+        if ('conflict' in out) {
+          const { conflict } = out;
+          update((b) => docSaveConflicted(b, conflict));
+        } else {
+          const { result } = out;
+          // The save landed either way; without the merged text the buffer keeps its own.
+          const head =
+            result.status === 'merged'
+              ? await client.getDoc(refId, { rev: result.rev.id }).then(
+                  (r) => r.text,
+                  () => null
+                )
+              : null;
+          update((b) => docSaveSucceeded(b, result, head));
         }
-        if (!mounted.current) return;
-        const fresh = await refetchDocAfterSave(
-          queryClient,
-          port,
-          refId,
-          since
-        );
-        if (fresh !== null) update((b) => reloadIfClean(b, fresh));
-      };
-      const pending = run();
-      inFlight.current = pending;
-      return pending;
-    },
-    [client, port, queryClient, refId, update]
-  );
+      } catch (err) {
+        update((b) => docSaveFailed(b, describeError(err), isRefusal(err)));
+      }
+      if (!mounted.current) return;
+      const fresh = await refetchDocAfterSave(queryClient, port, refId, since);
+      if (fresh !== null) update((b) => reloadIfClean(b, fresh));
+    };
+    const pending: Promise<void> = run().finally(() => {
+      if (inFlight.current === pending) inFlight.current = null;
+    });
+    inFlight.current = pending;
+    return pending;
+  }, [client, port, queryClient, refId, update]);
 
   useEffect(() => {
     if (buf === null || !docShouldSave(buf)) return;
@@ -131,24 +124,30 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
     return () => clearTimeout(timer);
   }, [buf, save]);
 
-  // Leaving waits out a save in flight, then sends what the debounce or the
-  // conflict hold still kept, rather than dropping it.
-  const leave = useCallback(async (): Promise<void> => {
-    for (let i = 0; i < LEAVE_SAVES; i += 1) {
-      if (inFlight.current !== null) await inFlight.current;
+  // Waits out every save in flight, then sends what the debounce or the
+  // conflict hold still kept; leaving and Save version both use it.
+  const flush = useCallback(async (): Promise<void> => {
+    for (let i = 0; i < FLUSH_SAVES; i += 1) {
+      while (inFlight.current !== null) await inFlight.current;
       const current = bufRef.current;
-      if (current === null || !docShouldFlush(current)) return;
-      await save(true);
+      if (current === null || !docShouldSave(current)) return;
+      await save();
     }
   }, [save]);
+
+  // Read through a ref so a new connection's `save` does not count as leaving.
+  const flushRef = useRef(flush);
+  useEffect(() => {
+    flushRef.current = flush;
+  }, [flush]);
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      void leave();
+      void flushRef.current();
     };
-  }, [leave]);
+  }, []);
 
   // Runs one header action, reporting its failure and refreshing the docs after it.
   const act = (work: () => Promise<unknown>): void => {
@@ -214,7 +213,12 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
             variant="ghost"
             onClick={() =>
               act(async () => {
-                await save();
+                await flush();
+                const problem =
+                  bufRef.current === null
+                    ? null
+                    : docSealProblem(bufRef.current);
+                if (problem !== null) throw new Error(problem);
                 await client.sealDoc(refId);
               })
             }
