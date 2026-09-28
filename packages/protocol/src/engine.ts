@@ -431,9 +431,8 @@ export class DeliveryEngine {
     );
   }
 
-  // Places every non-external target, then runs the one local-only check
-  // before any hook admits anything, so a message meets one error whichever
-  // path would catch it. A refused channel-expanded target is dropped.
+  // Places each non-external target and runs the one local-only check before
+  // any hook admits anything; refused channel members are dropped, not errors.
   private place(
     targets: Target[],
     fields: Map<Address, string>,
@@ -441,6 +440,9 @@ export class DeliveryEngine {
     message: Message
   ): { targets: Target[]; placed: Map<Address, Placement> } {
     const fed = this.host.federation;
+    const gateData =
+      hasGateData(message) ||
+      (replyTarget !== null && hasGateData(replyTarget));
     const placed = new Map<Address, Placement>();
     let external = false;
     for (const t of targets) {
@@ -448,17 +450,17 @@ export class DeliveryEngine {
         external = true;
         continue;
       }
-      placed.set(
-        t.recipient,
-        fed === undefined ? LOCAL : fed.placement(t, message, replyTarget)
-      );
+      let p: Placement =
+        fed === undefined ? LOCAL : fed.placement(t, message, replyTarget);
+      // Gate data never goes remote, whatever the hook says: it stays local
+      // where this replica is a home and is refused where it is not.
+      if (gateData && p.kind === 'remote')
+        p = p.alsoLocal ? LOCAL : { kind: 'refuse', reason: 'local-only' };
+      placed.set(t.recipient, p);
     }
     const refused = targets.filter(
       (t) => placed.get(t.recipient)?.kind === 'refuse'
     );
-    const gateData =
-      hasGateData(message) ||
-      (replyTarget !== null && hasGateData(replyTarget));
     if (gateData && (external || refused.length > 0))
       throw new MessagingError(
         'forbidden',
@@ -858,11 +860,11 @@ export class DeliveryEngine {
         'member'
       );
     }
-    this.store.transaction(() => {
+    const added = this.store.transaction(() => {
       this.store.ensureChannel(channel, this.nowIso(), false);
-      this.store.addMember(channel, member, this.nowIso());
+      return this.store.addMember(channel, member, this.nowIso());
     });
-    this.emit({ type: 'membership', channel, member, joined: true });
+    if (added) this.emit({ type: 'membership', channel, member, joined: true });
   }
 
   leave(channel: string, member: Address): boolean {
@@ -872,9 +874,8 @@ export class DeliveryEngine {
     return removed;
   }
 
-  // Where a reply or system notice for `address` should go: a run that is no
-  // longer live is reached through its task, here or on the replica running
-  // it; every other address is as given.
+  // Where a reply or notice for `address` goes: a run not live here is reached
+  // through its task, whichever replica runs it; other addresses are as given.
   deliverableAddress(address: Address): Address {
     if (!address.startsWith('run:')) return address;
     const runId = address.slice('run:'.length);
@@ -1045,9 +1046,8 @@ export class DeliveryEngine {
     );
   }
 
-  // After a wake-requesting send, asks the host to wake each held task
-  // recipient (or gates/denies it), so the message is actually seen soon.
-  // Recipients in `skip` are woken by another replica.
+  // After a wake-requesting send, asks the host to wake (or gate or deny) each
+  // held task recipient, except those in `skip`, which another replica wakes.
   private async runWake(
     message: Message,
     settled: Delivery[],

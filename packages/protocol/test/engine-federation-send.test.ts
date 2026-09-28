@@ -154,6 +154,35 @@ describe('send with federation hooks', () => {
     ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
   });
 
+  it('keeps gate data on this machine whatever placement says', async () => {
+    fed.placements.set('human:ada', {
+      kind: 'remote',
+      homes: [ME, BOB],
+      alsoLocal: true,
+    });
+    const gate = {
+      kind: 'question' as const,
+      blocking: true,
+      choices: ['approve', 'deny'],
+      body: 'wake?',
+      data: WAKE_GATE,
+    };
+    const { message, deliveries } = await engine.send(
+      { ...gate, to: ['human:ada'] },
+      SYSTEM
+    );
+    expect(deliveries.map((d) => d.recipient)).toEqual(['human:ada']);
+    expect(store.remoteDeliveries({ messageId: message.id })).toEqual([]);
+    fed.placements.set('human:bob', {
+      kind: 'remote',
+      homes: [BOB],
+      alsoLocal: false,
+    });
+    await expect(
+      engine.send({ ...gate, to: ['human:bob'] }, SYSTEM)
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
+  });
+
   it('skips its own wake when wakeAt names another replica', async () => {
     host.ruling = 'allow';
     fed.placements.set(TASK, {
@@ -209,6 +238,12 @@ describe('send with federation hooks', () => {
         joined: false,
       },
     ]);
+  });
+
+  it('emits no membership event for a join that changes nothing', () => {
+    engine.join('ops', 'human:bob');
+    engine.join('ops', 'human:bob');
+    expect(events.filter((e) => e.type === 'membership')).toHaveLength(1);
   });
 
   it('a system close sorts after its question with hooks on', async () => {
