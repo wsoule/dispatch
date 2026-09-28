@@ -35,6 +35,7 @@ export function bridgeExternalPolicy(
       }
       checkReachClient(
         message,
+        replyTarget,
         {
           inClientScope:
             replyTarget !== null &&

@@ -16,6 +16,7 @@ import type {
   ExecutorPricing,
   FixLoopConfig,
   LinearConfig,
+  MemoryConfig,
   MessagingConfig,
   ModelConfig,
   NotificationKind,
@@ -37,6 +38,7 @@ import {
   DEFAULT_EXECUTOR_NAME,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
   DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
@@ -200,7 +202,7 @@ function parseNotificationKinds(
 
 // Validates the optional `notifications:` block, same contract as the blocks
 // below. `kinds` merges over the defaults, so switching one kind off does not
-// switch the other four off with it.
+// switch the others off with it.
 function parseNotificationsConfig(raw: unknown): NotificationsConfig {
   if (raw === undefined) return cloneNotifications(DEFAULT_NOTIFICATIONS);
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -265,6 +267,99 @@ function parseMessagingConfig(raw: unknown): MessagingConfig {
     result[key] = value;
   }
   return result;
+}
+
+type MemoryIntegerKey = Exclude<
+  keyof MemoryConfig,
+  'claudeAutoMemory' | 'retireAfterDays'
+>;
+
+const MEMORY_RANGES: Record<MemoryIntegerKey, readonly [number, number]> = {
+  indexTokens: [200, 4000],
+  personalWritesPerHour: [1, 500],
+  proposalsPerHour: [1, 100],
+  maxOpenProposals: [1, 500],
+  proposalTtlDays: [1, 90],
+  staleAfterDays: [7, 3650],
+};
+
+const MAX_RETIRE_AFTER_DAYS = 3650;
+
+export interface MemoryConfigWarning {
+  key: string;
+  message: string;
+}
+
+function isInteger(value: unknown): value is number {
+  return typeof value === 'number' && Number.isInteger(value);
+}
+
+/** Parses the `memory:` block leniently: a bad value costs only that key, with
+ *  a warning naming it, and never fails the read. */
+export function parseMemoryConfig(raw: unknown): {
+  config: MemoryConfig;
+  warnings: MemoryConfigWarning[];
+} {
+  const config: MemoryConfig = { ...DEFAULT_MEMORY };
+  const warnings: MemoryConfigWarning[] = [];
+  if (raw === undefined || raw === null) return { config, warnings };
+  if (typeof raw !== 'object' || Array.isArray(raw)) {
+    return {
+      config,
+      warnings: [
+        { key: 'memory', message: 'memory must be a mapping; using defaults' },
+      ],
+    };
+  }
+  const obj = raw as Record<string, unknown>;
+  for (const [key, [min, max]] of Object.entries(MEMORY_RANGES) as Array<
+    [MemoryIntegerKey, readonly [number, number]]
+  >) {
+    const value = obj[key];
+    if (value === undefined) continue;
+    if (isInteger(value) && value >= min && value <= max) {
+      config[key] = value;
+    } else {
+      warnings.push({
+        key: `memory.${key}`,
+        message: `memory.${key} must be an integer from ${min} to ${max}; using ${DEFAULT_MEMORY[key]}`,
+      });
+    }
+  }
+  const retire = obj.retireAfterDays;
+  if (retire !== undefined) {
+    if (
+      isInteger(retire) &&
+      retire > config.staleAfterDays &&
+      retire <= MAX_RETIRE_AFTER_DAYS
+    ) {
+      config.retireAfterDays = retire;
+    } else {
+      warnings.push({
+        key: 'memory.retireAfterDays',
+        message: `memory.retireAfterDays must be an integer above staleAfterDays (${config.staleAfterDays}) and at most ${MAX_RETIRE_AFTER_DAYS}; using ${DEFAULT_MEMORY.retireAfterDays}`,
+      });
+    }
+  }
+  // A long staleAfterDays can pass the default retire age; retire just after.
+  if (config.retireAfterDays <= config.staleAfterDays) {
+    config.retireAfterDays = Math.min(
+      MAX_RETIRE_AFTER_DAYS,
+      config.staleAfterDays + 1
+    );
+  }
+  const mode = obj.claudeAutoMemory;
+  if (mode !== undefined) {
+    if (mode === 'export' || mode === 'off') {
+      config.claudeAutoMemory = mode;
+    } else {
+      warnings.push({
+        key: 'memory.claudeAutoMemory',
+        message: `memory.claudeAutoMemory must be export or off; using ${DEFAULT_MEMORY.claudeAutoMemory}`,
+      });
+    }
+  }
+  return { config, warnings };
 }
 
 const A2A_LIMIT_KEYS = [
@@ -339,6 +434,35 @@ function parseA2AConfig(raw: unknown): {
     }
   }
   return { config, warnings };
+}
+
+/** Reads the `memory:` block alone, per use, so a broken block elsewhere in
+ *  config.yml (or a file that does not parse) costs memory only its defaults. */
+export function readMemoryConfig(rootDir: string): {
+  config: MemoryConfig;
+  warnings: MemoryConfigWarning[];
+} {
+  const path = join(rootDir, DISPATCH_DIR, 'config.yml');
+  if (!existsSync(path)) return parseMemoryConfig(undefined);
+  let doc: unknown;
+  try {
+    doc = YAML.parse(readFileSync(path, 'utf8'));
+  } catch (err) {
+    return {
+      config: { ...DEFAULT_MEMORY },
+      warnings: [
+        {
+          key: 'memory',
+          message: `config.yml does not parse (${(err as Error).message}); using defaults`,
+        },
+      ],
+    };
+  }
+  const block =
+    typeof doc === 'object' && doc !== null
+      ? (doc as Record<string, unknown>).memory
+      : undefined;
+  return parseMemoryConfig(block);
 }
 
 // Validates the optional `orchestrator:` block. Only `undefined` falls back to
@@ -932,6 +1056,10 @@ function parsePreviewConfig(raw: unknown): PreviewConfig {
   };
 }
 
+// Gate keys a newer build wrote that this one does not know, warned about once
+// per process: config.yml is committed, and an older build must still load it.
+const warnedUnknownGates = new Set<string>();
+
 function parsePolicyConfig(raw: unknown): PolicyConfig {
   if (raw === undefined) return { ...DEFAULT_POLICY, gates: {} };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -972,9 +1100,13 @@ function parsePolicyConfig(raw: unknown): PolicyConfig {
         );
       }
       if (!POLICY_GATES.includes(gate as PolicyGate)) {
-        throw new ConfigError(
-          `invalid .dispatch/config.yml: unknown policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
-        );
+        if (!warnedUnknownGates.has(gate)) {
+          warnedUnknownGates.add(gate);
+          console.warn(
+            `dispatch: .dispatch/config.yml policy.gates.${gate} is unknown to this build (expected ${POLICY_GATES.join('|')}); ignored`
+          );
+        }
+        continue;
       }
       if (!POLICY_GATE_MODES.includes(mode as PolicyGateMode)) {
         throw new ConfigError(
@@ -1376,6 +1508,7 @@ export function loadConfig(rootDir: string): DispatchConfig {
       repoDigest: { ...DEFAULTS.repoDigest },
       notifications: cloneNotifications(DEFAULTS.notifications),
       messaging: { ...DEFAULTS.messaging },
+      memory: { ...DEFAULT_MEMORY },
       receipts: { ...DEFAULT_RECEIPTS },
       sync: { ...DEFAULT_SYNC },
       policy: { ...DEFAULT_POLICY, gates: {} },
@@ -1477,6 +1610,7 @@ function parseConfig(parsed: unknown): DispatchConfig {
     repoDigest: parseRepoDigestConfig(raw.repoDigest),
     notifications: parseNotificationsConfig(raw.notifications),
     messaging: parseMessagingConfig(raw.messaging),
+    memory: parseMemoryConfig(raw.memory).config,
     receipts: parseReceiptsConfig(raw.receipts),
     sync: parseSyncConfig(raw.sync),
     policy: parsePolicyConfig(raw.policy),
@@ -1648,6 +1782,7 @@ function applyBlockPatches(doc: YAML.Document, patch: ConfigPatch): void {
     ['receipts', patch.receipts],
     ['sync', patch.sync],
     ['preview', patch.preview],
+    ['memory', patch.memory],
   ] as const;
   for (const [block, fields] of blocks) {
     if (fields === undefined) continue;
@@ -1911,6 +2046,18 @@ export function updateConfig(
   }
 
   applyBlockPatches(doc, patch);
+  // The loader is lenient about memory keys, so a patch is checked strictly here.
+  if (patch.memory !== undefined) {
+    const block = doc.getIn(['memory']);
+    const { warnings } = parseMemoryConfig(
+      YAML.isMap(block) ? block.toJSON() : block
+    );
+    if (warnings.length > 0) {
+      throw new ConfigError(
+        `invalid memory settings: ${warnings.map((w) => w.message).join('; ')}`
+      );
+    }
+  }
 
   // The whole patched document, checked by the same parser loadConfig uses
   // before anything is written: a value it would refuse — from any key, not

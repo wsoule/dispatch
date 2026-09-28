@@ -76,6 +76,13 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
+  // Memory changed. A bare refetch signal; a personal change carries no id,
+  // since every request-tier client hears it.
+  | {
+      type: 'memory.changed';
+      scope: 'personal' | 'project' | 'team';
+      id?: string;
+    }
   // A task's fix loop moved between states, or stopped needing a human.
   // `reason` says which action: `round` alone never distinguished them.
   | { type: 'fixloop.changed'; taskId: string }
@@ -143,6 +150,8 @@ export type ServerEvent =
   | { type: 'message.new'; message: Message }
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // A doc changed; a bare refetch signal, never an id for personal docs.
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
   // The A2A bridge's clients, tasks or listener changed; go refetch.
   | { type: 'a2a.changed' };
 

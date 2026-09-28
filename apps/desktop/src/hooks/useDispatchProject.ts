@@ -103,6 +103,7 @@ import type { TaskAttention } from '../lib/taskAttention';
 import { deriveTaskAttentionById } from '../lib/taskAttention';
 import { computeBlockedIds } from '../lib/taskGraph';
 import { ensureDispatchd, restartDispatchd } from '../lib/tauri';
+import { applyDocsEvent } from './useDocs';
 import { gitQueryRootKey } from './useGit';
 import {
   findingsQueryRootKey,
@@ -1386,6 +1387,7 @@ export function useDispatchProject(
       {
         onEvent: (event) => {
           applyThreadEvent(queryClient, port, event);
+          applyDocsEvent(queryClient, port, event);
           // Checked structurally (see isDecisionsChanged): the client's
           // ServerEvent union predates this broadcast, so a literal comparison
           // here would not typecheck. First in the chain because no later
@@ -1660,6 +1662,9 @@ export function useDispatchProject(
                 },
               ]);
             }
+          } else if (event.type === 'a2a.changed') {
+            // Every Settings → A2A query shares this prefix (lib/a2a.ts).
+            void queryClient.invalidateQueries({ queryKey: ['dispatch-a2a'] });
           } else if (event.type === 'verification.changed') {
             void queryClient.invalidateQueries({
               queryKey: taskVerificationKey(port, event.taskId),

@@ -9,6 +9,7 @@ import {
 import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
+import { proposal } from '../../lib/memory.test-helper';
 import type { ParkedCall } from '../../lib/threadSources';
 import { threadLookups } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
@@ -62,6 +63,19 @@ const CAN_DECIDE: DecideAvailability = {
   explanation: null,
   restart: null,
 };
+
+// A client with only the calls a test gives it; any other call fails the test.
+function clientWith(
+  calls: Partial<NonNullable<MessageRowProps['client']>>
+): NonNullable<MessageRowProps['client']> {
+  const missing = (name: string) => () =>
+    Promise.reject(new Error(`unexpected ${name} call`));
+  return {
+    declineA2ATask: missing('declineA2ATask'),
+    getMemoryProposal: missing('getMemoryProposal'),
+    ...calls,
+  };
+}
 
 function renderRow(message: Message, over: Partial<MessageRowProps> = {}) {
   const onAnswer = mock((_m: Message, _r: { body: string; choice?: string }) =>
@@ -247,6 +261,114 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
   expect(onOpen).toHaveBeenCalledWith({ kind: 'task', taskId: 't-000002' });
   expect(screen.queryByRole('button', { name: /commit:/ })).toBeNull();
   expect(screen.getByText('commit:abc1234def')).toBeTruthy();
+});
+
+test('a doc ref chip names its whole section and opens the doc there', () => {
+  const onOpen = mock((_action: unknown) => {});
+  renderRow(
+    msg('m-d', { refs: [{ type: 'doc', id: 'doc-01K', at: 'auth-flow' }] }),
+    { onOpen, open: false }
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'doc:doc-01K#auth-flow' })
+  );
+  expect(onOpen).toHaveBeenCalledWith({
+    kind: 'doc',
+    docId: 'doc-01K',
+    anchor: 'auth-flow',
+  });
+});
+
+test('badges a close from Dispatch as Closed, and a client’s look-alike as the plain answer it is', () => {
+  const system = msg('m-c', {
+    from: 'agent:dispatch',
+    kind: 'answer',
+    replyTo: 'm-q',
+    body: 'canceled by the client',
+    data: { type: 'x-closed' },
+  });
+  renderRow(system, { open: false });
+  expect(screen.getByText('Closed')).toBeTruthy();
+  cleanup();
+  const lookalike = msg('m-f', {
+    from: 'agent:wyat/a2a.acme',
+    kind: 'answer',
+    replyTo: 'm-q',
+    body: 'closing this',
+    data: { type: 'x-closed' },
+  });
+  renderRow(lookalike, { open: false });
+  expect(screen.queryByText('Closed')).toBeNull();
+  expect(screen.getByText('Answer')).toBeTruthy();
+  expect(screen.getByText('closing this')).toBeTruthy();
+});
+
+test('badges a breaker pause from Dispatch as Breaker', () => {
+  renderRow(
+    msg('m-b', {
+      from: 'agent:dispatch',
+      kind: 'notice',
+      body: 'paused',
+      data: { type: 'x-breaker' },
+    }),
+    { open: false }
+  );
+  expect(screen.getByText('Breaker')).toBeTruthy();
+  expect(screen.queryByText('Notice')).toBeNull();
+});
+
+test('offers Decline on an open question from an A2A client, and not once it is answered', async () => {
+  const declineA2ATask = mock((_id: string, _reason?: string) =>
+    Promise.resolve({})
+  );
+  const ask = msg('m-q', {
+    from: 'agent:wyat/a2a.acme',
+    kind: 'question',
+    blocking: true,
+    body: 'Is /sessions final?',
+  });
+  renderRow(ask, { client: clientWith({ declineA2ATask }) });
+  fireEvent.click(screen.getByRole('button', { name: 'Decline' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Decline question' }));
+  await waitFor(() =>
+    expect(declineA2ATask).toHaveBeenCalledWith('m-q', undefined)
+  );
+  cleanup();
+  renderRow(ask, { client: clientWith({ declineA2ATask }), open: false });
+  expect(screen.queryByRole('button', { name: 'Decline' })).toBeNull();
+});
+
+test('shows a decider the memory proposal, and answers its gate with the choice', async () => {
+  const getMemoryProposal = mock((_id: string) =>
+    Promise.resolve({ proposal: proposal(), base: null, current: null })
+  );
+  const gate = msg('m-mem', {
+    from: 'agent:dispatch',
+    kind: 'question',
+    blocking: true,
+    choices: ['approve', 'reject'],
+    body: 'run:r-9f2c01 proposes a team memory (hazard). Review it in Needs you.',
+    data: {
+      type: 'memory',
+      proposalId: 'mp-000001',
+      action: 'add',
+      scope: 'team',
+      kind: 'hazard',
+    },
+  });
+  const onAnswer = renderRow(gate, {
+    client: clientWith({ getMemoryProposal }),
+  });
+  await screen.findByText('pnpm 11 ignores onlyBuiltDependencies');
+  expect(getMemoryProposal).toHaveBeenCalledWith('mp-000001');
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+  fireEvent.click(screen.getByRole('radio', { name: 'Approve' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(gate, {
+      body: '',
+      choice: 'approve',
+    })
+  );
 });
 
 test('a ref of a type this build does not register is plain text, not a link', () => {

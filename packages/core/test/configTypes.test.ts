@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'bun:test';
 
-import { notificationKindForMessage } from '../src/configTypes.js';
+import {
+  DEFAULT_NOTIFICATIONS,
+  NOTIFICATION_KINDS,
+  notificationKindForMessage,
+} from '../src/configTypes.js';
 
 const q = (data?: unknown) => ({ kind: 'question', blocking: true, data });
 
@@ -21,6 +25,35 @@ describe('notificationKindForMessage', () => {
     );
     expect(notificationKindForMessage(q())).toBe('question');
     expect(notificationKindForMessage(q({ type: 'x-poll' }))).toBe('question');
+  });
+
+  it('notifies memory gates under their own toggle', () => {
+    expect(
+      notificationKindForMessage(
+        q({
+          type: 'memory',
+          proposalId: 'mp-1',
+          action: 'add',
+          scope: 'team',
+          kind: 'hazard',
+        })
+      )
+    ).toBe('memory');
+    expect(DEFAULT_NOTIFICATIONS.kinds.memory).toBe(true);
+    expect(NOTIFICATION_KINDS).toEqual([
+      'question',
+      'approval',
+      'scope-request',
+      'memory',
+      'fix-loop-capped',
+      'run-stalled',
+    ]);
+  });
+
+  it('notifies a task proposal under approval', () => {
+    expect(notificationKindForMessage(q({ type: 'task-proposal' }))).toBe(
+      'approval'
+    );
   });
 
   it('is null for anything that is not a blocking question', () => {

@@ -2,6 +2,7 @@ import {
   ActorContext,
   describeDroppedEntry,
   formatMigrationReport,
+  generateSyncedRunId,
   generateSyncedTaskId,
   hasLegacyState,
   importLegacyProject,
@@ -59,6 +60,8 @@ import {
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
+import { DaemonDocsHost } from './docs/host.js';
+import { openDocs } from './docs/open.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
@@ -83,6 +86,8 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
+import { openMemory, overseerMemory } from './memory/service.js';
+import type { MemoryService } from './memory/service.js';
 import {
   closeOrphanedGates,
   openHumanDecisions,
@@ -193,6 +198,8 @@ export interface ServerHandle {
   // Task 7: exposed the same way prManager is — tests assert against real
   // git state (create/sync/removeIfClean/list) without going through HTTP.
   prWorktrees: PrWorktreeManager;
+  // Exposed for tests, as mergeQueue is: they reach the memory store directly.
+  memory: MemoryService;
   // Closes WS clients, stops the watcher, and removes the daemon file (if one
   // was written) — the reverse of everything startServer sets up.
   stop(): Promise<void>;
@@ -1053,6 +1060,14 @@ async function bootServer(
       `dispatchd: no main branch for ${rootDir}; task files won't be committed`
     );
   }
+  // Docs open before the boot receipt export and need nothing from messaging;
+  // a docs.db this build cannot open leaves docs unavailable, never the daemon down.
+  const docsHost = new DaemonDocsHost({ store, events });
+  const docs = openDocs({
+    rootDir,
+    host: docsHost,
+    ownerRef: actorContext.humanRef,
+  });
   // The receipts exporter: the database backend's counterpart to the board
   // syncer above, and the other half of the split that comment describes. A
   // file-backed project's task files are already committed into the user's own
@@ -1162,12 +1177,9 @@ async function bootServer(
   // probed jj through that seam would decide a demo repo was jj-colocated and
   // take the jj rebase path against a repo with no jj at all.
   const jj = new JjManager(rootDir);
-  // Shared with apiCtx below so a decision an agent records mid-run is
-  // visible to buildTaskPrompt on the very next dispatch, no restart needed.
-  //
-  // Backed by the same store the tasks came from: the database's ledger table
-  // when this project has one, and `.dispatch/ledger.jsonl` otherwise. Both
-  // satisfy `LedgerStorePort`, so nothing downstream branches on which.
+  // The audit ledger: the daemon's receipts, plus lesson rows memory imports.
+  // Backed by the same store the tasks came from (the database's ledger table,
+  // or `.dispatch/ledger.jsonl`); both satisfy `LedgerStorePort`.
   const ledgerStore: LedgerStorePort =
     stores.records?.ledger ?? new LedgerStore(rootDir);
   // Built here, above the Orchestrator, rather than beside ReviewRunner where
@@ -1254,7 +1266,6 @@ async function bootServer(
     judgments,
     events,
     jj,
-    ledgerStore,
     findingStore,
     // `null` on the file backend, where the run transcript is evidence's only
     // home. On sqlite this is what puts commands and mutations into the
@@ -1267,7 +1278,12 @@ async function bootServer(
     // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
+    // Memory and docs share one A2A-provenance answer: the a2a label or the
+    // bridge's provenance line, failing closed on an unparsable task.
+    isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
   });
+  orchestrator.setDocsPort(docs.service);
+  if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
@@ -1277,6 +1293,7 @@ async function bootServer(
   }
   // Messaging opens once the orchestrator exists (it mints run tokens and
   // hears onRunStarted); its recover() waits for reconcileOnBoot() below.
+  const appendPolicyActivity = policyActivityAppender({ store, cache, events });
   const messaging = openMessaging({
     rootDir,
     orchestrator,
@@ -1284,8 +1301,26 @@ async function bootServer(
     events,
     ownerRef: actorContext.humanRef,
     ledgerStore,
-    appendPolicyActivity: policyActivityAppender({ store, cache, events }),
+    appendPolicyActivity,
   });
+  // Memory opens before messaging.recover() because it registers the memory
+  // gate's handler: an answer replayed with no handler is marked applied and lost.
+  const memory = openMemory({
+    rootDir,
+    store,
+    orchestrator,
+    events,
+    ledgerStore,
+    messaging,
+    ownerRef: actorContext.humanRef,
+    appendPolicyActivity,
+    watchLedgerFile:
+      stores.records === null
+        ? join(rootDir, '.dispatch', 'ledger.jsonl')
+        : null,
+  });
+  docsHost.bindRuns(orchestrator);
+  docsHost.bindMessaging(messaging.store);
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
@@ -1318,6 +1353,19 @@ async function bootServer(
   await messaging.recover();
   // Runs force-failed above left their gates open; nobody can act on them now.
   closeOrphanedGates(messaging.engine, orchestrator);
+  // Before HTTP serves: the boot import carries every ledger lesson in before
+  // the first dispatch, then proposals a crash left without a gate get one.
+  try {
+    memory.importLedger();
+  } catch (err) {
+    console.error('dispatchd: boot ledger import failed', err);
+  }
+  try {
+    await memory.recover();
+  } catch (err) {
+    console.error('dispatchd: memory gate recovery failed', err);
+  }
+  orchestrator.setMemoryPort(memory);
   // After recovery, so the bridge reconciles against settled messaging state;
   // its listener opens only once the daemon's own ports are known (below).
   const a2a = openA2ABridge({
@@ -1333,6 +1381,11 @@ async function bootServer(
       ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
     ],
     ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    ...(opts.tls === undefined
+      ? {}
+      : {
+          teamTls: { certPath: opts.tls.certPath, keyPath: opts.tls.keyPath },
+        }),
     mark: (label) => watchdog.mark(label),
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
   });
@@ -1499,7 +1552,10 @@ async function bootServer(
       mergeQueue,
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
+      memory: overseerMemory(memory),
       messaging: overseerToolMessaging(messaging.engine),
+      ownerRef: actorContext.humanRef,
+      docs: docs.service,
     }),
     events,
     bus: createOverseerBus(messaging.engine, messaging.store, {
@@ -1760,6 +1816,8 @@ async function bootServer(
     overseerManager,
     epicEngine,
     messaging,
+    docs: docs.service,
+    memory,
     a2a,
     prManager,
     prWorktrees,
@@ -2064,6 +2122,7 @@ async function bootServer(
     a2a,
     prManager,
     prWorktrees,
+    memory,
     async stop() {
       watchdog.stop();
       idle?.stop();
@@ -2109,7 +2168,11 @@ async function bootServer(
       // than let it finish. A no-op on the file backend.
       boardSync?.stop();
       syncLedger?.close();
+      orchestrator.setMemoryPort(null);
+      memory.close();
       messaging.close();
+      orchestrator.setDocsPort(null);
+      docs.stop();
       stores.close();
     },
   };

@@ -41,6 +41,16 @@ describe('waitForSettled', () => {
     await aborted;
     expect(port.activeWatchers).toBe(0);
   });
+
+  it('rejects with the watch error and leaves no timer to fire later', async () => {
+    const port = new FakePort();
+    port.watchError = new Error('a2a.db is locked');
+    await expect(
+      waitForSettled(port, caller, 'm-root', { maxMs: 10 })
+    ).rejects.toThrow('a2a.db is locked');
+    // A timer left armed would throw from its callback once maxMs passes.
+    await Bun.sleep(40);
+  });
 });
 
 it('a blocking send returns WORKING after blockingWaitSec (the documented MUST deviation, §3.2.2)', async () => {

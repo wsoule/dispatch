@@ -3,7 +3,7 @@ import type {
   Options,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
+import { DISPATCH_MCP_TOOLS, DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
 import { describe, expect, it, spyOn, test } from 'bun:test';
 import {
   chmodSync,
@@ -19,6 +19,7 @@ import {
   buildCartoMcpServerConfig,
   cartoMcpServers,
   ClaudeExecutor,
+  MEMORY_TOOLS,
   STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
@@ -399,6 +400,11 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       ).toBeUndefined();
       expect(requests).toHaveLength(2);
       expect(captured?.settings).toEqual(floorGuard('deny').settings);
+      // A run's session keeps Claude's native auto memory.
+      expect(
+        (captured?.settings as { autoMemoryEnabled?: boolean } | undefined)
+          ?.autoMemoryEnabled
+      ).toBeUndefined();
     }
   });
 
@@ -928,7 +934,7 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
     expect(approvalRequested).toBe(false);
   });
 
-  it("auto-allows every messaging tool under 'acceptEdits'", async () => {
+  it("auto-allows every messaging and memory tool under 'acceptEdits'", async () => {
     let captured: Options | undefined;
     const executor = new ClaudeExecutor((args: { options?: Options }) => {
       captured = args.options;
@@ -952,7 +958,13 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
     );
     const tools = DISPATCH_MESSAGING_TOOLS.map((t) => `mcp__dispatch__${t}`);
     expect(tools).toContain('mcp__dispatch__msg_send');
-    for (const tool of tools) {
+    expect([...MEMORY_TOOLS].sort()).toEqual([
+      'mcp__dispatch__memory_forget',
+      'mcp__dispatch__memory_read',
+      'mcp__dispatch__memory_save',
+      'mcp__dispatch__memory_search',
+    ]);
+    for (const tool of [...tools, ...MEMORY_TOOLS]) {
       const result = await captured?.canUseTool?.(
         tool,
         { to: ['human:wyat'] },
@@ -961,6 +973,47 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
       expect(result).toEqual({
         behavior: 'allow',
         updatedInput: { to: ['human:wyat'] },
+      });
+    }
+    expect(approvalRequested).toBe(false);
+  });
+
+  it("auto-allows the five doc tools under 'acceptEdits'", async () => {
+    let captured: Options | undefined;
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    });
+    let approvalRequested = false;
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'go',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: () => {
+          approvalRequested = true;
+        },
+        onFinish: () => {},
+      }
+    );
+    const tools = DISPATCH_MCP_TOOLS.filter((t) => t.startsWith('doc_')).map(
+      (t) => `mcp__dispatch__${t}`
+    );
+    expect(tools).toHaveLength(5);
+    expect(tools).toContain('mcp__dispatch__doc_save');
+    for (const tool of tools) {
+      const result = await captured?.canUseTool?.(
+        tool,
+        { doc: 'spec' },
+        fakeCanUseToolOptions(`req-${tool}`)
+      );
+      expect(result).toEqual({
+        behavior: 'allow',
+        updatedInput: { doc: 'spec' },
       });
     }
     expect(approvalRequested).toBe(false);

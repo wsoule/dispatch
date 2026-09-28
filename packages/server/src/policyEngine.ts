@@ -81,6 +81,7 @@ export type ApprovalFloor = (toolName: string, input: unknown) => boolean;
 const DECISION_KIND_GATES: Readonly<Record<string, PolicyGate>> = {
   'scope-request': 'scope',
   approval: 'approval',
+  memory: 'memory',
 };
 
 export interface PolicyClassifierOptions {

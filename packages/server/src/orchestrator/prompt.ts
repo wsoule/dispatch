@@ -5,7 +5,7 @@ import {
   untrustedFenced,
   untrustedInline,
 } from '@dispatch/core';
-import type { LedgerEntry, TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -14,17 +14,6 @@ import type { RunMeta, RunSurvey } from './types.js';
 // Re-exported from core (where @dispatch/mcp can reach them too) because
 // every prompt builder in this package imports them from './prompt.js'.
 export { untrustedBlock, untrustedFenced, untrustedInline };
-
-// Terse bulleted section for entries carried forward, or null (no header
-// at all) when there are none — this goes into every dispatch prompt.
-function renderLedgerSection(entries: LedgerEntry[]): string | null {
-  if (entries.length === 0) return null;
-  const lines = entries.map(
-    (e) =>
-      `- **${e.kind}**: ${untrustedInline(e.title)} — ${untrustedInline(e.detail)}`
-  );
-  return ['## Findings and decisions from earlier work', ...lines].join('\n');
-}
 
 // Renders a task's recorded amendments after its description, with an
 // explicit line stating they take precedence over it where they conflict.
@@ -41,7 +30,8 @@ function renderAmendmentsSection(amendmentsText: string): string {
 export function buildTaskPrompt(
   task: TaskDoc,
   parentEpic: TaskDoc | null,
-  ledgerEntries: LedgerEntry[] = [],
+  // The rendered `## Memory` section, or null when there is nothing to show.
+  memorySection: string | null = null,
   // Optional so this stays callable (and snapshot-stable) without a real
   // checkout to collect from — see collectOrientation, which is the impure half.
   orientation: RepoOrientation | null = null,
@@ -49,7 +39,9 @@ export function buildTaskPrompt(
   // their prompt must not send the agent after tools it does not have.
   dispatchTools = true,
   // The address the agent asks (the project owner); null names a placeholder.
-  human: string | null = null
+  human: string | null = null,
+  // The rendered `## Docs` section; null when docs are off or nothing links.
+  docsSection: string | null = null
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -72,8 +64,8 @@ export function buildTaskPrompt(
     );
   }
 
-  const ledgerSection = renderLedgerSection(ledgerEntries);
-  if (ledgerSection !== null) sections.push(ledgerSection);
+  if (memorySection !== null) sections.push(memorySection);
+  if (docsSection !== null) sections.push(docsSection);
 
   // The orientation section answers the questions the two instructions below
   // would otherwise send the agent off to answer for itself, so when it is

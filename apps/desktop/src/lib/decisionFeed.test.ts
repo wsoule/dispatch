@@ -102,6 +102,24 @@ describe('decisionTarget', () => {
     }
   });
 
+  // The gate comes from the daemon, so it names no run; its card is in Threads.
+  test('a memory proposal opens its gate in Threads, where the card is', () => {
+    expect(
+      decisionTarget(
+        item({
+          id: 'memory:m-000001',
+          kind: 'memory',
+          runId: undefined,
+          taskId: undefined,
+          taskTitle: undefined,
+        })
+      )
+    ).toEqual({ kind: 'thread', messageId: 'm-000001' });
+    expect(
+      decisionTarget(item({ id: 'memory:m-000002', kind: 'memory' }))
+    ).toEqual({ kind: 'thread', messageId: 'm-000002' });
+  });
+
   test('a capped fix loop opens the task details tab, where the ruling happens', () => {
     expect(
       decisionTarget(item({ kind: 'fix-loop-capped', runId: undefined }))

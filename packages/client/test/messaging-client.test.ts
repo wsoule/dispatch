@@ -434,4 +434,24 @@ describe('openDecisions', () => {
       stub.restore();
     }
   });
+
+  it('types a task proposal’s draft and proposer', async () => {
+    const gate: GateData = {
+      type: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      message: 'm-root',
+    };
+    const stub = stubFetch({ items: [{ id: 'm-1', data: gate }] });
+    try {
+      const { items } = await createApiClient(BASE).openDecisions();
+      const data = items[0]?.data as GateData;
+      expect(data.type === 'task-proposal' ? data.task : null).toBe('t-a1b2c3');
+      expect(data.type === 'task-proposal' ? data.proposedBy : null).toBe(
+        'agent:wyat/a2a.acme'
+      );
+    } finally {
+      stub.restore();
+    }
+  });
 });

@@ -73,6 +73,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'landing',
     'branches',
     'files',
+    'docs',
     'terminals',
     'design',
     'impact',
@@ -87,6 +88,7 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
     'Merge queue',
     'Git',
     'Files',
+    'Docs',
     'Terminals',
     'Design',
     'Impact',
@@ -109,6 +111,7 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
     'all-agents',
     'branches',
     'files',
+    'docs',
     'terminals',
     'design',
     'impact',
@@ -139,10 +142,11 @@ test('a teammate below operator is not shown the host-only rows', () => {
   mount(true, { hideHostViews: true });
   const rows = navRows();
   // A shell and a browser carrying the host's cookies are operator-tier; the
-  // rest of Code (reading files, git history, impact) stays.
+  // rest of Code (reading files and docs, git history, impact) stays.
   expect(rows).not.toContain('terminals');
   expect(rows).not.toContain('design');
   expect(rows).toContain('files');
+  expect(rows).toContain('docs');
   expect(rows).toContain('branches');
 });
 

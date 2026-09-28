@@ -116,7 +116,7 @@ type WorkRequestV1 =
       acceptance?: string[]; // at most 20 entries, each one line of at most 500 bytes
       writes?: string[]; // at most 50 repo-relative paths or globs, each at most 512 bytes
       priority?: 'urgent' | 'high' | 'medium' | 'low' | 'none'; // capped at 'medium'
-      labels?: string[]; // at most 10, each at most 50 bytes; stored as 'a2a/<label>'
+      labels?: string[]; // at most 10, each at most 50 bytes; stored as 'a2a/<label>'; 'a2a' is always added
     }
   | { skill: 'status'; task?: string }; // an A2A task id; absent means all of the caller's
 ```

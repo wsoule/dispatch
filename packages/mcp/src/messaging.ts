@@ -41,7 +41,7 @@ const record = z.record(z.string(), z.unknown());
 
 // Renders a messaging route's {error, field?} body as one line, so an agent
 // sees which input was rejected without parsing JSON out of an error string.
-async function messagingErrorText(res: Response): Promise<string> {
+export async function messagingErrorText(res: Response): Promise<string> {
   const body = (await res.json().catch(() => ({}))) as {
     error?: string;
     field?: string;
@@ -85,7 +85,7 @@ type RequestFor = (credential: MessagingCredential) => RequestInit;
 
 // One request to a messaging route. A 401 for an unknown (not revoked)
 // agent token self-heals: drops the stale cache, re-registers, retries once.
-async function messagingFetch(
+export async function messagingFetch(
   rootDir: string,
   server: McpServer,
   path: string,
@@ -151,7 +151,7 @@ async function messagingFetch(
 }
 
 // Turns a failed MessagingFetchOutcome into the tool's error result.
-function fetchFailed(
+export function fetchFailed(
   outcome: Extract<MessagingFetchOutcome, { ok: false }>,
   toolName: string
 ): ToolOutcome {
@@ -318,7 +318,7 @@ async function msgSend(
   signal?: AbortSignal
 ): Promise<ToolOutcome> {
   // Same key on both attempts: a dropped connection doesn't say whether the
-  // send landed, so the retry replays the server's cached first result.
+  // send landed, so the retry replays the first send from messages.db.
   const idempotencyKey = randomUUID();
   const sendInit = (credential: MessagingCredential): RequestInit => ({
     method: 'POST',

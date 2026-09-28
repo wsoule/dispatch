@@ -555,6 +555,28 @@ importers:
         specifier: 5.9.2
         version: 5.9.2
 
+  packages/memory:
+    dependencies:
+      '@dispatch/core':
+        specifier: workspace:*
+        version: link:../core
+      '@dispatch/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      yaml:
+        specifier: 'catalog:'
+        version: 2.9.0
+    devDependencies:
+      '@types/bun':
+        specifier: 'catalog:'
+        version: 1.3.12
+      tsdown:
+        specifier: 'catalog:'
+        version: 0.15.11(@emnapi/core@1.11.2)(@emnapi/runtime@1.11.3)(@typescript/native-preview@7.0.0-dev.20260128.1)(oxc-resolver@11.24.2)(typescript@5.9.2)
+      typescript:
+        specifier: 5.9.2
+        version: 5.9.2
+
   packages/protocol:
     dependencies:
       '@dispatch/core':
@@ -606,6 +628,9 @@ importers:
       '@dispatch/mcp':
         specifier: workspace:*
         version: link:../mcp
+      '@dispatch/memory':
+        specifier: workspace:*
+        version: link:../memory
       '@dispatch/protocol':
         specifier: workspace:*
         version: link:../protocol

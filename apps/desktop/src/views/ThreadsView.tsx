@@ -193,6 +193,7 @@ export function ThreadsView({
               onAnswer={actions.answer}
               onOpen={onOpen}
               loadApprovalInput={loadApprovalInput}
+              client={client}
               route={replyRoute(
                 open.messages,
                 open.thread,

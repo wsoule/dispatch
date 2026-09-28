@@ -9,6 +9,7 @@ export {
   GATE_TYPES,
   gateTypeOf,
   hasGateData,
+  isDecidingAuthor,
   MARKERS,
   MAX_ADDRESS_BYTES,
   MAX_SEGMENT_BYTES,
@@ -20,6 +21,7 @@ export { DEFAULT_LIMITS, DeliveryEngine } from './engine.js';
 export type {
   EngineEvent,
   EngineLimits,
+  ReceiveResult,
   SendOptions,
   SendResult,
   Sender,
@@ -28,6 +30,7 @@ export {
   checkIdempotencyKey,
   gateOf,
   isSystemMarker,
+  MEMORY_GATE_KINDS,
   validateSendInput,
 } from './envelope.js';
 export type {
@@ -44,15 +47,30 @@ export type {
 export { MessagingError } from './errors.js';
 export type { MessagingErrorCode } from './errors.js';
 export type {
+  DeliveryEntry,
   ExternalAdmission,
   ExternalKind,
   ExternalTarget,
+  FederationHooks,
   MessagingHost,
+  Placement,
   PolicyRequest,
   PolicyRuling,
+  RefusedEntry,
+  RemoteOrigin,
+  RemoteTarget,
+  SettleEntry,
+  StateEntry,
   WakeResult,
 } from './host.js';
+export {
+  isFederationLocalAddress,
+  LOCAL_ONLY_MARKERS,
+  localOnlyReason,
+} from './localOnly.js';
+export type { LocalOnlyReason } from './localOnly.js';
 export { renderDigestLine, renderForAgent } from './render.js';
+export { LINE_BREAK } from './lines.js';
 export {
   MESSAGES_DB_VERSION,
   openMessagesDb,

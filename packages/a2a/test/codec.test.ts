@@ -142,6 +142,7 @@ describe('encodeMessage', () => {
     textMediaType: 'text/markdown' as const,
     extensions: new Set<never>(),
     clientIds: {},
+    lookup: () => null,
     taskId: 'm-1',
   };
 
@@ -203,6 +204,27 @@ describe('encodeMessage', () => {
     };
     expect(encodeMessage(gate, view).parts).toHaveLength(1);
     expect(encodeMessage(close, view).parts).toHaveLength(1);
+  });
+
+  it('never writes the data of an answer to a gate, or gate data of a type it does not know', () => {
+    const gate: Message = {
+      ...base,
+      id: 'm-g',
+      kind: 'question',
+      from: 'agent:dispatch',
+      data: { type: 'future-gate', detail: 'SECRET' },
+    };
+    const gateAnswer: Message = {
+      ...base,
+      replyTo: 'm-g',
+      data: { note: 'SECRET' },
+    };
+    const lookup = (id: string) => (id === 'm-g' ? gate : null);
+    expect(encodeMessage(gate, { ...view, lookup }).parts).toHaveLength(1);
+    expect(encodeMessage(gateAnswer, { ...view, lookup }).parts).toHaveLength(
+      1
+    );
+    expect(encodeMessage(gateAnswer, view).parts).toHaveLength(2);
   });
 });
 

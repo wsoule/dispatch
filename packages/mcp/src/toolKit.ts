@@ -37,6 +37,13 @@ export function projectRoot(rootDir: string): string {
   return override !== undefined && override !== '' ? override : rootDir;
 }
 
+// The calling run's id, which the executor passes as DISPATCH_RUN_ID; undefined
+// outside a dispatch run, and each caller decides whether it needs one.
+export function callingRunId(): string | undefined {
+  const id = process.env.DISPATCH_RUN_ID;
+  return id !== undefined && id !== '' ? id : undefined;
+}
+
 // One poll's abort signal: its own timeout, plus the client's cancellation
 // when there is one, so a cancelled tool call doesn't sit out the full poll.
 export function pollSignal(

@@ -4,6 +4,7 @@ import { describe, expect, it } from 'bun:test';
 import {
   buildCard,
   buildCardJson,
+  BUILT_SKILLS,
   cardEtag,
   cardJson,
   offeredSkills,
@@ -101,6 +102,9 @@ describe('cardEtag', () => {
 });
 
 describe('offeredSkills', () => {
+  it('builds ask, handoff and status', () => {
+    expect(BUILT_SKILLS).toEqual(['ask', 'handoff', 'status']);
+  });
   const all = ['ask', 'handoff', 'status'] as const;
   it('omits handoff when the project lacks draft, ready, dropped or landed', () => {
     expect(offeredSkills(null, ['todo', 'doing', 'done'], all)).toEqual([

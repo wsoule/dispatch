@@ -19,9 +19,11 @@ export {
   generateFindingId,
   generateLedgerId,
   generateRunId,
+  generateSyncedRunId,
   generateSyncedTaskId,
   generateTaskId,
   isTaskId,
+  SYNCED_RUN_ID_HEX,
   SYNCED_TASK_ID_HEX,
   TASK_ID_PATTERN,
   taskIdFromFilename,
@@ -68,7 +70,11 @@ export {
   untrustedBlock,
   untrustedFenced,
   untrustedInline,
+  untrustedVerbatim,
 } from './untrusted.js';
+export * from './docs.js';
+export { DEFAULT_DOCS, parseDocsConfig, readDocsConfig } from './docsConfig.js';
+export type { DocsConfig, DocsConfigWarning } from './docsConfig.js';
 export {
   parseTaskFile,
   serializeTaskFile,
@@ -197,6 +203,7 @@ export {
   DEFAULT_FIX_LOOP,
   DEFAULT_MODELS,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
   DEFAULT_MESSAGING,
   DEFAULT_NOTIFICATIONS,
   DEFAULT_EXECUTOR_NAME,
@@ -218,7 +225,9 @@ export {
   DEFAULT_PREVIEW,
   NOTIFICATION_KINDS,
   notificationKindForMessage,
+  parseMemoryConfig,
   previewSettings,
+  readMemoryConfig,
   syncSettings,
   projectPolicy,
   queueWeights,
@@ -268,6 +277,8 @@ export type {
   ExecutorPricing,
   FixLoopConfig,
   LinearConfig,
+  MemoryConfig,
+  MemoryConfigWarning,
   MessagingConfig,
   ModelConfig,
   NotificationKind,

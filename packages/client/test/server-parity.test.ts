@@ -121,6 +121,27 @@ describe('events mirror dispatchd', () => {
   });
 });
 
+// The client's GateData is hand-copied from @dispatch/protocol, which this
+// package does not import, so the protocol source is read as text too.
+describe('gate payloads mirror @dispatch/protocol', () => {
+  it('GateData has one variant per protocol GATE_TYPES entry', () => {
+    const constants = readFileSync(
+      join(import.meta.dir, '..', '..', 'protocol', 'src', 'constants.ts'),
+      'utf8'
+    );
+    const protocol = literals(
+      constants,
+      /export const GATE_TYPES = \[([^\]]*)\]/
+    );
+    // The union runs to the first blank line; its members' own `;` would end a lazier match.
+    const body =
+      /export type GateData =([\s\S]*?)\n\n/.exec(clientSource())?.[1] ?? '';
+    const client = [...body.matchAll(/type: '([^']+)'/g)].map((m) => m[1]);
+    expect(protocol).not.toBeNull();
+    expect([...client].sort()).toEqual([...(protocol ?? [])].sort());
+  });
+});
+
 describe('plan types mirror dispatchd', () => {
   it('PlanSummary carries the fields the server list() map emits', () => {
     // The server's PlanSummary is defined by what list() actually maps, so
@@ -269,5 +290,49 @@ describe('overseer types mirror dispatchd', () => {
     );
     expect(server).toBeDefined();
     expect(client).toEqual(server);
+  });
+});
+
+describe('A2A types mirror dispatchd', () => {
+  // The daemon keeps ListenerStatus file-private, so `export` is optional.
+  const fieldsOf = (source: string, name: string): string[] | null => {
+    const body = new RegExp(
+      `(?:export )?interface ${name} \\{([\\s\\S]*?)\\n\\}`
+    ).exec(source)?.[1];
+    if (body === undefined) return null;
+    return [...body.matchAll(/\n {2}(\w+\??):/g)].map((m) => m[1]);
+  };
+
+  for (const [client, server, file] of [
+    ['A2AListenerSettings', 'ListenerSettings', ['a2a', 'settings.ts']],
+    ['A2AListenerStatus', 'ListenerStatus', ['a2a', 'bridge.ts']],
+  ] as const) {
+    it(`${client} declares the fields of the server's ${server}`, () => {
+      const theirs = fieldsOf(serverSource(...file), server);
+      expect(theirs).not.toBeNull();
+      expect(fieldsOf(clientSource(), client)).toEqual(theirs);
+    });
+  }
+
+  const storeSource = (): string =>
+    readFileSync(
+      join(import.meta.dir, '..', '..', 'a2a', 'src', 'store', 'sqlite.ts'),
+      'utf8'
+    );
+
+  it("A2ATaskSummary declares the fields of @dispatch/a2a's TaskRow", () => {
+    const theirs = fieldsOf(storeSource(), 'TaskRow');
+    expect(theirs).not.toBeNull();
+    expect(fieldsOf(clientSource(), 'A2ATaskSummary')).toEqual(theirs);
+  });
+
+  // GET /api/a2a/clients spreads each clients row and adds its agent's status.
+  it("A2AClientSummary declares @dispatch/a2a's ClientRow plus the status", () => {
+    const theirs = fieldsOf(storeSource(), 'ClientRow');
+    expect(theirs).not.toBeNull();
+    expect(fieldsOf(clientSource(), 'A2AClientSummary')).toEqual([
+      ...(theirs ?? []),
+      'status',
+    ]);
   });
 });

@@ -61,7 +61,7 @@ const run = {
   createdAt: '2026-09-25T10:00:00.000Z',
   updatedAt: '2026-09-25T10:00:00.000Z',
 } as RunMeta;
-// A run's note to its task, pointing at a task, a file and another message.
+// A run's note to its task, pointing at a task, a file, another message and a doc section.
 const note: Message = {
   id: 'm-01',
   thread: 'm-01',
@@ -74,6 +74,7 @@ const note: Message = {
     { type: 'task', id: 't-000002' },
     { type: 'file', id: 'src/cart.ts' },
     { type: 'message', id: 'm-00' },
+    { type: 'doc', id: 'doc-01K', at: 'api' },
   ],
   urgent: false,
   blocking: false,
@@ -176,6 +177,7 @@ function mountView(tab: TaskTab) {
             onOpenImpact={(subject: ImpactSubjectRef) =>
               went.push(`impact ${subject.kind} ${subject.id}`)
             }
+            onOpenDoc={(docId, anchor) => went.push(`doc ${docId} ${anchor}`)}
             projectName="storefront"
           />
         </ShellActionsProvider>
@@ -220,11 +222,13 @@ test("the Thread tab lists the task's threads, and a thread's links go where the
   fireEvent.click(await within(thread).findByText('task:t-000002'));
   fireEvent.click(within(thread).getByText('file:src/cart.ts'));
   fireEvent.click(within(thread).getByText('message:m-00'));
+  fireEvent.click(within(thread).getByText('doc:doc-01K#api'));
   fireEvent.click(within(thread).getByRole('button', { name: /r-000001/ }));
   expect(went).toEqual([
     'task t-000002 details',
     'impact file src/cart.ts',
     'thread m-00',
+    'doc doc-01K api',
     'task t-000001 chat r-000001',
   ]);
 });

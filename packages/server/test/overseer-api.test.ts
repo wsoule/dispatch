@@ -19,6 +19,7 @@ import { FakeOverseer } from '../src/orchestrator/overseers/fake.js';
 import type { FakeOverseerScript } from '../src/orchestrator/overseers/fake.js';
 import type { ApprovalDecision } from '../src/orchestrator/types.js';
 import { json } from './json.js';
+import { BEFORE_CUTOVER, seedLedger } from './memory/fixtures.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth, wsUrl } from './testAuth.js';
 
@@ -334,9 +335,12 @@ describe('overseer action gates', () => {
     return { ready, gate };
   }
 
-  async function listRuns(): Promise<{ taskId: string }[]> {
+  async function listRuns(): Promise<
+    { taskId: string; operator?: string | null }[]
+  > {
     return (await json(await fetch(`${baseUrl}/api/runs`))) as {
       taskId: string;
+      operator?: string | null;
     }[];
   }
 
@@ -354,7 +358,10 @@ describe('overseer action gates', () => {
         outcome: 'applied',
       })
     );
-    expect(await listRuns()).toHaveLength(1);
+    const runs = await listRuns();
+    expect(runs).toHaveLength(1);
+    // The overseer acts for the daemon's owner.
+    expect(runs[0].operator).toBe('human:test');
     expect(await openGates()).toEqual([]);
   });
 
@@ -426,6 +433,43 @@ class GatedOverseer implements OverseerBackend {
     };
   }
 }
+
+describe('overseer memory tools', () => {
+  it('searches memory as the owner’s overseer, and ledger_entries lists only receipts', async () => {
+    const backend = new FakeOverseer({
+      ok: true,
+      calls: [
+        { tool: 'memory_search', input: { query: 'pnpm' } },
+        { tool: 'ledger_entries' },
+      ],
+    });
+    await startWithOverseer(backend);
+    seedLedger(
+      root,
+      {
+        kind: 'hazard',
+        title: 'pnpm 11 ignores onlyBuiltDependencies',
+        detail: 'use allowBuilds',
+        authoredBy: 'human:test',
+      },
+      BEFORE_CUTOVER
+    );
+    handle.memory.importLedger();
+
+    const { record } = await startConversation('what do we know about pnpm?');
+    await settled(record.id);
+    const [search, ledger] = backend.observations;
+    expect(search.result.isError).toBe(false);
+    expect(search.result.content).toMatchObject({
+      hits: [
+        expect.objectContaining({
+          title: 'pnpm 11 ignores onlyBuiltDependencies',
+        }),
+      ],
+    });
+    expect(ledger.result.content).toMatchObject({ entries: [], total: 0 });
+  });
+});
 
 describe('overseer tool-approval gates', () => {
   // Opens a conversation against the gated backend and returns the record and

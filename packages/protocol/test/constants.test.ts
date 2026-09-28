@@ -72,6 +72,7 @@ describe('registry exports (C4)', () => {
       'SYSTEM_ADDRESS',
       'gateTypeOf',
       'hasGateData',
+      'isDecidingAuthor',
       'raiserOf',
     ]);
   });
