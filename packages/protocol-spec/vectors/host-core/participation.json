@@ -314,7 +314,7 @@
       "class": "host-core",
       "level": "MUST",
       "profile": "core",
-      "sections": ["4.5", "4.6", "9.1", "13.5"],
+      "sections": ["4.5", "4.6", "9.1", "9.2", "13.5"],
       "given": {
         "workItems": [{ "id": "t-000001", "liveSession": "run:r-000001" }],
         "agents": [
