@@ -114,6 +114,8 @@ export interface DocOutlineEntry {
   heading: string;
   anchor: string;
   bytes: number;
+  // The heading's line in the whole body, counted from 0.
+  line: number;
 }
 
 export type DocOp =

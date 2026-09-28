@@ -2001,6 +2001,7 @@ export class DocsService {
           heading: s.heading,
           anchor: s.anchor,
           bytes: offsets[s.end] - offsets[s.line],
+          line: s.line,
         })),
       section,
       text: page.text,

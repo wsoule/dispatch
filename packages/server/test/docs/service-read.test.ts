@@ -26,6 +26,28 @@ describe('read', () => {
     expect((missing as DocsError).code).toBe('not-found');
     expect(() => service.read(owner, '~mine')).toThrow('not found');
   });
+
+  it('gives each outline heading its line, skipping headings in fenced code', () => {
+    const { service } = makeService();
+    const owner = service.actorFor(OWNER);
+    const body = [
+      '# Doc',
+      '- ```md',
+      '  ## API',
+      '  ```',
+      '## API',
+      '``` a`b',
+      '## API',
+      '',
+    ].join('\n');
+    service.create(owner, { title: 'Fences', body });
+    const read = service.read(owner, 'fences');
+    expect(read.outline.map((o) => [o.anchor, o.line])).toEqual([
+      ['doc', 0],
+      ['api', 4],
+      ['api-1', 6],
+    ]);
+  });
 });
 
 describe('search', () => {
