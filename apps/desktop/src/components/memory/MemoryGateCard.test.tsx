@@ -82,6 +82,34 @@ describe('MemoryGateCard', () => {
     );
     expect(await screen.findByText('the old advice')).toBeTruthy();
     expect(screen.getByText('the new advice')).toBeTruthy();
+    expect(screen.queryByText('Proposed against')).toBeNull();
+  });
+
+  it('shows the version proposed against beside the current one once the entry changed', async () => {
+    renderCard(() =>
+      Promise.resolve(
+        read({
+          proposal: proposalView({
+            action: 'supersede',
+            target: 'mem-000001',
+            baseRev: 1,
+            content: content({ body: 'the agent version' }),
+          }),
+          base: entry({ rev: 1, body: 'the old advice' }),
+          current: entry({ rev: 2, body: 'a human fix' }),
+        })
+      )
+    );
+    const now = await screen.findByText('a human fix');
+    expect(now.closest('[data-slot="memory-version"]')?.textContent).toContain(
+      'Now'
+    );
+    const against = screen.getByText('the old advice');
+    expect(
+      against.closest('[data-slot="memory-version"]')?.textContent
+    ).toContain('Proposed against');
+    expect(screen.getByText('the agent version')).toBeTruthy();
+    expect(screen.getByText(/changed after this was proposed/)).toBeTruthy();
   });
 
   it('says a personal match exists, and why a retire was asked for', async () => {

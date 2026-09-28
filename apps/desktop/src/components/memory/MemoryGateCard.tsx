@@ -148,7 +148,16 @@ function ProposalDetail({ model }: { model: ProposalCardModel }) {
         <Markdown content={model.body} />
       ) : (
         <>
-          <Version label="Now" body={model.diff.base} />
+          {model.diff.base !== null && (
+            <>
+              <span className="text-foreground">
+                This entry changed after this was proposed; approving replaces
+                the version it has now.
+              </span>
+              <Version label="Proposed against" body={model.diff.base} />
+            </>
+          )}
+          <Version label="Now" body={model.diff.current} />
           <Version label="Proposed" body={model.diff.proposed} />
         </>
       )}
@@ -178,7 +187,10 @@ function ProposalDetail({ model }: { model: ProposalCardModel }) {
 // One version of a superseded entry's body, labelled.
 function Version({ label, body }: { label: string; body: string }) {
   return (
-    <div className="rounded-control border-border-chip border-[0.5px] px-2.5 py-2">
+    <div
+      data-slot="memory-version"
+      className="rounded-control border-border-chip border-[0.5px] px-2.5 py-2"
+    >
       <div className="text-foreground mb-1 text-[11px] font-medium">
         {label}
       </div>

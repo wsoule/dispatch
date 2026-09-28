@@ -33,7 +33,7 @@ describe('proposalCardModel', () => {
     });
   });
 
-  it('shows a supersede as a diff of the base and the proposed version', () => {
+  it('shows a supersede as the current and the proposed version', () => {
     const model = proposalCardModel({
       proposal: proposal({
         action: 'supersede',
@@ -44,7 +44,25 @@ describe('proposalCardModel', () => {
       current: entry({ body: 'old' }),
     });
     expect(model.ask).toBe('Replace a team hazard with this version?');
-    expect(model.diff).toEqual({ base: 'old', proposed: 'new' });
+    expect(model.diff).toEqual({ current: 'old', base: null, proposed: 'new' });
+  });
+
+  it('shows the version proposed against beside the current one once the entry changed', () => {
+    const model = proposalCardModel({
+      proposal: proposal({
+        action: 'supersede',
+        target: 'mem-000001',
+        baseRev: 1,
+        content: content({ body: 'agent version' }),
+      }),
+      base: entry({ rev: 1, body: 'old' }),
+      current: entry({ rev: 2, body: 'human fix' }),
+    });
+    expect(model.diff).toEqual({
+      current: 'human fix',
+      base: 'old',
+      proposed: 'agent version',
+    });
   });
 
   it('shows a retire as the entry it would retire, and why', () => {

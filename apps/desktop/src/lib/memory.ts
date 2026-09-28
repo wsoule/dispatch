@@ -39,8 +39,9 @@ export interface ProposalCardModel {
   body: string;
   author: string;
   sourceTask: string | null;
-  /** A supersede's body now and as proposed; null for any other action. */
-  diff: { base: string; proposed: string } | null;
+  /** A supersede's body now and as proposed, plus the revision it was
+   *  proposed against once the entry changed since; null for other actions. */
+  diff: { current: string; base: string | null; proposed: string } | null;
   /** The proposal matches a personal entry of the author's operator. */
   matchedPersonal: boolean;
   /** Author-written text: why to retire, or what a late ledger row claims. */
@@ -75,7 +76,14 @@ export function proposalCardModel(view: ProposalRead): ProposalCardModel {
       : proposal.action === 'supersede'
         ? `Replace a ${proposal.scope} ${kind} with this version?`
         : `Retire this ${proposal.scope} ${kind}?`;
-  const baseBody = (view.base ?? view.current)?.body;
+  const currentBody = (view.current ?? view.base)?.body;
+  // A later revision means approving replaces a change the proposal never saw.
+  const baseIfChanged =
+    view.base !== null &&
+    view.current !== null &&
+    view.base.rev !== view.current.rev
+      ? view.base.body
+      : null;
   return {
     action: proposal.action,
     ask,
@@ -89,8 +97,12 @@ export function proposalCardModel(view: ProposalRead): ProposalCardModel {
     diff:
       proposal.action === 'supersede' &&
       proposal.content !== null &&
-      baseBody !== undefined
-        ? { base: baseBody, proposed: proposal.content.body }
+      currentBody !== undefined
+        ? {
+            current: currentBody,
+            base: baseIfChanged,
+            proposed: proposal.content.body,
+          }
         : null,
     matchedPersonal: proposal.matchedPersonal,
     note: proposal.reason,
