@@ -235,6 +235,22 @@ describe('rowControl', () => {
     });
   });
 
+  it('shows a system gate of an unknown type as a decision card to a decider, and read-only to a teammate', () => {
+    const unknown = msg('m-u', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data: { type: 'future-gate', ref: 'x' },
+    });
+    expect(
+      rowControl(unknown, { me: ME, open: true, access: DECIDER })
+    ).toEqual({ kind: 'choices', choices: ['approve', 'reject'], gate: true });
+    expect(
+      rowControl(unknown, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+  });
+
   it('offers nothing once answered or to someone else, and says why an agent window cannot answer', () => {
     const q = msg('m-q', {
       kind: 'question',

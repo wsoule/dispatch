@@ -273,6 +273,9 @@ importers:
       '@dispatch/client':
         specifier: workspace:*
         version: link:../../packages/client
+      '@dispatch/protocol':
+        specifier: workspace:*
+        version: link:../../packages/protocol
       '@dispatch/tokens':
         specifier: workspace:*
         version: link:../../packages/tokens
