@@ -46,13 +46,23 @@ export function generateSyncedTaskId(
 // at a time per dispatch call, never in the tight batches task ids can see.
 export function generateRunId(
   now: string,
-  nonce: string = randomBytes(4).toString('hex')
+  nonce: string = randomBytes(4).toString('hex'),
+  hexLength: number = 6
 ): string {
   const hash = createHash('sha256')
     .update(`${now}\n${nonce}`)
     .digest('hex')
-    .slice(0, 6);
+    .slice(0, hexLength);
   return `r-${hash}`;
+}
+
+// Hex characters in a synced board's run ids: 6 reaches even odds of a clash
+// near 4,800 team runs, 12 past 20 million (run addresses accept 6 to 12).
+export const SYNCED_RUN_ID_HEX = 12;
+
+/** The run id generator a synced board mints with. */
+export function generateSyncedRunId(now: string): string {
+  return generateRunId(now, undefined, SYNCED_RUN_ID_HEX);
 }
 
 // Same shape as generateRunId's id, but for server-side task drafts

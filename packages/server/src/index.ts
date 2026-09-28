@@ -2,6 +2,7 @@ import {
   ActorContext,
   describeDroppedEntry,
   formatMigrationReport,
+  generateSyncedRunId,
   generateSyncedTaskId,
   hasLegacyState,
   importLegacyProject,
@@ -1264,6 +1265,7 @@ async function bootServer(
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
   });
+  if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
