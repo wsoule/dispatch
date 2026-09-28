@@ -90,7 +90,7 @@ export function DocPage({
       return;
     }
     placedFor.current = anchor;
-    const line = anchorLine(read.text, read.outline, anchor);
+    const line = anchorLine(read.outline, anchor);
     if (line !== null) setPlaceAt({ line });
   }, [read, anchor]);
 

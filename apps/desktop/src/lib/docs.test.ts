@@ -102,42 +102,24 @@ describe('docs helpers', () => {
 });
 
 describe('anchorLine', () => {
-  const entry = (
-    ord: number,
-    level: number,
-    heading: string,
-    anchor: string
-  ) => ({
-    ord,
-    level,
-    heading,
+  const entry = (anchor: string, line: number) => ({
+    ord: line + 1,
+    level: 2,
+    heading: anchor,
     anchor,
     bytes: 0,
+    line,
   });
 
-  it('finds the line of the section a ref names, skipping fenced headings', () => {
-    const text = [
-      'intro',
-      '```md',
-      '## API',
-      '```',
-      '## API',
-      'body',
-      '## API ##',
-      '',
-    ].join('\n');
-    const outline = [
-      entry(0, 0, '', ''),
-      entry(1, 2, 'API', 'api'),
-      entry(2, 2, 'API', 'api-1'),
-    ];
-    expect(anchorLine(text, outline, 'api')).toBe(4);
-    expect(anchorLine(text, outline, 'api-1')).toBe(6);
+  it('takes the line the outline gives the section a ref names', () => {
+    const outline = [entry('api', 4), entry('api-1', 6)];
+    expect(anchorLine(outline, 'api')).toBe(4);
+    expect(anchorLine(outline, 'api-1')).toBe(6);
   });
 
   it('has no line for the preamble or an anchor the doc lacks', () => {
-    const outline = [entry(0, 0, '', ''), entry(1, 1, 'Title', 'title')];
-    expect(anchorLine('# Title\n', outline, '')).toBeNull();
-    expect(anchorLine('# Title\n', outline, 'gone')).toBeNull();
+    const outline = [entry('title', 0)];
+    expect(anchorLine(outline, '')).toBeNull();
+    expect(anchorLine(outline, 'gone')).toBeNull();
   });
 });

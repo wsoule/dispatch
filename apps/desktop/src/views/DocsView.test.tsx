@@ -547,7 +547,8 @@ test('a 409 loads the marked text under the banner', async () => {
 // list pick reported back so navigation keeps naming the open doc.
 function renderNamed(initialDoc: string | null, initialAnchor: string | null) {
   const picked: string[] = [];
-  const body = '# Auth\nintro\n## API\nroutes\n';
+  // The daemon's outline names each heading's line; the one in fenced code is not a heading.
+  const body = '# Auth\n- ```md\n  ## API\n  ```\n## API\nroutes\n';
   const client = {
     listDocs: () => Promise.resolve({ docs: [summary, other], total: 2 }),
     getDoc: (ref: string) =>
@@ -556,9 +557,22 @@ function renderNamed(initialDoc: string | null, initialAnchor: string | null) {
         doc: ref === 'doc-2' ? other : summary,
         text: body,
         outline: [
-          { ord: 0, level: 0, heading: '', anchor: '', bytes: 0 },
-          { ord: 1, level: 1, heading: 'Auth', anchor: 'auth', bytes: 13 },
-          { ord: 2, level: 2, heading: 'API', anchor: 'api', bytes: 14 },
+          {
+            ord: 1,
+            level: 1,
+            heading: 'Auth',
+            anchor: 'auth',
+            bytes: 36,
+            line: 0,
+          },
+          {
+            ord: 2,
+            level: 2,
+            heading: 'API',
+            anchor: 'api',
+            bytes: 14,
+            line: 4,
+          },
         ],
       }),
   } as unknown as ApiClient;
@@ -592,7 +606,7 @@ test('opens the doc a link names with the caret on its section heading', async (
   const editor =
     await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
   await waitFor(() =>
-    expect(editor.selectionStart).toBe(body.indexOf('## API'))
+    expect(editor.selectionStart).toBe(body.indexOf('## API\nroutes'))
   );
 });
 
