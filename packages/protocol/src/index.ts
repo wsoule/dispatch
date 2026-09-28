@@ -20,6 +20,7 @@ export { DEFAULT_LIMITS, DeliveryEngine } from './engine.js';
 export type {
   EngineEvent,
   EngineLimits,
+  ReceiveResult,
   SendOptions,
   SendResult,
   Sender,
@@ -53,6 +54,7 @@ export type {
   PolicyRequest,
   PolicyRuling,
   RefusedEntry,
+  RemoteOrigin,
   RemoteTarget,
   SettleEntry,
   StateEntry,

@@ -100,13 +100,14 @@ export type GateData =
       summary: string;
     };
 
-/** How validateSendInput judges gates and refs. A federated receive adds
- *  `parentOptional?: boolean`: a reply whose target is absent skips its checks. */
+/** How validateSendInput judges gates, refs and a missing reply target. */
 export interface ValidateOptions {
   /** The gate types the host implements; default every GATE_TYPES entry. */
   gateTypes?: ReadonlySet<string>;
   /** `received` for a message that arrived through a binding: it keeps unknown ref types. */
   origin?: 'local' | 'received';
+  /** A federated receive: a reply whose target is not stored skips the checks that need it. */
+  parentOptional?: boolean;
 }
 
 const PACKAGE_GATE_TYPES: ReadonlySet<string> = new Set(GATE_TYPES);
@@ -138,14 +139,16 @@ export function gateOf(message: { data?: JsonValue }): GateData | null {
     : null;
 }
 
-// True only for the daemon's own marker: a client, peer or human cannot forge one.
+// True only for this daemon's own marker: a client, peer, human or another
+// replica's system cannot forge one.
 export function isSystemMarker(
-  message: Pick<Message, 'from' | 'data'>,
+  message: Pick<Message, 'from' | 'data' | 'origin'>,
   type: 'x-closed' | 'x-breaker'
 ): boolean {
   const data = message.data;
   return (
     message.from === SYSTEM_ADDRESS &&
+    message.origin === undefined &&
     typeof data === 'object' &&
     data !== null &&
     !Array.isArray(data) &&
@@ -155,6 +158,15 @@ export function isSystemMarker(
 
 function invalid(field: string, why: string): never {
   throw new MessagingError('invalid', `${field}: ${why}`, field);
+}
+
+/** §1.4's identifier: lowercase, no line breaks, at most one segment's bytes. */
+export function isIdentifier(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    IDENTIFIER.test(value) &&
+    value.length <= MAX_SEGMENT_BYTES
+  );
 }
 
 // True when `text` is over `max` UTF-8 bytes. A UTF-16 code unit encodes to
@@ -302,11 +314,7 @@ export function validateSendInput(
   refs.forEach((ref, i) => {
     const registered = (REF_TYPES as readonly string[]).includes(ref.type);
     // A peer's newer ref type is kept, not refused, so a minor version can add one.
-    const receivedOk =
-      options.origin === 'received' &&
-      typeof ref.type === 'string' &&
-      IDENTIFIER.test(ref.type) &&
-      ref.type.length <= MAX_SEGMENT_BYTES;
+    const receivedOk = options.origin === 'received' && isIdentifier(ref.type);
     if (!registered && !receivedOk)
       invalid(`refs[${i}].type`, 'unknown ref type');
     if (typeof ref.id !== 'string' || ref.id === '')
@@ -341,9 +349,15 @@ export function validateSendInput(
   if (kind === 'answer' && replyTo === null)
     invalid('replyTo', 'an answer needs the question id');
   if (replyTo !== null) {
-    if (replyTarget === null)
-      throw new MessagingError('not-found', `no message ${replyTo}`, 'replyTo');
-    if (kind === 'answer') {
+    // A received reply may name a parent that never reached this replica.
+    if (replyTarget === null) {
+      if (options.parentOptional !== true)
+        throw new MessagingError(
+          'not-found',
+          `no message ${replyTo}`,
+          'replyTo'
+        );
+    } else if (kind === 'answer') {
       if (!ASKING_KINDS.has(replyTarget.kind))
         invalid('replyTo', 'only questions and handoffs take answers');
       const isGate = gateTypeOf(replyTarget, known) !== null;

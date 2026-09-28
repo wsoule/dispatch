@@ -33,6 +33,14 @@ export interface RemoteTarget {
   wakeAt?: string;
 }
 
+/** A received message's source replica and its resolved targets, which receivers never re-expand. */
+export interface RemoteOrigin {
+  replica: string;
+  targets: RemoteTarget[];
+  /** Set on a forward: the one target it carries the message to this replica for. */
+  forwardTarget?: Address;
+}
+
 /** Where one target of a local send lives: here, on other replicas, or nowhere it may go. */
 export type Placement =
   | { kind: 'local' }
