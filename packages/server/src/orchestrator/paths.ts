@@ -48,6 +48,16 @@ export function memoryDbPath(rootDir: string): string {
   return join(runsDir(rootDir), 'memory.db');
 }
 
+// The Claude auto-memory export directories, one per session lineage.
+export function claudeMemoryRoot(rootDir: string): string {
+  return join(runsDir(rootDir), 'claude-memory');
+}
+
+// One lineage's export: `name` is a run lineage id or `o-<conversation>`.
+export function claudeMemoryDir(rootDir: string, name: string): string {
+  return join(claudeMemoryRoot(rootDir), name);
+}
+
 // Personal memory is cross-project, so it lives under DISPATCH_HOME, not a project's run-state.
 export function personalMemoryDir(): string {
   return join(dispatchHome(), '.dispatch', 'memory');

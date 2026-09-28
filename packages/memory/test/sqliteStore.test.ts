@@ -232,6 +232,16 @@ describe('SqliteMemoryStore', () => {
     expect(s.manifestLineages()).toEqual([]);
   });
 
+  it('deletes a meta key and leaves the others', () => {
+    const s = store();
+    s.setMeta('export-index:r-1', 'index');
+    s.setMeta('export-index:r-2', 'other');
+    s.deleteMeta('export-index:r-1');
+    s.deleteMeta('export-index:missing');
+    expect(s.meta('export-index:r-1')).toBeNull();
+    expect(s.meta('export-index:r-2')).toBe('other');
+  });
+
   it('lists ingest problems newest first without content, and takes one by id', () => {
     const s = store();
     const problem = (id: string, at: string, content: string | null) => ({

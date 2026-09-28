@@ -8,7 +8,7 @@ import {
   personalIdentityFor,
   SqliteMemoryStore,
 } from '@dispatch/memory';
-import type { MemoryStores, Principal } from '@dispatch/memory';
+import type { MemoryStore, MemoryStores, Principal } from '@dispatch/memory';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { unwatchFile, watchFile } from 'node:fs';
 import { join } from 'node:path';
@@ -18,6 +18,7 @@ import type { LedgerStorePort } from '../ledger.js';
 import type { Messaging } from '../messaging/service.js';
 import type { OverseerToolContext } from '../orchestrator/overseerTools.js';
 import {
+  claudeMemoryDir,
   memoryDbPath,
   personalMemoryDir,
   projectKeyOf,
@@ -26,6 +27,12 @@ import type {
   MemoryPromptPort,
   MemoryPromptSection,
 } from '../orchestrator/types.js';
+import {
+  ClaudeExportManager,
+  overseerLineageOpen,
+  runLineageOpen,
+  runLineageTarget,
+} from './claudeExport.js';
 import { startDecayScheduler } from './decay.js';
 import { closeStrayMemoryGates, registerMemoryGate } from './gate.js';
 import {
@@ -65,13 +72,15 @@ export interface MemoryService extends MemoryPromptPort {
   /** Null when identities.db would not open. */
   readonly identities: MemoryIdentities | null;
   readonly personal: PersonalStores;
+  /** Null when memory.db would not open. */
+  readonly claudeExport: ClaudeExportManager | null;
   /** The engine's stores: a reused handle answers 409, a down identities.db 503. */
   readonly stores: MemoryStores;
   /** Throws MemoryError('unavailable') with the open failure. */
   requireEngine(): MemoryEngine;
   importLedger(opts?: { dryRun?: boolean }): LedgerImportReport | null;
   lastLedgerImport(): LedgerImportReport | null;
-  /** Boot, after messaging.recover(): raises unsent gates, closes strays, then starts decay. */
+  /** Boot, after messaging.recover(): raises unsent gates, closes strays, sweeps Claude exports, then starts decay. */
   recover(): Promise<{ raised: number; closed: number }>;
   health(principal: Principal | null): MemoryHealth;
   close(): void;
@@ -98,6 +107,7 @@ export interface OpenMemoryDeps {
 
 const LAST_IMPORT_KEY = 'ledger-import:last';
 const CUTOVER_KEY = 'ledger-cutover-at';
+const HOUR_MS = 3_600_000;
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -205,6 +215,61 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       Promise.reject(unavailable())
     );
   else registerMemoryGate(deps.messaging, engine);
+  // The operator's personal store for an export's writes and problems; null when there is none.
+  const personalStoreOf = (principal: Principal): MemoryStore | null => {
+    if (engine === null) return null;
+    try {
+      const identity = personalIdentityFor(engine.viewer(principal));
+      return identity === null ? null : stores.personal(identity);
+    } catch (err) {
+      if (err instanceof MemoryError) return null;
+      throw err;
+    }
+  };
+  const claudeExport =
+    engine === null || shared === null
+      ? null
+      : new ClaudeExportManager({
+          rootDir: deps.rootDir,
+          engine,
+          shared,
+          personalStore: personalStoreOf,
+          config,
+          now,
+        });
+  // The overseer acts for the owner, so its conversations export the owner's memory.
+  const overseer: Principal = {
+    address: `agent:${deps.ownerRef.slice('human:'.length)}/overseer`,
+    canDecide: false,
+    kind: 'agent',
+  };
+  // Scans leftover export directories and deletes those whose lineage closed.
+  const sweepExports = async (): Promise<void> => {
+    if (claudeExport === null) return;
+    try {
+      const runs = deps.orchestrator.list();
+      const nowMs = now().getTime();
+      await claudeExport.sweep({
+        targetOf: (name) =>
+          name.startsWith('o-')
+            ? { name, principal: overseer, taskId: null }
+            : runLineageTarget(runs, name),
+        isOpen: (name) =>
+          name.startsWith('o-')
+            ? overseerLineageOpen(claudeMemoryDir(deps.rootDir, name), nowMs)
+            : runLineageOpen(
+                runs,
+                name,
+                (id) => deps.orchestrator.isRunLive(id),
+                nowMs
+              ),
+      });
+    } catch (err) {
+      console.error('dispatchd: sweeping Claude memory exports failed', err);
+    }
+  };
+  const exportSweep = setInterval(() => void sweepExports(), HOUR_MS);
+  exportSweep.unref();
   const ids = createMemoryIds();
   let last = readLastImport(shared);
   // Gate recovery and proposal expiry run one at a time, so a proposal is
@@ -351,6 +416,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     host,
     identities,
     personal,
+    claudeExport,
     stores,
     requireEngine: () => {
       if (engine === null) throw unavailable();
@@ -363,10 +429,9 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       try {
         if (engine === null || shared === null) return { raised: 0, closed: 0 };
         const { raised } = await raisePending();
-        return {
-          raised,
-          closed: closeStrayMemoryGates(deps.messaging.engine, shared),
-        };
+        const closed = closeStrayMemoryGates(deps.messaging.engine, shared);
+        await sweepExports();
+        return { raised, closed };
       } finally {
         void decay
           .runDue()
@@ -388,6 +453,8 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       pinnedOverflow: principal === null ? false : pinnedOverflow(principal),
     }),
     close: () => {
+      clearInterval(exportSweep);
+      claudeExport?.close();
       decay.stop();
       unsubscribe();
       if (watched !== null) unwatchFile(watched, importQuietly);
