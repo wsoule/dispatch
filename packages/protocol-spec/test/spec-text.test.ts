@@ -178,6 +178,37 @@ describe('the DMP text and the kit', () => {
     );
   });
 
+  it("quotes an external sender's own text, not every host line, as checkRender tests it", () => {
+    // A reply line naming only an id carries none of the sender's text; one
+    // echoing the replied-to message does.
+    const forms = { ...FORMS, hostLines: ['^\\(in reply to '] };
+    const rendered =
+      '[message from agent:wyat/peer (external) · m-1]\n│ hi\n(in reply to m-0)';
+    const replied = ['Ship it?'];
+    expect(checkRender(rendered, 'hi', forms, true, replied)).toEqual([]);
+    expect(
+      checkRender(
+        rendered.replace('m-0)', 'm-0: Ship it?)'),
+        'hi',
+        forms,
+        true,
+        replied
+      )
+    ).not.toEqual([]);
+    const presenting = section('6.8');
+    expect(presenting).toContain(
+      'every line after the header that carries text the sender wrote MUST start with `quotePrefix`'
+    );
+    expect(presenting).toContain('the first line of the message it replies to');
+    expect(presenting).toContain('need not start with `quotePrefix`');
+    expect(section('12.4.6')).toContain(
+      "rule 4's clause for an external sender"
+    );
+    expect(section('13.12')).toContain(
+      "every line that carries an external sender's text"
+    );
+  });
+
   it('says what a structured read does, and declares it untested', () => {
     const presenting = section('6.8');
     expect(presenting).toContain(

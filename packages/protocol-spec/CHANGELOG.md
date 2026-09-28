@@ -58,9 +58,15 @@ vector ids (see §14.2).
   `core.idempotency.a-revoked-sender-gets-no-replay`,
   `core.idempotency.a-retried-answer-replays`.
 - [additive] System markers mean something only from the system address, and a
-  push from an external sender quotes every line after its header. Vectors:
+  push from an external sender quotes every line that carries its text: its
+  body, choices, choice and refs, and any text a host line echoes from the
+  message it replies to. A host line that carries none of it, such as one naming
+  only the id replied to or the prompt to answer, need not be quoted. Vectors:
   `core.markers.close-is-honored-only-from-the-system`,
-  `core.render.an-external-sender-is-quoted-throughout`.
+  `core.render.an-external-sender-is-quoted-throughout`,
+  `core.render.an-external-reply-quotes-its-text-not-the-reply-line`,
+  `core.render.an-external-question-quotes-its-text-not-the-prompt`,
+  `core.render.dispatch-external-push-format`.
 - [clarification] §4.6 rewrites an ended session among a reply target's `to`
   addresses as it does the target's sender, and §6.1 refuses a human's wake
   request naming a session that stands for no work item:

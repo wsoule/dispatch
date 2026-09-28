@@ -179,8 +179,20 @@ The sender is waiting. Answer with msg_reply(messageId: "<id>").
   makes one; `refs:` on a message with refs, each as `<type>:<id>`, with `@<at>`
   when it has an `at`, joined by a comma and a space; and the last line on a
   blocking message.
-- For an external sender, every line after the header starts with the quote
-  prefix, the host's lines included ([§6.8](06-delivery.md#s6.8)).
+- For an external sender, the `choices:`, `choice:` and `refs:` lines follow the
+  quote prefix too, since they carry the sender's text
+  ([§6.8](06-delivery.md#s6.8)). `(in reply to …)` names only the id of the
+  message replied to, and the last line only the message's own id, so they stay
+  as they are:
+
+  ```text
+  [message from <from> (external) · <kind> · <id>]
+  │ <each line of the body>
+  (in reply to <replyTo>)
+  │ choices: <choice> | <choice>
+  │ refs: <type>:<id>@<at>, <type>:<id>
+  The sender is waiting. Answer with msg_reply(messageId: "<id>").
+  ```
 
 **Digests.** Dispatch notifies a session with one line, which names the channel
 when the message was sent to one: the first channel among its recipients,
@@ -214,6 +226,7 @@ One longer than 80 code points is cut to its first 79 and `…` (U+2026).
 ```
 
 Vectors: `core.render.dispatch-push-format`,
+`core.render.dispatch-external-push-format`,
 `core.render.dispatch-digest-format`,
 `core.render.dispatch-digest-cuts-a-long-first-line`.
 

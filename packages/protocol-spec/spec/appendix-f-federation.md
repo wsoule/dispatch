@@ -310,8 +310,8 @@ a `refused` state entry; when every home of a recipient has refused, the origin
 sets that recipient's remote row to `refused` and sends the sender a notice.
 
 **Presentation.** A pushed message from another replica names its sender with
-`(remote: <handle>)`, and every line after its header is quoted, as for an
-external sender ([§6.8](06-delivery.md#s6.8)).
+`(remote: <handle>)`, and every line after its header is quoted, which meets the
+rule for an external sender ([§6.8](06-delivery.md#s6.8)).
 
 ## F.6 Settlement
 

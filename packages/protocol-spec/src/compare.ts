@@ -1,3 +1,4 @@
+import { LINE_BREAK } from './lines.js';
 import { checkDigest, checkRender } from './renderCheck.js';
 import { CREATING_OPS } from './types.js';
 import type {
@@ -7,6 +8,7 @@ import type {
   Json,
   JsonObject,
   Observation,
+  ObservedMessage,
   Vector,
 } from './types.js';
 
@@ -390,6 +392,24 @@ function checkChannels(
   if (failure !== null) failures.push(failure);
 }
 
+// What a message's sender wrote besides its body, plus the lines of the
+// message it replies to: text an external sender's host lines must not carry.
+function senderText(
+  message: ObservedMessage,
+  observation: Observation
+): string[] {
+  const refText = message.refs.flatMap((r) =>
+    [r['id'], r['at']].filter((v): v is string => typeof v === 'string')
+  );
+  const target = observation.messages.find((m) => m.id === message.replyTo);
+  return [
+    ...(message.choices ?? []),
+    ...(message.choice === undefined ? [] : [message.choice]),
+    ...refText,
+    ...(target === undefined ? [] : target.body.split(LINE_BREAK)),
+  ];
+}
+
 // Each `render` step not expected to fail must fit the declared forms, or the
 // digest rule for a digest, and match `then.render`'s text where it names it.
 function checkRenders(
@@ -427,7 +447,8 @@ function checkRenders(
             text,
             message.body,
             hello.render,
-            step['external'] === true
+            step['external'] === true,
+            senderText(message, observation)
           );
     for (const f of found) failures.push(`step ${n}: ${f}`);
   });

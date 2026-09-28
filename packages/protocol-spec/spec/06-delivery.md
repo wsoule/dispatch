@@ -222,8 +222,12 @@ says:
   the sender and the kind, up to where the body's first line would start.
 
 For a pushed message whose sender is external ([§2.1](02-terminology.md#s2.1)),
-every line after the header MUST start with `quotePrefix`, including the host
-lines, because an external sender's choices and refs are its text too.
+every line after the header that carries text the sender wrote MUST start with
+`quotePrefix`: the lines of its body, its choices, its choice and its refs, and
+any text a host line echoes from a message, such as the first line of the
+message it replies to. A host line that carries none of that text, such as one
+naming only the id of the message replied to or a prompt to answer, need not
+start with `quotePrefix`.
 
 A read that returns messages as structured data, such as the JSON an agent's
 tool or a route returns, keeps each body inside its string value. It MUST write
@@ -241,23 +245,25 @@ The host's own text may repeat a body by chance: an answer whose body is
 ([§12.4.6](12-conformance.md#s12.4.6)) test these requirements on bodies whose
 lines occur in no text the host writes for the message, such as a header naming
 another sender, where a line that contains a line of the body can only be
-carrying it. Splitting the rendered text and such a body into lines at every
-line break of [§1.4](01-introduction.md#s1.4), a pushed message MUST meet all of
-these:
+carrying it; for an external sender, its choices, its refs and the message it
+replies to are chosen the same way. Splitting the rendered text and such a body
+into lines at every line break of [§1.4](01-introduction.md#s1.4), a pushed
+message MUST meet all of these:
 
 1. its first line matches `header` and contains no line of the body;
 2. every later line that contains a line of the body starts with `quotePrefix`;
 3. at least as many later lines start with `quotePrefix` as the body has lines;
 4. every other later line matches one of `hostLines` and contains no line of the
-   body.
+   body and, for an external sender, none of its choices, its choice, the `id`
+   or `at` of any of its refs, or any line of the message it replies to.
 
 Blank lines of the body are left out of rules 1, 2 and 4 and of the digest rule,
-since every line would contain them. On a body whose lines occur in no text the
-host writes, a digest MUST be one line whose first match of `digestLead` starts
-it. That match is the host's own text: it MUST contain no line of the body and
-MUST NOT be the start of the body's first line, as it would be if the body
-forged it. Body text is judged only after the match ends, so what follows may be
-the body's first line, whole or cut short, or no body text at all; each later
-line of the body that the digest holds there MUST be contained in the body's
-first line. The Dispatch profile's exact forms are in
-[Appendix C](appendix-c-dispatch-profile.md#sC.6).
+and blank lines of the message replied to out of rule 4, since every line would
+contain them. On a body whose lines occur in no text the host writes, a digest
+MUST be one line whose first match of `digestLead` starts it. That match is the
+host's own text: it MUST contain no line of the body and MUST NOT be the start
+of the body's first line, as it would be if the body forged it. Body text is
+judged only after the match ends, so what follows may be the body's first line,
+whole or cut short, or no body text at all; each later line of the body that the
+digest holds there MUST be contained in the body's first line. The Dispatch
+profile's exact forms are in [Appendix C](appendix-c-dispatch-profile.md#sC.6).

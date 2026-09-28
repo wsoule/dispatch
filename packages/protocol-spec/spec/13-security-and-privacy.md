@@ -112,8 +112,8 @@ Keyword: SHOULD. Not tested.
 A host MUST present every message it puts into a model's context, in whatever
 form, so that no body line passes for a header or a host line, and so that a
 model can tell an external sender's message from a local one. A push quotes the
-body's lines with `quotePrefix`, and every line of an external sender's message
-after its header; a digest MUST carry at most the body's first line, after the
+body's lines with `quotePrefix`, and every line that carries an external
+sender's text; a digest MUST carry at most the body's first line, after the
 host's own text on one line, so no body text starts a line; and a structured
 read escapes every line break inside its string values and marks external
 senders ([§6.8](06-delivery.md#s6.8)).

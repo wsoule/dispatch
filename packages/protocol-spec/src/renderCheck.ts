@@ -2,18 +2,22 @@ import { LINE_BREAK } from './lines.js';
 import type { RenderForms } from './types.js';
 
 // Checks a rendered push against the forms the adapter declared, so Core can
-// test injection-safe presentation without fixing a format (§13.12).
+// test injection-safe presentation without fixing a format (§13.12). For an
+// external sender, `senderText` is what else it wrote or a host line may echo:
+// its choices, choice, ref ids and ats, and the lines of the message replied to.
 export function checkRender(
   text: string,
   body: string,
   forms: RenderForms,
-  external: boolean
+  external: boolean,
+  senderText: readonly string[] = []
 ): string[] {
   const failures: string[] = [];
   const header = new RegExp(forms.header);
   const hostLines = forms.hostLines.map((p) => new RegExp(p));
   const bodyLines = body.split(LINE_BREAK);
   const nonEmpty = bodyLines.filter((l) => l.trim() !== '');
+  const carried = external ? senderText.filter((t) => t.trim() !== '') : [];
   // Lines in the §1.4 sense: a correct render holds no break but LF, so a
   // separator left inside a quoted line starts a line of its own here.
   const [first = '', ...rest] = text.split(LINE_BREAK);
@@ -28,10 +32,9 @@ export function checkRender(
       quoted += 1;
       continue;
     }
-    if (external)
-      failures.push(`an external sender's line is not quoted: ${line}`);
-    else if (holdsBody(line))
-      failures.push(`a body line is not quoted: ${line}`);
+    if (holdsBody(line)) failures.push(`a body line is not quoted: ${line}`);
+    else if (carried.some((t) => line.includes(t)))
+      failures.push(`an external sender's text is not quoted: ${line}`);
     else if (!hostLines.some((r) => r.test(line)))
       failures.push(`a line matches no declared host line: ${line}`);
   }
