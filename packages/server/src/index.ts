@@ -885,9 +885,13 @@ async function bootServer(
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
-  for (const label of actorContext.droppedEmails) {
+  for (const entry of actorContext.droppedEntries) {
+    const fix =
+      entry.problem === 'too-long'
+        ? `its handle is too long: shorten it to at most ${MAX_HANDLE_BYTES} bytes`
+        : `it is malformed: fix it so it has an email and a handle of at most ${MAX_HANDLE_BYTES} bytes, made of lowercase letters, digits, '.', '_' and '-' and starting with a letter or digit`;
     console.warn(
-      `team.yml: skipped ${describeDroppedEntry(label)}: each entry needs an email and a handle of at most ${MAX_HANDLE_BYTES} bytes, made of lowercase letters, digits, '.', '_' and '-' and starting with a letter or digit; until it is fixed, dispatchd will not write team.yml or add any new teammate to it`
+      `team.yml: skipped ${describeDroppedEntry(entry)}: ${fix}; until it is fixed, dispatchd will not write team.yml or add any new teammate to it`
     );
   }
 

@@ -338,7 +338,7 @@ export {
   TeamParseError,
   upsertMember,
 } from './team.js';
-export type { TeamMember } from './team.js';
+export type { DroppedEntry, TeamMember } from './team.js';
 export { ActorContext } from './actorContext.js';
 export type { GitReader } from './actorContext.js';
 export {

@@ -69,6 +69,12 @@ describe('skipped roster entries at boot', () => {
     expect(lines[2]).toContain(
       'skipped the entry for "evil@x.com\\ndispatchd: forged"'
     );
+    // Only a handle whose length is all that is wrong is told to shorten it.
+    expect(lines[0]).toContain('its handle is too long: shorten it');
+    for (const line of lines.slice(1)) {
+      expect(line).toContain('it is malformed: fix it');
+      expect(line).not.toContain('shorten');
+    }
     for (const line of lines) {
       expect(line).not.toContain('\n');
       expect(line).toContain(`at most ${MAX_HANDLE_BYTES} bytes`);

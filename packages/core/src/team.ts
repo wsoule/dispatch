@@ -23,8 +23,13 @@ const HANDLE = /^[a-z0-9][a-z0-9._-]*$/;
 /** The longest handle an address may carry. Handles are ASCII, so length is bytes. */
 export const MAX_HANDLE_BYTES = 64;
 
-// How parseTeamReport names a dropped entry that has no email.
-const NO_EMAIL = '(no email)';
+/** A roster entry parseTeamReport skipped, and what the owner must fix. */
+export interface DroppedEntry {
+  /** The entry's email, or null when it has none. */
+  email: string | null;
+  /** `too-long` when the handle's length is all that is wrong; `malformed` otherwise. */
+  problem: 'too-long' | 'malformed';
+}
 
 // Line breaks and C1 controls JSON.stringify leaves raw.
 const RAW_AFTER_JSON = /[\u007f-\u009f\u2028\u2029]/g;
@@ -33,9 +38,9 @@ const RAW_AFTER_JSON = /[\u007f-\u009f\u2028\u2029]/g;
  * Names an entry parseTeamReport dropped, for a log line or an error. The
  * email is quoted and escaped so a hand-edited one cannot forge extra lines.
  */
-export function describeDroppedEntry(label: string): string {
-  if (label === NO_EMAIL) return 'an entry with no email';
-  const quoted = JSON.stringify(label).replace(
+export function describeDroppedEntry(entry: DroppedEntry): string {
+  if (entry.email === null) return 'an entry with no email';
+  const quoted = JSON.stringify(entry.email).replace(
     RAW_AFTER_JSON,
     (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, '0')}`
   );
@@ -69,12 +74,12 @@ export function parseTeam(yaml: string): TeamMember[] {
 }
 
 /**
- * Parses a roster and names each entry it drops, by email or `(no email)`,
- * so the caller can refuse to rewrite the file and ask the owner to fix it.
+ * Parses a roster and reports each entry it drops, so the caller can refuse to
+ * rewrite the file and tell the owner what to fix.
  */
 export function parseTeamReport(yaml: string): {
   members: TeamMember[];
-  dropped: string[];
+  dropped: DroppedEntry[];
 } {
   let raw: unknown;
   try {
@@ -92,30 +97,28 @@ export function parseTeamReport(yaml: string): {
   // dropped the same way: it would otherwise reach InboxStore, which throws
   // an uncaught error out of startServer instead of failing closed.
   const kept: TeamMember[] = [];
-  const dropped: string[] = [];
+  const dropped: DroppedEntry[] = [];
   for (const m of members as unknown[]) {
     const entry = m as Partial<TeamMember> | null;
-    if (
-      typeof entry?.handle !== 'string' ||
-      typeof entry?.email !== 'string' ||
-      !HANDLE.test(entry.handle) ||
-      entry.handle.length > MAX_HANDLE_BYTES
-    ) {
-      dropped.push(
-        typeof entry?.email === 'string' && entry.email !== ''
-          ? entry.email
-          : NO_EMAIL
-      );
+    const handle = entry?.handle;
+    const email = entry?.email;
+    const wellFormed =
+      typeof handle === 'string' &&
+      typeof email === 'string' &&
+      HANDLE.test(handle);
+    if (!wellFormed || handle.length > MAX_HANDLE_BYTES) {
+      dropped.push({
+        email: typeof email === 'string' && email !== '' ? email : null,
+        problem: wellFormed ? 'too-long' : 'malformed',
+      });
       continue;
     }
     kept.push({
-      handle: entry.handle,
-      email: entry.email,
+      handle,
+      email,
       displayName:
-        typeof entry.displayName === 'string'
-          ? entry.displayName
-          : entry.handle,
-      emails: Array.isArray(entry.emails)
+        typeof entry?.displayName === 'string' ? entry.displayName : handle,
+      emails: Array.isArray(entry?.emails)
         ? entry.emails.filter((e): e is string => typeof e === 'string')
         : [],
     });

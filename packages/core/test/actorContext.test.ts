@@ -226,7 +226,9 @@ describe('ActorContext.resolve', () => {
     const yaml = `members:\n  - handle: ${'c'.repeat(65)}\n    email: long@x.com\n`;
     writeFileSync(file, yaml);
     const ctx = ActorContext.resolve(root, gitOk);
-    expect(ctx.droppedEmails).toEqual(['long@x.com']);
+    expect(ctx.droppedEntries).toEqual([
+      { email: 'long@x.com', problem: 'too-long' },
+    ]);
     expect(readFileSync(file, 'utf8')).toBe(yaml);
   });
 
@@ -245,7 +247,9 @@ describe('ActorContext.resolve', () => {
       'members:\n  - handle: Wyat\n    email: wyat@old.com\n    displayName: Wyat\n'
     );
     const skipped = ActorContext.resolve(root, gitAt('w.soule@new.com'));
-    expect(skipped.droppedEmails).toEqual(['wyat@old.com']);
+    expect(skipped.droppedEntries).toEqual([
+      { email: 'wyat@old.com', problem: 'malformed' },
+    ]);
 
     // Once the owner fixes the entry, the known handle finds it again.
     writeFileSync(

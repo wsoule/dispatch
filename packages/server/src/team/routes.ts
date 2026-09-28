@@ -1,4 +1,4 @@
-import type { TeamMember } from '@dispatch/core';
+import type { DroppedEntry, TeamMember } from '@dispatch/core';
 import {
   describeDroppedEntry,
   DISPATCH_DIR,
@@ -89,7 +89,7 @@ function teamFile(rootDir: string): string {
 function readRoster(
   rootDir: string
 ):
-  | { ok: true; members: TeamMember[]; dropped: string[] }
+  | { ok: true; members: TeamMember[]; dropped: DroppedEntry[] }
   | { ok: false; error: string } {
   const file = teamFile(rootDir);
   const raw = existsSync(file) ? readFileSync(file, 'utf8') : '';
