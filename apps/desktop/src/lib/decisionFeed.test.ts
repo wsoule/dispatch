@@ -102,16 +102,22 @@ describe('decisionTarget', () => {
     }
   });
 
-  test('a memory proposal opens where gate questions do', () => {
-    expect(decisionTarget(item({ kind: 'memory' }))).toEqual(
-      decisionTarget(item({ kind: 'question' }))
-    );
-    expect(decisionTarget(item({ kind: 'memory' }))).toEqual({
-      kind: 'task',
-      taskId: 't-1',
-      tab: 'chat',
-      runId: 'r-1',
-    });
+  // The gate comes from the daemon, so it names no run; its card is in Threads.
+  test('a memory proposal opens its gate in Threads, where the card is', () => {
+    expect(
+      decisionTarget(
+        item({
+          id: 'memory:m-000001',
+          kind: 'memory',
+          runId: undefined,
+          taskId: undefined,
+          taskTitle: undefined,
+        })
+      )
+    ).toEqual({ kind: 'thread', messageId: 'm-000001' });
+    expect(
+      decisionTarget(item({ id: 'memory:m-000002', kind: 'memory' }))
+    ).toEqual({ kind: 'thread', messageId: 'm-000002' });
   });
 
   test('a capped fix loop opens the task details tab, where the ruling happens', () => {

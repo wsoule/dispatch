@@ -1,4 +1,4 @@
-import type { Message } from '@dispatch/client';
+import type { ApiClient, Message } from '@dispatch/client';
 import { memo, useState } from 'react';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
@@ -18,6 +18,7 @@ import {
   refAction,
   rowControl,
 } from '../../lib/threadSources';
+import { MemoryGateCard } from '../memory/MemoryGateCard';
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
@@ -44,6 +45,8 @@ export interface MessageRowProps {
   onOpen: (action: RefAction) => void;
   /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
   loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
+  /** Reads a memory gate's proposal; without it there is no proposal to show. */
+  client?: Pick<ApiClient, 'getMemoryProposal'> | null;
 }
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
@@ -59,6 +62,7 @@ export const MessageRow = memo(function MessageRow({
   onAnswer,
   onOpen,
   loadApprovalInput,
+  client = null,
 }: MessageRowProps) {
   const [error, setError] = useState<string | null>(null);
   const mine = message.from === me;
@@ -137,6 +141,7 @@ export const MessageRow = memo(function MessageRow({
             onRestartDaemon={onRestartDaemon}
             answer={answer}
             loadApprovalInput={loadApprovalInput}
+            client={client}
           />
           {error !== null && (
             <p role="alert" className="text-destructive text-[12px]">
@@ -156,12 +161,14 @@ function Control({
   onRestartDaemon,
   answer,
   loadApprovalInput,
+  client,
 }: {
   control: RowControl;
   availability: DecideAvailability;
   onRestartDaemon: () => Promise<void>;
   answer: (reply: Reply) => Promise<void>;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
+  client: MessageRowProps['client'];
 }) {
   if (control.kind === 'read-only') {
     return (
@@ -196,6 +203,20 @@ function Control({
           onDecide={(granted) =>
             answer({ body: '', choice: granted ? 'grant' : 'deny' })
           }
+        />
+      );
+    case 'memory':
+      return client === null || client === undefined ? (
+        <p className="text-muted-foreground text-[12px]">
+          This window cannot read the proposal, so it cannot decide it.
+        </p>
+      ) : (
+        <MemoryGateCard
+          proposalId={control.proposalId}
+          client={client}
+          availability={availability}
+          onRestartDaemon={onRestartDaemon}
+          onDecide={(choice) => answer({ body: '', choice })}
         />
       );
     case 'choices':

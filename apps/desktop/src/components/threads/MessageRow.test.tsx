@@ -9,6 +9,7 @@ import {
 import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
+import { proposal } from '../../lib/memory.test-helper';
 import type { ParkedCall } from '../../lib/threadSources';
 import { threadLookups } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
@@ -247,4 +248,46 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
   expect(onOpen).toHaveBeenCalledWith({ kind: 'task', taskId: 't-000002' });
   expect(screen.queryByRole('button', { name: /commit:/ })).toBeNull();
   expect(screen.getByText('commit:abc1234def')).toBeTruthy();
+});
+
+const memoryGate = msg('m-mem', {
+  from: 'agent:dispatch',
+  kind: 'question',
+  blocking: true,
+  choices: ['approve', 'reject'],
+  body: 'run:r-9f2c01 proposes a team memory (hazard). Review it in Needs you.',
+  data: {
+    type: 'memory',
+    proposalId: 'mp-000001',
+    action: 'add',
+    scope: 'team',
+    kind: 'hazard',
+  },
+});
+
+test('shows a decider the memory proposal, and answers its gate with the choice', async () => {
+  const getMemoryProposal = mock((_id: string) =>
+    Promise.resolve({ proposal: proposal(), base: null, current: null })
+  );
+  const onAnswer = renderRow(memoryGate, { client: { getMemoryProposal } });
+  await screen.findByText('pnpm 11 ignores onlyBuiltDependencies');
+  expect(getMemoryProposal).toHaveBeenCalledWith('mp-000001');
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+  fireEvent.click(screen.getByRole('radio', { name: 'Approve' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(memoryGate, {
+      body: '',
+      choice: 'approve',
+    })
+  );
+});
+
+test('offers no blind approve on a memory gate when the proposal cannot be read', () => {
+  renderRow(memoryGate);
+  expect(
+    screen.getByText(
+      'This window cannot read the proposal, so it cannot decide it.'
+    )
+  ).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
 });
