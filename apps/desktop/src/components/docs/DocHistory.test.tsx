@@ -30,10 +30,10 @@ const REVISIONS = [
   },
 ];
 
-function renderHistory(client: ApiClient) {
+function renderHistory(client: ApiClient, canWrite = true) {
   render(
     <QueryClientProvider client={new QueryClient()}>
-      <DocHistory client={client} port={1} refId="spec" canWrite />
+      <DocHistory client={client} port={1} refId="spec" canWrite={canWrite} />
     </QueryClientProvider>
   );
 }
@@ -79,4 +79,36 @@ test('diffs the two picked revisions, older first, whichever was picked first', 
   ).toBeDefined();
   fireEvent.click(screen.getByLabelText('Compare rev 1'));
   await waitFor(() => expect(asked).toEqual([['spec', 1, 2]]));
+});
+
+test('offers no Restore to a reader who cannot write', async () => {
+  const client = {
+    listDocRevisions: () => Promise.resolve({ revisions: REVISIONS }),
+  } as unknown as ApiClient;
+  renderHistory(client, false);
+  expect(await screen.findByText('replaced "## API"')).toBeDefined();
+  expect(screen.queryByRole('button', { name: 'Restore' })).toBeNull();
+});
+
+test('says why a restore failed', async () => {
+  const client = {
+    listDocRevisions: () => Promise.resolve({ revisions: REVISIONS }),
+    revertDoc: () => Promise.reject(new Error('rev 1 is gone')),
+  } as unknown as ApiClient;
+  renderHistory(client);
+  fireEvent.click(
+    (await screen.findAllByRole('button', { name: 'Restore' }))[1]
+  );
+  expect((await screen.findByRole('alert')).textContent).toBe('rev 1 is gone');
+});
+
+test('notes a diff that ran out of budget', async () => {
+  const client = {
+    listDocRevisions: () => Promise.resolve({ revisions: REVISIONS }),
+    diffDoc: () => Promise.resolve(diffOf(true)),
+  } as unknown as ApiClient;
+  renderHistory(client);
+  fireEvent.click(await screen.findByLabelText('Compare rev 2'));
+  fireEvent.click(screen.getByLabelText('Compare rev 1'));
+  expect(await screen.findByText(/The diff hit its work limit/)).toBeDefined();
 });
