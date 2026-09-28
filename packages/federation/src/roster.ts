@@ -367,7 +367,9 @@ function resolve(ctx: Context): {
   const status = new Map<Removal, Status>(removals.map((r) => [r, 'open']));
   const having = (...wanted: Status[]) =>
     removals.filter((r) => wanted.includes(status.get(r) ?? 'void'));
-  // Fight winners, which stand, and removals once sent back to waiting.
+  // Fight winners, which stand, and removals once sent back to waiting. A winner
+  // stays even if a removal accepted later cuts its publisher: voiding it would
+  // bring back the removal it beat, and the resolution would never settle.
   const won = new Set<Removal>();
   const demoted = new Set<Removal>();
 

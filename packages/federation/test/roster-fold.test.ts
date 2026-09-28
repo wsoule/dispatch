@@ -241,6 +241,7 @@ describe('foldRoster', () => {
       byC,
     ]);
     // A's revocation wins the pick and cuts B's, so nothing cuts C's any more.
+    // C's cuts A at seq 4 too, but A's stays: it won the fight.
     expect(v.resolution.get(byA.hash)).toBe('accepted');
     expect(v.resolution.get(byB.hash)).toBe('void');
     expect(v.resolution.get(byC.hash)).toBe('accepted');
