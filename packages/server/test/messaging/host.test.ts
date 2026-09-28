@@ -215,6 +215,43 @@ describe('DaemonMessagingHost.decide', () => {
     ).toBe('allow');
   });
 
+  it("sends a remote human's wake through the ladder instead of the human shortcut", () => {
+    const { host } = makeHost();
+    const id = store.create(
+      { title: 'remote wake' },
+      '2026-09-26T00:00:00.000Z'
+    ).meta.id;
+    const message = stubMessage({ from: 'human:ada', origin: 'ada-0000000a' });
+    expect(
+      host.decide({
+        type: 'wake',
+        target: `task:${id}`,
+        message,
+        origin: 'ada-0000000a',
+      })
+    ).toBe('ask');
+    expect(
+      host.decide({
+        type: 'wake',
+        target: `task:${id}`,
+        message: stubMessage({ from: 'human:ada' }),
+      })
+    ).toBe('allow');
+  });
+
+  it('denies a remote wake of a named run', () => {
+    const { host } = makeHost();
+    const message = stubMessage({ from: 'human:ada', origin: 'ada-0000000a' });
+    expect(
+      host.decide({
+        type: 'wake',
+        target: 'run:r-000001',
+        message,
+        origin: 'ada-0000000a',
+      })
+    ).toBe('deny');
+  });
+
   it("still asks at rung 3 for a critical task, whose risk caps the rung below wake's", () => {
     const task = store.create({ title: 'Risky work', risk: 'critical' });
     writeFileSync(
@@ -304,6 +341,26 @@ describe('DaemonMessagingHost.wake', () => {
     expect(
       await host.wake('run:r-000001', stubMessage({ from: 'human:ada' }))
     ).toEqual({ ok: false, reason: 'run has been merged' });
+  });
+
+  it("never continues a finished run for a remote human's wake", async () => {
+    const { host, calls } = makeHost();
+    await host.wake(
+      'task:t-abc123',
+      stubMessage({ from: 'human:ada', origin: 'ada-0000000a' })
+    );
+    expect(calls.wakeTask).toEqual([
+      ['t-abc123', { actor: 'agent:dispatch', continueFinished: false }],
+    ]);
+    expect(
+      (
+        await host.wake(
+          'run:r-000001',
+          stubMessage({ from: 'human:ada', origin: 'ada-0000000a' })
+        )
+      ).ok
+    ).toBe(false);
+    expect(calls.wakeRun).toEqual([]);
   });
 
   it('credits a human sender, who may continue a finished run; anyone else wakes as the system', async () => {

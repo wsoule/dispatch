@@ -18,6 +18,7 @@ import {
   refAction,
   rowControl,
 } from '../../lib/threadSources';
+import { MemoryGateCard } from '../memory/MemoryGateCard';
 import { ApprovalCard } from '../runs/ApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
@@ -29,6 +30,12 @@ import { Pill, PillButton } from '@/ui/ai/pill';
 import { Button } from '@/ui/button';
 
 type Reply = { body: string; choice?: string };
+
+// A ref chip's suffix: a doc's whole section anchor, or a commit's short sha.
+function refAt(ref: Message['refs'][number]): string {
+  if (ref.at === undefined) return '';
+  return ref.type === 'doc' ? `#${ref.at}` : `@${ref.at.slice(0, 7)}`;
+}
 
 export interface MessageRowProps {
   message: Message;
@@ -45,8 +52,9 @@ export interface MessageRowProps {
   onOpen: (action: RefAction) => void;
   /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
   loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
-  /** Declines an open question from an A2A client; without it there is no Decline. */
-  client?: Pick<ApiClient, 'declineA2ATask'> | null;
+  /** Declines an open question from an A2A client and reads a memory gate's
+   *  proposal; without it there is no Decline and no proposal to show. */
+  client?: Pick<ApiClient, 'declineA2ATask' | 'getMemoryProposal'> | null;
 }
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
@@ -128,7 +136,7 @@ export const MessageRow = memo(function MessageRow({
             <div className="flex flex-wrap gap-1">
               {message.refs.map((ref, i) => {
                 const action = refAction(ref, lookups);
-                const text = `${ref.type}:${ref.id}${ref.at === undefined ? '' : `@${ref.at.slice(0, 7)}`}`;
+                const text = `${ref.type}:${ref.id}${refAt(ref)}`;
                 const key = `${text}:${i}`;
                 return action === null ? (
                   <Pill key={key}>{text}</Pill>
@@ -146,6 +154,7 @@ export const MessageRow = memo(function MessageRow({
             onRestartDaemon={onRestartDaemon}
             answer={answer}
             loadApprovalInput={loadApprovalInput}
+            client={client}
           />
           {open && (
             <A2ADeclineAction
@@ -172,12 +181,14 @@ function Control({
   onRestartDaemon,
   answer,
   loadApprovalInput,
+  client,
 }: {
   control: RowControl;
   availability: DecideAvailability;
   onRestartDaemon: () => Promise<void>;
   answer: (reply: Reply) => Promise<void>;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
+  client: MessageRowProps['client'];
 }) {
   if (control.kind === 'read-only') {
     return (
@@ -212,6 +223,20 @@ function Control({
           onDecide={(granted) =>
             answer({ body: '', choice: granted ? 'grant' : 'deny' })
           }
+        />
+      );
+    case 'memory':
+      return client === null || client === undefined ? (
+        <p className="text-muted-foreground text-[12px]">
+          This window cannot read the proposal, so it cannot decide it.
+        </p>
+      ) : (
+        <MemoryGateCard
+          proposalId={control.proposalId}
+          client={client}
+          availability={availability}
+          onRestartDaemon={onRestartDaemon}
+          onDecide={(choice) => answer({ body: '', choice })}
         />
       );
     case 'choices':

@@ -7,13 +7,12 @@ import { GATE_TYPES } from '../src/envelope.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
 import { FakeHost } from './fakeHost.js';
 
-// Answer and reply behaviour lives in the kit's host-core vectors; these
-// cases pin engine internals and the refusal of non-participants.
+// Answer, reply and participation behaviour lives in the kit's host-core
+// vectors; these cases pin engine internals.
 let db: SqliteDatabase;
 let store: SqliteMessageStore;
 let host: FakeHost;
 let engine: DeliveryEngine;
-const run1 = { address: 'run:r-000001', canDecide: false };
 const human = { address: 'human:wyat', canDecide: true };
 const system = { address: SYSTEM_ADDRESS, canDecide: true };
 
@@ -81,138 +80,5 @@ describe('answers', () => {
     } finally {
       console.error = originalError;
     }
-  });
-});
-
-// §4.6 has a non-participant's reply fail exactly like a reply to an absent
-// id; until the engine does, these refusals stay here rather than in vectors.
-describe('answer authorization', () => {
-  it('a bystander run cannot answer a question addressed to a human', async () => {
-    host.startRun('t-000002', 'r-000002');
-    const { message: q } = await engine.send(
-      { to: ['human:wyat'], kind: 'question', body: 'which?' },
-      run1
-    );
-    await expect(
-      engine.reply(
-        q.id,
-        { body: 'mine' },
-        { address: 'run:r-000002', canDecide: false }
-      )
-    ).rejects.toMatchObject({ code: 'forbidden', field: 'replyTo' });
-    const { message: a } = await engine.reply(q.id, { body: 'b' }, human);
-    expect(engine.answerOf(q.id)?.id).toBe(a.id);
-  });
-
-  it('a run of a different task still gets forbidden', async () => {
-    host.startRun('t-000003', 'r-000003');
-    const { message: q } = await engine.send(
-      { to: ['run:r-000003'], kind: 'question', body: 'which?' },
-      human
-    );
-    host.startRun('t-000009', 'r-000009');
-    await expect(
-      engine.reply(
-        q.id,
-        { body: 'not mine' },
-        { address: 'run:r-000009', canDecide: false }
-      )
-    ).rejects.toMatchObject({ code: 'forbidden', field: 'replyTo' });
-  });
-});
-
-describe('reply authorization (every kind, not just answers)', () => {
-  it('a run on an unrelated task cannot reply into a message thread', async () => {
-    const { message: m } = await engine.send(
-      { to: ['human:wyat'], kind: 'message', body: 'hello' },
-      run1
-    );
-    host.startRun('t-999999', 'r-999999');
-    await expect(
-      engine.reply(
-        m.id,
-        { body: 'butting in' },
-        { address: 'run:r-999999', canDecide: false }
-      )
-    ).rejects.toMatchObject({ code: 'forbidden', field: 'replyTo' });
-  });
-});
-
-describe('replies from non-participants', () => {
-  const stranger = { address: 'run:r-000009', canDecide: false };
-  const forbidden = {
-    code: 'forbidden',
-    field: 'replyTo',
-    message: 'only a participant can reply in this thread',
-  };
-  beforeEach(() => host.startRun('t-000009', 'r-000009'));
-
-  it('are refused before the target kind is checked', async () => {
-    const { message: notice } = await engine.send(
-      { to: ['human:wyat'], kind: 'notice', body: 'fyi' },
-      run1
-    );
-    await expect(
-      engine.send(
-        { to: ['run:r-000001'], kind: 'answer', body: 'x', replyTo: notice.id },
-        stranger
-      )
-    ).rejects.toMatchObject(forbidden);
-  });
-
-  it('are refused before the target choices are checked', async () => {
-    const { message: q } = await engine.send(
-      {
-        to: ['human:wyat'],
-        kind: 'question',
-        body: 'which?',
-        choices: ['a', 'b'],
-      },
-      run1
-    );
-    await expect(
-      engine.send(
-        {
-          to: ['run:r-000001'],
-          kind: 'answer',
-          body: 'x',
-          choice: 'zzz',
-          replyTo: q.id,
-        },
-        stranger
-      )
-    ).rejects.toMatchObject(forbidden);
-  });
-
-  it('are refused before the target is checked for a gate', async () => {
-    const { message: gate } = await engine.send(
-      {
-        to: ['human:wyat'],
-        kind: 'question',
-        body: 'Run Bash?',
-        blocking: true,
-        choices: ['approve', 'deny'],
-        data: {
-          type: 'tool-approval',
-          requestId: 'req-1',
-          runId: 'r-000001',
-          tool: 'Bash',
-          input: {},
-        },
-      },
-      system
-    );
-    await expect(
-      engine.send(
-        {
-          to: [SYSTEM_ADDRESS],
-          kind: 'answer',
-          body: '',
-          choice: 'approve',
-          replyTo: gate.id,
-        },
-        stranger
-      )
-    ).rejects.toMatchObject(forbidden);
   });
 });

@@ -62,7 +62,15 @@ A gate type the registry does not list is raised by the system only. A host also
 checks each gate of a type it implements against that type's definition: a
 `session` type fixes the whole shape of its gate (kind, `blocking`, `choices`
 and data), and a gate in another shape, or with bad data, fails `invalid` on
-`data` or on the member at fault, such as `data.paths`. (pinned rule 16)
+`data` or on the member at fault, such as `data.paths`. (pinned rule 16;
+vectors: `core.gates.unregistered-type-refused`,
+`core.gates.gate-data-on-a-notice-refused`,
+`core.gates.an-unimplemented-registered-type-is-refused`,
+`core.gates.wake-is-raised-only-by-the-system`,
+`env.envelope.only-sessions-raise-scope-gates`,
+`env.envelope.agents-may-not-forge-tool-approval-gates`,
+`env.envelope.scope-gates-have-a-fixed-shape`,
+`env.envelope.a-scope-gate-names-a-path`)
 
 ## 5.4 Answering a gate
 

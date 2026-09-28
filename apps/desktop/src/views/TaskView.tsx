@@ -49,6 +49,8 @@ export interface TaskViewProps {
   /** Opens `ImpactView` with a subject preselected — reaches the Diff tab's review case
    * panel, which is where the retired Review page used to offer this. */
   onOpenImpact: (subject: ImpactSubjectRef) => void;
+  /** Opens a doc a thread's `doc:` ref names, at its section when the ref has one. */
+  onOpenDoc: (docId: string, anchor: string | null) => void;
   /** The active project's display name, the first crumb of the page header (`null` only
    * when no project is active). Required so a mount that forgets it fails `tsc` instead
    * of silently dropping the segment. */
@@ -71,6 +73,7 @@ export function TaskView({
   panelProps,
   onViewPr,
   onOpenImpact,
+  onOpenDoc,
   projectName,
 }: TaskViewProps) {
   const doc =
@@ -91,8 +94,9 @@ export function TaskView({
         openTask: shell.openTask,
         openThread: shell.openThread,
         openImpact: onOpenImpact,
+        openDoc: onOpenDoc,
       }),
-    [shell.openTask, shell.openThread, onOpenImpact]
+    [shell.openTask, shell.openThread, onOpenImpact, onOpenDoc]
   );
   if (doc === null || panelProps === undefined)
     return (

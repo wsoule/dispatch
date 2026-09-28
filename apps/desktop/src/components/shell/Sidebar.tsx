@@ -1,5 +1,6 @@
 import type { DraftRecord } from '@dispatch/client';
 import {
+  BookText,
   Brain,
   CircleDot,
   Crosshair,
@@ -75,6 +76,7 @@ const HOST_VIEWS: ReadonlySet<ProjectView> = new Set(['terminals', 'design']);
 const CODE_VIEWS: ViewRow<ProjectView>[] = [
   { id: 'branches', label: 'Git', icon: GitBranch },
   { id: 'files', label: 'Files', icon: FileCode2 },
+  { id: 'docs', label: 'Docs', icon: BookText },
   { id: 'terminals', label: 'Terminals', icon: TerminalSquare },
   { id: 'design', label: 'Design', icon: Crosshair },
   // Blast radius of a file, run, or task's declared writes.

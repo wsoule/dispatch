@@ -3,13 +3,26 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocScope,
+  DocsHealth,
+  DocStatus,
+  DocSummary,
   EffortLevel,
   Finding,
   FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
   LedgerEntry,
-  LedgerKind,
+  LinkRel,
   ModelConfig,
   MutationEvidence,
   Priority,
@@ -616,15 +629,6 @@ export interface StartReviewInput {
   runId?: string;
 }
 
-export interface CreateLedgerInput {
-  epicId?: string | null;
-  sourceTaskId?: string | null;
-  kind: Exclude<LedgerKind, 'handoff'>;
-  title: string;
-  detail: string;
-  appliesTo?: string[];
-}
-
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
 // what changes and why, recorded in the task's `## Amendments` section.
 export interface AmendTaskInput {
@@ -659,12 +663,15 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// A task, run, file, commit or message a message points at; mirrors
-// @dispatch/protocol's Ref.
+// The ref types @dispatch/protocol registers; mirrors its RefType.
+export type RefType = 'task' | 'run' | 'file' | 'commit' | 'message' | 'doc';
+
+// What a message points at; mirrors @dispatch/protocol's Ref. A message
+// received from a peer may carry any other identifier as its type.
 export interface Ref {
-  type: string;
+  type: RefType | (string & {});
   id: string;
-  /** Commit sha for `file` refs. */
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
 }
 
@@ -776,12 +783,199 @@ export type GateData =
       summary: string;
     }
   | {
+      type: 'memory';
+      proposalId: string; // the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: MemoryKind;
+    }
+  | {
       type: 'task-proposal';
       // The draft an A2A client handed off, and who proposed it (system-only gate).
       task: string;
       proposedBy: string;
       message: string;
     };
+
+// Structural mirrors of @dispatch/memory's views and the memory routes'
+// bodies (packages/server/src/memory/routes.ts).
+export type MemoryKind =
+  | 'preference'
+  | 'convention'
+  | 'constraint'
+  | 'hazard'
+  | 'decision'
+  | 'fact'
+  | 'reference';
+export type MemoryScope = 'personal' | 'project' | 'team';
+export type MemoryTrust = 'human' | 'confirmed' | 'agent';
+/** Retired when retired or expired; what agents and the UI see. */
+export type MemoryState = 'active' | 'stale' | 'retired';
+
+export interface MemoryEntryView {
+  id: string;
+  handle: string;
+  scope: MemoryScope;
+  kind: MemoryKind;
+  title: string;
+  body: string;
+  refs: Ref[];
+  epic: string | null;
+  appliesTo: string[];
+  projectKey: string | null;
+  author: string;
+  trust: MemoryTrust;
+  status: 'active' | 'retired';
+  statusReason: 'forgotten' | 'superseded' | 'undone' | null;
+  decay: 'fresh' | 'stale' | 'expired';
+  pinned: boolean;
+  supersedes: string | null;
+  supersededBy: string | null;
+  origin: string | null;
+  proposal: string | null;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  rev: number;
+  createdAt: string;
+  updatedAt: string;
+  lastRecalledAt: string | null;
+  recallCount: number;
+  state: MemoryState;
+}
+
+export interface MemorySearchHit {
+  id: string;
+  handle: string;
+  title: string;
+  kind: MemoryKind;
+  scope: MemoryScope;
+  trust: MemoryTrust;
+  state: MemoryState;
+  updatedAt: string;
+  snippet: string;
+}
+
+export interface MemoryReadResult {
+  entry: MemoryEntryView;
+  revisions: {
+    memoryId: string;
+    rev: number;
+    by: string;
+    cause: string;
+    at: string;
+  }[];
+  recallCount: number;
+}
+
+export interface MemoryIndexResult {
+  text: string | null;
+  /** Handles of the entries the index shows, in rank order. */
+  included: string[];
+  omitted: number;
+  pinnedOverflow: boolean;
+}
+
+export interface LedgerImportReport {
+  outcome: 'ok' | 'MISMATCH' | 'dry-run';
+  read: number;
+  byKind: Record<string, number>;
+  memory: {
+    total: number;
+    imported: number;
+    proposed: number;
+    truncated: number;
+    alreadyImported: number;
+    alreadyDeleted: number;
+  };
+  audit: Record<string, number>;
+  damaged: number;
+  memoryRows: { before: number; after: number };
+  openProposals: { before: number; after: number };
+  mismatches: string[];
+  at: string;
+}
+
+export interface MemoryHealth {
+  available: boolean;
+  /** Why memory.db would not open, when it did not. */
+  reason: string | null;
+  search: 'fts5' | 'like' | null;
+  entries: number;
+  openProposals: number;
+  ledgerImport: LedgerImportReport | null;
+  configWarnings: { key: string; message: string }[];
+  lastDecayAt: string | null;
+  /** The caller's own personal store; null when the caller acts for no one. */
+  personal: { available: boolean; reason: string | null } | null;
+  /** The caller's pinned entries alone exceed the index budget. */
+  pinnedOverflow: boolean;
+}
+
+/** `proposed` waits on a decision; `active` or `retired` took effect. */
+export type MemorySaveResult =
+  | { status: 'active' | 'retired'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+export type MemoryProposalState = 'open' | 'approved' | 'rejected' | 'expired';
+
+export interface MemoryProposalView {
+  id: string;
+  action: 'add' | 'supersede' | 'retire';
+  scope: 'project' | 'team';
+  target: string | null;
+  baseRev: number | null;
+  content: {
+    kind: MemoryKind;
+    title: string;
+    body: string;
+    refs: Ref[];
+    epic: string | null;
+    appliesTo: string[];
+  } | null;
+  reason: string | null;
+  author: string;
+  authorTrust: 'human' | 'agent';
+  operator: string | null;
+  runId: string | null;
+  taskId: string | null;
+  origin: string | null;
+  contentHash: string | null;
+  gate: string | null;
+  state: MemoryProposalState;
+  matchedPersonal: boolean;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  decisionReason: string | null;
+  result: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+/** One line of the caller's personal activity, which the Inbox lists with an Undo. */
+export interface MemoryActivityRow {
+  id: string;
+  at: string;
+  kind:
+    | 'saved'
+    | 'edited'
+    | 'retired'
+    | 'ingested'
+    | 'throttled'
+    | 'ingest-problem';
+  memoryId: string | null;
+  runId: string | null;
+  summary: string;
+}
+
+/** A Claude memory file a scan skipped, without its kept content. */
+export interface MemoryIngestProblem {
+  id: string;
+  lineage: string;
+  file: string;
+  reason: string;
+  size: number;
+  at: string;
+}
 
 export type AgentStatus = 'pending' | 'approved' | 'revoked';
 
@@ -824,6 +1018,48 @@ export interface ThreadDetail {
 export interface MailboxItem {
   delivery: Delivery;
   message: Message;
+}
+
+// Docs: @dispatch/core defines the wire types packages/server/src/docs/routes.ts
+// serves; these three are the client's own framing of its answers.
+export type {
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocSummary,
+  DocsHealth,
+} from '@dispatch/core';
+
+/** A whole-body save: the new head, or the 409's merge conflict as a value. */
+export type DocSaveOutcome =
+  | { ok: true; result: DocSaveResult }
+  | { ok: false; conflict: DocConflict };
+
+/** GET /api/docs/:ref/diff; `spent` when the line diff ran out of budget. */
+export interface DocDiff {
+  from: DocRevisionInfo;
+  to: DocRevisionInfo;
+  chunks: { equal: boolean; a: string[]; b: string[] }[];
+  spent: boolean;
+}
+
+/** GET /api/docs's filters; `q` matches within titles. */
+export interface DocListParams {
+  taskId?: string;
+  scope?: DocScope;
+  status?: DocStatus;
+  unreviewed?: boolean;
+  conflicted?: boolean;
+  q?: string;
+  includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
 }
 
 export type ServerEvent =
@@ -877,6 +1113,12 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
+  // Memory changed: a bare refetch signal, with no id for a personal change.
+  | {
+      type: 'memory.changed';
+      scope: 'personal' | 'project' | 'team';
+      id?: string;
+    }
   // A task's fix loop moved between states, or stopped. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'fixloop.changed'; taskId: string }
@@ -939,6 +1181,9 @@ export type ServerEvent =
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   // Mirrors packages/server/src/events.ts exactly.
   | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // A doc changed; a bare refetch signal, never an id for personal docs.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
   // The A2A bridge's clients, tasks or listener changed; go refetch.
   | { type: 'a2a.changed' };
 
@@ -1316,6 +1561,8 @@ export interface EpicSession {
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** The human who started the session; its auto-fill runs act for them. */
+  startedBy?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -2095,11 +2342,12 @@ async function request<T>(
 // request, body or not, so the gate can be a blanket rule rather than one the
 // body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
 // A FormData body is left without one so fetch writes the multipart boundary
-// itself.
+// itself. Statuses in `allowed` come back as responses instead of throwing.
 async function send(
   target: ApiTarget,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  allowed: readonly number[] = []
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
   if (
@@ -2113,20 +2361,28 @@ async function send(
     headers.set('authorization', `Bearer ${target.token}`);
   }
   const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      code?: string;
-      field?: string;
-    };
-    throw new ApiError(
-      body.error ?? `request failed: ${res.status}`,
-      res.status,
-      body.code,
-      body.field
-    );
+  if (!res.ok && !allowed.includes(res.status)) {
+    throw apiError(res.status, await res.json().catch(() => null));
   }
   return res;
+}
+
+// The ApiError for a failed response's `{ error, code, field }` body.
+function apiError(status: number, body: unknown): ApiError {
+  const b = body as { error?: string; code?: string; field?: string } | null;
+  return new ApiError(
+    b?.error ?? `request failed: ${status}`,
+    status,
+    b?.code,
+    b?.field
+  );
+}
+
+// Only a whole-body save's merge conflict carries these reasons; other 409s,
+// such as an archived doc's, are a plain error body.
+function isDocConflict(body: unknown): body is DocConflict {
+  const reason = (body as { reason?: unknown } | null)?.reason;
+  return reason === 'merge-conflict' || reason === 'base-changed';
 }
 
 // request() for a binary body: same auth and error handling, the response
@@ -2135,11 +2391,21 @@ async function requestBlob(target: ApiTarget, path: string): Promise<Blob> {
   return (await send(target, path)).blob();
 }
 
+// An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
+function memoryPath(ref: string): string {
+  return `/api/memory/${encodeURIComponent(ref)}`;
+}
+
 function jsonBody(value: unknown): RequestInit {
   return {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(value),
   };
+}
+
+// A doc's route: ids and team handles as they are, a personal handle keeps its '~'.
+function docPath(ref: string): string {
+  return `/api/docs/${encodeURIComponent(ref).replace(/^%7E/, '~')}`;
 }
 
 // The base path a ReviewTarget's comment routes hang off — /api/runs/:id
@@ -2150,6 +2416,22 @@ function reviewTargetPath(reviewTarget: ReviewTarget): string {
   return reviewTarget.kind === 'run'
     ? `/api/runs/${encodeURIComponent(reviewTarget.runId)}`
     : `/api/prs/${reviewTarget.number}`;
+}
+
+// `?k=v&…` from the defined values in insertion order, booleans as 1/0;
+// '' when none is defined.
+function queryString(
+  params: Record<string, string | number | boolean | undefined>
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    search.set(
+      key,
+      typeof value === 'boolean' ? (value ? '1' : '0') : String(value)
+    );
+  }
+  return search.size > 0 ? `?${search.toString()}` : '';
 }
 
 // Pure helper (no fetch involved) so the query-string shape is unit
@@ -2941,8 +3223,11 @@ export interface ApiClient {
     input: AdjudicateFindingInput
   ): Promise<AdjudicateFindingResult>;
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
-  fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
-  createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  // `class: 'audit'` keeps only receipts; the lessons live in memory.
+  fetchLedger(filter?: {
+    epicId?: string | null;
+    class?: 'audit';
+  }): Promise<LedgerEntry[]>;
   /** Every message on a subject. `subject` is `run:…`, `worktree:…` or `pr:…`. */
   fetchConversation(subject: string): Promise<ChatMessage[]>;
   addChatMessage(input: {
@@ -3000,6 +3285,170 @@ export interface ApiClient {
   muteAgent(address: string, muted: boolean): Promise<AgentSummary>;
   /** Open blocking questions addressed to a human (deciding humans only). */
   openDecisions(): Promise<{ items: Message[] }>;
+  /** The caller's visible entries; `state` defaults to active and stale. */
+  listMemory(q?: {
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    state?: MemoryState | 'all';
+    taskId?: string;
+    /** Entries imported from that source (their origin's prefix). */
+    origin?: 'ledger' | 'claude' | 'amendment';
+    trust?: MemoryTrust;
+    limit?: number;
+  }): Promise<{ entries: MemoryEntryView[] }>;
+  searchMemory(q: {
+    query: string;
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    includeStale?: boolean;
+    includeRetired?: boolean;
+    limit?: number;
+  }): Promise<{ hits: MemorySearchHit[]; search: 'fts5' | 'like' }>;
+  /** `ref` is an entry id or a `#handle`. */
+  getMemory(ref: string): Promise<MemoryReadResult>;
+  /** The caller's index for a task, or the index a run got (the run itself
+   *  or a deciding human only). */
+  memoryIndex(
+    q: { taskId: string } | { runId: string }
+  ): Promise<MemoryIndexResult>;
+  memoryRecalls(runId: string): Promise<{
+    recalls: {
+      memoryId: string;
+      handle: string | null;
+      via: string;
+      at: string;
+    }[];
+  }>;
+  memoryHealth(): Promise<MemoryHealth>;
+  /** Deciding humans only; `dryRun` reports without writing. */
+  importLedger(opts?: {
+    dryRun?: boolean;
+  }): Promise<{ report: LedgerImportReport; text: string }>;
+  /** A save to shared memory by anyone but a deciding human is a proposal.
+   *  A retry with the same `opts.idempotencyKey` replays the first result. */
+  saveMemory(
+    input: {
+      scope: MemoryScope;
+      kind: MemoryKind;
+      title: string;
+      body: string;
+      refs?: Ref[];
+      epic?: string | null;
+      appliesTo?: string[];
+      supersedes?: string;
+      projectOnly?: boolean;
+    },
+    opts?: { idempotencyKey?: string }
+  ): Promise<MemorySaveResult>;
+  retireMemory(ref: string, reason: string): Promise<MemorySaveResult>;
+  /** Restores the entry's previous revision. */
+  undoMemory(ref: string): Promise<MemoryEntryView>;
+  /** Raises an agent-trust entry to confirmed. */
+  confirmMemory(ref: string): Promise<MemoryEntryView>;
+  pinMemory(ref: string, pinned: boolean): Promise<MemoryEntryView>;
+  /** Copies a personal entry into shared memory; the personal one stays. */
+  promoteMemory(
+    ref: string,
+    scope: 'project' | 'team'
+  ): Promise<MemorySaveResult>;
+  /** The entry and its history, for good. */
+  deleteMemory(ref: string): Promise<void>;
+  /** Deciding humans see every proposal; anyone else their own. */
+  listMemoryProposals(
+    state?: MemoryProposalState
+  ): Promise<{ proposals: MemoryProposalView[] }>;
+  /** A proposal with its target as proposed against (`base`) and as it is now. */
+  getMemoryProposal(id: string): Promise<{
+    proposal: MemoryProposalView;
+    base: MemoryEntryView | null;
+    current: MemoryEntryView | null;
+  }>;
+  /** The caller's own personal activity; the last day when `since` is absent. */
+  memoryActivity(since?: string): Promise<{ activity: MemoryActivityRow[] }>;
+  memoryIdentity(): Promise<{
+    identity: string;
+    aliases: { projectKey: string; handle: string }[];
+    placeholderEmail: boolean;
+  }>;
+  /** A one-time code for linking another project, or with `fresh` a new, empty identity. */
+  startMemoryLink(opts?: {
+    fresh?: boolean;
+  }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
+  completeMemoryLink(code: string): Promise<{ identity: string }>;
+  listIngestProblems(): Promise<{ problems: MemoryIngestProblem[] }>;
+  /** Saves a skipped file's kept content to the caller's memory with agent trust. */
+  acceptIngestProblem(id: string): Promise<MemorySaveResult>;
+
+  // Docs; the server's docs/routes.ts defines these routes. `ref` is a doc id,
+  // a team handle or a personal `~handle`; `rev` a revision number or rev- id.
+  listDocs(
+    params?: DocListParams
+  ): Promise<{ docs: DocSummary[]; total: number }>;
+  /** `section` reads one heading's section; `page` pages from `offset`. */
+  getDoc(
+    ref: string,
+    opts?: {
+      rev?: string | number;
+      section?: string;
+      offset?: number;
+      page?: boolean;
+    }
+  ): Promise<DocRead>;
+  createDoc(input: {
+    title: string;
+    body: string;
+    slug?: string;
+    scope?: DocScope;
+    links?: { target: string; rel: LinkRel }[];
+  }): Promise<DocSaveResult>;
+  /** A merge conflict comes back as `{ ok: false, conflict }`; other
+   *  failures throw, including a 409 such as an archived doc's. */
+  saveDocBody(
+    ref: string,
+    input: {
+      baseRev: string | number;
+      baseHash?: string;
+      body: string;
+      title?: string;
+    }
+  ): Promise<DocSaveOutcome>;
+  editDoc(
+    ref: string,
+    input: { ops: DocOp[]; baseRev?: string | number }
+  ): Promise<DocSaveResult>;
+  renameDoc(ref: string, slug: string): Promise<DocRecord>;
+  setDocStatus(ref: string, status: DocStatus): Promise<DocRecord>;
+  markDocReviewed(ref: string): Promise<DocRecord>;
+  sealDoc(ref: string): Promise<DocRecord>;
+  revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
+  deleteDoc(ref: string): Promise<void>;
+  listDocRevisions(
+    ref: string,
+    page?: { before?: number; limit?: number }
+  ): Promise<{ revisions: DocRevisionInfo[] }>;
+  getDocRevision(
+    ref: string,
+    rev: string | number
+  ): Promise<DocRevisionInfo & { body: string }>;
+  diffDoc(
+    ref: string,
+    from: string | number,
+    to: string | number
+  ): Promise<DocDiff>;
+  /** `target` is `type:id` (`task:t-1`); `replace` takes the spec link over
+   *  from the task's current spec instead of answering 409. */
+  linkDoc(
+    ref: string,
+    input: { target: string; rel: LinkRel; replace?: boolean }
+  ): Promise<{ links: DocLink[] }>;
+  unlinkDoc(ref: string, target: string): Promise<{ links: DocLink[] }>;
+  /** The docs linked to `target`, a `type:id` string. */
+  docsLinking(target: string): Promise<{ docs: DocLinking[] }>;
+  searchDocs(
+    q: string,
+    opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
+  ): Promise<{ hits: DocHit[] }>;
+  docsHealth(): Promise<DocsHealth>;
   a2aListener(): Promise<A2AListenerStatus>;
   /** Writes the listener settings and (re)opens it (operator tier). */
   setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
@@ -3664,11 +4113,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       if (filter.epicId !== undefined) {
         params.set('epicId', filter.epicId ?? '');
       }
+      if (filter.class !== undefined) params.set('class', filter.class);
       const query = params.size > 0 ? `?${params.toString()}` : '';
       return request(target, `/api/ledger${query}`);
     },
-    createLedgerEntry: (input) =>
-      request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
     fetchConversation: (subject) =>
       request(
         target,
@@ -3761,6 +4209,200 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         { method: 'POST' }
       ),
     openDecisions: () => request(target, '/api/decisions/open'),
+    listMemory: (q = {}) =>
+      request(
+        target,
+        `/api/memory${queryString({ scope: q.scope, kind: q.kind, state: q.state, taskId: q.taskId, origin: q.origin, trust: q.trust, limit: q.limit })}`
+      ),
+    searchMemory: (q) =>
+      request(
+        target,
+        `/api/memory/search${queryString({ q: q.query, scope: q.scope, kind: q.kind, includeStale: q.includeStale, includeRetired: q.includeRetired, limit: q.limit })}`
+      ),
+    getMemory: (ref) =>
+      request(target, `/api/memory/${encodeURIComponent(ref)}`),
+    memoryIndex: (q) =>
+      request(
+        target,
+        `/api/memory/index${queryString('taskId' in q ? { taskId: q.taskId } : { runId: q.runId })}`
+      ),
+    memoryRecalls: (runId) =>
+      request(target, `/api/memory/recalls${queryString({ runId })}`),
+    memoryHealth: () => request(target, '/api/memory/health'),
+    importLedger: (opts = {}) =>
+      request(
+        target,
+        `/api/memory/import/ledger${opts.dryRun === true ? '?dryRun=1' : ''}`,
+        { method: 'POST' }
+      ),
+    saveMemory: (input, opts) =>
+      request(target, '/api/memory', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(opts?.idempotencyKey === undefined
+            ? {}
+            : { 'Idempotency-Key': opts.idempotencyKey }),
+        },
+        body: JSON.stringify(input),
+      }),
+    retireMemory: (ref, reason) =>
+      request(target, `${memoryPath(ref)}/retire`, {
+        method: 'POST',
+        ...jsonBody({ reason }),
+      }),
+    undoMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/undo`, { method: 'POST' }),
+    confirmMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/confirm`, { method: 'POST' }),
+    pinMemory: (ref, pinned) =>
+      request(target, `${memoryPath(ref)}/${pinned ? 'pin' : 'unpin'}`, {
+        method: 'POST',
+      }),
+    promoteMemory: (ref, scope) =>
+      request(target, `${memoryPath(ref)}/promote`, {
+        method: 'POST',
+        ...jsonBody({ scope }),
+      }),
+    deleteMemory: async (ref) => {
+      await send(target, memoryPath(ref), { method: 'DELETE' });
+    },
+    listMemoryProposals: (state) =>
+      request(target, `/api/memory/proposals${queryString({ state })}`),
+    getMemoryProposal: (id) =>
+      request(target, `/api/memory/proposals/${encodeURIComponent(id)}`),
+    memoryActivity: (since) =>
+      request(target, `/api/memory/activity${queryString({ since })}`),
+    memoryIdentity: () => request(target, '/api/memory/identity'),
+    startMemoryLink: (opts = {}) =>
+      request(target, '/api/memory/link', {
+        method: 'POST',
+        ...jsonBody(opts.fresh === true ? { fresh: true } : {}),
+      }),
+    completeMemoryLink: (code) =>
+      request(target, `/api/memory/link/${encodeURIComponent(code)}`, {
+        method: 'POST',
+      }),
+    listIngestProblems: () => request(target, '/api/memory/ingest-problems'),
+    acceptIngestProblem: (id) =>
+      request(
+        target,
+        `/api/memory/ingest-problems/${encodeURIComponent(id)}/accept`,
+        { method: 'POST' }
+      ),
+    // Docs — packages/server/src/docs/routes.ts. Flags go as `1` only when
+    // true, since the routes read anything else as false.
+    listDocs: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.taskId !== undefined) q.set('taskId', params.taskId);
+      if (params.scope !== undefined) q.set('scope', params.scope);
+      if (params.status !== undefined) q.set('status', params.status);
+      if (params.unreviewed === true) q.set('unreviewed', '1');
+      if (params.conflicted === true) q.set('conflicted', '1');
+      if (params.q !== undefined && params.q !== '') q.set('q', params.q);
+      if (params.includeArchived === true) q.set('includeArchived', '1');
+      if (params.limit !== undefined) q.set('limit', String(params.limit));
+      if (params.offset !== undefined) q.set('offset', String(params.offset));
+      const qs = q.toString();
+      return request(target, `/api/docs${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDoc: (ref, opts = {}) => {
+      const q = new URLSearchParams();
+      if (opts.rev !== undefined) q.set('rev', String(opts.rev));
+      if (opts.section !== undefined) q.set('section', opts.section);
+      if (opts.offset !== undefined) q.set('offset', String(opts.offset));
+      if (opts.page === true) q.set('page', '1');
+      const qs = q.toString();
+      return request(target, `${docPath(ref)}${qs === '' ? '' : `?${qs}`}`);
+    },
+    createDoc: (input) =>
+      request(target, '/api/docs', { method: 'POST', ...jsonBody(input) }),
+    saveDocBody: async (ref, input) => {
+      const res = await send(
+        target,
+        `${docPath(ref)}/body`,
+        { method: 'PUT', ...jsonBody(input) },
+        [409]
+      );
+      if (res.status !== 409) {
+        return { ok: true, result: (await res.json()) as DocSaveResult };
+      }
+      const body: unknown = await res.json().catch(() => null);
+      if (isDocConflict(body)) return { ok: false, conflict: body };
+      throw apiError(409, body);
+    },
+    editDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/edit`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    renameDoc: (ref, slug) =>
+      request(target, docPath(ref), { method: 'PATCH', ...jsonBody({ slug }) }),
+    setDocStatus: (ref, status) =>
+      request(target, `${docPath(ref)}/status`, {
+        method: 'POST',
+        ...jsonBody({ status }),
+      }),
+    markDocReviewed: (ref) =>
+      request(target, `${docPath(ref)}/reviewed`, { method: 'POST' }),
+    sealDoc: (ref) =>
+      request(target, `${docPath(ref)}/seal`, { method: 'POST' }),
+    revertDoc: (ref, rev) =>
+      request(target, `${docPath(ref)}/revert`, {
+        method: 'POST',
+        ...jsonBody({ rev }),
+      }),
+    // send(), not request(): the server answers 204 with no body.
+    deleteDoc: async (ref) => {
+      await send(target, docPath(ref), { method: 'DELETE' });
+    },
+    listDocRevisions: (ref, page = {}) => {
+      const q = new URLSearchParams();
+      if (page.before !== undefined) q.set('before', String(page.before));
+      if (page.limit !== undefined) q.set('limit', String(page.limit));
+      const qs = q.toString();
+      return request(
+        target,
+        `${docPath(ref)}/revisions${qs === '' ? '' : `?${qs}`}`
+      );
+    },
+    getDocRevision: (ref, rev) =>
+      request(
+        target,
+        `${docPath(ref)}/revisions/${encodeURIComponent(String(rev))}`
+      ),
+    diffDoc: (ref, from, to) =>
+      request(
+        target,
+        `${docPath(ref)}/diff?from=${encodeURIComponent(String(from))}&to=${encodeURIComponent(String(to))}`
+      ),
+    linkDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/links`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    // The route takes the target's type and id as two path segments.
+    unlinkDoc: (ref, link) => {
+      const colon = link.indexOf(':');
+      return request(
+        target,
+        `${docPath(ref)}/links/${encodeURIComponent(link.slice(0, colon))}/${encodeURIComponent(link.slice(colon + 1))}`,
+        { method: 'DELETE' }
+      );
+    },
+    docsLinking: (link) =>
+      request(
+        target,
+        `/api/docs/links?${new URLSearchParams({ target: link }).toString()}`
+      ),
+    searchDocs: (q, opts = {}) => {
+      const params = new URLSearchParams({ q });
+      if (opts.scope !== undefined) params.set('scope', opts.scope);
+      if (opts.includeArchived === true) params.set('includeArchived', '1');
+      if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+      return request(target, `/api/docs/search?${params.toString()}`);
+    },
+    docsHealth: () => request(target, '/api/docs/health'),
     a2aListener: () => request(target, '/api/a2a/listener'),
     setA2AListener: (settings) =>
       request(target, '/api/a2a/listener', {

@@ -9,6 +9,7 @@ import {
   variantTaskInput,
 } from '../fanout.js';
 import type { RunMeta } from '../orchestrator/types.js';
+import { humanCredentialRef } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 /**
@@ -22,7 +23,7 @@ import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 type FanoutRouteContext = Pick<
   ApiContext,
-  'store' | 'cache' | 'events' | 'orchestrator'
+  'store' | 'cache' | 'events' | 'orchestrator' | 'caller' | 'viaAgentToken'
 >;
 
 interface FanoutResult {
@@ -77,6 +78,8 @@ export async function fanoutTask(
         variant.executor,
         {
           ...(variant.model === undefined ? {} : { model: variant.model }),
+          // Each variant acts for the caller's own credential, as a dispatch does.
+          operator: humanCredentialRef(ctx),
         }
       );
       result.variants.push({

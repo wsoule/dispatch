@@ -30,9 +30,10 @@ import type {
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
+import { MemoryError } from '@dispatch/memory';
 import type { Sender } from '@dispatch/protocol';
 import { MessagingError } from '@dispatch/protocol';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 
 import { isA2AClientToken } from './a2a/auth.js';
@@ -59,7 +60,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor } from './api/caller.js';
+import { humanActor, humanCredentialRef } from './api/caller.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
@@ -70,7 +71,6 @@ import {
 } from './api/files.js';
 import {
   createFinding,
-  createLedgerEntry,
   listFindings,
   listLedger,
   updateFinding,
@@ -110,6 +110,8 @@ import { isSnippet, isSubjectRef } from './conversations.js';
 import { checkDaemonIdentity } from './daemonfile.js';
 import type { DecisionDisposition, DecisionFeed } from './decisionFeed.js';
 import type { DepMapCache } from './depmap.js';
+import { handleDocsRoute } from './docs/routes.js';
+import type { DocsService } from './docs/service.js';
 import type { EventBus } from './events.js';
 import type { FindingStorePort } from './findings.js';
 import {
@@ -125,7 +127,7 @@ import type { GitOutcome } from './git/commands.js';
 import { GitRepo } from './git/commands.js';
 import { CommitMessageGenerator } from './git/commitMessage.js';
 import type { GitBranch } from './git/parse.js';
-import { expiredTokenMessage } from './identity.js';
+import { expiredTokenMessage, sha256 } from './identity.js';
 import type { TokenIdentity, TokenRegistry } from './identity.js';
 import type { InboxKind } from './inbox.js';
 import { INBOX_KINDS, type InboxStore } from './inbox.js';
@@ -151,6 +153,27 @@ import { buildLandingSnapshot } from './landing.js';
 import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
+import {
+  acceptIngestProblemRoute,
+  completeLinkRoute,
+  deleteMemoryRoute,
+  getMemory,
+  getProposalRoute,
+  importLedgerRoute,
+  ingestProblemsRoute,
+  listMemory,
+  listProposalsRoute,
+  memoryActionRoute,
+  memoryActivityRoute,
+  memoryHealthRoute,
+  memoryIdentityRoute,
+  memoryIndexRoute,
+  memoryRecallsRoute,
+  saveMemoryRoute,
+  searchMemory,
+  startLinkRoute,
+} from './memory/routes.js';
+import type { MemoryService } from './memory/service.js';
 import type { Principal } from './messaging/principal.js';
 import { resolvePrincipal } from './messaging/principal.js';
 import {
@@ -263,6 +286,10 @@ export interface ApiContext {
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
+  // The docs service (docs/service.ts); unavailable when docs.db did not open.
+  docs: DocsService;
+  /** The memory store and engine (memory/service.ts). */
+  memory: MemoryService;
   /** The A2A bridge; absent in hand-built test contexts. */
   a2a?: A2ABridge;
   prManager: PrManager;
@@ -377,6 +404,9 @@ export interface ApiContext {
   /** Who made the request being handled, when their credential resolved.
    *  Set per request by handleApi — never on the daemon-wide context. */
   caller?: TokenIdentity;
+  /** True when the request presented the shared agentToken: `caller` names
+   *  the owner, but no human is behind it. Set per request by handleApi. */
+  viaAgentToken?: boolean;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -661,10 +691,9 @@ async function updateTask(
 
 // Credits whoever actually left the comment. `runId` is how the MCP
 // `task_comment` tool (called BY an agent from inside a run) says "this came
-// from the run I'm in" — mirrors findings.ts's ledgerAuthorFor, but unlike
-// that helper a missing/unresolvable runId here is NEVER the daemon's human:
-// this endpoint has no other caller, so an unresolvable run must still yield
-// 'none' rather than crediting whoever happens to be operating the daemon.
+// from the run I'm in"; a missing/unresolvable runId is NEVER the daemon's
+// human: this endpoint has no other caller, so an unresolvable run must still
+// yield 'none' rather than crediting whoever happens to be operating the daemon.
 function commentAuthorFor(ctx: ApiContext, runId: string | null): string {
   if (runId === null) return 'none';
   const run = ctx.orchestrator.getRun(runId);
@@ -769,6 +798,9 @@ async function createRun(
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
     actor: humanActor(ctx),
+    // Who the run acts for: the credential's own human, never the shared
+    // agentToken, which humanActor credits to the owner.
+    operator: humanCredentialRef(ctx),
   });
   return jsonResponse(meta, 201);
 }
@@ -1167,6 +1199,7 @@ async function patchConfig(req: Request, ctx: ApiContext): Promise<Response> {
     'receipts',
     'sync',
     'preview',
+    'memory',
   ] as const) {
     if (!(key in body)) continue;
     const field = objectField(body, key);
@@ -3548,7 +3581,12 @@ async function startEpic(
   if (!parsed.ok) return parsed.response;
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
-  const session = await ctx.epicEngine.start(epicId, checked.body);
+  // Only a human credential starts a session its auto-fill runs act for.
+  const startedBy = humanCredentialRef(ctx);
+  const session = await ctx.epicEngine.start(epicId, {
+    ...checked.body,
+    ...(startedBy === null ? {} : { startedBy }),
+  });
   return jsonResponse(session, 201);
 }
 
@@ -4379,7 +4417,20 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'DELETE', segments: ['channels', '*', 'members'] },
   { method: 'DELETE', segments: ['channels', '*', 'members', '*'] },
   { method: 'GET', segments: ['decisions', 'open'] },
+  { method: 'GET', segments: ['memory'] },
+  { method: 'GET', segments: ['memory', '*'] },
+  { method: 'POST', segments: ['memory', 'import', 'ledger'] },
+  { method: 'POST', segments: ['memory'] },
+  { method: 'POST', segments: ['memory', 'link'] },
+  { method: 'POST', segments: ['memory', 'link', '*'] },
+  { method: 'POST', segments: ['memory', '*', '*'] },
+  { method: 'DELETE', segments: ['memory', '*'] },
+  { method: 'GET', segments: ['memory', 'proposals', '*'] },
+  { method: 'POST', segments: ['memory', 'ingest-problems', '*', 'accept'] },
 ];
+
+// Route families that authenticate by principal throughout, every method.
+const SELF_AUTHENTICATED_PREFIXES: ReadonlySet<string> = new Set(['docs']);
 
 /** Whether `/api/<segments>` is a messaging route that authenticates by
  *  principal, not tier: requiredTier skips it and handleApi resolves it. */
@@ -4387,6 +4438,9 @@ export function isSelfAuthenticated(
   segments: readonly string[],
   method: string
 ): boolean {
+  if (segments.length > 0 && SELF_AUTHENTICATED_PREFIXES.has(segments[0])) {
+    return true;
+  }
   return SELF_AUTHENTICATED_ROUTES.some(
     (route) => route.method === method && matchesRoute(route.segments, segments)
   );
@@ -4580,8 +4634,13 @@ export async function handleApi(
   // request, so the daemon-wide context is never mutated with one caller's
   // identity and a concurrent request can never read someone else's.
   const caller = daemonCtx.tokens.registry.resolve(presented);
+  // The shared agentToken resolves to the owner but is never a human; a
+  // constant-time digest compare, as resolvePrincipal does.
+  const viaAgentToken =
+    presented !== null &&
+    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
   let ctx: ApiContext = daemonCtx;
-  if (caller !== null) ctx = { ...ctx, caller };
+  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken };
   if (principal !== undefined) ctx = { ...ctx, principal };
 
   try {
@@ -5492,6 +5551,67 @@ export async function handleApi(
       }
     }
 
+    // Docs routes read ctx.principal and map their own errors (docs/routes.ts).
+    if (segments[0] === 'docs') {
+      const res = await handleDocsRoute(req, ctx, segments.slice(1), url);
+      if (res !== null) return res;
+    }
+
+    // Memory routes read ctx.principal, like messaging's (memory/routes.ts).
+    if (segments[0] === 'memory') {
+      if (segments.length === 1 && method === 'GET') {
+        return listMemory(ctx, url);
+      }
+      if (segments.length === 1 && method === 'POST') {
+        return await saveMemoryRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'GET') {
+        if (segments[1] === 'search') return searchMemory(ctx, url);
+        if (segments[1] === 'health') return memoryHealthRoute(ctx);
+        if (segments[1] === 'index') return memoryIndexRoute(ctx, url);
+        if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
+        if (segments[1] === 'proposals') return listProposalsRoute(ctx, url);
+        if (segments[1] === 'activity') return memoryActivityRoute(ctx, url);
+        if (segments[1] === 'identity') return memoryIdentityRoute(ctx);
+        if (segments[1] === 'ingest-problems') return ingestProblemsRoute(ctx);
+        return getMemory(ctx, segments[1]);
+      }
+      if (segments.length === 2 && method === 'POST') {
+        if (segments[1] === 'link') return await startLinkRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        return deleteMemoryRoute(ctx, segments[1]);
+      }
+      if (segments.length === 3 && method === 'GET') {
+        if (segments[1] === 'proposals') {
+          return getProposalRoute(ctx, segments[2]);
+        }
+      }
+      if (segments.length === 3 && method === 'POST') {
+        if (segments[1] === 'import' && segments[2] === 'ledger') {
+          return importLedgerRoute(ctx, url);
+        }
+        if (segments[1] === 'link') {
+          return await completeLinkRoute(req, ctx, segments[2]);
+        }
+        const acted = await memoryActionRoute(
+          req,
+          ctx,
+          segments[1],
+          segments[2]
+        );
+        if (acted !== null) return acted;
+      }
+      if (
+        segments.length === 4 &&
+        method === 'POST' &&
+        segments[1] === 'ingest-problems' &&
+        segments[3] === 'accept'
+      ) {
+        return await acceptIngestProblemRoute(ctx, segments[2]);
+      }
+    }
+
     if (
       segments[0] === 'decisions' &&
       segments.length === 2 &&
@@ -5963,9 +6083,6 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return listLedger(ctx, url);
       }
-      if (segments.length === 1 && method === 'POST') {
-        return await createLedgerEntry(req, ctx);
-      }
     }
 
     if (segments[0] === 'impact' && segments.length === 1 && method === 'GET') {
@@ -6189,6 +6306,12 @@ export async function handleApi(
       const body: { error: string; field?: string } = { error: err.message };
       if (err.field !== undefined) body.field = err.field;
       return jsonResponse(body, status[err.code]);
+    }
+    // Memory routes do the same with MemoryError, which also has `unavailable` (503).
+    if (err instanceof MemoryError) {
+      const body: { error: string; field?: string } = { error: err.message };
+      if (err.field !== undefined) body.field = err.field;
+      return jsonResponse(body, err.status);
     }
     throw err;
   }

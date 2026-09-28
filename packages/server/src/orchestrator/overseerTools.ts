@@ -1,12 +1,20 @@
-import { notificationKindForMessage, untrustedInline } from '@dispatch/core';
+import {
+  notificationKindForMessage,
+  untrustedInline,
+  untrustedVerbatim,
+} from '@dispatch/core';
 import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
+import { MEMORY_KINDS } from '@dispatch/memory';
+import type { MemoryKind, SharedScope } from '@dispatch/memory';
 import type { Message } from '@dispatch/protocol';
 import { gateOf } from '@dispatch/protocol';
 import { randomBytes } from 'node:crypto';
 import { z } from 'zod';
 
 import type { TaskCache } from '../cache.js';
+import type { DocsService } from '../docs/service.js';
 import type { LedgerStorePort } from '../ledger.js';
+import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
@@ -61,6 +69,16 @@ export interface OverseerToolContext {
   /** Open blocking questions addressed to a human (see openHumanDecisions). */
   openGates: () => Message[];
   ledgerStore: LedgerStorePort;
+  /** Project and team memory reads; the overseer has no personal scope. */
+  memory?: {
+    search(input: {
+      query: string;
+      scope?: SharedScope;
+      kind?: MemoryKind;
+      limit?: number;
+    }): unknown;
+    read(ref: string): unknown;
+  };
   /** The message bus, for the tools that answer a run's tool-approval gate or
    *  message a run, as the human who confirmed the action (`actor`). */
   messaging: {
@@ -72,6 +90,13 @@ export interface OverseerToolContext {
     ): Promise<void>;
     sendAsHuman(to: string, text: string, actor: string): Promise<void>;
   };
+  /** The daemon's human: the overseer acts for them, so its runs do too. */
+  ownerRef: string;
+  /** Team docs, read as the owner; absent or null when the docs service is not wired. */
+  docs?: Pick<
+    DocsService,
+    'available' | 'overseerActor' | 'list' | 'search' | 'read'
+  > | null;
   /**
    * Executor `dispatch_task` uses when the overseer doesn't name one. Matches
    * api.ts's own fallback rather than being configurable per call site, so
@@ -414,16 +439,143 @@ function ledgerFields(entry: LedgerEntry) {
 
 const ledgerTool: OverseerStatusTool<z.infer<typeof ledgerInput>> = {
   name: 'ledger_entries',
-  description:
-    'Findings and decisions earlier runs recorded for later ones to build on.',
+  description: 'Audit receipts: policy decisions, holds, grants.',
   inputSchema: ledgerInput,
   read(ctx, input) {
-    const entries = ctx.ledgerStore.list(
-      input.epicId === undefined ? {} : { epicId: input.epicId }
-    );
+    const entries = ctx.ledgerStore
+      .list(input.epicId === undefined ? {} : { epicId: input.epicId })
+      .filter((e) => classifyLedgerEntry(e).to === 'audit');
     const limited =
       input.limit === undefined ? entries : entries.slice(0, input.limit);
     return { entries: limited.map(ledgerFields), total: entries.length };
+  },
+};
+
+// The memory port, or the error a context without one gives the model.
+function requireMemory(
+  ctx: OverseerToolContext
+): NonNullable<OverseerToolContext['memory']> {
+  if (ctx.memory === undefined)
+    throw new OverseerToolError('memory is not available in this session');
+  return ctx.memory;
+}
+
+const memorySearchInput = z.object({
+  query: z
+    .string()
+    .describe('Words to search for. Empty returns the top entries.'),
+  scope: z.enum(['project', 'team']).optional(),
+  kind: z.enum(MEMORY_KINDS).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+
+const memorySearchTool: OverseerStatusTool<z.infer<typeof memorySearchInput>> =
+  {
+    name: 'memory_search',
+    description:
+      'Search the project and team lessons, conventions and preferences Dispatch remembers, stale ones included.',
+    inputSchema: memorySearchInput,
+    read(ctx, input) {
+      return requireMemory(ctx).search(input);
+    },
+  };
+
+const memoryReadInput = z.object({
+  id: z.string().describe('A #handle from a search, or a full memory id.'),
+});
+
+const memoryReadTool: OverseerStatusTool<z.infer<typeof memoryReadInput>> = {
+  name: 'memory_read',
+  description:
+    'Open one project or team memory: its body, who wrote it, and its revisions.',
+  inputSchema: memoryReadInput,
+  read(ctx, input) {
+    // Handles are stored upper-case; the model may type one in any case.
+    const id = input.id.trim();
+    return requireMemory(ctx).read(id.startsWith('#') ? id.toUpperCase() : id);
+  },
+};
+
+const docListInput = z.object({
+  query: z
+    .string()
+    .optional()
+    .describe('Search section text instead of listing.'),
+  taskId: z
+    .string()
+    .optional()
+    .describe("A task id (t-… or e-…) to list that task's linked docs."),
+  limit: z.number().int().positive().max(100).optional(),
+});
+
+const docListTool: OverseerStatusTool<z.infer<typeof docListInput>> = {
+  name: 'doc_list',
+  description:
+    "The project's team docs: all of them, a task's linked docs, or search hits.",
+  inputSchema: docListInput,
+  read(ctx, input) {
+    if (ctx.docs === undefined || ctx.docs === null || !ctx.docs.available)
+      return { available: false };
+    const actor = ctx.docs.overseerActor();
+    if (input.query !== undefined) {
+      return {
+        hits: ctx.docs
+          .search(actor, { query: input.query, limit: input.limit })
+          .map((h) => ({
+            ...h,
+            heading: untrustedInline(h.heading),
+            snippet: untrustedInline(h.snippet),
+            title: untrustedInline(h.title),
+          })),
+      };
+    }
+    const { docs, total } = ctx.docs.list(actor, {
+      taskId: input.taskId,
+      limit: input.limit ?? 20,
+    });
+    return {
+      total,
+      docs: docs.map((d) => ({
+        handle: d.handle,
+        title: untrustedInline(d.title),
+        status: d.status,
+        unreviewed: d.unreviewed,
+        rev: d.head.n,
+        rel: d.rel,
+      })),
+    };
+  },
+};
+
+const docReadInput = z.object({
+  doc: z.string().describe('A handle or doc- id.'),
+  section: z.string().optional(),
+  offset: z.number().int().nonnegative().optional(),
+});
+
+const docReadTool: OverseerStatusTool<z.infer<typeof docReadInput>> = {
+  name: 'doc_read',
+  description:
+    'One page (32 KiB) of a team doc, or one section of it, fenced as untrusted text.',
+  inputSchema: docReadInput,
+  read(ctx, input) {
+    if (ctx.docs === undefined || ctx.docs === null || !ctx.docs.available)
+      return { available: false };
+    const r = ctx.docs.read(ctx.docs.overseerActor(), input.doc, {
+      section: input.section,
+      offset: input.offset,
+      page: true,
+    });
+    return {
+      handle: r.doc.handle,
+      title: untrustedInline(r.doc.title),
+      rev: r.rev.n,
+      nextOffset: r.nextOffset,
+      text: untrustedVerbatim(
+        `doc ${r.doc.handle} rev ${r.rev.n ?? r.rev.id}`,
+        r.text
+      ),
+    };
   },
 };
 
@@ -435,6 +587,10 @@ export const OVERSEER_STATUS_TOOLS: readonly OverseerStatusTool[] = [
   pendingApprovalsTool,
   openQuestionsTool,
   ledgerTool,
+  memorySearchTool,
+  memoryReadTool,
+  docListTool,
+  docReadTool,
 ] as OverseerStatusTool[];
 
 // ---------------------------------------------------------------------------
@@ -486,6 +642,7 @@ const dispatchTask: OverseerMutatingTool<z.infer<typeof dispatchInput>> = {
     await ctx.orchestrator.dispatchOrResume(input.taskId, {
       executor: input.executor,
       model: input.model,
+      operator: ctx.ownerRef,
       defaults: { executor: executorFor(ctx) },
     });
   },

@@ -166,6 +166,8 @@ export type RowControl =
       call: ParkedCall | null;
     }
   | { kind: 'scope'; paths: string[]; reason: string }
+  /** A memory gate; its card reads the proposal, which the message never carries. */
+  | { kind: 'memory'; proposalId: string }
   | { kind: 'choices'; choices: string[]; gate: boolean };
 
 // The run or Assistant conversation a tool-approval gate's call is parked on.
@@ -208,6 +210,9 @@ export function rowControl(
     if (gate.type === 'scope') {
       return { kind: 'scope', paths: gate.paths, reason: gate.reason };
     }
+    if (gate.type === 'memory') {
+      return { kind: 'memory', proposalId: gate.proposalId };
+    }
     return { kind: 'choices', choices: message.choices ?? [], gate: true };
   }
   if (!message.to.includes(ctx.me)) return { kind: 'none' };
@@ -221,14 +226,18 @@ export function rowControl(
 /** A row control that draws something to answer with. */
 type AnswerControl = Extract<
   RowControl,
-  { kind: 'tool-approval' | 'scope' | 'choices' }
+  { kind: 'tool-approval' | 'scope' | 'memory' | 'choices' }
 >;
 
 /** Whether a row's control draws a gate card or at least one choice button:
  *  the one rule `MessageRow` renders by and the reply box's footer reads. */
 export function offersAnswer(control: RowControl): control is AnswerControl {
   if (control.kind === 'choices') return control.choices.length > 0;
-  return control.kind === 'tool-approval' || control.kind === 'scope';
+  return (
+    control.kind === 'tool-approval' ||
+    control.kind === 'scope' ||
+    control.kind === 'memory'
+  );
 }
 
 /** Whether some open message in a thread gives this viewer buttons (or a
@@ -380,9 +389,11 @@ export type RefAction =
   | { kind: 'task'; taskId: string }
   | { kind: 'run'; taskId: string; runId: string }
   | { kind: 'file'; path: string }
-  | { kind: 'message'; messageId: string };
+  | { kind: 'message'; messageId: string }
+  | { kind: 'doc'; docId: string; anchor: string | null };
 
-/** Where a ref chip leads, or null for one with no page (a commit, a run no longer listed). */
+/** Where a ref chip leads, or null for one with no page: a commit, a run no longer listed, or a
+ *  type this build does not register, which a peer's newer version may send. */
 export function refAction(
   ref: Ref,
   lookups: Pick<ThreadLookups, 'taskIdOfRun'>
@@ -398,6 +409,8 @@ export function refAction(
       return { kind: 'file', path: ref.id };
     case 'message':
       return { kind: 'message', messageId: ref.id };
+    case 'doc':
+      return { kind: 'doc', docId: ref.id, anchor: ref.at ?? null };
     default:
       return null;
   }
@@ -425,6 +438,8 @@ export interface RefNavigation {
   openTask: (taskId: string, tab: 'details' | 'chat', runId?: string) => void;
   openThread: (messageId: string) => void;
   openImpact: (subject: { kind: 'file'; id: string }) => void;
+  /** The Docs view on one doc, scrolled to `anchor`'s section when set. */
+  openDoc: (docId: string, anchor: string | null) => void;
 }
 
 export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
@@ -434,6 +449,8 @@ export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
       nav.openTask(action.taskId, 'chat', action.runId);
     } else if (action.kind === 'file') {
       nav.openImpact({ kind: 'file', id: action.path });
+    } else if (action.kind === 'doc') {
+      nav.openDoc(action.docId, action.anchor);
     } else nav.openThread(action.messageId);
   };
 }

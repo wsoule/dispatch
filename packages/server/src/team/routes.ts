@@ -1,7 +1,8 @@
-import type { TeamMember } from '@dispatch/core';
+import type { DroppedEntry, TeamMember } from '@dispatch/core';
 import {
+  describeDroppedEntry,
   DISPATCH_DIR,
-  parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
@@ -82,16 +83,18 @@ function teamFile(rootDir: string): string {
   return join(rootDir, DISPATCH_DIR, 'team.yml');
 }
 
-/** The roster as it stands, or a reason it cannot be read. A conflicted
- *  team.yml is reported, never treated as empty — writing over it would wipe
- *  the team, the same rule ActorContext follows. */
+/** The roster as it stands, with the entries it skipped, or a reason it
+ *  cannot be read. A conflicted team.yml is reported, never treated as empty —
+ *  writing over it would wipe the team, the same rule ActorContext follows. */
 function readRoster(
   rootDir: string
-): { ok: true; members: TeamMember[] } | { ok: false; error: string } {
+):
+  | { ok: true; members: TeamMember[]; dropped: DroppedEntry[] }
+  | { ok: false; error: string } {
   const file = teamFile(rootDir);
   const raw = existsSync(file) ? readFileSync(file, 'utf8') : '';
   try {
-    return { ok: true, members: parseTeam(raw) };
+    return { ok: true, ...parseTeamReport(raw) };
   } catch (err) {
     if (!(err instanceof TeamParseError)) throw err;
     return { ok: false, error: err.message };
@@ -159,6 +162,14 @@ export async function issueTeamToken(
         : email.slice(0, email.indexOf('@'));
     const result = upsertMember(roster.members, email, displayName);
     if (result.changed) {
+      // Rewriting a roster with skipped entries would delete those teammates.
+      if (roster.dropped.length > 0) {
+        const named = roster.dropped.map(describeDroppedEntry).join('; ');
+        return errorResponse(
+          409,
+          `team.yml has entries this daemon skipped (${named}); fix them first, since this invite would rewrite team.yml and delete them`
+        );
+      }
       mkdirSync(join(ctx.rootDir, DISPATCH_DIR), { recursive: true });
       writeFileSync(teamFile(ctx.rootDir), serializeTeam(result.members));
     }

@@ -187,6 +187,9 @@ export interface DispatchConfig {
   repoDigest: RepoDigestConfig;
   notifications: NotificationsConfig;
   messaging: MessagingConfig;
+  /** Optional only so hand-built fixtures stay valid; `loadConfig` always
+   *  sets it. */
+  memory?: MemoryConfig;
   /** The A2A bridge's policy; `loadConfig` always sets it, optional for hand-built fixtures. */
   a2a?: A2AConfig;
   /** One line per `a2a:` key that fell back to its default. */
@@ -339,6 +342,7 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
  *
  * - `approval`        a run is parked on a permission gate.
  * - `scope-request`   an agent asked to edit outside its declared writes.
+ * - `memory`          an agent proposes a lesson for shared memory.
  * - `question`        an agent sent a blocking question (msg_send) and waits
  *                     on the answer.
  * - `fix-loop-capped` a review/fix loop exhausted its rounds and wants a ruling.
@@ -347,6 +351,7 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
 export type NotificationKind =
   | 'approval'
   | 'scope-request'
+  | 'memory'
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
@@ -372,6 +377,7 @@ export function notificationKindForMessage(message: {
       ? (data as { type?: unknown }).type
       : undefined;
   if (type === 'scope') return 'scope-request';
+  if (type === 'memory') return 'memory';
   if (typeof type === 'string' && APPROVAL_GATES.has(type)) return 'approval';
   return 'question';
 }
@@ -381,6 +387,7 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'question',
   'approval',
   'scope-request',
+  'memory',
   'fix-loop-capped',
   'run-stalled',
 ];
@@ -419,6 +426,7 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
     question: true,
     approval: true,
     'scope-request': true,
+    memory: true,
     'fix-loop-capped': true,
     'run-stalled': true,
   },
@@ -435,6 +443,29 @@ export const DEFAULT_MESSAGING: MessagingConfig = {
   urgentPerHour: 10,
   agentTurnsPerThreadPerHour: 20,
   agentBlockingTimeoutSec: 600,
+};
+
+/** Memory's prompt budget, write limits and decay clock. */
+export interface MemoryConfig {
+  indexTokens: number;
+  personalWritesPerHour: number;
+  proposalsPerHour: number;
+  maxOpenProposals: number;
+  proposalTtlDays: number;
+  staleAfterDays: number;
+  retireAfterDays: number;
+  claudeAutoMemory: 'export' | 'off';
+}
+
+export const DEFAULT_MEMORY: MemoryConfig = {
+  indexTokens: 1000,
+  personalWritesPerHour: 50,
+  proposalsPerHour: 10,
+  maxOpenProposals: 50,
+  proposalTtlDays: 14,
+  staleAfterDays: 60,
+  retireAfterDays: 180,
+  claudeAutoMemory: 'off',
 };
 
 /** The skills an A2A agent card may offer. */
@@ -736,4 +767,6 @@ export interface ConfigPatch {
     readyTimeoutSec?: number | null;
     idleTimeoutSec?: number | null;
   };
+  /** A value sets the key, `null` removes it (its default applies again). */
+  memory?: { [K in keyof MemoryConfig]?: MemoryConfig[K] | null };
 }

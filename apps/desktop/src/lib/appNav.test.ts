@@ -42,6 +42,48 @@ describe('navReducer', () => {
     expect(next.activeRunId).toBeNull();
   });
 
+  test('Docs is a project view that back returns from', () => {
+    const docs = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'docs',
+    });
+    expect(docs.section).toBe('project');
+    expect(docs.projectView).toBe('docs');
+    expect(navReducer(docs, { type: 'back' }).projectView).toBe('overview');
+  });
+
+  test('openDoc switches to the Docs view on that doc and section', () => {
+    const next = navReducer(initialNavState, {
+      type: 'openDoc',
+      docId: 'doc-1',
+      anchor: 'api',
+    });
+    expect(next).toMatchObject({
+      projectView: 'docs',
+      activeDocId: 'doc-1',
+      activeDocAnchor: 'api',
+    });
+  });
+
+  test('openDoc from a task peek closes the peek, and back returns to the task', () => {
+    const task = navReducer(initialNavState, {
+      type: 'openTask',
+      taskId: 't-1',
+    });
+    const peeked = { ...task, peekTaskId: 't-2' };
+    const next = navReducer(peeked, {
+      type: 'openDoc',
+      docId: 'doc-1',
+      anchor: null,
+    });
+    expect(next.section).toBe('project');
+    expect(next.peekTaskId).toBeNull();
+    expect(next.activeDocAnchor).toBeNull();
+    const back = navReducer(next, { type: 'back' });
+    expect(back.projectView).toBe('task');
+    expect(back.activeTaskId).toBe('t-1');
+  });
+
   test('setGlobalView switches section to global', () => {
     const next = navReducer(initialNavState, {
       type: 'setGlobalView',

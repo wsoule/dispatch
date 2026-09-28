@@ -144,10 +144,12 @@ export class DaemonMessagingHost implements MessagingHost {
     this.deps.onHumanMessage(actor, message);
   }
 
-  // Wakes a task as its human sender (who may continue a finished run) or as the
-  // system, or continues the one run a human names; a throw becomes a failure.
+  // Wakes a task as its local human sender (who may continue a finished run) or
+  // as the system, or continues the one run a local human names; a throw fails.
   async wake(target: Address, message: Message): Promise<WakeResult> {
-    const human = message.from.startsWith('human:');
+    // A remote sender's wake runs as the system and continues nothing.
+    const human =
+      message.origin === undefined && message.from.startsWith('human:');
     if (target.startsWith('run:') && human) {
       try {
         const meta = this.deps.orchestrator.wakeRun(
@@ -180,16 +182,17 @@ export class DaemonMessagingHost implements MessagingHost {
     }
   }
 
-  // Allows a human's wake of a dispatchable task or of a run; an agent's task
-  // wake follows the project's 'wake' policy, capped by the task's risk.
+  // Allows a local human's wake of a dispatchable task or of a run; any other
+  // task wake follows the project's 'wake' policy, capped by the task's risk.
   decide(request: PolicyRequest): PolicyRuling {
     const target = request.target;
-    const human = request.message.from.startsWith('human:');
+    const human =
+      request.origin === undefined && request.message.from.startsWith('human:');
     if (target.startsWith('run:')) return human ? 'allow' : 'deny';
     if (!target.startsWith('task:')) return 'deny';
     const task = this.deps.store.get(target.slice('task:'.length));
     if (task === null || wakeRefusal(task) !== null) return 'deny';
-    // A human's wake is their own call, so policy never gates it.
+    // A local human's wake is their own call, so policy never gates it.
     if (human) return 'allow';
     const ruling: CorePolicyRuling = consultProjectPolicy(
       this.deps.rootDir,

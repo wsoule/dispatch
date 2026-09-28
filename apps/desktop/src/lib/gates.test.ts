@@ -74,6 +74,7 @@ const overseer = msg('m-o', {
 const ALL_ON = {
   approval: true,
   'scope-request': true,
+  memory: true,
   question: true,
   'fix-loop-capped': true,
   'run-stalled': true,
@@ -309,6 +310,33 @@ describe('gateOf', () => {
     expect(gateOf(question)).toBeNull();
     expect(gateOf({ ...question, data: { type: 'x-closed' } })).toBeNull();
     expect(gateOf({ ...question, data: ['scope'] })).toBeNull();
+  });
+
+  it('treats a system question of an unknown gate type as a gate', () => {
+    const message = msg('m-unknown', {
+      choices: ['approve', 'reject'],
+      data: { type: 'future-gate', ref: 'x' },
+    });
+    expect(gateOf(message)).not.toBeNull();
+  });
+
+  it("keeps a run's question carrying an unknown type a plain run question", () => {
+    const message = msg('m-run', {
+      from: 'run:r-000001',
+      choices: ['yes', 'no'],
+      data: { type: 'future-gate' },
+    });
+    expect(gateOf(message)).toBeNull();
+    expect(toRunQuestion(message)).toMatchObject({
+      id: 'm-run',
+      runId: 'r-000001',
+    });
+  });
+
+  it("keeps an agent's free-form question a plain question", () => {
+    expect(
+      gateOf(msg('m-poll', { from: 'run:r-000001', data: { type: 'poll' } }))
+    ).toBeNull();
   });
 
   it('reads a task proposal as a gate, never a plain run question', () => {

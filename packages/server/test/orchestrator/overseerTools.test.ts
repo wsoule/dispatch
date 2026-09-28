@@ -22,6 +22,7 @@ import {
   OverseerToolRegistry,
 } from '../../src/orchestrator/overseerTools.js';
 import type { CommandResult } from '../../src/orchestrator/pr.js';
+import { makeService as makeDocsService } from '../docs/fakeHost.js';
 import { initGitRepo, lateBoundOverseerMessaging } from './helpers.js';
 
 let fakeHome: string;
@@ -115,7 +116,9 @@ interface Harness extends OverseerToolContext {
  * immediately, one that stays live long enough to be cancelled or messaged,
  * and one that parks on an approval gate.
  */
-function makeHarness(): Harness {
+function makeHarness(
+  opts: { docs?: OverseerToolContext['docs'] } = {}
+): Harness {
   const store = TaskStore.init(repo);
   const cache = new TaskCache();
   cache.rebuild(store);
@@ -172,6 +175,8 @@ function makeHarness(): Harness {
     ledgerStore,
     defaultExecutor: 'fake',
     messaging: lateMessaging.port,
+    ownerRef: 'human:test',
+    docs: opts.docs ?? null,
   };
   return {
     ...ctx,
@@ -265,10 +270,14 @@ describe('overseer tool sets', () => {
 
   it('covers every status and mutating tool the overseer is specified to have', () => {
     expect(OVERSEER_STATUS_TOOLS.map((t) => t.name).sort()).toEqual([
+      'doc_list',
+      'doc_read',
       'ledger_entries',
       'list_blocked_tasks',
       'list_ready_tasks',
       'list_runs',
+      'memory_read',
+      'memory_search',
       'merge_queue',
       'open_questions',
       'pending_approvals',
@@ -281,6 +290,28 @@ describe('overseer tool sets', () => {
       'dispatch_task',
       'message_run',
     ]);
+  });
+
+  it('reads team docs for the overseer and never writes them', () => {
+    const { service } = makeDocsService();
+    service.create(
+      service.actorFor({
+        address: 'human:wyat',
+        canDecide: true,
+        kind: 'human',
+      }),
+      { title: 'Plan', body: '# Plan\n## Steps\nONE\n' }
+    );
+    const h = makeHarness({ docs: service });
+    const out = h.registry.callStatusTool('doc_read', {
+      doc: 'plan',
+      section: 'Steps',
+    }) as { text: string };
+    expect(out.text).toContain('## Steps\nONE\n');
+    expect(out.text).toMatch(/^~+ doc plan rev 1 ~+$/m);
+    expect(
+      h.registry.mutatingTools().some((t) => t.name.startsWith('doc_'))
+    ).toBe(false);
   });
 
   it('rejects an unknown tool name on both call paths', () => {
@@ -536,21 +567,29 @@ describe('overseer status tools', () => {
     expect(scoped.questions[0].question).toBe('Second?');
   });
 
-  it('ledger_entries returns project entries, and narrows to one epic on request', () => {
+  it('ledger_entries returns only audit receipts, and narrows to one epic on request', () => {
     const h = makeHarness();
     h.ledgerStore.add({
       kind: 'decision',
-      title: 'Use bun',
-      detail: 'faster',
+      title: 'Merged r-1',
+      detail: 'ok — auto-decided by policy rung 4 (merge gate)',
       authoredBy: 'human:test',
       epicId: 'e-111111',
     });
+    h.ledgerStore.add({
+      kind: 'decision',
+      title: 'Scope extended for run r-2',
+      detail: 'src/a.ts — needed it',
+      authoredBy: 'human:test',
+      epicId: 'e-222222',
+    });
+    // A lesson lives in memory now, so the overseer reads it there instead.
     h.ledgerStore.add({
       kind: 'hazard',
       title: 'Flaky suite',
       detail: 'retries',
       authoredBy: 'human:test',
-      epicId: 'e-222222',
+      epicId: 'e-111111',
     });
 
     const all = h.registry.callStatusTool('ledger_entries') as {
@@ -564,9 +603,57 @@ describe('overseer status tools', () => {
     expect(scoped.total).toBe(1);
     expect(scoped.entries[0]).toMatchObject({
       kind: 'decision',
-      title: 'Use bun',
-      detail: 'faster',
+      title: 'Merged r-1',
     });
+  });
+
+  it('memory_search and memory_read read through the memory port, upper-casing a handle', () => {
+    const h = makeHarness();
+    const calls: unknown[] = [];
+    const registry = new OverseerToolRegistry({
+      ...h,
+      memory: {
+        search: (input) => {
+          calls.push(['search', input]);
+          return { hits: [] };
+        },
+        read: (ref) => {
+          calls.push(['read', ref]);
+          return { entry: { handle: ref } };
+        },
+      },
+    });
+    expect(
+      registry.callStatusTool('memory_search', {
+        query: 'pnpm',
+        kind: 'hazard',
+        limit: 5,
+      })
+    ).toEqual({ hits: [] });
+    expect(registry.callStatusTool('memory_read', { id: '#7qx2k9pa' })).toEqual(
+      { entry: { handle: '#7QX2K9PA' } }
+    );
+    expect(calls).toEqual([
+      ['search', { query: 'pnpm', kind: 'hazard', limit: 5 }],
+      ['read', '#7QX2K9PA'],
+    ]);
+    expect(() =>
+      registry.callStatusTool('memory_search', { query: 'x', kind: 'rumour' })
+    ).toThrow(OverseerToolError);
+    // The overseer has no personal scope to offer.
+    expect(() =>
+      registry.callStatusTool('memory_search', {
+        query: 'x',
+        scope: 'personal',
+      })
+    ).toThrow(OverseerToolError);
+  });
+
+  it('memory tools say memory is unavailable when the context has none', () => {
+    const h = makeHarness();
+    expect(() =>
+      h.registry.callStatusTool('memory_search', { query: 'x' })
+    ).toThrow('memory is not available');
   });
 
   it('rejects arguments sent to a tool that takes none, rather than ignoring them', () => {
@@ -743,6 +830,8 @@ describe('applyAction performs the real effect', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0].taskId).toBe(task.meta.id);
     expect(runs[0].executor).toBe('fake');
+    // The overseer acts for the daemon's owner.
+    expect(runs[0].operator).toBe('human:test');
   });
 
   it("approve_run answers the run's tool-approval gate as the confirming human", async () => {

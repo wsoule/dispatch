@@ -54,6 +54,8 @@ interface EpicSessionRecord {
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** The human who started the session; its auto-fill runs act for them. */
+  startedBy?: string;
   /** Critical-risk children already noted as held on the epic's Activity,
    *  so each is announced once per session rather than on every fill. */
   heldCritical: Set<string>;
@@ -81,6 +83,8 @@ export interface EpicSession {
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** The human who started the session; its auto-fill runs act for them. */
+  startedBy?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -253,7 +257,7 @@ export class EpicEngine {
   // throws (see the catch below), which a fire-and-forget `void` could not.
   async start(
     epicId: string,
-    opts: EpicSessionOptions & { executor?: string } = {}
+    opts: EpicSessionOptions & { executor?: string; startedBy?: string } = {}
   ): Promise<EpicSession> {
     const epic = this.requireEpic(epicId);
     const existing = this.sessions.get(epicId);
@@ -294,6 +298,7 @@ export class EpicEngine {
       maxRuns,
       startedAt: now,
       updatedAt: now,
+      ...(opts.startedBy === undefined ? {} : { startedBy: opts.startedBy }),
       heldCritical: new Set(),
     };
     this.sessions.set(epicId, session);
@@ -845,6 +850,7 @@ export class EpicEngine {
         await this.ctx.orchestrator.dispatchOrResume(taskId, {
           executor: session.executor,
           actor: 'none',
+          operator: session.startedBy ?? null,
         });
       } catch (err) {
         // A task that already picked up a live run outside this session
@@ -1091,6 +1097,9 @@ export class EpicEngine {
         ...(record.completedAt !== undefined
           ? { completedAt: record.completedAt }
           : {}),
+        ...(typeof record.startedBy === 'string'
+          ? { startedBy: record.startedBy }
+          : {}),
         heldCritical: new Set(
           Array.isArray(record.heldCritical)
             ? record.heldCritical.filter((id) => typeof id === 'string')
@@ -1121,6 +1130,9 @@ export class EpicEngine {
       updatedAt: session.updatedAt,
       ...(session.completedAt !== undefined
         ? { completedAt: session.completedAt }
+        : {}),
+      ...(session.startedBy !== undefined
+        ? { startedBy: session.startedBy }
         : {}),
       active: session.state === 'active',
     };

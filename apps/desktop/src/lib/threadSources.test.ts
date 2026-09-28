@@ -235,6 +235,48 @@ describe('rowControl', () => {
     });
   });
 
+  it('gives a decider the memory card for a memory gate, and a teammate the reason', () => {
+    const memoryGate = msg('m-mem', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data: {
+        type: 'memory',
+        proposalId: 'mp-000001',
+        action: 'add',
+        scope: 'team',
+        kind: 'hazard',
+      },
+    });
+    const decider = rowControl(memoryGate, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({ kind: 'memory', proposalId: 'mp-000001' });
+    expect(offersAnswer(decider)).toBe(true);
+    expect(
+      rowControl(memoryGate, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+  });
+
+  it('shows a system gate of an unknown type as a decision card to a decider, and read-only to a teammate', () => {
+    const unknown = msg('m-u', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data: { type: 'future-gate', ref: 'x' },
+    });
+    expect(
+      rowControl(unknown, { me: ME, open: true, access: DECIDER })
+    ).toEqual({ kind: 'choices', choices: ['approve', 'reject'], gate: true });
+    expect(
+      rowControl(unknown, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+  });
+
   it('offers nothing once answered or to someone else, and says why an agent window cannot answer', () => {
     const q = msg('m-q', {
       kind: 'question',
@@ -685,6 +727,11 @@ describe('replyRoute', () => {
 });
 
 describe('refs and labels', () => {
+  it('gives a ref of a type this build does not register no link', () => {
+    // A peer's newer version may send one; it stays a plain chip.
+    expect(refAction({ type: 'wiki', id: 'handbook' }, lookups)).toBeNull();
+  });
+
   it('routes each ref kind, and gives a commit or an unknown run no link', () => {
     expect(refAction({ type: 'task', id: 't-000001' }, lookups)).toEqual({
       kind: 'task',
@@ -716,22 +763,39 @@ describe('refs and labels', () => {
     expect(addressAction(ME, lookups)).toBeNull();
   });
 
+  it('routes a doc ref to the doc and its section', () => {
+    const none = { taskIdOfRun: () => null };
+    expect(refAction({ type: 'doc', id: 'doc-01K', at: 'api' }, none)).toEqual({
+      kind: 'doc',
+      docId: 'doc-01K',
+      anchor: 'api',
+    });
+    expect(refAction({ type: 'doc', id: 'doc-01K' }, none)).toEqual({
+      kind: 'doc',
+      docId: 'doc-01K',
+      anchor: null,
+    });
+  });
+
   it('turns each action into the matching navigation', () => {
     const calls: unknown[][] = [];
     const open = openRefWith({
       openTask: (...args) => calls.push(['task', ...args]),
       openThread: (id) => calls.push(['thread', id]),
       openImpact: (subject) => calls.push(['impact', subject]),
+      openDoc: (docId, anchor) => calls.push(['doc', docId, anchor]),
     });
     open({ kind: 'task', taskId: 't-000001' });
     open({ kind: 'run', taskId: 't-000001', runId: 'r-000001' });
     open({ kind: 'file', path: 'src/a.ts' });
     open({ kind: 'message', messageId: 'm-01' });
+    open({ kind: 'doc', docId: 'doc-01K', anchor: 'api' });
     expect(calls).toEqual([
       ['task', 't-000001', 'details'],
       ['task', 't-000001', 'chat', 'r-000001'],
       ['impact', { kind: 'file', id: 'src/a.ts' }],
       ['thread', 'm-01'],
+      ['doc', 'doc-01K', 'api'],
     ]);
   });
 

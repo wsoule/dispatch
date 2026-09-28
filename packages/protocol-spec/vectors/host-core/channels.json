@@ -48,6 +48,60 @@
       }
     },
     {
+      "id": "core.channels.a-channel-cannot-join-a-channel",
+      "title": "A channel cannot join a channel, so no channel is ever a recipient; the channel is not created",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["7.3"],
+      "given": {
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [{ "op": "join", "channel": "ops", "member": "channel:eng" }],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "member" } }
+        ],
+        "channels": []
+      }
+    },
+    {
+      "id": "core.channels.a-stored-channel-member-is-skipped",
+      "title": "A stored member that is a channel is skipped when a send resolves its channel",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["3.5", "6.1", "7.3"],
+      "given": {
+        "channels": [
+          { "name": "ops", "members": ["human:ada", "channel:eng"] }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "input": {
+            "to": ["channel:ops"],
+            "kind": "message",
+            "body": "standup"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }],
+        "deliveries": [
+          {
+            "message": "$s1",
+            "recipient": "human:ada",
+            "via": "channel",
+            "state": "notified"
+          }
+        ]
+      }
+    },
+    {
       "id": "core.channels.implicit-members-are-notified",
       "title": "A channel's implicit members are reached through the channel, except the sender's own work item",
       "class": "host-core",

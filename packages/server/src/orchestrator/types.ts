@@ -96,6 +96,30 @@ export interface ApprovalGatePort {
   settle(runId: string, requestId: string, reason: string): void;
 }
 
+/** A run's memory section; `text` is null when there is nothing to show. */
+export interface MemoryPromptSection {
+  source: 'memory';
+  text: string | null;
+}
+
+/** Renders a dispatched run's `## Memory` section; installed by the memory service at boot. */
+export interface MemoryPromptPort {
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): MemoryPromptSection;
+}
+
+/** Where the `## Docs` prompt section comes from (docs/service.ts). */
+export interface DocsPromptPort {
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): string | null;
+}
+
 export interface ExecutorRun {
   interrupt(): Promise<void>;
   /**
@@ -134,6 +158,10 @@ export interface ExecutorEvents {
   // The session has its result and is winding down to onFinish; a message
   // sent from here on is never read, so delivery waits for the next run.
   onEnding?(): void;
+  // Export mode's load check changed the run's memory mode; `detail` says why.
+  onMemoryMode?(mode: MemoryMode, detail: string): void;
+  // The agent read exported memory files, by a Read call or Claude's own recall.
+  onMemoryRecall?(paths: string[], via: 'read' | 'claude-recall'): void;
   onFinish(finish: {
     state: 'finished' | 'failed';
     costUsd?: number;
@@ -182,6 +210,30 @@ export interface ExecutorStartOptions {
   // The 0600 file holding this run's messaging token. Only the path travels to
   // the dispatch MCP server, since backends put MCP env on a process's argv.
   runTokenFile?: string;
+  // How a Claude session carries memory; absent is `native`, today's behavior.
+  memory?: ExecutorMemoryOptions;
+}
+
+/** A run's memory mode, including the two outcomes of export's load check. */
+export type MemoryMode =
+  | 'export'
+  | 'native'
+  | 'prompt'
+  | 'export-fallback'
+  | 'export-unloaded';
+
+/** The memory mode a session starts in, and what export mode needs. */
+interface ExecutorMemoryOptions {
+  mode: 'export' | 'native' | 'prompt';
+  // The absolute export directory Claude Code loads MEMORY.md from.
+  dir?: string;
+  // The oldest Claude Code version the live probe passed on.
+  probeVersion?: string;
+  // The task prompt, with the index, that a prompt-mode restart opens with. A
+  // resume needs it: its restart is a fresh session sent the run's prompt next.
+  fallbackPrompt?: string;
+  // Reaches the agent with its first tool result when nothing loaded.
+  unloadedNote?: string;
 }
 
 // What the orchestrator may assume about an executor beyond `start()`: which
@@ -318,6 +370,12 @@ export interface RunMeta {
   // and the files it claims, and the decisions it parks on — someone's on a
   // daemon more than one person uses.
   dispatchedBy?: string;
+  // The human whose personal memory this run reads and writes (read it through
+  // runOperator). null = no one; absent = recorded before the field.
+  operator?: string | null;
+  // The run whose Claude memory export this one shares: itself, or a
+  // continuing predecessor's (read it through runLineage).
+  memoryLineage?: string;
   // C2: once a run has been merged or discarded, review() must refuse any
   // further review/resume calls on it — this pair of fields, once set, is
   // that one-way marker. `state` itself stays whatever terminal value it
@@ -407,6 +465,23 @@ export interface RunMeta {
 // before `kind` existed.
 export function runKind(meta: Pick<RunMeta, 'kind'>): RunKind {
   return meta.kind ?? 'execute';
+}
+
+// The human a run acts for; null means no one. Runs from before the field
+// fall back to dispatchedBy.
+export function runOperator(
+  meta: Pick<RunMeta, 'operator' | 'dispatchedBy'>
+): string | null {
+  return meta.operator !== undefined
+    ? meta.operator
+    : (meta.dispatchedBy ?? null);
+}
+
+// The first run of a continuing resume chain: the key of its Claude memory export.
+export function runLineage(
+  meta: Pick<RunMeta, 'id' | 'memoryLineage'>
+): string {
+  return meta.memoryLineage ?? meta.id;
 }
 
 // How a branch ref relates to the run registry, derived fresh on every

@@ -27,6 +27,23 @@ test('unchecking a kind saves just that toggle', () => {
   ]);
 });
 
+test('memory proposals have their own toggle, on by default', () => {
+  const saved: unknown[] = [];
+  render(
+    <NotificationsSection
+      config={config}
+      onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
+    />
+  );
+  const name = 'An agent proposes a lesson for shared memory';
+  expect(
+    screen.getByRole('switch', { name }).getAttribute('aria-checked')
+  ).toBe('true');
+  toggle(name);
+  expect(saved).toEqual([{ notifications: { kinds: { memory: false } } }]);
+});
+
 test('renders the saved toggle state', () => {
   render(
     <NotificationsSection

@@ -125,12 +125,12 @@ describe('events mirror dispatchd', () => {
 // package does not import, so the protocol source is read as text too.
 describe('gate payloads mirror @dispatch/protocol', () => {
   it('GateData has one variant per protocol GATE_TYPES entry', () => {
-    const envelope = readFileSync(
-      join(import.meta.dir, '..', '..', 'protocol', 'src', 'envelope.ts'),
+    const constants = readFileSync(
+      join(import.meta.dir, '..', '..', 'protocol', 'src', 'constants.ts'),
       'utf8'
     );
     const protocol = literals(
-      envelope,
+      constants,
       /export const GATE_TYPES = \[([^\]]*)\]/
     );
     // The union runs to the first blank line; its members' own `;` would end a lazier match.

@@ -292,7 +292,9 @@ export class ClaudeOverseer implements OverseerBackend {
 
     // Same CLI-resolution chain (DISPATCH_CLAUDE_BIN -> bundled SDK CLI ->
     // PATH `claude` -> install hint) the executor and planner use.
-    const sdkQuery: Query = openClaudeQuery(this.queryFn, prompt, options);
+    const sdkQuery: Query = openClaudeQuery(this.queryFn, prompt, options, {
+      memory: 'managed',
+    });
 
     try {
       let sessionId: string | undefined;

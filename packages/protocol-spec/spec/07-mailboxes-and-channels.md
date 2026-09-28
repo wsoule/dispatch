@@ -40,7 +40,9 @@ item. A host MUST refuse, as `invalid` on `member`, a join whose member is a
 session (`run:`) or a channel (`channel:`), and MUST skip a stored member that
 is a channel when it resolves a send, so that no channel is ever a recipient
 ([§3.5](03-addresses.md#s3.5)). (pinned rule 14; vectors:
-`core.channels.a-session-cannot-join`)
+`core.channels.a-session-cannot-join`,
+`core.channels.a-channel-cannot-join-a-channel`,
+`core.channels.a-stored-channel-member-is-skipped`)
 
 Joining an existing member again changes nothing. Leaving removes an explicit
 member and reports whether one was removed; it never removes an implicit member,

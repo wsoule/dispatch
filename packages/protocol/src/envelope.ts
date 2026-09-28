@@ -1,6 +1,14 @@
 import { parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
-import { gateTypeOf, hasGateData, raiserOf } from './constants.js';
+import {
+  BUILT_IN_KINDS,
+  GATE_TYPES,
+  gateTypeOf,
+  hasGateData,
+  MAX_SEGMENT_BYTES,
+  raiserOf,
+  REF_TYPES,
+} from './constants.js';
 import { MessagingError } from './errors.js';
 import { LINE_BREAK } from './lines.js';
 
@@ -12,21 +20,19 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
-export const BUILT_IN_KINDS = [
-  'message',
-  'question',
-  'answer',
-  'handoff',
-  'notice',
-] as const;
+export { GATE_TYPES };
+
 export type BuiltInKind = (typeof BUILT_IN_KINDS)[number];
 export type MessageKind = BuiltInKind | `x-${string}`;
 
-export const REF_TYPES = ['task', 'run', 'file', 'commit', 'message'] as const;
+/** A ref type the registry lists; a received ref may carry any other identifier. */
+export type RefType = (typeof REF_TYPES)[number];
+
 export interface Ref {
-  type: (typeof REF_TYPES)[number];
+  /** A registered ref type, or any identifier on a ref received from a peer (§4.4). */
+  type: RefType | (string & {});
   id: string;
-  /** Commit sha for `file` refs. */
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
 }
 
@@ -70,14 +76,20 @@ export interface SendInput {
   idempotencyKey?: string;
 }
 
-export const GATE_TYPES = [
-  'tool-approval',
-  'scope',
-  'wake',
-  'agent-registration',
-  'overseer-action',
-  'task-proposal',
+// The kinds a memory gate may name; @dispatch/memory pins its MEMORY_KINDS to
+// this list.
+export const MEMORY_GATE_KINDS = [
+  'preference',
+  'convention',
+  'constraint',
+  'hazard',
+  'decision',
+  'fact',
+  'reference',
 ] as const;
+const MEMORY_GATE_ACTIONS: readonly string[] = ['add', 'supersede', 'retire'];
+const PROPOSAL_ID = /^mp-[0-9A-HJKMNP-TV-Z]{26}$/;
+
 export type GateData =
   | {
       type: 'tool-approval';
@@ -105,6 +117,13 @@ export type GateData =
       summary: string;
     }
   | {
+      type: 'memory';
+      proposalId: string; // mp-<ulid>; the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: (typeof MEMORY_GATE_KINDS)[number];
+    }
+  | {
       type: 'task-proposal';
       // The draft an A2A client handed off, and who proposed it (system-only gate).
       task: string;
@@ -112,15 +131,21 @@ export type GateData =
       message: string;
     };
 
-/** How validateSendInput judges gates. */
+/** How validateSendInput judges gates, refs and a missing reply target. */
 export interface ValidateOptions {
   /** The gate types the host implements; default every GATE_TYPES entry. */
   gateTypes?: ReadonlySet<string>;
+  /** `received` for a message that arrived through a binding: it keeps unknown ref types. */
+  origin?: 'local' | 'received';
+  /** A federated receive: a reply whose target is not stored skips the checks that need it. */
+  parentOptional?: boolean;
 }
 
 const PACKAGE_GATE_TYPES: ReadonlySet<string> = new Set(GATE_TYPES);
 
 const X_KIND = /^x-[a-z0-9][a-z0-9-]*$/;
+// §1.4's identifier grammar; an identifier's cap is the segment cap.
+const IDENTIFIER = /^[a-z0-9][a-z0-9._-]*$/;
 const ASKING_KINDS: ReadonlySet<string> = new Set(['question', 'handoff']);
 
 // Caps on one send, so no message can flood a recipient's session or the store.
@@ -145,14 +170,16 @@ export function gateOf(message: { data?: JsonValue }): GateData | null {
     : null;
 }
 
-// True only for the daemon's own marker: a client, peer or human cannot forge one.
+// True only for this daemon's own marker: a client, peer, human or another
+// replica's system cannot forge one.
 export function isSystemMarker(
-  message: Pick<Message, 'from' | 'data'>,
+  message: Pick<Message, 'from' | 'data' | 'origin'>,
   type: 'x-closed' | 'x-breaker'
 ): boolean {
   const data = message.data;
   return (
     message.from === SYSTEM_ADDRESS &&
+    message.origin === undefined &&
     typeof data === 'object' &&
     data !== null &&
     !Array.isArray(data) &&
@@ -162,6 +189,15 @@ export function isSystemMarker(
 
 function invalid(field: string, why: string): never {
   throw new MessagingError('invalid', `${field}: ${why}`, field);
+}
+
+/** §1.4's identifier: lowercase, no line breaks, at most one segment's bytes. */
+export function isIdentifier(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    IDENTIFIER.test(value) &&
+    value.length <= MAX_SEGMENT_BYTES
+  );
 }
 
 // True when `text` is over `max` UTF-8 bytes. A UTF-16 code unit encodes to
@@ -210,6 +246,7 @@ function validateGate(
       'data.type',
       `unregistered or unimplemented gate type ${type}; private payloads use an x- type`
     );
+  if (type === 'memory') validateMemoryShape(input);
   const raiser = raiserOf(type);
   if (raiser === 'session' && !sender.startsWith('run:')) {
     throw new MessagingError(
@@ -263,6 +300,30 @@ function validateScopeShape(input: SendInput): void {
   }
 }
 
+// A memory gate names its proposal, never its content, and has one fixed
+// question shape.
+function validateMemoryShape(input: SendInput): void {
+  const gate = input.data as unknown as Extract<GateData, { type: 'memory' }>;
+  if (typeof gate.proposalId !== 'string' || !PROPOSAL_ID.test(gate.proposalId))
+    invalid('data.proposalId', 'expected a proposal id like mp-01K…');
+  if (!MEMORY_GATE_ACTIONS.includes(gate.action))
+    invalid('data.action', `expected ${MEMORY_GATE_ACTIONS.join('|')}`);
+  if (gate.scope !== 'project' && gate.scope !== 'team')
+    invalid('data.scope', 'expected project|team');
+  if (!(MEMORY_GATE_KINDS as readonly string[]).includes(gate.kind))
+    invalid('data.kind', `expected ${MEMORY_GATE_KINDS.join('|')}`);
+  if (
+    input.kind !== 'question' ||
+    input.blocking !== true ||
+    JSON.stringify(input.choices) !== '["approve","reject"]'
+  ) {
+    invalid(
+      'data',
+      'a memory gate is { kind: "question", blocking: true, choices: ["approve", "reject"], data: { type: "memory", proposalId, action, scope, kind } }'
+    );
+  }
+}
+
 // Rejects any envelope the engine must not store. `replyTarget` is the message
 // named by `replyTo` (null when absent or unknown); errors name the bad field.
 export function validateSendInput(
@@ -307,7 +368,10 @@ export function validateSendInput(
   const refs = input.refs ?? [];
   if (refs.length > MAX_REFS) invalid('refs', `at most ${MAX_REFS} refs`);
   refs.forEach((ref, i) => {
-    if (!(REF_TYPES as readonly string[]).includes(ref.type))
+    const registered = (REF_TYPES as readonly string[]).includes(ref.type);
+    // A peer's newer ref type is kept, not refused, so a minor version can add one.
+    const receivedOk = options.origin === 'received' && isIdentifier(ref.type);
+    if (!registered && !receivedOk)
       invalid(`refs[${i}].type`, 'unknown ref type');
     if (typeof ref.id !== 'string' || ref.id === '')
       invalid(`refs[${i}].id`, 'required');
@@ -341,9 +405,15 @@ export function validateSendInput(
   if (kind === 'answer' && replyTo === null)
     invalid('replyTo', 'an answer needs the question id');
   if (replyTo !== null) {
-    if (replyTarget === null)
-      throw new MessagingError('not-found', `no message ${replyTo}`, 'replyTo');
-    if (kind === 'answer') {
+    // A received reply may name a parent that never reached this replica.
+    if (replyTarget === null) {
+      if (options.parentOptional !== true)
+        throw new MessagingError(
+          'not-found',
+          `no message ${replyTo}`,
+          'replyTo'
+        );
+    } else if (kind === 'answer') {
       if (!ASKING_KINDS.has(replyTarget.kind))
         invalid('replyTo', 'only questions and handoffs take answers');
       const isGate = gateTypeOf(replyTarget, known) !== null;

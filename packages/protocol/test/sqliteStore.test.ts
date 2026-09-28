@@ -282,8 +282,8 @@ describe('SqliteMessageStore', () => {
   it('manages channels and members', () => {
     store.ensureChannel('auth', at, false);
     store.ensureChannel('auth', at, false);
-    store.addMember('auth', 'task:t-000001', at);
-    store.addMember('auth', 'task:t-000001', at);
+    expect(store.addMember('auth', 'task:t-000001', at)).toBe(true);
+    expect(store.addMember('auth', 'task:t-000001', at)).toBe(false);
     expect(store.members('auth')).toEqual(['task:t-000001']);
     expect(store.channelsOf('task:t-000001')).toEqual(['auth']);
     expect(store.removeMember('auth', 'task:t-000001')).toBe(true);

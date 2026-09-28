@@ -787,12 +787,16 @@ export class SqliteMessageStore implements MessageStore {
     }));
   }
 
-  addMember(channel: string, member: Address, at: string): void {
-    this.db
-      .prepare(
-        'INSERT INTO members (channel, addr, joined_at) VALUES (?,?,?) ON CONFLICT (channel, addr) DO NOTHING'
-      )
-      .run(channel, member, at);
+  addMember(channel: string, member: Address, at: string): boolean {
+    return (
+      Number(
+        this.db
+          .prepare(
+            'INSERT INTO members (channel, addr, joined_at) VALUES (?,?,?) ON CONFLICT (channel, addr) DO NOTHING'
+          )
+          .run(channel, member, at).changes
+      ) > 0
+    );
   }
 
   removeMember(channel: string, member: Address): boolean {
