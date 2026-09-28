@@ -293,15 +293,25 @@ describe('A2A types mirror dispatchd', () => {
     });
   }
 
-  it("A2ATaskSummary declares the fields of @dispatch/a2a's TaskRow", () => {
-    const theirs = fieldsOf(
-      readFileSync(
-        join(import.meta.dir, '..', '..', 'a2a', 'src', 'store', 'sqlite.ts'),
-        'utf8'
-      ),
-      'TaskRow'
+  const storeSource = (): string =>
+    readFileSync(
+      join(import.meta.dir, '..', '..', 'a2a', 'src', 'store', 'sqlite.ts'),
+      'utf8'
     );
+
+  it("A2ATaskSummary declares the fields of @dispatch/a2a's TaskRow", () => {
+    const theirs = fieldsOf(storeSource(), 'TaskRow');
     expect(theirs).not.toBeNull();
     expect(fieldsOf(clientSource(), 'A2ATaskSummary')).toEqual(theirs);
+  });
+
+  // GET /api/a2a/clients spreads each clients row and adds its agent's status.
+  it("A2AClientSummary declares @dispatch/a2a's ClientRow plus the status", () => {
+    const theirs = fieldsOf(storeSource(), 'ClientRow');
+    expect(theirs).not.toBeNull();
+    expect(fieldsOf(clientSource(), 'A2AClientSummary')).toEqual([
+      ...(theirs ?? []),
+      'status',
+    ]);
   });
 });

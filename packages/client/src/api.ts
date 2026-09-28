@@ -965,9 +965,9 @@ export interface A2AClientSummary {
   address: string;
   name: string;
   recipients: string[];
-  status: AgentStatus;
   createdBy: string;
   createdAt: string;
+  status: AgentStatus;
 }
 
 // One row of GET /api/a2a/tasks. Mirrors TaskRow in @dispatch/a2a's store.
