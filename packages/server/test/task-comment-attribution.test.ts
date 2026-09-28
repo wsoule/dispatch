@@ -121,9 +121,7 @@ function postComment(
 }
 
 // Covers the exact path packages/mcp/src/tools.ts's task_comment proxies
-// through when a live run + healthy daemon can resolve the calling agent —
-// mirrors ledger-attribution.test.ts's coverage of the same
-// runId-resolves-to-an-agent-or-none shape for POST /api/ledger.
+// through when a live run + healthy daemon can resolve the calling agent.
 describe('a task comment records who left it', () => {
   it('credits the agent running the run named by runId', async () => {
     const taskId = await createTask('mid-run note');

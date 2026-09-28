@@ -4,7 +4,10 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { CLAUDE_INSTALL_HINT } from '../../src/orchestrator/claudeCli.js';
+import {
+  CLAUDE_INSTALL_HINT,
+  withAutoMemoryOff,
+} from '../../src/orchestrator/claudeCli.js';
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
 import type { PlanProposal } from '../../src/orchestrator/planner.js';
 import {
@@ -101,7 +104,10 @@ describe('ClaudePlanner.start', () => {
     expect(
       await floorDecision(captured?.hooks, 'Bash', { command: 'npm publish' })
     ).toBe('deny');
-    expect(captured?.settings).toEqual(floorGuard('deny').settings);
+    // Auto memory stays off: a plan session never loads the owner's notes.
+    expect(captured?.settings).toEqual(
+      withAutoMemoryOff(floorGuard('deny')).settings
+    );
     expect(
       await floorDecision(captured?.hooks, 'Bash', { command: 'git log -1' })
     ).toBeUndefined();

@@ -4,6 +4,7 @@ ACMR
 acodex
 addext
 affordances
+allowbuilds
 analysability
 analysable
 analyse
@@ -206,6 +207,7 @@ headerless
 headlessly
 hexdigit
 HIDEABLE
+hjkmnp
 hookable
 hookified
 hostable
@@ -493,6 +495,7 @@ TOCTOU
 toidentifier
 tokenisation
 tokeniser
+tombstoned
 toolsets
 toolu
 topbar

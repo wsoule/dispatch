@@ -31,6 +31,17 @@ const gate: Message = {
 describe('gateOf', () => {
   it('recognizes gate payloads and ignores other data', () => {
     expect(gateOf(gate)?.type).toBe('tool-approval');
+    expect(
+      gateOf({
+        data: {
+          type: 'memory',
+          proposalId: `mp-01K5Z6G${'0'.repeat(19)}`,
+          action: 'retire',
+          scope: 'project',
+          kind: 'fact',
+        },
+      })?.type
+    ).toBe('memory');
     expect(gateOf({ data: { type: 'other' } })).toBeNull();
     expect(gateOf({ data: [1] })).toBeNull();
     expect(gateOf({})).toBeNull();

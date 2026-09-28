@@ -19,6 +19,7 @@ import {
   buildCartoMcpServerConfig,
   cartoMcpServers,
   ClaudeExecutor,
+  MEMORY_TOOLS,
   STOP_DENIAL_MESSAGE,
 } from '../../src/orchestrator/executors/claude.js';
 import { floorGuard } from '../../src/orchestrator/floorHook.js';
@@ -399,6 +400,11 @@ describe('ClaudeExecutor CLI-parity system prompt and setting sources', () => {
       ).toBeUndefined();
       expect(requests).toHaveLength(2);
       expect(captured?.settings).toEqual(floorGuard('deny').settings);
+      // A run's session keeps Claude's native auto memory.
+      expect(
+        (captured?.settings as { autoMemoryEnabled?: boolean } | undefined)
+          ?.autoMemoryEnabled
+      ).toBeUndefined();
     }
   });
 
@@ -928,7 +934,7 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
     expect(approvalRequested).toBe(false);
   });
 
-  it("auto-allows every messaging tool under 'acceptEdits'", async () => {
+  it("auto-allows every messaging and memory tool under 'acceptEdits'", async () => {
     let captured: Options | undefined;
     const executor = new ClaudeExecutor((args: { options?: Options }) => {
       captured = args.options;
@@ -952,7 +958,13 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
     );
     const tools = DISPATCH_MESSAGING_TOOLS.map((t) => `mcp__dispatch__${t}`);
     expect(tools).toContain('mcp__dispatch__msg_send');
-    for (const tool of tools) {
+    expect([...MEMORY_TOOLS].sort()).toEqual([
+      'mcp__dispatch__memory_forget',
+      'mcp__dispatch__memory_read',
+      'mcp__dispatch__memory_save',
+      'mcp__dispatch__memory_search',
+    ]);
+    for (const tool of [...tools, ...MEMORY_TOOLS]) {
       const result = await captured?.canUseTool?.(
         tool,
         { to: ['human:wyat'] },

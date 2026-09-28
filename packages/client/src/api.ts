@@ -9,7 +9,6 @@ import type {
   FindingSeverity,
   FindingVerdict,
   LedgerEntry,
-  LedgerKind,
   ModelConfig,
   MutationEvidence,
   Priority,
@@ -616,15 +615,6 @@ export interface StartReviewInput {
   runId?: string;
 }
 
-export interface CreateLedgerInput {
-  epicId?: string | null;
-  sourceTaskId?: string | null;
-  kind: Exclude<LedgerKind, 'handoff'>;
-  title: string;
-  detail: string;
-  appliesTo?: string[];
-}
-
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
 // what changes and why, recorded in the task's `## Amendments` section.
 export interface AmendTaskInput {
@@ -774,7 +764,194 @@ export type GateData =
       conversation: string;
       actionId: string;
       summary: string;
+    }
+  | {
+      type: 'memory';
+      proposalId: string; // the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: MemoryKind;
     };
+
+// Structural mirrors of @dispatch/memory's views and the memory routes'
+// bodies (packages/server/src/memory/routes.ts).
+export type MemoryKind =
+  | 'preference'
+  | 'convention'
+  | 'constraint'
+  | 'hazard'
+  | 'decision'
+  | 'fact'
+  | 'reference';
+export type MemoryScope = 'personal' | 'project' | 'team';
+export type MemoryTrust = 'human' | 'confirmed' | 'agent';
+/** Retired when retired or expired; what agents and the UI see. */
+export type MemoryState = 'active' | 'stale' | 'retired';
+
+export interface MemoryEntryView {
+  id: string;
+  handle: string;
+  scope: MemoryScope;
+  kind: MemoryKind;
+  title: string;
+  body: string;
+  refs: Ref[];
+  epic: string | null;
+  appliesTo: string[];
+  projectKey: string | null;
+  author: string;
+  trust: MemoryTrust;
+  status: 'active' | 'retired';
+  statusReason: 'forgotten' | 'superseded' | 'undone' | null;
+  decay: 'fresh' | 'stale' | 'expired';
+  pinned: boolean;
+  supersedes: string | null;
+  supersededBy: string | null;
+  origin: string | null;
+  proposal: string | null;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  rev: number;
+  createdAt: string;
+  updatedAt: string;
+  lastRecalledAt: string | null;
+  recallCount: number;
+  state: MemoryState;
+}
+
+export interface MemorySearchHit {
+  id: string;
+  handle: string;
+  title: string;
+  kind: MemoryKind;
+  scope: MemoryScope;
+  trust: MemoryTrust;
+  state: MemoryState;
+  updatedAt: string;
+  snippet: string;
+}
+
+export interface MemoryReadResult {
+  entry: MemoryEntryView;
+  revisions: {
+    memoryId: string;
+    rev: number;
+    by: string;
+    cause: string;
+    at: string;
+  }[];
+  recallCount: number;
+}
+
+export interface MemoryIndexResult {
+  text: string | null;
+  /** Handles of the entries the index shows, in rank order. */
+  included: string[];
+  omitted: number;
+  pinnedOverflow: boolean;
+}
+
+export interface LedgerImportReport {
+  outcome: 'ok' | 'MISMATCH' | 'dry-run';
+  read: number;
+  byKind: Record<string, number>;
+  memory: {
+    total: number;
+    imported: number;
+    proposed: number;
+    truncated: number;
+    alreadyImported: number;
+    alreadyDeleted: number;
+  };
+  audit: Record<string, number>;
+  damaged: number;
+  memoryRows: { before: number; after: number };
+  openProposals: { before: number; after: number };
+  mismatches: string[];
+  at: string;
+}
+
+export interface MemoryHealth {
+  available: boolean;
+  /** Why memory.db would not open, when it did not. */
+  reason: string | null;
+  search: 'fts5' | 'like' | null;
+  entries: number;
+  openProposals: number;
+  ledgerImport: LedgerImportReport | null;
+  configWarnings: { key: string; message: string }[];
+  lastDecayAt: string | null;
+  /** The caller's own personal store; null when the caller acts for no one. */
+  personal: { available: boolean; reason: string | null } | null;
+  /** The caller's pinned entries alone exceed the index budget. */
+  pinnedOverflow: boolean;
+}
+
+/** `proposed` waits on a decision; `active` or `retired` took effect. */
+export type MemorySaveResult =
+  | { status: 'active' | 'retired'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+export type MemoryProposalState = 'open' | 'approved' | 'rejected' | 'expired';
+
+export interface MemoryProposalView {
+  id: string;
+  action: 'add' | 'supersede' | 'retire';
+  scope: 'project' | 'team';
+  target: string | null;
+  baseRev: number | null;
+  content: {
+    kind: MemoryKind;
+    title: string;
+    body: string;
+    refs: Ref[];
+    epic: string | null;
+    appliesTo: string[];
+  } | null;
+  reason: string | null;
+  author: string;
+  authorTrust: 'human' | 'agent';
+  operator: string | null;
+  runId: string | null;
+  taskId: string | null;
+  origin: string | null;
+  contentHash: string | null;
+  gate: string | null;
+  state: MemoryProposalState;
+  matchedPersonal: boolean;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  decisionReason: string | null;
+  result: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+/** One line of the caller's personal activity, which the Inbox lists with an Undo. */
+export interface MemoryActivityRow {
+  id: string;
+  at: string;
+  kind:
+    | 'saved'
+    | 'edited'
+    | 'retired'
+    | 'ingested'
+    | 'throttled'
+    | 'ingest-problem';
+  memoryId: string | null;
+  runId: string | null;
+  summary: string;
+}
+
+/** A Claude memory file a scan skipped, without its kept content. */
+export interface MemoryIngestProblem {
+  id: string;
+  lineage: string;
+  file: string;
+  reason: string;
+  size: number;
+  at: string;
+}
 
 export type AgentStatus = 'pending' | 'approved' | 'revoked';
 
@@ -870,6 +1047,12 @@ export type ServerEvent =
   | { type: 'finding.changed' }
   // A decision, hazard or constraint was added to the ledger.
   | { type: 'ledger.changed' }
+  // Memory changed: a bare refetch signal, with no id for a personal change.
+  | {
+      type: 'memory.changed';
+      scope: 'personal' | 'project' | 'team';
+      id?: string;
+    }
   // A task's fix loop moved between states, or stopped. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'fixloop.changed'; taskId: string }
@@ -1255,6 +1438,8 @@ export interface EpicSession {
   startedAt: string;
   updatedAt: string;
   completedAt?: string;
+  /** The human who started the session; its auto-fill runs act for them. */
+  startedBy?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -2074,6 +2259,11 @@ async function requestBlob(target: ApiTarget, path: string): Promise<Blob> {
   return (await send(target, path)).blob();
 }
 
+// An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
+function memoryPath(ref: string): string {
+  return `/api/memory/${encodeURIComponent(ref)}`;
+}
+
 function jsonBody(value: unknown): RequestInit {
   return {
     headers: { 'content-type': 'application/json' },
@@ -2089,6 +2279,22 @@ function reviewTargetPath(reviewTarget: ReviewTarget): string {
   return reviewTarget.kind === 'run'
     ? `/api/runs/${encodeURIComponent(reviewTarget.runId)}`
     : `/api/prs/${reviewTarget.number}`;
+}
+
+// `?k=v&…` from the defined values in insertion order, booleans as 1/0;
+// '' when none is defined.
+function queryString(
+  params: Record<string, string | number | boolean | undefined>
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    search.set(
+      key,
+      typeof value === 'boolean' ? (value ? '1' : '0') : String(value)
+    );
+  }
+  return search.size > 0 ? `?${search.toString()}` : '';
 }
 
 // Pure helper (no fetch involved) so the query-string shape is unit
@@ -2880,8 +3086,11 @@ export interface ApiClient {
     input: AdjudicateFindingInput
   ): Promise<AdjudicateFindingResult>;
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
-  fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
-  createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  // `class: 'audit'` keeps only receipts; the lessons live in memory.
+  fetchLedger(filter?: {
+    epicId?: string | null;
+    class?: 'audit';
+  }): Promise<LedgerEntry[]>;
   /** Every message on a subject. `subject` is `run:…`, `worktree:…` or `pr:…`. */
   fetchConversation(subject: string): Promise<ChatMessage[]>;
   addChatMessage(input: {
@@ -2939,6 +3148,99 @@ export interface ApiClient {
   muteAgent(address: string, muted: boolean): Promise<AgentSummary>;
   /** Open blocking questions addressed to a human (deciding humans only). */
   openDecisions(): Promise<{ items: Message[] }>;
+  /** The caller's visible entries; `state` defaults to active and stale. */
+  listMemory(q?: {
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    state?: MemoryState | 'all';
+    taskId?: string;
+    /** Entries imported from that source (their origin's prefix). */
+    origin?: 'ledger' | 'claude' | 'amendment';
+    trust?: MemoryTrust;
+    limit?: number;
+  }): Promise<{ entries: MemoryEntryView[] }>;
+  searchMemory(q: {
+    query: string;
+    scope?: MemoryScope;
+    kind?: MemoryKind;
+    includeStale?: boolean;
+    includeRetired?: boolean;
+    limit?: number;
+  }): Promise<{ hits: MemorySearchHit[]; search: 'fts5' | 'like' }>;
+  /** `ref` is an entry id or a `#handle`. */
+  getMemory(ref: string): Promise<MemoryReadResult>;
+  /** The caller's index for a task, or the index a run got (the run itself
+   *  or a deciding human only). */
+  memoryIndex(
+    q: { taskId: string } | { runId: string }
+  ): Promise<MemoryIndexResult>;
+  memoryRecalls(runId: string): Promise<{
+    recalls: {
+      memoryId: string;
+      handle: string | null;
+      via: string;
+      at: string;
+    }[];
+  }>;
+  memoryHealth(): Promise<MemoryHealth>;
+  /** Deciding humans only; `dryRun` reports without writing. */
+  importLedger(opts?: {
+    dryRun?: boolean;
+  }): Promise<{ report: LedgerImportReport; text: string }>;
+  /** A save to shared memory by anyone but a deciding human is a proposal.
+   *  A retry with the same `opts.idempotencyKey` replays the first result. */
+  saveMemory(
+    input: {
+      scope: MemoryScope;
+      kind: MemoryKind;
+      title: string;
+      body: string;
+      refs?: Ref[];
+      epic?: string | null;
+      appliesTo?: string[];
+      supersedes?: string;
+      projectOnly?: boolean;
+    },
+    opts?: { idempotencyKey?: string }
+  ): Promise<MemorySaveResult>;
+  retireMemory(ref: string, reason: string): Promise<MemorySaveResult>;
+  /** Restores the entry's previous revision. */
+  undoMemory(ref: string): Promise<MemoryEntryView>;
+  /** Raises an agent-trust entry to confirmed. */
+  confirmMemory(ref: string): Promise<MemoryEntryView>;
+  pinMemory(ref: string, pinned: boolean): Promise<MemoryEntryView>;
+  /** Copies a personal entry into shared memory; the personal one stays. */
+  promoteMemory(
+    ref: string,
+    scope: 'project' | 'team'
+  ): Promise<MemorySaveResult>;
+  /** The entry and its history, for good. */
+  deleteMemory(ref: string): Promise<void>;
+  /** Deciding humans see every proposal; anyone else their own. */
+  listMemoryProposals(
+    state?: MemoryProposalState
+  ): Promise<{ proposals: MemoryProposalView[] }>;
+  /** A proposal with its target as proposed against (`base`) and as it is now. */
+  getMemoryProposal(id: string): Promise<{
+    proposal: MemoryProposalView;
+    base: MemoryEntryView | null;
+    current: MemoryEntryView | null;
+  }>;
+  /** The caller's own personal activity; the last day when `since` is absent. */
+  memoryActivity(since?: string): Promise<{ activity: MemoryActivityRow[] }>;
+  memoryIdentity(): Promise<{
+    identity: string;
+    aliases: { projectKey: string; handle: string }[];
+    placeholderEmail: boolean;
+  }>;
+  /** A one-time code for linking another project, or with `fresh` a new, empty identity. */
+  startMemoryLink(opts?: {
+    fresh?: boolean;
+  }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
+  completeMemoryLink(code: string): Promise<{ identity: string }>;
+  listIngestProblems(): Promise<{ problems: MemoryIngestProblem[] }>;
+  /** Saves a skipped file's kept content to the caller's memory with agent trust. */
+  acceptIngestProblem(id: string): Promise<MemorySaveResult>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -3584,11 +3886,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       if (filter.epicId !== undefined) {
         params.set('epicId', filter.epicId ?? '');
       }
+      if (filter.class !== undefined) params.set('class', filter.class);
       const query = params.size > 0 ? `?${params.toString()}` : '';
       return request(target, `/api/ledger${query}`);
     },
-    createLedgerEntry: (input) =>
-      request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
     fetchConversation: (subject) =>
       request(
         target,
@@ -3681,6 +3982,87 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         { method: 'POST' }
       ),
     openDecisions: () => request(target, '/api/decisions/open'),
+    listMemory: (q = {}) =>
+      request(
+        target,
+        `/api/memory${queryString({ scope: q.scope, kind: q.kind, state: q.state, taskId: q.taskId, origin: q.origin, trust: q.trust, limit: q.limit })}`
+      ),
+    searchMemory: (q) =>
+      request(
+        target,
+        `/api/memory/search${queryString({ q: q.query, scope: q.scope, kind: q.kind, includeStale: q.includeStale, includeRetired: q.includeRetired, limit: q.limit })}`
+      ),
+    getMemory: (ref) =>
+      request(target, `/api/memory/${encodeURIComponent(ref)}`),
+    memoryIndex: (q) =>
+      request(
+        target,
+        `/api/memory/index${queryString('taskId' in q ? { taskId: q.taskId } : { runId: q.runId })}`
+      ),
+    memoryRecalls: (runId) =>
+      request(target, `/api/memory/recalls${queryString({ runId })}`),
+    memoryHealth: () => request(target, '/api/memory/health'),
+    importLedger: (opts = {}) =>
+      request(
+        target,
+        `/api/memory/import/ledger${opts.dryRun === true ? '?dryRun=1' : ''}`,
+        { method: 'POST' }
+      ),
+    saveMemory: (input, opts) =>
+      request(target, '/api/memory', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(opts?.idempotencyKey === undefined
+            ? {}
+            : { 'Idempotency-Key': opts.idempotencyKey }),
+        },
+        body: JSON.stringify(input),
+      }),
+    retireMemory: (ref, reason) =>
+      request(target, `${memoryPath(ref)}/retire`, {
+        method: 'POST',
+        ...jsonBody({ reason }),
+      }),
+    undoMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/undo`, { method: 'POST' }),
+    confirmMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/confirm`, { method: 'POST' }),
+    pinMemory: (ref, pinned) =>
+      request(target, `${memoryPath(ref)}/${pinned ? 'pin' : 'unpin'}`, {
+        method: 'POST',
+      }),
+    promoteMemory: (ref, scope) =>
+      request(target, `${memoryPath(ref)}/promote`, {
+        method: 'POST',
+        ...jsonBody({ scope }),
+      }),
+    deleteMemory: async (ref) => {
+      await send(target, memoryPath(ref), { method: 'DELETE' });
+    },
+    listMemoryProposals: (state) =>
+      request(target, `/api/memory/proposals${queryString({ state })}`),
+    getMemoryProposal: (id) =>
+      request(target, `/api/memory/proposals/${encodeURIComponent(id)}`),
+    memoryActivity: (since) =>
+      request(target, `/api/memory/activity${queryString({ since })}`),
+    memoryIdentity: () => request(target, '/api/memory/identity'),
+    startMemoryLink: (opts = {}) =>
+      request(target, '/api/memory/link', {
+        method: 'POST',
+        ...jsonBody(opts.fresh === true ? { fresh: true } : {}),
+      }),
+    completeMemoryLink: (code) =>
+      request(target, `/api/memory/link/${encodeURIComponent(code)}`, {
+        method: 'POST',
+      }),
+    listIngestProblems: () => request(target, '/api/memory/ingest-problems'),
+    acceptIngestProblem: (id) =>
+      request(
+        target,
+        `/api/memory/ingest-problems/${encodeURIComponent(id)}/accept`,
+        { method: 'POST' }
+      ),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

@@ -188,6 +188,7 @@ function harness(
         return { ...input, id: 'l-000001' } as unknown as LedgerEntry;
       },
       list: () => [],
+      listSafe: () => ({ records: [], errors: [] }),
       entriesFor: () => [],
     },
     actorContext: { humanRef: 'human:test' },
@@ -286,6 +287,21 @@ describe('policyDecisionClassifier', () => {
     ]) {
       expect(classify(item(kind))).toBe('blocking');
     }
+    h.stop();
+  });
+
+  it('records a resolved memory proposal only from the rung that accepts it', () => {
+    const h = harness();
+    const classify = policyDecisionClassifier(h.root);
+    const item = (state: 'open' | 'resolved') =>
+      ({ kind: 'memory', state }) as Parameters<typeof classify>[0];
+    h.setPolicy('policy:\n  rung: 3\n');
+    expect(classify(item('resolved'))).toBe('blocking');
+    h.setPolicy('policy:\n  rung: 4\n');
+    expect(classify(item('resolved'))).toBe('recorded');
+    expect(classify(item('open'))).toBe('blocking');
+    h.setPolicy('policy:\n  rung: 4\n  gates:\n    memory: block\n');
+    expect(classify(item('resolved'))).toBe('blocking');
     h.stop();
   });
 

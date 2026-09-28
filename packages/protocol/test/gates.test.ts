@@ -10,7 +10,7 @@ import {
 } from '../src/constants.js';
 import { DeliveryEngine } from '../src/engine.js';
 import { GATE_TYPES, validateSendInput } from '../src/envelope.js';
-import type { Message } from '../src/envelope.js';
+import type { Message, SendInput } from '../src/envelope.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
 import { FakeHost } from './fakeHost.js';
 
@@ -364,5 +364,106 @@ describe('deciding principals and raise authority (C5)', () => {
     expect(() =>
       validateSendInput(scope, 'run:r-000001', false, null)
     ).not.toThrow();
+  });
+});
+
+describe('memory gates', () => {
+  const data = {
+    type: 'memory',
+    proposalId: `mp-01K5Z6G${'0'.repeat(19)}`,
+    action: 'add',
+    scope: 'team',
+    kind: 'hazard',
+  };
+  const memoryGate: SendInput = {
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'run:r-9f2c01 proposes a team memory (hazard). Review it in Needs you.',
+    blocking: true,
+    choices: ['approve', 'reject'],
+    data,
+  };
+
+  it('accepts the exact shape from the system or a deciding human', () => {
+    expect(() =>
+      validateSendInput(memoryGate, SYSTEM_ADDRESS, true, null)
+    ).not.toThrow();
+    expect(() =>
+      validateSendInput(memoryGate, 'human:wyat', true, null)
+    ).not.toThrow();
+  });
+
+  it('names the correct shape when it is wrong', () => {
+    expect(() =>
+      validateSendInput(
+        { ...memoryGate, choices: ['yes', 'no'] },
+        SYSTEM_ADDRESS,
+        true,
+        null
+      )
+    ).toThrow(
+      'a memory gate is { kind: "question", blocking: true, choices: ["approve", "reject"]'
+    );
+    expect(() =>
+      validateSendInput(
+        { ...memoryGate, blocking: false },
+        SYSTEM_ADDRESS,
+        true,
+        null
+      )
+    ).toThrow('a memory gate is');
+    for (const [field, value] of [
+      ['scope', 'personal'],
+      ['proposalId', 'm-1'],
+      ['action', 'delete'],
+      ['kind', 'lesson'],
+    ]) {
+      expect(() =>
+        validateSendInput(
+          { ...memoryGate, data: { ...data, [field]: value } },
+          SYSTEM_ADDRESS,
+          true,
+          null
+        )
+      ).toThrow(`data.${field}`);
+    }
+  });
+
+  // GATE_RAISERS.memory ('system-or-decider') refuses these.
+  it('may not be raised by a run or an agent', () => {
+    expect(() =>
+      validateSendInput(memoryGate, 'run:r-9f2c01', false, null)
+    ).toThrow('only Dispatch may raise memory gates');
+    expect(() =>
+      validateSendInput(memoryGate, agent.address, false, null)
+    ).toThrow('only Dispatch may raise memory gates');
+  });
+
+  it('needs the decide tier to answer', () => {
+    const question = {
+      ...memoryGate,
+      id: 'm-g',
+      thread: 'm-g',
+      replyTo: null,
+      from: SYSTEM_ADDRESS,
+      refs: [],
+      urgent: false,
+      wake: 'none',
+      createdAt: T0,
+    } as Message;
+    expect(() =>
+      validateSendInput(
+        {
+          to: [SYSTEM_ADDRESS],
+          kind: 'answer',
+          body: '',
+          choice: 'approve',
+          replyTo: 'm-g',
+        },
+        'human:ada',
+        false,
+        question
+      )
+    ).toThrow('decide tier');
   });
 });

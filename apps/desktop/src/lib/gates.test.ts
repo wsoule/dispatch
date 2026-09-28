@@ -73,6 +73,7 @@ const overseer = msg('m-o', {
 const ALL_ON = {
   approval: true,
   'scope-request': true,
+  memory: true,
   question: true,
   'fix-loop-capped': true,
   'run-stalled': true,

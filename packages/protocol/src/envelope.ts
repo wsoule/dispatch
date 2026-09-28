@@ -76,7 +76,23 @@ export const GATE_TYPES = [
   'wake',
   'agent-registration',
   'overseer-action',
+  'memory',
 ] as const;
+
+// The kinds a memory gate may name; @dispatch/memory pins its MEMORY_KINDS to
+// this list.
+export const MEMORY_GATE_KINDS = [
+  'preference',
+  'convention',
+  'constraint',
+  'hazard',
+  'decision',
+  'fact',
+  'reference',
+] as const;
+const MEMORY_GATE_ACTIONS: readonly string[] = ['add', 'supersede', 'retire'];
+const PROPOSAL_ID = /^mp-[0-9A-HJKMNP-TV-Z]{26}$/;
+
 export type GateData =
   | {
       type: 'tool-approval';
@@ -102,6 +118,13 @@ export type GateData =
       conversation: string;
       actionId: string;
       summary: string;
+    }
+  | {
+      type: 'memory';
+      proposalId: string; // mp-<ulid>; the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: (typeof MEMORY_GATE_KINDS)[number];
     };
 
 /** How validateSendInput judges gates. */
@@ -202,6 +225,7 @@ function validateGate(
       'data.type',
       `unregistered or unimplemented gate type ${type}; private payloads use an x- type`
     );
+  if (type === 'memory') validateMemoryShape(input);
   const raiser = raiserOf(type);
   if (raiser === 'session' && !sender.startsWith('run:')) {
     throw new MessagingError(
@@ -251,6 +275,30 @@ function validateScopeShape(input: SendInput): void {
     invalid(
       'data',
       'a scope request is { kind: "question", blocking: true, choices: ["grant", "deny"], data: { type: "scope", paths, reason } }'
+    );
+  }
+}
+
+// A memory gate names its proposal, never its content, and has one fixed
+// question shape.
+function validateMemoryShape(input: SendInput): void {
+  const gate = input.data as unknown as Extract<GateData, { type: 'memory' }>;
+  if (typeof gate.proposalId !== 'string' || !PROPOSAL_ID.test(gate.proposalId))
+    invalid('data.proposalId', 'expected a proposal id like mp-01K…');
+  if (!MEMORY_GATE_ACTIONS.includes(gate.action))
+    invalid('data.action', `expected ${MEMORY_GATE_ACTIONS.join('|')}`);
+  if (gate.scope !== 'project' && gate.scope !== 'team')
+    invalid('data.scope', 'expected project|team');
+  if (!(MEMORY_GATE_KINDS as readonly string[]).includes(gate.kind))
+    invalid('data.kind', `expected ${MEMORY_GATE_KINDS.join('|')}`);
+  if (
+    input.kind !== 'question' ||
+    input.blocking !== true ||
+    JSON.stringify(input.choices) !== '["approve","reject"]'
+  ) {
+    invalid(
+      'data',
+      'a memory gate is { kind: "question", blocking: true, choices: ["approve", "reject"], data: { type: "memory", proposalId, action, scope, kind } }'
     );
   }
 }

@@ -4,6 +4,7 @@ export {
   GATE_RAISERS,
   gateTypeOf,
   hasGateData,
+  isDecidingAuthor,
   raiserOf,
 } from './constants.js';
 export type { GateRaiser } from './constants.js';
@@ -20,6 +21,7 @@ export {
   GATE_TYPES,
   gateOf,
   isSystemMarker,
+  MEMORY_GATE_KINDS,
   REF_TYPES,
   validateSendInput,
 } from './envelope.js';
@@ -45,6 +47,7 @@ export type {
   WakeResult,
 } from './host.js';
 export { renderDigestLine, renderForAgent } from './render.js';
+export { LINE_BREAK } from './lines.js';
 export {
   MESSAGES_DB_VERSION,
   openMessagesDb,

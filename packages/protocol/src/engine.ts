@@ -1,6 +1,6 @@
 import { isAgentAuthored, parseAddress, SYSTEM_ADDRESS } from './address.js';
 import type { Address } from './address.js';
-import { gateTypeOf, hasGateData } from './constants.js';
+import { gateTypeOf, hasGateData, isDecidingAuthor } from './constants.js';
 import {
   checkIdempotencyKey,
   isSystemMarker,
@@ -343,7 +343,7 @@ export class DeliveryEngine {
       gateType !== null &&
       this.gateTypes.has(gateType) &&
       !isSystemMarker(message, 'x-closed') &&
-      decidingAuthor(message.from)
+      isDecidingAuthor(message.from)
     )
       await this.applyGate(question, message);
     this.emit({ type: 'message', message });
@@ -503,7 +503,7 @@ export class DeliveryEngine {
     question: Message,
     answer: Message
   ): Promise<boolean> {
-    if (!decidingAuthor(answer.from)) return false;
+    if (!isDecidingAuthor(answer.from)) return false;
     try {
       await this.host.onAnswered(question, answer);
     } catch (err) {
@@ -602,7 +602,7 @@ export class DeliveryEngine {
       const type = gateTypeOf(question, this.gateTypes);
       // Unknown to this build: leave it unapplied, so a build that knows it replays it.
       if (type === null || !this.gateTypes.has(type)) continue;
-      if (!decidingAuthor(answer.from)) {
+      if (!isDecidingAuthor(answer.from)) {
         if (await this.voidAndReopen(question, answer)) voided++;
         continue;
       }
@@ -1015,11 +1015,6 @@ function alreadyAnswered(questionId: string): MessagingError {
     `${questionId} is already answered`,
     'replyTo'
   );
-}
-
-// Answers that may take effect: a deciding human's or the system's.
-function decidingAuthor(address: Address): boolean {
-  return address === SYSTEM_ADDRESS || address.startsWith('human:');
 }
 
 // Only a human's wake may name an ended run: it asks to continue exactly that run.

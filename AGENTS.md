@@ -55,7 +55,7 @@ For non-moon commands that CI-gate themselves, unset the var:
 Dispatch is open core (`LICENSING.md`) — license is per package, not uniform:
 
 - `packages/core`, `packages/client`, `packages/cli`, `packages/mcp`,
-  `packages/protocol`, `packages/a2a` are MIT.
+  `packages/protocol`, `packages/memory`, `packages/a2a` are MIT.
 - `packages/protocol-spec` is Apache-2.0: the published protocol text and its
   conformance kit.
 - `packages/federation`, `packages/server/src/team/` and

@@ -21,6 +21,7 @@ const EXPECTED: Record<string, string> = {
   '@dispatch/cli': 'MIT',
   '@dispatch/mcp': 'MIT',
   '@dispatch/protocol': 'MIT',
+  '@dispatch/memory': 'MIT',
   '@dispatch/protocol-spec': 'Apache-2.0',
   '@dispatch/a2a': 'MIT',
   // Shared with the relay: log verification and the license check.
