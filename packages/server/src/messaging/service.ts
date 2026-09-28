@@ -522,13 +522,14 @@ export function openMessaging(deps: {
       );
       return;
     }
-    const message = store.getMessage(e.delivery.messageId);
+    // Channel membership reaches no socket; only the federation router reads it.
+    if (e.type === 'membership') return;
+    const messageId = e.type === 'remote' ? e.messageId : e.delivery.messageId;
+    const deliveryId =
+      e.type === 'remote' ? `remote:${e.recipient}` : e.delivery.id;
+    const message = store.getMessage(messageId);
     deps.events.broadcast(
-      {
-        type: 'delivery.changed',
-        deliveryId: e.delivery.id,
-        messageId: e.delivery.messageId,
-      },
+      { type: 'delivery.changed', deliveryId, messageId },
       message === null ? () => false : messageAudience(store, message)
     );
   });

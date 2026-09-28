@@ -8,13 +8,14 @@ import {
 } from './envelope.js';
 import type { JsonValue, Message, Ref, SendInput } from './envelope.js';
 import { MessagingError } from './errors.js';
-import type { MessagingHost, WakeResult } from './host.js';
+import type { MessagingHost, Placement, WakeResult } from './host.js';
 import { firstLine, renderDigestLine, renderForAgent } from './render.js';
 import type {
   Delivery,
   DeliveryState,
   DeliveryVia,
   MessageStore,
+  RemoteDelivery,
 } from './store.js';
 import { createUlidFactory } from './ulid.js';
 
@@ -50,7 +51,9 @@ export interface SendResult {
 
 export type EngineEvent =
   | { type: 'message'; message: Message }
-  | { type: 'delivery'; delivery: Delivery };
+  | { type: 'delivery'; delivery: Delivery }
+  | { type: 'membership'; channel: string; member: Address; joined: boolean }
+  | { type: 'remote'; messageId: string; recipient: Address };
 
 interface Target {
   recipient: Address;
@@ -60,6 +63,8 @@ interface Target {
 const HOUR_MS = 60 * 60 * 1000;
 
 const SYSTEM_SENDER: Sender = { address: SYSTEM_ADDRESS, canDecide: true };
+
+const LOCAL: Placement = { kind: 'local' };
 
 export class DeliveryEngine {
   private readonly store: MessageStore;
@@ -318,16 +323,47 @@ export class DeliveryEngine {
     if (input.choice !== undefined) message.choice = input.choice;
 
     const fields = this.recipientFields(input.to, replyTarget);
-    const targets = this.admitExternal(
+    const { targets: placedTargets, placed } = this.place(
       this.resolveTargets(message.to, sender.address, fields),
+      fields,
+      replyTarget,
+      message
+    );
+    const targets = this.admitExternal(
+      placedTargets,
       fields,
       sender,
       replyTarget,
       message
     );
+    const fed = this.host.federation;
+    if (fed !== undefined) message.hlc = fed.hlc();
     const wakesRuns = wakesEndedRuns(message);
     const deliveries: Delivery[] = [];
+    const remotes: RemoteDelivery[] = [];
+    const skipWake = new Set<Address>();
     for (const t of targets) {
+      const p = placed.get(t.recipient) ?? LOCAL;
+      if (p.kind === 'remote') {
+        remotes.push({
+          messageId: id,
+          recipient: t.recipient,
+          via: t.via,
+          state: 'forwarded',
+          homes: p.homes,
+          wakeAt: p.wakeAt ?? null,
+          refusedBy: [],
+          updatedAt: this.nowIso(),
+        });
+        // Exactly one replica wakes a task: the one placement named.
+        if (
+          p.wakeAt !== undefined &&
+          fed !== undefined &&
+          p.wakeAt !== fed.replica
+        )
+          skipWake.add(t.recipient);
+        if (!p.alsoLocal) continue;
+      }
       const planned = this.plan(
         t,
         muted,
@@ -348,6 +384,7 @@ export class DeliveryEngine {
         throw alreadyAnswered(question.id);
       this.store.insertMessage(message, key);
       for (const d of deliveries) this.store.insertDelivery(d);
+      for (const r of remotes) this.store.insertRemote(r);
       return question === null ? [] : this.markAnswered(question.id);
     });
     if (!Array.isArray(written)) return written;
@@ -366,6 +403,8 @@ export class DeliveryEngine {
       await this.applyGate(question, message);
     this.emit({ type: 'message', message });
     for (const d of answered) this.emit({ type: 'delivery', delivery: d });
+    for (const r of remotes)
+      this.emit({ type: 'remote', messageId: id, recipient: r.recipient });
 
     const settled: Delivery[] = [];
     for (const d of deliveries)
@@ -373,7 +412,7 @@ export class DeliveryEngine {
 
     if (message.wake === 'request') {
       try {
-        await this.runWake(message, settled);
+        await this.runWake(message, settled, skipWake);
       } catch (err) {
         // The message is committed; a failing wake path must not fail the send.
         console.error('messaging wake failed', err);
@@ -392,8 +431,58 @@ export class DeliveryEngine {
     );
   }
 
-  // Refuses or drops A2A clients and peers before storing: gate data, sent or
-  // replied to, never leaves the machine; a refused channel member is skipped.
+  // Places every non-external target, then runs the one local-only check
+  // before any hook admits anything, so a message meets one error whichever
+  // path would catch it. A refused channel-expanded target is dropped.
+  private place(
+    targets: Target[],
+    fields: Map<Address, string>,
+    replyTarget: Message | null,
+    message: Message
+  ): { targets: Target[]; placed: Map<Address, Placement> } {
+    const fed = this.host.federation;
+    const placed = new Map<Address, Placement>();
+    let external = false;
+    for (const t of targets) {
+      if (this.isExternal(t.recipient)) {
+        external = true;
+        continue;
+      }
+      placed.set(
+        t.recipient,
+        fed === undefined ? LOCAL : fed.placement(t, message, replyTarget)
+      );
+    }
+    const refused = targets.filter(
+      (t) => placed.get(t.recipient)?.kind === 'refuse'
+    );
+    const gateData =
+      hasGateData(message) ||
+      (replyTarget !== null && hasGateData(replyTarget));
+    if (gateData && (external || refused.length > 0))
+      throw new MessagingError(
+        'forbidden',
+        'gates never leave this machine',
+        'data'
+      );
+    for (const t of refused) {
+      if (t.via === 'direct')
+        throw new MessagingError(
+          'forbidden',
+          'overseer and A2A conversations stay on this machine',
+          fields.get(t.recipient) ?? 'to'
+        );
+    }
+    return {
+      targets: targets.filter(
+        (t) => placed.get(t.recipient)?.kind !== 'refuse'
+      ),
+      placed,
+    };
+  }
+
+  // Admits or drops A2A clients and peers before storing (place() has already
+  // refused gate data); a refused channel member is skipped.
   private admitExternal(
     targets: Target[],
     fields: Map<Address, string>,
@@ -403,16 +492,6 @@ export class DeliveryEngine {
   ): Target[] {
     const external = (t: Target) => this.isExternal(t.recipient);
     if (!targets.some(external)) return targets;
-    if (
-      hasGateData(message) ||
-      (replyTarget !== null && hasGateData(replyTarget))
-    ) {
-      throw new MessagingError(
-        'forbidden',
-        'gate data never goes to an A2A client or peer',
-        'data'
-      );
-    }
     const out: Target[] = [];
     for (const t of targets) {
       if (!external(t)) {
@@ -711,6 +790,11 @@ export class DeliveryEngine {
     return this.store.openBlocking();
   }
 
+  /** One message's local deliveries; recipients homed elsewhere are not among them. */
+  deliveriesOf(messageId: string): Delivery[] {
+    return this.store.deliveries({ messageId });
+  }
+
   thread(threadId: string): { messages: Message[]; deliveries: Delivery[] } {
     const messages = this.store.thread(threadId);
     return {
@@ -778,20 +862,27 @@ export class DeliveryEngine {
       this.store.ensureChannel(channel, this.nowIso(), false);
       this.store.addMember(channel, member, this.nowIso());
     });
+    this.emit({ type: 'membership', channel, member, joined: true });
   }
 
   leave(channel: string, member: Address): boolean {
-    return this.store.removeMember(channel, member);
+    const removed = this.store.removeMember(channel, member);
+    if (removed)
+      this.emit({ type: 'membership', channel, member, joined: false });
+    return removed;
   }
 
   // Where a reply or system notice for `address` should go: a run that is no
-  // longer live is reached through its task; every other address is as given.
+  // longer live is reached through its task, here or on the replica running
+  // it; every other address is as given.
   deliverableAddress(address: Address): Address {
     if (!address.startsWith('run:')) return address;
     const runId = address.slice('run:'.length);
     if (this.host.isLiveRun(runId)) return address;
     const task = this.host.taskOfRun(runId);
-    return task === null ? address : `task:${task}`;
+    if (task !== null) return `task:${task}`;
+    const remote = this.host.federation?.remoteRunTask(runId) ?? null;
+    return remote === null ? address : `task:${remote}`;
   }
 
   async reply(
@@ -953,10 +1044,15 @@ export class DeliveryEngine {
 
   // After a wake-requesting send, asks the host to wake each held task
   // recipient (or gates/denies it), so the message is actually seen soon.
-  private async runWake(message: Message, settled: Delivery[]): Promise<void> {
+  // Recipients in `skip` are woken by another replica.
+  private async runWake(
+    message: Message,
+    settled: Delivery[],
+    skip: ReadonlySet<Address>
+  ): Promise<void> {
     const wakesRuns = wakesEndedRuns(message);
     for (const d of settled) {
-      if (d.state !== 'held') continue;
+      if (d.state !== 'held' || skip.has(d.recipient)) continue;
       if (
         !d.recipient.startsWith('task:') &&
         !(wakesRuns && d.recipient.startsWith('run:'))
@@ -1065,7 +1161,12 @@ function decidingAuthor(address: Address): boolean {
   return address === SYSTEM_ADDRESS || address.startsWith('human:');
 }
 
-// Only a human's wake may name an ended run: it asks to continue exactly that run.
+// Only a local human's wake may name an ended run: it asks to continue exactly
+// that run. A message from another replica never continues one.
 function wakesEndedRuns(message: Message): boolean {
-  return message.wake === 'request' && message.from.startsWith('human:');
+  return (
+    message.wake === 'request' &&
+    message.origin === undefined &&
+    message.from.startsWith('human:')
+  );
 }
