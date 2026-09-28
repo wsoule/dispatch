@@ -585,6 +585,13 @@ function YourMemory({
     >
       <GroupHeader name="Your memory" count={items.length} />
       <MemoryActivityList items={items} client={client} />
+      <p className="font-book text-muted-foreground px-2 py-1 text-[12px]">
+        Showing the last day. Undo an older change with{' '}
+        <code className="font-mono text-[12px]">
+          dispatch memory undo &lt;ref&gt;
+        </code>
+        .
+      </p>
     </section>
   );
 }

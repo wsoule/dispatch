@@ -804,6 +804,32 @@ test('lists your memory activity under Your memory, each with its Undo', async (
   await waitFor(() => expect(undoMemory).toHaveBeenCalledWith('mem-1'));
 });
 
+// The list covers the last day, but undo has no time limit.
+test('says how to undo a memory change older than the list reaches', async () => {
+  const project = projectWith({
+    port: 4321,
+    client: {
+      memoryActivity: () =>
+        Promise.resolve({
+          activity: [
+            {
+              id: 'ma-1',
+              at: '2026-09-25T10:00:00.000Z',
+              kind: 'saved',
+              memoryId: 'mem-1',
+              runId: 'r-9f2c01',
+              summary: 'run:r-9f2c01 saved to your memory: pnpm builds',
+            },
+          ],
+        }),
+    } as unknown as ApiClient,
+  });
+  renderInbox(dataWith([]), { project });
+  const section = await screen.findByRole('region', { name: 'Your memory' });
+  expect(within(section).getByText(/last day/)).toBeTruthy();
+  expect(within(section).getByText('dispatch memory undo <ref>')).toBeTruthy();
+});
+
 test('has no memory section while nothing was written to your memory', async () => {
   const memoryActivity = mock(() => Promise.resolve({ activity: [] }));
   renderInbox(dataWith([]), {
