@@ -116,8 +116,8 @@ export interface RosterView {
   dismissed: readonly Dismissal[];
   problems: readonly Problem[];
   /**
-   * Set while the fold keeps an op this build cannot read from a member or
-   * admin at it; the caller then applies nothing. Always null for the relay.
+   * Set while the fold keeps an unreadable op from a member or admin at it, no
+   * observer; the caller then applies nothing. Always null for the relay.
    */
   unknown: Paused | null;
 }
@@ -265,9 +265,8 @@ export function foldRosterAt(input: FoldInput, later: LaterPairs): RosterView {
   return viewOf(final, dismisses, valid);
 }
 
-// Judged in the base fold only: the publisher is an admin at the dismiss, and
-// the op is its own, or its publisher was no admin there or ranked after the
-// dismiss's publisher, each rank read at its own op.
+// Judged in the base fold: an admin at the dismiss may name its own op, a
+// non-admin's, or one from an admin it outranks, each rank read at its op.
 function validIn(ev: Evaluation, { item, named }: Eligible): boolean {
   const { op } = item;
   const x = named.op;

@@ -180,7 +180,7 @@ const JUNK = op(C, 2, 200, { action: 'teleport' });
 const TWINS = [1, 2]
   .map((n) => op(C, 2, 200, { action: 'teleport', n }))
   .sort((a, b) => (a.hash < b.hash ? -1 : 1)) as [RosterOpRef, RosterOpRef];
-// B promotes D, and C, which outranks B, dismisses the promotion.
+// The founder admits C as an admin, and B promotes D.
 const ADMIT_C = admit(A, 2, 100, C, 'admin');
 const B_PROMOTES = op(B, 2, 200, { action: 'role', replica: D, role: 'admin' });
 // The revoked B's junk, which the founder dismisses.
@@ -516,7 +516,8 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(B, 2, 300, B2, 1),
     revoke(B2, 3, 310, B, 1),
   ]),
-  // C's promotion of D at a later rv pauses: C is an admin there.
+  // C's promotion of D at a later rv is inert: B's accepted revoke cuts C
+  // below it, so D, no admin, has no right to revoke B.
   scenario('unknown-admitted-grant', [
     admit(A, 2, 100, C, 'admin'),
     admit(A, 3, 110, D),
@@ -704,9 +705,8 @@ export const SCENARIOS: readonly RosterScenario[] = [
       hash: 'e'.repeat(64),
     }),
   ]),
-  // Unreadable ops whose publishers hold no right there: a pending replica's,
-  // an observer's, a revoked one's above its cut, and a member's positioned
-  // before the founding.
+  // Unreadable ops from a pending replica, an observer, a revoked replica
+  // above its cut and a member before the founding, none with a right there.
   scenario('inert-unreadable', [
     admit(A, 2, 100, OBS, 'member', { observer: true }),
     admit(A, 3, 110, B),
