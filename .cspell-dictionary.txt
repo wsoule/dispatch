@@ -226,6 +226,8 @@ irrors
 isexe
 jaccard
 jridgewell
+jsdiff
+jsdiff's
 jsonpointer
 katex
 keepalives
@@ -235,7 +237,9 @@ keycaps
 keydowns
 keymap
 keyout
+Khanna
 kiro
+Kunal
 Lamport
 landable
 lede
@@ -624,6 +628,7 @@ wsoule
 wyats
 wyatsoule
 xhigh
+xmpp
 xxxstarxxx
 Yegge
 Yegge's
