@@ -1258,8 +1258,14 @@ export class DeliveryEngine {
         valid === null
           ? []
           : this.honourSettlement(storedMessage, valid, changed, closeHlc);
+      // An answer that arrived first already answers this question here.
+      const answeredFirst =
+        asking && this.store.answersTo(message.id).length > 0
+          ? this.markAnswered(message.id)
+          : [];
       return [
         ...honoured,
+        ...answeredFirst,
         ...(answer.markAnswered === null
           ? []
           : this.markAnswered(answer.markAnswered)),

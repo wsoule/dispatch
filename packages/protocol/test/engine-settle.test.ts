@@ -251,6 +251,35 @@ describe('a settle for a question not stored yet', () => {
   });
 });
 
+describe('an answer that arrived before its question', () => {
+  it('stores the question answered on arrival, so nobody is asked it again', async () => {
+    const q5 = remote('m-q5', {
+      kind: 'question',
+      blocking: true,
+      to: ['human:wyat', 'human:cy'],
+    });
+    await engine.receive(answerTo(q5, 'm-a5', 'human:cy'), {
+      replica: CY,
+      targets: [there('human:bob'), here('human:wyat')],
+    });
+    expect(store.settledAs('m-a5')).toBe('pending');
+    const r = await engine.receive(
+      q5,
+      fromBob([here('human:wyat'), there('human:cy', [CY])])
+    );
+    expect(r.deliveries.map((d) => [d.recipient, d.state])).toEqual([
+      ['human:wyat', 'answered'],
+    ]);
+    expect(
+      store.deliveries({ messageId: 'm-q5', recipient: 'human:wyat' })[0]?.state
+    ).toBe('answered');
+    expect(host.hooks('notifyHuman')).not.toContainEqual([
+      'human:wyat',
+      'm-q5',
+    ]);
+  });
+});
+
 describe("elsewhere: Bob's question, received here", () => {
   let q: Message;
   beforeEach(async () => {
