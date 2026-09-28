@@ -102,6 +102,8 @@ export interface OpenMemoryDeps {
   personalDir?: string;
   /** The files backend's ledger.jsonl, re-imported when a pull rewrites it. */
   watchLedgerFile?: string | null;
+  /** How often leftover Claude export directories are swept; hourly unless a test shortens it. */
+  exportSweepMs?: number;
   now?: () => Date;
 }
 
@@ -268,7 +270,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       console.error('dispatchd: sweeping Claude memory exports failed', err);
     }
   };
-  const exportSweep = setInterval(() => void sweepExports(), HOUR_MS);
+  const exportSweep = setInterval(
+    () => void sweepExports(),
+    deps.exportSweepMs ?? HOUR_MS
+  );
   exportSweep.unref();
   const ids = createMemoryIds();
   let last = readLastImport(shared);

@@ -24,6 +24,7 @@ import {
   rmSync,
   statSync,
   symlinkSync,
+  utimesSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -31,7 +32,11 @@ import { dirname, join } from 'node:path';
 
 import { EventBus } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
-import { ClaudeExportManager } from '../../src/memory/claudeExport.js';
+import {
+  ClaudeExportManager,
+  overseerLineageOpen,
+  runLineageOpen,
+} from '../../src/memory/claudeExport.js';
 import type { ExportTarget } from '../../src/memory/claudeExport.js';
 import { PersonalStores } from '../../src/memory/personalStores.js';
 import { openMemory } from '../../src/memory/service.js';
@@ -470,6 +475,74 @@ describe('ClaudeExportManager', () => {
   });
 });
 
+describe('when a lineage closes', () => {
+  const NOW = Date.parse('2026-09-28T12:00:00.000Z');
+  const DAY_MS = 86_400_000;
+  const ago = (ms: number) => new Date(NOW - ms).toISOString();
+  const run = (id: string, over: Partial<RunMeta> = {}): RunMeta =>
+    ({
+      id,
+      taskId: TASK,
+      state: 'finished',
+      operator: 'human:wyat',
+      memoryLineage: 'r-000001',
+      createdAt: ago(2 * DAY_MS),
+      updatedAt: ago(DAY_MS),
+      ...over,
+    }) as RunMeta;
+  const notLive = () => false;
+
+  it('keeps a run lineage open while any of its runs is live, reviewed or not', () => {
+    const runs = [run('r-000001', { reviewedAt: ago(DAY_MS) })];
+    expect(
+      runLineageOpen(runs, 'r-000001', (id) => id === 'r-000001', NOW)
+    ).toBe(true);
+    expect(runLineageOpen(runs, 'r-000001', notLive, NOW)).toBe(false);
+    expect(runLineageOpen([], 'r-000001', notLive, NOW)).toBe(false);
+  });
+
+  it('closes a run lineage once a newer execute run of its task starts another lineage', () => {
+    const mine = run('r-000001');
+    const newer = { createdAt: ago(DAY_MS / 2), memoryLineage: 'r-000002' };
+    expect(runLineageOpen([mine], 'r-000001', notLive, NOW)).toBe(true);
+    expect(
+      runLineageOpen([mine, run('r-000002', newer)], 'r-000001', notLive, NOW)
+    ).toBe(false);
+    // A review run, another task's run, or an older run replaces nothing.
+    for (const other of [
+      run('r-000002', { ...newer, kind: 'review' }),
+      run('r-000002', { ...newer, taskId: 't-other1' }),
+      run('r-000002', { ...newer, createdAt: ago(3 * DAY_MS) }),
+    ])
+      expect(runLineageOpen([mine, other], 'r-000001', notLive, NOW)).toBe(
+        true
+      );
+  });
+
+  it('closes a run lineage a week after its last run moved', () => {
+    const at = (days: number) => [
+      run('r-000001', {
+        createdAt: ago(10 * DAY_MS),
+        updatedAt: ago(days * DAY_MS),
+      }),
+    ];
+    expect(runLineageOpen(at(6.9), 'r-000001', notLive, NOW)).toBe(true);
+    expect(runLineageOpen(at(7), 'r-000001', notLive, NOW)).toBe(false);
+  });
+
+  it('closes an overseer conversation’s directory a day after its last write', () => {
+    const dir = claudeMemoryDir(root, 'o-conversation1');
+    expect(overseerLineageOpen(dir, NOW)).toBe(false);
+    mkdirSync(dir, { recursive: true });
+    const touch = (ms: number) =>
+      utimesSync(dir, (NOW - ms) / 1000, (NOW - ms) / 1000);
+    touch(23 * 3_600_000);
+    expect(overseerLineageOpen(dir, NOW)).toBe(true);
+    touch(24 * 3_600_000);
+    expect(overseerLineageOpen(dir, NOW)).toBe(false);
+  });
+});
+
 // Messaging with no gate open, enough for recover()'s stray-gate check.
 function noOpenGates() {
   const engine = new Proxy(
@@ -530,6 +603,43 @@ describe('openMemory and Claude export directories', () => {
       // Reviewed: closed and deleted. Unreviewed and recent: kept for a resume.
       expect(existsSync(claudeMemoryDir(root, 'r-000001'))).toBe(false);
       expect(existsSync(claudeMemoryDir(root, 'r-000002'))).toBe(true);
+    } finally {
+      memory.close();
+    }
+  });
+
+  it('sweeps the directories again on its interval, not only at boot', async () => {
+    const at = new Date().toISOString();
+    const reviewed = {
+      id: 'r-000001',
+      taskId: TASK,
+      state: 'finished',
+      operator: 'human:wyat',
+      memoryLineage: 'r-000001',
+      createdAt: at,
+      updatedAt: at,
+      reviewedAt: at,
+    } as RunMeta;
+    const dir = claudeMemoryDir(root, 'r-000001');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, 'note.md'), 'from r-000001');
+    const memory = openMemory({
+      rootDir: root,
+      store: TaskStore.init(root),
+      events: new EventBus(),
+      ledgerStore: new LedgerStore(root),
+      ...quietDaemon(root, { list: () => [reviewed] }),
+      dbPath: join(home, 'interval-memory.db'),
+      exportSweepMs: 20,
+    });
+    try {
+      await waitFor(() => !existsSync(dir));
+      expect(
+        memory.personal
+          .personal('self')
+          .listEntries()
+          .map((e) => e.title)
+      ).toEqual(['from r-000001']);
     } finally {
       memory.close();
     }

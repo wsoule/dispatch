@@ -189,9 +189,8 @@ function listNames(path: string, limit: number): string[] {
   }
 }
 
-// Every path under `dir` without following links, at most MAX_FILES of them;
-// `stoppedAt` names the first path past that limit. A path that vanishes
-// mid-walk is skipped; a subdirectory that will not list is `unlisted`.
+// Up to MAX_FILES paths under `dir`, links unfollowed, and the first path past that limit;
+// a path that vanishes mid-walk is skipped, a subdirectory that will not list is `unlisted`.
 function walkTree(dir: string): {
   entries: TreeEntry[];
   unlisted: string[];
@@ -951,9 +950,8 @@ export class ClaudeExportManager {
   }
 }
 
-// A run lineage stays open while a run of it is live; it closes once its last
-// run is reviewed, a newer execute run of the task starts another lineage, or
-// a week passes without a run.
+// Open while a run of the lineage is live; closed once its last run is reviewed,
+// a newer execute run of the task starts another lineage, or a week passes without a run.
 export function runLineageOpen(
   runs: readonly RunMeta[],
   name: string,
