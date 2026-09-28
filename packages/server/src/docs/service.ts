@@ -151,6 +151,7 @@ const HOUR_MS = 3_600_000;
 const MAX_OPEN_AGE_MS = HOUR_MS;
 const ANCESTOR_LEVELS = 8;
 const HITS_PER_DOC = 3;
+const NO_PERSONAL_SCOPE = 'no personal scope: this caller acts for no human';
 // A high surrogate with no low one after it, or a low one with no high one before.
 const UNPAIRED_SURROGATE =
   /[\ud800-\udbff](?![\udc00-\udfff])|(?<![\ud800-\udbff])[\udc00-\udfff]/;
@@ -507,9 +508,8 @@ export class DocsService {
     );
   }
 
-  // A doc argument: doc-<id>; ~slug among the operator's personal docs; else a
-  // team handle. Handles fall back to retired slugs. A decide-tier human asking
-  // for another human's personal doc by id learns why (403); anyone else 404s.
+  // doc-<id>, ~slug among the operator's docs, or a team handle or old slug. An
+  // unseen personal id is 403 with the reason for decide tier, 404 for others.
   private resolve(actor: DocsActor, ref: string): DocRow {
     const store = this.store();
     let row: DocRow | null = null;
@@ -530,7 +530,12 @@ export class DocsService {
       actor.decider &&
       !this.canSee(actor, row)
     ) {
-      throw forbidden('this personal doc belongs to another human', 'doc');
+      throw forbidden(
+        actor.operator === null
+          ? NO_PERSONAL_SCOPE
+          : 'this personal doc belongs to another human',
+        'doc'
+      );
     }
     if (row === null || !this.canSee(actor, row))
       throw new DocsError('not-found', `doc ${ref} not found`, 'doc');
@@ -871,11 +876,7 @@ export class DocsService {
     let ns = 'team';
     let owner: Operator | null = null;
     if (scope === 'personal') {
-      if (actor.operator === null)
-        throw forbidden(
-          'no personal scope: this caller acts for no human',
-          'scope'
-        );
+      if (actor.operator === null) throw forbidden(NO_PERSONAL_SCOPE, 'scope');
       ns = `p:${actor.operator.identity}`;
       owner = actor.operator;
     }

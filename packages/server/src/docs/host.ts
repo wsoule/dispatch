@@ -110,9 +110,8 @@ export function docsMemoryPort(memory: {
   };
 }
 
-// The daemon's DocsHost. The orchestrator, messaging and memory are bound late
-// (boot order); until then runs resolve to nothing, threads and memory entries
-// do not exist, and no one has an operator.
+// The daemon's DocsHost. Runs, messaging and memory bind after boot; until
+// then no run, thread, memory entry or operator resolves.
 export class DaemonDocsHost implements DocsHost {
   private runs: DocsRuns | null = null;
   private messages: DocsMessages | null = null;

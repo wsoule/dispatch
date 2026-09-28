@@ -93,6 +93,40 @@ describe('review focus 5: personal docs never leave their owner', () => {
     ).toBe('notes');
   });
 
+  it("lets a rename take a slug another human's personal doc holds, revealing nothing", () => {
+    service.create(as(OWNER), {
+      title: 'Notes',
+      body: 'x\n',
+      scope: 'personal',
+    });
+    service.create(as(TEAMMATE), { title: 'Scratch', body: 'y\n' });
+    expect(service.rename(as(TEAMMATE), 'scratch', 'notes').handle).toBe(
+      'notes'
+    );
+    service.create(as(TEAMMATE), {
+      title: 'Mine',
+      body: 'z\n',
+      scope: 'personal',
+    });
+    expect(service.rename(as(TEAMMATE), '~mine', 'notes').handle).toBe('notes');
+    expect(service.read(as(TEAMMATE), 'notes').text).toBe('y\n');
+    expect(service.read(as(TEAMMATE), '~notes').text).toBe('z\n');
+    expect(service.read(as(OWNER), '~notes').text).toBe('x\n');
+  });
+
+  it('tells a decide-tier owner with no identity why their own doc is out of reach', () => {
+    const mine = service.create(as(OWNER), {
+      title: 'Notes',
+      body: 'x\n',
+      scope: 'personal',
+    });
+    host.operators.delete('human:wyat');
+    expect(() => service.read(as(OWNER), mine.doc.id)).toThrow(
+      'acts for no human'
+    );
+    expect(code(() => service.read(as(OWNER), mine.doc.id))).toBe('forbidden');
+  });
+
   it("keeps personal docs out of teammates' lists, searches and linking views", () => {
     service.create(as(OWNER), {
       title: 'Secret plan',
