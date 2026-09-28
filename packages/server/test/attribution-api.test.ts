@@ -166,17 +166,22 @@ describe('attribution on a shared daemon', () => {
   });
 
   it("a teammate's follow-up on her own run stays hers", async () => {
-    // Every way to send a stopped run back: the composer's request-changes,
-    // the review's send-back and a request-changes verdict.
-    const message = await post(
-      `/api/runs/${await stoppedRunBy(ada)}/message`,
-      ada,
-      { text: 'try again', resume: true }
+    // Every way to send a stopped run back: the composer's message that wakes
+    // it, the review's send-back and a request-changes verdict.
+    const stopped = await stoppedRunBy(ada);
+    const message = await post('/api/messages', ada, {
+      to: [`run:${stopped}`],
+      kind: 'message',
+      body: 'try again',
+      wake: 'request',
+    });
+    expect(message.status).toBe(201);
+    const runs = (await (
+      await rawFetch(`${baseUrl}/api/runs`, { headers: headers(ada) })
+    ).json()) as { resumedFrom?: string; dispatchedBy?: string }[];
+    expect(runs.find((r) => r.resumedFrom === stopped)?.dispatchedBy).toBe(
+      'human:ada'
     );
-    expect(message.status).toBe(200);
-    expect(
-      ((await message.json()) as { dispatchedBy?: string }).dispatchedBy
-    ).toBe('human:ada');
 
     const sendBack = await post(
       `/api/runs/${await stoppedRunBy(ada)}/send-back`,
