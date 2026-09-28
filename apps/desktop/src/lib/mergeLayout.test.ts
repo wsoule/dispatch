@@ -65,6 +65,53 @@ describe('mergeLayout', () => {
     ]);
   });
 
+  it('keeps a marked block inside a side whole, as when a 409 wraps a marked head', () => {
+    const wrapped = `<<<<<<< head (rev 14, run:r-1)\n${LOCAL}=======\nmine\n>>>>>>> yours\n`;
+    const parts = parseMarked(wrapped);
+    expect(parts).toEqual([
+      {
+        kind: 'conflict',
+        head: LOCAL.split(/(?<=\n)/),
+        base: [],
+        mine: ['mine\n'],
+        headLabel: 'head (rev 14, run:r-1)',
+        mineLabel: 'yours',
+      },
+    ]);
+    expect(resolveMarked(parts, [{ take: 'mine' }])).toBe('mine\n');
+    expect(resolveMarked(parts, [{ take: 'head' }])).toBe(LOCAL);
+  });
+
+  it('keeps a setext underline on the head side of a block with a base', () => {
+    const setext =
+      '<<<<<<< rev-01A\nTitle\n=======\nH\n||||||| rev-01O\nB\n=======\nM\n>>>>>>> rev-01B\n';
+    expect(parseMarked(setext)).toEqual([
+      {
+        kind: 'conflict',
+        head: ['Title\n', '=======\n', 'H\n'],
+        base: ['B\n'],
+        mine: ['M\n'],
+        headLabel: 'rev-01A',
+        mineLabel: 'rev-01B',
+      },
+    ]);
+  });
+
+  it('reads a base marker after the separator as your text', () => {
+    const late =
+      '<<<<<<< head (rev 2, run:r-1)\nH\n=======\nM\n||||||| x\n>>>>>>> yours\n';
+    expect(parseMarked(late)).toEqual([
+      {
+        kind: 'conflict',
+        head: ['H\n'],
+        base: [],
+        mine: ['M\n', '||||||| x\n'],
+        headLabel: 'head (rev 2, run:r-1)',
+        mineLabel: 'yours',
+      },
+    ]);
+  });
+
   it('keeps a block whose closing marker was deleted as text, markers and all', () => {
     const open = 'a\n<<<<<<< head (rev 3, run:r-1)\nH\n=======\nM\n';
     const parts = parseMarked(open);
