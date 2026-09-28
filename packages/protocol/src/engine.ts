@@ -1166,11 +1166,11 @@ export class DeliveryEngine {
     }
     const replyTarget =
       message.replyTo === null ? null : this.store.getMessage(message.replyTo);
-    checkReceivedThread(message, replyTarget);
     const root =
       message.thread === message.id
         ? null
         : this.store.getMessage(message.thread);
+    checkReceivedThread(message, replyTarget, root);
     const local = localOnlyReason(message, replyTarget, root);
     if (local !== null)
       throw new MessagingError(
@@ -1179,8 +1179,17 @@ export class DeliveryEngine {
         local === 'gate' ? 'data' : 'to'
       );
     const { muted } = this.authorizeRemote(message, origin.replica);
-    if (replyTarget !== null)
-      this.authorizeRemoteReply(replyTarget, message.from, origin, fed);
+    // With the parent missing here, a stored root stands in for participation
+    // and the breaker, so a reply joins only a thread its sender is in.
+    const joined = replyTarget ?? root;
+    if (joined !== null)
+      this.authorizeRemoteReply(
+        joined,
+        message.from,
+        origin,
+        fed,
+        joined === replyTarget ? 'replyTo' : 'thread'
+      );
     // Received mode keeps a peer's newer ref types; a missing parent skips
     // only the checks that need it.
     validateSendInput(toSendInput(message), message.from, false, replyTarget, {
@@ -1189,7 +1198,7 @@ export class DeliveryEngine {
       parentOptional: true,
     });
     const sender: Sender = { address: message.from, canDecide: false };
-    await this.checkBreaker(replyTarget, sender, true);
+    await this.checkBreaker(joined, sender, true);
     // Per origin, so a remote agent:dispatch never shares the local system's count.
     const demote =
       message.urgent &&
@@ -1422,7 +1431,8 @@ export class DeliveryEngine {
     target: Message,
     from: Address,
     origin: RemoteOrigin,
-    fed: FederationHooks
+    fed: FederationHooks,
+    field: 'replyTo' | 'thread'
   ): void {
     const taskOf = (runId: string) =>
       this.host.taskOfRun(runId) ?? fed.remoteRunTask(runId);
@@ -1454,7 +1464,7 @@ export class DeliveryEngine {
       throw new MessagingError(
         'forbidden',
         `${from} is not a participant of ${target.id}`,
-        'replyTo'
+        field
       );
   }
 
@@ -2164,9 +2174,17 @@ function checkReceivedTargets(origin: RemoteOrigin): void {
   });
 }
 
-// A root is its own thread and a reply joins its target's, as every honest
-// sender files them; any other thread would skip participation and the breaker.
-function checkReceivedThread(m: Message, replyTarget: Message | null): void {
+// Refuses what no honest sender files: a root is its own thread, a reply
+// joins its target's and never names itself, and a thread names a root.
+function checkReceivedThread(
+  m: Message,
+  replyTarget: Message | null,
+  root: Message | null
+): void {
+  if (m.replyTo === m.id)
+    malformed('replyTo', 'a message cannot reply to itself');
+  if (root !== null && root.thread !== root.id)
+    malformed('thread', `${root.id} is a reply, not a thread's first message`);
   if (m.replyTo === null && m.thread !== m.id)
     malformed(
       'thread',

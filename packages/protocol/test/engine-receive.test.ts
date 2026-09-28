@@ -724,6 +724,98 @@ describe('receive refuses a malformed or overreaching envelope', () => {
     expect(store.thread(secret.id).map((m) => m.id)).toEqual([secret.id]);
   });
 
+  it('holds a reply to a missing parent to participation in its stored thread', async () => {
+    fed.placements.set('human:ada', {
+      kind: 'remote',
+      homes: [CY],
+      alsoLocal: false,
+    });
+    fed.placements.set('human:bob', {
+      kind: 'remote',
+      homes: [BOB],
+      alsoLocal: false,
+    });
+    const { message: secret } = await engine.send(
+      { to: ['human:ada'], kind: 'message', body: 'just us' },
+      wyat
+    );
+    await expect(
+      engine.receive(
+        remote('m-p1c', { replyTo: 'm-missing1', thread: secret.id }),
+        fromBob([here('human:wyat')])
+      )
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'thread' });
+    expect(store.thread(secret.id).map((m) => m.id)).toEqual([secret.id]);
+    const { message: shared } = await engine.send(
+      { to: ['human:bob'], kind: 'message', body: 'thoughts?' },
+      wyat
+    );
+    const r = await engine.receive(
+      remote('m-p1e', { replyTo: 'm-missing2', thread: shared.id }),
+      fromBob([here('human:wyat')])
+    );
+    expect(r.status).toBe('applied');
+  });
+
+  it('refuses a message that replies to itself', async () => {
+    fed.placements.set('human:ada', {
+      kind: 'remote',
+      homes: [CY],
+      alsoLocal: false,
+    });
+    const { message: secret } = await engine.send(
+      { to: ['human:ada'], kind: 'message', body: 'just us' },
+      wyat
+    );
+    for (const thread of [secret.id, 'm-p1d'])
+      await expect(
+        engine.receive(
+          remote('m-p1d', { replyTo: 'm-p1d', thread }),
+          fromBob([here('human:wyat')])
+        )
+      ).rejects.toMatchObject({ code: 'invalid', field: 'replyTo' });
+    expect(store.getMessage('m-p1d')).toBeNull();
+  });
+
+  it('refuses a thread that names a stored reply rather than a root', async () => {
+    await engine.receive(remote('m-01'), fromBob([here('human:wyat')]));
+    await engine.receive(
+      remote('m-r1', { thread: 'm-01', replyTo: 'm-01' }),
+      fromBob([here('human:wyat')])
+    );
+    await expect(
+      engine.receive(
+        remote('m-r2', { thread: 'm-r1', replyTo: 'm-missing3' }),
+        fromBob([here('human:wyat')])
+      )
+    ).rejects.toMatchObject({ code: 'invalid', field: 'thread' });
+    expect(store.getMessage('m-r2')).toBeNull();
+  });
+
+  it('trips the breaker for a reply to a missing parent in a stored thread', async () => {
+    engine = new DeliveryEngine({
+      store,
+      host,
+      limits: { agentTurnsPerThreadPerHour: 2 },
+    });
+    store.putAgent(agent('agent:bob/codex'));
+    const from = 'agent:bob/codex';
+    await engine.receive(
+      remote('m-r0', { from }),
+      fromBob([here('human:wyat')])
+    );
+    await engine.receive(
+      remote('m-r1', { from, thread: 'm-r0', replyTo: 'm-r0' }),
+      fromBob([here('human:wyat')])
+    );
+    await expect(
+      engine.receive(
+        remote('m-r2', { from, thread: 'm-r0', replyTo: 'm-missing4' }),
+        fromBob([here('human:wyat')])
+      )
+    ).rejects.toMatchObject({ code: 'limited' });
+  });
+
   it('refuses a forward of a held message to a local-only, malformed or never-forwarded target', async () => {
     const m = remote('m-01');
     await engine.receive(m, fromBob([here('human:wyat')]));

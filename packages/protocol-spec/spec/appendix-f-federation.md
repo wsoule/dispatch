@@ -285,8 +285,9 @@ the payload:
    agent rows.
 4. **Participation.** When the `replyTo` target is stored here, the sender must
    participate in it ([§4.6](04-messages.md#s4.6)), counting remote rows too.
-   When it is not stored here, the thread is partial on this replica and the
-   message is accepted.
+   When it is not stored here, the thread is partial on this replica: the sender
+   must participate in the thread's root when that is stored here, and otherwise
+   the message is accepted.
 5. **Validate** the message as received ([§4.4](04-messages.md#s4.4)), with
    `canDecide` false, so no remote sender decides, and a received ref of an
    unknown identifier type is kept. When the reply target is missing, the checks
