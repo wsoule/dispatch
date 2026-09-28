@@ -222,11 +222,17 @@ interface Evaluation {
 }
 
 // One fold of every op but `without`, its removals resolved.
-interface Folded {
+interface Folded extends Resolved {
   ctx: Context;
+  without: ReadonlySet<Item>;
+}
+
+// The evaluation under the accepted removals, and the fight winners among them.
+interface Resolved {
   ev: Evaluation;
   resolution: Map<string, Resolution>;
-  without: ReadonlySet<Item>;
+  accepted: readonly Removal[];
+  won: ReadonlySet<Removal>;
 }
 
 const NEWER_ROSTER =
@@ -247,12 +253,37 @@ export function foldRoster(input: FoldInput): RosterView {
  * Dismisses only ever take such ops out, so every build folds the same set.
  */
 export function foldRosterAt(input: FoldInput, later: LaterPairs): RosterView {
+  const { final, dismisses, valid } = finalFold(input, later);
+  return viewOf(final, dismisses, valid);
+}
+
+/**
+ * The accepted removals, by op hash, that won no fight and whose publisher
+ * lacks the right at them in the final fold. The resolution leaves none.
+ */
+export function unfoundedRemovals(
+  input: FoldInput,
+  later: LaterPairs
+): string[] {
+  const { ctx, accepted, won } = finalFold(input, later).final;
+  const unfounded = (r: Removal): boolean => {
+    const others = accepted.filter((o) => o !== r);
+    return !won.has(r) && !hadRight(ctx, evaluate(ctx, others), r);
+  };
+  return accepted.filter(unfounded).map((r) => r.op.hash);
+}
+
+// The base fold leaves out every op an eligible dismiss names, valid or not;
+// the final fold only the ops valid ones name.
+function finalFold(
+  input: FoldInput,
+  later: LaterPairs
+): { final: Folded; dismisses: Dismiss[]; valid: Set<Eligible> } {
   const all = dedupe(input.ops)
     .sort(comparePositions)
     .map((op) => itemOf(op, later));
   const shared = sharedOf(input, all);
   const dismisses = dismissesOf(all);
-  // The base fold leaves out every op an eligible dismiss names, valid or not.
   const eligible = dismisses.filter(
     (d): d is Eligible => d.named?.kind === 'later'
   );
@@ -262,7 +293,7 @@ export function foldRosterAt(input: FoldInput, later: LaterPairs): RosterView {
   // What valid dismisses name is a subset of what eligible ones do.
   const final =
     named.size === base.without.size ? base : foldWithout(shared, named);
-  return viewOf(final, dismisses, valid);
+  return { final, dismisses, valid };
 }
 
 // Judged in the base fold: an admin at the dismiss may name its own op, a
@@ -280,10 +311,7 @@ function validIn(ev: Evaluation, { item, named }: Eligible): boolean {
 
 // Decides every removal, accepted or void, and evaluates the ops under the
 // accepted ones.
-function resolve(ctx: Context): {
-  ev: Evaluation;
-  resolution: Map<string, Resolution>;
-} {
+function resolve(ctx: Context): Resolved {
   const all = ctx.items.map(removalOf).filter((r): r is Removal => r !== null);
   // Only Known(1) removals fight; a later one never changes a right, so it
   // takes no pick and buys no pass, and is decided on the result.
@@ -299,12 +327,17 @@ function resolve(ctx: Context): {
   for (;;) {
     // Rights can grow with accepted removals, so one accepted on a worst case
     // that failed can lose its right: it waits again; a second loss voids it.
-    for (const s of having('accepted')) {
-      if (won.has(s)) continue;
-      const others = having('accepted').filter((o) => o !== s);
-      if (hadRight(ctx, evaluate(ctx, others), s)) continue;
-      status.set(s, demoted.has(s) ? 'void' : 'waiting');
-      demoted.add(s);
+    // A loss can take the right of one checked before it, so repeat until none.
+    for (let lost = true; lost; ) {
+      lost = false;
+      for (const s of having('accepted')) {
+        if (won.has(s)) continue;
+        const others = having('accepted').filter((o) => o !== s);
+        if (hadRight(ctx, evaluate(ctx, others), s)) continue;
+        status.set(s, demoted.has(s) ? 'void' : 'waiting');
+        demoted.add(s);
+        lost = true;
+      }
     }
     const accepted = having('accepted');
     const ev = evaluate(ctx, accepted);
@@ -374,7 +407,7 @@ function resolve(ctx: Context): {
       status.get(r) === 'accepted' ? 'accepted' : 'void'
     );
   const accepted = all.filter((r) => status.get(r) === 'accepted');
-  return { ev: evaluate(ctx, accepted, true), resolution };
+  return { ev: evaluate(ctx, accepted, true), resolution, accepted, won };
 }
 
 // Every Known(1) dismiss, and the op it names among the deduplicated ops.
@@ -486,8 +519,7 @@ function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
   const { all, ...rest } = shared;
   const items = all.filter((i) => !without.has(i));
   const ctx: Context = { ...rest, items, reach: reachOf(items) };
-  const { ev, resolution } = resolve(ctx);
-  return { ctx, ev, resolution, without };
+  return { ctx, without, ...resolve(ctx) };
 }
 
 // Admissions and promotions link a publisher to its targets; a recover or a

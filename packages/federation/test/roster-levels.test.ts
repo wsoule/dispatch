@@ -477,6 +477,18 @@ describe('the level table', () => {
     }
   }, 120_000);
 
+  it('accepts no removal that lacks its right in the final fold, unless it won a fight', () => {
+    for (let seed = 1; seed <= SEEDS; seed++) {
+      const ops = opsFor(seed, mulberry32(seed));
+      for (const level of [1, 2, 3])
+        expect({ seed, level, unfounded: t.unfounded(level, ops) }).toEqual({
+          seed,
+          level,
+          unfounded: [],
+        });
+    }
+  }, 120_000);
+
   it('never pauses the relay, which folds what a daemon at its level folds', () => {
     for (let seed = 1; seed <= SEEDS; seed += 3) {
       const ops = opsFor(seed, mulberry32(seed));
@@ -738,9 +750,19 @@ describe('a later removal among a revocation fight', () => {
       revoke(C, 5, 47, P, 2),
       revoke(A, 15, 59, B, 2),
     ],
+    // The founder's revokes of B lose their right twice, as each lets D
+    // revoke the founder, so B's counter-revocation stands.
+    expected: {
+      admins: [B, P],
+      members: [C],
+      revoked: [
+        [A, 13],
+        [D, 1],
+      ],
+    },
   };
-  // B's revoke of the founder rests on B's revoke of D, which alone makes B
-  // an admin; D's later cut stands while D does.
+  // B is an admin only once D is cut, so B's revoke of the founder would undo
+  // the founder's revoke of D that B's right rests on.
   const PASS = {
     later: laterCut(D, 2, 18),
     rest: [
@@ -755,19 +777,45 @@ describe('a later removal among a revocation fight', () => {
       revoke(A, 13, 39, D, 2),
       revoke(B, 7, 51, D, 2),
     ],
+    expected: { admins: [A, P, B], members: [C], revoked: [[D, 2]] },
   };
   const SPLITS = [PICK, PASS];
+  // Admins by rank, members, and each revoked replica's cut.
+  const summary = (v: RosterView) => {
+    const all = [...v.members.values()];
+    return {
+      admins: all
+        .filter((m) => m.rank !== null)
+        .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+        .map((m) => m.replica),
+      members: all.filter((m) => m.rank === null).map((m) => m.replica),
+      revoked: [...v.revoked]
+        .sort(([a], [b]) => (a < b ? -1 : 1))
+        .map(([r, c]) => [r, c.afterSeq]),
+    };
+  };
+
+  it('re-checks until no accepted removal rests on one a pass demoted', () => {
+    for (const { later, rest } of SPLITS)
+      for (const ops of [rest, [...rest, later]])
+        for (const level of [1, 2, 3])
+          expect({ level, unfounded: t.unfounded(level, ops) }).toEqual({
+            level,
+            unfounded: [],
+          });
+  });
 
   it('folds one standing at every level, which the level-1 relay shares', () => {
-    for (const { later, rest } of SPLITS) {
+    for (const { later, rest, expected } of SPLITS) {
       const ops = [...rest, later];
-      const relay = standingOf(t.at(1, ops, { relay: true }));
+      const relay = t.at(1, ops, { relay: true });
+      expect(summary(relay)).toEqual(expected);
       for (const level of [1, 2, 3])
         expect({
           later: later.hash,
           level,
           s: standingOf(t.at(level, ops)),
-        }).toEqual({ later: later.hash, level, s: relay });
+        }).toEqual({ later: later.hash, level, s: standingOf(relay) });
     }
   });
 
@@ -786,35 +834,40 @@ describe('a later removal among a revocation fight', () => {
   });
 
   it('judges a dismiss the same at every level, however another names the cut', () => {
+    // C, a member, names B's junk; P, an admin, names the revoked founder's.
     const U = junk(B, 7, 65);
-    const set = [...PICK.rest, PICK.later, U, dismiss(C, 7, 70, U)];
+    const V = junk(A, 17, 66);
+    const set = [
+      ...PICK.rest,
+      PICK.later,
+      U,
+      dismiss(C, 7, 70, U),
+      V,
+      dismiss(P, 6, 72, V),
+    ];
     // A pending replica's dismiss of the later cut is invalid but eligible.
     const steered = [...set, dismiss(Q, 2, 75, PICK.later)];
-    const at1 = t.at(1, set);
-    expect(at1.dismissed).toEqual([
-      { replica: B, seq: 7, hash: U.hash, by: C },
-    ]);
     for (const ops of [set, steered])
-      for (const level of [1, 2, 3]) {
-        const v = t.at(level, ops);
-        expect({ level, paused: v.unknown, dismissed: v.dismissed }).toEqual({
+      for (const level of [1, 2, 3])
+        expect({ level, dismissed: t.at(level, ops).dismissed }).toEqual({
           level,
-          paused: at1.unknown,
-          dismissed: at1.dismissed,
+          dismissed: [{ replica: A, seq: 17, hash: V.hash, by: P }],
         });
-      }
   });
 
   it('lets no dismiss of the later cut move the fight', () => {
-    const named = dismiss(A, 17, 70, PICK.later);
     const ops = [...PICK.rest, PICK.later];
-    for (const level of [1, 2, 3])
-      expect({
-        level,
-        s: standingOf(t.at(level, [...ops, named])),
-      }).toEqual({
-        level,
-        s: standingOf(t.at(level, [...ops, blank(named)])),
-      });
+    // The revoked founder's dismiss is invalid, and B's valid.
+    const byB = dismiss(B, 6, 70, PICK.later);
+    expect(t.at(1, [...ops, byB]).dismissed.map((d) => d.by)).toEqual([B]);
+    for (const named of [dismiss(A, 17, 70, PICK.later), byB])
+      for (const level of [1, 2, 3])
+        expect({
+          level,
+          s: standingOf(t.at(level, [...ops, named])),
+        }).toEqual({
+          level,
+          s: standingOf(t.at(level, [...ops, blank(named)])),
+        });
   });
 });

@@ -6,7 +6,7 @@ import {
 } from '@dispatch/protocol/federation';
 import type { RosterBody } from '@dispatch/protocol/federation';
 
-import { foldRoster, foldRosterAt } from '../src/roster.js';
+import { foldRoster, foldRosterAt, unfoundedRemovals } from '../src/roster.js';
 import type {
   FoldInput,
   KeyInfo,
@@ -161,6 +161,9 @@ export function team(founder: string, keys: ReadonlyMap<string, KeyInfo>) {
       ops: readonly RosterOpRef[],
       extra: { relay?: boolean } = {}
     ) => foldRosterAt(input(ops, extra), laterAt(level)),
+    /** Accepted removals at `level` that won no fight yet lack their right. */
+    unfounded: (level: number, ops: readonly RosterOpRef[]) =>
+      unfoundedRemovals(input(ops), laterAt(level)),
     recover: (replica: string, seq: number, ms: number): RosterOpRef =>
       op(replica, seq, ms, {
         action: 'recover',
