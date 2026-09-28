@@ -334,6 +334,27 @@ describe('errors', () => {
       'Answer with one of: us | eu'
     );
   });
+
+  it('frees the stream slot when the stream cannot start', async () => {
+    port.watchError = new Error('a2a.db is locked');
+    const subscribed = await call('/a2a/v1/tasks/m-root:subscribe');
+    const streamed = await call('/a2a/v1/message:stream', {
+      body: { message: ask().message },
+    });
+    expect([subscribed.status, streamed.status]).toEqual([500, 500]);
+    expect(port.openStreams).toBe(0);
+  });
+
+  it('answers a blocking send whose watch throws with a 500', async () => {
+    port.watchError = new Error('a2a.db is locked');
+    const res = await call('/a2a/v1/message:send', {
+      body: { message: ask().message },
+    });
+    expect(res.status).toBe(500);
+    expect(
+      ((await res.json()) as { error: { status: string } }).error.status
+    ).toBe('INTERNAL');
+  });
 });
 
 describe('ListTasks', () => {

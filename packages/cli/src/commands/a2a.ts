@@ -130,23 +130,25 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
         throw new CliError('--tls-cert and --tls-key go together');
       }
       const client = await withAppToken(o.token, 'dispatch a2a listen');
-      printStatus(
-        await client.setListener({
-          enabled: true,
-          host: o.host ?? '127.0.0.1',
-          port,
-          publicUrl: o.publicUrl ?? null,
-          tls:
-            o.tlsCert === undefined || o.tlsKey === undefined
-              ? null
-              : {
-                  certPath: resolve(ctx.cwd, o.tlsCert),
-                  keyPath: resolve(ctx.cwd, o.tlsKey),
-                },
-          trustForwardedFor: o.trustForwardedFor === true,
-          standalone: o.standalone === true,
-        })
-      );
+      const status = await client.setListener({
+        enabled: true,
+        host: o.host ?? '127.0.0.1',
+        port,
+        publicUrl: o.publicUrl ?? null,
+        tls:
+          o.tlsCert === undefined || o.tlsKey === undefined
+            ? null
+            : {
+                certPath: resolve(ctx.cwd, o.tlsCert),
+                keyPath: resolve(ctx.cwd, o.tlsKey),
+              },
+        trustForwardedFor: o.trustForwardedFor === true,
+        standalone: o.standalone === true,
+      });
+      printStatus(status);
+      // Saved but closed (port in use, bad certificate): exit non-zero for scripts.
+      if (!status.listening)
+        throw new CliError('the A2A listener did not open');
     });
 
   a2a

@@ -76,6 +76,23 @@ describe('MemoryEngine reads', () => {
     expect(listed).toContainEqual([mine.id, 'active']);
   });
 
+  it('filters by origin source and trust before the limit', () => {
+    const t = setup();
+    const lesson = put(t.shared, { origin: 'ledger:l-1@2026-09-01' });
+    put(t.shared, { origin: 'ledger:l-2@2026-09-01', trust: 'human' });
+    put(t.shared, { origin: 'claude:aaaaaaaaaaaa/a.md', pinned: true });
+    put(t.shared, { origin: 'ledgers:l-3', pinned: true });
+    put(t.shared, { title: 'no origin', pinned: true });
+    const listed = (q: Parameters<typeof t.engine.list>[1]) =>
+      t.engine.list(RUN, q).map((e) => e.id);
+    expect(listed({ origin: 'ledger', trust: 'agent', limit: 1 })).toEqual([
+      lesson.id,
+    ]);
+    expect(listed({ origin: 'ledger' })).toHaveLength(2);
+    expect(listed({ trust: 'agent' })).toHaveLength(4);
+    expect(listed({ origin: 'amendment' })).toEqual([]);
+  });
+
   // Another identity's personal entry is invisible, and a decide-tier
   // non-owner asking by id gets 403, not the entry.
   it('never returns another identity’s entry', () => {
@@ -114,6 +131,35 @@ describe('MemoryEngine reads', () => {
     const listed = t.engine.list(RUN).map((e) => e.id);
     expect(listed).toContain(team.id);
     expect(listed).not.toContain(local.id);
+  });
+
+  it('treats a review run of an A2A task as an A2A run too', () => {
+    const t = setup();
+    const REVIEW = { ...RUN, address: 'run:r-4e5f60' };
+    t.host.auxRunTasks.set('r-4e5f60', 't-1a2b3c');
+    t.host.operators.set(REVIEW.address, {
+      human: 'human:wyat',
+      identity: 'self',
+    });
+    t.host.tasks.set('t-1a2b3c', {
+      ...t.host.tasks.get('t-1a2b3c')!,
+      a2a: true,
+    });
+    const local = put(t.shared, { scope: 'project', title: 'local only' });
+    const team = put(t.shared);
+    const mine = put(t.stores.personal('self'), {
+      scope: 'personal',
+      kind: 'preference',
+      title: 'terse comments',
+    });
+    expect(t.engine.viewer(REVIEW)).toMatchObject({
+      operator: null,
+      a2aRun: true,
+    });
+    const listed = t.engine.list(REVIEW).map((e) => e.id);
+    expect(listed).toContain(team.id);
+    expect(listed).not.toContain(local.id);
+    expect(listed).not.toContain(mine.id);
   });
 
   it('searches with includeStale on by default and includeRetired off, recording search recalls', () => {

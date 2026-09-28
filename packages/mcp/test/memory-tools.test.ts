@@ -11,7 +11,13 @@ import { createDispatchMcpServer } from '../src/index.js';
 let root: string;
 let home: string;
 let server: ReturnType<typeof Bun.serve>;
-const seen: { path: string; auth: string | null }[] = [];
+const seen: {
+  path: string;
+  auth: string | null;
+  method: string;
+  key: string | null;
+  body: string | null;
+}[] = [];
 const ENTRY = {
   id: 'mem-01K5Z6G0000000000000000000',
   handle: '#7QX2K9PA',
@@ -35,13 +41,31 @@ beforeEach(() => {
   process.env.DISPATCH_HOME = home;
   server = Bun.serve({
     port: 0,
-    fetch(req) {
+    async fetch(req) {
       const url = new URL(req.url);
       seen.push({
         path: `${url.pathname}${url.search}`,
         auth: req.headers.get('authorization'),
+        method: req.method,
+        key: req.headers.get('idempotency-key'),
+        body: req.method === 'POST' ? await req.text() : null,
       });
       if (url.pathname === '/api/health') return Response.json({ ok: true });
+      if (url.pathname === '/api/memory' && req.method === 'POST')
+        return Response.json(
+          { status: 'active', id: ENTRY.id, handle: ENTRY.handle },
+          { status: 201 }
+        );
+      if (url.pathname === '/api/runs/r-1')
+        return Response.json({ taskId: 't-1a2b3c' });
+      if (url.pathname === '/api/tasks/t-1a2b3c')
+        return Response.json({ meta: { parent: 'e-000001' } });
+      if (url.pathname === '/api/memory/%237QX2K9PA/retire')
+        return Response.json({
+          status: 'proposed',
+          proposal: 'mp-1',
+          gate: 'm-1',
+        });
       if (url.pathname === '/api/memory/search')
         return Response.json({
           hits: [{ id: ENTRY.id, handle: ENTRY.handle, title: ENTRY.title }],
@@ -112,15 +136,63 @@ interface ToolCallResult {
   content: { type: string; text?: string }[];
 }
 
-async function call(
-  name: string,
-  args: Record<string, unknown>
-): Promise<ToolCallResult> {
+// A client connected to a fresh dispatch MCP server over this test's root.
+async function client(): Promise<Client> {
   const mcp = createDispatchMcpServer(root);
   const c = new Client({ name: 'test', version: '1' });
   const [a, b] = InMemoryTransport.createLinkedPair();
   await Promise.all([c.connect(a), mcp.connect(b)]);
-  return (await c.callTool({ name, arguments: args })) as ToolCallResult;
+  return c;
+}
+
+async function call(
+  name: string,
+  args: Record<string, unknown>
+): Promise<ToolCallResult> {
+  return (await (
+    await client()
+  ).callTool({
+    name,
+    arguments: args,
+  })) as ToolCallResult;
+}
+
+// The bodies of every POST /api/memory the fake daemon saw, in order.
+function savePosts() {
+  return seen.filter((s) => s.path === '/api/memory' && s.method === 'POST');
+}
+
+// Calls a tool while the first POST whose URL ends in `suffix` reaches the
+// daemon but its response is lost, as a dropped connection would.
+async function callDroppingFirstPost(
+  suffix: string,
+  name: string,
+  args: Record<string, unknown>
+): Promise<ToolCallResult> {
+  const realFetch = globalThis.fetch;
+  let dropped = false;
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => {
+    const res = await realFetch(input, init);
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (url.endsWith(suffix) && init?.method === 'POST' && !dropped) {
+      dropped = true;
+      throw new TypeError('socket hang up');
+    }
+    return res;
+  }) as typeof fetch;
+  try {
+    return await call(name, args);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
 }
 
 describe('memory tools', () => {
@@ -162,5 +234,77 @@ describe('memory tools', () => {
     expect(res.content[0].text).toBe(
       'id: that is a message id; memory handles start with # (field: id)'
     );
+  });
+
+  it('memory_save sends one Idempotency-Key, retries a dropped connection with it, and defaults epic to the task’s parent', async () => {
+    const res = await callDroppingFirstPost('/api/memory', 'memory_save', {
+      scope: 'team',
+      kind: 'hazard',
+      title: 'pnpm 11 ignores onlyBuiltDependencies',
+      body: 'use allowBuilds',
+    });
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent?.status).toBe('active');
+    const posts = savePosts();
+    expect(posts).toHaveLength(2);
+    expect(posts[0].key).toBeTruthy();
+    expect(posts[1].key).toBe(posts[0].key);
+    expect(posts[1].auth).toBe('Bearer rt-secret');
+    expect(JSON.parse(posts[1].body ?? '')).toMatchObject({
+      scope: 'team',
+      epic: 'e-000001',
+    });
+  });
+
+  it('memory_save sends an explicit epic: null, and no epic on a personal save', async () => {
+    const c = await client();
+    await c.callTool({
+      name: 'memory_save',
+      arguments: {
+        scope: 'team',
+        kind: 'fact',
+        title: 'project-wide',
+        body: '',
+        epic: null,
+      },
+    });
+    await c.callTool({
+      name: 'memory_save',
+      arguments: {
+        scope: 'personal',
+        kind: 'preference',
+        title: 'terse comments',
+        body: '',
+      },
+    });
+    const bodies = savePosts().map(
+      (s) => JSON.parse(s.body ?? '') as Record<string, unknown>
+    );
+    expect(bodies[0].epic).toBeNull();
+    expect('epic' in bodies[1]).toBe(false);
+  });
+
+  it('memory_forget posts the reason to /retire, upper-casing the handle', async () => {
+    await call('memory_forget', { id: '#7qx2k9pa', reason: 'no longer true' });
+    const retire = seen.find((s) => s.path.endsWith('/retire'));
+    expect(retire?.path).toBe(
+      `/api/memory/${encodeURIComponent('#7QX2K9PA')}/retire`
+    );
+    expect(JSON.parse(retire?.body ?? '')).toEqual({
+      reason: 'no longer true',
+    });
+  });
+
+  it('memory_forget sends one Idempotency-Key and retries a dropped connection with it', async () => {
+    const res = await callDroppingFirstPost('/retire', 'memory_forget', {
+      id: '#7qx2k9pa',
+      reason: 'no longer true',
+    });
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent?.status).toBe('proposed');
+    const posts = seen.filter((s) => s.path.endsWith('/retire'));
+    expect(posts).toHaveLength(2);
+    expect(posts[0].key).toBeTruthy();
+    expect(posts[1].key).toBe(posts[0].key);
   });
 });

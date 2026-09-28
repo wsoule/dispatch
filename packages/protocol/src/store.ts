@@ -1,21 +1,9 @@
 import type { Address } from './address.js';
+import { DELIVERY_STATES } from './constants.js';
 import type { Message, MessageKind } from './envelope.js';
 
-export type DeliveryState =
-  | 'held'
-  | 'sending'
-  | 'pushed'
-  | 'notified'
-  | 'read'
-  | 'answered';
-export const DELIVERY_STATES: readonly DeliveryState[] = [
-  'held',
-  'sending',
-  'pushed',
-  'notified',
-  'read',
-  'answered',
-];
+export { DELIVERY_STATES };
+export type DeliveryState = (typeof DELIVERY_STATES)[number];
 
 export type DeliveryVia = 'direct' | 'channel';
 
@@ -215,7 +203,8 @@ export interface MessageStore {
   maxRowid(): number;
   ensureChannel(name: string, at: string, auto: boolean): void;
   channels(): ChannelRecord[];
-  addMember(channel: string, member: Address, at: string): void;
+  /** Adds a member; false when it was already in the channel. */
+  addMember(channel: string, member: Address, at: string): boolean;
   removeMember(channel: string, member: Address): boolean;
   members(channel: string): Address[];
   channelsOf(member: Address): string[];

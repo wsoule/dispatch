@@ -1,7 +1,8 @@
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
 
 import type { MemoryStore } from './store.js';
-import type { MemoryEntry } from './types.js';
+import { MEMORY_SCOPES } from './types.js';
+import type { MemoryEntry, MemoryScope } from './types.js';
 
 const DAY_MS = 86_400_000;
 const RECALL_KEEP_DAYS = 365;
@@ -10,6 +11,8 @@ export interface DecayResult {
   staled: number;
   expired: number;
   prunedRecalls: number;
+  /** The scopes of the entries it changed, in MEMORY_SCOPES order. */
+  scopes: MemoryScope[];
 }
 
 // "Use" is the later of the last recall that counted as use and the last change.
@@ -40,7 +43,13 @@ export function decayStore(
   const expireBefore = new Date(
     nowMs - input.retireAfterDays * DAY_MS
   ).toISOString();
-  const result: DecayResult = { staled: 0, expired: 0, prunedRecalls: 0 };
+  const result: DecayResult = {
+    staled: 0,
+    expired: 0,
+    prunedRecalls: 0,
+    scopes: [],
+  };
+  const changed = new Set<MemoryScope>();
   store.transaction(() => {
     for (const e of store.listEntries({ states: ['active'] })) {
       if (exempt(e) || lastUse(e) >= staleBefore) continue;
@@ -50,6 +59,7 @@ export function decayStore(
         'decay'
       );
       result.staled += 1;
+      changed.add(e.scope);
     }
     for (const e of store.listEntries({ states: ['stale'] })) {
       if (exempt(e) || lastUse(e) >= expireBefore) continue;
@@ -59,11 +69,13 @@ export function decayStore(
         'decay'
       );
       result.expired += 1;
+      changed.add(e.scope);
     }
     result.prunedRecalls = store.pruneRecalls(
       new Date(nowMs - RECALL_KEEP_DAYS * DAY_MS).toISOString()
     );
     store.setMeta('last_decay_at', input.now.toISOString());
   });
+  result.scopes = MEMORY_SCOPES.filter((scope) => changed.has(scope));
   return result;
 }

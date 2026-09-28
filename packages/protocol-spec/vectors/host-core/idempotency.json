@@ -1,0 +1,307 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "host-core",
+  "area": "idempotency",
+  "vectors": [
+    {
+      "id": "core.idempotency.replays-the-first-message",
+      "title": "A repeated key from the same sender returns the first message and its deliveries, even for a different input, and runs no hook",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.9"],
+      "given": {
+        "agents": [
+          { "address": "agent:wyat/a2a.acme", "status": "approved" },
+          { "address": "agent:wyat/a2a.other", "status": "approved" }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "question",
+            "body": "Is /sessions final?",
+            "idempotencyKey": "msg-1",
+            "blocking": true
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "question",
+            "body": "a different body",
+            "idempotencyKey": "msg-1",
+            "blocking": true
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true, "result": { "message": "$s1" } },
+          { "ok": true, "result": { "message": "$s1", "replayed": true } }
+        ],
+        "messages": [{ "id": "$s1", "body": "Is /sessions final?" }],
+        "noOtherMessages": true,
+        "deliveries": [
+          { "message": "$s1", "recipient": "task:t-4a8cce", "state": "held" }
+        ],
+        "calls": [{ "hook": "published", "message": "$s1" }]
+      }
+    },
+    {
+      "id": "core.idempotency.keys-are-per-sender",
+      "title": "Two senders may use the same key, and neither replays the other's message",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.9", "13.15"],
+      "given": {
+        "agents": [
+          { "address": "agent:wyat/a2a.acme", "status": "approved" },
+          { "address": "agent:wyat/a2a.other", "status": "approved" }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "a",
+            "idempotencyKey": "same"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.other", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "b",
+            "idempotencyKey": "same"
+          }
+        }
+      ],
+      "then": {
+        "steps": [{ "ok": true }, { "ok": true }],
+        "messages": [
+          { "id": "$s1", "from": "agent:wyat/a2a.acme", "body": "a" },
+          { "id": "$s2", "from": "agent:wyat/a2a.other", "body": "b" }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.idempotency.a-key-is-one-line-of-at-most-200-bytes",
+      "title": "A key is refused on idempotencyKey when it is empty, holds a line break or is over 200 bytes; 200 bytes is accepted",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["1.4", "4.5", "4.9"],
+      "given": {
+        "agents": [
+          { "address": "agent:wyat/a2a.acme", "status": "approved" },
+          { "address": "agent:wyat/a2a.other", "status": "approved" }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "x",
+            "idempotencyKey": ""
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "x",
+            "idempotencyKey": "a\nb"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "x",
+            "idempotencyKey": "····································································································a"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "x",
+            "idempotencyKey": "····································································································"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "idempotencyKey" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "idempotencyKey" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "idempotencyKey" }
+          },
+          { "ok": true }
+        ],
+        "messages": [{ "id": "$s4" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.idempotency.a-revoked-sender-gets-no-replay",
+      "title": "A sender whose registration was revoked is refused on from, not given its earlier message back",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.9", "9.1", "13.15"],
+      "given": {
+        "agents": [
+          { "address": "agent:wyat/a2a.acme", "status": "approved" },
+          { "address": "agent:wyat/a2a.other", "status": "approved" }
+        ],
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "x",
+            "idempotencyKey": "r"
+          }
+        },
+        {
+          "op": "world",
+          "change": {
+            "agentStatus": {
+              "address": "agent:wyat/a2a.acme",
+              "status": "revoked"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["task:t-4a8cce"],
+            "kind": "message",
+            "body": "x",
+            "idempotencyKey": "r"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          null,
+          { "ok": false, "error": { "code": "forbidden", "field": "from" } }
+        ],
+        "messages": [{ "id": "$s1" }],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.idempotency.a-retried-answer-replays",
+      "title": "A retried answer under the same key replays the first answer instead of meeting conflict; without the key it conflicts",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["4.7", "4.9"],
+      "given": {
+        "agents": [
+          { "address": "agent:wyat/a2a.acme", "status": "approved" },
+          { "address": "agent:wyat/a2a.other", "status": "approved" }
+        ],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["agent:wyat/a2a.acme"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Which region?",
+            "choices": ["us", "eu"]
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "answer",
+            "replyTo": "$s1",
+            "body": "",
+            "choice": "us",
+            "idempotencyKey": "ans-1"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "answer",
+            "replyTo": "$s1",
+            "body": "",
+            "choice": "us",
+            "idempotencyKey": "ans-1"
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/a2a.acme", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "answer",
+            "replyTo": "$s1",
+            "body": "",
+            "choice": "us"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true, "result": { "message": "$s2" } },
+          { "ok": true, "result": { "message": "$s2", "replayed": true } },
+          { "ok": false, "error": { "code": "conflict", "field": "replyTo" } }
+        ],
+        "noOtherMessages": true
+      }
+    }
+  ]
+}

@@ -1,12 +1,15 @@
 import {
   ActorContext,
+  describeDroppedEntry,
   formatMigrationReport,
+  generateSyncedRunId,
   generateSyncedTaskId,
   hasLegacyState,
   importLegacyProject,
   initProjectStores,
   isMergeDriverResolvable,
   loadConfig,
+  MAX_HANDLE_BYTES,
   openProjectStores,
   SqliteTaskStore,
   syncSettings,
@@ -83,7 +86,7 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
-import { openMemory } from './memory/service.js';
+import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
   closeOrphanedGates,
@@ -889,6 +892,15 @@ async function bootServer(
   // store, so a teammate is registered on the roster ahead of any task edit
   // this process might make.
   const actorContext = ActorContext.resolve(rootDir, makeGitReader(rootDir));
+  for (const entry of actorContext.droppedEntries) {
+    const fix =
+      entry.problem === 'too-long'
+        ? `its handle is too long: shorten it to at most ${MAX_HANDLE_BYTES} bytes`
+        : `it is malformed: fix it so it has an email and a handle of at most ${MAX_HANDLE_BYTES} bytes, made of lowercase letters, digits, '.', '_' and '-' and starting with a letter or digit`;
+    console.warn(
+      `team.yml: skipped ${describeDroppedEntry(entry)}: ${fix}; until it is fixed, dispatchd will not write team.yml or add any new teammate to it`
+    );
+  }
 
   // Credentials, once there is someone for them to speak for. The pair may be
   // supplied (a harness presetting the decide-tier token); the registry is
@@ -1165,12 +1177,9 @@ async function bootServer(
   // probed jj through that seam would decide a demo repo was jj-colocated and
   // take the jj rebase path against a repo with no jj at all.
   const jj = new JjManager(rootDir);
-  // Shared with apiCtx below so a decision an agent records mid-run is
-  // visible to buildTaskPrompt on the very next dispatch, no restart needed.
-  //
-  // Backed by the same store the tasks came from: the database's ledger table
-  // when this project has one, and `.dispatch/ledger.jsonl` otherwise. Both
-  // satisfy `LedgerStorePort`, so nothing downstream branches on which.
+  // The audit ledger: the daemon's receipts, plus lesson rows memory imports.
+  // Backed by the same store the tasks came from (the database's ledger table,
+  // or `.dispatch/ledger.jsonl`); both satisfy `LedgerStorePort`.
   const ledgerStore: LedgerStorePort =
     stores.records?.ledger ?? new LedgerStore(rootDir);
   // Built here, above the Orchestrator, rather than beside ReviewRunner where
@@ -1257,7 +1266,6 @@ async function bootServer(
     judgments,
     events,
     jj,
-    ledgerStore,
     findingStore,
     // `null` on the file backend, where the run transcript is evidence's only
     // home. On sqlite this is what puts commands and mutations into the
@@ -1270,8 +1278,12 @@ async function bootServer(
     // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
+    // Memory and docs share one A2A-provenance answer: the a2a label or the
+    // bridge's provenance line, failing closed on an unparsable task.
+    isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
   });
   orchestrator.setDocsPort(docs.service);
+  if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
@@ -1281,6 +1293,7 @@ async function bootServer(
   }
   // Messaging opens once the orchestrator exists (it mints run tokens and
   // hears onRunStarted); its recover() waits for reconcileOnBoot() below.
+  const appendPolicyActivity = policyActivityAppender({ store, cache, events });
   const messaging = openMessaging({
     rootDir,
     orchestrator,
@@ -1288,7 +1301,23 @@ async function bootServer(
     events,
     ownerRef: actorContext.humanRef,
     ledgerStore,
-    appendPolicyActivity: policyActivityAppender({ store, cache, events }),
+    appendPolicyActivity,
+  });
+  // Memory opens before messaging.recover() because it registers the memory
+  // gate's handler: an answer replayed with no handler is marked applied and lost.
+  const memory = openMemory({
+    rootDir,
+    store,
+    orchestrator,
+    events,
+    ledgerStore,
+    messaging,
+    ownerRef: actorContext.humanRef,
+    appendPolicyActivity,
+    watchLedgerFile:
+      stores.records === null
+        ? join(rootDir, '.dispatch', 'ledger.jsonl')
+        : null,
   });
   docsHost.bindRuns(orchestrator);
   docsHost.bindMessaging(messaging.store);
@@ -1324,23 +1353,17 @@ async function bootServer(
   await messaging.recover();
   // Runs force-failed above left their gates open; nobody can act on them now.
   closeOrphanedGates(messaging.engine, orchestrator);
-  // Memory opens after messaging and before HTTP serves; the boot import
-  // carries every ledger lesson in before the first dispatch.
-  const memory = openMemory({
-    rootDir,
-    store,
-    orchestrator,
-    events,
-    ledgerStore,
-    watchLedgerFile:
-      stores.records === null
-        ? join(rootDir, '.dispatch', 'ledger.jsonl')
-        : null,
-  });
+  // Before HTTP serves: the boot import carries every ledger lesson in before
+  // the first dispatch, then proposals a crash left without a gate get one.
   try {
     memory.importLedger();
   } catch (err) {
     console.error('dispatchd: boot ledger import failed', err);
+  }
+  try {
+    await memory.recover();
+  } catch (err) {
+    console.error('dispatchd: memory gate recovery failed', err);
   }
   orchestrator.setMemoryPort(memory);
   // After recovery, so the bridge reconciles against settled messaging state;
@@ -1358,6 +1381,11 @@ async function bootServer(
       ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
     ],
     ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    ...(opts.tls === undefined
+      ? {}
+      : {
+          teamTls: { certPath: opts.tls.certPath, keyPath: opts.tls.keyPath },
+        }),
     mark: (label) => watchdog.mark(label),
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
   });
@@ -1524,6 +1552,7 @@ async function bootServer(
       mergeQueue,
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
+      memory: overseerMemory(memory),
       messaging: overseerToolMessaging(messaging.engine),
       ownerRef: actorContext.humanRef,
       docs: docs.service,

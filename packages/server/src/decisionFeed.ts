@@ -25,9 +25,10 @@ import { runKind } from './orchestrator/types.js';
  * rather than redeclaring is what stops a kind being added here without the
  * toggles knowing about it.
  *
- * `approval`, `scope-request` and `question` are the open gates, sorted onto
- * the toggles by notificationKindForMessage; they stay separate kinds because
- * each carries a different payload and a surface renders them differently.
+ * `approval`, `scope-request`, `memory` and `question` are the open gates,
+ * sorted onto the toggles by notificationKindForMessage; they stay separate
+ * kinds because each carries a different payload and a surface renders them
+ * differently.
  */
 type DecisionKind = NotificationKind;
 

@@ -81,3 +81,26 @@ it('refuses a name that was ever registered, revoked included, when asked to', a
   );
   expect(reused.ok).toBe(true);
 });
+
+it('tells a refused client name to choose a new one, whatever the row status', async () => {
+  const { ctx } = await harness();
+  const first = await registerAgentRow(ctx, registration());
+  if (!first.ok) throw new Error(await first.response.text());
+
+  const again = await registerAgentRow(ctx, registration());
+  expect(again.ok).toBe(false);
+  if (again.ok) return;
+  expect(again.response.status).toBe(409);
+  const { error } = (await again.response.json()) as { error: string };
+  expect(error).toContain('choose a new name');
+  expect(error).not.toContain('revoke');
+
+  const ordinary = await registerAgentRow(
+    ctx,
+    registration({ refuseAnyExisting: false })
+  );
+  if (ordinary.ok) throw new Error('expected a 409 for a pending row');
+  expect(
+    ((await ordinary.response.json()) as { error: string }).error
+  ).toContain('ask a human to revoke it first');
+});

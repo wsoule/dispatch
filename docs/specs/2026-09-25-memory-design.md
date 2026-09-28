@@ -231,7 +231,8 @@ interface MemoryHost {
   operatorOf(principal: Principal): Operator | null;
   projectKey(): string; // sha256(rootDir)[:12], the run-state key
   taskContext(taskId: string): IndexContext | null; // title, body, writes, epic, risk, a2a
-  taskOfPrincipal(principal: Principal): string | null; // a run's task
+  taskOfPrincipal(principal: Principal): string | null; // an execute run's task
+  runTaskOf(principal: Principal): string | null; // any run's task, for A2A provenance
   // Policy's ruling for one open proposal, consulted before any gate is sent.
   rule(proposal: MemoryProposal): PolicyRuling;
   // Sends the memory gate for an open proposal, or returns the one already open for it.

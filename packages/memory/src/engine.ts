@@ -62,6 +62,9 @@ export interface ListQuery {
   kind?: MemoryKind;
   state?: DisplayState | 'all';
   taskId?: string;
+  // Entries imported from that source: an origin of `ledger:…`, `claude:…` or `amendment:…`.
+  origin?: 'ledger' | 'claude' | 'amendment';
+  trust?: MemoryTrust;
   limit?: number;
 }
 
@@ -124,9 +127,10 @@ export interface SaveInput {
   cause?: 'save' | 'ingest';
 }
 
-// `active` means the write took effect; `proposed` means it waits on a decision.
+// `active` or `retired` means the write took effect and names the entry's new
+// state; `proposed` means it waits on a decision.
 export type SaveResult =
-  | { status: 'active'; id: string; handle: string }
+  | { status: 'active' | 'retired'; id: string; handle: string }
   | { status: 'proposed'; proposal: string; gate: string | null };
 
 export interface EditInput {
@@ -313,7 +317,8 @@ export class MemoryEngine {
 
   viewer(principal: Principal): Viewer {
     refuseA2A(principal);
-    const taskId = this.deps.host.taskOfPrincipal(principal);
+    // Any run of an A2A-provenance task, whatever its kind, is an A2A run.
+    const taskId = this.deps.host.runTaskOf(principal);
     const a2aRun =
       principal.kind === 'run' &&
       taskId !== null &&
@@ -345,7 +350,11 @@ export class MemoryEngine {
       q.scope
     )
       .filter(
-        ({ entry }) => q.taskId === undefined || reaches(entry, ctx, projectKey)
+        ({ entry }) =>
+          (q.taskId === undefined || reaches(entry, ctx, projectKey)) &&
+          (q.origin === undefined ||
+            entry.origin?.startsWith(`${q.origin}:`) === true) &&
+          (q.trust === undefined || entry.trust === q.trust)
       )
       .map(({ entry }) => ({ entry, matched: false, score: 0 }));
     return rankEntries(items, ctx)
@@ -632,7 +641,7 @@ export class MemoryEngine {
         );
       });
       this.deps.host.changed({ scope: 'personal' });
-      return { status: 'active', id: entry.id, handle: entry.handle };
+      return { status: 'retired', id: entry.id, handle: entry.handle };
     }
     const scope = entry.scope;
     if (!isDecider(principal))
@@ -647,7 +656,7 @@ export class MemoryEngine {
       this.revise(store, entry, retired, principal.address, 'retire')
     );
     this.deps.host.changed({ scope, id: entry.id });
-    return { status: 'active', id: entry.id, handle: entry.handle };
+    return { status: 'retired', id: entry.id, handle: entry.handle };
   }
 
   // Restores the previous revision as a new one. Undoing a creation retires
@@ -1221,9 +1230,10 @@ export class MemoryEngine {
       p.state === 'approved' && p.result !== null
         ? store.getEntry(p.result)
         : null;
-    return entry === null
-      ? { status: 'proposed', proposal: p.id, gate: p.gate }
-      : { status: 'active', id: entry.id, handle: entry.handle };
+    if (entry === null)
+      return { status: 'proposed', proposal: p.id, gate: p.gate };
+    const status = entry.status === 'retired' ? 'retired' : 'active';
+    return { status, id: entry.id, handle: entry.handle };
   }
 
   // One lesson, one row: an equal active or stale entry, open proposal or

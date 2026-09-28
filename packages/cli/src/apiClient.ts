@@ -685,6 +685,66 @@ export interface ApiClient {
   importLedger(
     dryRun: boolean
   ): Promise<{ report: { outcome: string }; text: string }>;
+  // Memory refuses the agent token, as messaging does: build the client on
+  // the app token or a teammate's token. `ref` is an id or a #handle.
+  listMemory(q: {
+    scope?: string;
+    kind?: string;
+    state?: string;
+    origin?: 'ledger' | 'claude';
+    trust?: 'agent';
+    limit?: number;
+  }): Promise<{ entries: MemoryEntry[] }>;
+  getMemory(
+    ref: string
+  ): Promise<{ entry: MemoryEntry; revisions: unknown[]; recallCount: number }>;
+  saveMemory(input: {
+    scope: string;
+    kind: string;
+    title: string;
+    body: string;
+    projectOnly?: boolean;
+  }): Promise<MemorySaveResult>;
+  retireMemory(ref: string, reason: string): Promise<MemorySaveResult>;
+  undoMemory(ref: string): Promise<MemoryEntry>;
+  confirmMemory(ref: string): Promise<MemoryEntry>;
+  pinMemory(ref: string, pinned: boolean): Promise<MemoryEntry>;
+  promoteMemory(ref: string, scope: string): Promise<MemorySaveResult>;
+  deleteMemory(ref: string): Promise<void>;
+  listMemoryProposals(state?: string): Promise<{ proposals: MemoryProposal[] }>;
+  startMemoryLink(opts: {
+    fresh?: boolean;
+  }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
+  completeMemoryLink(code: string): Promise<{ identity: string }>;
+}
+
+/** The fields of @dispatch/memory's entry view the CLI prints. */
+export interface MemoryEntry {
+  id: string;
+  handle: string;
+  kind: string;
+  scope: string;
+  state: string;
+  title: string;
+  body: string;
+  trust: string;
+  author: string;
+  rev: number;
+}
+
+/** Mirrors SaveResult in packages/memory/src/engine.ts. */
+export type MemorySaveResult =
+  | { status: 'active' | 'retired'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+/** The fields of @dispatch/memory's proposal the CLI prints. */
+export interface MemoryProposal {
+  id: string;
+  state: string;
+  action: string;
+  scope: string;
+  target: string | null;
+  content: { kind: string; title: string } | null;
 }
 
 /** Mirrors SyncStatus in packages/server/src/team/boardSync/service.ts.
@@ -884,7 +944,51 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/memory/import/ledger${dryRun ? '?dryRun=1' : ''}`, {
         method: 'POST',
       }),
+    listMemory: (q) => request(target, `/api/memory${memoryQuery(q)}`),
+    getMemory: (ref) => request(target, memoryPath(ref)),
+    saveMemory: (input) => request(target, '/api/memory', jsonBody(input)),
+    retireMemory: (ref, reason) =>
+      request(target, `${memoryPath(ref)}/retire`, jsonBody({ reason })),
+    undoMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/undo`, { method: 'POST' }),
+    confirmMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/confirm`, { method: 'POST' }),
+    pinMemory: (ref, pinned) =>
+      request(target, `${memoryPath(ref)}/${pinned ? 'pin' : 'unpin'}`, {
+        method: 'POST',
+      }),
+    promoteMemory: (ref, scope) =>
+      request(target, `${memoryPath(ref)}/promote`, jsonBody({ scope })),
+    deleteMemory: (ref) =>
+      request(target, memoryPath(ref), { method: 'DELETE' }),
+    listMemoryProposals: (state) =>
+      request(target, `/api/memory/proposals${memoryQuery({ state })}`),
+    startMemoryLink: (opts) =>
+      request(
+        target,
+        '/api/memory/link',
+        jsonBody(opts.fresh === true ? { fresh: true } : {})
+      ),
+    completeMemoryLink: (code) =>
+      request(target, `/api/memory/link/${encodeURIComponent(code)}`, {
+        method: 'POST',
+      }),
   };
+}
+
+// An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
+function memoryPath(ref: string): string {
+  return `/api/memory/${encodeURIComponent(ref)}`;
+}
+
+// `?k=v&…` from the defined values in order; '' when none is defined.
+function memoryQuery(
+  params: Record<string, string | number | undefined>
+): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params))
+    if (value !== undefined) search.set(key, String(value));
+  return search.size > 0 ? `?${search.toString()}` : '';
 }
 
 // The A2A control surface. Mirrors packages/server/src/a2a/routes.ts and its

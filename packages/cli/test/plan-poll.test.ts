@@ -52,6 +52,18 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     getLicense: () => Promise.reject(new Error('not used')),
     installLicense: () => Promise.reject(new Error('not used')),
     importLedger: () => Promise.reject(new Error('not used')),
+    listMemory: () => Promise.reject(new Error('not used')),
+    getMemory: () => Promise.reject(new Error('not used')),
+    saveMemory: () => Promise.reject(new Error('not used')),
+    retireMemory: () => Promise.reject(new Error('not used')),
+    undoMemory: () => Promise.reject(new Error('not used')),
+    confirmMemory: () => Promise.reject(new Error('not used')),
+    pinMemory: () => Promise.reject(new Error('not used')),
+    promoteMemory: () => Promise.reject(new Error('not used')),
+    deleteMemory: () => Promise.reject(new Error('not used')),
+    listMemoryProposals: () => Promise.reject(new Error('not used')),
+    startMemoryLink: () => Promise.reject(new Error('not used')),
+    completeMemoryLink: () => Promise.reject(new Error('not used')),
   };
 }
 

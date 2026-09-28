@@ -80,4 +80,10 @@ each with a \`#handle\`. Open one with \`memory_read("#handle")\` for its body,
 author and revisions, and use \`memory_search\` to find entries the index left
 out. A line marked \`unreviewed\` was written by an agent and no human has
 checked it yet.
+
+To remember something for later work, call \`memory_save\`: the title is the
+whole lesson in one line. \`scope: "personal"\` is your operator's own memory and
+saves at once; \`"project"\` and \`"team"\` become proposals a human approves,
+unless the project's autonomy policy accepts them. \`memory_forget\` retires an
+entry that is wrong or no longer true.
 `;

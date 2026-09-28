@@ -40,8 +40,6 @@ import { GitRepo } from '../git/commands.js';
 import type { JudgmentClient } from '../judgments/client.js';
 import { judgeRunModel } from '../judgments/modelTier.js';
 import type { RunModelChoice } from '../judgments/modelTier.js';
-import { LedgerStore } from '../ledger.js';
-import type { LedgerStorePort } from '../ledger.js';
 import { dirSizeBytes } from './dirSize.js';
 import {
   EPIC_BRANCH_PREFIX,
@@ -86,7 +84,6 @@ import type {
   ExecutorRun,
   ExecutorStartOptions,
   MemoryPromptPort,
-  MemoryPromptSection,
   NormalizedEntry,
   ReviewFailure,
   RunKind,
@@ -112,9 +109,9 @@ import { WorktreeManager } from './worktree.js';
 /**
  * The slice of the database's evidence store the orchestrator writes to.
  * Structural rather than an import of `SqliteEvidenceStore`, matching how
- * `FindingStorePort` and `LedgerStorePort` are declared — a test can pass two
- * functions instead of a database. Not exported: callers pass an object
- * literal and never need to name the type.
+ * `FindingStorePort` is declared — a test can pass two functions instead of a
+ * database. Not exported: callers pass an object literal and never need to
+ * name the type.
  */
 interface EvidenceWriter {
   addCommand(runId: string, evidence: CommandEvidence): CommandEvidence;
@@ -132,11 +129,8 @@ export interface OrchestratorContext {
   // CommandRunner so that path can be exercised without a jj binary, which is
   // otherwise structurally untestable.
   jj?: JjManager;
-  // Ledger entries injected into dispatch prompts (see promptForTask below).
-  // Defaults to one over `rootDir`, same pattern as `jj`.
-  ledgerStore?: LedgerStorePort;
   // Where blocking rulings are read from (see blockedFindingReason). Defaults
-  // to one over `rootDir`, same pattern as `ledgerStore`.
+  // to one over `rootDir`, same pattern as `jj`.
   findingStore?: FindingStorePort;
   // The database's evidence tables, on the sqlite backend only; `null` (or
   // absent) on the file backend, where the run transcript is the only home
@@ -168,7 +162,7 @@ export interface OrchestratorContext {
   autoResumeQuietMs?: number;
   autoResumeMaxAttempts?: number;
   // The repo-map cache injected into run prompts (see promptForTask). Defaults
-  // to one over `rootDir`, same pattern as `ledgerStore`. A test that wants no
+  // to one over `rootDir`, same pattern as `jj`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
   // How the orchestrator shells out to delete a retired PR review's head ref
@@ -358,7 +352,6 @@ export class Orchestrator {
   // constructing it is inert — it shells out to jj lazily, per call — so an
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
-  private readonly ledgerStore: LedgerStorePort;
   private readonly findingStore: FindingStorePort;
   // The repo map injected into every run prompt (see promptForTask). Held on
   // the orchestrator rather than built per dispatch so its single-flight
@@ -386,6 +379,8 @@ export class Orchestrator {
   // Mints each run's messaging token at start (see setRunTokenMinter); null
   // leaves runs without one, as in fixtures that never set it.
   private mintRunToken: ((runId: string) => string) | null = null;
+  // Mints every new run's id; a synced board installs a longer one at boot.
+  private mintRunId: (now: string) => string = (now) => generateRunId(now);
   // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
   private approvalGate: ApprovalGatePort | null = null;
   // Renders each dispatch prompt's memory section (see setMemoryPort); null keeps the ledger section.
@@ -430,7 +425,6 @@ export class Orchestrator {
   constructor(private readonly ctx: OrchestratorContext) {
     this.worktrees = new WorktreeManager(ctx.rootDir);
     this.jj = ctx.jj ?? new JjManager(ctx.rootDir);
-    this.ledgerStore = ctx.ledgerStore ?? new LedgerStore(ctx.rootDir);
     this.findingStore = ctx.findingStore ?? new FindingStore(ctx.rootDir);
     this.digestCache = ctx.digestCache ?? new RepoDigestCache(ctx.rootDir);
     this.claimsRefreshCooldownMs =
@@ -470,6 +464,11 @@ export class Orchestrator {
   // token file (runTokenPath) and passes the executor only that path.
   setRunTokenMinter(mint: (runId: string) => string): void {
     this.mintRunToken = mint;
+  }
+
+  // Called once at boot, before any run starts, to change how run ids are minted.
+  setRunIdMinter(mint: (now: string) => string): void {
+    this.mintRunId = mint;
   }
 
   // Installed by messaging at boot: raises and settles the gate a parked tool call waits on.
@@ -839,7 +838,7 @@ export class Orchestrator {
 
     const { base: baseBranch, stackParents } = await this.resolveBase(task);
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     // Suffixed with the run's own hex tag (stripping its `r-` prefix) so two
     // runs against the same task never collide on branch name — a task can
     // have several finished-but-unreviewed runs sitting in parallel until
@@ -954,7 +953,7 @@ export class Orchestrator {
     );
 
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     const branch = `${DISPATCH_BRANCH_PREFIX}${opts.kind}-${opts.taskId}-${runId.slice(2)}`;
     const wtPath = worktreePath(this.ctx.rootDir, runId);
     this.worktrees.add(wtPath, branch, opts.head);
@@ -2167,6 +2166,11 @@ export class Orchestrator {
   // Whether a task came in over A2A; its runs act for no one.
   private a2a(taskId: string): boolean {
     return this.ctx.isA2ATask?.(taskId) ?? false;
+  }
+
+  // The same answer for memory, which keeps project scope from A2A runs.
+  isA2ATask(taskId: string): boolean {
+    return this.a2a(taskId);
   }
 
   // Who the task's latest execute run acts for: the operator of a wake, review,
@@ -4741,7 +4745,7 @@ export class Orchestrator {
       substituted,
     } = this.resolveExecutorForResume(oldMeta.executor);
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     const meta: RunMeta = {
       id: runId,
       taskId: oldMeta.taskId,
@@ -4894,7 +4898,7 @@ export class Orchestrator {
       substituted,
     } = this.resolveExecutorForResume(meta.executor);
     const now = new Date().toISOString();
-    const newRunId = generateRunId(now);
+    const newRunId = this.mintRunId(now);
     const continuing = meta.sessionId !== undefined;
     const newMeta: RunMeta = {
       id: newRunId,
@@ -5042,38 +5046,31 @@ export class Orchestrator {
     }
     const dispatchTools =
       this.executorProfile(executorName).dispatchMcp !== false;
-    const memory = this.memorySection(task.meta.id, runId, dispatchTools);
-    const ledgerEntries =
-      memory.source === 'ledger'
-        ? this.ledgerStore.entriesFor(task.meta.id, task.meta.parent)
-        : [];
     return buildTaskPrompt(
       task,
       parentEpic,
-      ledgerEntries,
+      this.memorySection(task.meta.id, runId, dispatchTools),
       this.orientationFor(task.meta.id),
       dispatchTools,
       this.ctx.actorContext?.humanRef ?? null,
-      memory.source === 'memory' ? memory.text : undefined,
       this.docsSection(task.meta.id, runId, dispatchTools)
     );
   }
 
-  // Never throws: a broken memory store costs the section, never the dispatch.
+  // The run's `## Memory` text, or null. Never throws: a broken memory store
+  // costs the section, never the dispatch.
   private memorySection(
     taskId: string,
     runId: string,
     dispatchTools: boolean
-  ): MemoryPromptSection {
-    if (this.memoryPort === null) return { source: 'ledger' };
+  ): string | null {
+    if (this.memoryPort === null) return null;
     try {
-      return this.memoryPort.promptSection({ runId, taskId, dispatchTools });
+      return this.memoryPort.promptSection({ runId, taskId, dispatchTools })
+        .text;
     } catch (err) {
-      console.error(
-        `dispatchd: memory index for run ${runId} failed; using the ledger section`,
-        err
-      );
-      return { source: 'ledger' };
+      console.error(`dispatchd: memory index for run ${runId} failed`, err);
+      return null;
     }
   }
 

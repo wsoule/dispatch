@@ -318,7 +318,7 @@ async function msgSend(
   signal?: AbortSignal
 ): Promise<ToolOutcome> {
   // Same key on both attempts: a dropped connection doesn't say whether the
-  // send landed, so the retry replays the server's cached first result.
+  // send landed, so the retry replays the first send from messages.db.
   const idempotencyKey = randomUUID();
   const sendInit = (credential: MessagingCredential): RequestInit => ({
     method: 'POST',

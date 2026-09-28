@@ -3,3 +3,12 @@ $schema: 'https://moonrepo.dev/schemas/project.json'
 language: 'typescript'
 layer: 'library'
 tags: ['tsdown', 'publishable']
+
+tasks:
+  # server-parity.test.ts reads the protocol's constants.ts as text, and the
+  # client has no package edge to protocol; **/* is listed because an override
+  # replaces the defaults.
+  test:
+    inputs:
+      - '**/*'
+      - '/packages/protocol/src/constants.ts'

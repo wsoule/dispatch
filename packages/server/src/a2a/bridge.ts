@@ -37,6 +37,10 @@ interface ListenerStatus {
   warnings: string[];
   // Approved a2a.* agents with no clients row, registered before the bridge.
   legacyClients: string[];
+  // What the listener opens from: the file plus any one-boot flags.
+  settings: ListenerSettings;
+  // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
+  teamTls: { certPath: string; keyPath: string } | null;
 }
 
 export interface A2ABridge {
@@ -73,6 +77,7 @@ interface OpenBridgeDeps {
   // The daemon's own ports, read when the listener opens; it never shares one.
   daemonPorts: () => number[];
   overrides?: ListenerOverrides;
+  teamTls?: { certPath: string; keyPath: string };
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
@@ -207,6 +212,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       error: dbError ?? settingsError ?? openError,
       warnings: a2aConfig(rootDir).warnings,
       legacyClients,
+      settings,
+      teamTls: deps.teamTls ?? null,
     };
   }
 

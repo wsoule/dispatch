@@ -46,6 +46,7 @@ describe('loadConfig notifications', () => {
       question: true,
       approval: true,
       'scope-request': true,
+      memory: true,
       'fix-loop-capped': false,
       'run-stalled': true,
     });

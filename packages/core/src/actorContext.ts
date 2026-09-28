@@ -5,9 +5,9 @@ import { join } from 'node:path';
 
 import { formatActorRef } from './actor.js';
 import { DISPATCH_DIR } from './store.js';
-import type { TeamMember } from './team.js';
+import type { DroppedEntry, TeamMember } from './team.js';
 import {
-  parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
@@ -78,7 +78,10 @@ export class ActorContext {
     readonly humanRef: string,
     // False when `.dispatch/team.yml` was unparseable (e.g. merge
     // conflict markers) — the caller should surface the degraded state.
-    readonly rosterReadable: boolean
+    readonly rosterReadable: boolean,
+    // Roster entries skipped as malformed or too long; while any remain,
+    // resolve() writes no team.yml and records only a matched handle.
+    readonly droppedEntries: readonly DroppedEntry[]
   ) {}
 
   static resolve(rootDir: string, runGit: GitReader): ActorContext {
@@ -91,9 +94,11 @@ export class ActorContext {
     // A conflicted roster must be reported, never treated as empty — that
     // would re-register the local member alone and wipe out the team.
     let existingMembers: TeamMember[] = [];
+    let droppedEntries: DroppedEntry[] = [];
     let rosterReadable = true;
     try {
-      existingMembers = parseTeam(existing);
+      ({ members: existingMembers, dropped: droppedEntries } =
+        parseTeamReport(existing));
     } catch (err) {
       if (!(err instanceof TeamParseError)) throw err;
       rosterReadable = false;
@@ -103,14 +108,18 @@ export class ActorContext {
     // survives a changed git email — the roster cannot infer identity itself.
     const knownHandle = readKnownHandle(rootDir);
     const result = upsertMember(existingMembers, email, name, knownHandle);
-    if (rosterReadable && result.changed) {
+    // Rewriting a roster with skipped entries would delete those teammates.
+    if (rosterReadable && droppedEntries.length === 0 && result.changed) {
       mkdirSync(dir, { recursive: true });
       writeFileSync(file, serializeTeam(result.members));
     }
-    // Never persist a handle derived from a roster this boot couldn't read —
-    // upsertMember saw an empty member list, so its result can't be trusted
-    // enough to overwrite what a prior, successful boot recorded.
-    if (rosterReadable) {
+    // A handle minted from a roster read in part may belong to a skipped
+    // entry, so it must not overwrite what a complete boot recorded; one
+    // matched in the roster names a real entry and is recorded.
+    const matched = existingMembers.some(
+      (m) => m.handle === result.member.handle
+    );
+    if (rosterReadable && (droppedEntries.length === 0 || matched)) {
       writeKnownHandle(rootDir, result.member.handle);
     }
     return new ActorContext(
@@ -120,7 +129,8 @@ export class ActorContext {
         handle: result.member.handle,
         operator: null,
       }),
-      rosterReadable
+      rosterReadable,
+      droppedEntries
     );
   }
 

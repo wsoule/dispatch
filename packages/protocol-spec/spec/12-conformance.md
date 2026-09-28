@@ -121,6 +121,13 @@ empty store and a fresh world.
 Seeded rows stand for state an older build or another host wrote, which a
 current send could not produce, such as an agent's answer to a gate.
 
+The scripted host makes the choices [§8](08-a2a-binding.md#s8) leaves to a host
+this way: it admits every recipient of a send that `external` names, recording
+each `admitExternal` call ([§8.8](08-a2a-binding.md#s8.8)); and the recipient
+list of each `client` there is the owner alone, with no approved handoffs, so a
+client that names anyone else in `to` is refused as
+[§8.4](08-a2a-binding.md#s8.4) says. No member of `given` changes either.
+
 ### 12.4.3 Steps
 
 Each entry of `when` is an object with an `op` and that op's members. A step
@@ -128,27 +135,27 @@ that fails fails only itself: later steps still run. Each step's outcome is
 `{ "ok": true, "result"? }` or `{ "ok": false, "error": { "code", "field"? } }`
 ([§10](10-errors.md#s10)).
 
-| Op             | Members                                                                                                      | Result                                                    |
-| -------------- | ------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------- |
-| `send`         | `as` (`{ "address", "canDecide" }`), `input` (a send input), `origin`?                                       | `{ "message", "downgraded", "replayed"? }`                |
-| `reply`        | `as`, `message` (the target), `input` (`body`, `choice`?, `refs`?, `data`?, `session`?)                      | as `send` ([§4.6](04-messages.md#s4.6))                   |
-| `close`        | `question`, `reason`                                                                                         | `{ "message" }` ([§4.8](04-messages.md#s4.8))             |
-| `markRead`     | `message`, `recipient`: the delivery of that message to that recipient                                       | `{ "state" }`                                             |
-| `inbox`        | `recipient`, `states`?                                                                                       | `{ "messages": [ids] }`                                   |
-| `thread`       | `thread`                                                                                                     | `{ "messages": [ids] }`                                   |
-| `canRead`      | `message`, `as` ([§9.3](09-identity-and-authorization.md#s9.3))                                              | `{ "readable" }`                                          |
-| `openBlocking` | none                                                                                                         | `{ "messages": [ids] }`                                   |
-| `join`         | `channel`, `member`                                                                                          | `{}`                                                      |
-| `leave`        | `channel`, `member`                                                                                          | `{ "removed" }`                                           |
-| `deliverHeld`  | `session`, `workItem`: that session of that work item starts ([§6.4](06-delivery.md#s6.4))                   | `{ "deliveries": [{ "message", "recipient", "state" }] }` |
-| `recover`      | none ([§6.3](06-delivery.md#s6.3))                                                                           | `{ "retried", "reverted", "replayed", "voided"? }`        |
-| `parseAddress` | `input`                                                                                                      | the parsed address ([§3.1](03-addresses.md#s3.1))         |
-| `validate`     | `as`, `input`, `replyTarget`? (a message id), `origin`? (`local` or `received`, [§4.4](04-messages.md#s4.4)) | `{}`                                                      |
-| `render`       | `message`, `form`? (`push`, the default, or `digest`), `external`?                                           | `{ "text" }` ([§6.8](06-delivery.md#s6.8))                |
-| `a2a.validate` | `extension`, `raw`                                                                                           | `{}` ([§8](08-a2a-binding.md#s8))                         |
-| `a2a.project`  | `facts`                                                                                                      | `{ "state", "stage"? }` ([§8.7](08-a2a-binding.md#s8.7))  |
-| `a2a.inbound`  | `as`, `envelope`, `body`, `parts`?: a message arriving through the A2A binding                               | as `send` ([§8.8](08-a2a-binding.md#s8.8))                |
-| `world`        | `change`: exactly one of the changes below                                                                   | no result                                                 |
+| Op             | Members                                                                                                      | Result                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------ |
+| `send`         | `as` (`{ "address", "canDecide" }`), `input` (a send input), `origin`?                                       | `{ "message", "downgraded", "replayed"? }`                         |
+| `reply`        | `as`, `message` (the target), `input` (`body`, `choice`?, `refs`?, `data`?, `session`?)                      | as `send` ([§4.6](04-messages.md#s4.6))                            |
+| `close`        | `question`, `reason`                                                                                         | `{ "message" }` ([§4.8](04-messages.md#s4.8))                      |
+| `markRead`     | `message`, `recipient`: the delivery of that message to that recipient                                       | `{ "state" }`                                                      |
+| `inbox`        | `recipient`, `states`?                                                                                       | `{ "messages": [ids] }`                                            |
+| `thread`       | `thread`                                                                                                     | `{ "messages": [ids] }`                                            |
+| `canRead`      | `message`, `as` ([§9.3](09-identity-and-authorization.md#s9.3))                                              | `{ "readable" }`                                                   |
+| `openBlocking` | none                                                                                                         | `{ "messages": [ids] }`                                            |
+| `join`         | `channel`, `member`                                                                                          | `{}`                                                               |
+| `leave`        | `channel`, `member`                                                                                          | `{ "removed" }`                                                    |
+| `deliverHeld`  | `session`, `workItem`: that session of that work item starts ([§6.4](06-delivery.md#s6.4))                   | `{ "deliveries": [{ "message", "recipient", "state" }] }`          |
+| `recover`      | none ([§6.3](06-delivery.md#s6.3))                                                                           | `{ "retried", "reverted", "replayed", "voided"? }`                 |
+| `parseAddress` | `input`                                                                                                      | the parsed address ([§3.1](03-addresses.md#s3.1))                  |
+| `validate`     | `as`, `input`, `replyTarget`? (a message id), `origin`? (`local` or `received`, [§4.4](04-messages.md#s4.4)) | `{}`                                                               |
+| `render`       | `message`, `form`? (`push`, the default, or `digest`), `external`?                                           | `{ "text" }` ([§6.8](06-delivery.md#s6.8))                         |
+| `a2a.validate` | `extension` (`envelope` or `work`), `raw`                                                                    | `{}` ([§8](08-a2a-binding.md#s8))                                  |
+| `a2a.project`  | `facts`                                                                                                      | `{ "state", "stage"?, "gates"? }` ([§8.7](08-a2a-binding.md#s8.7)) |
+| `a2a.inbound`  | `as`, `envelope`, `body`, `parts`?, `answers`?: a message arriving through the A2A binding                   | as `send` ([§8.8](08-a2a-binding.md#s8.8))                         |
+| `world`        | `change`: exactly one of the changes below                                                                   | no result                                                          |
 
 `validate` runs only step 4 of the order in [§4.5](04-messages.md#s4.5): it
 skips step 1's authorization and step 3's participation check, stores nothing
@@ -157,7 +164,39 @@ step 3 it keeps only the lookup: an input that sets `replyTo` when `replyTarget`
 names no message fails `not-found` on `replyTo`. `parseAddress` refuses an
 address as `invalid` ([§3.1](03-addresses.md#s3.1)); no input field carries it,
 so no vector names the error's field. `send`, `reply`, `close` and `a2a.inbound`
-create a message. A `world` step changes the world between steps:
+create a message.
+
+`a2a.validate` checks `raw`, an extension's metadata as a client sent it, as the
+only metadata of one message: the budget of [§8.3](08-a2a-binding.md#s8.3), then
+the extension's rules. `a2a.inbound` takes a message as a client sent it through
+the binding: `as` is the client's address, `envelope` its `envelope/v1` metadata
+(or null), `body` its text and `parts` its data parts; the host applies
+[§8.3](08-a2a-binding.md#s8.3), [§8.4](08-a2a-binding.md#s8.4) and
+[§8.8](08-a2a-binding.md#s8.8), the recipient rule against the scripted host's
+list ([§12.4.2](12-conformance.md#s12.4.2)), and sends it as the client, with no
+decide authority. Without `answers` the message has no `taskId` and starts a new
+exchange ([§8.4](08-a2a-binding.md#s8.4)). `answers` names an open question to
+the client, and stands for the `taskId` of the task that asks it: the message
+then answers that question, as a continuation does
+([§8.4](08-a2a-binding.md#s8.4)).
+
+An `a2a.project` step's result carries `gates` when the state is
+`AUTH_REQUIRED`: the `gates` list of `gate/v1` ([§8.5](08-a2a-binding.md#s8.5))
+that the host writes on `status.message` for a client that activated that
+extension. Its `facts` names only what its row reads, and every other fact takes
+its default, so a task is by default an ask that matches row 12: `skill` (`ask`
+or `handoff`; `ask`), `root` (the message that opened the task; a blocking
+question from the client to the owner), `canceledAt` and `declinedAt` (times;
+null), `answer` (the root's answer; null), `openQuestions` (open questions to
+the client; none), `openGates` (`{ id, type, openedAt }` of the open gates in
+scope; none), `task` (the handoff's work item,
+`{ id, title, status, approved }`, or `"deleted"`; null), `dropped` (`client` or
+`other`; null), `recipientTaskDropped` (false), `rootDeliveries` (the states of
+the root's deliveries; none) and `scope` (the in-scope messages; none). A
+message fact lists only the fields it needs and takes the default root's for the
+rest.
+
+A `world` step changes the world between steps:
 
 | Change           | Value                                                                         |
 | ---------------- | ----------------------------------------------------------------------------- |
@@ -213,12 +252,17 @@ its recipient, never by its id.
 | `channels`        | every channel and its explicit members, as sets                                                                                                                                                                 |
 | `render`          | for a `render` step, its exact text (used by `dispatch`-profile vectors)                                                                                                                                        |
 
+Matched as a subset, an object checks only the members it lists, each matched
+the same way, while any other value compares exactly as a JSON value: a list
+item by item, and an object inside a list with the same members, in any order.
+
 The hook calls are `push { session, message }`, `notify { session, message }`,
 `notifyHuman { actor, message }`, `wake { target, message }`,
 `decide { target, message }`, `onAnswered { question, answer }`,
 `published { message }` (the host made the message visible to readers, as it
 does for every stored message and every close) and, for `a2a-binding` vectors,
-`admitExternal`.
+`admitExternal { recipient, message }` (the host decided whether an external
+recipient gets the message, [§8.8](08-a2a-binding.md#s8.8)).
 
 **Always checked.** Whatever `then` says, every message id and every delivery id
 is unique and an identifier of at most 64 bytes; generated message ids increase
@@ -233,15 +277,16 @@ A `render` step renders a stored message as the host would push it (or, with
 `form: "digest"`, as a digest). Core vectors send bodies whose lines occur in no
 text the host writes for the message ([§6.8](06-delivery.md#s6.8)): lines that
 imitate a header or a host line without repeating the host's own, every line
-break of [§1.4](01-introduction.md#s1.4) and, for external senders, choices and
-refs. They then check a pushed rendering against rules 1 to 4 of
-[§6.8](06-delivery.md#s6.8), using the forms the adapter declared, and, with
-`external: true`, that every line after the header starts with `quotePrefix`;
-and they check a digest against the digest rule of [§6.8](06-delivery.md#s6.8)
-alone, using the declared `digestLead`, since a correct digest holds the body's
-first line, if any, on its only line. `dispatch`-profile vectors also compare
-the exact text. No vector reads a mailbox or thread; how each read surface
-presents messages is listed in [§12.5](12-conformance.md#s12.5).
+break of [§1.4](01-introduction.md#s1.4) and, for external senders, choices,
+refs and a message replied to. They then check a pushed rendering against rules
+1 to 4 of [§6.8](06-delivery.md#s6.8), using the forms the adapter declared and,
+with `external: true`, rule 4's clause for an external sender, so a host line
+left unquoted carries none of the sender's text; and they check a digest against
+the digest rule of [§6.8](06-delivery.md#s6.8) alone, using the declared
+`digestLead`, since a correct digest holds the body's first line, if any, on its
+only line. `dispatch`-profile vectors also compare the exact text. No vector
+reads a mailbox or thread; how each read surface presents messages is listed in
+[§12.5](12-conformance.md#s12.5).
 
 ### 12.4.7 Adapter messages
 

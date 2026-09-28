@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'bun:test';
 import { readdirSync, readFileSync } from 'node:fs';
 
+import { isRecord } from '../src/guards.js';
 import { LINE_BREAK } from '../src/lines.js';
 import { loadVectors, VECTORS_DIR } from '../src/load.js';
 import { loadRegistry, REGISTRY_NAMES } from '../src/registries.js';
@@ -48,6 +49,50 @@ describe('the kit', () => {
             id,
             ok: true,
           });
+  });
+
+  // A provisional entry has no vectors yet (§11.11), so it lists none and no
+  // vector tests a section that provisional entries alone define.
+  it('tests no provisional entry', () => {
+    const registry = loadRegistry();
+    const statuses = new Map<string, Set<string>>();
+    const listed: string[] = [];
+    for (const name of REGISTRY_NAMES)
+      for (const e of registry[name]) {
+        statuses.set(
+          e.section,
+          (statuses.get(e.section) ?? new Set()).add(e.status)
+        );
+        if (e.status === 'provisional')
+          listed.push(...e.vectors.map((id) => `${e.value}: ${id}`));
+      }
+    expect(listed).toEqual([]);
+    const provisional = (s: string) => {
+      const found = statuses.get(s);
+      return found?.size === 1 && found.has('provisional');
+    };
+    expect(
+      vectors.filter((v) => v.sections.some(provisional)).map((v) => v.id)
+    ).toEqual([]);
+  });
+
+  // A handoff exists only through work/v1 (§8.6), so while that extension is
+  // provisional no vector validates a work/v1 request or projects a handoff.
+  it('tests no handoff while work/v1 is provisional', () => {
+    const work = loadRegistry()['extension-uris'].find((e) =>
+      e.value.endsWith('/a2a/ext/work/v1')
+    );
+    expect(work?.status).toBe('provisional');
+    const handoffs = vectors.filter((v) =>
+      v.when.some(
+        (s) =>
+          (s.op === 'a2a.validate' && s['extension'] === 'work') ||
+          (s.op === 'a2a.project' &&
+            isRecord(s['facts']) &&
+            s['facts']['skill'] === 'handoff')
+      )
+    );
+    expect(handoffs.map((v) => v.id)).toEqual([]);
   });
 
   // Raw, these three are invisible in a diff and some editors strip them.

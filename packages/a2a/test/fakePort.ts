@@ -58,6 +58,8 @@ export class FakePort implements BridgePort {
   requestAdmission: Admission = { ok: true };
   streamLimit = 5;
   openStreams = 0;
+  // Thrown by watch(), as a failed a2a.db read would be.
+  watchError: Error | null = null;
   private readonly watchers = new Map<string, Set<() => void>>();
   onOpen: (input: OpenInput) => OpenResult = () => ({
     kind: 'task',
@@ -129,6 +131,7 @@ export class FakePort implements BridgePort {
     return Promise.resolve();
   }
   watch(_caller: Caller, taskId: string, onChange: () => void): () => void {
+    if (this.watchError !== null) throw this.watchError;
     const set = this.watchers.get(taskId) ?? new Set();
     set.add(onChange);
     this.watchers.set(taskId, set);

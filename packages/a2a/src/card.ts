@@ -7,7 +7,7 @@ import { createHash } from 'node:crypto';
 import type { CardInputs } from './port.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from './uris.js';
 
-export const BUILT_SKILLS: readonly A2ASkill[] = ['ask'];
+export const BUILT_SKILLS: readonly A2ASkill[] = ['ask', 'handoff', 'status'];
 export const DEFAULT_CARD_DESCRIPTION =
   'A Dispatch project. Ask its owner a question, hand off a piece of software work (the owner approves it before anything runs), or check the status of your handoffs.';
 const HANDOFF_STATUSES = ['draft', 'ready', 'dropped', 'landed'];

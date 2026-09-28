@@ -4,9 +4,11 @@ import {
   generateFindingId,
   generateLedgerId,
   generateRunId,
+  generateSyncedRunId,
   generateSyncedTaskId,
   generateTaskId,
   isTaskId,
+  SYNCED_RUN_ID_HEX,
   taskIdFromFilename,
 } from '../src/ids.js';
 import { slugify } from '../src/slug.js';
@@ -49,6 +51,17 @@ describe('generateRunId', () => {
     const a = generateRunId('2026-01-01T00:00:00Z');
     const b = generateRunId('2026-01-01T00:00:00Z');
     expect(a).not.toBe(b);
+  });
+  it('mints 12 hex characters for a synced board', () => {
+    expect(generateSyncedRunId('2026-09-26T00:00:00Z')).toMatch(
+      /^r-[0-9a-f]{12}$/
+    );
+    expect(generateRunId('2026-09-26T00:00:00Z', 'n1')).toMatch(
+      /^r-[0-9a-f]{6}$/
+    );
+    expect(
+      generateRunId('2026-09-26T00:00:00Z', 'n1', SYNCED_RUN_ID_HEX).slice(0, 8)
+    ).toBe(generateRunId('2026-09-26T00:00:00Z', 'n1'));
   });
 });
 

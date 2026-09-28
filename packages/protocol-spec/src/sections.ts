@@ -12,7 +12,7 @@ const FENCE = /^ {0,3}(`{3,}(?=[^`]*$)|~{3,})(.*)$/;
 export function sectionsOf(markdown: string): string[] {
   const out: string[] = [];
   let fence = '';
-  for (const line of markdown.split('\n')) {
+  for (const line of markdown.split(/\r?\n/)) {
     const marker = FENCE.exec(line);
     const run = marker?.[1] ?? '';
     if (fence !== '') {

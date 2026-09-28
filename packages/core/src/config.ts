@@ -202,7 +202,7 @@ function parseNotificationKinds(
 
 // Validates the optional `notifications:` block, same contract as the blocks
 // below. `kinds` merges over the defaults, so switching one kind off does not
-// switch the other four off with it.
+// switch the others off with it.
 function parseNotificationsConfig(raw: unknown): NotificationsConfig {
   if (raw === undefined) return cloneNotifications(DEFAULT_NOTIFICATIONS);
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {

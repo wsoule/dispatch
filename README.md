@@ -473,7 +473,10 @@ Tools (server name `dispatch`):
 | `channel_leave`   | `{ name, member? }`                                                                                          | `{ ok }`                                                |
 | `channel_list`    | `{}`                                                                                                         | `{ channels }`                                          |
 | `dispatch_note`   | `{ kind, title, body? }`                                                                                     | `{ ok, id }`                                            |
-| `record_decision` | `{ kind, title, detail, appliesTo? }`                                                                        | `{ ok, id }`                                            |
+| `memory_search`   | `{ query, scope?, kind?, includeStale?, limit? }`                                                            | `{ hits, search }`                                      |
+| `memory_read`     | `{ id }`                                                                                                     | `{ entry, body, provenance, revisions }`                |
+| `memory_save`     | `{ scope, kind, title, body, refs?, epic?, appliesTo?, supersedes?, projectOnly? }`                          | `{ status, id?, handle?, proposal?, gate? }`            |
+| `memory_forget`   | `{ id, reason }`                                                                                             | `{ status, id?, handle?, proposal?, gate? }`            |
 | `record_evidence` | `{ command, exitCode, durationMs, summary }`                                                                 | `{ ok }`                                                |
 | `record_mutation` | `{ guard, file, testsFailed }`                                                                               | `{ ok }`                                                |
 

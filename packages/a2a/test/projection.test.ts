@@ -179,6 +179,33 @@ describe('decideState — one test per row of spec:400-413', () => {
     );
   });
 
+  it('skips a question with gate data of an unknown type, or one answering a gate, for row 7', () => {
+    const future = msg({
+      id: 'm-fq',
+      kind: 'question',
+      blocking: true,
+      data: { type: 'future-gate' },
+    });
+    const gate = msg({
+      id: 'm-g7',
+      replyTo: 'm-root',
+      from: 'agent:dispatch',
+      kind: 'question',
+      data: { type: 'wake', target: 'task:t-1', message: 'm' },
+    });
+    const followUp = msg({
+      id: 'm-fu',
+      replyTo: 'm-g7',
+      kind: 'question',
+      blocking: true,
+    });
+    expect(
+      decideState(
+        facts({ scope: [ROOT, gate], openQuestions: [future, followUp] })
+      ).state
+    ).toBe('WORKING');
+  });
+
   it('carries the review and landing stages', () => {
     expect(
       decideState(facts({ skill: 'handoff', task: handoffTask('review') }))
@@ -205,6 +232,28 @@ describe('project', () => {
       id: 'm-root',
       status: { state: 'TASK_STATE_COMPLETED' },
     });
+  });
+
+  // A port that leaks a gate into scope must not leak its answer either.
+  it('never shows an answer to a gate as history or status', () => {
+    const gate = msg({
+      id: 'm-gh',
+      replyTo: 'm-root',
+      from: 'agent:dispatch',
+      kind: 'question',
+      body: 'Run `SECRET_INPUT`?',
+      data: { type: 'future-gate' },
+    });
+    const gateAnswer = msg({
+      id: 'm-gha',
+      replyTo: 'm-gh',
+      kind: 'answer',
+      body: 'Approved SECRET_INPUT',
+    });
+    const json = project(facts({ scope: [ROOT, gate, gateAnswer] }), view);
+    expect(json.history?.map((m) => m.messageId)).toEqual(['c-1']);
+    expect(json.status.message?.parts[0].text).toBe('Working.');
+    expect(JSON.stringify(json)).not.toContain('SECRET_INPUT');
   });
 
   it('caps history, and historyLength 0 sends none', () => {

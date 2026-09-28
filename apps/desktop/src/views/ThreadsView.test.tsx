@@ -572,6 +572,9 @@ test('a focus that names no message says the thread did not load', async () => {
     getMessage: mock(() =>
       Promise.reject(new ApiError('no message m-gone', 404))
     ),
+    getThread: mock(() =>
+      Promise.reject(new ApiError('no message m-gone', 404))
+    ),
     listChannels: mock(() => Promise.resolve({ channels: [] })),
     listAgentRoster: mock(() => Promise.resolve({ agents: [] })),
   };

@@ -342,6 +342,7 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
  *
  * - `approval`        a run is parked on a permission gate.
  * - `scope-request`   an agent asked to edit outside its declared writes.
+ * - `memory`          an agent proposes a lesson for shared memory.
  * - `question`        an agent sent a blocking question (msg_send) and waits
  *                     on the answer.
  * - `fix-loop-capped` a review/fix loop exhausted its rounds and wants a ruling.
@@ -350,6 +351,7 @@ export const DEFAULT_FIX_LOOP: FixLoopConfig = {
 export type NotificationKind =
   | 'approval'
   | 'scope-request'
+  | 'memory'
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
@@ -359,6 +361,7 @@ const APPROVAL_GATES: ReadonlySet<string> = new Set([
   'wake',
   'agent-registration',
   'overseer-action',
+  'task-proposal',
 ]);
 
 /** The toggle a message notifies under; null when no human is being asked. */
@@ -374,6 +377,7 @@ export function notificationKindForMessage(message: {
       ? (data as { type?: unknown }).type
       : undefined;
   if (type === 'scope') return 'scope-request';
+  if (type === 'memory') return 'memory';
   if (typeof type === 'string' && APPROVAL_GATES.has(type)) return 'approval';
   return 'question';
 }
@@ -383,6 +387,7 @@ export const NOTIFICATION_KINDS: readonly NotificationKind[] = [
   'question',
   'approval',
   'scope-request',
+  'memory',
   'fix-loop-capped',
   'run-stalled',
 ];
@@ -421,6 +426,7 @@ export const DEFAULT_NOTIFICATIONS: NotificationsConfig = {
     question: true,
     approval: true,
     'scope-request': true,
+    memory: true,
     'fix-loop-capped': true,
     'run-stalled': true,
   },

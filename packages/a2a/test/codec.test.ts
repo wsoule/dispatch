@@ -78,6 +78,19 @@ describe('decodeInbound', () => {
     expect(() => kind({ [ENVELOPE_URI]: { kind: 'answer' } })).toThrow(
       expect.objectContaining({ field: 'kind' })
     );
+    // A work skill decides before the envelope's kind is read (§8.4).
+    expect(
+      kind({
+        [ENVELOPE_URI]: { kind: 'handoff' },
+        [WORK_URI]: { skill: 'handoff', title: 'Do it' },
+      })
+    ).toBe('handoff');
+    expect(
+      kind({
+        [ENVELOPE_URI]: { kind: 'answer' },
+        [WORK_URI]: { skill: 'status' },
+      })
+    ).toBe('status');
   });
 
   it('refuses raw parts and non-text text media types as CONTENT_TYPE_NOT_SUPPORTED', () => {
@@ -129,6 +142,7 @@ describe('encodeMessage', () => {
     textMediaType: 'text/markdown' as const,
     extensions: new Set<never>(),
     clientIds: {},
+    lookup: () => null,
     taskId: 'm-1',
   };
 
@@ -190,6 +204,27 @@ describe('encodeMessage', () => {
     };
     expect(encodeMessage(gate, view).parts).toHaveLength(1);
     expect(encodeMessage(close, view).parts).toHaveLength(1);
+  });
+
+  it('never writes the data of an answer to a gate, or gate data of a type it does not know', () => {
+    const gate: Message = {
+      ...base,
+      id: 'm-g',
+      kind: 'question',
+      from: 'agent:dispatch',
+      data: { type: 'future-gate', detail: 'SECRET' },
+    };
+    const gateAnswer: Message = {
+      ...base,
+      replyTo: 'm-g',
+      data: { note: 'SECRET' },
+    };
+    const lookup = (id: string) => (id === 'm-g' ? gate : null);
+    expect(encodeMessage(gate, { ...view, lookup }).parts).toHaveLength(1);
+    expect(encodeMessage(gateAnswer, { ...view, lookup }).parts).toHaveLength(
+      1
+    );
+    expect(encodeMessage(gateAnswer, view).parts).toHaveLength(2);
   });
 });
 

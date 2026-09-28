@@ -22,7 +22,6 @@ import type {
   FindingSeverity,
   FindingVerdict,
   LedgerEntry,
-  LedgerKind,
   LinkRel,
   ModelConfig,
   MutationEvidence,
@@ -630,15 +629,6 @@ export interface StartReviewInput {
   runId?: string;
 }
 
-export interface CreateLedgerInput {
-  epicId?: string | null;
-  sourceTaskId?: string | null;
-  kind: Exclude<LedgerKind, 'handoff'>;
-  title: string;
-  detail: string;
-  appliesTo?: string[];
-}
-
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
 // what changes and why, recorded in the task's `## Amendments` section.
 export interface AmendTaskInput {
@@ -673,10 +663,13 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// A task, run, file, commit, message or doc a message points at; mirrors
-// @dispatch/protocol's Ref.
+// The ref types @dispatch/protocol registers; mirrors its RefType.
+export type RefType = 'task' | 'run' | 'file' | 'commit' | 'message' | 'doc';
+
+// What a message points at; mirrors @dispatch/protocol's Ref. A message
+// received from a peer may carry any other identifier as its type.
 export interface Ref {
-  type: string;
+  type: RefType | (string & {});
   id: string;
   /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
@@ -788,6 +781,20 @@ export type GateData =
       conversation: string;
       actionId: string;
       summary: string;
+    }
+  | {
+      type: 'memory';
+      proposalId: string; // the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: MemoryKind;
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: string;
+      message: string;
     };
 
 // Structural mirrors of @dispatch/memory's views and the memory routes'
@@ -898,6 +905,76 @@ export interface MemoryHealth {
   ledgerImport: LedgerImportReport | null;
   configWarnings: { key: string; message: string }[];
   lastDecayAt: string | null;
+  /** The caller's own personal store; null when the caller acts for no one. */
+  personal: { available: boolean; reason: string | null } | null;
+  /** The caller's pinned entries alone exceed the index budget. */
+  pinnedOverflow: boolean;
+}
+
+/** `proposed` waits on a decision; `active` or `retired` took effect. */
+export type MemorySaveResult =
+  | { status: 'active' | 'retired'; id: string; handle: string }
+  | { status: 'proposed'; proposal: string; gate: string | null };
+
+export type MemoryProposalState = 'open' | 'approved' | 'rejected' | 'expired';
+
+export interface MemoryProposalView {
+  id: string;
+  action: 'add' | 'supersede' | 'retire';
+  scope: 'project' | 'team';
+  target: string | null;
+  baseRev: number | null;
+  content: {
+    kind: MemoryKind;
+    title: string;
+    body: string;
+    refs: Ref[];
+    epic: string | null;
+    appliesTo: string[];
+  } | null;
+  reason: string | null;
+  author: string;
+  authorTrust: 'human' | 'agent';
+  operator: string | null;
+  runId: string | null;
+  taskId: string | null;
+  origin: string | null;
+  contentHash: string | null;
+  gate: string | null;
+  state: MemoryProposalState;
+  matchedPersonal: boolean;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  decisionReason: string | null;
+  result: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+/** One line of the caller's personal activity, which the Inbox lists with an Undo. */
+export interface MemoryActivityRow {
+  id: string;
+  at: string;
+  kind:
+    | 'saved'
+    | 'edited'
+    | 'retired'
+    | 'ingested'
+    | 'throttled'
+    | 'ingest-problem';
+  memoryId: string | null;
+  runId: string | null;
+  summary: string;
+}
+
+/** A Claude memory file a scan skipped, without its kept content. */
+export interface MemoryIngestProblem {
+  id: string;
+  lineage: string;
+  file: string;
+  reason: string;
+  size: number;
+  at: string;
 }
 
 export type AgentStatus = 'pending' | 'approved' | 'revoked';
@@ -1109,6 +1186,60 @@ export type ServerEvent =
   | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
   // The A2A bridge's clients, tasks or listener changed; go refetch.
   | { type: 'a2a.changed' };
+
+// The A2A listener's machine-local settings, the body of PUT /api/a2a/listener.
+// Mirrors ListenerSettings in packages/server/src/a2a/settings.ts.
+export interface A2AListenerSettings {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  publicUrl: string | null;
+  tls: { certPath: string; keyPath: string } | null;
+  trustForwardedFor: boolean;
+  standalone: boolean;
+}
+
+// GET /api/a2a/listener's body. Mirrors ListenerStatus in
+// packages/server/src/a2a/bridge.ts.
+export interface A2AListenerStatus {
+  enabled: boolean;
+  listening: boolean;
+  url: string | null;
+  error: string | null;
+  // config.yml `a2a:` keys that fell back to their defaults.
+  warnings: string[];
+  // Approved a2a.* agents with no clients row, registered before the bridge.
+  legacyClients: string[];
+  // What the listener opens from: the file plus any one-boot flags.
+  settings: A2AListenerSettings;
+  // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
+  teamTls: { certPath: string; keyPath: string } | null;
+}
+
+// One row of GET /api/a2a/clients: the clients row plus its agent's status.
+export interface A2AClientSummary {
+  address: string;
+  name: string;
+  recipients: string[];
+  createdBy: string;
+  createdAt: string;
+  status: AgentStatus;
+}
+
+// One row of GET /api/a2a/tasks. Mirrors TaskRow in @dispatch/a2a's store.
+export interface A2ATaskSummary {
+  id: string;
+  client: string;
+  contextId: string;
+  skill: 'ask' | 'handoff';
+  dispatchTask: string | null;
+  gate: string | null;
+  state: string;
+  statusAt: string;
+  canceledAt: string | null;
+  declinedAt: string | null;
+  createdAt: string;
+}
 
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {
@@ -2260,6 +2391,11 @@ async function requestBlob(target: ApiTarget, path: string): Promise<Blob> {
   return (await send(target, path)).blob();
 }
 
+// An entry's route; a `#handle` travels as %23 so it is not read as a fragment.
+function memoryPath(ref: string): string {
+  return `/api/memory/${encodeURIComponent(ref)}`;
+}
+
 function jsonBody(value: unknown): RequestInit {
   return {
     headers: { 'content-type': 'application/json' },
@@ -3087,8 +3223,11 @@ export interface ApiClient {
     input: AdjudicateFindingInput
   ): Promise<AdjudicateFindingResult>;
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
-  fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
-  createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  // `class: 'audit'` keeps only receipts; the lessons live in memory.
+  fetchLedger(filter?: {
+    epicId?: string | null;
+    class?: 'audit';
+  }): Promise<LedgerEntry[]>;
   /** Every message on a subject. `subject` is `run:…`, `worktree:…` or `pr:…`. */
   fetchConversation(subject: string): Promise<ChatMessage[]>;
   addChatMessage(input: {
@@ -3152,6 +3291,9 @@ export interface ApiClient {
     kind?: MemoryKind;
     state?: MemoryState | 'all';
     taskId?: string;
+    /** Entries imported from that source (their origin's prefix). */
+    origin?: 'ledger' | 'claude' | 'amendment';
+    trust?: MemoryTrust;
     limit?: number;
   }): Promise<{ entries: MemoryEntryView[] }>;
   searchMemory(q: {
@@ -3182,6 +3324,60 @@ export interface ApiClient {
   importLedger(opts?: {
     dryRun?: boolean;
   }): Promise<{ report: LedgerImportReport; text: string }>;
+  /** A save to shared memory by anyone but a deciding human is a proposal.
+   *  A retry with the same `opts.idempotencyKey` replays the first result. */
+  saveMemory(
+    input: {
+      scope: MemoryScope;
+      kind: MemoryKind;
+      title: string;
+      body: string;
+      refs?: Ref[];
+      epic?: string | null;
+      appliesTo?: string[];
+      supersedes?: string;
+      projectOnly?: boolean;
+    },
+    opts?: { idempotencyKey?: string }
+  ): Promise<MemorySaveResult>;
+  retireMemory(ref: string, reason: string): Promise<MemorySaveResult>;
+  /** Restores the entry's previous revision. */
+  undoMemory(ref: string): Promise<MemoryEntryView>;
+  /** Raises an agent-trust entry to confirmed. */
+  confirmMemory(ref: string): Promise<MemoryEntryView>;
+  pinMemory(ref: string, pinned: boolean): Promise<MemoryEntryView>;
+  /** Copies a personal entry into shared memory; the personal one stays. */
+  promoteMemory(
+    ref: string,
+    scope: 'project' | 'team'
+  ): Promise<MemorySaveResult>;
+  /** The entry and its history, for good. */
+  deleteMemory(ref: string): Promise<void>;
+  /** Deciding humans see every proposal; anyone else their own. */
+  listMemoryProposals(
+    state?: MemoryProposalState
+  ): Promise<{ proposals: MemoryProposalView[] }>;
+  /** A proposal with its target as proposed against (`base`) and as it is now. */
+  getMemoryProposal(id: string): Promise<{
+    proposal: MemoryProposalView;
+    base: MemoryEntryView | null;
+    current: MemoryEntryView | null;
+  }>;
+  /** The caller's own personal activity; the last day when `since` is absent. */
+  memoryActivity(since?: string): Promise<{ activity: MemoryActivityRow[] }>;
+  memoryIdentity(): Promise<{
+    identity: string;
+    aliases: { projectKey: string; handle: string }[];
+    placeholderEmail: boolean;
+  }>;
+  /** A one-time code for linking another project, or with `fresh` a new, empty identity. */
+  startMemoryLink(opts?: {
+    fresh?: boolean;
+  }): Promise<{ code: string; expiresAt: string } | { identity: string }>;
+  completeMemoryLink(code: string): Promise<{ identity: string }>;
+  listIngestProblems(): Promise<{ problems: MemoryIngestProblem[] }>;
+  /** Saves a skipped file's kept content to the caller's memory with agent trust. */
+  acceptIngestProblem(id: string): Promise<MemorySaveResult>;
 
   // Docs; the server's docs/routes.ts defines these routes. `ref` is a doc id,
   // a team handle or a personal `~handle`; `rev` a revision number or rev- id.
@@ -3253,6 +3449,25 @@ export interface ApiClient {
     opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
   ): Promise<{ hits: DocHit[] }>;
   docsHealth(): Promise<DocsHealth>;
+  a2aListener(): Promise<A2AListenerStatus>;
+  /** Writes the listener settings and (re)opens it (operator tier). */
+  setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
+  /** Closes the listener, keeping its other settings (operator tier). */
+  disableA2AListener(): Promise<A2AListenerStatus>;
+  /** The agent card exactly as the listener serves it. */
+  a2aCard(): Promise<Record<string, unknown>>;
+  a2aClients(): Promise<{ clients: A2AClientSummary[] }>;
+  /** `approve` needs the decide tier; the token is returned only here. */
+  addA2AClient(input: {
+    name: string;
+    to?: string[];
+    approve?: boolean;
+  }): Promise<{ address: string; token: string; status: string }>;
+  /** `name` is the client's address, `a2a.` name, or name as typed. */
+  rotateA2AClient(name: string): Promise<{ token: string }>;
+  a2aTasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
+  /** Closes an unanswered ask; the client sees REJECTED with the reason. */
+  declineA2ATask(id: string, reason?: string): Promise<unknown>;
 
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
@@ -3898,11 +4113,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       if (filter.epicId !== undefined) {
         params.set('epicId', filter.epicId ?? '');
       }
+      if (filter.class !== undefined) params.set('class', filter.class);
       const query = params.size > 0 ? `?${params.toString()}` : '';
       return request(target, `/api/ledger${query}`);
     },
-    createLedgerEntry: (input) =>
-      request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
     fetchConversation: (subject) =>
       request(
         target,
@@ -3998,7 +4212,7 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     listMemory: (q = {}) =>
       request(
         target,
-        `/api/memory${queryString({ scope: q.scope, kind: q.kind, state: q.state, taskId: q.taskId, limit: q.limit })}`
+        `/api/memory${queryString({ scope: q.scope, kind: q.kind, state: q.state, taskId: q.taskId, origin: q.origin, trust: q.trust, limit: q.limit })}`
       ),
     searchMemory: (q) =>
       request(
@@ -4019,6 +4233,61 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(
         target,
         `/api/memory/import/ledger${opts.dryRun === true ? '?dryRun=1' : ''}`,
+        { method: 'POST' }
+      ),
+    saveMemory: (input, opts) =>
+      request(target, '/api/memory', {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(opts?.idempotencyKey === undefined
+            ? {}
+            : { 'Idempotency-Key': opts.idempotencyKey }),
+        },
+        body: JSON.stringify(input),
+      }),
+    retireMemory: (ref, reason) =>
+      request(target, `${memoryPath(ref)}/retire`, {
+        method: 'POST',
+        ...jsonBody({ reason }),
+      }),
+    undoMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/undo`, { method: 'POST' }),
+    confirmMemory: (ref) =>
+      request(target, `${memoryPath(ref)}/confirm`, { method: 'POST' }),
+    pinMemory: (ref, pinned) =>
+      request(target, `${memoryPath(ref)}/${pinned ? 'pin' : 'unpin'}`, {
+        method: 'POST',
+      }),
+    promoteMemory: (ref, scope) =>
+      request(target, `${memoryPath(ref)}/promote`, {
+        method: 'POST',
+        ...jsonBody({ scope }),
+      }),
+    deleteMemory: async (ref) => {
+      await send(target, memoryPath(ref), { method: 'DELETE' });
+    },
+    listMemoryProposals: (state) =>
+      request(target, `/api/memory/proposals${queryString({ state })}`),
+    getMemoryProposal: (id) =>
+      request(target, `/api/memory/proposals/${encodeURIComponent(id)}`),
+    memoryActivity: (since) =>
+      request(target, `/api/memory/activity${queryString({ since })}`),
+    memoryIdentity: () => request(target, '/api/memory/identity'),
+    startMemoryLink: (opts = {}) =>
+      request(target, '/api/memory/link', {
+        method: 'POST',
+        ...jsonBody(opts.fresh === true ? { fresh: true } : {}),
+      }),
+    completeMemoryLink: (code) =>
+      request(target, `/api/memory/link/${encodeURIComponent(code)}`, {
+        method: 'POST',
+      }),
+    listIngestProblems: () => request(target, '/api/memory/ingest-problems'),
+    acceptIngestProblem: (id) =>
+      request(
+        target,
+        `/api/memory/ingest-problems/${encodeURIComponent(id)}/accept`,
         { method: 'POST' }
       ),
     // Docs — packages/server/src/docs/routes.ts. Flags go as `1` only when
@@ -4134,6 +4403,37 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       return request(target, `/api/docs/search?${params.toString()}`);
     },
     docsHealth: () => request(target, '/api/docs/health'),
+    a2aListener: () => request(target, '/api/a2a/listener'),
+    setA2AListener: (settings) =>
+      request(target, '/api/a2a/listener', {
+        method: 'PUT',
+        ...jsonBody(settings),
+      }),
+    disableA2AListener: () =>
+      request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    a2aCard: () => request(target, '/api/a2a/card'),
+    a2aClients: () => request(target, '/api/a2a/clients'),
+    addA2AClient: (input) =>
+      request(target, '/api/a2a/clients', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    rotateA2AClient: (name) =>
+      request(target, `/api/a2a/clients/${encodeURIComponent(name)}/rotate`, {
+        method: 'POST',
+      }),
+    a2aTasks: (client) =>
+      request(
+        target,
+        client === undefined
+          ? '/api/a2a/tasks'
+          : `/api/a2a/tasks?${new URLSearchParams({ client }).toString()}`
+      ),
+    declineA2ATask: (id, reason) =>
+      request(target, `/api/a2a/tasks/${encodeURIComponent(id)}/decline`, {
+        method: 'POST',
+        ...jsonBody(reason === undefined ? {} : { reason }),
+      }),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

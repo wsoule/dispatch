@@ -9,7 +9,8 @@ function settled(facts: TaskFacts | null): boolean {
 }
 
 // Waits for a terminal or interrupted state, at most maxMs (the documented
-// MUST deviation); always unsubscribes, whichever way it ends.
+// MUST deviation); always unsubscribes, whichever way it ends. A watch that
+// throws rejects before the timer or abort listener is armed.
 export async function waitForSettled(
   port: BridgePort,
   caller: Caller,
@@ -19,8 +20,10 @@ export async function waitForSettled(
   let facts = await port.facts(caller, taskId);
   if (settled(facts) || opts.maxMs <= 0 || opts.signal?.aborted === true)
     return facts;
-  return await new Promise<TaskFacts | null>((resolve) => {
+  return await new Promise<TaskFacts | null>((resolve, reject) => {
     let done = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    let unwatch = () => {};
     const finish = () => {
       if (done) return;
       done = true;
@@ -29,14 +32,20 @@ export async function waitForSettled(
       opts.signal?.removeEventListener('abort', finish);
       resolve(facts);
     };
-    const timer = setTimeout(finish, opts.maxMs);
-    const unwatch = port.watch(caller, taskId, () => {
-      port.facts(caller, taskId).then((latest) => {
-        if (done) return;
-        facts = latest;
-        if (settled(latest)) finish();
-      }, finish);
-    });
+    try {
+      unwatch = port.watch(caller, taskId, () => {
+        port.facts(caller, taskId).then((latest) => {
+          if (done) return;
+          facts = latest;
+          if (settled(latest)) finish();
+        }, finish);
+      });
+    } catch (err) {
+      done = true;
+      reject(err instanceof Error ? err : new Error(String(err)));
+      return;
+    }
+    timer = setTimeout(finish, opts.maxMs);
     opts.signal?.addEventListener('abort', finish, { once: true });
   });
 }

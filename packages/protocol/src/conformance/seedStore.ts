@@ -30,7 +30,7 @@ function refsOf(value: Json | undefined, where: string): Ref[] {
     const at = `${where}[${i}]`;
     const r = asObject(raw, at);
     const ref: Ref = {
-      type: text(r, 'type', at) as Ref['type'],
+      type: text(r, 'type', at),
       id: text(r, 'id', at),
     };
     const commit = optionalText(r, 'at', at);

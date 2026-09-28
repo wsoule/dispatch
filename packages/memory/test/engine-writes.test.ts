@@ -156,8 +156,15 @@ describe('personal writes', () => {
 
   it('forget, then undo by the entry’s human; runs cannot undo', async () => {
     const t = setup();
-    const e = (await t.engine.save(RUN, hazard)) as { id: string };
-    await t.engine.forget(RUN, e.id, 'wrong machine');
+    const e = (await t.engine.save(RUN, hazard)) as {
+      id: string;
+      handle: string;
+    };
+    expect(await t.engine.forget(RUN, e.id, 'wrong machine')).toEqual({
+      status: 'retired',
+      id: e.id,
+      handle: e.handle,
+    });
     expect(await code(() => t.engine.undo(RUN, e.id))).toBe('forbidden');
     expect(t.engine.undo(OWNER, e.id)).toMatchObject({
       status: 'active',
@@ -292,7 +299,9 @@ describe('write edges', () => {
       'proposed'
     );
     expect((await t.engine.forget(RUN, e.id, 'stale')).status).toBe('proposed');
-    await t.engine.forget(ADA, e.id, 'fixed upstream');
+    expect((await t.engine.forget(ADA, e.id, 'fixed upstream')).status).toBe(
+      'retired'
+    );
     expect(t.shared.getEntry(e.id)).toMatchObject({
       status: 'retired',
       statusReason: 'forgotten',

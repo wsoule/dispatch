@@ -18,6 +18,7 @@
   },
   "dependencies": {
     "@dispatch/client": "workspace:*",
+    "@dispatch/protocol": "workspace:*",
     "@dispatch/tokens": "workspace:*",
     "@dnd-kit/core": "catalog:",
     "@dnd-kit/utilities": "catalog:",

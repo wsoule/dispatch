@@ -120,6 +120,20 @@ describe('proposals', () => {
     expect(t.host.activated.map((a) => a.authorRun)).toEqual(['r-9f2c01']);
   });
 
+  it('reports an auto-approved retire as retired', async () => {
+    const t = setup();
+    const target = (await t.engine.save(OWNER, team)) as {
+      id: string;
+      handle: string;
+    };
+    t.host.ruling = AUTO;
+    expect(await t.engine.forget(RUN, target.id, 'stale')).toEqual({
+      status: 'retired',
+      id: target.id,
+      handle: target.handle,
+    });
+  });
+
   it('reports and announces an auto-approval whose receipt could not be written', async () => {
     const t = setup();
     t.host.ruling = AUTO;

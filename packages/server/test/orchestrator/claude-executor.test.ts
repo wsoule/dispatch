@@ -958,6 +958,12 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
     );
     const tools = DISPATCH_MESSAGING_TOOLS.map((t) => `mcp__dispatch__${t}`);
     expect(tools).toContain('mcp__dispatch__msg_send');
+    expect([...MEMORY_TOOLS].sort()).toEqual([
+      'mcp__dispatch__memory_forget',
+      'mcp__dispatch__memory_read',
+      'mcp__dispatch__memory_save',
+      'mcp__dispatch__memory_search',
+    ]);
     for (const tool of [...tools, ...MEMORY_TOOLS]) {
       const result = await captured?.canUseTool?.(
         tool,

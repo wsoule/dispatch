@@ -91,6 +91,17 @@ describe('decayStore', () => {
     expect(s.meta('last_decay_at')).toBe(NOW.toISOString());
   });
 
+  it('names each scope whose entries it changed, in MEMORY_SCOPES order', () => {
+    const s = store();
+    put(s, { scope: 'team', updatedAt: ago(61) });
+    put(s, { scope: 'project', updatedAt: ago(1) });
+    expect(decayStore(s, policy).scopes).toEqual(['team']);
+    put(s, { scope: 'team', updatedAt: ago(61) });
+    put(s, { scope: 'project', updatedAt: ago(200) });
+    expect(decayStore(s, policy).scopes).toEqual(['project', 'team']);
+    expect(decayStore(s, policy).scopes).toEqual([]);
+  });
+
   it('exempts pinned entries and human constraints written directly; imported and amendment constraints still decay', () => {
     const s = store();
     const pinned = put(s, { pinned: true, updatedAt: ago(400) });

@@ -71,7 +71,6 @@ import {
 } from './api/files.js';
 import {
   createFinding,
-  createLedgerEntry,
   listFindings,
   listLedger,
   updateFinding,
@@ -155,13 +154,24 @@ import type { LedgerStorePort } from './ledger.js';
 import { HttpLinearClient } from './linear/client.js';
 import type { LinearSync } from './linear/sync.js';
 import {
+  acceptIngestProblemRoute,
+  completeLinkRoute,
+  deleteMemoryRoute,
   getMemory,
+  getProposalRoute,
   importLedgerRoute,
+  ingestProblemsRoute,
   listMemory,
+  listProposalsRoute,
+  memoryActionRoute,
+  memoryActivityRoute,
   memoryHealthRoute,
+  memoryIdentityRoute,
   memoryIndexRoute,
   memoryRecallsRoute,
+  saveMemoryRoute,
   searchMemory,
+  startLinkRoute,
 } from './memory/routes.js';
 import type { MemoryService } from './memory/service.js';
 import type { Principal } from './messaging/principal.js';
@@ -681,10 +691,9 @@ async function updateTask(
 
 // Credits whoever actually left the comment. `runId` is how the MCP
 // `task_comment` tool (called BY an agent from inside a run) says "this came
-// from the run I'm in" — mirrors findings.ts's ledgerAuthorFor, but unlike
-// that helper a missing/unresolvable runId here is NEVER the daemon's human:
-// this endpoint has no other caller, so an unresolvable run must still yield
-// 'none' rather than crediting whoever happens to be operating the daemon.
+// from the run I'm in"; a missing/unresolvable runId is NEVER the daemon's
+// human: this endpoint has no other caller, so an unresolvable run must still
+// yield 'none' rather than crediting whoever happens to be operating the daemon.
 function commentAuthorFor(ctx: ApiContext, runId: string | null): string {
   if (runId === null) return 'none';
   const run = ctx.orchestrator.getRun(runId);
@@ -4411,6 +4420,13 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['memory'] },
   { method: 'GET', segments: ['memory', '*'] },
   { method: 'POST', segments: ['memory', 'import', 'ledger'] },
+  { method: 'POST', segments: ['memory'] },
+  { method: 'POST', segments: ['memory', 'link'] },
+  { method: 'POST', segments: ['memory', 'link', '*'] },
+  { method: 'POST', segments: ['memory', '*', '*'] },
+  { method: 'DELETE', segments: ['memory', '*'] },
+  { method: 'GET', segments: ['memory', 'proposals', '*'] },
+  { method: 'POST', segments: ['memory', 'ingest-problems', '*', 'accept'] },
 ];
 
 // Route families that authenticate by principal throughout, every method.
@@ -5546,20 +5562,53 @@ export async function handleApi(
       if (segments.length === 1 && method === 'GET') {
         return listMemory(ctx, url);
       }
+      if (segments.length === 1 && method === 'POST') {
+        return await saveMemoryRoute(req, ctx);
+      }
       if (segments.length === 2 && method === 'GET') {
         if (segments[1] === 'search') return searchMemory(ctx, url);
         if (segments[1] === 'health') return memoryHealthRoute(ctx);
         if (segments[1] === 'index') return memoryIndexRoute(ctx, url);
         if (segments[1] === 'recalls') return memoryRecallsRoute(ctx, url);
+        if (segments[1] === 'proposals') return listProposalsRoute(ctx, url);
+        if (segments[1] === 'activity') return memoryActivityRoute(ctx, url);
+        if (segments[1] === 'identity') return memoryIdentityRoute(ctx);
+        if (segments[1] === 'ingest-problems') return ingestProblemsRoute(ctx);
         return getMemory(ctx, segments[1]);
       }
+      if (segments.length === 2 && method === 'POST') {
+        if (segments[1] === 'link') return await startLinkRoute(req, ctx);
+      }
+      if (segments.length === 2 && method === 'DELETE') {
+        return deleteMemoryRoute(ctx, segments[1]);
+      }
+      if (segments.length === 3 && method === 'GET') {
+        if (segments[1] === 'proposals') {
+          return getProposalRoute(ctx, segments[2]);
+        }
+      }
+      if (segments.length === 3 && method === 'POST') {
+        if (segments[1] === 'import' && segments[2] === 'ledger') {
+          return importLedgerRoute(ctx, url);
+        }
+        if (segments[1] === 'link') {
+          return await completeLinkRoute(req, ctx, segments[2]);
+        }
+        const acted = await memoryActionRoute(
+          req,
+          ctx,
+          segments[1],
+          segments[2]
+        );
+        if (acted !== null) return acted;
+      }
       if (
-        segments.length === 3 &&
-        segments[1] === 'import' &&
-        segments[2] === 'ledger' &&
-        method === 'POST'
+        segments.length === 4 &&
+        method === 'POST' &&
+        segments[1] === 'ingest-problems' &&
+        segments[3] === 'accept'
       ) {
-        return importLedgerRoute(ctx, url);
+        return await acceptIngestProblemRoute(ctx, segments[2]);
       }
     }
 
@@ -6033,9 +6082,6 @@ export async function handleApi(
     if (segments[0] === 'ledger') {
       if (segments.length === 1 && method === 'GET') {
         return listLedger(ctx, url);
-      }
-      if (segments.length === 1 && method === 'POST') {
-        return await createLedgerEntry(req, ctx);
       }
     }
 

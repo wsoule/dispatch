@@ -328,12 +328,13 @@ export interface OpenThread {
 
 // The thread holding message `id`. A rail row names its thread by the root,
 // which a teammate pulled in by a later reply may not hold; the thread itself
-// may still be theirs to read, so a refused id is tried as a thread id.
+// may still be theirs to read, so an id the daemon will not show (a 404, as for
+// an absent id) is tried as a thread id.
 async function threadOf(api: ApiClient, id: string): Promise<string> {
   try {
     return (await api.getMessage(id)).thread;
   } catch (err) {
-    if (!(err instanceof ApiError && err.status === 403)) throw err;
+    if (!(err instanceof ApiError && err.status === 404)) throw err;
     const detail = await api.getThread(id).catch(() => null);
     if (detail === null || detail.messages.length === 0) throw err;
     return id;

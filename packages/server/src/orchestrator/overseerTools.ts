@@ -4,6 +4,8 @@ import {
   untrustedVerbatim,
 } from '@dispatch/core';
 import type { LedgerEntry, TaskDoc, TaskStorePort } from '@dispatch/core';
+import { MEMORY_KINDS } from '@dispatch/memory';
+import type { MemoryKind, SharedScope } from '@dispatch/memory';
 import type { Message } from '@dispatch/protocol';
 import { gateOf } from '@dispatch/protocol';
 import { randomBytes } from 'node:crypto';
@@ -12,6 +14,7 @@ import { z } from 'zod';
 import type { TaskCache } from '../cache.js';
 import type { DocsService } from '../docs/service.js';
 import type { LedgerStorePort } from '../ledger.js';
+import { classifyLedgerEntry } from '../memory/ledgerImport.js';
 import type { MergeQueue, MergeQueueEntry } from './mergeQueue.js';
 import type { Orchestrator } from './orchestrator.js';
 import type { RunMeta } from './types.js';
@@ -66,6 +69,16 @@ export interface OverseerToolContext {
   /** Open blocking questions addressed to a human (see openHumanDecisions). */
   openGates: () => Message[];
   ledgerStore: LedgerStorePort;
+  /** Project and team memory reads; the overseer has no personal scope. */
+  memory?: {
+    search(input: {
+      query: string;
+      scope?: SharedScope;
+      kind?: MemoryKind;
+      limit?: number;
+    }): unknown;
+    read(ref: string): unknown;
+  };
   /** The message bus, for the tools that answer a run's tool-approval gate or
    *  message a run, as the human who confirmed the action (`actor`). */
   messaging: {
@@ -426,16 +439,60 @@ function ledgerFields(entry: LedgerEntry) {
 
 const ledgerTool: OverseerStatusTool<z.infer<typeof ledgerInput>> = {
   name: 'ledger_entries',
-  description:
-    'Findings and decisions earlier runs recorded for later ones to build on.',
+  description: 'Audit receipts: policy decisions, holds, grants.',
   inputSchema: ledgerInput,
   read(ctx, input) {
-    const entries = ctx.ledgerStore.list(
-      input.epicId === undefined ? {} : { epicId: input.epicId }
-    );
+    const entries = ctx.ledgerStore
+      .list(input.epicId === undefined ? {} : { epicId: input.epicId })
+      .filter((e) => classifyLedgerEntry(e).to === 'audit');
     const limited =
       input.limit === undefined ? entries : entries.slice(0, input.limit);
     return { entries: limited.map(ledgerFields), total: entries.length };
+  },
+};
+
+// The memory port, or the error a context without one gives the model.
+function requireMemory(
+  ctx: OverseerToolContext
+): NonNullable<OverseerToolContext['memory']> {
+  if (ctx.memory === undefined)
+    throw new OverseerToolError('memory is not available in this session');
+  return ctx.memory;
+}
+
+const memorySearchInput = z.object({
+  query: z
+    .string()
+    .describe('Words to search for. Empty returns the top entries.'),
+  scope: z.enum(['project', 'team']).optional(),
+  kind: z.enum(MEMORY_KINDS).optional(),
+  limit: z.number().int().min(1).max(50).optional(),
+});
+
+const memorySearchTool: OverseerStatusTool<z.infer<typeof memorySearchInput>> =
+  {
+    name: 'memory_search',
+    description:
+      'Search the project and team lessons, conventions and preferences Dispatch remembers, stale ones included.',
+    inputSchema: memorySearchInput,
+    read(ctx, input) {
+      return requireMemory(ctx).search(input);
+    },
+  };
+
+const memoryReadInput = z.object({
+  id: z.string().describe('A #handle from a search, or a full memory id.'),
+});
+
+const memoryReadTool: OverseerStatusTool<z.infer<typeof memoryReadInput>> = {
+  name: 'memory_read',
+  description:
+    'Open one project or team memory: its body, who wrote it, and its revisions.',
+  inputSchema: memoryReadInput,
+  read(ctx, input) {
+    // Handles are stored upper-case; the model may type one in any case.
+    const id = input.id.trim();
+    return requireMemory(ctx).read(id.startsWith('#') ? id.toUpperCase() : id);
   },
 };
 
@@ -530,6 +587,8 @@ export const OVERSEER_STATUS_TOOLS: readonly OverseerStatusTool[] = [
   pendingApprovalsTool,
   openQuestionsTool,
   ledgerTool,
+  memorySearchTool,
+  memoryReadTool,
   docListTool,
   docReadTool,
 ] as OverseerStatusTool[];

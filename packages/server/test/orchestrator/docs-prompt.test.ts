@@ -28,7 +28,7 @@ async function promptWith(
 }
 
 describe('the ## Docs section in dispatch prompts', () => {
-  it('appears after the ledger section', async () => {
+  it('appears with no memory section, and ledger lessons add none', async () => {
     new LedgerStore(project.root()).add({
       kind: 'hazard',
       title: 'ledger lesson',
@@ -36,11 +36,9 @@ describe('the ## Docs section in dispatch prompts', () => {
       authoredBy: '',
     });
     const prompt = await promptWith(DOCS);
-    const ledgerAt = prompt.indexOf(
-      '## Findings and decisions from earlier work'
-    );
-    expect(ledgerAt).toBeGreaterThan(-1);
-    expect(prompt.indexOf('## Docs\n- spec · s')).toBeGreaterThan(ledgerAt);
+    expect(prompt).not.toContain('## Findings and decisions from earlier work');
+    expect(prompt).not.toContain('ledger lesson');
+    expect(prompt).toContain('## Docs\n- spec · s');
   });
 
   it('appears after the memory section', async () => {
