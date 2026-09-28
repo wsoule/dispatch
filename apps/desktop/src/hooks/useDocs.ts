@@ -100,13 +100,17 @@ export function useDocsLinking(
   client: ApiClient | null,
   port: number | undefined,
   target: string | null
-): DocLinking[] {
+) {
   const q = useQuery({
     queryKey: [...docsKey(port), 'links', target],
     enabled: client !== null && target !== null,
     queryFn: () => ready(client).docsLinking(target ?? ''),
   });
-  return q.data?.docs ?? NO_LINKING;
+  return {
+    docs: q.data?.docs ?? NO_LINKING,
+    loading: q.isLoading,
+    error: q.error,
+  };
 }
 
 // The daemon's search hits for `query` (titles, headings and text); none while it is empty.

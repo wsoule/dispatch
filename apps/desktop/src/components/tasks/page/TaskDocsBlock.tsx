@@ -56,8 +56,15 @@ export function TaskDocsBlock({
 }: TaskDocsBlockProps) {
   const queryClient = useQueryClient();
   const target = `task:${taskId}`;
-  const linking = useDocsLinking(client, port, target);
+  const {
+    docs: linking,
+    loading,
+    error: linkingError,
+  } = useDocsLinking(client, port, target);
   const g = groupTaskDocs(linking);
+  // New spec and Link doc wait for the task's links, so a spec still loading
+  // or a failed request never reads as a task with no docs.
+  const mayAct = canLink && !loading && linkingError === null;
   const [picking, setPicking] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,7 +121,7 @@ export function TaskDocsBlock({
     <MainSection
       title="Docs"
       trailing={
-        canLink ? (
+        mayAct ? (
           <>
             {g.spec === null && (
               <Button size="xs" variant="ghost" onClick={newSpec}>
@@ -146,6 +153,11 @@ export function TaskDocsBlock({
       {error !== null && (
         <p role="alert" className="text-destructive text-[12px]">
           {error}
+        </p>
+      )}
+      {linkingError !== null && (
+        <p className="text-muted-foreground text-[12px]">
+          {describeError(linkingError)}
         </p>
       )}
       {linking.length > 0 && (

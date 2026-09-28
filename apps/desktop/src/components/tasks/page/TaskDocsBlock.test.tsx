@@ -1,6 +1,12 @@
 import type { ApiClient, DocLinking, DocSummary } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
 import { groupTaskDocs, TaskDocsBlock } from './TaskDocsBlock';
@@ -45,7 +51,11 @@ function mount(
   { canLink = true, opened = [] as string[] } = {}
 ) {
   render(
-    <QueryClientProvider client={new QueryClient()}>
+    <QueryClientProvider
+      client={
+        new QueryClient({ defaultOptions: { queries: { retry: false } } })
+      }
+    >
       <TaskDocsBlock
         client={client}
         port={1}
@@ -191,6 +201,39 @@ test('Link doc also finds docs by their text through the daemon search', async (
   await waitFor(() =>
     expect(linked).toEqual([['doc-rl', { target: 'task:t-1', rel: 'context' }]])
   );
+});
+
+// Button names in the block; a list of strings reports a failure plainly.
+const buttons = () =>
+  screen.queryAllByRole('button').map((b) => b.textContent ?? '');
+
+test("offers New spec and Link doc only once the task's links have loaded", async () => {
+  let answer: (docs: DocLinking[]) => void = () => undefined;
+  const client = {
+    docsLinking: () =>
+      new Promise((resolve) => {
+        answer = (docs) => resolve({ docs });
+      }),
+  } as unknown as ApiClient;
+  mount(client);
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(buttons()).toEqual([]);
+  await act(async () => {
+    answer([link('s', 'spec')]);
+    await Promise.resolve();
+  });
+  await waitFor(() => expect(buttons()).toEqual(['Link doc', 'specS']));
+});
+
+test('a failed links request shows why and offers no New spec or Link doc', async () => {
+  const client = {
+    docsLinking: () => Promise.reject(new Error('docs are unavailable')),
+  } as unknown as ApiClient;
+  mount(client);
+  expect(await screen.findByText('docs are unavailable')).toBeDefined();
+  expect(buttons()).toEqual([]);
 });
 
 test('a caller who may not link sees the docs and no New spec or Link doc', async () => {
