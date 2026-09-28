@@ -522,6 +522,37 @@ describe('the memory gate', () => {
     expect(await second.json()).toEqual(await first.json());
   });
 
+  it('replays a retire’s Idempotency-Key with the first result', async () => {
+    const target = await json<{ id: string }>(
+      await fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'team',
+          kind: 'fact',
+          title: 'retire me once',
+          body: '',
+        }),
+      })
+    );
+    const ada = handle.team.teammates.issue('ada', 'request');
+    const init = {
+      method: 'POST',
+      headers: { ...authHeaders(ada), 'idempotency-key': 'k-retire' },
+      body: JSON.stringify({ reason: 'no longer true' }),
+    };
+    const url = `${base}/api/memory/${target.id}/retire`;
+    const first = await rawFetch(url, init);
+    const second = await rawFetch(url, init);
+    expect([first.status, second.status]).toEqual([200, 200]);
+    const out = await json<{ status: string; proposal: string }>(first);
+    expect(out.status).toBe('proposed');
+    expect(await second.json()).toEqual(out);
+    expect(
+      handle.memory.shared!.listProposals({ states: ['open'] }).map((p) => p.id)
+    ).toEqual([out.proposal]);
+  });
+
   // A crash between an answer and its effect: messaging replays the answer at
   // the next boot, and only a handler registered before messaging.recover()
   // sees the replay.

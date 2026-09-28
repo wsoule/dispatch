@@ -162,6 +162,39 @@ function savePosts() {
   return seen.filter((s) => s.path === '/api/memory' && s.method === 'POST');
 }
 
+// Calls a tool while the first POST whose URL ends in `suffix` reaches the
+// daemon but its response is lost, as a dropped connection would.
+async function callDroppingFirstPost(
+  suffix: string,
+  name: string,
+  args: Record<string, unknown>
+): Promise<ToolCallResult> {
+  const realFetch = globalThis.fetch;
+  let dropped = false;
+  globalThis.fetch = (async (
+    input: string | URL | Request,
+    init?: RequestInit
+  ) => {
+    const res = await realFetch(input, init);
+    const url =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.href
+          : input.url;
+    if (url.endsWith(suffix) && init?.method === 'POST' && !dropped) {
+      dropped = true;
+      throw new TypeError('socket hang up');
+    }
+    return res;
+  }) as typeof fetch;
+  try {
+    return await call(name, args);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+}
+
 describe('memory tools', () => {
   it('memory_search sends the query on the run token', async () => {
     const res = await call('memory_search', {
@@ -204,36 +237,12 @@ describe('memory tools', () => {
   });
 
   it('memory_save sends one Idempotency-Key, retries a dropped connection with it, and defaults epic to the task’s parent', async () => {
-    const realFetch = globalThis.fetch;
-    let dropped = false;
-    globalThis.fetch = (async (
-      input: string | URL | Request,
-      init?: RequestInit
-    ) => {
-      const res = await realFetch(input, init);
-      const url =
-        typeof input === 'string'
-          ? input
-          : input instanceof URL
-            ? input.href
-            : input.url;
-      if (url.endsWith('/api/memory') && init?.method === 'POST' && !dropped) {
-        dropped = true;
-        throw new TypeError('socket hang up');
-      }
-      return res;
-    }) as typeof fetch;
-    let res: ToolCallResult;
-    try {
-      res = await call('memory_save', {
-        scope: 'team',
-        kind: 'hazard',
-        title: 'pnpm 11 ignores onlyBuiltDependencies',
-        body: 'use allowBuilds',
-      });
-    } finally {
-      globalThis.fetch = realFetch;
-    }
+    const res = await callDroppingFirstPost('/api/memory', 'memory_save', {
+      scope: 'team',
+      kind: 'hazard',
+      title: 'pnpm 11 ignores onlyBuiltDependencies',
+      body: 'use allowBuilds',
+    });
     expect(res.isError).toBeUndefined();
     expect(res.structuredContent?.status).toBe('active');
     const posts = savePosts();
@@ -284,5 +293,18 @@ describe('memory tools', () => {
     expect(JSON.parse(retire?.body ?? '')).toEqual({
       reason: 'no longer true',
     });
+  });
+
+  it('memory_forget sends one Idempotency-Key and retries a dropped connection with it', async () => {
+    const res = await callDroppingFirstPost('/retire', 'memory_forget', {
+      id: '#7qx2k9pa',
+      reason: 'no longer true',
+    });
+    expect(res.isError).toBeUndefined();
+    expect(res.structuredContent?.status).toBe('proposed');
+    const posts = seen.filter((s) => s.path.endsWith('/retire'));
+    expect(posts).toHaveLength(2);
+    expect(posts[0].key).toBeTruthy();
+    expect(posts[1].key).toBe(posts[0].key);
   });
 });

@@ -115,15 +115,17 @@ async function saveBody(
   return { ...rest, epic: epicId };
 }
 
-// POST /api/memory. One Idempotency-Key for both attempts: a dropped
-// connection doesn't say whether the save landed, so the retry replays it.
-async function memorySave(
+// POSTs a memory write under one Idempotency-Key for both attempts: a dropped
+// connection doesn't say whether the write landed, so the retry replays it.
+async function postWrite(
   rootDir: string,
   server: McpServer,
-  args: MemorySaveArgs
+  path: string,
+  payload: Record<string, unknown>,
+  tool: string
 ): Promise<ToolOutcome> {
   const idempotencyKey = randomUUID();
-  const body = JSON.stringify(await saveBody(rootDir, args));
+  const body = JSON.stringify(payload);
   const init = (): RequestInit => ({
     method: 'POST',
     headers: {
@@ -133,33 +135,10 @@ async function memorySave(
     body,
     signal: requestDeadline(),
   });
-  let sent = await messagingFetch(rootDir, server, '/api/memory', init);
+  let sent = await messagingFetch(rootDir, server, path, init);
   if (!sent.ok && sent.transient)
-    sent = await messagingFetch(rootDir, server, '/api/memory', init);
-  if (!sent.ok) return fetchFailed(sent, 'memory_save');
-  if (!sent.res.ok) return toolError(await messagingErrorText(sent.res));
-  return toolResult((await sent.res.json()) as Record<string, unknown>);
-}
-
-// POST /api/memory/:id/retire. Not retried: the route keeps no replay key,
-// and a second retire could raise a second proposal.
-async function memoryForget(
-  rootDir: string,
-  server: McpServer,
-  args: { id: string; reason: string }
-): Promise<ToolOutcome> {
-  const sent = await messagingFetch(
-    rootDir,
-    server,
-    `/api/memory/${encodeURIComponent(memoryRef(args.id))}/retire`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ reason: args.reason }),
-      signal: requestDeadline(),
-    }
-  );
-  if (!sent.ok) return fetchFailed(sent, 'memory_forget');
+    sent = await messagingFetch(rootDir, server, path, init);
+  if (!sent.ok) return fetchFailed(sent, tool);
   if (!sent.res.ok) return toolError(await messagingErrorText(sent.res));
   return toolResult((await sent.res.json()) as Record<string, unknown>);
 }
@@ -303,7 +282,14 @@ export function registerMemoryTools(server: McpServer, rootDir: string): void {
       outputSchema: saveOutput,
       annotations: { readOnlyHint: false },
     },
-    (args) => memorySave(rootDir, server, args)
+    async (args) =>
+      postWrite(
+        rootDir,
+        server,
+        '/api/memory',
+        await saveBody(rootDir, args),
+        'memory_save'
+      )
   );
 
   server.registerTool(
@@ -318,6 +304,13 @@ export function registerMemoryTools(server: McpServer, rootDir: string): void {
       outputSchema: saveOutput,
       annotations: { readOnlyHint: false },
     },
-    (args) => memoryForget(rootDir, server, args)
+    (args) =>
+      postWrite(
+        rootDir,
+        server,
+        `/api/memory/${encodeURIComponent(memoryRef(args.id))}/retire`,
+        { reason: args.reason },
+        'memory_forget'
+      )
   );
 }

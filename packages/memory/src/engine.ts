@@ -124,9 +124,10 @@ export interface SaveInput {
   cause?: 'save' | 'ingest';
 }
 
-// `active` means the write took effect; `proposed` means it waits on a decision.
+// `active` or `retired` means the write took effect and names the entry's new
+// state; `proposed` means it waits on a decision.
 export type SaveResult =
-  | { status: 'active'; id: string; handle: string }
+  | { status: 'active' | 'retired'; id: string; handle: string }
   | { status: 'proposed'; proposal: string; gate: string | null };
 
 export interface EditInput {
@@ -632,7 +633,7 @@ export class MemoryEngine {
         );
       });
       this.deps.host.changed({ scope: 'personal' });
-      return { status: 'active', id: entry.id, handle: entry.handle };
+      return { status: 'retired', id: entry.id, handle: entry.handle };
     }
     const scope = entry.scope;
     if (!isDecider(principal))
@@ -647,7 +648,7 @@ export class MemoryEngine {
       this.revise(store, entry, retired, principal.address, 'retire')
     );
     this.deps.host.changed({ scope, id: entry.id });
-    return { status: 'active', id: entry.id, handle: entry.handle };
+    return { status: 'retired', id: entry.id, handle: entry.handle };
   }
 
   // Restores the previous revision as a new one. Undoing a creation retires
@@ -1221,9 +1222,10 @@ export class MemoryEngine {
       p.state === 'approved' && p.result !== null
         ? store.getEntry(p.result)
         : null;
-    return entry === null
-      ? { status: 'proposed', proposal: p.id, gate: p.gate }
-      : { status: 'active', id: entry.id, handle: entry.handle };
+    if (entry === null)
+      return { status: 'proposed', proposal: p.id, gate: p.gate };
+    const status = entry.status === 'retired' ? 'retired' : 'active';
+    return { status, id: entry.id, handle: entry.handle };
   }
 
   // One lesson, one row: an equal active or stale entry, open proposal or

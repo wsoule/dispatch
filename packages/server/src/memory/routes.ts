@@ -214,8 +214,8 @@ const saveCaches = new WeakMap<
   Map<string, Promise<SaveResult>>
 >();
 
-// The first save under (principal, Idempotency-Key) answers every repeat; a
-// failed save is forgotten so a retry runs again.
+// The first save or retire under (action, principal, Idempotency-Key) answers
+// every repeat; a failed one is forgotten so a retry runs again.
 function idempotentSave(
   service: MemoryService,
   key: string,
@@ -485,13 +485,14 @@ export async function saveMemoryRoute(
   if (key === null) return jsonResponse(await save(), 201);
   const { result, replayed } = idempotentSave(
     ctx.memory,
-    `${principal.address}:${key}`,
+    `save:${principal.address}:${key}`,
     save
   );
   return jsonResponse(await result, replayed ? 200 : 201);
 }
 
-// POST /api/memory/:id/{retire,undo,confirm,pin,unpin,promote}
+// POST /api/memory/:id/{retire,undo,confirm,pin,unpin,promote}; a retire
+// replays a repeated Idempotency-Key, as a save does.
 export async function memoryActionRoute(
   req: Request,
   ctx: ApiContext,
@@ -506,10 +507,18 @@ export async function memoryActionRoute(
   const engine = ctx.memory.requireEngine();
   const ref = refOf(segment);
   switch (action) {
-    case 'retire':
-      return jsonResponse(
-        await engine.forget(principal, ref, stringField(parsed.value, 'reason'))
+    case 'retire': {
+      const forget = () =>
+        engine.forget(principal, ref, stringField(parsed.value, 'reason'));
+      const key = req.headers.get('idempotency-key');
+      if (key === null) return jsonResponse(await forget());
+      const { result } = idempotentSave(
+        ctx.memory,
+        `retire:${principal.address}:${key}`,
+        forget
       );
+      return jsonResponse(await result);
+    }
     case 'undo':
       return jsonResponse(engine.undo(principal, ref));
     case 'confirm':
