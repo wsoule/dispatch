@@ -38,6 +38,16 @@ function renderHistory(client: ApiClient) {
   );
 }
 
+// The daemon's diff of rev 1 against rev 2, one line replaced.
+function diffOf(spent: boolean) {
+  return {
+    from: { ...REVISIONS[1], hash: 'h1' },
+    to: { ...REVISIONS[0], hash: 'h2' },
+    chunks: [{ equal: false, a: ['old\n'], b: ['new\n'] }],
+    spent,
+  };
+}
+
 test('lists revisions with author, cause and summary, and restores one', async () => {
   const reverted: unknown[] = [];
   const client = {
@@ -59,10 +69,7 @@ test('diffs the two picked revisions, older first, whichever was picked first', 
     listDocRevisions: () => Promise.resolve({ revisions: REVISIONS }),
     diffDoc: (ref: string, from: number, to: number) => {
       asked.push([ref, from, to]);
-      return Promise.resolve({
-        chunks: [{ equal: false, a: ['old\n'], b: ['new\n'] }],
-        spent: false,
-      });
+      return Promise.resolve(diffOf(false));
     },
   } as unknown as ApiClient;
   renderHistory(client);

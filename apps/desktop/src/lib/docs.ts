@@ -156,3 +156,9 @@ export function docDiffPatch(name: string, chunks: DocDiff['chunks']): string {
   }
   return out;
 }
+
+// The History diff's render-cache prefix. An open head is amended in place
+// under the same number, so the key follows the two bodies' hashes.
+export function docDiffCacheKey(ref: string, diff: DocDiff): string {
+  return `doc:${ref}:${diff.from.hash}:${diff.to.hash}`;
+}

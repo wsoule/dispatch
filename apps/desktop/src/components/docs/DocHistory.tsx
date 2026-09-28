@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 
 import { docsKey, useDocDiff, useDocRevisions } from '../../hooks/useDocs';
 import { describeError } from '../../lib/actionFeedback';
-import { docDiffPatch } from '../../lib/docs';
+import { docDiffCacheKey, docDiffPatch } from '../../lib/docs';
 import { relativeTime } from '../../lib/landingView';
 import { DiffSurface } from '../code/DiffSurface';
 import { Button } from '@/ui/button';
@@ -139,7 +139,9 @@ export function DocHistory({
           <DiffSurface
             patch={patch}
             loading={loading}
-            cacheKeyPrefix={`doc:${refId}:${range.from}:${range.to}`}
+            cacheKeyPrefix={
+              diff === null ? undefined : docDiffCacheKey(refId, diff)
+            }
             emptyLabel="These revisions have the same text."
           />
         </div>

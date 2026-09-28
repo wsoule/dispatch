@@ -1,16 +1,18 @@
-import type { DocRevisionInfo, DocSummary } from '@dispatch/client';
+import type { DocDiff, DocRevisionInfo, DocSummary } from '@dispatch/client';
 import { describe, expect, it } from 'bun:test';
 
 import { openDocBuffer } from './docBuffer';
 import {
   anchorLine,
   docBadges,
+  docDiffCacheKey,
   docDiffPatch,
   docStatusLine,
   filterDocs,
   revisionsSinceReview,
   sameRevisions,
 } from './docs';
+import { splitPatchFiles } from './patchFiles';
 
 const doc = (over: Partial<DocSummary>): DocSummary =>
   ({
@@ -179,5 +181,29 @@ describe('docDiffPatch', () => {
     expect(
       docDiffPatch('a.md', [{ equal: true, a: ['x\n'], b: ['x\n'] }])
     ).toBe('');
+  });
+});
+
+describe('docDiffCacheKey', () => {
+  // Rev 4 against rev 5, the open head, whose text `head` gives with its hash.
+  const diff = (hash: string, head: string): DocDiff => ({
+    from: { ...rev('rev-4', 4), hash: 'h4' },
+    to: { ...rev('rev-5', 5), hash },
+    chunks: [{ equal: false, a: ['old\n'], b: [head] }],
+    spent: false,
+  });
+  const pierreKey = (d: DocDiff): string | undefined =>
+    splitPatchFiles(
+      docDiffPatch('doc.md', d.chunks),
+      docDiffCacheKey('spec', d)
+    ).files[0]?.cacheKey;
+
+  it('keys an amended head apart from its earlier text under the same numbers', () => {
+    expect(pierreKey(diff('h5a', 'draft\n'))).not.toBe(
+      pierreKey(diff('h5b', 'draft, amended\n'))
+    );
+    expect(pierreKey(diff('h5a', 'draft\n'))).toBe(
+      pierreKey(diff('h5a', 'draft\n'))
+    );
   });
 });
