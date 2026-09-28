@@ -256,4 +256,32 @@ describe('ActorContext.resolve', () => {
     expect(fixed.humanRef).toBe('human:wyat');
     expect(parseTeam(readFileSync(file, 'utf8'))).toHaveLength(1);
   });
+
+  it("records its known handle when it matched its own entry while another's is skipped", () => {
+    const root = fixture();
+    const file = join(root, '.dispatch', 'team.yml');
+    const gitAt = (email: string) => (args: string[]) =>
+      args.includes('user.email') ? email : 'Wyat';
+    const bad = '  - handle: Bad\n    email: bad@x.com\n';
+    const wyat =
+      '  - handle: wyat\n    email: wyat@old.com\n    displayName: Wyat\n';
+    // A new root: no known-handle file yet, and an unrelated entry is broken.
+    writeFileSync(file, `members:\n${wyat}${bad}`);
+    expect(ActorContext.resolve(root, gitAt('wyat@old.com')).humanRef).toBe(
+      'human:wyat'
+    );
+
+    // Git's email changes while that entry is still skipped.
+    expect(ActorContext.resolve(root, gitAt('w.soule@new.com')).humanRef).toBe(
+      'human:wyat'
+    );
+
+    // Once the owner fixes it, the roster updates wyat and adds nobody.
+    writeFileSync(file, `members:\n${wyat}${bad.replace('Bad', 'bad')}`);
+    const fixed = ActorContext.resolve(root, gitAt('w.soule@new.com'));
+    expect(fixed.humanRef).toBe('human:wyat');
+    const roster = parseTeam(readFileSync(file, 'utf8'));
+    expect(roster.map((m) => m.handle)).toEqual(['wyat', 'bad']);
+    expect(roster[0]?.email).toBe('w.soule@new.com');
+  });
 });
