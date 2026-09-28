@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'bun:test';
+import { describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -58,13 +58,47 @@ describe('policy config', () => {
     }
   });
 
-  it('rejects an unknown gate key and an unknown mode', () => {
-    expect(() =>
-      loadConfig(root('policy:\n  gates:\n    review: auto\n'))
-    ).toThrow(/unknown policy gate: review/);
+  it('skips a gate key this build does not know, warning once, and still rejects an unknown mode', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const dir = root(
+        'policy:\n  rung: 2\n  gates:\n    from-the-future: auto\n    scope: block\n'
+      );
+      expect(loadConfig(dir).policy).toEqual({
+        rung: 2,
+        gates: { scope: 'block' },
+      });
+      expect(loadConfig(dir).policy).toEqual({
+        rung: 2,
+        gates: { scope: 'block' },
+      });
+      const lines = warn.mock.calls.map((call) => String(call[0]));
+      expect(
+        lines.filter((line) => line.includes('policy.gates.from-the-future'))
+      ).toHaveLength(1);
+      expect(lines[0]).toContain('unknown to this build');
+    } finally {
+      warn.mockRestore();
+    }
     expect(() =>
       loadConfig(root('policy:\n  gates:\n    merge: always\n'))
     ).toThrow(/policy\.gates\.merge/);
+  });
+
+  it('keeps writing other keys while the file pins a gate this build does not know', () => {
+    const warn = spyOn(console, 'warn').mockImplementation(() => undefined);
+    try {
+      const dir = root(
+        'policy:\n  rung: 1\n  gates:\n    also-from-the-future: auto\n'
+      );
+      expect(updateConfig(dir, { policy: { rung: 3 } }).policy).toEqual({
+        rung: 3,
+        gates: {},
+      });
+      expect(read(dir)).toContain('also-from-the-future: auto');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('rejects a non-object block rather than ignoring it', () => {

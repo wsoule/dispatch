@@ -1056,6 +1056,10 @@ function parsePreviewConfig(raw: unknown): PreviewConfig {
   };
 }
 
+// Gate keys a newer build wrote that this one does not know, warned about once
+// per process: config.yml is committed, and an older build must still load it.
+const warnedUnknownGates = new Set<string>();
+
 function parsePolicyConfig(raw: unknown): PolicyConfig {
   if (raw === undefined) return { ...DEFAULT_POLICY, gates: {} };
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
@@ -1096,9 +1100,13 @@ function parsePolicyConfig(raw: unknown): PolicyConfig {
         );
       }
       if (!POLICY_GATES.includes(gate as PolicyGate)) {
-        throw new ConfigError(
-          `invalid .dispatch/config.yml: unknown policy gate: ${gate} (expected ${POLICY_GATES.join('|')})`
-        );
+        if (!warnedUnknownGates.has(gate)) {
+          warnedUnknownGates.add(gate);
+          console.warn(
+            `dispatch: .dispatch/config.yml policy.gates.${gate} is unknown to this build (expected ${POLICY_GATES.join('|')}); ignored`
+          );
+        }
+        continue;
       }
       if (!POLICY_GATE_MODES.includes(mode as PolicyGateMode)) {
         throw new ConfigError(

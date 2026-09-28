@@ -21,6 +21,7 @@ import {
   openDesktopOrBrowser,
   registerDaemonCommands,
 } from './commands/daemon.js';
+import { registerDocsCommands } from './commands/docs.js';
 import { registerDoctorCommand } from './commands/doctor.js';
 import { registerFanoutCommand } from './commands/fanout.js';
 import { registerLicenseCommands } from './commands/license.js';
@@ -244,6 +245,7 @@ export function makeProgram(ctx: CliContext): Command {
   registerTeamCommands(program, ctx);
   registerBoardSyncCommands(program, ctx);
   registerReceiptsCommands(program, ctx);
+  registerDocsCommands(program, ctx);
   registerLicenseCommands(program, ctx);
   registerMigrateCommand(program, ctx);
   registerA2ACommands(program, ctx);

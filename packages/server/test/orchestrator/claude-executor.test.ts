@@ -3,7 +3,7 @@ import type {
   Options,
   Query,
 } from '@anthropic-ai/claude-agent-sdk';
-import { DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
+import { DISPATCH_MCP_TOOLS, DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
 import { describe, expect, it, spyOn, test } from 'bun:test';
 import {
   chmodSync,
@@ -973,6 +973,47 @@ describe('ClaudeExecutor canUseTool edit-tool fast-path', () => {
       expect(result).toEqual({
         behavior: 'allow',
         updatedInput: { to: ['human:wyat'] },
+      });
+    }
+    expect(approvalRequested).toBe(false);
+  });
+
+  it("auto-allows the five doc tools under 'acceptEdits'", async () => {
+    let captured: Options | undefined;
+    const executor = new ClaudeExecutor((args: { options?: Options }) => {
+      captured = args.options;
+      return emptyMessages() as unknown as Query;
+    });
+    let approvalRequested = false;
+    executor.start(
+      {
+        cwd: '/tmp/dispatch-worktree-x',
+        prompt: 'go',
+        permissionMode: 'acceptEdits',
+        maxTurns: 5,
+      },
+      {
+        onEntry: () => {},
+        onApprovalRequest: () => {
+          approvalRequested = true;
+        },
+        onFinish: () => {},
+      }
+    );
+    const tools = DISPATCH_MCP_TOOLS.filter((t) => t.startsWith('doc_')).map(
+      (t) => `mcp__dispatch__${t}`
+    );
+    expect(tools).toHaveLength(5);
+    expect(tools).toContain('mcp__dispatch__doc_save');
+    for (const tool of tools) {
+      const result = await captured?.canUseTool?.(
+        tool,
+        { doc: 'spec' },
+        fakeCanUseToolOptions(`req-${tool}`)
+      );
+      expect(result).toEqual({
+        behavior: 'allow',
+        updatedInput: { doc: 'spec' },
       });
     }
     expect(approvalRequested).toBe(false);

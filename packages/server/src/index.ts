@@ -57,6 +57,8 @@ import {
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
+import { DaemonDocsHost } from './docs/host.js';
+import { openDocs } from './docs/open.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
@@ -1046,6 +1048,14 @@ async function bootServer(
       `dispatchd: no main branch for ${rootDir}; task files won't be committed`
     );
   }
+  // Docs open before the boot receipt export and need nothing from messaging;
+  // a docs.db this build cannot open leaves docs unavailable, never the daemon down.
+  const docsHost = new DaemonDocsHost({ store, events });
+  const docs = openDocs({
+    rootDir,
+    host: docsHost,
+    ownerRef: actorContext.humanRef,
+  });
   // The receipts exporter: the database backend's counterpart to the board
   // syncer above, and the other half of the split that comment describes. A
   // file-backed project's task files are already committed into the user's own
@@ -1257,6 +1267,7 @@ async function bootServer(
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
   });
+  orchestrator.setDocsPort(docs.service);
   if (opts.registerExecutors !== undefined) {
     opts.registerExecutors(orchestrator);
   } else {
@@ -1292,6 +1303,8 @@ async function bootServer(
         ? join(rootDir, '.dispatch', 'ledger.jsonl')
         : null,
   });
+  docsHost.bindRuns(orchestrator);
+  docsHost.bindMessaging(messaging.store);
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
@@ -1521,6 +1534,7 @@ async function bootServer(
       memory: overseerMemory(memory),
       messaging: overseerToolMessaging(messaging.engine),
       ownerRef: actorContext.humanRef,
+      docs: docs.service,
     }),
     events,
     bus: createOverseerBus(messaging.engine, messaging.store, {
@@ -1781,6 +1795,7 @@ async function bootServer(
     overseerManager,
     epicEngine,
     messaging,
+    docs: docs.service,
     memory,
     a2a,
     prManager,
@@ -2135,6 +2150,8 @@ async function bootServer(
       orchestrator.setMemoryPort(null);
       memory.close();
       messaging.close();
+      orchestrator.setDocsPort(null);
+      docs.stop();
       stores.close();
     },
   };

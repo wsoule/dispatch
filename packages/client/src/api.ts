@@ -3,12 +3,26 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocScope,
+  DocsHealth,
+  DocStatus,
+  DocSummary,
   EffortLevel,
   Finding,
   FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
   LedgerEntry,
+  LinkRel,
   ModelConfig,
   MutationEvidence,
   Priority,
@@ -649,12 +663,12 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// A task, run, file, commit or message a message points at; mirrors
+// A task, run, file, commit, message or doc a message points at; mirrors
 // @dispatch/protocol's Ref.
 export interface Ref {
   type: string;
   id: string;
-  /** Commit sha for `file` refs. */
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
 }
 
@@ -996,6 +1010,48 @@ export interface MailboxItem {
   message: Message;
 }
 
+// Docs: @dispatch/core defines the wire types packages/server/src/docs/routes.ts
+// serves; these three are the client's own framing of its answers.
+export type {
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocSummary,
+  DocsHealth,
+} from '@dispatch/core';
+
+/** A whole-body save: the new head, or the 409's merge conflict as a value. */
+export type DocSaveOutcome =
+  | { ok: true; result: DocSaveResult }
+  | { ok: false; conflict: DocConflict };
+
+/** GET /api/docs/:ref/diff; `spent` when the line diff ran out of budget. */
+export interface DocDiff {
+  from: DocRevisionInfo;
+  to: DocRevisionInfo;
+  chunks: { equal: boolean; a: string[]; b: string[] }[];
+  spent: boolean;
+}
+
+/** GET /api/docs's filters; `q` matches within titles. */
+export interface DocListParams {
+  taskId?: string;
+  scope?: DocScope;
+  status?: DocStatus;
+  unreviewed?: boolean;
+  conflicted?: boolean;
+  q?: string;
+  includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
 export type ServerEvent =
   | { type: 'task.changed' }
   | { type: 'hello'; version: string }
@@ -1115,6 +1171,9 @@ export type ServerEvent =
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   // Mirrors packages/server/src/events.ts exactly.
   | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // A doc changed; a bare refetch signal, never an id for personal docs.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
   // The A2A bridge's clients, tasks or listener changed; go refetch.
   | { type: 'a2a.changed' };
 
@@ -2219,11 +2278,12 @@ async function request<T>(
 // request, body or not, so the gate can be a blanket rule rather than one the
 // body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
 // A FormData body is left without one so fetch writes the multipart boundary
-// itself.
+// itself. Statuses in `allowed` come back as responses instead of throwing.
 async function send(
   target: ApiTarget,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  allowed: readonly number[] = []
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
   if (
@@ -2237,20 +2297,28 @@ async function send(
     headers.set('authorization', `Bearer ${target.token}`);
   }
   const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      code?: string;
-      field?: string;
-    };
-    throw new ApiError(
-      body.error ?? `request failed: ${res.status}`,
-      res.status,
-      body.code,
-      body.field
-    );
+  if (!res.ok && !allowed.includes(res.status)) {
+    throw apiError(res.status, await res.json().catch(() => null));
   }
   return res;
+}
+
+// The ApiError for a failed response's `{ error, code, field }` body.
+function apiError(status: number, body: unknown): ApiError {
+  const b = body as { error?: string; code?: string; field?: string } | null;
+  return new ApiError(
+    b?.error ?? `request failed: ${status}`,
+    status,
+    b?.code,
+    b?.field
+  );
+}
+
+// Only a whole-body save's merge conflict carries these reasons; other 409s,
+// such as an archived doc's, are a plain error body.
+function isDocConflict(body: unknown): body is DocConflict {
+  const reason = (body as { reason?: unknown } | null)?.reason;
+  return reason === 'merge-conflict' || reason === 'base-changed';
 }
 
 // request() for a binary body: same auth and error handling, the response
@@ -2269,6 +2337,11 @@ function jsonBody(value: unknown): RequestInit {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(value),
   };
+}
+
+// A doc's route: ids and team handles as they are, a personal handle keeps its '~'.
+function docPath(ref: string): string {
+  return `/api/docs/${encodeURIComponent(ref).replace(/^%7E/, '~')}`;
 }
 
 // The base path a ReviewTarget's comment routes hang off — /api/runs/:id
@@ -3242,6 +3315,77 @@ export interface ApiClient {
   /** Saves a skipped file's kept content to the caller's memory with agent trust. */
   acceptIngestProblem(id: string): Promise<MemorySaveResult>;
 
+  // Docs; the server's docs/routes.ts defines these routes. `ref` is a doc id,
+  // a team handle or a personal `~handle`; `rev` a revision number or rev- id.
+  listDocs(
+    params?: DocListParams
+  ): Promise<{ docs: DocSummary[]; total: number }>;
+  /** `section` reads one heading's section; `page` pages from `offset`. */
+  getDoc(
+    ref: string,
+    opts?: {
+      rev?: string | number;
+      section?: string;
+      offset?: number;
+      page?: boolean;
+    }
+  ): Promise<DocRead>;
+  createDoc(input: {
+    title: string;
+    body: string;
+    slug?: string;
+    scope?: DocScope;
+    links?: { target: string; rel: LinkRel }[];
+  }): Promise<DocSaveResult>;
+  /** A merge conflict comes back as `{ ok: false, conflict }`; other
+   *  failures throw, including a 409 such as an archived doc's. */
+  saveDocBody(
+    ref: string,
+    input: {
+      baseRev: string | number;
+      baseHash?: string;
+      body: string;
+      title?: string;
+    }
+  ): Promise<DocSaveOutcome>;
+  editDoc(
+    ref: string,
+    input: { ops: DocOp[]; baseRev?: string | number }
+  ): Promise<DocSaveResult>;
+  renameDoc(ref: string, slug: string): Promise<DocRecord>;
+  setDocStatus(ref: string, status: DocStatus): Promise<DocRecord>;
+  markDocReviewed(ref: string): Promise<DocRecord>;
+  sealDoc(ref: string): Promise<DocRecord>;
+  revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
+  deleteDoc(ref: string): Promise<void>;
+  listDocRevisions(
+    ref: string,
+    page?: { before?: number; limit?: number }
+  ): Promise<{ revisions: DocRevisionInfo[] }>;
+  getDocRevision(
+    ref: string,
+    rev: string | number
+  ): Promise<DocRevisionInfo & { body: string }>;
+  diffDoc(
+    ref: string,
+    from: string | number,
+    to: string | number
+  ): Promise<DocDiff>;
+  /** `target` is `type:id` (`task:t-1`); `replace` takes the spec link over
+   *  from the task's current spec instead of answering 409. */
+  linkDoc(
+    ref: string,
+    input: { target: string; rel: LinkRel; replace?: boolean }
+  ): Promise<{ links: DocLink[] }>;
+  unlinkDoc(ref: string, target: string): Promise<{ links: DocLink[] }>;
+  /** The docs linked to `target`, a `type:id` string. */
+  docsLinking(target: string): Promise<{ docs: DocLinking[] }>;
+  searchDocs(
+    q: string,
+    opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
+  ): Promise<{ hits: DocHit[] }>;
+  docsHealth(): Promise<DocsHealth>;
+
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
   fetchWorkspaceTree(
@@ -4063,6 +4207,119 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         `/api/memory/ingest-problems/${encodeURIComponent(id)}/accept`,
         { method: 'POST' }
       ),
+    // Docs — packages/server/src/docs/routes.ts. Flags go as `1` only when
+    // true, since the routes read anything else as false.
+    listDocs: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.taskId !== undefined) q.set('taskId', params.taskId);
+      if (params.scope !== undefined) q.set('scope', params.scope);
+      if (params.status !== undefined) q.set('status', params.status);
+      if (params.unreviewed === true) q.set('unreviewed', '1');
+      if (params.conflicted === true) q.set('conflicted', '1');
+      if (params.q !== undefined && params.q !== '') q.set('q', params.q);
+      if (params.includeArchived === true) q.set('includeArchived', '1');
+      if (params.limit !== undefined) q.set('limit', String(params.limit));
+      if (params.offset !== undefined) q.set('offset', String(params.offset));
+      const qs = q.toString();
+      return request(target, `/api/docs${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDoc: (ref, opts = {}) => {
+      const q = new URLSearchParams();
+      if (opts.rev !== undefined) q.set('rev', String(opts.rev));
+      if (opts.section !== undefined) q.set('section', opts.section);
+      if (opts.offset !== undefined) q.set('offset', String(opts.offset));
+      if (opts.page === true) q.set('page', '1');
+      const qs = q.toString();
+      return request(target, `${docPath(ref)}${qs === '' ? '' : `?${qs}`}`);
+    },
+    createDoc: (input) =>
+      request(target, '/api/docs', { method: 'POST', ...jsonBody(input) }),
+    saveDocBody: async (ref, input) => {
+      const res = await send(
+        target,
+        `${docPath(ref)}/body`,
+        { method: 'PUT', ...jsonBody(input) },
+        [409]
+      );
+      if (res.status !== 409) {
+        return { ok: true, result: (await res.json()) as DocSaveResult };
+      }
+      const body: unknown = await res.json().catch(() => null);
+      if (isDocConflict(body)) return { ok: false, conflict: body };
+      throw apiError(409, body);
+    },
+    editDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/edit`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    renameDoc: (ref, slug) =>
+      request(target, docPath(ref), { method: 'PATCH', ...jsonBody({ slug }) }),
+    setDocStatus: (ref, status) =>
+      request(target, `${docPath(ref)}/status`, {
+        method: 'POST',
+        ...jsonBody({ status }),
+      }),
+    markDocReviewed: (ref) =>
+      request(target, `${docPath(ref)}/reviewed`, { method: 'POST' }),
+    sealDoc: (ref) =>
+      request(target, `${docPath(ref)}/seal`, { method: 'POST' }),
+    revertDoc: (ref, rev) =>
+      request(target, `${docPath(ref)}/revert`, {
+        method: 'POST',
+        ...jsonBody({ rev }),
+      }),
+    // send(), not request(): the server answers 204 with no body.
+    deleteDoc: async (ref) => {
+      await send(target, docPath(ref), { method: 'DELETE' });
+    },
+    listDocRevisions: (ref, page = {}) => {
+      const q = new URLSearchParams();
+      if (page.before !== undefined) q.set('before', String(page.before));
+      if (page.limit !== undefined) q.set('limit', String(page.limit));
+      const qs = q.toString();
+      return request(
+        target,
+        `${docPath(ref)}/revisions${qs === '' ? '' : `?${qs}`}`
+      );
+    },
+    getDocRevision: (ref, rev) =>
+      request(
+        target,
+        `${docPath(ref)}/revisions/${encodeURIComponent(String(rev))}`
+      ),
+    diffDoc: (ref, from, to) =>
+      request(
+        target,
+        `${docPath(ref)}/diff?from=${encodeURIComponent(String(from))}&to=${encodeURIComponent(String(to))}`
+      ),
+    linkDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/links`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    // The route takes the target's type and id as two path segments.
+    unlinkDoc: (ref, link) => {
+      const colon = link.indexOf(':');
+      return request(
+        target,
+        `${docPath(ref)}/links/${encodeURIComponent(link.slice(0, colon))}/${encodeURIComponent(link.slice(colon + 1))}`,
+        { method: 'DELETE' }
+      );
+    },
+    docsLinking: (link) =>
+      request(
+        target,
+        `/api/docs/links?${new URLSearchParams({ target: link }).toString()}`
+      ),
+    searchDocs: (q, opts = {}) => {
+      const params = new URLSearchParams({ q });
+      if (opts.scope !== undefined) params.set('scope', opts.scope);
+      if (opts.includeArchived === true) params.set('includeArchived', '1');
+      if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+      return request(target, `/api/docs/search?${params.toString()}`);
+    },
+    docsHealth: () => request(target, '/api/docs/health'),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

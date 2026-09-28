@@ -248,3 +248,19 @@ test('a run sender and a task ref open where they lead; a commit ref does not', 
   expect(screen.queryByRole('button', { name: /commit:/ })).toBeNull();
   expect(screen.getByText('commit:abc1234def')).toBeTruthy();
 });
+
+test('a doc ref chip names its whole section and opens the doc there', () => {
+  const onOpen = mock((_action: unknown) => {});
+  renderRow(
+    msg('m-d', { refs: [{ type: 'doc', id: 'doc-01K', at: 'auth-flow' }] }),
+    { onOpen, open: false }
+  );
+  fireEvent.click(
+    screen.getByRole('button', { name: 'doc:doc-01K#auth-flow' })
+  );
+  expect(onOpen).toHaveBeenCalledWith({
+    kind: 'doc',
+    docId: 'doc-01K',
+    anchor: 'auth-flow',
+  });
+});

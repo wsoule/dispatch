@@ -716,22 +716,39 @@ describe('refs and labels', () => {
     expect(addressAction(ME, lookups)).toBeNull();
   });
 
+  it('routes a doc ref to the doc and its section', () => {
+    const none = { taskIdOfRun: () => null };
+    expect(refAction({ type: 'doc', id: 'doc-01K', at: 'api' }, none)).toEqual({
+      kind: 'doc',
+      docId: 'doc-01K',
+      anchor: 'api',
+    });
+    expect(refAction({ type: 'doc', id: 'doc-01K' }, none)).toEqual({
+      kind: 'doc',
+      docId: 'doc-01K',
+      anchor: null,
+    });
+  });
+
   it('turns each action into the matching navigation', () => {
     const calls: unknown[][] = [];
     const open = openRefWith({
       openTask: (...args) => calls.push(['task', ...args]),
       openThread: (id) => calls.push(['thread', id]),
       openImpact: (subject) => calls.push(['impact', subject]),
+      openDoc: (docId, anchor) => calls.push(['doc', docId, anchor]),
     });
     open({ kind: 'task', taskId: 't-000001' });
     open({ kind: 'run', taskId: 't-000001', runId: 'r-000001' });
     open({ kind: 'file', path: 'src/a.ts' });
     open({ kind: 'message', messageId: 'm-01' });
+    open({ kind: 'doc', docId: 'doc-01K', anchor: 'api' });
     expect(calls).toEqual([
       ['task', 't-000001', 'details'],
       ['task', 't-000001', 'chat', 'r-000001'],
       ['impact', { kind: 'file', id: 'src/a.ts' }],
       ['thread', 'm-01'],
+      ['doc', 'doc-01K', 'api'],
     ]);
   });
 

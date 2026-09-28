@@ -76,6 +76,7 @@ import type {
   ApprovalGatePort,
   BranchEntry,
   BranchEntryStatus,
+  DocsPromptPort,
   Executor,
   ExecutorEvents,
   ExecutorInfo,
@@ -382,6 +383,8 @@ export class Orchestrator {
   private approvalGate: ApprovalGatePort | null = null;
   // Renders each dispatch prompt's memory section (see setMemoryPort); null keeps the ledger section.
   private memoryPort: MemoryPromptPort | null = null;
+  // Renders each dispatch prompt's `## Docs` section (see setDocsPort); null leaves it out.
+  private docsPort: DocsPromptPort | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
   private readonly lastClaimsCheck = new Map<string, number>();
@@ -469,6 +472,11 @@ export class Orchestrator {
   // Installed by the memory service at boot; until then prompts carry the ledger section.
   setMemoryPort(port: MemoryPromptPort | null): void {
     this.memoryPort = port;
+  }
+
+  // Installed by the docs service at boot; until then prompts carry no docs section.
+  setDocsPort(port: DocsPromptPort | null): void {
+    this.docsPort = port;
   }
 
   // Subscribes to "a run just became live" (its ExecutorRun is registered), so
@@ -5037,7 +5045,8 @@ export class Orchestrator {
       this.memorySection(task.meta.id, runId, dispatchTools),
       this.orientationFor(task.meta.id),
       dispatchTools,
-      this.ctx.actorContext?.humanRef ?? null
+      this.ctx.actorContext?.humanRef ?? null,
+      this.docsSection(task.meta.id, runId, dispatchTools)
     );
   }
 
@@ -5054,6 +5063,21 @@ export class Orchestrator {
         .text;
     } catch (err) {
       console.error(`dispatchd: memory index for run ${runId} failed`, err);
+      return null;
+    }
+  }
+
+  // A failure here costs the section, never the dispatch (as orientation's does).
+  private docsSection(
+    taskId: string,
+    runId: string,
+    dispatchTools: boolean
+  ): string | null {
+    if (this.docsPort === null) return null;
+    try {
+      return this.docsPort.promptSection({ runId, taskId, dispatchTools });
+    } catch (err) {
+      console.error(`dispatchd: docs prompt section for ${taskId} failed`, err);
       return null;
     }
   }
