@@ -1322,6 +1322,11 @@ async function bootServer(
       ...(tlsServer === null ? [] : [tlsServer.port ?? 0]),
     ],
     ...(opts.a2a === undefined ? {} : { overrides: opts.a2a }),
+    ...(opts.tls === undefined
+      ? {}
+      : {
+          teamTls: { certPath: opts.tls.certPath, keyPath: opts.tls.keyPath },
+        }),
     mark: (label) => watchdog.mark(label),
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
   });

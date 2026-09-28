@@ -1,4 +1,5 @@
 import type {
+  A2AListenerSettings,
   A2AListenerStatus,
   A2ATaskSummary,
   Message,
@@ -16,6 +17,7 @@ import {
   listenerStatusLine,
   openTasksByClient,
   parseRecipients,
+  withHost,
 } from './a2a';
 
 const q = (over: Partial<Message> = {}): Message => ({
@@ -70,6 +72,7 @@ describe('the listener form', () => {
     certPath: '',
     keyPath: '',
     trustForwardedFor: false,
+    standalone: false,
   };
   it('builds loopback settings with no public URL', () => {
     expect(formToSettings(base)).toEqual({
@@ -145,6 +148,16 @@ describe('the listener form', () => {
 });
 
 describe('the form from the listener status', () => {
+  const OFF: A2AListenerSettings = {
+    enabled: false,
+    host: '127.0.0.1',
+    port: null,
+    publicUrl: null,
+    tls: null,
+    trustForwardedFor: false,
+    standalone: false,
+  };
+  const TEAM_TLS = { certPath: '/t/cert.pem', keyPath: '/t/key.pem' };
   const closed: A2AListenerStatus = {
     enabled: false,
     listening: false,
@@ -152,45 +165,127 @@ describe('the form from the listener status', () => {
     error: null,
     warnings: [],
     legacyClients: [],
+    settings: OFF,
+    teamTls: null,
   };
-  it('proposes loopback on the default port, with the team-local cert', () => {
-    expect(
-      formFromStatus(closed, { certPath: '/t/cert.pem', keyPath: '/t/key.pem' })
-    ).toEqual({
+  const withSettings = (
+    settings: A2AListenerSettings,
+    over: Partial<A2AListenerStatus> = {}
+  ): A2AListenerStatus => ({
+    ...closed,
+    enabled: settings.enabled,
+    settings,
+    ...over,
+  });
+  // What Save sends for a status shown and saved without an edit.
+  const savedAsShown = (status: A2AListenerStatus) =>
+    formToSettings({ ...formFromStatus(status), enabled: true });
+
+  it('proposes loopback on the default port, with no TLS even beside a team-local cert', () => {
+    expect(formFromStatus({ ...closed, teamTls: TEAM_TLS })).toEqual({
       enabled: false,
       host: '127.0.0.1',
       port: '7450',
       publicUrl: '',
-      certPath: '/t/cert.pem',
-      keyPath: '/t/key.pem',
+      certPath: '',
+      keyPath: '',
       trustForwardedFor: false,
+      standalone: false,
     });
   });
-  it('reads the port of a loopback listener from its URL', () => {
-    expect(
-      formFromStatus(
-        {
-          ...closed,
-          enabled: true,
-          listening: true,
-          url: 'http://127.0.0.1:8123',
-        },
-        null
-      )
-    ).toMatchObject({ enabled: true, port: '8123', publicUrl: '' });
+  it('shows a network listener with TLS as stored, and saves it back unchanged', () => {
+    const wildcard: A2AListenerSettings = {
+      enabled: true,
+      host: '0.0.0.0',
+      port: 8443,
+      publicUrl: 'https://agent.example.com',
+      tls: { certPath: '/c', keyPath: '/k' },
+      trustForwardedFor: false,
+      standalone: false,
+    };
+    const status = withSettings(wildcard, {
+      listening: true,
+      url: 'https://agent.example.com',
+    });
+    expect(formFromStatus(status)).toMatchObject({
+      host: '0.0.0.0',
+      port: '8443',
+      certPath: '/c',
+      keyPath: '/k',
+      publicUrl: 'https://agent.example.com',
+    });
+    expect(savedAsShown(status)).toEqual({ ok: true, settings: wildcard });
   });
-  it('keeps a public URL and leaves the port for the owner to confirm', () => {
+  it('keeps a disabled tunnel’s URL and X-Forwarded-For trust for when it comes back on', () => {
+    const tunnel: A2AListenerSettings = {
+      enabled: false,
+      host: '127.0.0.1',
+      port: 7450,
+      publicUrl: 'https://agent.example.com',
+      tls: null,
+      trustForwardedFor: true,
+      standalone: false,
+    };
+    expect(formFromStatus(withSettings(tunnel))).toMatchObject({
+      enabled: false,
+      trustForwardedFor: true,
+    });
+    expect(savedAsShown(withSettings(tunnel))).toEqual({
+      ok: true,
+      settings: { ...tunnel, enabled: true },
+    });
+  });
+  it('shows a failing listener’s own settings, not the defaults', () => {
+    const failing: A2AListenerSettings = {
+      enabled: true,
+      host: '0.0.0.0',
+      port: 8443,
+      publicUrl: 'https://agent.example.com',
+      tls: { certPath: '/gone.pem', keyPath: '/k' },
+      trustForwardedFor: false,
+      standalone: false,
+    };
     expect(
-      formFromStatus(
-        {
-          ...closed,
-          enabled: true,
-          listening: true,
-          url: 'https://agent.example.com',
-        },
-        null
-      )
-    ).toMatchObject({ publicUrl: 'https://agent.example.com', port: '' });
+      formFromStatus(withSettings(failing, { error: 'cannot read /gone.pem' }))
+    ).toMatchObject({ enabled: true, host: '0.0.0.0', certPath: '/gone.pem' });
+  });
+  it('keeps a host the picker does not list, and standalone, through a save', () => {
+    const odd: A2AListenerSettings = {
+      ...OFF,
+      enabled: true,
+      host: 'localhost',
+      port: 7451,
+      trustForwardedFor: true,
+      standalone: true,
+    };
+    expect(savedAsShown(withSettings(odd))).toEqual({
+      ok: true,
+      settings: odd,
+    });
+  });
+  it('offers the team-local cert to a network host that has no TLS files yet', () => {
+    const noTls = withSettings(
+      { ...OFF, host: '0.0.0.0', port: 8443 },
+      { teamTls: TEAM_TLS }
+    );
+    expect(formFromStatus(noTls)).toMatchObject(TEAM_TLS);
+    const loopback = formFromStatus({ ...closed, teamTls: TEAM_TLS });
+    expect(withHost(loopback, '0.0.0.0', TEAM_TLS)).toMatchObject({
+      host: '0.0.0.0',
+      ...TEAM_TLS,
+    });
+    expect(withHost(loopback, '0.0.0.0', null)).toMatchObject({
+      certPath: '',
+      keyPath: '',
+    });
+    const typed = { ...loopback, certPath: '/mine.pem' };
+    expect(withHost(typed, '0.0.0.0', TEAM_TLS)).toMatchObject({
+      certPath: '/mine.pem',
+      keyPath: '',
+    });
+    expect(withHost(loopback, '127.0.0.1', TEAM_TLS)).toMatchObject({
+      certPath: '',
+    });
   });
   it('says off, listening, or why it is closed', () => {
     expect(listenerStatusLine(closed)).toBe('Off');

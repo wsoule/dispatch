@@ -19,10 +19,12 @@ import {
   cardSummary,
   formFromStatus,
   formToSettings,
+  isLoopbackHost,
   listenerFieldOf,
   listenerStatusLine,
   openTasksByClient,
   parseRecipients,
+  withHost,
 } from '../../lib/a2a';
 import { isInsufficientTier } from '../../lib/daemonAuth';
 import { formatShortDate } from '../../lib/taskDates';
@@ -62,10 +64,17 @@ const OPERATOR_HINT =
 const DECIDE_HINT =
   'This needs Can approve access. Ask the person running Dispatch for this project.';
 
-const HOSTS: { value: ListenerForm['host']; label: string }[] = [
+const HOSTS: { value: string; label: string }[] = [
   { value: '127.0.0.1', label: 'This machine' },
   { value: '0.0.0.0', label: 'Every network interface' },
 ];
+
+// The two hosts on offer, plus a stored one set elsewhere (`localhost`, `::`).
+function hostChoices(stored: string): { value: string; label: string }[] {
+  return HOSTS.some((h) => h.value === stored)
+    ? HOSTS
+    : [...HOSTS, { value: stored, label: stored }];
+}
 
 // The fields with a row of their own to show a refusal under.
 const FIELD_ROWS: ReadonlySet<keyof ListenerForm> = new Set([
@@ -141,7 +150,7 @@ function ListenerGroup({
 }) {
   const queryClient = useQueryClient();
   const status = useA2AQuery(client, 'listener', (api) => api.a2aListener());
-  // The form as edited; null follows the daemon's status until the first edit.
+  // The form as edited; null follows the daemon's settings until the first edit.
   const [draft, setDraft] = useState<ListenerForm | null>(null);
   const [problem, setProblem] = useState<{
     field: keyof ListenerForm | null;
@@ -171,7 +180,7 @@ function ListenerGroup({
     return group(<SettingsRow title="Loading the listener…" />);
   }
   const current: A2AListenerStatus = status.data;
-  const form = draft ?? formFromStatus(current, null);
+  const form = draft ?? formFromStatus(current);
   const locked = !canOperate;
   const update = (patch: Partial<ListenerForm>) => {
     setDraft({ ...form, ...patch });
@@ -218,7 +227,7 @@ function ListenerGroup({
     }
   }
 
-  const loopback = form.host === '127.0.0.1';
+  const loopback = isLoopbackHost(form.host);
   return group(
     <>
       {locked && (
@@ -259,9 +268,11 @@ function ListenerGroup({
           <Select
             value={form.host}
             disabled={locked}
-            onValueChange={(host) =>
-              update({ host: host as ListenerForm['host'] })
-            }
+            onValueChange={(host) => {
+              if (host === null) return;
+              setDraft(withHost(form, host, current.teamTls));
+              setProblem(null);
+            }}
           >
             <SelectTrigger
               id="a2a-host"
@@ -271,7 +282,7 @@ function ListenerGroup({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {HOSTS.map((h) => (
+              {hostChoices(current.settings.host).map((h) => (
                 <SelectItem key={h.value} value={h.value}>
                   {h.label}
                 </SelectItem>

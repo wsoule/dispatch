@@ -1,5 +1,6 @@
 import { openSqliteDb, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -275,6 +276,81 @@ describe('the A2A listener', () => {
     expect(all).not.toContain('TOKEN-MARKER-7f3a');
     expect(all).not.toContain('BODY-MARKER-91c2');
     expect(all).not.toContain('QUERY-MARKER-55e1');
+  });
+
+  it('reports the settings it opens from, and keeps them through a disable', async () => {
+    const h = await boot();
+    const tunnel = {
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      port: await freePort(),
+      publicUrl: 'https://agent.example.com',
+      trustForwardedFor: true,
+    };
+    expect((await h.a2a.applySettings(tunnel)).settings).toEqual(tunnel);
+    expect((await h.a2a.disable()).settings).toEqual({
+      ...tunnel,
+      enabled: false,
+    });
+  });
+
+  it('reports a failing listener’s settings, not the defaults', async () => {
+    const h = await boot();
+    const failing = {
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      host: '0.0.0.0',
+      port: await freePort(),
+      publicUrl: 'https://agent.example.com',
+      tls: { certPath: join(root, 'missing.pem'), keyPath: join(root, 'k') },
+    };
+    expect(await h.a2a.applySettings(failing)).toMatchObject({
+      listening: false,
+      error: expect.stringContaining('missing.pem'),
+      settings: failing,
+    });
+  });
+
+  it('reports one-boot flags in its settings', async () => {
+    const port = await freePort();
+    const h = await boot({ a2a: { port } });
+    expect(h.a2a.status().settings).toEqual({
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      port,
+    });
+  });
+
+  it('names the daemon’s team-local TLS files, and none without them', async () => {
+    const plain = await boot();
+    expect(plain.a2a.status().teamTls).toBeNull();
+    await plain.stop();
+    handle = null;
+    const dir = mkdtempSync(join(tmpdir(), 'a2a-team-tls-'));
+    const certPath = join(dir, 'cert.pem');
+    const keyPath = join(dir, 'key.pem');
+    const made = spawnSync('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      keyPath,
+      '-out',
+      certPath,
+      '-days',
+      '1',
+      '-subj',
+      '/CN=dispatch.test',
+    ]);
+    expect(made.status).toBe(0);
+    try {
+      const team = await boot({ host: '0.0.0.0', tls: { certPath, keyPath } });
+      expect(team.a2a.status().teamTls).toEqual({ certPath, keyPath });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it('lists approved legacy a2a.* agents that have no clients row, never revoked or pending ones', async () => {

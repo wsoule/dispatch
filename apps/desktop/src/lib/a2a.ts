@@ -12,8 +12,9 @@ import { gateOf } from './gates';
 /** The port the form proposes for a listener that has never been opened. */
 export const A2A_DEFAULT_PORT = 7450;
 
-const LOOPBACK = '127.0.0.1';
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
+// The listener hosts the daemon binds to this machine alone (its bindModeFor).
+const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1']);
 const A2A_CLIENT = /^agent:[^/]+\/a2a\./;
 const TERMINAL_STATES = new Set([
   'COMPLETED',
@@ -48,15 +49,23 @@ export function canDecline(message: Message, canDecide: boolean): boolean {
   );
 }
 
-/** The listener form as typed: every field a string except the two toggles. */
+/** The listener form as typed: every field a string except the toggles. */
 export interface ListenerForm {
   enabled: boolean;
-  host: '127.0.0.1' | '0.0.0.0';
+  // The stored host as written, so `localhost` or `::` survives a save.
+  host: string;
   port: string;
   publicUrl: string;
   certPath: string;
   keyPath: string;
   trustForwardedFor: boolean;
+  // Set by `dispatch a2a listen --standalone`; no control, carried through a save.
+  standalone: boolean;
+}
+
+/** Whether the daemon binds a listener host to this machine alone. */
+export function isLoopbackHost(host: string): boolean {
+  return LOOPBACK_BINDS.has(host);
 }
 
 type FormResult =
@@ -80,7 +89,7 @@ export function formToSettings(form: ListenerForm): FormResult {
       error: 'Port must be a number from 1 to 65535.',
     };
   }
-  const loopback = form.host === LOOPBACK;
+  const loopback = isLoopbackHost(form.host);
   const certPath = form.certPath.trim();
   const keyPath = form.keyPath.trim();
   if (!loopback && certPath === '') {
@@ -140,36 +149,45 @@ export function formToSettings(form: ListenerForm): FormResult {
       tls: certPath === '' ? null : { certPath, keyPath },
       // The daemon honours it only on loopback, behind a tunnel.
       trustForwardedFor: loopback && form.trustForwardedFor,
-      standalone: false,
+      standalone: form.standalone,
     },
   };
 }
 
-/** The form for a listener status. The status names only the URL, so a
- *  loopback URL gives the port, and any other URL is the public one. */
-export function formFromStatus(
-  status: A2AListenerStatus,
+/** The form for the settings the listener opens from. A network host with no
+ *  TLS of its own proposes the daemon's team-local cert. */
+export function formFromStatus(status: A2AListenerStatus): ListenerForm {
+  const s = status.settings;
+  const tls = s.tls ?? (isLoopbackHost(s.host) ? null : status.teamTls);
+  return {
+    enabled: s.enabled,
+    host: s.host,
+    port: String(s.port ?? A2A_DEFAULT_PORT),
+    publicUrl: s.publicUrl ?? '',
+    certPath: tls?.certPath ?? '',
+    keyPath: tls?.keyPath ?? '',
+    trustForwardedFor: s.trustForwardedFor,
+    standalone: s.standalone,
+  };
+}
+
+/** The form moved to another host; a network host with both TLS fields empty
+ *  takes the daemon's team-local cert. */
+export function withHost(
+  form: ListenerForm,
+  host: string,
   teamTls: { certPath: string; keyPath: string } | null
 ): ListenerForm {
-  const form: ListenerForm = {
-    enabled: status.enabled,
-    host: LOOPBACK,
-    port: String(A2A_DEFAULT_PORT),
-    publicUrl: '',
-    certPath: teamTls?.certPath ?? '',
-    keyPath: teamTls?.keyPath ?? '',
-    trustForwardedFor: false,
-  };
-  if (status.url === null) return form;
-  let url: URL;
-  try {
-    url = new URL(status.url);
-  } catch {
-    return form;
+  const next = { ...form, host };
+  if (
+    teamTls === null ||
+    isLoopbackHost(host) ||
+    form.certPath.trim() !== '' ||
+    form.keyPath.trim() !== ''
+  ) {
+    return next;
   }
-  if (isLoopbackUrl(url) && url.port !== '') return { ...form, port: url.port };
-  // A tunnel or proxy URL says nothing of the bound port; the owner confirms it.
-  return { ...form, publicUrl: status.url, port: '' };
+  return { ...next, certPath: teamTls.certPath, keyPath: teamTls.keyPath };
 }
 
 /** The status line under the listener switch. */

@@ -261,6 +261,8 @@ describe('/api/a2a/listener', () => {
       url: null,
       error: null,
       legacyClients: [],
+      settings: DEFAULT_LISTENER,
+      teamTls: null,
     });
   });
 

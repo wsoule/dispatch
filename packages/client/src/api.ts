@@ -958,6 +958,10 @@ export interface A2AListenerStatus {
   warnings: string[];
   // Approved a2a.* agents with no clients row, registered before the bridge.
   legacyClients: string[];
+  // What the listener opens from: the file plus any one-boot flags.
+  settings: A2AListenerSettings;
+  // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
+  teamTls: { certPath: string; keyPath: string } | null;
 }
 
 // One row of GET /api/a2a/clients: the clients row plus its agent's status.

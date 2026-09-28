@@ -1,5 +1,6 @@
 import type {
   A2AClientSummary,
+  A2AListenerSettings,
   A2AListenerStatus,
   A2ATaskSummary,
   AuthTier,
@@ -11,6 +12,16 @@ import { expect, mock, test } from 'bun:test';
 import { A2ASection } from './A2ASection';
 import { dataWith } from './fixtures.test-helper';
 
+const OFF: A2AListenerSettings = {
+  enabled: false,
+  host: '127.0.0.1',
+  port: null,
+  publicUrl: null,
+  tls: null,
+  trustForwardedFor: false,
+  standalone: false,
+};
+
 const CLOSED: A2AListenerStatus = {
   enabled: false,
   listening: false,
@@ -18,6 +29,28 @@ const CLOSED: A2AListenerStatus = {
   error: null,
   warnings: [],
   legacyClients: [],
+  settings: OFF,
+  teamTls: null,
+};
+
+const WILDCARD: A2AListenerSettings = {
+  enabled: true,
+  host: '0.0.0.0',
+  port: 8443,
+  publicUrl: 'https://agent.example.com',
+  tls: { certPath: '/c.pem', keyPath: '/k.pem' },
+  trustForwardedFor: false,
+  standalone: false,
+};
+
+const TUNNEL: A2AListenerSettings = {
+  enabled: false,
+  host: '127.0.0.1',
+  port: 7450,
+  publicUrl: 'https://agent.example.com',
+  tls: null,
+  trustForwardedFor: true,
+  standalone: false,
 };
 
 const ACME: A2AClientSummary = {
@@ -55,15 +88,21 @@ function mount(
   const client = {
     baseUrl: 'http://127.0.0.1:1',
     a2aListener: mock(() => Promise.resolve(status)),
-    setA2AListener: mock((_s: unknown) =>
+    setA2AListener: mock((settings: A2AListenerSettings) =>
       Promise.resolve({
         ...CLOSED,
         enabled: true,
         listening: true,
         url: 'http://127.0.0.1:7450',
+        settings,
       })
     ),
-    disableA2AListener: mock(() => Promise.resolve(CLOSED)),
+    disableA2AListener: mock(() =>
+      Promise.resolve({
+        ...CLOSED,
+        settings: { ...status.settings, enabled: false },
+      })
+    ),
     a2aCard: mock(() =>
       Promise.resolve({ name: 'Acme API', skills: [{ id: 'ask' }] })
     ),
@@ -140,6 +179,7 @@ test('turning a running listener off disables it', async () => {
       enabled: true,
       listening: true,
       url: 'http://127.0.0.1:7450',
+      settings: { ...OFF, enabled: true, port: 7450 },
     },
   });
   await screen.findByText('Listening at http://127.0.0.1:7450');
@@ -147,6 +187,70 @@ test('turning a running listener off disables it', async () => {
   fireEvent.click(screen.getByRole('button', { name: 'Save listener' }));
   await waitFor(() => expect(client.disableA2AListener).toHaveBeenCalled());
   expect(client.setA2AListener).not.toHaveBeenCalled();
+});
+
+// Base UI commits a select item on a click that began on it, so press first.
+function chooseOption(name: string) {
+  const option = screen.getByRole('option', { name });
+  fireEvent.pointerDown(option);
+  fireEvent.click(option);
+}
+
+const valueOf = (label: string) =>
+  screen.getByLabelText<HTMLInputElement>(label).value;
+
+test('shows a network listener as stored and saves it back unchanged', async () => {
+  const client = mount('operator', {
+    status: {
+      ...CLOSED,
+      enabled: true,
+      listening: true,
+      url: 'https://agent.example.com',
+      settings: WILDCARD,
+    },
+  });
+  await screen.findByText('Listening at https://agent.example.com');
+  expect(screen.getByRole('combobox', { name: 'Host' }).textContent).toContain(
+    'Every network interface'
+  );
+  expect(valueOf('Port')).toBe('8443');
+  expect(valueOf('TLS certificate')).toBe('/c.pem');
+  expect(valueOf('TLS key')).toBe('/k.pem');
+  fireEvent.click(screen.getByRole('button', { name: 'Save listener' }));
+  await waitFor(() =>
+    expect(client.setA2AListener).toHaveBeenCalledWith(WILDCARD)
+  );
+});
+
+test('turning a disabled tunnel back on keeps its URL and X-Forwarded-For trust', async () => {
+  const client = mount('operator', {
+    status: { ...CLOSED, settings: TUNNEL },
+  });
+  await screen.findByText(/Off/);
+  expect(valueOf('Public URL')).toBe('https://agent.example.com');
+  fireEvent.click(screen.getByRole('switch', { name: 'A2A listener' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save listener' }));
+  await waitFor(() =>
+    expect(client.setA2AListener).toHaveBeenCalledWith({
+      ...TUNNEL,
+      enabled: true,
+    })
+  );
+});
+
+test('moving to every network interface proposes the team-local cert', async () => {
+  mount('operator', {
+    status: {
+      ...CLOSED,
+      teamTls: { certPath: '/team/cert.pem', keyPath: '/team/key.pem' },
+    },
+  });
+  await screen.findByText(/Off/);
+  expect(valueOf('TLS certificate')).toBe('');
+  fireEvent.click(screen.getByRole('combobox', { name: 'Host' }));
+  chooseOption('Every network interface');
+  expect(valueOf('TLS certificate')).toBe('/team/cert.pem');
+  expect(valueOf('TLS key')).toBe('/team/key.pem');
 });
 
 test('shows the card the listener serves', async () => {
