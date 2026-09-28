@@ -33,6 +33,8 @@ export type ProjectView =
   | 'design'
   /** Browse and edit the checkout, with previews and quick open. */
   | 'files'
+  /** Team documents beside tasks: specs, plans, runbooks, versioned and linked. */
+  | 'docs'
   /** Shells on the repo or a run's worktree, split any number of ways. */
   | 'terminals'
   | 'plans'

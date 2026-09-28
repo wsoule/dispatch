@@ -100,6 +100,7 @@ import { BoardView } from './views/BoardView';
 import { BrainDumpView } from './views/BrainDumpView';
 import { BranchesView } from './views/BranchesView';
 import { DesignView } from './views/DesignView';
+import { DocsView } from './views/DocsView';
 import { DraftView } from './views/DraftView';
 import { FilesView } from './views/FilesView';
 import { FirstRunView } from './views/FirstRunView';
@@ -1433,6 +1434,9 @@ function App() {
                               )}
                               {navState.projectView === 'files' && (
                                 <FilesView data={data} />
+                              )}
+                              {navState.projectView === 'docs' && (
+                                <DocsView data={data} />
                               )}
                               {navState.projectView === 'terminals' && (
                                 <TerminalsView data={data} />

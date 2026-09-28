@@ -42,6 +42,16 @@ describe('navReducer', () => {
     expect(next.activeRunId).toBeNull();
   });
 
+  test('Docs is a project view that back returns from', () => {
+    const docs = navReducer(initialNavState, {
+      type: 'setProjectView',
+      view: 'docs',
+    });
+    expect(docs.section).toBe('project');
+    expect(docs.projectView).toBe('docs');
+    expect(navReducer(docs, { type: 'back' }).projectView).toBe('overview');
+  });
+
   test('setGlobalView switches section to global', () => {
     const next = navReducer(initialNavState, {
       type: 'setGlobalView',
