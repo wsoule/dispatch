@@ -223,7 +223,7 @@ export function foldRoster(input: FoldInput): RosterView {
     .sort(comparePositions)
     .map((op) => ({ op, body: readBody(op.body) }));
   const dismisses = dismissesOf(input, items);
-  // Every unreadable op some fold held pauses: this build judged dismisses there.
+  // Every unreadable op a resolved fold held pauses: dismisses were judged there.
   const paused = new Set<Item>();
   const folds = foldsWithout(input, items, paused);
   // Each dismiss is judged in a fold without the ops the effective ones name;
@@ -262,33 +262,35 @@ interface Resolved {
   resolution: Map<string, Resolution>;
 }
 
+type Folds = (standing: readonly Dismiss[]) => Fold;
+
 // Folds without what a set of standing dismisses takes out, each resolved once
 // however often the loop asks; every unreadable op one holds goes in `paused`.
 function foldsWithout(
   input: FoldInput,
   items: readonly Item[],
   paused: Set<Item>
-): (standing: readonly Dismiss[]) => Fold {
+): Folds {
   const grants = adminGrants(items);
   const seen = new Map<string, Resolved>();
   return (standing) => {
     const effect = effective(standing);
     const named = new Set(effect.map((d) => d.target));
-    for (const i of items)
-      if (i.body === 'unknown' && !named.has(i)) paused.add(i);
     const key = items.flatMap((i, n) => (named.has(i) ? [n] : [])).join(',');
     const resolved = (): Resolved => {
       const known = seen.get(key);
       if (known !== undefined) return known;
       const ctx = contextOf(input, items, named);
+      for (const i of ctx.items) if (i.body === 'unknown') paused.add(i);
       const fold = { ctx, ...resolve(ctx) };
       seen.set(key, fold);
       return fold;
     };
-    // With no op left that could make the publisher an admin, it cannot pass.
+    // Without an rv 1 op here that could make its publisher an admin, it fails.
+    const granted = (d: Dismiss): boolean =>
+      (grants.get(d.item.op.replica) ?? []).some((g) => !named.has(g));
     const allows = (d: Dismiss): boolean =>
-      (grants.get(d.item.op.replica) ?? []).some((g) => !named.has(g)) &&
-      mayDismiss(resolved().ev, d);
+      granted(d) && mayDismiss(resolved().ev, d);
     return { effect, resolved, allows };
   };
 }
@@ -297,28 +299,34 @@ function foldsWithout(
 // and admissions and promotions naming it as one.
 function adminGrants(items: readonly Item[]): Map<string, Item[]> {
   const out = new Map<string, Item[]>();
-  const add = (replica: string, item: Item): void => {
+  for (const item of items) {
+    const replica = madeAdmin(item);
+    if (replica === null) continue;
     const list = out.get(replica);
     if (list === undefined) out.set(replica, [item]);
     else list.push(item);
-  };
-  for (const item of items) {
-    const { op, body } = item;
-    if (isAction(body, 'found') || isAction(body, 'recover'))
-      add(op.replica, item);
-    else if (
-      (isAction(body, 'admit') || isAction(body, 'role')) &&
-      body.role === 'admin'
-    )
-      add(body.replica, item);
   }
   return out;
 }
 
-// The failing dismisses to drop: those that still fail with the others' targets
-// back, so an invalid one never takes a valid one with it; else they all go.
+// The replica an rv 1 op could make an admin, if any: only these ops ever let
+// a replica dismiss, in every build, so builds agree on who may.
+function madeAdmin({ op, body }: Item): string | null {
+  if (isAction(body, 'found') || isAction(body, 'recover')) return op.replica;
+  if (
+    isAction(body, 'admit') &&
+    body.role === 'admin' &&
+    body.observer !== true
+  )
+    return body.replica;
+  if (isAction(body, 'role') && body.role === 'admin') return body.replica;
+  return null;
+}
+
+// The failing dismisses to drop: those that still fail with the other failing
+// ones' targets back, else all of them.
 function hopeless(
-  folds: (standing: readonly Dismiss[]) => Fold,
+  folds: Folds,
   standing: readonly Dismiss[],
   failing: readonly Dismiss[]
 ): readonly Dismiss[] {
@@ -450,12 +458,18 @@ function resolve(ctx: Context): {
 }
 
 // Every dismiss, and the op it names when it may drop one. One naming an op
-// this daemon does not hold names nothing, for now. Only a dismiss's publisher
-// may undo it, so no one else can bring back an op an admin dismissed.
+// this daemon lacks names nothing, for now; one no admin could send is refused.
 function dismissesOf(input: FoldInput, items: readonly Item[]): Dismiss[] {
   const id = (op: { replica: string; seq: number; hash: string }) =>
     `${op.replica}\n${op.seq}\n${op.hash}`;
   const byId = new Map(items.map((i) => [id(i.op), i]));
+  const found = foundingOf(input, items);
+  // Who may dismiss, worked out on the first dismiss that names an op.
+  let admins: ReadonlySet<string> | null = null;
+  const eligible = (replica: string): boolean => {
+    admins ??= mayBeAdmins(input, items, found);
+    return admins.has(replica);
+  };
   const out: Dismiss[] = [];
   for (const item of items) {
     if (!isAction(item.body, 'dismiss')) continue;
@@ -464,21 +478,58 @@ function dismissesOf(input: FoldInput, items: readonly Item[]): Dismiss[] {
       out.push({ item, target: null, refused });
     };
     if (target === null) none(null);
-    else if (
-      target.op.replica === input.founder.replica &&
-      target.op.seq === input.founder.seq
-    )
+    else if (target === found.item)
       none('the founding cannot be dismissed; ignored');
-    else if (
-      isAction(target.body, 'dismiss') &&
-      target.op.replica !== item.op.replica
-    )
+    else if (!eligible(item.op.replica))
       none(
-        `only ${target.op.replica} may undo its dismiss at seq ${target.op.seq}; ignored`
+        `${item.op.replica} may not dismiss ${target.op.replica}'s roster op at seq ${target.op.seq}; ignored`
       );
     else out.push({ item, target, refused: null });
   }
   return out;
+}
+
+// The replicas an rv 1 op could make an admin: the founder, a recover proven by
+// a code one of them set, and whom they admit or promote as admins.
+function mayBeAdmins(
+  input: FoldInput,
+  items: readonly Item[],
+  found: Founding
+): Set<string> {
+  const admins = new Set([found.op.replica]);
+  const codes = [found.body.recoveryPub];
+  const teamId = found.op.hash.slice(0, 32);
+  // How many of `codes` each recover's proof was already checked against.
+  const tried = new Map<Item, number>();
+  const proves = (item: Item, proof: string): boolean => {
+    const key = input.keys.get(item.op.replica);
+    if (key === undefined) return false;
+    const signed = `${TAG.recovery}\n${teamId}\n${item.op.replica}\n${key.signPub}`;
+    const from = tried.get(item) ?? 0;
+    tried.set(item, codes.length);
+    return codes.slice(from).some((pub) => verifyText(pub, signed, proof));
+  };
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const item of items) {
+      const { op, body } = item;
+      if (isAction(body, 'recovery-key')) {
+        if (!admins.has(op.replica) || codes.includes(body.pub)) continue;
+        codes.push(body.pub);
+        grew = true;
+        continue;
+      }
+      const made = madeAdmin(item);
+      if (made === null || admins.has(made)) continue;
+      const granted = isAction(body, 'recover')
+        ? proves(item, body.proof)
+        : admins.has(op.replica);
+      if (!granted) continue;
+      admins.add(made);
+      grew = true;
+    }
+  }
+  return admins;
 }
 
 // An admin may dismiss its own roster ops and those of any replica it outranks
@@ -532,6 +583,26 @@ export function isCovered(view: RosterView, replica: string): boolean {
   return m.observer || view.covered.has(m.handle);
 }
 
+interface Founding {
+  item: Item;
+  op: RosterOpRef;
+  body: Action<'found'>;
+}
+
+// The pinned founding op, which no dismiss takes out of a fold.
+function foundingOf(input: FoldInput, items: readonly Item[]): Founding {
+  const item = items.find(
+    (i) =>
+      i.op.replica === input.founder.replica && i.op.seq === input.founder.seq
+  );
+  if (item === undefined || !isAction(item.body, 'found')) {
+    throw new Error(
+      `the founding op ${input.founder.replica}:${input.founder.seq} is not among the roster ops`
+    );
+  }
+  return { item, op: item.op, body: item.body };
+}
+
 // The ops to fold are `all` but the `dismissed`; a replica's first roster op is
 // its first in `all`, so dismissing it never makes a later op the first.
 function contextOf(
@@ -540,15 +611,7 @@ function contextOf(
   dismissed: ReadonlySet<Item | null>
 ): Context {
   const items = all.filter((i) => !dismissed.has(i));
-  const found = items.find(
-    (i) =>
-      i.op.replica === input.founder.replica && i.op.seq === input.founder.seq
-  );
-  if (found === undefined || !isAction(found.body, 'found')) {
-    throw new Error(
-      `the founding op ${input.founder.replica}:${input.founder.seq} is not among the roster ops`
-    );
-  }
+  const found = foundingOf(input, items);
   const firstSeq = new Map<string, number>();
   for (const { op } of all)
     firstSeq.set(
@@ -1294,7 +1357,7 @@ function notesOf(
     unknown ??= { ...positionOf(op), hash: op.hash };
     const named = `${op.replica}'s roster op at seq ${op.seq} (${op.hash})`;
     // A dismissed op still pauses when judging an invalid dismiss needed a fold
-    // that held it; another admin's dismiss of it lifts the pause.
+    // that held it; dismissing that dismiss lifts the pause.
     const by = [
       ...new Set(
         effect.filter((d) => d.target?.op === op).map((d) => d.item.op.replica)
@@ -1305,7 +1368,7 @@ function notesOf(
       message:
         by.length === 0
           ? `${NEWER_ROSTER}, or an admin can dismiss ${named}`
-          : `${NEWER_ROSTER}, or an admin other than ${by.join(', ')} can dismiss ${named} again`,
+          : `${NEWER_ROSTER}; ${by.join(', ')} dismissed ${named}, but judging an invalid dismiss read it, and an admin can dismiss that dismiss`,
     });
   }
   for (const d of dismisses) {

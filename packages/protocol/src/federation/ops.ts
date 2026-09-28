@@ -194,6 +194,7 @@ export type RosterBody = { rv: 1 } & (
   | { action: 'recovery-key'; pub: string } // a new recovery code replaces the last
   | { action: 'transport'; kind: 'git' | 'relay'; url?: string }
   // Drops the named roster op from every build's fold, as if never published.
+  // Every build ignores one from a replica no rv 1 found, recover or admin grant names.
   | { action: 'dismiss'; replica: string; seq: number; hash: string }
 );
 

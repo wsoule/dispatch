@@ -157,6 +157,20 @@ const B_PROMOTES = op(B, 2, 200, { action: 'role', replica: D, role: 'admin' });
 // The revoked B's junk, which the founder dismisses.
 const B_JUNK = op(B, 2, 300, { action: 'teleport' });
 const JUNK_DISMISSED = dismiss(A, 4, 400, B_JUNK);
+// C dismisses its admission of D, and the founder undoes that dismiss.
+const ADMIT_D = admit(C, 2, 200, D);
+const C_DISMISSES_D = dismiss(C, 3, 300, ADMIT_D);
+// The once-admin B names C's dismiss of B's junk.
+const C_JUNK_DISMISSED = dismiss(C, 2, 400, B_JUNK);
+const B_UNDOES = dismiss(B, 3, 410, C_JUNK_DISMISSED);
+const ONCE_ADMIN = [
+  admit(A, 2, 100, C, 'admin'),
+  admit(A, 3, 110, B, 'admin'),
+  revoke(A, 4, 200, B, 1),
+  B_JUNK,
+  C_JUNK_DISMISSED,
+  B_UNDOES,
+];
 
 const ATTEST = [
   { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },
@@ -491,7 +505,7 @@ export const SCENARIOS: readonly RosterScenario[] = [
     dismiss(C, 2, 300, B_PROMOTES),
     dismiss(A2, 2, 310, ADMIT_C),
   ]),
-  // Only A may undo its dismiss; the revoked B and the pending C may not.
+  // The revoked B and the pending C, which no admin made one, may not undo A's.
   scenario('dismiss-of-dismiss-refused', [
     admit(A, 2, 100, B),
     revoke(A, 3, 200, B, 1),
@@ -499,6 +513,32 @@ export const SCENARIOS: readonly RosterScenario[] = [
     JUNK_DISMISSED,
     dismiss(B, 3, 410, JUNK_DISMISSED),
     dismiss(C, 2, 440, JUNK_DISMISSED),
+  ]),
+  // The founder handed admin to C; the revoked B, the member D and the pending
+  // B2 each name C's admission, which pauses nothing.
+  scenario('dismiss-by-outsiders', [
+    ADMIT_C,
+    admit(A, 3, 110, B),
+    admit(A, 4, 120, D),
+    revoke(A, 5, 130, B, 1),
+    demote(A, 6, 140, A, 5),
+    B_JUNK,
+    C_JUNK_DISMISSED,
+    dismiss(B, 3, 410, ADMIT_C),
+    dismiss(D, 2, 420, ADMIT_C),
+    dismiss(B2, 2, 430, ADMIT_C),
+  ]),
+  scenario('dismiss-undoes-dismiss', [
+    admit(A, 2, 100, C, 'admin'),
+    ADMIT_D,
+    C_DISMISSES_D,
+    dismiss(A, 3, 400, C_DISMISSES_D),
+  ]),
+  // Judging B's dismiss reads the junk, which pauses until C dismisses B's.
+  scenario('dismiss-by-once-admin', ONCE_ADMIN),
+  scenario('dismiss-by-once-admin-dismissed', [
+    ...ONCE_ADMIN,
+    dismiss(C, 3, 420, B_UNDOES),
   ]),
   scenario('dismiss-outranked', [
     admit(A, 2, 100, C, 'admin'),

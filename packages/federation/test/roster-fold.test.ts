@@ -697,32 +697,121 @@ describe('foldRoster', () => {
     });
   });
 
-  it('pauses on an op read while judging an invalid dismiss until another admin dismisses it again', () => {
+  it('gives a dismiss from a replica no admin ever made one no effect, the pause included', () => {
+    // The founder hands admin to C and steps down; C dismissed the revoked B's junk.
     const admitC = admit(A, 2, 100, C, 'admin');
     const junk = op(B, 2, 300, { action: 'teleport' });
     const base = [
       admitC,
       admit(A, 3, 110, B),
-      revoke(A, 4, 200, B, 1),
+      admit(A, 4, 120, D),
+      revoke(A, 5, 130, B, 1),
+      demote(A, 6, 140, A, 5),
       junk,
       dismiss(C, 2, 400, junk),
     ];
-    expect(fold(base).unknown).toBeNull();
-    // Judging B's dismiss needs a fold without C's, which holds the junk.
-    const hostile = dismiss(B, 3, 410, admitC);
-    const v = fold([...base, hostile]);
-    expect(v.unknown).toEqual(pausedAt(junk));
-    expect(v.dismissed.map((d) => d.by)).toEqual([C]);
-    expect(v.problems).toContainEqual({
-      subject: `op:${B}:2`,
-      message: `a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue, or an admin other than ${C} can dismiss ${B}'s roster op at seq 2 (${junk.hash}) again`,
+    const expected = fold(base);
+    expect(expected.unknown).toBeNull();
+    expect(roles(expected)).toEqual({
+      [A]: 'member',
+      [C]: 'admin',
+      [D]: 'member',
     });
-    expect(
-      fold([...base, hostile, dismiss(A, 5, 500, junk)]).unknown
-    ).toBeNull();
+    // The revoked B, the member D, and the pending B2, alone or after a recover
+    // whose proof fails, each name C's admission.
+    const cases = [
+      { before: [], hostile: dismiss(B, 3, 410, admitC) },
+      { before: [], hostile: dismiss(D, 2, 420, admitC) },
+      { before: [], hostile: dismiss(B2, 2, 430, admitC) },
+      {
+        before: [
+          op(B2, 2, 430, { action: 'recover', proof: recoveryProof(C) }),
+        ],
+        hostile: dismiss(B2, 3, 440, admitC),
+      },
+    ];
+    for (const { before, hostile } of cases) {
+      const v = fold([...base, ...before, hostile]);
+      expect(v.unknown).toBeNull();
+      expect(rosterOf(v)).toEqual(rosterOf(expected));
+      expect(v.problems).toContainEqual({
+        subject: `op:${hostile.replica}:${hostile.seq}`,
+        message: `${hostile.replica} may not dismiss ${A}'s roster op at seq 2; ignored`,
+      });
+    }
   });
 
-  it("refuses a dismiss of another replica's dismiss, so no one else brings a dismissed op back", () => {
+  it("keeps a recovered admin's dismiss when a revoked replica names the recover", () => {
+    const junk = op(B, 2, 300, { action: 'teleport' });
+    const recover = op(A2, 2, 400, {
+      action: 'recover',
+      proof: recoveryProof(A2),
+    });
+    const base = [
+      admit(A, 2, 100, B),
+      revoke(A, 3, 200, B, 1),
+      junk,
+      recover,
+      dismiss(A2, 3, 500, junk),
+    ];
+    const expected = fold(base);
+    expect(expected.unknown).toBeNull();
+    expect(expected.members.get(A2)?.recovered).toBe(true);
+    const v = fold([...base, dismiss(B, 3, 510, recover)]);
+    expect(v.unknown).toBeNull();
+    expect(rosterOf(v)).toEqual(rosterOf(expected));
+  });
+
+  it("pauses on an op a once-admin's invalid dismiss brings back, until an admin dismisses that dismiss", () => {
+    const junk = op(B, 2, 300, { action: 'teleport' });
+    const byC = dismiss(C, 2, 400, junk);
+    const base = [
+      admit(A, 2, 100, C, 'admin'),
+      admit(A, 3, 110, B, 'admin'),
+      revoke(A, 4, 200, B, 1),
+      junk,
+      byC,
+    ];
+    expect(fold(base).unknown).toBeNull();
+    // Judging the revoked B's dismiss of C's needs the fold it leaves, which holds the junk.
+    const hostile = dismiss(B, 3, 410, byC);
+    const v = fold([...base, hostile]);
+    expect(v.unknown).toEqual(pausedAt(junk));
+    expect(v.dismissed).toEqual([
+      { replica: B, seq: 2, hash: junk.hash, by: C },
+    ]);
+    expect(v.problems).toContainEqual({
+      subject: `op:${B}:2`,
+      message: `a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue; ${C} dismissed ${B}'s roster op at seq 2 (${junk.hash}), but judging an invalid dismiss read it, and an admin can dismiss that dismiss`,
+    });
+    expect(v.problems).toContainEqual({
+      subject: `op:${B}:3`,
+      message: `${B} may not dismiss ${C}'s roster op at seq 2; ignored`,
+    });
+    const lifted = fold([...base, hostile, dismiss(C, 3, 420, hostile)]);
+    expect(lifted.unknown).toBeNull();
+    expect(lifted.dismissed.map((d) => d.hash)).toEqual([
+      junk.hash,
+      hostile.hash,
+    ]);
+  });
+
+  it('lets an admin undo a dismiss it outranks, alike in a build that cannot read that dismiss', () => {
+    const admitD = admit(C, 2, 200, D);
+    const byC = dismiss(C, 3, 300, admitD);
+    const byA = dismiss(A, 3, 400, byC);
+    const base = [admit(A, 2, 100, C, 'admin'), admitD];
+    const newer = fold([...base, byC, byA]);
+    expect(newer.members.has(D)).toBe(true);
+    expect(newer.dismissed).toEqual([
+      { replica: C, seq: 3, hash: byC.hash, by: A },
+    ]);
+    const older = fold([...base, unreadable(byC), byA]);
+    expect(older.unknown).toBeNull();
+    expect(rosterOf(older)).toEqual(rosterOf(newer));
+  });
+
+  it("ignores a dismiss of an admin's dismiss from a replica no admin made one", () => {
     const junk = op(B, 2, 300, { action: 'teleport' });
     const byA = dismiss(A, 4, 400, junk);
     const base = [admit(A, 2, 100, B), revoke(A, 3, 200, B, 1), junk, byA];
@@ -736,7 +825,7 @@ describe('foldRoster', () => {
       ]);
       expect(v.problems).toContainEqual({
         subject: `op:${hostile.replica}:${hostile.seq}`,
-        message: `only ${A} may undo its dismiss at seq 4; ignored`,
+        message: `${hostile.replica} may not dismiss ${A}'s roster op at seq 4; ignored`,
       });
     }
   });

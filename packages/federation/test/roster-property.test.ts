@@ -77,9 +77,6 @@ function agrees(input: FoldInput, hidden: ReadonlySet<string>): boolean {
   return true;
 }
 
-// Every build that folds rosters reads an rv 1 dismiss, so none is ever hidden.
-const hideable = (o: RosterOpRef): boolean => o.body.action !== 'dismiss';
-
 const REPLICAS = [
   'ada-0000000a',
   'bob-0000000b',
@@ -171,8 +168,9 @@ function randomBody(
   };
 }
 
-// A random roster of 6 to 22 ops after the founding, some backdated.
-function randomRoster(rand: () => number): FoldInput {
+// A random roster of 6 to 22 ops after the founding, some backdated;
+// `dismisses` is an extra share of ops that each dismiss an earlier op.
+function randomRoster(rand: () => number, dismisses = 0): FoldInput {
   const found = op(REPLICAS[0], 1, 0, {
     action: 'found',
     name: 'acme',
@@ -190,7 +188,20 @@ function randomRoster(rand: () => number): FoldInput {
     seqs.set(by, seq);
     t += Math.floor(rand() * 20);
     const ms = rand() < 0.15 ? Math.floor(rand() * t) : t;
-    ops.push(op(by, seq, ms, randomBody(rand, by, teamId, ops)));
+    const named =
+      dismisses > 0 && rand() < dismisses
+        ? ops[Math.floor(rand() * ops.length)]
+        : undefined;
+    const body =
+      named === undefined
+        ? randomBody(rand, by, teamId, ops)
+        : {
+            action: 'dismiss',
+            replica: named.replica,
+            seq: named.seq,
+            hash: named.hash,
+          };
+    ops.push(op(by, seq, ms, body));
   }
   // The founder dismisses a few ops, so hiding them need not pause.
   for (let n = Math.floor(rand() * 4); n > 0; n--) {
@@ -219,7 +230,7 @@ function randomRoster(rand: () => number): FoldInput {
 describe('an older build that cannot read some ops pauses or agrees with a newer one', () => {
   for (const scenario of SCENARIOS) {
     it(scenario.name, () => {
-      for (const o of scenario.input.ops.slice(1).filter(hideable))
+      for (const o of scenario.input.ops.slice(1))
         agrees(scenario.input, new Set([o.hash]));
     });
   }
@@ -229,7 +240,7 @@ describe('an older build that cannot read some ops pauses or agrees with a newer
     for (let seed = 1; seed <= 600; seed++) {
       const rand = mulberry32(seed);
       const input = randomRoster(rand);
-      const rest = input.ops.slice(1).filter(hideable);
+      const rest = input.ops.slice(1);
       const founding = input.ops[0]?.hash;
       const named = input.ops
         .flatMap((o) =>
@@ -277,29 +288,35 @@ describe('a dismiss from a replica that is never an admin', () => {
     return [[], [admitted], [admitted, revoked]][seed % 3] ?? [];
   }
 
-  it('changes no roster on random rosters, whatever op it names', () => {
+  it('changes nothing on random rosters, the pause included, whatever op it names', () => {
     for (let seed = 1; seed <= 1200; seed++) {
       const rand = mulberry32(seed);
-      const roster = randomRoster(rand);
+      const roster = randomRoster(rand, seed % 2 === 0 ? 0.3 : 0);
+      // The ops dismisses name are unreadable, so a dismiss can lift a pause.
+      const named = new Set(
+        roster.ops.flatMap((o) => ('hash' in o.body ? [o.body.hash] : []))
+      );
+      const ops = roster.ops.map((o, i) =>
+        i > 0 && named.has(o.hash) ? unreadable(o) : o
+      );
       const input = {
         ...roster,
-        ops: [...roster.ops, ...outsiderOps(seed)],
+        ops: [...ops, ...outsiderOps(seed)],
         keys: withOutsider,
       };
       const rest = roster.ops.slice(1);
-      const named = rest[Math.floor(rand() * rest.length)];
-      if (named === undefined) continue;
+      const target = rest[Math.floor(rand() * rest.length)];
+      if (target === undefined) continue;
       const dismiss = op(OUTSIDER, 2, 50 + Math.floor(rand() * 400), {
         action: 'dismiss',
-        replica: named.replica,
-        seq: named.seq,
-        hash: named.hash,
+        replica: target.replica,
+        seq: target.seq,
+        hash: target.hash,
       });
-      const none = new Set<string>();
       expect({
         seed,
-        roster: rosterOf({ ...input, ops: [...input.ops, dismiss] }, none),
-      }).toEqual({ seed, roster: rosterOf(input, none) });
+        view: normalize(foldRoster({ ...input, ops: [...input.ops, dismiss] })),
+      }).toEqual({ seed, view: normalize(foldRoster(input)) });
     }
   }, 60_000);
 });
