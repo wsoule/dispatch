@@ -253,8 +253,9 @@ function readBounded(path: string, n: number): Uint8Array | null {
   }
 }
 
-// Walks the export directory without following links; every refusal is recorded, never thrown.
-function scanExport(dir: string): Scan {
+// Walks a Claude memory directory without following links, reading each file
+// at most 64 KiB; every refusal is recorded, never thrown.
+export function readMemoryTree(dir: string): Scan {
   const scan: Scan = {
     missing: false,
     files: [],
@@ -681,7 +682,7 @@ export class ClaudeExportManager {
     state: LineageState
   ): Promise<IngestSummary> {
     const { shared, engine } = this.deps;
-    const scan = scanExport(this.dirOf(target.name));
+    const scan = readMemoryTree(this.dirOf(target.name));
     const run: ScanRun = {
       target,
       state,

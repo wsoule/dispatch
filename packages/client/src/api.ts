@@ -871,6 +871,21 @@ export interface LedgerImportReport {
   at: string;
 }
 
+/** Mirrors ClaudeImportReport in packages/server/src/memory/claudeImport.ts. */
+export interface ClaudeImportReport {
+  state: 'complete' | 'failed' | 'unconfirmed';
+  /** The directory read, or null when nothing was. */
+  source: string | null;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  duplicates: number;
+  tombstoned: number;
+  problems: string[];
+  /** Where the notes may be, when none were found. */
+  candidates: string[];
+}
+
 export interface MemoryHealth {
   available: boolean;
   /** Why memory.db would not open, when it did not. */
@@ -885,6 +900,12 @@ export interface MemoryHealth {
   personal: { available: boolean; reason: string | null } | null;
   /** The caller's pinned entries alone exceed the index budget. */
   pinnedOverflow: boolean;
+  /** The owner's Claude-notes import; null for anyone but the daemon's own human. */
+  claudeImport: {
+    state: 'complete' | 'failed' | 'unconfirmed' | 'running' | null;
+    source: string | null;
+    candidates: string[];
+  } | null;
 }
 
 /** `proposed` waits on a decision; `active` or `retired` took effect. */
@@ -3187,6 +3208,13 @@ export interface ApiClient {
   importLedger(opts?: {
     dryRun?: boolean;
   }): Promise<{ report: LedgerImportReport; text: string }>;
+  /** The daemon's own human only: re-runs the import of their Claude notes;
+   *  `from` (absolute) or `none` answers an unconfirmed one. */
+  importClaude(opts?: {
+    from?: string;
+    none?: boolean;
+    dryRun?: boolean;
+  }): Promise<{ report: ClaudeImportReport }>;
   /** A save to shared memory by anyone but a deciding human is a proposal.
    *  A retry with the same `opts.idempotencyKey` replays the first result. */
   saveMemory(
@@ -4006,6 +4034,16 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       request(
         target,
         `/api/memory/import/ledger${opts.dryRun === true ? '?dryRun=1' : ''}`,
+        { method: 'POST' }
+      ),
+    importClaude: (opts = {}) =>
+      request(
+        target,
+        `/api/memory/import/claude${queryString({
+          from: opts.from,
+          none: opts.none === true ? true : undefined,
+          dryRun: opts.dryRun === true ? true : undefined,
+        })}`,
         { method: 'POST' }
       ),
     saveMemory: (input, opts) =>

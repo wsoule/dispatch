@@ -1,7 +1,9 @@
 import type { Command } from 'commander';
+import { resolve } from 'node:path';
 
 import type {
   ApiClient,
+  ClaudeImportReport,
   MemoryEntry,
   MemoryProposal,
   MemorySaveResult,
@@ -31,6 +33,21 @@ function saveLine(result: MemorySaveResult): string {
   if (result.status === 'proposed')
     return `proposed as ${result.proposal}, waiting for a human in Needs you`;
   return `${result.status === 'retired' ? 'retired' : 'saved'} ${result.handle}`;
+}
+
+// What an import of the owner's Claude notes did; an unconfirmed one lists
+// where the notes may be and how to answer.
+function claudeImportLines(r: ClaudeImportReport, dryRun: boolean): string[] {
+  const from = r.source === null ? '' : ` from ${r.source}`;
+  const counts = `imported ${r.imported} · updated ${r.updated} · unchanged ${r.unchanged} · duplicates ${r.duplicates} · tombstoned ${r.tombstoned}`;
+  const lines = [`${dryRun ? 'dry run, ' : ''}${r.state}${from}: ${counts}`];
+  for (const p of r.problems) lines.push(`problem: ${p}`);
+  if (r.state !== 'unconfirmed') return lines;
+  for (const c of r.candidates) lines.push(`candidate: ${c}`);
+  lines.push(
+    'answer with `dispatch memory import-claude --from <dir>` or `--none`'
+  );
+  return lines;
 }
 
 // Confirms every agent-trust entry from `origin`, a page at a time; an entry
@@ -278,6 +295,45 @@ export function registerMemoryCommands(
         ctx.log(
           `run \`dispatch memory link ${started.code}\` in the other project before ${started.expiresAt}`
         );
+      }
+    );
+
+  memory
+    .command('import-claude')
+    .description(
+      "Import your Claude Code notes for this project as personal memory (the daemon's own human only)"
+    )
+    .option('--from <dir>', 'import from this directory under your home')
+    .option('--none', 'record that you have no Claude notes for this project')
+    .option('--dry-run', 'report without writing')
+    .option('--json')
+    .option('--token <token>', 'the daemon app token (or DISPATCH_APP_TOKEN)')
+    .action(
+      async (opts: {
+        from?: string;
+        none?: boolean;
+        dryRun?: boolean;
+        json?: boolean;
+        token?: string;
+      }) => {
+        if (opts.from !== undefined && opts.none === true)
+          throw new CliError('give --from or --none, not both');
+        const api = await client(opts, 'import-claude');
+        const dryRun = opts.dryRun === true;
+        const { report } = await api.importClaude({
+          ...(opts.from === undefined
+            ? {}
+            : { from: resolve(ctx.cwd, opts.from) }),
+          none: opts.none === true,
+          dryRun,
+        });
+        if (opts.json === true) ctx.log(JSON.stringify(report, null, 2));
+        else
+          for (const line of claudeImportLines(report, dryRun)) ctx.log(line);
+        if (report.state === 'failed')
+          throw new CliError(
+            `Claude notes import failed: ${report.problems.join('; ')}`
+          );
       }
     );
 

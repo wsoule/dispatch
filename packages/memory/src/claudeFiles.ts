@@ -194,10 +194,12 @@ function cutBody(body: string): { body: string; truncated: boolean } {
 }
 
 // Title and body as ingest reads them: frontmatter is informational, the
-// provenance line and untrustedBlock's escapes are removed.
+// provenance line and untrustedBlock's escapes are removed. A MEMORY.md link's
+// text titles the file before Claude's `name`, a filename slug.
 export function parseMemoryFile(
   text: string,
-  fileName: string
+  fileName: string,
+  opts: { linkText?: string } = {}
 ): ParsedMemoryFile {
   const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
   let front: Record<string, unknown> = {};
@@ -235,6 +237,7 @@ export function parseMemoryFile(
   const title = cutUtf8(
     untrustedInline(
       nonEmpty(front.description) ??
+        nonEmpty(opts.linkText) ??
         nonEmpty(front.name) ??
         firstLine ??
         fileName.replace(/\.md$/, '')

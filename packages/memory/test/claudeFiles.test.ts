@@ -81,6 +81,24 @@ describe('topic files', () => {
     ).toBe('2026-09-26T08:00:00.000Z');
   });
 
+  it('takes a MEMORY.md link text as the title before Claude’s name slug, never before a description', () => {
+    expect(
+      parseMemoryFile('---\nname: terse\n---\nbody', 'terse.md', {
+        linkText: 'Terse comments',
+      }).title
+    ).toBe('Terse comments');
+    expect(
+      parseMemoryFile(
+        '---\nname: terse\ndescription: Keep comments short\n---\nbody',
+        'terse.md',
+        { linkText: 'Terse comments' }
+      ).title
+    ).toBe('Keep comments short');
+    expect(
+      parseMemoryFile('---\nname: terse\n---\nbody', 'terse.md').title
+    ).toBe('terse');
+  });
+
   it('read Claude’s own files: nested metadata.type first, then top-level type, then the first line', () => {
     expect(
       parseMemoryFile(

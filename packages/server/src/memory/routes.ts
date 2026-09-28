@@ -481,6 +481,40 @@ export function importLedgerRoute(ctx: ApiContext, url: URL): Response {
   return jsonResponse({ report, text: renderImportReport(report) });
 }
 
+// POST /api/memory/import/claude[?dryRun=1][&from=<abs dir> | &none=1] — the
+// daemon's own human only, since it reads that human's Claude notes.
+export async function importClaudeRoute(
+  ctx: ApiContext,
+  url: URL
+): Promise<Response> {
+  const principal = requireMemoryPrincipal(ctx);
+  if (
+    !(
+      principal.kind === 'human' &&
+      principal.address === ctx.actorContext.humanRef
+    )
+  )
+    throw new MemoryError(
+      'forbidden',
+      "only the daemon's own human imports its Claude notes",
+      'principal'
+    );
+  const from = url.searchParams.get('from');
+  const none = flag(url, 'none') === true;
+  if (from !== null && none)
+    throw new MemoryError(
+      'invalid',
+      'from: give from or none, not both',
+      'from'
+    );
+  const report = await ctx.memory.importClaude({
+    ...(from === null ? {} : { from }),
+    none,
+    dryRun: flag(url, 'dryRun') === true,
+  });
+  return jsonResponse({ report });
+}
+
 // POST /api/memory — 201 with the result; a repeated Idempotency-Key gets
 // the first result back with 200.
 export async function saveMemoryRoute(

@@ -1302,6 +1302,9 @@ async function bootServer(
   // Before messaging.recover() too: a replayed wake or dispatch starts runs,
   // and a run with no memory mode would load the host's native Claude memory.
   orchestrator.setMemoryPort(memory);
+  // Before any run starts: the owner's runs stay in native mode until their
+  // Claude notes are imported, once per project.
+  await memory.importClaudeOnce();
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the

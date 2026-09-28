@@ -103,6 +103,26 @@ describe('memory bindings', () => {
     }
   });
 
+  it('posts the Claude-notes import with only the options given', async () => {
+    const stub = stubFetch({ report: {} });
+    try {
+      const client = createApiClient(BASE);
+      await client.importClaude();
+      await client.importClaude({ from: '/home/wyat/notes', dryRun: true });
+      await client.importClaude({ none: true });
+      expect(stub.calls.map((c) => [c.url, c.init?.method ?? 'GET'])).toEqual([
+        [`${BASE}/api/memory/import/claude`, 'POST'],
+        [
+          `${BASE}/api/memory/import/claude?${new URLSearchParams({ from: '/home/wyat/notes', dryRun: '1' }).toString()}`,
+          'POST',
+        ],
+        [`${BASE}/api/memory/import/claude?none=1`, 'POST'],
+      ]);
+    } finally {
+      stub.restore();
+    }
+  });
+
   it('asks the ledger for its receipts alone with class=audit', async () => {
     const stub = stubFetch([]);
     try {

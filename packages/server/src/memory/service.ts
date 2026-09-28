@@ -44,6 +44,14 @@ import {
   runLineageTarget,
 } from './claudeExport.js';
 import {
+  claudeImportEnv,
+  findClaudeMemorySource,
+  importClaudeNotes,
+  lastClaudeImport,
+  mainCheckoutOf,
+} from './claudeImport.js';
+import type { ClaudeImportReport } from './claudeImport.js';
+import {
   chooseMemoryMode,
   EXPORT_PROMPT_LINE,
   resolveManagedSettings,
@@ -79,6 +87,12 @@ interface MemoryHealth {
   personal: { available: boolean; reason: string | null } | null;
   // The caller's pinned entries alone exceed indexTokens.
   pinnedOverflow: boolean;
+  // The owner's Claude-notes import; null for anyone but the daemon's own human.
+  claudeImport: {
+    state: ImportState | null;
+    source: string | null;
+    candidates: string[];
+  } | null;
 }
 
 export interface MemoryService extends MemoryPromptPort {
@@ -103,6 +117,14 @@ export interface MemoryService extends MemoryPromptPort {
   ingestOverseer(conversationId: string): Promise<void>;
   /** Re-runs the export preflight that prepare reads from its cache. */
   refreshPreflight(): Promise<PreflightResult>;
+  /** Boot: imports the owner's Claude notes unless this project already recorded an import. */
+  importClaudeOnce(): Promise<ClaudeImportReport | null>;
+  /** Re-runs the owner's Claude-notes import; `from` or `none` answers an unconfirmed one. */
+  importClaude(opts?: {
+    from?: string;
+    none?: boolean;
+    dryRun?: boolean;
+  }): Promise<ClaudeImportReport>;
   /** Boot, after messaging.recover(): raises unsent gates, closes strays, sweeps Claude exports, then starts decay. */
   recover(): Promise<{ raised: number; closed: number }>;
   health(principal: Principal | null): MemoryHealth;
@@ -623,6 +645,68 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     }
   };
 
+  const projectKey = projectKeyOf(deps.rootDir);
+  // The real home and Claude settings, unless DISPATCH_HOME redirects them.
+  const claudeEnv = claudeImportEnv();
+  // Imports run one at a time; `claudeWrites` counts those queued that write.
+  let claudeQueue: Promise<unknown> = Promise.resolve();
+  let claudeWrites = 0;
+  const importClaude: MemoryService['importClaude'] = (opts = {}) => {
+    const writes = opts.dryRun !== true;
+    if (writes) claudeWrites += 1;
+    const step = async (): Promise<ClaudeImportReport> => {
+      try {
+        // The owner is always identity `self`.
+        const store = stores.personal('self');
+        const source =
+          opts.none === true
+            ? { none: true as const }
+            : opts.from !== undefined
+              ? { explicit: opts.from }
+              : await findClaudeMemorySource({
+                  rootDir: deps.rootDir,
+                  mainCheckout: mainCheckoutOf(deps.rootDir),
+                  env: claudeEnv.env,
+                  home: claudeEnv.home,
+                  resolveEffective: claudeEnv.resolveEffective,
+                });
+        const report = await importClaudeNotes({
+          source,
+          store,
+          projectKey,
+          ownerRef: deps.ownerRef,
+          ids,
+          now: now(),
+          home: claudeEnv.home,
+          dryRun: opts.dryRun,
+        });
+        if (writes && report.imported + report.updated > 0)
+          host.changed({ scope: 'personal' });
+        return report;
+      } finally {
+        if (writes) claudeWrites -= 1;
+      }
+    };
+    const next = claudeQueue.then(step, step);
+    claudeQueue = next.catch(() => undefined);
+    return next;
+  };
+  // Settings → Memory's view of the owner's import: its state, source and candidates.
+  const claudeImportHealth = (): MemoryHealth['claudeImport'] => {
+    const store = openPersonal('self');
+    const last = store === null ? null : lastClaudeImport(store, projectKey);
+    return {
+      state:
+        claudeWrites > 0
+          ? 'running'
+          : store === null
+            ? null
+            : importState(store, projectKey),
+      source: last?.source ?? null,
+      candidates: last?.candidates ?? [],
+    };
+  };
+
   const unsubscribe = deps.events.subscribe((event) => {
     if (event.type === 'ledger.changed') importQuietly();
   });
@@ -677,6 +761,21 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       await claudeExport.ingest({ name, principal: overseer, taskId: null });
     },
     refreshPreflight,
+    importClaudeOnce: async () => {
+      const store = openPersonal('self');
+      if (store === null || importState(store, projectKey) !== null)
+        return null;
+      try {
+        return await importClaude();
+      } catch (err) {
+        console.error(
+          "dispatchd: importing the owner's Claude notes failed",
+          err
+        );
+        return null;
+      }
+    },
+    importClaude,
     recover: async () => {
       try {
         if (engine === null || shared === null) return { raised: 0, closed: 0 };
@@ -703,6 +802,12 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       lastDecayAt: shared?.meta('last_decay_at') ?? null,
       personal: principal === null ? null : personalHealth(principal),
       pinnedOverflow: principal === null ? false : pinnedOverflow(principal),
+      claudeImport:
+        principal !== null &&
+        principal.kind === 'human' &&
+        principal.address === deps.ownerRef
+          ? claudeImportHealth()
+          : null,
     }),
     close: () => {
       clearInterval(exportSweep);

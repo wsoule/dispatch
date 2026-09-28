@@ -157,6 +157,7 @@ import {
   deleteMemoryRoute,
   getMemory,
   getProposalRoute,
+  importClaudeRoute,
   importLedgerRoute,
   ingestProblemsRoute,
   listMemory,
@@ -4416,6 +4417,7 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['memory'] },
   { method: 'GET', segments: ['memory', '*'] },
   { method: 'POST', segments: ['memory', 'import', 'ledger'] },
+  { method: 'POST', segments: ['memory', 'import', 'claude'] },
   { method: 'POST', segments: ['memory'] },
   { method: 'POST', segments: ['memory', 'link'] },
   { method: 'POST', segments: ['memory', 'link', '*'] },
@@ -5574,6 +5576,9 @@ export async function handleApi(
       if (segments.length === 3 && method === 'POST') {
         if (segments[1] === 'import' && segments[2] === 'ledger') {
           return importLedgerRoute(ctx, url);
+        }
+        if (segments[1] === 'import' && segments[2] === 'claude') {
+          return await importClaudeRoute(ctx, url);
         }
         if (segments[1] === 'link') {
           return await completeLinkRoute(req, ctx, segments[2]);

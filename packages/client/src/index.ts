@@ -29,6 +29,7 @@ export type {
   BranchEntryStatus,
   ChannelSummary,
   ChatMessage,
+  ClaudeImportReport,
   ConfirmResult,
   ConnectEventsOptions,
   CreateFindingInput,
