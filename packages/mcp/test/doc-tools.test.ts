@@ -36,6 +36,8 @@ class FakeDocsDaemon {
   conflictNext = false;
   // One canned answer for the next PUT …/body, in place of a plain save.
   nextPut: { status: number; body: unknown } | null = null;
+  // One canned answer for the next create, in place of the default team doc.
+  nextPost: { status: number; body: unknown } | null = null;
   task: TaskDoc | null = null; // a real task file's shape, so task_get's output schema holds
   private server: ReturnType<typeof Bun.serve> | undefined;
 
@@ -230,6 +232,15 @@ class FakeDocsDaemon {
             return Response.json({
               links: req.method === 'DELETE' ? [] : this.view(d).links,
             });
+        }
+        if (
+          url.pathname === '/api/docs' &&
+          req.method === 'POST' &&
+          this.nextPost !== null
+        ) {
+          const { status, body: reply } = this.nextPost;
+          this.nextPost = null;
+          return Response.json(reply, { status });
         }
         if (url.pathname === '/api/docs' && req.method === 'POST')
           return Response.json(
@@ -505,6 +516,30 @@ describe('doc_save', () => {
     });
     expect(r.isError).toBe(true);
     expect(r.text).toBe('archived; restore it first (field: doc)');
+  });
+
+  it('names a personal doc it created ~slug, and never bases a team save on it', async () => {
+    daemon.add({ id: 'doc-2', handle: 'notes', title: 'Notes', body: 'a\n' });
+    daemon.nextPost = {
+      status: 201,
+      body: {
+        doc: { id: 'doc-p', handle: 'notes', scope: 'personal' },
+        handle: 'notes',
+        rev: { id: 'rev-p3', n: 3, hash: 'personal-hash' },
+        status: 'saved',
+      },
+    };
+    const c = await client();
+    const r = await call(c, 'doc_save', {
+      title: 'Notes',
+      body: 'private\n',
+      scope: 'personal',
+    });
+    expect(r.text).toContain('saved doc ~notes rev 3 (rev-p3)');
+    await call(c, 'doc_save', { doc: 'notes', body: 'b\n', baseRev: 3 });
+    const put = daemon.calls.find((x) => x.method === 'PUT');
+    expect(put?.path).toBe('/api/docs/notes/body');
+    expect(put?.body).toEqual({ baseRev: 3, body: 'b\n' });
   });
 
   it('retries a create whose response was lost with the same Idempotency-Key', async () => {
