@@ -433,6 +433,43 @@ stopped. `--from` takes a remote's name, a URL or a path:
     dispatch receipts restore --from origin
     dispatch receipts restore --from git@github.com:acme/dispatch-audit.git
 
+## Memory
+
+Runs keep what they learn as memory: short entries, a one-line title and a body
+of up to 8 KiB, that later runs are shown. Every dispatch prompt carries a
+budgeted index of the entries that reach the task (1,000 tokens by default,
+`memory.indexTokens`), best-ranked first, and the agent reads a body only when
+it needs one. The four `memory_*` tools below are how a run reaches it:
+`memory_search` and `memory_read` look things up, `memory_save` adds an entry,
+and `memory_forget` retires one. `dispatch memory` and **Settings → Memory** do
+the same for a person.
+
+An entry has one of three scopes:
+
+- **Personal** belongs to one human and follows them across projects unless it
+  is saved for one project only. A run writes its operator's personal memory
+  directly, and the Inbox can undo it. Nobody else sees it.
+- **Project** holds this project's lessons: its constraints, hazards and
+  decisions. What the ledger used to carry lives here now; the ledger keeps the
+  audit receipts.
+- **Team** reaches every teammate's runs.
+
+An agent's write to project or team memory is a proposal, never an entry, until
+someone decides on it. It raises the `memory` gate: a card in **Threads → Needs
+you** with the proposed entry, where it would reach and who asked, to approve or
+reject. At autonomy rung 4 (`policy.rung: 4`) policy approves it instead and
+records a receipt.
+
+For Claude runs, `memory.claudeAutoMemory: export` (the default) points Claude
+Code's own auto memory at a directory Dispatch writes for the run, with the
+index as its `MEMORY.md`; what the agent saves there comes back as memory
+writes. `off` disables Claude Code's auto memory and keeps the index in the
+prompt. The daemon imports your existing Claude Code notes for the project into
+your personal memory once, before its first run; `dispatch memory import-claude`
+runs it again. Memory lives in `memory.db` beside the project's run state, and
+personal memory under `~/.dispatch/memory`. See
+`docs/specs/2026-09-25-memory-design.md`.
+
 ## MCP server
 
 `dispatch init` registers a stdio MCP server in the project's `.mcp.json`

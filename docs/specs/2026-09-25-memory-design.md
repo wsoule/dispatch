@@ -1,8 +1,12 @@
 # Memory
 
-Status: **v0 built** (store, index, ledger import, read tools); v1 and v2 not
-yet. Designed 2026-09-25 and revised the same day after a feasibility critique
-and a consistency critique. Second of the six sub-projects in
+Status: **v1 built** (v0's store, index, ledger import and read tools, plus
+personal memory, the `memory` gate, the ledger cutover, decay, the Claude export
+and the one-time import); v2 not yet. The live Agent SDK probe passed on
+2026-09-28 on Claude Code 2.1.207 (bundled) and 2.1.283 (PATH), so
+`memory.claudeAutoMemory` defaults to `export` and 2.1.207 is the probed
+version. Designed 2026-09-25 and revised the same day after a feasibility
+critique and a consistency critique. Second of the six sub-projects in
 `docs/specs/2026-09-23-messaging-core-design.md` (:21-30), "MIT model, FSL
 host", depending on messaging (#1). Binding inputs: the owner decisions in
 `.agents/ignore/specs/2026-09-25-subprojects-2-3-decisions.md` and the option
@@ -101,7 +105,7 @@ This spec does two things:
 │  memory gate through the DeliveryEngine      │
 │  prompt index, Claude export/ingest          │
 │  ledger import, decay scheduler              │
-│  team/boardSync memory ops  (ELv2, v2)       │
+│  team memory ops: federation F3 (ELv2, v2)   │
 └───────────────────────▲──────────────────────┘
                         │ HTTP
    packages/mcp (runs + external agents), desktop app, CLI
@@ -608,16 +612,16 @@ as policy is (`policyEngine.ts:50-66`), so an edit takes effect without a
 restart. An invalid value falls back to its default, and Settings → Memory shows
 a warning naming the key.
 
-| Key                     | Default                             | Allowed                                 |
-| ----------------------- | ----------------------------------- | --------------------------------------- |
-| `indexTokens`           | 1000                                | integer 200–4000                        |
-| `personalWritesPerHour` | 50                                  | integer 1–500                           |
-| `proposalsPerHour`      | 10                                  | integer 1–100                           |
-| `maxOpenProposals`      | 50                                  | integer 1–500                           |
-| `proposalTtlDays`       | 14                                  | integer 1–90                            |
-| `staleAfterDays`        | 60                                  | integer 7–3650                          |
-| `retireAfterDays`       | 180                                 | integer, above `staleAfterDays`, ≤ 3650 |
-| `claudeAutoMemory`      | `export` once the live probe passes | `export` or `off`                       |
+| Key                     | Default                          | Allowed                                 |
+| ----------------------- | -------------------------------- | --------------------------------------- |
+| `indexTokens`           | 1000                             | integer 200–4000                        |
+| `personalWritesPerHour` | 50                               | integer 1–500                           |
+| `proposalsPerHour`      | 10                               | integer 1–100                           |
+| `maxOpenProposals`      | 50                               | integer 1–500                           |
+| `proposalTtlDays`       | 14                               | integer 1–90                            |
+| `staleAfterDays`        | 60                               | integer 7–3650                          |
+| `retireAfterDays`       | 180                              | integer, above `staleAfterDays`, ≤ 3650 |
+| `claudeAutoMemory`      | `export` (the live probe passed) | `export` or `off`                       |
 
 ## Recall
 
@@ -1802,15 +1806,16 @@ aliases, and require no live runs, as messaging's cutover did.
 
 ## Licensing
 
-| Code                                                                                                                                                                           | License |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| `packages/memory` (`@dispatch/memory`): types, validation, limits, `SqliteMemoryStore`, `MemoryEngine`, `MemoryHost`, rank/render, decay, Claude file format and manifest diff | MIT     |
-| `@dispatch/protocol`: the `memory` `GateData` variant; the `LINE_BREAK` export                                                                                                 | MIT     |
-| `@dispatch/core`: `PolicyGate` `memory`, the rung-4 label, `MemoryConfig`, the `memory` `NotificationKind`, `DISPATCH_MCP_TOOLS`                                               | MIT     |
-| `@dispatch/mcp`, `@dispatch/client`, `@dispatch/cli`: tools, API, commands                                                                                                     | MIT     |
-| `packages/server/src/memory/`: host, routes, identities, gate handler, ledger import, Claude export/ingest/import, decay scheduler, prompt wiring; desktop                     | FSL     |
-| `packages/server/src/receipts/exporter.ts`: the v2 export of team entries                                                                                                      | FSL     |
-| `packages/server/src/team/boardSync/`: `memory` ops                                                                                                                            | ELv2    |
+| Code                                                                                                                                                                           | License                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `packages/memory` (`@dispatch/memory`): types, validation, limits, `SqliteMemoryStore`, `MemoryEngine`, `MemoryHost`, rank/render, decay, Claude file format and manifest diff | MIT                                                   |
+| `@dispatch/protocol`: the `memory` `GateData` variant; the `LINE_BREAK` export                                                                                                 | MIT                                                   |
+| `@dispatch/core`: `PolicyGate` `memory`, the rung-4 label, `MemoryConfig`, the `memory` `NotificationKind`, `DISPATCH_MCP_TOOLS`                                               | MIT                                                   |
+| `@dispatch/mcp`, `@dispatch/client`, `@dispatch/cli`: tools, API, commands                                                                                                     | MIT                                                   |
+| `packages/server/src/memory/`: host, routes, identities, gate handler, ledger import, Claude export/ingest/import, decay scheduler, prompt wiring; desktop                     | FSL                                                   |
+| `packages/server/src/receipts/exporter.ts`: the v2 export of team entries                                                                                                      | FSL                                                   |
+| The team-memory op's wire format (`MemoryBody` in `@dispatch/protocol/federation`; published in the protocol spec's App. F)                                                    | MIT in the package; Apache-2.0 as published in App. F |
+| Team replication machinery: `packages/server/src/team/federation/memory.ts` (federation F3, in place of `team/boardSync/` `memory` ops)                                        | ELv2                                                  |
 
 The new package, per AGENTS.md:
 
@@ -2031,6 +2036,18 @@ interface MemoryOp {
   If the probe fails, `memory.claudeAutoMemory` ships defaulting to `off` until
   it passes (Open question 5).
 
+  **Outcome (2026-09-28).** Every case passed on the bundled 2.1.207 and the
+  PATH 2.1.283, so 2.1.207 is `PROBED_CLAUDE_CODE_VERSION` and boot records it
+  as `meta.claude-probe-passed`. Both list the export's `MEMORY.md` with the
+  `memoryFiles` type `AutoMem` (2.1.283 also knows `AutoMemPinned`); the load
+  check counts any type outside CLAUDE.md's four as native. Writes landed with
+  no `canUseTool` call under `default`, `acceptEdits`, `auto` and
+  `bypassPermissions`. 2.1.207 has no `blockReadsOutsideWorkingDirectories`
+  setting; on 2.1.283 it refused a read outside while the topic file stayed
+  readable. The recall supervisor that emits `memory_recall` is behind a server
+  flag and did not run by default; forced on, both CLIs recalled from the export
+  directory only.
+
 - **Manual, before v0 lands:** ledger parity on this repo and on the audio-book
   project.
 
@@ -2128,6 +2145,7 @@ Each stage ships on its own.
    - **Recommendation:** accept as a temporary fallback, with the owner's
      confirmation, and turn export on in a point release once a probe passes on
      the CLI versions users run.
+   - **Resolved:** the probe passed (Testing), so v1 ships with `export` on.
 6. **Teammates' personal memory is per project until they link (clarifies
    decision Q2).**
    - Handles are per roster, so a teammate on a shared host cannot be recognised
