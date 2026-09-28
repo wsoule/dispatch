@@ -6,7 +6,9 @@ import type { LaterPairs, RosterOpRef, RosterView } from '../src/roster.js';
 import {
   admit,
   demote,
+  dismiss,
   handleOf,
+  junk,
   keysFor,
   LEVELS,
   op,
@@ -32,8 +34,9 @@ const MEMBERS = ['bo-0000000b', 'cy-0000000c', 'di-0000000d'] as const;
 const O = 'obs-0000000f';
 const P = 'pat-00000011'; // pinned but admitted only when a run admits it
 const Q = 'quin-00000013'; // a recovering machine
+const M = 'mo-0000000e'; // a hosts cut's target
 const ALL = [A, ...MEMBERS, O, P, Q] as const;
-const t = team(A, keysFor(ALL));
+const t = team(A, keysFor([...ALL, M]));
 const OTHER = ed25519FromSeed(Buffer.alloc(32, 9));
 
 // An op body's (action, rv), or null when it has none.
@@ -240,6 +243,96 @@ function shuffled<T>(rand: () => number, xs: readonly T[]): T[] {
   return out;
 }
 
+// Hinge chains: an admin admits a replica as a member and the founder then as
+// an admin, or the reverse, so cutting one admit flips rights further down.
+// Removals cut just below those admits, among later hosts cuts and dismisses
+// of them; each replica's clock rises with its seq.
+function hingeOps(rand: () => number): RosterOpRef[] {
+  const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
+  const seqs = new Map<string, number>();
+  const hinges = new Map<string, number[]>();
+  let now = 5;
+  const ops: RosterOpRef[] = [];
+  const mk = (by: string, body: Record<string, unknown>): RosterOpRef => {
+    const seq = (seqs.get(by) ?? 1) + 1;
+    seqs.set(by, seq);
+    now += 1 + Math.floor(rand() * 6);
+    const o = op(by, seq, now, body);
+    ops.push(o);
+    return o;
+  };
+  const admitOf = (
+    r: string,
+    role: string,
+    extra: Record<string, unknown> = {}
+  ) => ({
+    action: 'admit',
+    replica: r,
+    handle: handleOf(r),
+    role,
+    fingerprint: `FP-${r}`,
+    ...extra,
+  });
+  const joined: string[] = [A];
+  for (const r of shuffled(rand, [...MEMBERS, P])) {
+    const by = pick(joined);
+    if (by !== A && rand() < 0.75) {
+      const first = rand() < 0.7 ? 'member' : 'admin';
+      const hinge = mk(by, admitOf(r, first));
+      hinges.set(by, [...(hinges.get(by) ?? []), hinge.seq]);
+      mk(A, admitOf(r, first === 'member' ? 'admin' : 'member'));
+    } else mk(A, admitOf(r, rand() < 0.8 ? 'admin' : 'member'));
+    joined.push(r);
+  }
+  mk(A, admitOf(M, 'member', { hosts: ['mx', 'my'] }));
+  const n = 5 + Math.floor(rand() * 9);
+  for (let k = 0; k < n; k++) {
+    const by = pick(joined);
+    const x = rand();
+    const odd = ops.filter(outsideKnown);
+    if (x < 0.3)
+      mk(by, {
+        rv: 2,
+        action: 'hosts',
+        replica: M,
+        hosts: rand() < 0.5 ? [] : ['mx'],
+        afterSeq: 1,
+        afterHash: `h-${M}-1`,
+      });
+    else if (x < 0.36 && odd.length > 0) {
+      const o = pick(odd);
+      mk(pick([...joined, Q]), {
+        action: 'dismiss',
+        replica: o.replica,
+        seq: o.seq,
+        hash: o.hash,
+      });
+    } else {
+      const target = pick(joined.filter((r) => r !== by));
+      const below = hinges.get(target) ?? [];
+      const afterSeq =
+        below.length > 0 && rand() < 0.7
+          ? pick(below) - 1
+          : Math.max(1, (seqs.get(target) ?? 1) + Math.floor(rand() * 3) - 1);
+      const cut = {
+        replica: target,
+        afterSeq,
+        afterHash: `h-${target}-${afterSeq}`,
+      };
+      if (rand() < 0.65) mk(by, { action: 'revoke', reason: 'r', ...cut });
+      else mk(by, { action: 'role', role: 'member', ...cut });
+    }
+  }
+  return ops;
+}
+
+// Each seed's op set: every fourth a fight among admins, every fourth a hinge
+// chain, the rest mixed.
+function opsFor(seed: number, rand: () => number): RosterOpRef[] {
+  if (seed % 4 === 2) return hingeOps(rand);
+  return randomOps(rand, seed % 4 === 0);
+}
+
 // A view as every level must agree on it: less problems, the pause, and the
 // removals only a level that reads them decides.
 function agreed(v: RosterView, known: ReadonlySet<string>): unknown {
@@ -249,6 +342,21 @@ function agreed(v: RosterView, known: ReadonlySet<string>): unknown {
     resolution: r.resolution.filter(([hash]) => known.has(hash)),
   };
 }
+
+// A dismiss that names no op, in the dismiss's own place.
+const blank = (o: RosterOpRef): RosterOpRef =>
+  o.body.action === 'dismiss'
+    ? {
+        ...o,
+        body: {
+          rv: 1,
+          action: 'dismiss',
+          replica: o.replica,
+          seq: 0,
+          hash: 'f'.repeat(64),
+        },
+      }
+    : o;
 
 const SEEDS = 700;
 
@@ -273,7 +381,7 @@ describe('the level table', () => {
   it('folds the same roster in any order and with duplicates, at every level', () => {
     for (let seed = 1; seed <= SEEDS; seed++) {
       const rand = mulberry32(seed);
-      const ops = randomOps(rand, seed % 4 === 0);
+      const ops = opsFor(seed, rand);
       for (const level of [1, 2, 3]) {
         const v = t.at(level, ops);
         const again = t.at(level, [
@@ -293,7 +401,7 @@ describe('the level table', () => {
   it('has a lower level either pause or fold what the highest level folds', () => {
     let compared = 0;
     for (let seed = 1; seed <= SEEDS; seed++) {
-      const ops = randomOps(mulberry32(seed), seed % 4 === 0);
+      const ops = opsFor(seed, mulberry32(seed));
       const known = new Set(
         [t.found, ...ops].filter((o) => !outsideKnown(o)).map((o) => o.hash)
       );
@@ -322,7 +430,7 @@ describe('the level table', () => {
     let removed = 0;
     for (let seed = 1; seed <= SEEDS; seed++) {
       const rand = mulberry32(seed);
-      const ops = randomOps(rand, seed % 4 === 0);
+      const ops = opsFor(seed, rand);
       const outside = ops.filter(outsideKnown);
       const drops = [
         outside,
@@ -354,21 +462,8 @@ describe('the level table', () => {
   }, 120_000);
 
   it('lets no dismiss, valid or not, change a right, rank or revocation, at any level', () => {
-    const blank = (o: RosterOpRef): RosterOpRef =>
-      o.body.action === 'dismiss'
-        ? {
-            ...o,
-            body: {
-              rv: 1,
-              action: 'dismiss',
-              replica: o.replica,
-              seq: 0,
-              hash: 'f'.repeat(64),
-            },
-          }
-        : o;
     for (let seed = 1; seed <= SEEDS; seed++) {
-      const ops = randomOps(mulberry32(seed), seed % 4 === 0);
+      const ops = opsFor(seed, mulberry32(seed));
       for (const level of [1, 2, 3])
         expect({
           seed,
@@ -384,7 +479,7 @@ describe('the level table', () => {
 
   it('never pauses the relay, which folds what a daemon at its level folds', () => {
     for (let seed = 1; seed <= SEEDS; seed += 3) {
-      const ops = randomOps(mulberry32(seed), seed % 4 === 0);
+      const ops = opsFor(seed, mulberry32(seed));
       for (const level of [1, 2, 3]) {
         const relay = t.at(level, ops, { relay: true });
         expect({ seed, level, paused: relay.unknown }).toEqual({
@@ -399,8 +494,6 @@ describe('the level table', () => {
 
   it('voids a later removal whose publisher holds no right at it in the final roster', () => {
     const [B, C, D] = MEMBERS;
-    const M = 'mo-0000000e';
-    const withM = team(A, keysFor([...ALL, M]));
     // A hosts cut at rv 2, which levels 2 and 3 read as a removal.
     const cutBy = (by: string, seq: number, ms: number) =>
       op(by, seq, ms, {
@@ -460,9 +553,9 @@ describe('the level table', () => {
     ];
     for (const { later, rest, hosts } of cases) {
       const ops = [...rest, later];
-      const known = new Set([withM.found, ...rest].map((o) => o.hash));
+      const known = new Set([t.found, ...rest].map((o) => o.hash));
       for (const level of [1, 2, 3]) {
-        const v = withM.at(level, ops);
+        const v = t.at(level, ops);
         expect({
           later: later.hash,
           level,
@@ -476,7 +569,7 @@ describe('the level table', () => {
           paused: null,
           hosts,
           cut: 'void',
-          v: agreed(withM.at(level, rest), known),
+          v: agreed(t.at(level, rest), known),
         });
       }
     }
@@ -611,5 +704,117 @@ describe('the level table', () => {
         );
       }
     }
+  });
+});
+
+describe('a later removal among a revocation fight', () => {
+  const [B, C, D] = MEMBERS;
+  // A hosts cut at rv 2: levels 2 and 3 read it as a removal, level 1 cannot.
+  const laterCut = (by: string, seq: number, ms: number) =>
+    op(by, seq, ms, {
+      rv: 2,
+      action: 'hosts',
+      replica: M,
+      hosts: [],
+      afterSeq: 1,
+      afterHash: `h-${M}-1`,
+    });
+  // Hinge admits: an admin a fight can cut admits a replica as a member, then
+  // the founder admits it as an admin, which counts once the first is cut.
+  // P's later cut shares P's rank with P's revoke of D, and comes first.
+  const PICK = {
+    later: laterCut(P, 4, 20),
+    rest: [
+      admit(A, 3, 8, B, 'admin'),
+      admit(A, 5, 12, P, 'admin'),
+      admit(B, 3, 14, C),
+      admit(A, 7, 16, C, 'admin'),
+      admit(P, 3, 17, D),
+      admit(A, 9, 19, D, 'admin'),
+      revoke(P, 5, 27, D, 1),
+      revoke(A, 13, 30, B, 2),
+      revoke(B, 5, 36, A, 13),
+      revoke(D, 3, 41, A, 12),
+      revoke(C, 5, 47, P, 2),
+      revoke(A, 15, 59, B, 2),
+    ],
+  };
+  // B's revoke of the founder rests on B's revoke of D, which alone makes B
+  // an admin; D's later cut stands while D does.
+  const PASS = {
+    later: laterCut(D, 2, 18),
+    rest: [
+      admit(A, 3, 6, P, 'admin'),
+      admit(A, 5, 9, C, 'admin'),
+      admit(C, 3, 15, D),
+      admit(A, 7, 17, D, 'admin'),
+      admit(D, 3, 22, B),
+      admit(A, 9, 25, B, 'admin'),
+      revoke(B, 3, 29, A, 12),
+      demote(P, 3, 32, C, 2),
+      revoke(A, 13, 39, D, 2),
+      revoke(B, 7, 51, D, 2),
+    ],
+  };
+  const SPLITS = [PICK, PASS];
+
+  it('folds one standing at every level, which the level-1 relay shares', () => {
+    for (const { later, rest } of SPLITS) {
+      const ops = [...rest, later];
+      const relay = standingOf(t.at(1, ops, { relay: true }));
+      for (const level of [1, 2, 3])
+        expect({
+          later: later.hash,
+          level,
+          s: standingOf(t.at(level, ops)),
+        }).toEqual({ later: later.hash, level, s: relay });
+    }
+  });
+
+  it('changes no standing when the later cut is dropped', () => {
+    for (const { later, rest } of SPLITS)
+      for (const level of [1, 2, 3])
+        expect({
+          later: later.hash,
+          level,
+          s: standingOf(t.at(level, [...rest, later])),
+        }).toEqual({
+          later: later.hash,
+          level,
+          s: standingOf(t.at(level, rest)),
+        });
+  });
+
+  it('judges a dismiss the same at every level, however another names the cut', () => {
+    const U = junk(B, 7, 65);
+    const set = [...PICK.rest, PICK.later, U, dismiss(C, 7, 70, U)];
+    // A pending replica's dismiss of the later cut is invalid but eligible.
+    const steered = [...set, dismiss(Q, 2, 75, PICK.later)];
+    const at1 = t.at(1, set);
+    expect(at1.dismissed).toEqual([
+      { replica: B, seq: 7, hash: U.hash, by: C },
+    ]);
+    for (const ops of [set, steered])
+      for (const level of [1, 2, 3]) {
+        const v = t.at(level, ops);
+        expect({ level, paused: v.unknown, dismissed: v.dismissed }).toEqual({
+          level,
+          paused: at1.unknown,
+          dismissed: at1.dismissed,
+        });
+      }
+  });
+
+  it('lets no dismiss of the later cut move the fight', () => {
+    const named = dismiss(A, 17, 70, PICK.later);
+    const ops = [...PICK.rest, PICK.later];
+    for (const level of [1, 2, 3])
+      expect({
+        level,
+        s: standingOf(t.at(level, [...ops, named])),
+      }).toEqual({
+        level,
+        s: standingOf(t.at(level, [...ops, blank(named)])),
+      });
   });
 });

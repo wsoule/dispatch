@@ -284,9 +284,10 @@ function resolve(ctx: Context): {
   ev: Evaluation;
   resolution: Map<string, Resolution>;
 } {
-  const removals = ctx.items
-    .map(removalOf)
-    .filter((r): r is Removal => r !== null);
+  const all = ctx.items.map(removalOf).filter((r): r is Removal => r !== null);
+  // Only Known(1) removals fight; a later one never changes a right, so it
+  // takes no pick and buys no pass, and is decided on the result.
+  const removals = all.filter((r) => !r.later);
   const status = new Map<Removal, Status>(removals.map((r) => [r, 'open']));
   const having = (...wanted: Status[]) =>
     removals.filter((r) => wanted.includes(status.get(r) ?? 'void'));
@@ -362,17 +363,18 @@ function resolve(ctx: Context): {
     status.set(worst, 'void');
     ev = evaluate(ctx, having('accepted'));
   }
-  // A later removal stands only where its publisher stands in the result, as
-  // a build that cannot read it holds it inert everywhere else.
-  for (const r of having('accepted'))
-    if (r.later && !standsAt(ev, r.op)) status.set(r, 'void');
+  // A later removal stands only where its publisher holds its right in the
+  // result, where a build that cannot read it pauses rather than differs.
+  for (const r of all)
+    if (r.later) status.set(r, hadRight(ctx, ev, r) ? 'accepted' : 'void');
   const resolution = new Map<string, Resolution>();
-  for (const r of removals)
+  for (const r of all)
     resolution.set(
       r.op.hash,
       status.get(r) === 'accepted' ? 'accepted' : 'void'
     );
-  return { ev: evaluate(ctx, having('accepted'), true), resolution };
+  const accepted = all.filter((r) => status.get(r) === 'accepted');
+  return { ev: evaluate(ctx, accepted, true), resolution };
 }
 
 // Every Known(1) dismiss, and the op it names among the deduplicated ops.
