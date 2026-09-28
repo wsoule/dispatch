@@ -353,6 +353,17 @@ describe('gateOf', () => {
     expect(gateOf(proposal)?.type).toBe('task-proposal');
     expect(toRunQuestion(proposal)).toBeNull();
   });
+
+  it('reads a doc gate as a gate from any sender, never a plain run question', () => {
+    const docGate = {
+      ...question,
+      choices: ['approve', 'reject'],
+      data: { type: 'doc', doc: 'doc-1', proposal: 'rev-1', runId: 'r-1' },
+    };
+    const gate = gateOf(docGate);
+    expect(gate?.type === 'doc' ? gate.proposal : null).toBe('rev-1');
+    expect(toRunQuestion(docGate)).toBeNull();
+  });
 });
 
 describe('isSystemMarker', () => {

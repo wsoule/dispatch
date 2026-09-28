@@ -795,6 +795,14 @@ export type GateData =
       task: string;
       proposedBy: string;
       message: string;
+    }
+  | {
+      type: 'doc';
+      // A proposed edit to an accepted doc; the text stays in docs.db (system-only gate).
+      doc: string; // doc-<ulid>
+      proposal: string; // rev-<ulid>
+      taskId?: string;
+      runId?: string;
     };
 
 // Structural mirrors of @dispatch/memory's views and the memory routes'
