@@ -51,32 +51,6 @@ const unreadable = (o: RosterOpRef): RosterOpRef => ({
   body: { ...o.body, rv: 2 } as unknown as RosterBody,
 });
 
-// The view without the pause and without the hidden ops' own decisions,
-// which only a build that reads them can report.
-function rosterOf(input: FoldInput, hidden: ReadonlySet<string>): unknown {
-  const v = foldRoster(input);
-  const resolution = new Map(
-    [...v.resolution].filter(([hash]) => !hidden.has(hash))
-  );
-  const { unknown: _paused, ...rest } = normalize({
-    ...v,
-    resolution,
-  }) as Record<string, unknown>;
-  return rest;
-}
-
-// An older build that cannot read `hidden` must pause or reach the newer one's
-// roster; returns whether it reached one to compare.
-function agrees(input: FoldInput, hidden: ReadonlySet<string>): boolean {
-  const older = {
-    ...input,
-    ops: input.ops.map((o) => (hidden.has(o.hash) ? unreadable(o) : o)),
-  };
-  if (foldRoster(older).unknown !== null) return false;
-  expect(rosterOf(older, hidden)).toEqual(rosterOf(input, hidden));
-  return true;
-}
-
 const REPLICAS = [
   'ada-0000000a',
   'bob-0000000b',
@@ -116,8 +90,19 @@ function op(
   };
 }
 
+// An earlier op for a dismiss to name, often one no build reads.
+function pickNamed(
+  rand: () => number,
+  earlier: readonly RosterOpRef[]
+): RosterOpRef {
+  const unread = earlier.filter((o) => (o.body as { rv: unknown }).rv !== 1);
+  const from = unread.length > 0 && rand() < 0.6 ? unread : earlier;
+  return from[Math.floor(rand() * from.length)];
+}
+
 // One random roster op by `by`: an admission, a promotion, a removal of any
-// kind (its own or another's), a recover, an invite or a dismiss.
+// kind (its own or another's), a recover, an invite, an op no build reads or
+// a dismiss.
 function randomBody(
   rand: () => number,
   by: string,
@@ -151,7 +136,7 @@ function randomBody(
       ),
     };
   if (k < 0.84) return { action: 'hosts', replica: target, hosts: [], ...cut };
-  if (k < 0.9)
+  if (k < 0.88)
     return {
       action: 'invite',
       id: `i-${by}-${earlier.length}`,
@@ -159,7 +144,9 @@ function randomBody(
       handle: handleOf(by),
       expires: '2026-10-03T00:00:00.000Z',
     };
-  const named = pick(earlier);
+  if (k < 0.94)
+    return { rv: 2, action: 'role', replica: target, role: 'admin' };
+  const named = pickNamed(rand, earlier);
   return {
     action: 'dismiss',
     replica: named.replica,
@@ -189,9 +176,7 @@ function randomRoster(rand: () => number, dismisses = 0): FoldInput {
     t += Math.floor(rand() * 20);
     const ms = rand() < 0.15 ? Math.floor(rand() * t) : t;
     const named =
-      dismisses > 0 && rand() < dismisses
-        ? ops[Math.floor(rand() * ops.length)]
-        : undefined;
+      dismisses > 0 && rand() < dismisses ? pickNamed(rand, ops) : undefined;
     const body =
       named === undefined
         ? randomBody(rand, by, teamId, ops)
@@ -203,9 +188,9 @@ function randomRoster(rand: () => number, dismisses = 0): FoldInput {
           };
     ops.push(op(by, seq, ms, body));
   }
-  // The founder dismisses a few ops, so hiding them need not pause.
+  // The founder dismisses a few ops.
   for (let n = Math.floor(rand() * 4); n > 0; n--) {
-    const named = ops[1 + Math.floor(rand() * (ops.length - 1))] ?? found;
+    const named = pickNamed(rand, ops.slice(1));
     const seq = (seqs.get(REPLICAS[0]) ?? 1) + 1;
     seqs.set(REPLICAS[0], seq);
     t += Math.floor(rand() * 20);
@@ -226,39 +211,6 @@ function randomRoster(rand: () => number, dismisses = 0): FoldInput {
     licensePublicKey: null,
   };
 }
-
-describe('an older build that cannot read some ops pauses or agrees with a newer one', () => {
-  for (const scenario of SCENARIOS) {
-    it(scenario.name, () => {
-      for (const o of scenario.input.ops.slice(1))
-        agrees(scenario.input, new Set([o.hash]));
-    });
-  }
-
-  it('on random rosters, hiding random ops and the ops dismisses name', () => {
-    let compared = 0;
-    for (let seed = 1; seed <= 600; seed++) {
-      const rand = mulberry32(seed);
-      const input = randomRoster(rand);
-      const rest = input.ops.slice(1);
-      const founding = input.ops[0]?.hash;
-      const named = input.ops
-        .flatMap((o) =>
-          'hash' in o.body && o.body.hash !== founding ? [o.body.hash] : []
-        )
-        .filter((hash) => rest.some((o) => o.hash === hash));
-      const hideSets = [
-        rest.filter(() => rand() < 0.2).map((o) => o.hash),
-        named.filter(() => rand() < 0.7),
-        rest.filter((o) => o.seq > 2 && rand() < 0.5).map((o) => o.hash),
-      ];
-      for (const hidden of hideSets)
-        if (hidden.length > 0 && agrees(input, new Set(hidden))) compared++;
-    }
-    // Enough older folds must not pause for the agreement to be tested.
-    expect(compared).toBeGreaterThan(200);
-  }, 60_000);
-});
 
 describe('a dismiss from a replica that is never an admin', () => {
   const OUTSIDER = 'zed-00000012';
@@ -334,19 +286,8 @@ function ignoredDismisses(input: FoldInput): RosterOpRef[] {
   );
 }
 
-// The roster, less the dismissal of `gone`, which names nothing once it is gone.
-function withoutOp(input: FoldInput, gone: RosterOpRef): unknown {
-  const v = foldRoster(input);
-  const dismissed = v.dismissed.filter((d) => d.hash !== gone.hash);
-  const { unknown: _paused, ...rest } = normalize({
-    ...v,
-    dismissed,
-  }) as Record<string, unknown>;
-  return rest;
-}
-
 describe('a dismiss the fold ignores', () => {
-  it('changes no roster on random rosters dense with dismisses', () => {
+  it('changes no roster and no pause on random rosters dense with dismisses', () => {
     let checked = 0;
     for (let seed = 1; seed <= 1500; seed++) {
       const input = randomRoster(mulberry32(seed), 0.35);
@@ -363,11 +304,11 @@ describe('a dismiss the fold ignores', () => {
           ...input,
           ops: input.ops.map((o) => (o === d ? { ...blank, hlc: d.hlc } : o)),
         };
-        expect({ seed, d: d.hash, roster: withoutOp(without, d) }).toEqual({
+        expect({
           seed,
           d: d.hash,
-          roster: withoutOp(input, d),
-        });
+          roster: normalize(foldRoster(without)),
+        }).toEqual({ seed, d: d.hash, roster: normalize(foldRoster(input)) });
       }
     }
     // Enough ignored dismisses must turn up for the check to mean something.

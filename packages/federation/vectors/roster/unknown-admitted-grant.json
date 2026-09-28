@@ -210,11 +210,6 @@
       "kind": "git"
     },
     "dismissed": [],
-    "unknown": {
-      "hlc": "1790380800200.0000.cy-0000000c",
-      "replica": "cy-0000000c",
-      "seq": 2,
-      "hash": "9d905a894b7c2459def9a26d9a009fc9da328c75140cb9efc14a66f80bcb44f2"
-    }
+    "unknown": null
   }
 }

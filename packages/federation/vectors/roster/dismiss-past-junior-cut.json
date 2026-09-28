@@ -187,12 +187,14 @@
     "transport": {
       "kind": "git"
     },
-    "dismissed": [],
-    "unknown": {
-      "hlc": "1790380800400.0000.cy-0000000c",
-      "replica": "cy-0000000c",
-      "seq": 2,
-      "hash": "1ba25186e964970af37a1f4a62f05914ad1080b0954aca4c9e6cce53eb75bce6"
-    }
+    "dismissed": [
+      {
+        "replica": "cy-0000000c",
+        "seq": 2,
+        "hash": "1ba25186e964970af37a1f4a62f05914ad1080b0954aca4c9e6cce53eb75bce6",
+        "by": "bob-0000000b"
+      }
+    ],
+    "unknown": null
   }
 }

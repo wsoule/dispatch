@@ -37,6 +37,7 @@ export interface RosterVector {
     keys: [string, KeyInfo][];
     now: string;
     licensePublicKey: string | null;
+    relay?: boolean;
   };
   expect: unknown;
 }
@@ -151,15 +152,23 @@ const unreadable = (o: RosterOpRef): RosterOpRef => ({
   body: { ...o.body, rv: 2 } as unknown as RosterBody,
 });
 
-const dismiss = (by: string, seq: number, ms: number, target: RosterOpRef) =>
+const dismiss = (
+  by: string,
+  seq: number,
+  ms: number,
+  target: RosterOpRef,
+  extra: Record<string, unknown> = {}
+) =>
   op(by, seq, ms, {
     action: 'dismiss',
     replica: target.replica,
     seq: target.seq,
     hash: target.hash,
+    ...extra,
   });
 
-// C promotes D, which only a newer build reads; the founder dismisses it.
+// C promotes D; the founder dismisses the promotion, which only counts when
+// no build reads it.
 const PROMOTE = op(C, 2, 200, { action: 'role', replica: D, role: 'admin' });
 const DISMISSED = [
   admit(A, 2, 100, C, 'admin'),
@@ -167,21 +176,25 @@ const DISMISSED = [
   dismiss(A, 4, 500, PROMOTE),
 ];
 const JUNK = op(C, 2, 200, { action: 'teleport' });
+// Two ops at C's seq 2, smaller hash first.
+const TWINS = [1, 2]
+  .map((n) => op(C, 2, 200, { action: 'teleport', n }))
+  .sort((a, b) => (a.hash < b.hash ? -1 : 1)) as [RosterOpRef, RosterOpRef];
 // B promotes D, and C, which outranks B, dismisses the promotion.
 const ADMIT_C = admit(A, 2, 100, C, 'admin');
 const B_PROMOTES = op(B, 2, 200, { action: 'role', replica: D, role: 'admin' });
 // The revoked B's junk, which the founder dismisses.
 const B_JUNK = op(B, 2, 300, { action: 'teleport' });
 const JUNK_DISMISSED = dismiss(A, 4, 400, B_JUNK);
-// B lifts D's demotion, so D may dismiss its admission of B2; OBS, which only
-// the revoked A2 made an admin, names B's admission.
+// B names D's demotion and D its admission of B2; OBS, which only the revoked
+// A2 made an admin, names B's admission. Every build reads all three.
 const ADMIT_B = admit(A, 2, 100, B, 'admin');
 const ADMIT_B2 = admit(D, 2, 300, B2);
 const D_DEMOTED = demote(C, 2, 400, D, 2);
-// C dismisses its admission of D, and the founder undoes that dismiss.
+// C names its admission of D, and the founder names C's dismiss.
 const ADMIT_D = admit(C, 2, 200, D);
 const C_DISMISSES_D = dismiss(C, 3, 300, ADMIT_D);
-// The once-admin B names C's dismiss of B's junk.
+// The once-admin B names C's dismiss of B's junk above its cut.
 const C_JUNK_DISMISSED = dismiss(C, 2, 400, B_JUNK);
 const B_UNDOES = dismiss(B, 3, 410, C_JUNK_DISMISSED);
 const ONCE_ADMIN = [
@@ -192,10 +205,10 @@ const ONCE_ADMIN = [
   C_JUNK_DISMISSED,
   B_UNDOES,
 ];
-// Each loser of a revocation fight dismisses the winner's counter-revocation.
+// Each loser of a revocation fight names the winner's counter-revocation.
 const C_COUNTERS = revoke(C, 2, 310, B, 1);
 const A_COUNTERS = revoke(A, 3, 310, B, 1);
-// B2 recovers with a leaked code, and it and the founder dismiss in turn.
+// B2 recovers with a leaked code, and it and the founder name each other's ops.
 const RECOVERED_FIGHT = [
   recover(B2, 2, 200),
   revoke(B2, 3, 300, A, 1),
@@ -211,17 +224,17 @@ const ATTEST = [
 function scenario(
   name: string,
   ops: RosterOpRef[],
-  nowMs = DAY,
-  found = FOUND
+  opts: { nowMs?: number; found?: RosterOpRef; relay?: boolean } = {}
 ): RosterScenario {
   return {
     name,
     input: {
       founder: { replica: A, seq: 1 },
-      ops: [found, ...ops],
+      ops: [opts.found ?? FOUND, ...ops],
       keys,
-      now: new Date(T0 + nowMs),
+      now: new Date(T0 + (opts.nowMs ?? DAY)),
       licensePublicKey: null,
+      ...(opts.relay === true ? { relay: true } : {}),
     },
   };
 }
@@ -479,6 +492,12 @@ export const SCENARIOS: readonly RosterScenario[] = [
   ]),
   scenario('unknown-action', [op(A, 2, 100, { action: 'teleport' })]),
   scenario('unknown-rv', [admit(A, 2, 100, B, 'member', { rv: 2 })]),
+  // The relay folds what pauses a daemon, and never pauses.
+  scenario('relay-unknown-rv', [admit(A, 2, 100, B, 'member', { rv: 2 })], {
+    relay: true,
+  }),
+  // Pending replicas' unreadable ops are inert, so D's is not its first
+  // roster op and C's cannot decide anything.
   scenario('unknown-at-recover', [
     op(C, 2, 100, { action: 'recover', proof: 'p', rv: 2 }),
     op(D, 2, 100, { action: 'recover', proof: 'p' }),
@@ -490,14 +509,14 @@ export const SCENARIOS: readonly RosterScenario[] = [
     admit(B, 6, 400, C, 'member', { rv: 2 }),
     op(B, 7, 150, { action: 'teleport' }),
   ]),
-  // A newer build admits B2 by its recover, and B2 wins the fight with B.
+  // B2's recover at a later rv is inert, so B revokes its own device B2.
   scenario('unknown-cut-recover', [
     admit(A, 2, 100, B),
     op(B2, 2, 200, { action: 'recover', proof: 'p', rv: 2 }),
     revoke(B, 2, 300, B2, 1),
     revoke(B2, 3, 310, B, 1),
   ]),
-  // A newer build reads C's promotion of D, which wins D the fight with B.
+  // C's promotion of D at a later rv pauses: C is an admin there.
   scenario('unknown-admitted-grant', [
     admit(A, 2, 100, C, 'admin'),
     admit(A, 3, 110, D),
@@ -507,7 +526,8 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(D, 2, 410, B, 1),
   ]),
   scenario('dismiss-unreadable', [...DISMISSED, unreadable(PROMOTE)]),
-  scenario('dismiss-unreadable-newer', [...DISMISSED, PROMOTE]),
+  // Every build reads C's promotion, so the founder's dismiss of it is ignored.
+  scenario('dismiss-known-grant', [...DISMISSED, PROMOTE]),
   scenario('dismiss-revoked-junk', [
     admit(A, 2, 100, B, 'admin'),
     revoke(A, 3, 300, B, 5),
@@ -520,14 +540,15 @@ export const SCENARIOS: readonly RosterScenario[] = [
     JUNK,
     dismiss(D, 2, 300, JUNK),
   ]),
-  // Dismissing A's dismiss of C's junk brings the junk, and the pause, back.
+  // A dismiss is never dismissable, so C's junk stays dismissed.
   scenario('dismiss-a-dismiss', [
     admit(A, 2, 100, C, 'admin'),
     JUNK,
     dismiss(A, 3, 300, JUNK),
     dismiss(A, 4, 310, dismiss(A, 3, 300, JUNK)),
   ]),
-  // A2, a plain member, names C's admission, and C's dismiss still stands.
+  // C names B's promotion of D and the member A2 names C's admission: both
+  // ops are known, so both dismisses are ignored.
   scenario('dismiss-member-veto', [
     ADMIT_C,
     admit(A, 3, 110, A2),
@@ -537,7 +558,7 @@ export const SCENARIOS: readonly RosterScenario[] = [
     dismiss(C, 2, 300, B_PROMOTES),
     dismiss(A2, 2, 310, ADMIT_C),
   ]),
-  // The revoked B and the pending C, which no admin made one, may not undo A's.
+  // The revoked B and the pending C name A's dismiss, which stands.
   scenario('dismiss-of-dismiss-refused', [
     admit(A, 2, 100, B),
     revoke(A, 3, 200, B, 1),
@@ -560,7 +581,7 @@ export const SCENARIOS: readonly RosterScenario[] = [
     dismiss(OBS, 2, 520, ADMIT_B),
   ]),
   // The founder handed admin to C; the revoked B, the member D and the pending
-  // B2 each name C's admission, which pauses nothing.
+  // B2 each name C's admission, which every build reads.
   scenario('dismiss-by-outsiders', [
     ADMIT_C,
     admit(A, 3, 110, B),
@@ -573,13 +594,14 @@ export const SCENARIOS: readonly RosterScenario[] = [
     dismiss(D, 2, 420, ADMIT_C),
     dismiss(B2, 2, 430, ADMIT_C),
   ]),
-  scenario('dismiss-undoes-dismiss', [
+  scenario('dismiss-known-admission', [
     admit(A, 2, 100, C, 'admin'),
     ADMIT_D,
     C_DISMISSES_D,
     dismiss(A, 3, 400, C_DISMISSES_D),
   ]),
-  // Judging B's dismiss reads the junk, which pauses until C dismisses B's.
+  // B's junk is inert above its cut, and C dismisses it; B's naming of C's
+  // dismiss is ignored.
   scenario('dismiss-by-once-admin', ONCE_ADMIN),
   scenario('dismiss-by-once-admin-dismissed', [
     ...ONCE_ADMIN,
@@ -599,14 +621,14 @@ export const SCENARIOS: readonly RosterScenario[] = [
     dismiss(B, 3, 400, A_COUNTERS),
   ]),
   scenario('dismiss-recovered-counter', [...RECOVERED_FIGHT, B2_DISMISSES]),
-  // The last dismiss is B2's, and the founder still wins.
+  // Every dismiss names a known op, and the founder still wins.
   scenario('dismiss-ping-pong', [
     ...RECOVERED_FIGHT,
     B2_DISMISSES,
     A_UNDOES,
     dismiss(B2, 5, 402, A_UNDOES),
   ]),
-  // B dismisses C's promotion of D, which armed D's winning counter-revocation.
+  // B names C's promotion of D, which armed D's winning counter-revocation.
   scenario('dismiss-armed-promotion', [
     admit(A, 2, 100, C, 'admin'),
     admit(A, 3, 110, D),
@@ -616,7 +638,7 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(D, 2, 410, B, 1),
     dismiss(B, 3, 600, PROMOTE),
   ]),
-  // C could still win a fight with B, so B may not dismiss C's later junk.
+  // C's junk is inert above B's accepted cut, and B may dismiss it.
   scenario('dismiss-past-junior-cut', [
     admit(A, 2, 100, C, 'admin'),
     admit(A, 3, 200, B, 'admin'),
@@ -628,6 +650,43 @@ export const SCENARIOS: readonly RosterScenario[] = [
     admit(A, 2, 100, C, 'admin'),
     op(A, 3, 150, { action: 'teleport' }),
     dismiss(C, 2, 400, op(A, 3, 150, { action: 'teleport' })),
+  ]),
+  // The founder may dismiss its own op, which no other admin outranks.
+  scenario('dismiss-own-op', [
+    admit(A, 2, 100, C, 'admin'),
+    op(A, 3, 150, { action: 'teleport' }),
+    dismiss(A, 4, 400, op(A, 3, 150, { action: 'teleport' })),
+  ]),
+  // C ranked before B at its junk, though its re-promotion ranks it after B.
+  scenario('dismiss-rank-at-op', [
+    admit(A, 2, 10, C, 'admin'),
+    admit(A, 3, 20, B, 'admin'),
+    op(C, 5, 30, { action: 'teleport' }),
+    demote(A, 4, 40, C, 5),
+    op(A, 5, 50, { action: 'role', replica: C, role: 'admin' }),
+    dismiss(B, 2, 60, op(C, 5, 30, { action: 'teleport' })),
+  ]),
+  // Deduplication keeps the smaller hash, so a dismiss naming the other twin
+  // names nothing held.
+  scenario('dismiss-dedupe-twin', [
+    admit(A, 2, 100, C, 'admin'),
+    TWINS[0],
+    TWINS[1],
+    dismiss(A, 3, 300, TWINS[1]),
+  ]),
+  // A level field on a dismiss is ignored, whatever its value.
+  scenario('dismiss-stray-level', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 110, D),
+    JUNK,
+    op(D, 2, 200, {
+      action: 'dismiss',
+      replica: 'nobody-00000000',
+      seq: 0,
+      hash: 'x',
+      level: Number.MAX_SAFE_INTEGER,
+    }),
+    dismiss(A, 4, 300, JUNK, { level: 424242 }),
   ]),
   scenario('dismiss-unknown-id', [
     admit(A, 2, 100, C, 'admin'),
@@ -645,13 +704,46 @@ export const SCENARIOS: readonly RosterScenario[] = [
       hash: 'e'.repeat(64),
     }),
   ]),
+  // Unreadable ops whose publishers hold no right there: a pending replica's,
+  // an observer's, a revoked one's above its cut, and a member's positioned
+  // before the founding.
+  scenario('inert-unreadable', [
+    admit(A, 2, 100, OBS, 'member', { observer: true }),
+    admit(A, 3, 110, B),
+    revoke(A, 4, 200, B, 1),
+    admit(A, 5, 210, D),
+    op(C, 2, 150, { action: 'teleport' }),
+    op(OBS, 2, 160, { action: 'teleport' }),
+    op(B, 2, 300, { action: 'teleport' }),
+    op(D, 2, -5000, { action: 'teleport' }),
+  ]),
+  // A revocation below a member's unreadable op lifts its pause.
+  scenario('revoke-lifts-pause', [
+    admit(A, 2, 100, D),
+    op(D, 3, 200, { action: 'teleport' }),
+    revoke(A, 3, 300, D, 2),
+  ]),
+  // Malformed bodies never pause, and a dismiss of one is ignored.
+  scenario('malformed-never-pauses', [
+    admit(A, 2, 100, C, 'admin'),
+    op(C, 2, 200, { rv: '2', action: 'teleport' }),
+    op(C, 3, 210, { action: 7 }),
+    op(C, 4, 220, { action: 'admit', replica: D }),
+    dismiss(A, 3, 300, op(C, 2, 200, { rv: '2', action: 'teleport' })),
+  ]),
+  // Only Known(1) ops count toward a pending replica's first roster op, so
+  // its unreadable op ahead of a recover leaves the recover first.
+  scenario('recover-past-unreadable', [
+    op(B2, 2, 100, { action: 'teleport' }),
+    recover(B2, 3, 150),
+  ]),
   scenario(
     'legacy-close-early',
     [
       admit(A, 2, 100, B),
       op(B, 2, 10 * DAY, { action: 'close-legacy', entries: ATTEST }),
     ],
-    40 * DAY
+    { nowMs: 40 * DAY }
   ),
   scenario(
     'legacy-close-late',
@@ -659,13 +751,10 @@ export const SCENARIOS: readonly RosterScenario[] = [
       admit(A, 2, 100, B),
       op(B, 2, 31 * DAY, { action: 'close-legacy', entries: ATTEST }),
     ],
-    40 * DAY
+    { nowMs: 40 * DAY }
   ),
-  scenario(
-    'legacy-people',
-    [admit(A, 2, 100, B), admit(A, 3, 200, C)],
-    DAY,
-    op(A, 1, 0, {
+  scenario('legacy-people', [admit(A, 2, 100, B), admit(A, 3, 200, C)], {
+    found: op(A, 1, 0, {
       action: 'found',
       name: 'acme',
       legacy: [
@@ -673,8 +762,8 @@ export const SCENARIOS: readonly RosterScenario[] = [
         { replica: C, throughSeq: 2, digest: 'e'.repeat(64) },
       ],
       recoveryPub: RECOVERY_PUB,
-    })
-  ),
+    }),
+  }),
   scenario('legacy-close-admin', [
     op(A, 2, DAY, { action: 'close-legacy', entries: [] }),
     admit(A, 3, 2 * DAY, B),
@@ -727,6 +816,7 @@ export function makeRosterVectors(): RosterVector[] {
       keys: [...input.keys.entries()],
       now: input.now.toISOString(),
       licensePublicKey: input.licensePublicKey,
+      ...(input.relay === true ? { relay: true } : {}),
     },
     expect: normalize(foldRoster(input)),
   }));

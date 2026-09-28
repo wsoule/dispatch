@@ -243,8 +243,9 @@
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
       ["bob-0000000b", "admin", 1, [], false, false],
+      ["bob-0000000f", "member", null, [], false, false],
       ["cy-0000000c", "admin", 2, [], false, false],
-      ["dee-0000000d", "admin", 3, [], false, false]
+      ["dee-0000000d", "member", null, [], false, false]
     ],
     "revoked": [
       [
@@ -263,9 +264,13 @@
       [
         "82f7c50c268d715e114fcaa135aff55b58616e935436af9d87df3b05a5d61cda",
         "accepted"
+      ],
+      [
+        "c9d16c12d747f9bcd17329086797003c0072306e45a007201779e8e99d5ab848",
+        "accepted"
       ]
     ],
-    "pending": ["bob-0000000f", "obs-00000010"],
+    "pending": ["obs-00000010"],
     "invites": [],
     "invitedBy": [],
     "seats": 3,
@@ -275,20 +280,7 @@
     "transport": {
       "kind": "git"
     },
-    "dismissed": [
-      {
-        "replica": "cy-0000000c",
-        "seq": 2,
-        "hash": "c9d16c12d747f9bcd17329086797003c0072306e45a007201779e8e99d5ab848",
-        "by": "bob-0000000b"
-      },
-      {
-        "replica": "dee-0000000d",
-        "seq": 2,
-        "hash": "175efc2e4a7467c0a4fe352b9d74e84d563dafb2a07e8a1c188012681c1228bf",
-        "by": "dee-0000000d"
-      }
-    ],
+    "dismissed": [],
     "unknown": null
   }
 }

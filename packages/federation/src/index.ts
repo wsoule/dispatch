@@ -12,6 +12,7 @@ export type { Position } from './position.js';
 export {
   foldRoster,
   isCovered,
+  KNOWN_ROSTER_PAIRS,
   LEGACY_WINDOW_MS,
   speaksForHandle,
 } from './roster.js';

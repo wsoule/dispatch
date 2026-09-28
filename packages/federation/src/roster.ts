@@ -37,6 +37,8 @@ export interface FoldInput {
   keys: ReadonlyMap<string, KeyInfo>;
   now: Date;
   licensePublicKey: string | null;
+  /** The relay never pauses: it folds the same roster, ops it cannot read left inert. */
+  relay?: boolean;
 }
 
 export interface RosterMember {
@@ -62,7 +64,7 @@ export interface RevokedReplica {
   observer: boolean;
 }
 
-/** An op a valid dismiss dropped before folding, and the admin who dismissed it. */
+/** An op a valid dismiss took out of the fold, and the admin who dismissed it. */
 export interface Dismissal {
   replica: string;
   seq: number;
@@ -70,7 +72,7 @@ export interface Dismissal {
   by: string;
 }
 
-/** The first op this build cannot read, named as a dismiss names it. */
+/** The first op that pauses this build, named as a dismiss names it. */
 export interface Paused extends Position {
   hash: string;
 }
@@ -110,14 +112,25 @@ export interface RosterView {
     closed: Closed | null;
   };
   transport: Transport;
-  /** The ops dismisses took out of the fold, one per effective dismiss. */
+  /** The ops valid dismisses took out of the fold, one per valid dismiss. */
   dismissed: readonly Dismissal[];
   problems: readonly Problem[];
-  /** Set until an upgrade or a dismiss; while set, the caller applies nothing. */
+  /**
+   * Set while the fold keeps an op this build cannot read from a member or
+   * admin at it; the caller then applies nothing. Always null for the relay.
+   */
   unknown: Paused | null;
 }
 
+/**
+ * How a build reads a body whose (action, rv) is outside Known(1): its meaning
+ * as an rv 1 body, or null when this build cannot read it.
+ */
+export type LaterPairs = (body: Readonly<Record<string, unknown>>) => unknown;
+
 type Body = RosterBody | 'unknown' | 'malformed';
+// Level-independent: a well-formed Known(1) op, a pair outside Known(1), or malformed.
+type Kind = 'known' | 'later' | 'malformed';
 type Action<A extends RosterBody['action']> = Extract<
   RosterBody,
   { action: A }
@@ -128,6 +141,8 @@ type Status = 'open' | 'waiting' | Resolution;
 
 interface Item {
   op: RosterOpRef;
+  kind: Kind;
+  /** What this build reads; `unknown` when it cannot. */
   body: Body;
 }
 
@@ -155,22 +170,15 @@ interface Holder {
   recovered: boolean;
 }
 
-// A dismiss and the op it names; target is null when it names none it may drop.
+// A dismiss and the op it names; null when this daemon does not hold one.
 interface Dismiss {
   item: Item;
-  target: Item | null;
-  refused: string | null;
+  named: Item | null;
 }
 
-// What deciding the dismisses leaves for the view.
-interface Settled {
-  dismisses: readonly Dismiss[];
-  /** Dismisses whose publishers may dismiss what they name. */
-  standing: readonly Dismiss[];
-  /** Those of them no effective dismiss names, whose targets left the fold. */
-  effect: readonly Dismiss[];
-  /** Unreadable ops some fold held, so this build cannot vouch for its result. */
-  paused: ReadonlySet<Item>;
+// A dismiss naming an op outside Known(1), which it may take out of the fold.
+interface Eligible extends Dismiss {
+  named: Item;
 }
 
 interface Context {
@@ -179,7 +187,7 @@ interface Context {
   found: { op: RosterOpRef; body: Action<'found'> };
   teamId: string;
   deadlineMs: number;
-  /** Each replica's lowest roster op seq, where a pending recover goes. */
+  /** Each replica's lowest Known(1) roster op seq, where a pending recover goes. */
   firstSeq: ReadonlyMap<string, number>;
   /** The replicas whose rights a cut of `replica` can change, itself included. */
   reach: (replica: string) => ReadonlySet<string>;
@@ -211,251 +219,62 @@ interface Evaluation {
   problems: Problem[];
 }
 
+// One fold of every op but `without`, its removals resolved.
+interface Folded {
+  ctx: Context;
+  ev: Evaluation;
+  resolution: Map<string, Resolution>;
+  without: ReadonlySet<Item>;
+}
+
 const NEWER_ROSTER =
   "a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue";
+
+const READS_NO_LATER_PAIR: LaterPairs = () => null;
 
 /**
  * Folds verified roster ops, less those admins dismissed, into the team's view:
  * grants count at their position, removals cut by seq, and a fight goes by rank.
  */
 export function foldRoster(input: FoldInput): RosterView {
-  const items = dedupe(input.ops)
+  return foldRosterAt(input, READS_NO_LATER_PAIR);
+}
+
+/**
+ * The fold as a build that also reads the pairs outside Known(1) `later` reads.
+ * Dismisses only ever take such ops out, so every build folds the same set.
+ */
+export function foldRosterAt(input: FoldInput, later: LaterPairs): RosterView {
+  const all = dedupe(input.ops)
     .sort(comparePositions)
-    .map((op) => ({ op, body: readBody(op.body) }));
-  const dismisses = dismissesOf(input, items);
-  // Every unreadable op a resolved fold held pauses: dismisses were judged there.
-  const paused = new Set<Item>();
-  const { round, standing } = settle(
-    foldsWithout(input, items, paused),
-    dismisses,
-    dependence(items, dismisses)
+    .map((op) => itemOf(op, later));
+  const shared = sharedOf(input, all);
+  const dismisses = dismissesOf(all);
+  // The base fold leaves out every op an eligible dismiss names, valid or not.
+  const eligible = dismisses.filter(
+    (d): d is Eligible => d.named?.kind === 'later'
   );
-  const { ctx, ev, resolution } = round.resolved();
-  return viewOf(ctx, ev, resolution, {
-    dismisses,
-    standing,
-    effect: round.effect,
-    paused,
-  });
+  const base = foldWithout(shared, new Set(eligible.map((d) => d.named)));
+  const valid = new Set(eligible.filter((d) => validIn(base.ev, d)));
+  const named = new Set([...valid].map((d) => d.named));
+  // What valid dismisses name is a subset of what eligible ones do.
+  const final =
+    named.size === base.without.size ? base : foldWithout(shared, named);
+  return viewOf(final, dismisses, valid);
 }
 
-// A fold without the ops some standing dismisses take out, resolved on first
-// need, and whether it lets a dismiss's publisher dismiss what it names.
-interface Fold {
-  effect: readonly Dismiss[];
-  resolved: () => Resolved;
-  allows: (d: Dismiss) => boolean;
-  /** Whether a removal by one who outranks a dismiss's publisher cuts it here. */
-  held: (d: Dismiss) => boolean;
-}
-
-interface Resolved {
-  ctx: Context;
-  ev: Evaluation;
-  resolution: Map<string, Resolution>;
-  /** The fold's views under only senior cuts, made on first need. */
-  senior: () => readonly Evaluation[];
-}
-
-type Folds = (standing: readonly Dismiss[]) => Fold;
-// Whether restoring what `e` names can change whether `d` passes.
-type DependsOn = (d: Dismiss, e: Dismiss) => boolean;
-
-// Folds without what a set of standing dismisses takes out, each resolved once
-// however often the loop asks; every unreadable op one holds goes in `paused`.
-function foldsWithout(
-  input: FoldInput,
-  items: readonly Item[],
-  paused: Set<Item>
-): Folds {
-  const grants = adminGrants(items);
-  const seen = new Map<string, Resolved>();
-  return (standing) => {
-    const effect = effective(standing);
-    const named = new Set(effect.map((d) => d.target));
-    const key = items.flatMap((i, n) => (named.has(i) ? [n] : [])).join(',');
-    const resolved = (): Resolved => {
-      const known = seen.get(key);
-      if (known !== undefined) return known;
-      const ctx = contextOf(input, items, named);
-      for (const i of ctx.items) if (i.body === 'unknown') paused.add(i);
-      const { ev, resolution } = resolve(ctx);
-      let views: readonly Evaluation[] | null = null;
-      const senior = () => (views ??= seniorViews(ctx, ev));
-      const fold = { ctx, ev, resolution, senior };
-      seen.set(key, fold);
-      return fold;
-    };
-    // Without an rv 1 op here that could make its publisher an admin, it fails.
-    const granted = (d: Dismiss): boolean =>
-      (grants.get(d.item.op.replica) ?? []).some((g) => !named.has(g));
-    const allows = (d: Dismiss): boolean =>
-      granted(d) && mayDismiss(resolved(), d);
-    const held = (d: Dismiss): boolean =>
-      granted(d) && heldDown(resolved().ev, d.item.op);
-    return { effect, resolved, allows, held };
-  };
-}
-
-// Per replica, the ops that could make it an admin: its founding or recover,
-// and admissions and promotions naming it as one.
-function adminGrants(items: readonly Item[]): Map<string, Item[]> {
-  const out = new Map<string, Item[]>();
-  for (const item of items) {
-    const replica = madeAdmin(item);
-    if (replica === null) continue;
-    const list = out.get(replica);
-    if (list === undefined) out.set(replica, [item]);
-    else list.push(item);
-  }
-  return out;
-}
-
-// The replica an rv 1 op could make an admin, if any: only these ops ever let
-// a replica dismiss, in every build, so builds agree on who may.
-function madeAdmin({ op, body }: Item): string | null {
-  if (isAction(body, 'found') || isAction(body, 'recover')) return op.replica;
-  if (
-    isAction(body, 'admit') &&
-    body.role === 'admin' &&
-    body.observer !== true
-  )
-    return body.replica;
-  if (isAction(body, 'role') && body.role === 'admin') return body.replica;
-  return null;
-}
-
-// Whether another replica that outranked op's publisher where it cut it holds
-// an accepted revocation or demotion of it below op, which it cannot dismiss.
-function heldDown(ev: Evaluation, op: RosterOpRef): boolean {
-  return (ev.cutsOn.get(op.replica) ?? []).some(
-    (c) =>
-      c.kind !== 'hosts' &&
-      c.afterSeq < op.seq &&
-      c.op.replica !== op.replica &&
-      compareRank(
-        ev,
-        { replica: c.op.replica, seq: c.op.seq, pos: c.op },
-        { replica: op.replica, seq: c.afterSeq, pos: c.op }
-      ) < 0
+// Judged in the base fold only: the publisher is an admin at the dismiss, and
+// the op is its own, or its publisher was no admin there or ranked after the
+// dismiss's publisher, each rank read at its own op.
+function validIn(ev: Evaluation, { item, named }: Eligible): boolean {
+  const { op } = item;
+  const x = named.op;
+  if (!rightsAt(ev, op.replica, op.seq, op).admin) return false;
+  if (x.replica === op.replica) return true;
+  if (!rightsAt(ev, x.replica, x.seq, x).admin) return true;
+  return (
+    compareRanks(ev.order, rankOf(ev, rankAt(op)), rankOf(ev, rankAt(x))) < 0
   );
-}
-
-// Drops the dismisses that fail in the fold the standing ones leave, and brings
-// back a dropped one that passes in the fold where it takes effect.
-function settle(
-  folds: Folds,
-  dismisses: readonly Dismiss[],
-  dependsOn: DependsOn
-): { round: Fold; standing: readonly Dismiss[] } {
-  const all = dismisses.filter((d) => d.target !== null);
-  const drops = new Map<Dismiss, number>();
-  let standing: readonly Dismiss[] = all;
-  for (;;) {
-    const round = folds(standing);
-    const failing = standing.filter((d) => !round.allows(d));
-    if (failing.length > 0) {
-      const drop = toDrop(folds, round, standing, failing, dependsOn);
-      for (const d of drop) drops.set(d, (drops.get(d) ?? 0) + 1);
-      standing = standing.filter((d) => !drop.has(d));
-      continue;
-    }
-    // Each comes back once at most, so ones that knock each other out settle;
-    // one an outranking removal holds down stays out unchecked.
-    const kept = new Set(standing);
-    const back = all.filter(
-      (d) =>
-        !kept.has(d) &&
-        drops.get(d) === 1 &&
-        !round.held(d) &&
-        folds([...standing, d]).allows(d)
-    );
-    if (back.length === 0) return { round, standing };
-    for (const d of back) kept.add(d);
-    standing = all.filter((d) => kept.has(d));
-  }
-}
-
-// Of several failing dismisses, those an outranking removal holds down go
-// first, since they fail whatever the others name; else the hopeless ones.
-function toDrop(
-  folds: Folds,
-  round: Fold,
-  standing: readonly Dismiss[],
-  failing: readonly Dismiss[],
-  dependsOn: DependsOn
-): ReadonlySet<Dismiss> {
-  if (failing.length === 1) return new Set(failing);
-  const held = failing.filter((d) => round.held(d));
-  if (held.length > 0) return new Set(held);
-  // Those that still fail with the targets of the failing ones they depend on
-  // back, else all; settle brings back any the fold it reaches lets pass.
-  const still = failing.filter((d) => {
-    const back = new Set(failing.filter((e) => e !== d && dependsOn(d, e)));
-    return (
-      back.size === 0 || !folds(standing.filter((s) => !back.has(s))).allows(d)
-    );
-  });
-  return new Set(still.length > 0 ? still : failing);
-}
-
-// A dismiss depends on another when what the other names can reach, through
-// admissions, promotions and removals, its publisher or the named op's.
-function dependence(
-  items: readonly Item[],
-  dismisses: readonly Dismiss[]
-): DependsOn {
-  const reach = reachOf(items, true);
-  const byItem = new Map(dismisses.map((d) => [d.item, d]));
-  // The replicas an op grants or cuts rights of; null when it could be any.
-  const subjects = (item: Item): readonly string[] | null => {
-    const { op, body } = item;
-    if (body === 'unknown' || isAction(body, 'recovery-key')) return null;
-    if (isAction(body, 'recover')) return [op.replica];
-    if (isAction(body, 'dismiss')) {
-      const named = byItem.get(item)?.target ?? null;
-      return named === null ? [] : subjects(named);
-    }
-    if (
-      isAction(body, 'admit') ||
-      isAction(body, 'role') ||
-      isAction(body, 'revoke')
-    )
-      return [body.replica];
-    return [];
-  };
-  return (d, e) => {
-    if (d.target === null || e.target === null) return false;
-    const of = subjects(e.target);
-    if (of === null) return true;
-    const who = [d.item.op.replica, d.target.op.replica];
-    return of.some((x) => who.some((w) => reach(x).has(w)));
-  };
-}
-
-// The standing dismisses that take effect: each unless an effective one names
-// it. An op commits to the hash it names, so these chains never loop.
-function effective(standing: readonly Dismiss[]): Dismiss[] {
-  const namedBy = new Map<Item, Dismiss[]>();
-  for (const d of standing) {
-    if (d.target === null) continue;
-    const by = namedBy.get(d.target);
-    if (by === undefined) namedBy.set(d.target, [d]);
-    else by.push(d);
-  }
-  const takes = new Map<Dismiss, boolean>();
-  for (let changed = true; changed; ) {
-    changed = false;
-    for (const d of standing) {
-      if (takes.has(d)) continue;
-      const by = namedBy.get(d.item) ?? [];
-      if (by.some((o) => takes.get(o) === true)) takes.set(d, false);
-      else if (by.every((o) => takes.get(o) === false)) takes.set(d, true);
-      else continue;
-      changed = true;
-    }
-  }
-  return standing.filter((d) => takes.get(d) === true);
 }
 
 // Decides every removal, accepted or void, and evaluates the ops under the
@@ -551,126 +370,16 @@ function resolve(ctx: Context): {
   return { ev: evaluate(ctx, having('accepted'), true), resolution };
 }
 
-// Every dismiss, and the op it names when it may drop one. One naming an op
-// this daemon lacks names nothing, for now; one no admin could send is refused.
-function dismissesOf(input: FoldInput, items: readonly Item[]): Dismiss[] {
-  const id = (op: { replica: string; seq: number; hash: string }) =>
-    `${op.replica}\n${op.seq}\n${op.hash}`;
+// Every Known(1) dismiss, and the op it names among the deduplicated ops.
+function dismissesOf(items: readonly Item[]): Dismiss[] {
+  const id = (o: { replica: string; seq: number; hash: string }): string =>
+    `${o.replica}\n${o.seq}\n${o.hash}`;
   const byId = new Map(items.map((i) => [id(i.op), i]));
-  const found = foundingOf(input, items);
-  // Who may dismiss, worked out on the first dismiss that names an op.
-  let admins: ReadonlySet<string> | null = null;
-  const eligible = (replica: string): boolean => {
-    admins ??= mayBeAdmins(input, items, found);
-    return admins.has(replica);
-  };
-  const out: Dismiss[] = [];
-  for (const item of items) {
-    if (!isAction(item.body, 'dismiss')) continue;
-    const target = byId.get(id(item.body)) ?? null;
-    const none = (refused: string | null): void => {
-      out.push({ item, target: null, refused });
-    };
-    if (target === null) none(null);
-    else if (target === found.item)
-      none('the founding cannot be dismissed; ignored');
-    else if (!eligible(item.op.replica))
-      none(
-        `${item.op.replica} may not dismiss ${target.op.replica}'s roster op at seq ${target.op.seq}; ignored`
-      );
-    else out.push({ item, target, refused: null });
-  }
-  return out;
-}
-
-// The replicas an rv 1 op could make an admin: the founder, a recover proven by
-// a code one of them set, and whom they admit or promote as admins.
-function mayBeAdmins(
-  input: FoldInput,
-  items: readonly Item[],
-  found: Founding
-): Set<string> {
-  const admins = new Set([found.op.replica]);
-  const codes = [found.body.recoveryPub];
-  const teamId = found.op.hash.slice(0, 32);
-  // How many of `codes` each recover's proof was already checked against.
-  const tried = new Map<Item, number>();
-  const proves = (item: Item, proof: string): boolean => {
-    const key = input.keys.get(item.op.replica);
-    if (key === undefined) return false;
-    const signed = `${TAG.recovery}\n${teamId}\n${item.op.replica}\n${key.signPub}`;
-    const from = tried.get(item) ?? 0;
-    tried.set(item, codes.length);
-    return codes.slice(from).some((pub) => verifyText(pub, signed, proof));
-  };
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const item of items) {
-      const { op, body } = item;
-      if (isAction(body, 'recovery-key')) {
-        if (!admins.has(op.replica) || codes.includes(body.pub)) continue;
-        codes.push(body.pub);
-        grew = true;
-        continue;
-      }
-      const made = madeAdmin(item);
-      if (made === null || admins.has(made)) continue;
-      const granted = isAction(body, 'recover')
-        ? proves(item, body.proof)
-        : admins.has(op.replica);
-      if (!granted) continue;
-      admins.add(made);
-      grew = true;
-    }
-  }
-  return admins;
-}
-
-// An admin may dismiss its own roster ops and those of a replica it outranks
-// there, cuts by that replica's juniors aside: it could still win those fights.
-function mayDismiss(fold: Resolved, { item, target }: Dismiss): boolean {
-  const { ev } = fold;
-  const { op } = item;
-  if (target === null || !rightsAt(ev, op.replica, op.seq, op).admin)
-    return false;
-  const named = target.op;
-  if (named.replica === op.replica) return true;
-  const mine = rankOf(ev, rankAt(op));
-  // Only the founding grants the founder's tier, so it outranks every other.
-  if (mine.tier === TIER.found) return true;
-  if (compareRanks(ev.order, mine, rankOf(ev, rankAt(named))) >= 0)
-    return false;
-  return (
-    compareRanks(ev.order, mine, bestRank(fold.senior(), rankAt(named))) < 0
+  return items.flatMap((item) =>
+    item.kind === 'known' && isAction(item.body, 'dismiss')
+      ? [{ item, named: byId.get(id(item.body)) ?? null }]
+      : []
   );
-}
-
-// Whether a cut counts toward its target's rank for dismisses: its publisher
-// outranked the target at its afterSeq, or it is the target's own.
-function seniorCut(
-  ev: Evaluation,
-  views: readonly Evaluation[],
-  c: Removal
-): boolean {
-  if (c.kind === 'hosts' || c.op.replica === c.target) return true;
-  const target = { replica: c.target, seq: c.afterSeq, pos: c.op };
-  return (
-    compareRanks(ev.order, rankOf(ev, rankAt(c.op)), bestRank(views, target)) <
-    0
-  );
-}
-
-// The fold under its senior cuts alone, on its own grants and re-evaluated to
-// restore a cut grantor's; repeats until every cut left is senior in them.
-function seniorViews(ctx: Context, ev: Evaluation): readonly Evaluation[] {
-  let cuts = ev.cuts;
-  let views: readonly Evaluation[] = [ev];
-  for (;;) {
-    const kept = cuts.filter((c) => seniorCut(ev, views, c));
-    if (kept.length === cuts.length) return views;
-    cuts = kept;
-    views = [ev, { ...ev, cuts, cutsOn: byTarget(cuts) }, evaluate(ctx, cuts)];
-  }
 }
 
 /** Whether `replica`'s op `seq` may speak for `handle`. Observers speak for nobody. */
@@ -720,7 +429,11 @@ function foundingOf(input: FoldInput, items: readonly Item[]): Founding {
     (i) =>
       i.op.replica === input.founder.replica && i.op.seq === input.founder.seq
   );
-  if (item === undefined || !isAction(item.body, 'found')) {
+  if (
+    item === undefined ||
+    item.kind !== 'known' ||
+    !isAction(item.body, 'found')
+  ) {
     throw new Error(
       `the founding op ${input.founder.replica}:${input.founder.seq} is not among the roster ops`
     );
@@ -728,30 +441,30 @@ function foundingOf(input: FoldInput, items: readonly Item[]): Founding {
   return { item, op: item.op, body: item.body };
 }
 
-// The ops to fold are `all` but the `dismissed`; a replica's first roster op is
-// its first in `all`, so dismissing it never makes a later op the first.
-function contextOf(
-  input: FoldInput,
-  all: readonly Item[],
-  dismissed: ReadonlySet<Item | null>
-): Context {
-  const items = all.filter((i) => !dismissed.has(i));
-  const found = foundingOf(input, items);
+// What every fold of one op set shares: the founding, first seqs and the order.
+interface Shared extends Omit<Context, 'items' | 'reach'> {
+  all: readonly Item[];
+}
+
+function sharedOf(input: FoldInput, all: readonly Item[]): Shared {
+  const found = foundingOf(input, all);
+  // Only Known(1) ops count toward a replica's first roster op, so neither an
+  // unreadable op nor its dismissal ever moves it.
   const firstSeq = new Map<string, number>();
-  for (const { op } of all)
-    firstSeq.set(
-      op.replica,
-      Math.min(op.seq, firstSeq.get(op.replica) ?? op.seq)
-    );
+  for (const { op, kind } of all)
+    if (kind === 'known')
+      firstSeq.set(
+        op.replica,
+        Math.min(op.seq, firstSeq.get(op.replica) ?? op.seq)
+      );
   const index = new Map<Position, number>(all.map((i, n) => [i.op, n]));
   return {
     input,
-    items,
+    all,
     found: { op: found.op, body: found.body },
     teamId: found.op.hash.slice(0, 32),
     deadlineMs: (hlcWallMs(found.op.hlc) ?? 0) + LEGACY_WINDOW_MS,
     firstSeq,
-    reach: reachOf(items),
     order: (a, b) => {
       const ia = index.get(a);
       const ib = index.get(b);
@@ -761,11 +474,19 @@ function contextOf(
   };
 }
 
-// Admissions, promotions and, with `revokes`, revocations link a publisher to
-// its targets; a recover or a recovery key links to every recovering replica.
+// Folds every op but `without` and resolves its removals.
+function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
+  const { all, ...rest } = shared;
+  const items = all.filter((i) => !without.has(i));
+  const ctx: Context = { ...rest, items, reach: reachOf(items) };
+  const { ev, resolution } = resolve(ctx);
+  return { ctx, ev, resolution, without };
+}
+
+// Admissions and promotions link a publisher to its targets; a recover or a
+// recovery key links to every recovering replica.
 function reachOf(
-  items: readonly Item[],
-  revokes = false
+  items: readonly Item[]
 ): (replica: string) => ReadonlySet<string> {
   const links = new Map<string, Set<string>>();
   const link = (from: string, to: string): void => {
@@ -777,11 +498,7 @@ function reachOf(
     .filter((i) => isAction(i.body, 'recover'))
     .map((i) => i.op.replica);
   for (const { op, body } of items) {
-    if (
-      isAction(body, 'admit') ||
-      isAction(body, 'role') ||
-      (revokes && isAction(body, 'revoke'))
-    )
+    if (isAction(body, 'admit') || isAction(body, 'role'))
       link(op.replica, body.replica);
     else if (isAction(body, 'recover') || isAction(body, 'recovery-key'))
       for (const r of recovering) link(op.replica, r);
@@ -894,17 +611,36 @@ const SHAPES = new Map<string, (b: Record<string, unknown>) => boolean>([
   ],
 ]);
 
-// A newer `rv` or action is unknown, and pauses the caller; a known action
-// missing its fields is malformed, and ignored.
-function readBody(body: unknown): Body {
+/**
+ * Known(1): the (action, rv) pairs every build reads, each `action@rv`. Every
+ * later build keeps them verbatim, and only they decide rights.
+ */
+export const KNOWN_ROSTER_PAIRS: ReadonlySet<string> = new Set(
+  [...SHAPES.keys()].map((action) => `${action}@1`)
+);
+
+// A body without a string action and an integer rv is malformed, and so is a
+// Known(1) pair missing its fields; any other pair is outside Known(1).
+function kindOf(body: unknown): Kind {
   if (typeof body !== 'object' || body === null || Array.isArray(body))
     return 'malformed';
   const b = body as Record<string, unknown>;
   if (!Number.isInteger(b.rv) || !isStr(b.action)) return 'malformed';
-  if (b.rv !== 1) return 'unknown';
-  const shape = SHAPES.get(b.action);
-  if (shape === undefined) return 'unknown';
-  return shape(b) ? (body as RosterBody) : 'malformed';
+  const shape = b.rv === 1 ? SHAPES.get(b.action) : undefined;
+  if (shape === undefined) return 'later';
+  return shape(b) ? 'known' : 'malformed';
+}
+
+// An op as this build reads it: a pair outside Known(1) is unknown, and pauses
+// the caller, unless `later` reads it.
+function itemOf(op: RosterOpRef, later: LaterPairs): Item {
+  const kind = kindOf(op.body);
+  if (kind === 'known') return { op, kind, body: op.body };
+  if (kind === 'malformed') return { op, kind, body: 'malformed' };
+  const meaning = later(op.body as unknown as Record<string, unknown>);
+  if (meaning === null) return { op, kind, body: 'unknown' };
+  const body = kindOf(meaning) === 'known' ? (meaning as RosterBody) : null;
+  return { op, kind, body: body ?? 'malformed' };
 }
 
 function removalOf({ op, body }: Item): Removal | null {
@@ -1072,7 +808,7 @@ function step(
   accepted: ReadonlySet<RosterOpRef>,
   { op, body }: Item
 ): void {
-  // An unreadable op grants nothing; foldRoster pauses on it unless dismissed.
+  // An unreadable op grants nothing; notesOf decides whether it pauses.
   if (body === 'unknown') return;
   if (isAction(body, 'found')) {
     foundStep(ctx, ev, op, body);
@@ -1172,7 +908,7 @@ function step(
       // A removal, which the resolution loop decides.
       return;
     case 'dismiss':
-      // Decided before the fold, which no longer holds the op it names.
+      // Decided before the fold: a valid one's named op is not in it.
       return;
   }
 }
@@ -1466,16 +1202,6 @@ function compareRank(ev: Evaluation, a: RankAt, b: RankAt): number {
   return compareRanks(ev.order, rankOf(ev, a), rankOf(ev, b));
 }
 
-// The highest rank a replica holds at an op in any of several views of a fold.
-function bestRank(views: readonly Evaluation[], at: RankAt): Rank {
-  let best: Rank = { tier: NO_RIGHTS, by: null };
-  for (const ev of views) {
-    const r = rankOf(ev, at);
-    if (compareRanks(ev.order, r, best) < 0) best = r;
-  }
-  return best;
-}
-
 // Removals by their publishers' rank at each removal, then by position.
 function byRank(ev: Evaluation, a: Removal, b: Removal): number {
   const d = compareRank(ev, rankAt(a.op), rankAt(b.op));
@@ -1489,59 +1215,95 @@ function adminsOf(ev: Evaluation): string[] {
   );
 }
 
-// The pause, and the problems for unreadable ops and for dismisses.
-function notesOf(
+const standing = (replica: string): RankAt => ({
+  replica,
+  seq: Infinity,
+  pos: null,
+});
+
+// An unreadable op holds a build back only when its publisher was a member or
+// admin at it and not an observer; every other one is inert.
+function pauses(ev: Evaluation, op: RosterOpRef): boolean {
+  if (ev.holders.get(op.replica)?.observer === true) return false;
+  return rightsAt(ev, op.replica, op.seq, op).member;
+}
+
+// The standing admins, by rank, whose dismiss of `op` would be valid now.
+function liftersOf(
   ev: Evaluation,
-  { dismisses, standing, effect, paused }: Settled
+  admins: readonly string[],
+  op: RosterOpRef
+): string[] {
+  if (!rightsAt(ev, op.replica, op.seq, op).admin) return [...admins];
+  const theirs = rankOf(ev, rankAt(op));
+  return admins.filter(
+    (a) =>
+      a === op.replica ||
+      compareRanks(ev.order, rankOf(ev, standing(a)), theirs) < 0
+  );
+}
+
+// "a", "a or b", "a, b or c".
+function listed(xs: readonly string[]): string {
+  if (xs.length <= 1) return xs.join('');
+  return `${xs.slice(0, -1).join(', ')} or ${xs[xs.length - 1] ?? ''}`;
+}
+
+// What became of a dismiss that names an op this daemon holds.
+function dismissNote(
+  d: Dismiss,
+  named: Item,
+  valid: ReadonlySet<Dismiss>
+): string {
+  const by = d.item.op.replica;
+  const op = `${named.op.replica}'s roster op at seq ${named.op.seq}`;
+  if (named.kind === 'known')
+    return `${by} may not dismiss ${op}: every build reads it; ignored`;
+  if (named.kind === 'malformed')
+    return `${by} may not dismiss ${op}: it is malformed, so no build applies it; ignored`;
+  if (valid.has(d)) return `${by} dismissed ${op}, so no build applies it`;
+  return `${by} may not dismiss ${op}; ignored`;
+}
+
+// The pause, which names who can lift it, and what became of each dismiss.
+function notesOf(
+  { ctx, ev }: Folded,
+  dismisses: readonly Dismiss[],
+  valid: ReadonlySet<Dismiss>,
+  admins: readonly string[]
 ): { unknown: Paused | null; problems: Problem[] } {
   const problems = [...ev.problems];
   const at = (op: RosterOpRef) => `op:${op.replica}:${op.seq}`;
-  let unknown: Paused | null = null;
-  const ops = [...paused].map((i) => i.op).sort(comparePositions);
-  for (const op of ops) {
-    unknown ??= { ...positionOf(op), hash: op.hash };
-    const named = `${op.replica}'s roster op at seq ${op.seq} (${op.hash})`;
-    // A dismissed op still pauses when judging an invalid dismiss needed a fold
-    // that held it; another dismiss of the op keeps it out of that fold too.
-    const by = [
-      ...new Set(
-        effect.filter((d) => d.target?.op === op).map((d) => d.item.op.replica)
-      ),
-    ];
+  for (const d of dismisses) {
+    if (d.named === null) continue;
     problems.push({
-      subject: at(op),
-      message:
-        by.length === 0
-          ? `${NEWER_ROSTER}, or an admin can dismiss ${named}`
-          : `${NEWER_ROSTER}; ${by.join(', ')} dismissed ${named}, but judging an invalid dismiss read it; an admin can lift the pause by dismissing that op again`,
+      subject: at(d.item.op),
+      message: dismissNote(d, d.named, valid),
     });
   }
-  for (const d of dismisses) {
-    const { op } = d.item;
-    if (d.refused !== null)
-      problems.push({ subject: at(op), message: d.refused });
-    if (d.target === null) continue;
-    const named = `${d.target.op.replica}'s roster op at seq ${d.target.op.seq}`;
-    if (effect.includes(d))
-      problems.push({
-        subject: at(op),
-        message: `${op.replica} dismissed ${named}, so no build applies it`,
-      });
-    else if (!standing.includes(d))
-      problems.push({
-        subject: at(op),
-        message: `${op.replica} may not dismiss ${named}; ignored`,
-      });
+  if (ctx.input.relay === true) return { unknown: null, problems };
+  let unknown: Paused | null = null;
+  for (const { op, body } of ctx.items) {
+    if (body !== 'unknown' || !pauses(ev, op)) continue;
+    unknown ??= { ...positionOf(op), hash: op.hash };
+    const who = liftersOf(ev, admins, op);
+    const named = `${op.replica}'s roster op at seq ${op.seq} (${op.hash})`;
+    const dismiss =
+      who.length > 0 ? `${listed(who)} can dismiss ${named}, or ` : 'or ';
+    problems.push({
+      subject: at(op),
+      message: `${NEWER_ROSTER}, ${dismiss}an admin can revoke ${op.replica} below seq ${op.seq}`,
+    });
   }
   return { unknown, problems };
 }
 
 function viewOf(
-  ctx: Context,
-  ev: Evaluation,
-  resolution: ReadonlyMap<string, Resolution>,
-  settled: Settled
+  folded: Folded,
+  dismisses: readonly Dismiss[],
+  valid: ReadonlySet<Eligible>
 ): RosterView {
+  const { ctx, ev, resolution } = folded;
   const { input } = ctx;
   const revoked = new Map<string, RevokedReplica>();
   for (const c of ev.cuts) {
@@ -1557,7 +1319,6 @@ function viewOf(
       observer: held?.observer ?? false,
     });
   }
-  const standing = (replica: string) => ({ replica, seq: Infinity, pos: null });
   const admins = adminsOf(ev).sort((a, b) =>
     compareRank(ev, standing(a), standing(b))
   );
@@ -1646,18 +1407,12 @@ function viewOf(
       closed: ev.legacyClosed,
     },
     transport: ev.transport,
-    dismissed: settled.effect.flatMap(({ item, target }) =>
-      target === null
-        ? []
-        : [
-            {
-              replica: target.op.replica,
-              seq: target.op.seq,
-              hash: target.op.hash,
-              by: item.op.replica,
-            },
-          ]
-    ),
-    ...notesOf(ev, settled),
+    dismissed: [...valid].map(({ item, named }) => ({
+      replica: named.op.replica,
+      seq: named.op.seq,
+      hash: named.op.hash,
+      by: item.op.replica,
+    })),
+    ...notesOf(folded, dismisses, valid, admins),
   };
 }

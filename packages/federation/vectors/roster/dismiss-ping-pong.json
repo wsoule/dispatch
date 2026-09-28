@@ -207,14 +207,7 @@
     "transport": {
       "kind": "git"
     },
-    "dismissed": [
-      {
-        "replica": "bob-0000000f",
-        "seq": 4,
-        "hash": "318a61dc45006fdb737eedb0217c7d439c4c6de248fab6b0a52c2e34713ff160",
-        "by": "ada-0000000a"
-      }
-    ],
+    "dismissed": [],
     "unknown": null
   }
 }

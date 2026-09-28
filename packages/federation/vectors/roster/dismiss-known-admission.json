@@ -1,5 +1,5 @@
 {
-  "name": "dismiss-member-veto",
+  "name": "dismiss-known-admission",
   "input": {
     "founder": {
       "replica": "ada-0000000a",
@@ -34,24 +34,10 @@
         }
       },
       {
-        "replica": "ada-0000000a",
-        "seq": 3,
-        "hlc": "1790380800110.0000.ada-0000000a",
-        "hash": "a4340edbdd9ac0c57fa03544c42ae50f944aa5996d45d4a33b904463c3179ee7",
-        "body": {
-          "rv": 1,
-          "action": "admit",
-          "replica": "ada-0000000e",
-          "handle": "ada",
-          "role": "member",
-          "fingerprint": "FP-ada-0000000e"
-        }
-      },
-      {
-        "replica": "ada-0000000a",
-        "seq": 4,
-        "hlc": "1790380800120.0000.ada-0000000a",
-        "hash": "5ca34fd2d27d0f43d0aeeb64be19a026a1ee51bf57b675fff5161cf3f27ac354",
+        "replica": "cy-0000000c",
+        "seq": 2,
+        "hlc": "1790380800200.0000.cy-0000000c",
+        "hash": "aa3def18be13de63d11ebeecb9fdac2f6036fb032813dcbc976f83877849ba0b",
         "body": {
           "rv": 1,
           "action": "admit",
@@ -62,55 +48,29 @@
         }
       },
       {
-        "replica": "ada-0000000a",
-        "seq": 5,
-        "hlc": "1790380800130.0000.ada-0000000a",
-        "hash": "35fe8e431b5ffe55ec9dc6903dcf602da2717ae48d7ae2e1bd94c2c9caeba63b",
-        "body": {
-          "rv": 1,
-          "action": "admit",
-          "replica": "bob-0000000b",
-          "handle": "bob",
-          "role": "admin",
-          "fingerprint": "FP-bob-0000000b"
-        }
-      },
-      {
-        "replica": "bob-0000000b",
-        "seq": 2,
-        "hlc": "1790380800200.0000.bob-0000000b",
-        "hash": "62591f770cb8e5e195906e7e2bda19d48c25d7ace4a36fd366b7fd57a7027c66",
-        "body": {
-          "rv": 1,
-          "action": "role",
-          "replica": "dee-0000000d",
-          "role": "admin"
-        }
-      },
-      {
         "replica": "cy-0000000c",
-        "seq": 2,
+        "seq": 3,
         "hlc": "1790380800300.0000.cy-0000000c",
-        "hash": "d297d3717b4fc8cbc00824ea1fd5d31b73d765e53f4b6aa29b81ed005feae77b",
+        "hash": "2fa1aba3ec46ff1e105b8aa0f2fe43ce348b000fa15fd0d9e5af4f81732a7f59",
         "body": {
           "rv": 1,
           "action": "dismiss",
-          "replica": "bob-0000000b",
+          "replica": "cy-0000000c",
           "seq": 2,
-          "hash": "62591f770cb8e5e195906e7e2bda19d48c25d7ace4a36fd366b7fd57a7027c66"
+          "hash": "aa3def18be13de63d11ebeecb9fdac2f6036fb032813dcbc976f83877849ba0b"
         }
       },
       {
-        "replica": "ada-0000000e",
-        "seq": 2,
-        "hlc": "1790380800310.0000.ada-0000000e",
-        "hash": "76d3bd6e86159d832f8b28b4daa339b7c2f4ef198a80dce8a86bd58b943eab34",
+        "replica": "ada-0000000a",
+        "seq": 3,
+        "hlc": "1790380800400.0000.ada-0000000a",
+        "hash": "8c81ae9eba4261fae467b148b9a933f4c73538ad54c04583fa6716e1fd3f1f6a",
         "body": {
           "rv": 1,
           "action": "dismiss",
-          "replica": "ada-0000000a",
-          "seq": 2,
-          "hash": "82c7e82c0e0f4028717e01808a2b8cb21f0f42de88c47f48f4feb4c07d05653e"
+          "replica": "cy-0000000c",
+          "seq": 3,
+          "hash": "2fa1aba3ec46ff1e105b8aa0f2fe43ce348b000fa15fd0d9e5af4f81732a7f59"
         }
       }
     ],
@@ -185,19 +145,17 @@
   "expect": {
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
-      ["ada-0000000e", "member", null, [], false, false],
-      ["bob-0000000b", "admin", 2, [], false, false],
       ["cy-0000000c", "admin", 1, [], false, false],
-      ["dee-0000000d", "admin", 3, [], false, false]
+      ["dee-0000000d", "member", null, [], false, false]
     ],
     "revoked": [],
     "hostCuts": [],
     "resolution": [],
-    "pending": ["bob-0000000f", "obs-00000010"],
+    "pending": ["ada-0000000e", "bob-0000000b", "bob-0000000f", "obs-00000010"],
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "cy", "dee", "bob"],
+    "people": ["ada", "cy", "dee"],
     "covered": ["ada", "cy", "dee"],
     "closedBy": null,
     "transport": {

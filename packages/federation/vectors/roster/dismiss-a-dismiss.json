@@ -164,17 +164,12 @@
     },
     "dismissed": [
       {
-        "replica": "ada-0000000a",
-        "seq": 3,
-        "hash": "ef04581df3bafd17c40425bd04bb538dfac78c92daec704a67c3f9330b9e7df2",
+        "replica": "cy-0000000c",
+        "seq": 2,
+        "hash": "1ba25186e964970af37a1f4a62f05914ad1080b0954aca4c9e6cce53eb75bce6",
         "by": "ada-0000000a"
       }
     ],
-    "unknown": {
-      "hlc": "1790380800200.0000.cy-0000000c",
-      "replica": "cy-0000000c",
-      "seq": 2,
-      "hash": "1ba25186e964970af37a1f4a62f05914ad1080b0954aca4c9e6cce53eb75bce6"
-    }
+    "unknown": null
   }
 }

@@ -1,5 +1,5 @@
 {
-  "name": "dismiss-undoes-dismiss",
+  "name": "revoke-lifts-pause",
   "input": {
     "founder": {
       "replica": "ada-0000000a",
@@ -23,21 +23,7 @@
         "replica": "ada-0000000a",
         "seq": 2,
         "hlc": "1790380800100.0000.ada-0000000a",
-        "hash": "82c7e82c0e0f4028717e01808a2b8cb21f0f42de88c47f48f4feb4c07d05653e",
-        "body": {
-          "rv": 1,
-          "action": "admit",
-          "replica": "cy-0000000c",
-          "handle": "cy",
-          "role": "admin",
-          "fingerprint": "FP-cy-0000000c"
-        }
-      },
-      {
-        "replica": "cy-0000000c",
-        "seq": 2,
-        "hlc": "1790380800200.0000.cy-0000000c",
-        "hash": "aa3def18be13de63d11ebeecb9fdac2f6036fb032813dcbc976f83877849ba0b",
+        "hash": "01631d517ea8408b650e3d74aac003aa9a378999513f196e359d966d42d9c31c",
         "body": {
           "rv": 1,
           "action": "admit",
@@ -48,29 +34,27 @@
         }
       },
       {
-        "replica": "cy-0000000c",
+        "replica": "dee-0000000d",
         "seq": 3,
-        "hlc": "1790380800300.0000.cy-0000000c",
-        "hash": "2fa1aba3ec46ff1e105b8aa0f2fe43ce348b000fa15fd0d9e5af4f81732a7f59",
+        "hlc": "1790380800200.0000.dee-0000000d",
+        "hash": "09ef7358ffb705aff360604a0f5184572cf2f2d6aa32d8cfa75999d3d66a74f7",
         "body": {
           "rv": 1,
-          "action": "dismiss",
-          "replica": "cy-0000000c",
-          "seq": 2,
-          "hash": "aa3def18be13de63d11ebeecb9fdac2f6036fb032813dcbc976f83877849ba0b"
+          "action": "teleport"
         }
       },
       {
         "replica": "ada-0000000a",
         "seq": 3,
-        "hlc": "1790380800400.0000.ada-0000000a",
-        "hash": "8c81ae9eba4261fae467b148b9a933f4c73538ad54c04583fa6716e1fd3f1f6a",
+        "hlc": "1790380800300.0000.ada-0000000a",
+        "hash": "8db2ea02e1bd91be3ba1489a8742e3a2d09183419db43692ebc2b50d76ba0493",
         "body": {
           "rv": 1,
-          "action": "dismiss",
-          "replica": "cy-0000000c",
-          "seq": 3,
-          "hash": "2fa1aba3ec46ff1e105b8aa0f2fe43ce348b000fa15fd0d9e5af4f81732a7f59"
+          "action": "revoke",
+          "replica": "dee-0000000d",
+          "afterSeq": 2,
+          "afterHash": "h-dee-0000000d-2",
+          "reason": "test"
         }
       }
     ],
@@ -143,32 +127,43 @@
     "licensePublicKey": null
   },
   "expect": {
-    "members": [
-      ["ada-0000000a", "admin", 0, [], false, false],
-      ["cy-0000000c", "admin", 1, [], false, false],
-      ["dee-0000000d", "member", null, [], false, false]
+    "members": [["ada-0000000a", "admin", 0, [], false, false]],
+    "revoked": [
+      [
+        "dee-0000000d",
+        {
+          "afterSeq": 2,
+          "afterHash": "h-dee-0000000d-2",
+          "handle": "dee",
+          "hosts": [],
+          "observer": false
+        }
+      ]
     ],
-    "revoked": [],
     "hostCuts": [],
-    "resolution": [],
-    "pending": ["ada-0000000e", "bob-0000000b", "bob-0000000f", "obs-00000010"],
+    "resolution": [
+      [
+        "8db2ea02e1bd91be3ba1489a8742e3a2d09183419db43692ebc2b50d76ba0493",
+        "accepted"
+      ]
+    ],
+    "pending": [
+      "ada-0000000e",
+      "bob-0000000b",
+      "bob-0000000f",
+      "cy-0000000c",
+      "obs-00000010"
+    ],
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "cy", "dee"],
-    "covered": ["ada", "cy", "dee"],
+    "people": ["ada"],
+    "covered": ["ada"],
     "closedBy": null,
     "transport": {
       "kind": "git"
     },
-    "dismissed": [
-      {
-        "replica": "cy-0000000c",
-        "seq": 3,
-        "hash": "2fa1aba3ec46ff1e105b8aa0f2fe43ce348b000fa15fd0d9e5af4f81732a7f59",
-        "by": "ada-0000000a"
-      }
-    ],
+    "dismissed": [],
     "unknown": null
   }
 }

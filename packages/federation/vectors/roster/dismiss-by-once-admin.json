@@ -208,11 +208,6 @@
         "by": "cy-0000000c"
       }
     ],
-    "unknown": {
-      "hlc": "1790380800300.0000.bob-0000000b",
-      "replica": "bob-0000000b",
-      "seq": 2,
-      "hash": "41c61c7a0d83d0d98a5776b7773894df34745934a6800e1e08e9bf7a5ca57d1f"
-    }
+    "unknown": null
   }
 }

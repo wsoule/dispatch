@@ -1,5 +1,5 @@
 {
-  "name": "unknown-at-recover",
+  "name": "recover-past-unreadable",
   "input": {
     "founder": {
       "replica": "ada-0000000a",
@@ -20,35 +20,24 @@
         }
       },
       {
-        "replica": "cy-0000000c",
+        "replica": "bob-0000000f",
         "seq": 2,
-        "hlc": "1790380800100.0000.cy-0000000c",
-        "hash": "07804fa19432dbec74dc8f43fe2a98ad92d7366a140ad4a784d54c76c96c1579",
-        "body": {
-          "rv": 2,
-          "action": "recover",
-          "proof": "p"
-        }
-      },
-      {
-        "replica": "dee-0000000d",
-        "seq": 2,
-        "hlc": "1790380800100.0000.dee-0000000d",
-        "hash": "bdf64a76da1a693be99dd83bd4172dfcb50053a7e691445beeb2613356683ffa",
-        "body": {
-          "rv": 1,
-          "action": "recover",
-          "proof": "p"
-        }
-      },
-      {
-        "replica": "dee-0000000d",
-        "seq": 3,
-        "hlc": "1790380800150.0000.dee-0000000d",
-        "hash": "09ef7358ffb705aff360604a0f5184572cf2f2d6aa32d8cfa75999d3d66a74f7",
+        "hlc": "1790380800100.0000.bob-0000000f",
+        "hash": "9a07e17095d88ac6b12250c7fd55a1fb31a4dd702cb25413b492854125a3f17e",
         "body": {
           "rv": 1,
           "action": "teleport"
+        }
+      },
+      {
+        "replica": "bob-0000000f",
+        "seq": 3,
+        "hlc": "1790380800150.0000.bob-0000000f",
+        "hash": "7cd73e9437f101f88478c526bd114d6792b682640fca04efac78fb6d75ae6976",
+        "body": {
+          "rv": 1,
+          "action": "recover",
+          "proof": "YSMGt2Hp0jaI_cAWFmoKRWF2ZYqMbVwssKnJ_9dvEnM5czwXTNQ7lD-9hqem9xyaDiJgjrlK-_JzGyg951wEAw"
         }
       }
     ],
@@ -121,14 +110,16 @@
     "licensePublicKey": null
   },
   "expect": {
-    "members": [["ada-0000000a", "admin", 0, [], false, false]],
+    "members": [
+      ["ada-0000000a", "admin", 0, [], false, false],
+      ["bob-0000000f", "admin", 1, [], false, true]
+    ],
     "revoked": [],
     "hostCuts": [],
     "resolution": [],
     "pending": [
       "ada-0000000e",
       "bob-0000000b",
-      "bob-0000000f",
       "cy-0000000c",
       "dee-0000000d",
       "obs-00000010"
@@ -136,8 +127,8 @@
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada"],
-    "covered": ["ada"],
+    "people": ["ada", "bob"],
+    "covered": ["ada", "bob"],
     "closedBy": null,
     "transport": {
       "kind": "git"

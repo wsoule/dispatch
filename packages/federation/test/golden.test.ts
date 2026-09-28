@@ -77,12 +77,14 @@ describe('roster vectors', () => {
     });
   }
 
-  // A dismissed op is gone before folding, so reading it changes nothing.
-  it('folds a dismissed op the same whether or not the build reads it', () => {
-    const older = readRoster('dismiss-unreadable.json');
-    const newer = readRoster('dismiss-unreadable-newer.json');
-    expect(older.expect).toEqual(newer.expect);
-    expect(older.input.ops).not.toEqual(newer.input.ops);
+  // The relay folds the roster a daemon pauses on, and never pauses.
+  it('folds for the relay what it folds for a daemon, without the pause', () => {
+    const daemon = readRoster('unknown-rv.json');
+    const relay = readRoster('relay-unknown-rv.json');
+    const { unknown, ...rest } = daemon.expect as Record<string, unknown>;
+    expect(unknown).not.toBeNull();
+    expect(relay.input.ops).toEqual(daemon.input.ops);
+    expect(relay.expect).toEqual({ ...rest, unknown: null });
   });
 
   it('regenerates every committed file exactly', () => {
