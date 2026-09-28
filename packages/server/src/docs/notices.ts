@@ -36,8 +36,8 @@ export function noticeLine(
 }
 
 export class DocNotices {
-  // Docs each run has read since it started, kept in process only.
-  private readonly reads = new Map<string, Set<string>>();
+  // Per run, the revision it last read of each doc, kept in process only.
+  private readonly reads = new Map<string, Map<string, string>>();
   private readonly windows = new Map<string, Map<string, NoticeWindow>>();
 
   constructor(
@@ -48,9 +48,9 @@ export class DocNotices {
     }
   ) {}
 
-  recordRead(runId: string, docId: string): void {
-    const docs = this.reads.get(runId) ?? new Set<string>();
-    docs.add(docId);
+  recordRead(runId: string, docId: string, revId: string): void {
+    const docs = this.reads.get(runId) ?? new Map<string, string>();
+    docs.set(docId, revId);
     this.reads.set(runId, docs);
   }
 
@@ -59,20 +59,22 @@ export class DocNotices {
     this.windows.delete(runId);
   }
 
-  // A DaemonDocsHost.onChange listener: only a team doc's sealed head counts.
+  // A DaemonDocsHost.onChange listener: only a team doc's sealed head counts,
+  // a new doc's first revision included.
   onChange(change: DocChange): void {
     if (
       change.scope !== 'team' ||
-      change.kind !== 'sealed' ||
+      (change.kind !== 'sealed' && change.kind !== 'created') ||
       change.rev === null
     )
       return;
     const head = this.deps.service.noticeFacts(change.doc);
-    if (head === null || head.rev !== change.rev) return;
+    if (head === null || head.rev !== change.rev || !head.sealed) return;
     const now = this.deps.host.now().getTime();
     const span = this.span();
     for (const run of this.deps.host.liveExecuteRuns()) {
       if (`run:${run.runId}` === change.author) continue;
+      if (this.hasRead(run.runId, change.doc, head.rev)) continue;
       if (!this.cares(run.runId, run.taskId, change.doc)) continue;
       const windows =
         this.windows.get(run.runId) ?? new Map<string, NoticeWindow>();
@@ -117,7 +119,7 @@ export class DocNotices {
   }
 
   // The head a trailing notice names: a sealed one past the last notified,
-  // not the run's own, on a doc the run still cares about.
+  // neither the run's own nor one it read, on a doc the run still cares about.
   private trailing(
     runId: string,
     docId: string,
@@ -128,10 +130,15 @@ export class DocNotices {
       head === null ||
       !head.sealed ||
       head.rev === w.rev ||
-      head.author === `run:${runId}`
+      head.author === `run:${runId}` ||
+      this.hasRead(runId, docId, head.rev)
     )
       return null;
     return this.cares(runId, w.taskId, docId) ? head : null;
+  }
+
+  private hasRead(runId: string, docId: string, revId: string): boolean {
+    return this.reads.get(runId)?.get(docId) === revId;
   }
 
   private cares(runId: string, taskId: string, docId: string): boolean {

@@ -62,11 +62,7 @@ export interface DocsHost {
   // Called after a write commits: events, receipts and notices hang off it.
   changed(change: DocChange): void;
   // Live execute runs (running or awaiting approval), each with its task.
-  liveExecuteRuns(): {
-    runId: string;
-    taskId: string;
-    operator: Operator | null;
-  }[];
+  liveExecuteRuns(): { runId: string; taskId: string }[];
   // One line into a live run's context; throws for a run that cannot take it.
   notifyRun(runId: string, line: string): void;
   now(): Date;
@@ -78,7 +74,10 @@ export const AMEND_DEBOUNCE_MS = 2_000;
 // How the line the A2A bridge writes into each task a client asks for begins.
 const A2A_PROVENANCE_PREFIX = 'Requested over A2A by ';
 
-type DocsRuns = Pick<Orchestrator, 'list' | 'taskIdOfRun' | 'notifyRun'>;
+type DocsRuns = Pick<
+  Orchestrator,
+  'list' | 'notifyRun' | 'onRunTerminal' | 'taskIdOfRun'
+>;
 type DocsMessages = Pick<MessageStore, 'getMessage' | 'thread' | 'deliveries'>;
 type MemoryEntryScope = 'personal' | 'project' | 'team';
 
@@ -125,6 +124,7 @@ export class DaemonDocsHost implements DocsHost {
   private messages: DocsMessages | null = null;
   private memory: DocsMemoryPort | null = null;
   private readonly listeners = new Set<(change: DocChange) => void>();
+  private readonly endListeners = new Set<(runId: string) => void>();
   private readonly debounced = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
@@ -137,6 +137,9 @@ export class DaemonDocsHost implements DocsHost {
 
   bindRuns(orchestrator: DocsRuns): void {
     this.runs = orchestrator;
+    orchestrator.onRunTerminal((meta) => {
+      for (const listener of this.endListeners) listener(meta.id);
+    });
   }
 
   bindMessaging(store: DocsMessages): void {
@@ -150,6 +153,12 @@ export class DaemonDocsHost implements DocsHost {
   onChange(listener: (change: DocChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  // Hears each run's id once it reaches a terminal state, after runs bind.
+  onRunEnded(listener: (runId: string) => void): () => void {
+    this.endListeners.add(listener);
+    return () => this.endListeners.delete(listener);
   }
 
   operatorOf(principal: Principal): Operator | null {
@@ -267,15 +276,7 @@ export class DaemonDocsHost implements DocsHost {
           (r.state === 'running' || r.state === 'awaiting-approval') &&
           runKind(r) === 'execute'
       )
-      .map((r) => ({
-        runId: r.id,
-        taskId: r.taskId,
-        operator: this.operatorOf({
-          address: `run:${r.id}`,
-          canDecide: false,
-          kind: 'run',
-        }),
-      }));
+      .map((r) => ({ runId: r.id, taskId: r.taskId }));
   }
 
   notifyRun(runId: string, line: string): void {

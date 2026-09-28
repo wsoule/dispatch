@@ -12,7 +12,6 @@ const DOCS_SWEEP_MS = 60_000;
 
 interface OpenDocs {
   service: DocsService;
-  notices: DocNotices;
   stop(): void;
 }
 
@@ -91,6 +90,7 @@ export function openDocs(deps: {
   });
   service.attachNotices(notices);
   const unsubscribe = deps.host.onChange((c) => notices.onChange(c));
+  const unsubscribeEnds = deps.host.onRunEnded((id) => notices.runEnded(id));
   const sweep = (): void => {
     try {
       service.sweep();
@@ -105,10 +105,10 @@ export function openDocs(deps: {
   timer.unref();
   return {
     service,
-    notices,
     stop() {
       clearInterval(timer);
       unsubscribe();
+      unsubscribeEnds();
       service.close();
     },
   };

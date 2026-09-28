@@ -128,9 +128,9 @@ export interface RankedDoc {
   source: 'manual' | 'mention';
 }
 
-// Live notices, told of each doc a run reads so they cover it.
+// Live notices, told of each revision a run reads so they cover its doc.
 interface DocReadRecorder {
-  recordRead(runId: string, docId: string): void;
+  recordRead(runId: string, docId: string, revId: string): void;
 }
 
 // What a live notice names about a team doc's head.
@@ -2085,6 +2085,9 @@ export class DocsService {
       opts.rev === undefined
         ? this.headOf(doc)
         : this.revisionOf(doc, opts.rev, 'rev');
+    // Recorded before the read seals the head, so no notice tells the run of it.
+    if (actor.runId !== null)
+      this.notices?.recordRead(actor.runId, doc.id, rev.id);
     this.sealIfOtherReads(actor, doc, rev);
     const store = this.store();
     const current = store.revisionMeta(rev.id) ?? rev;
@@ -2106,7 +2109,6 @@ export class DocsService {
       ? pageOf(text, opts.offset ?? 0, DOCS_LIMITS.readPageBytes)
       : { text, offset: 0, nextOffset: null, total: utf8Bytes(text) };
     const fresh = store.doc(doc.id) ?? doc;
-    if (actor.runId !== null) this.notices?.recordRead(actor.runId, doc.id);
     return {
       doc: this.record(fresh),
       rev: toInfo(current),
