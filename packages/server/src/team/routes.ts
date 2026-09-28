@@ -167,7 +167,7 @@ export async function issueTeamToken(
         const named = roster.dropped.map(describeDroppedEntry).join('; ');
         return errorResponse(
           409,
-          `team.yml has entries this daemon skipped (${named}); fix them before adding anyone, or rewriting the roster would delete them`
+          `team.yml has entries this daemon skipped (${named}); fix them first, since this invite would rewrite team.yml and delete them`
         );
       }
       mkdirSync(join(ctx.rootDir, DISPATCH_DIR), { recursive: true });

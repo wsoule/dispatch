@@ -218,6 +218,21 @@ describe('team tokens', () => {
     expect(readFileSync(file, 'utf8')).toBe(yaml);
   });
 
+  it('refuses a re-invite that would rewrite the roster, saying so rather than that it adds anyone', async () => {
+    const file = join(root, '.dispatch', 'team.yml');
+    const yaml = `members:\n  - handle: ${'a'.repeat(64)}2\n    email: long@x.com\n  - handle: ok\n    email: ok@x.com\n`;
+    writeFileSync(file, yaml);
+
+    // A new display name changes ok's entry without adding anyone.
+    const res = await invite({ email: 'ok@x.com', displayName: 'Okay' });
+    expect(res.status).toBe(409);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain('"long@x.com"');
+    expect(error).toContain('this invite would rewrite team.yml');
+    expect(error).not.toContain('adding anyone');
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+  });
+
   it('rejects an unknown tier', async () => {
     const res = await invite({ email: 'ada@example.com', tier: 'admin' });
     expect(res.status).toBe(400);
