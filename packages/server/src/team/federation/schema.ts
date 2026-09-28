@@ -1,0 +1,30 @@
+// The federation's tables in the board-sync ledger's state.db. The ledger's
+// own tables keep their meaning, so an older build never meets a v2 op there.
+export const FED_SCHEMA = `
+CREATE TABLE IF NOT EXISTS fed_meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_outbox (seq INTEGER PRIMARY KEY, op_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_keys (
+  replica TEXT PRIMARY KEY, handle TEXT NOT NULL, device TEXT NOT NULL, build TEXT NOT NULL,
+  sign_pub TEXT NOT NULL, seal_pub TEXT NOT NULL, fingerprint TEXT NOT NULL, key_seq INTEGER NOT NULL,
+  legacy_through INTEGER, legacy_digest TEXT, invite_json TEXT, first_seen_at TEXT NOT NULL
+);
+-- The head columns are null for a log halted before its first op verified.
+CREATE TABLE IF NOT EXISTS fed_cursors (replica TEXT PRIMARY KEY, seq INTEGER, hash TEXT, hlc TEXT, halted TEXT);
+-- Every verified roster op, whatever its action, as the fold reads them.
+CREATE TABLE IF NOT EXISTS fed_roster (replica TEXT NOT NULL, seq INTEGER NOT NULL, hlc TEXT NOT NULL, hash TEXT NOT NULL, body_json TEXT NOT NULL, PRIMARY KEY (replica, seq));
+CREATE TABLE IF NOT EXISTS fed_runs (run TEXT PRIMARY KEY, replica TEXT NOT NULL, task TEXT, run_kind TEXT NOT NULL, live INTEGER NOT NULL, waiting_on TEXT, hlc TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_replicas (replica TEXT PRIMARY KEY, build TEXT NOT NULL, device TEXT NOT NULL, last_hlc TEXT NOT NULL, skew_ms INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_members (channel TEXT NOT NULL, member TEXT NOT NULL, joined INTEGER NOT NULL, hlc TEXT NOT NULL, PRIMARY KEY (channel, member));
+CREATE TABLE IF NOT EXISTS fed_agents (address TEXT PRIMARY KEY, replica TEXT NOT NULL, display_name TEXT NOT NULL, client TEXT NOT NULL, status TEXT NOT NULL, hlc TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_held_ops (message_id TEXT PRIMARY KEY, op_json TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_inbox (replica TEXT NOT NULL, seq INTEGER NOT NULL, hlc TEXT NOT NULL, payload_json TEXT NOT NULL, attempts INTEGER NOT NULL DEFAULT 0, first_at TEXT NOT NULL, PRIMARY KEY (replica, seq));
+CREATE TABLE IF NOT EXISTS fed_parked (replica TEXT NOT NULL, seq INTEGER NOT NULL, op_json TEXT NOT NULL, reason TEXT NOT NULL, first_at TEXT NOT NULL, PRIMARY KEY (replica, seq));
+CREATE TABLE IF NOT EXISTS fed_unknown (replica TEXT NOT NULL, seq INTEGER NOT NULL, op_json TEXT NOT NULL, PRIMARY KEY (replica, seq));
+CREATE TABLE IF NOT EXISTS fed_published (kind TEXT NOT NULL, ref TEXT NOT NULL, hash TEXT NOT NULL, PRIMARY KEY (kind, ref));
+CREATE TABLE IF NOT EXISTS fed_quota (replica TEXT NOT NULL, hour TEXT NOT NULL, count INTEGER NOT NULL, PRIMARY KEY (replica, hour));
+CREATE TABLE IF NOT EXISTS fed_problems (subject TEXT PRIMARY KEY, message TEXT NOT NULL, at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fed_audit (id INTEGER PRIMARY KEY, at TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT NOT NULL, detail_json TEXT NOT NULL);
+-- Which tasks each applied v2 task op touched, kept 30 days, so a revocation
+-- that cuts below ops already applied here can list them.
+CREATE TABLE IF NOT EXISTS fed_applied (replica TEXT NOT NULL, seq INTEGER NOT NULL, task TEXT NOT NULL, at TEXT NOT NULL, PRIMARY KEY (replica, seq, task));
+`;
