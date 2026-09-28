@@ -4,9 +4,12 @@ import { CANONICAL_STATUSES, DEFAULT_A2A } from '@dispatch/core';
 
 import { tokenHash } from '../../src/a2a/auth.js';
 import { bridgeExternalPolicy } from '../../src/a2a/external.js';
+import { handleProposal } from '../../src/a2a/handoff.js';
 import type { BridgeDeps } from '../../src/a2a/port.js';
 import { DaemonBridgePort } from '../../src/a2a/port.js';
 import { BridgeWatch } from '../../src/a2a/watch.js';
+import { validateTaskInput } from '../../src/api.js';
+import { TaskCache } from '../../src/cache.js';
 import { makeOrchestrator, openRecovered } from '../messaging/harness.js';
 
 // A bridge over a real engine and task store, with one approved client.
@@ -17,6 +20,15 @@ export async function bridgeFixture(
   const { orchestrator, store: tasks, events } = makeOrchestrator(root);
   const messaging = await openRecovered(root, orchestrator, tasks, events);
   const store = new SqliteA2AStore(openA2ADb(':memory:'));
+  const cache = new TaskCache();
+  cache.rebuild(tasks);
+  // A task write as the daemon makes it: the store, then the cache and bus.
+  const write = <T>(fn: () => T): T => {
+    const out = fn();
+    cache.rebuild(tasks);
+    events.broadcast({ type: 'task.changed' });
+    return out;
+  };
   const deps: BridgeDeps = {
     rootDir: root,
     engine: messaging.engine,
@@ -28,6 +40,9 @@ export async function bridgeFixture(
     policy: () => ({ ...DEFAULT_A2A, ...policy }),
     statuses: () => [...CANONICAL_STATUSES],
     cardBase: () => ({ publicUrl: 'http://127.0.0.1:7450', version: 'test' }),
+    validateTask: (input) => validateTaskInput(root, { ...input }),
+    createTask: (input) => write(() => tasks.create(input)),
+    updateTask: (id, patch) => write(() => tasks.update(id, patch)),
   };
   const changed: string[] = [];
   const watch = new BridgeWatch({
@@ -38,6 +53,9 @@ export async function bridgeFixture(
   });
   const stopWatch = watch.start();
   messaging.setExternalPolicy(bridgeExternalPolicy(deps));
+  messaging.gates.register('task-proposal', (q, a) =>
+    handleProposal(deps, watch, q, a)
+  );
   const port = new DaemonBridgePort(deps, watch);
   const addClient = (name: string, recipients: string[] = []) => {
     const address = `agent:wyat/a2a.${name}`;
@@ -67,6 +85,7 @@ export async function bridgeFixture(
     messaging,
     store,
     tasks,
+    cache,
     orchestrator,
     events,
     watch,

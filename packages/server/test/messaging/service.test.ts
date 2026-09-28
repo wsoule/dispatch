@@ -415,8 +415,20 @@ describe('openMessaging', () => {
         message: 'm-x',
       },
     });
+    const sent = await messaging.engine.send(
+      gate('task-proposal'),
+      SYSTEM_SENDER
+    );
+    expect(sent.message.kind).toBe('question');
+    // Only the system raises a task proposal.
     await expect(
-      messaging.engine.send(gate('task-proposal'), SYSTEM_SENDER)
+      messaging.engine.send(gate('task-proposal'), {
+        address: 'human:wyat',
+        canDecide: true,
+      })
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
+    await expect(
+      messaging.engine.send(gate('handoff-review'), SYSTEM_SENDER)
     ).rejects.toMatchObject({ code: 'invalid', field: 'data.type' });
     messaging.close();
   });

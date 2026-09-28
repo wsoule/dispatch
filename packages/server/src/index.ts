@@ -38,10 +38,12 @@ import type { ListenerOverrides } from './a2a/settings.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
   bearerToken,
+  createTaskChecked,
   handleApi,
   isTrustedOrigin,
   mintDaemonTokens,
   rejectUnauthorized,
+  validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
@@ -1372,6 +1374,22 @@ async function bootServer(
     rootDir,
     messaging,
     tasks: store,
+    validateTask: (input) => validateTaskInput(rootDir, { ...input }),
+    // Validated by validateTask first, so a refusal here is a bug.
+    createTask: (input) => {
+      const created = createTaskChecked(
+        { rootDir, store, cache, events },
+        input
+      );
+      if (!created.ok) throw new Error(created.error);
+      return created.doc;
+    },
+    updateTask: (id, patch) => {
+      const doc = store.update(id, patch);
+      cache.rebuild(store);
+      events.broadcast({ type: 'task.changed' });
+      return doc;
+    },
     orchestrator,
     events,
     ownerRef: actorContext.humanRef,

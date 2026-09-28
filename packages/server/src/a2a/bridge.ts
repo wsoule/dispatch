@@ -15,6 +15,7 @@ import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { runsDir } from '../orchestrator/paths.js';
 import { bridgeExternalPolicy } from './external.js';
+import { handleProposal } from './handoff.js';
 import { A2AListener } from './listener.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
@@ -70,6 +71,10 @@ interface OpenBridgeDeps {
   rootDir: string;
   messaging: Messaging;
   tasks: TaskStorePort;
+  // The daemon's checked task writes (cache rebuild and task.changed included).
+  validateTask: BridgeDeps['validateTask'];
+  createTask: BridgeDeps['createTask'];
+  updateTask: BridgeDeps['updateTask'];
   orchestrator: Orchestrator;
   events: EventBus;
   ownerRef: string;
@@ -139,15 +144,22 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         publicUrl: listener?.url() ?? 'http://127.0.0.1',
         version: deps.version,
       }),
+      validateTask: deps.validateTask,
+      createTask: deps.createTask,
+      updateTask: deps.updateTask,
     };
-    watch = new BridgeWatch({
+    const hub = new BridgeWatch({
       ...bridgeDeps,
       events: deps.events,
       onChanged: () => deps.events.broadcast({ type: 'a2a.changed' }),
     });
-    stopWatch = watch.start();
+    watch = hub;
+    stopWatch = hub.start();
     messaging.setExternalPolicy(bridgeExternalPolicy(bridgeDeps));
-    port = new DaemonBridgePort(bridgeDeps, watch);
+    messaging.gates.register('task-proposal', (question, answer) =>
+      handleProposal(bridgeDeps, hub, question, answer)
+    );
+    port = new DaemonBridgePort(bridgeDeps, hub);
     listener = new A2AListener({
       port,
       policy: () => a2aConfig(rootDir).policy,
@@ -155,7 +167,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       ...(deps.track === undefined ? {} : { track: deps.track }),
     });
     try {
-      reconcileA2A(bridgeDeps, watch);
+      // Its gate sends finish in the background and log their own failures.
+      reconcileA2A(bridgeDeps, hub);
     } catch (err) {
       console.error('dispatchd: A2A boot reconciliation failed', err);
     }

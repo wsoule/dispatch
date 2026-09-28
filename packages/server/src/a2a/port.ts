@@ -11,6 +11,7 @@ import type {
   ListQuery,
   OpenInput,
   OpenResult,
+  StatusEntry,
   TaskFacts,
   TaskRow,
 } from '@dispatch/a2a';
@@ -22,9 +23,16 @@ import {
   encodePageToken,
   matchChoice,
   offeredSkills,
+  statusReply,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
-import type { A2AConfig, A2ASkill, TaskStorePort } from '@dispatch/core';
+import type {
+  A2AConfig,
+  CreateInput,
+  TaskDoc,
+  TaskStorePort,
+  UpdatePatch,
+} from '@dispatch/core';
 import type {
   Address,
   DeliveryEngine,
@@ -35,18 +43,19 @@ import type {
 import { MessagingError } from '@dispatch/protocol';
 import { basename } from 'node:path';
 
-import { closeGate } from '../messaging/gates.js';
+import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import { settle } from '../messaging/host.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
+import { answerRoot, approvedTasksOf, openHandoff } from './handoff.js';
 import { rowFor } from './reconcile.js';
 import type { BridgeWatch } from './watch.js';
 
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
-// The skills open() serves; the card never lists one it would refuse.
-const SERVED_SKILLS: readonly A2ASkill[] = ['ask'];
+// The status skill reports at most this many handoffs, newest first.
+const STATUS_LIMIT = 50;
 
 // What the daemon's bridge reads and writes. `policy` is a function so a
 // config reload (or a test) can swap it; every call reads it afresh.
@@ -61,6 +70,11 @@ export interface BridgeDeps {
   policy: () => A2AConfig;
   statuses: () => string[];
   cardBase: () => { publicUrl: string; version: string };
+  // Task writes as POST and PATCH /api/tasks make them: checked, stored,
+  // cached and broadcast.
+  validateTask(input: CreateInput): string | null;
+  createTask(input: CreateInput): TaskDoc;
+  updateTask(id: string, patch: UpdatePatch): TaskDoc;
   now?: () => Date;
 }
 
@@ -91,10 +105,9 @@ export class DaemonBridgePort implements BridgePort {
     return row;
   }
 
-  // The Dispatch tasks the caller's approved handoffs created; none until
-  // this project takes handoffs.
-  private approvedTasks(_caller: Caller): Set<string> {
-    return new Set();
+  // The Dispatch tasks the caller's approved handoffs created.
+  private approvedTasks(caller: Caller): Set<string> {
+    return approvedTasksOf(this.deps, caller.address);
   }
 
   // A reply with no `to` goes to the replied-to message's sender (the engine
@@ -259,11 +272,7 @@ export class DaemonBridgePort implements BridgePort {
         description: policy.description,
         publicUrl: base.publicUrl,
         version: base.version,
-        skills: offeredSkills(
-          policy.skills,
-          this.deps.statuses(),
-          SERVED_SKILLS
-        ),
+        skills: offeredSkills(policy.skills, this.deps.statuses()),
         blockingWaitSec: policy.blockingWaitSec,
         pushNotifications: false,
       };
@@ -271,7 +280,7 @@ export class DaemonBridgePort implements BridgePort {
   }
 
   // A replayed messageId returns its first result before any limit applies;
-  // an ask opens a task, any other kind is delivered with a direct reply.
+  // an ask or a handoff opens a task, status and plain sends get a direct reply.
   async open(caller: Caller, input: OpenInput): Promise<OpenResult> {
     const prior = this.deps.messages.byIdemKey(
       caller.address,
@@ -283,15 +292,14 @@ export class DaemonBridgePort implements BridgePort {
       this.deps.store.insertTask(rowFor(caller.address, prior));
       return { kind: 'task', taskId: prior.id };
     }
-    if (input.kind === 'handoff' || input.kind === 'status') {
-      throw new MessagingError(
-        'invalid',
-        'this project does not take handoffs yet',
-        'work.skill'
-      );
-    }
-    this.checkDurableLimits(caller, input.kind === 'ask');
+    if (input.kind === 'status') return this.statusSkill(caller, input);
+    this.checkDurableLimits(
+      caller,
+      input.kind === 'ask' || input.kind === 'handoff'
+    );
     this.checkRefs(caller, input.refs);
+    if (input.kind === 'handoff')
+      return openHandoff(this.deps, this.hub, caller, input);
     const to = this.recipients(caller, input);
     const send: SendInput = {
       to,
@@ -377,9 +385,50 @@ export class DaemonBridgePort implements BridgePort {
     return { reask: null };
   }
 
-  // Where a continuation outside INPUT_REQUIRED goes: the root's recipients.
-  protected continuationRecipients(_row: TaskRow, facts: TaskFacts): Address[] {
-    return facts.root.to;
+  // Where a continuation outside INPUT_REQUIRED goes: an ask's recipients; a
+  // handoff's task once approved, its owner until then.
+  protected continuationRecipients(row: TaskRow, facts: TaskFacts): Address[] {
+    if (row.skill === 'ask') return facts.root.to;
+    const task = facts.task;
+    return task !== null && task !== 'deleted' && task.approved
+      ? [`task:${task.id}`]
+      : [this.deps.ownerRef];
+  }
+
+  // The caller's handoffs (or the one `work.task` names), newest first; it
+  // opens no task and sends nothing.
+  private statusSkill(caller: Caller, input: OpenInput): OpenResult {
+    const named = input.work?.skill === 'status' ? input.work.task : undefined;
+    const rows = this.deps.store
+      .tasksOf(caller.address)
+      .filter(
+        (r) => r.skill === 'handoff' && (named === undefined || r.id === named)
+      )
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+      .slice(0, STATUS_LIMIT);
+    const entries: StatusEntry[] = [];
+    for (const row of rows) {
+      const entry = this.statusEntry(row);
+      if (entry !== null) entries.push(entry);
+    }
+    return { kind: 'reply', ...statusReply(entries) };
+  }
+
+  // One handoff's status line, or null while it has no Dispatch task.
+  private statusEntry(row: TaskRow): StatusEntry | null {
+    const facts = gatherFacts(this.deps, row);
+    const task = facts.task;
+    if (task === null || task === 'deleted') return null;
+    const { stage } = decideState(facts);
+    const pr = facts.work.pr;
+    return {
+      a2aTask: row.id,
+      task: task.id,
+      title: task.title,
+      status: task.status,
+      ...(stage === undefined ? {} : { stage }),
+      ...(pr?.kind === 'pr' ? { pr: pr.url } : {}),
+    };
   }
 
   facts(caller: Caller, taskId: string): Promise<TaskFacts | null> {
@@ -418,12 +467,9 @@ export class DaemonBridgePort implements BridgePort {
     };
   }
 
-  // Closes the unanswered root as the system; a second cancel is a no-op.
-  cancel(caller: Caller, taskId: string): Promise<void> {
-    return settle(() => this.cancelNow(caller, taskId));
-  }
-
-  private cancelNow(caller: Caller, taskId: string): void {
+  // Closes an unanswered ask, or a handoff still awaiting the owner, as the
+  // system; a second cancel is a no-op.
+  async cancel(caller: Caller, taskId: string): Promise<void> {
     const row = this.ownedRow(caller, taskId);
     if (row.canceledAt !== null) return;
     if (TERMINAL_STATES.has(decideState(gatherFacts(this.deps, row)).state)) {
@@ -432,6 +478,7 @@ export class DaemonBridgePort implements BridgePort {
         'this task is already finished'
       );
     }
+    if (row.skill === 'handoff') return this.cancelHandoff(caller, row);
     if (!closeGate(this.deps.engine, row.id, `canceled by ${caller.address}`)) {
       throw new A2AError(
         'TASK_NOT_CANCELABLE',
@@ -441,6 +488,47 @@ export class DaemonBridgePort implements BridgePort {
     this.deps.store.updateTask(row.id, {
       canceledAt: this.now().toISOString(),
     });
+    this.hub.recompute(row.id);
+  }
+
+  // A proposal still open is closed and its draft dropped; once the owner has
+  // approved, nothing is dropped and the owner hears the client asked.
+  private async cancelHandoff(caller: Caller, row: TaskRow): Promise<void> {
+    const { engine } = this.deps;
+    if (row.gate !== null && engine.answerOf(row.gate) !== null) {
+      await engine.send(
+        {
+          to: [this.deps.ownerRef],
+          kind: 'notice',
+          body: `${caller.address} asked to cancel ${row.dispatchTask ?? row.id} over A2A.`,
+          refs: [{ type: 'message', id: row.id }],
+          // A client asking again replays this notice rather than repeating it.
+          idempotencyKey: `a2a-cancel:${row.id}`,
+        },
+        SYSTEM_SENDER
+      );
+      throw new A2AError(
+        'TASK_NOT_CANCELABLE',
+        'the task is approved; the project owner was notified'
+      );
+    }
+    if (
+      row.gate !== null &&
+      !closeGate(engine, row.gate, 'canceled by the client')
+    ) {
+      throw new A2AError(
+        'TASK_NOT_CANCELABLE',
+        'the project owner just answered this proposal'
+      );
+    }
+    this.deps.store.updateTask(row.id, {
+      canceledAt: this.now().toISOString(),
+    });
+    const task =
+      row.dispatchTask === null ? null : this.deps.tasks.get(row.dispatchTask);
+    if (task !== null && task.meta.status !== 'dropped')
+      this.deps.updateTask(task.meta.id, { status: 'dropped' });
+    await answerRoot(this.deps, row, 'decline', 'Canceled by the client.');
     this.hub.recompute(row.id);
   }
 

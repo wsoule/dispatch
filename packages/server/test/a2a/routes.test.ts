@@ -355,7 +355,7 @@ describe('/api/a2a/card', () => {
       skills: { id: string }[];
     };
     expect(card.supportedInterfaces[0].protocolBinding).toBe('HTTP+JSON');
-    expect(card.skills.map((s) => s.id)).toEqual(['ask']);
+    expect(card.skills.map((s) => s.id)).toEqual(['ask', 'handoff', 'status']);
   });
 });
 

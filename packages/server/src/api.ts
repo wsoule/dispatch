@@ -572,25 +572,39 @@ function validateTaskFields(
   return null;
 }
 
-async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const input = parsed.value as CreateInput;
-  if (typeof input.title !== 'string' || input.title.trim() === '') {
-    return errorResponse(400, 'invalid title: title is required');
-  }
-  const config = loadConfig(ctx.rootDir);
-  const fieldsError = validateTaskFields(
-    parsed.value as Record<string, unknown>,
-    config,
-    { includeKind: true, includeBody: false }
-  );
-  if (fieldsError) return errorResponse(400, fieldsError);
+// The title and field checks POST /api/tasks runs, shared with A2A handoffs.
+export function validateTaskInput(
+  rootDir: string,
+  input: Record<string, unknown>
+): string | null {
+  if (typeof input.title !== 'string' || input.title.trim() === '')
+    return 'invalid title: title is required';
+  return validateTaskFields(input, loadConfig(rootDir), {
+    includeKind: true,
+    includeBody: false,
+  });
+}
 
+// Creates a task as POST /api/tasks does: checked, then stored, cached and
+// broadcast as task.changed.
+export function createTaskChecked(
+  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'>,
+  input: CreateInput
+): { ok: true; doc: TaskDoc } | { ok: false; error: string } {
+  const error = validateTaskInput(ctx.rootDir, { ...input });
+  if (error !== null) return { ok: false, error };
   const doc = ctx.store.create(input);
   ctx.cache.rebuild(ctx.store);
   ctx.events.broadcast({ type: 'task.changed' });
-  return jsonResponse(doc, 201);
+  return { ok: true, doc };
+}
+
+async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const created = createTaskChecked(ctx, parsed.value as CreateInput);
+  if (!created.ok) return errorResponse(400, created.error);
+  return jsonResponse(created.doc, 201);
 }
 
 // POST /api/tasks/draft — starts a background planner turn and returns the
