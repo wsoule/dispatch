@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { SYSTEM_ADDRESS } from '../src/address.js';
 import { DeliveryEngine } from '../src/engine.js';
 import type { Message } from '../src/envelope.js';
-import type { RemoteTarget } from '../src/host.js';
+import type { RemoteOrigin, RemoteTarget } from '../src/host.js';
 import { openMessagesDb, SqliteMessageStore } from '../src/sqliteStore.js';
 import type { AgentRecord } from '../src/store.js';
 import { FakeFederation, FakeHost } from './fakeHost.js';
@@ -603,6 +603,65 @@ describe('receive refuses a malformed or overreaching envelope', () => {
     await expect(
       engine.receive(bad, fromBob([here('human:wyat')]))
     ).rejects.toMatchObject({ code: 'invalid', field: 'refs' });
+  });
+
+  it('refuses a list element of the wrong type as a refusal, never a crash', async () => {
+    const cases: [Partial<Message>, string][] = [
+      [{ to: [42] as unknown as string[] }, 'to[0]'],
+      [
+        {
+          kind: 'question',
+          blocking: true,
+          choices: [1, 2] as unknown as string[],
+        },
+        'choices[0]',
+      ],
+      [
+        {
+          from: SYSTEM_ADDRESS,
+          kind: 'notice',
+          refs: [{ type: 'message', id: {} }] as unknown as Message['refs'],
+        },
+        'refs[0].id',
+      ],
+    ];
+    for (const [over, field] of cases)
+      await expect(
+        engine.receive(
+          remote(`m-${tick + 100}`, over),
+          fromBob([here('human:wyat')])
+        )
+      ).rejects.toMatchObject({ code: 'invalid', field });
+  });
+
+  it("refuses an origin's target of the wrong shape as a refusal, never a crash", async () => {
+    const targets: [unknown, string][] = [
+      [{ recipient: 7, via: 'direct', homes: [ME] }, 'targets[0].recipient'],
+      [{ recipient: 'human:wyat', via: 'mail', homes: [ME] }, 'targets[0].via'],
+      [
+        { recipient: 'human:wyat', via: 'direct', homes: [ME, 9] },
+        'targets[0].homes[1]',
+      ],
+      [
+        { recipient: 'human:wyat', via: 'direct', homes: [ME], wakeAt: 3 },
+        'targets[0].wakeAt',
+      ],
+    ];
+    for (const [target, field] of targets)
+      await expect(
+        engine.receive(
+          remote(`m-${tick + 100}`),
+          fromBob([target as RemoteTarget])
+        )
+      ).rejects.toMatchObject({ code: 'invalid', field });
+    const notAList = { replica: BOB, targets: 'human:wyat' };
+    await expect(
+      engine.receive(remote('m-02'), notAList as unknown as RemoteOrigin)
+    ).rejects.toMatchObject({ code: 'invalid', field: 'targets' });
+    const forward = { ...fromBob([here('human:wyat')]), forwardTarget: 5 };
+    await expect(
+      engine.receive(remote('m-03'), forward as unknown as RemoteOrigin)
+    ).rejects.toMatchObject({ code: 'invalid', field: 'forwardTarget' });
   });
 
   it("refuses an overseer or A2A target in the origin's resolution", async () => {

@@ -2085,13 +2085,24 @@ function checkReceivedEnvelope(m: Message): void {
     if (m[field] !== undefined && typeof m[field] !== 'string')
       malformed(field, 'expected a string');
   if (!Array.isArray(m.to)) malformed('to', 'expected a list');
-  if (m.choices !== undefined && !Array.isArray(m.choices))
-    malformed('choices', 'expected a list');
+  checkStrings(m.to, 'to');
+  if (m.choices !== undefined) {
+    if (!Array.isArray(m.choices)) malformed('choices', 'expected a list');
+    checkStrings(m.choices, 'choices');
+  }
   if (
     !Array.isArray(m.refs) ||
     !m.refs.every((r) => typeof r === 'object' && r !== null)
   )
     malformed('refs', 'expected a list of refs');
+  m.refs.forEach((r, i) => {
+    if (typeof r.type !== 'string')
+      malformed(`refs[${i}].type`, 'expected a string');
+    if (typeof r.id !== 'string')
+      malformed(`refs[${i}].id`, 'expected a string');
+    if (r.at !== undefined && typeof r.at !== 'string')
+      malformed(`refs[${i}].at`, 'expected a string');
+  });
   if (typeof m.urgent !== 'boolean') malformed('urgent', 'expected a boolean');
   if (typeof m.blocking !== 'boolean')
     malformed('blocking', 'expected a boolean');
@@ -2099,13 +2110,37 @@ function checkReceivedEnvelope(m: Message): void {
     malformed('wake', 'expected none or request');
 }
 
-// The origin's resolution may name only addresses that parse and may leave
-// their machine; a target that fails either refuses the whole message.
+// Refuses the first element of a received list that is not a string.
+function checkStrings(list: readonly unknown[], field: string): void {
+  list.forEach((v, i) => {
+    if (typeof v !== 'string') malformed(`${field}[${i}]`, 'expected a string');
+  });
+}
+
+// The origin's resolution, shaped as RemoteTarget, may name only addresses
+// that parse and may leave their machine; any failure refuses the message.
 function checkReceivedTargets(origin: RemoteOrigin): void {
-  origin.targets.forEach((t, i) => {
+  if (!Array.isArray(origin.targets)) malformed('targets', 'expected a list');
+  if (
+    origin.forwardTarget !== undefined &&
+    typeof origin.forwardTarget !== 'string'
+  )
+    malformed('forwardTarget', 'expected an address');
+  origin.targets.forEach((raw: unknown, i) => {
+    const at = `targets[${i}]`;
+    const t: Partial<Record<keyof RemoteTarget, unknown>> =
+      typeof raw === 'object' && raw !== null ? raw : {};
+    if (typeof t.recipient !== 'string')
+      malformed(`${at}.recipient`, 'expected an address');
+    if (t.via !== 'direct' && t.via !== 'channel')
+      malformed(`${at}.via`, 'expected direct or channel');
+    if (!Array.isArray(t.homes)) malformed(`${at}.homes`, 'expected a list');
+    checkStrings(t.homes, `${at}.homes`);
+    if (t.wakeAt !== undefined && typeof t.wakeAt !== 'string')
+      malformed(`${at}.wakeAt`, 'expected a replica id');
     if (isFederationLocalAddress(t.recipient))
       throw new MessagingError('forbidden', LOCAL_ONLY_TEXT.participant, 'to');
-    parseAddress(t.recipient, `targets[${i}]`);
+    parseAddress(t.recipient, at);
   });
 }
 
