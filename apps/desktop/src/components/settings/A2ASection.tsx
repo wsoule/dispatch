@@ -122,12 +122,8 @@ function FieldProblem({ message }: { message: string | null }) {
   );
 }
 
-/**
- * Settings → A2A: the opt-in listener other agents reach this project on, the
- * card they read, the clients allowed to ask, and their open tasks. Reading
- * needs no tier; changing the listener needs operator, and rotating, revoking
- * or approving a client needs decide.
- */
+/** Settings → A2A: the opt-in listener, its card, clients and open tasks.
+ *  The listener needs operator; approving, rotating and revoking need decide. */
 export function A2ASection({ data }: A2ASectionProps) {
   const { client, myTier } = data;
   const canDecide = myTier === 'decide' || myTier === 'operator';
@@ -150,7 +146,7 @@ function ListenerGroup({
 }) {
   const queryClient = useQueryClient();
   const status = useA2AQuery(client, 'listener', (api) => api.a2aListener());
-  // The form as edited; null follows the daemon's settings until the first edit.
+  // The form as edited; null follows the daemon's settings.
   const [draft, setDraft] = useState<ListenerForm | null>(null);
   const [problem, setProblem] = useState<{
     field: keyof ListenerForm | null;
@@ -210,6 +206,7 @@ function ListenerGroup({
           ? await client.disableA2AListener()
           : await client.setA2AListener(settings);
       queryClient.setQueryData(a2aQueryKey(client.baseUrl, 'listener'), next);
+      setDraft(null);
       // The card advertises the listener's URL.
       void queryClient.invalidateQueries({
         queryKey: a2aQueryKey(client.baseUrl, 'card'),
@@ -396,7 +393,11 @@ function ListenerGroup({
 
 function CardGroup({ client }: { client: Api }) {
   const card = useA2AQuery(client, 'card', (api) => api.a2aCard());
+  const listener = useA2AQuery(client, 'listener', (api) => api.a2aListener());
   const summary = card.data === undefined ? null : cardSummary(card.data);
+  // A closed listener's card carries a placeholder URL nothing answers on.
+  const endpoint =
+    listener.data?.listening === true ? (summary?.url ?? null) : null;
   return (
     <SettingsGroup
       title="Card"
@@ -427,10 +428,10 @@ function CardGroup({ client }: { client: Api }) {
               </span>
             }
           />
-          {summary.url !== null && (
+          {endpoint !== null && (
             <SettingsRow
               title="Endpoint"
-              subtitle={<span className="font-mono">{summary.url}</span>}
+              subtitle={<span className="font-mono">{endpoint}</span>}
             />
           )}
         </>

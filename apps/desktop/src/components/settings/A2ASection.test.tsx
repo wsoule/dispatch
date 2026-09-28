@@ -6,7 +6,14 @@ import type {
   AuthTier,
 } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { expect, mock, test } from 'bun:test';
 
 import { A2ASection } from './A2ASection';
@@ -76,17 +83,21 @@ const ASK: A2ATaskSummary = {
   createdAt: '2026-09-25T10:00:00.000Z',
 };
 
+const BASE_URL = 'http://127.0.0.1:1';
+let queryClient: QueryClient;
+
 function mount(
   myTier: AuthTier = 'operator',
   over: {
     status?: A2AListenerStatus;
+    card?: Record<string, unknown>;
     clients?: A2AClientSummary[];
     tasks?: A2ATaskSummary[];
   } = {}
 ) {
   const status = over.status ?? CLOSED;
   const client = {
-    baseUrl: 'http://127.0.0.1:1',
+    baseUrl: BASE_URL,
     a2aListener: mock(() => Promise.resolve(status)),
     setA2AListener: mock((settings: A2AListenerSettings) =>
       Promise.resolve({
@@ -104,7 +115,9 @@ function mount(
       })
     ),
     a2aCard: mock(() =>
-      Promise.resolve({ name: 'Acme API', skills: [{ id: 'ask' }] })
+      Promise.resolve(
+        over.card ?? { name: 'Acme API', skills: [{ id: 'ask' }] }
+      )
     ),
     a2aClients: mock(() => Promise.resolve({ clients: over.clients ?? [] })),
     addA2AClient: mock((_input: unknown) =>
@@ -121,12 +134,11 @@ function mount(
     approveAgent: mock((_address: string) => Promise.resolve({})),
     a2aTasks: mock(() => Promise.resolve({ tasks: over.tasks ?? [] })),
   };
+  queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <QueryClientProvider
-      client={
-        new QueryClient({ defaultOptions: { queries: { retry: false } } })
-      }
-    >
+    <QueryClientProvider client={queryClient}>
       <A2ASection data={dataWith({ client: client as never, myTier })} />
     </QueryClientProvider>
   );
@@ -251,6 +263,54 @@ test('moving to every network interface proposes the team-local cert', async () 
   chooseOption('Every network interface');
   expect(valueOf('TLS certificate')).toBe('/team/cert.pem');
   expect(valueOf('TLS key')).toBe('/team/key.pem');
+});
+
+test('after a save the form follows the daemon again', async () => {
+  mount();
+  await screen.findByText(/Off/);
+  fireEvent.click(screen.getByRole('switch', { name: 'A2A listener' }));
+  fireEvent.click(screen.getByRole('button', { name: 'Save listener' }));
+  await screen.findByText('Listening at http://127.0.0.1:7450');
+  // Another window (the CLI, a second desktop) moves the listener.
+  act(() => {
+    queryClient.setQueryData(['dispatch-a2a', BASE_URL, 'listener'], {
+      ...CLOSED,
+      settings: { ...OFF, port: 9000 },
+    });
+  });
+  await waitFor(() => expect(valueOf('Port')).toBe('9000'));
+  expect(
+    screen
+      .getByRole('switch', { name: 'A2A listener' })
+      .getAttribute('aria-checked')
+  ).toBe('false');
+});
+
+test('the card shows its endpoint only while the listener is open', async () => {
+  const card = {
+    name: 'Acme API',
+    skills: [{ id: 'ask' }],
+    supportedInterfaces: [{ url: 'http://127.0.0.1/a2a/v1' }],
+  };
+  mount('operator', { card });
+  expect(await screen.findByText('Acme API')).toBeTruthy();
+  await screen.findByText(/Off/);
+  expect(screen.queryByText('Endpoint')).toBeNull();
+  cleanup();
+  mount('operator', {
+    card: {
+      ...card,
+      supportedInterfaces: [{ url: 'http://127.0.0.1:7450/a2a/v1' }],
+    },
+    status: {
+      ...CLOSED,
+      enabled: true,
+      listening: true,
+      url: 'http://127.0.0.1:7450',
+      settings: { ...OFF, enabled: true, port: 7450 },
+    },
+  });
+  expect(await screen.findByText('http://127.0.0.1:7450/a2a/v1')).toBeTruthy();
 });
 
 test('shows the card the listener serves', async () => {
