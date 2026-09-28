@@ -1,3 +1,4 @@
+import type { AddLedgerInput } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -7,6 +8,7 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from '../testAuth.js';
+import { BEFORE_CUTOVER, seedLedger } from './fixtures.js';
 
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
@@ -40,19 +42,20 @@ afterEach(async () => {
   rmSync(root, { recursive: true, force: true });
 });
 
-async function addLedger(body: Record<string, unknown>): Promise<void> {
-  const res = await fetch(`${base}/api/ledger`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ kind: 'hazard', detail: 'detail', ...body }),
-  });
-  expect(res.status).toBe(201);
+// A ledger row from before the cutover, imported as the boot import would.
+function seedLesson(input: Partial<AddLedgerInput> & { title: string }): void {
+  seedLedger(
+    root,
+    { kind: 'hazard', detail: 'detail', authoredBy: 'human:test', ...input },
+    BEFORE_CUTOVER
+  );
+  handle.memory.importLedger();
 }
 
 describe('memory read routes', () => {
-  it('imports lessons on ledger.changed and lists them; receipts stay out', async () => {
-    await addLedger({ title: 'pnpm 11 ignores onlyBuiltDependencies' });
-    await addLedger({
+  it('imports lessons and lists them; receipts stay out', async () => {
+    seedLesson({ title: 'pnpm 11 ignores onlyBuiltDependencies' });
+    seedLesson({
       kind: 'decision',
       title: 'Merged r-1',
       detail: 'ok — auto-decided by policy rung 4 (merge gate)',
@@ -66,7 +69,7 @@ describe('memory read routes', () => {
   });
 
   it('searches, reads by #handle, and reports health', async () => {
-    await addLedger({
+    seedLesson({
       title: 'flaky server tests under load',
       detail: 'run them in chunks',
     });
@@ -115,7 +118,7 @@ describe('memory read routes', () => {
   });
 
   it('dry-runs the ledger import for a decider only', async () => {
-    await addLedger({ title: 'lesson' });
+    seedLesson({ title: 'lesson' });
     const dry = await json<{
       report: { outcome: string; memory: { alreadyImported: number } };
       text: string;
@@ -148,7 +151,7 @@ describe('memory read routes', () => {
   });
 
   it('serves a run its own recalls and index, and refuses other readers', async () => {
-    await addLedger({ title: 'recalled lesson', appliesTo: [] });
+    seedLesson({ title: 'recalled lesson', appliesTo: [] });
     const runId = 'r-memory';
     const shared = handle.memory.shared;
     expect(shared).not.toBeNull();

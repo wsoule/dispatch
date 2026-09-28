@@ -9,7 +9,6 @@ import type {
   FindingSeverity,
   FindingVerdict,
   LedgerEntry,
-  LedgerKind,
   ModelConfig,
   MutationEvidence,
   Priority,
@@ -614,15 +613,6 @@ export interface StartReviewInput {
   // The execute run whose evidence (record_evidence/record_mutation) the
   // review prompt should render — omit when no single run maps to the diff.
   runId?: string;
-}
-
-export interface CreateLedgerInput {
-  epicId?: string | null;
-  sourceTaskId?: string | null;
-  kind: Exclude<LedgerKind, 'handoff'>;
-  title: string;
-  detail: string;
-  appliesTo?: string[];
 }
 
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
@@ -3021,8 +3011,11 @@ export interface ApiClient {
     input: AdjudicateFindingInput
   ): Promise<AdjudicateFindingResult>;
   // `epicId: null` asks for project-wide entries only; omit it for every entry.
-  fetchLedger(filter?: { epicId?: string | null }): Promise<LedgerEntry[]>;
-  createLedgerEntry(input: CreateLedgerInput): Promise<LedgerEntry>;
+  // `class: 'audit'` keeps only receipts; the lessons live in memory.
+  fetchLedger(filter?: {
+    epicId?: string | null;
+    class?: 'audit';
+  }): Promise<LedgerEntry[]>;
   /** Every message on a subject. `subject` is `run:…`, `worktree:…` or `pr:…`. */
   fetchConversation(subject: string): Promise<ChatMessage[]>;
   addChatMessage(input: {
@@ -3761,11 +3754,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       if (filter.epicId !== undefined) {
         params.set('epicId', filter.epicId ?? '');
       }
+      if (filter.class !== undefined) params.set('class', filter.class);
       const query = params.size > 0 ? `?${params.toString()}` : '';
       return request(target, `/api/ledger${query}`);
     },
-    createLedgerEntry: (input) =>
-      request(target, '/api/ledger', { method: 'POST', ...jsonBody(input) }),
     fetchConversation: (subject) =>
       request(
         target,

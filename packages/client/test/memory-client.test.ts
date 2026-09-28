@@ -102,4 +102,21 @@ describe('memory bindings', () => {
       stub.restore();
     }
   });
+
+  it('asks the ledger for its receipts alone with class=audit', async () => {
+    const stub = stubFetch([]);
+    try {
+      const client = createApiClient(BASE);
+      await client.fetchLedger({ class: 'audit' });
+      await client.fetchLedger({ epicId: null, class: 'audit' });
+      await client.fetchLedger();
+      expect(stub.calls.map((c) => c.url)).toEqual([
+        `${BASE}/api/ledger?class=audit`,
+        `${BASE}/api/ledger?epicId=&class=audit`,
+        `${BASE}/api/ledger`,
+      ]);
+    } finally {
+      stub.restore();
+    }
+  });
 });

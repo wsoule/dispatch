@@ -1,4 +1,4 @@
-import type { LedgerEntry, TaskDoc } from '@dispatch/core';
+import type { TaskDoc } from '@dispatch/core';
 import { appendActivity } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
@@ -23,21 +23,6 @@ function fixtureOrientation(
     hotspots: [{ path: 'packages/server/src/api.ts', runs: 6 }],
     digest: null,
     concurrentRuns: [],
-    ...overrides,
-  };
-}
-
-function fixtureLedgerEntry(overrides: Partial<LedgerEntry> = {}): LedgerEntry {
-  return {
-    id: 'l-abc123',
-    epicId: 'e-def456',
-    sourceTaskId: 't-earlier1',
-    kind: 'hazard',
-    title: 'withActionFeedback swallows rejections',
-    detail: 'every catch downstream of it is dead code — check response.ok',
-    appliesTo: [],
-    createdAt: '2026-07-20T00:00:00.000Z',
-    authoredBy: '',
     ...overrides,
   };
 }
@@ -124,7 +109,7 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       null,
       true,
       'human:wyat'
@@ -164,34 +149,29 @@ describe('buildTaskPrompt', () => {
     expect(prompt).toContain('Only finish when the review comes back clean.');
   });
 
-  it('renders no ledger section at all when there are no entries', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+  it('renders no memory section when there is none', () => {
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
+    expect(prompt).not.toContain('## Memory');
     expect(prompt).not.toContain('Findings and decisions');
   });
 
-  it('renders each ledger entry as its kind, title, and detail', () => {
-    const entries = [
-      fixtureLedgerEntry(),
-      fixtureLedgerEntry({
-        id: 'l-def456',
-        kind: 'decision',
-        title: 'retry POSTs',
-        detail: 'up to 3 times on 5xx',
-      }),
-    ];
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), entries);
-    expect(prompt).toContain('## Findings and decisions from earlier work');
-    expect(prompt).toContain(
-      '- **hazard**: withActionFeedback swallows rejections — every catch ' +
-        'downstream of it is dead code — check response.ok'
+  it('renders the memory section after the parent epic and before orientation', () => {
+    const section = '## Memory\n- hazard: x (#AAAAAAAA)';
+    const prompt = buildTaskPrompt(
+      fixtureTask(),
+      fixtureEpic(),
+      section,
+      fixtureOrientation()
     );
-    expect(prompt).toContain(
-      '- **decision**: retry POSTs — up to 3 times on 5xx'
-    );
+    const epicIdx = prompt.indexOf('## Parent epic');
+    const memoryIdx = prompt.indexOf(section);
+    expect(epicIdx).toBeGreaterThan(-1);
+    expect(memoryIdx).toBeGreaterThan(epicIdx);
+    expect(prompt.indexOf('## Repo orientation')).toBeGreaterThan(memoryIdx);
   });
 
   it('renders no orientation section when none was collected', () => {
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
     expect(prompt).not.toContain('## Repo orientation');
   });
 
@@ -199,7 +179,7 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation()
     );
     expect(prompt).toContain('## Repo orientation');
@@ -214,7 +194,7 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation(),
       false
     );
@@ -237,7 +217,7 @@ describe('buildTaskPrompt', () => {
     const prompt = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation({ skills: [] })
     );
     expect(prompt).toContain('## Repo orientation');
@@ -248,13 +228,13 @@ describe('buildTaskPrompt', () => {
   // The whole point of collecting orientation is to stop instructing agents to
   // go and re-derive what it already contains.
   it('drops the go-enumerate-the-skills instruction when orientation supplies the index', () => {
-    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
     expect(without).toContain('.agents/skills or');
 
     const withOrientation = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation()
     );
     expect(withOrientation).not.toContain('.agents/skills or');
@@ -264,13 +244,13 @@ describe('buildTaskPrompt', () => {
   });
 
   it('drops the opening run_list instruction when concurrency is already reported', () => {
-    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), []);
+    const without = buildTaskPrompt(fixtureTask(), fixtureEpic(), null);
     expect(without).toContain('before assuming you have exclusive access');
 
     const withOrientation = buildTaskPrompt(
       fixtureTask(),
       fixtureEpic(),
-      [],
+      null,
       fixtureOrientation()
     );
     expect(withOrientation).not.toContain(
@@ -294,7 +274,7 @@ describe('buildTaskPrompt', () => {
       digest: null,
       concurrentRuns: [],
     };
-    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), [], empty);
+    const prompt = buildTaskPrompt(fixtureTask(), fixtureEpic(), null, empty);
     expect(prompt).not.toContain('## Repo orientation');
     expect(prompt).toContain('.agents/skills or');
     expect(prompt).toContain('before assuming you have exclusive access');
@@ -347,43 +327,5 @@ describe('buildTaskPrompt', () => {
       'These amendments override the description where they conflict.'
     );
     expect(prompt.match(/^## Amendments$/gm)).toBeNull();
-  });
-});
-
-describe('buildTaskPrompt memory section', () => {
-  const ledger = [fixtureLedgerEntry({ title: 'old', detail: 'ledger' })];
-
-  it('renders the memory section instead of the ledger section', () => {
-    const prompt = buildTaskPrompt(
-      fixtureTask(),
-      fixtureEpic(),
-      ledger,
-      null,
-      true,
-      'human:wyat',
-      '## Memory\n- hazard: x (#AAAAAAAA)'
-    );
-    expect(prompt).toContain('## Memory\n- hazard: x (#AAAAAAAA)');
-    expect(prompt).not.toContain('## Findings and decisions from earlier work');
-  });
-
-  it('renders neither when memory is in use with nothing to show', () => {
-    const prompt = buildTaskPrompt(
-      fixtureTask(),
-      fixtureEpic(),
-      ledger,
-      null,
-      true,
-      'human:wyat',
-      null
-    );
-    expect(prompt).not.toContain('## Memory');
-    expect(prompt).not.toContain('## Findings and decisions');
-  });
-
-  it('keeps the ledger section when memory is not in use', () => {
-    expect(buildTaskPrompt(fixtureTask(), fixtureEpic(), ledger)).toContain(
-      '## Findings and decisions from earlier work'
-    );
   });
 });

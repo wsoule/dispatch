@@ -61,7 +61,7 @@ function saveHazard(shared: SqliteMemoryStore, title: string, body: string) {
 }
 
 function textOf(section: MemoryPromptSection): string {
-  if (section.source !== 'memory' || section.text === null)
+  if (section.text === null)
     throw new Error(
       `expected a memory section, got ${JSON.stringify(section)}`
     );
@@ -136,7 +136,7 @@ describe('MemoryService.promptSection', () => {
     memory.close();
   });
 
-  it('asks for the ledger section while memory is unavailable', () => {
+  it('shows no section while memory is unavailable, never the ledger', () => {
     const { memory, shared, task } = setup();
     // A closed store stands in for an unavailable one; the service must not throw.
     shared.close();
@@ -146,38 +146,40 @@ describe('MemoryService.promptSection', () => {
         taskId: task.meta.id,
         dispatchTools: true,
       })
-    ).toEqual({ source: 'ledger' });
+    ).toEqual({ source: 'memory', text: null });
   });
 
-  it('asks for the ledger section until an import has succeeded', () => {
-    const { memory, task } = setup({ imported: false });
+  it('renders memory before any ledger import has run', () => {
+    const { memory, shared, task } = setup({ imported: false });
+    const e = saveHazard(shared, 'saved before any import', 'x');
     expect(
-      memory.promptSection({
-        runId: 'r-000004',
-        taskId: task.meta.id,
-        dispatchTools: true,
-      })
-    ).toEqual({ source: 'ledger' });
+      textOf(
+        memory.promptSection({
+          runId: 'r-000004',
+          taskId: task.meta.id,
+          dispatchTools: true,
+        })
+      )
+    ).toContain(`(${e.handle})`);
     memory.close();
   });
 
-  // A later import that fails its checks outranks an earlier success, now and after a restart.
-  it('asks for the ledger section again once an import reports MISMATCH', () => {
+  // A failed import writes nothing, and prompts stay on memory, now and after a restart.
+  it('stays on memory after an import reports MISMATCH', () => {
     const { memory, shared, task, open } = setup();
     const ask = (m: typeof memory, runId: string) =>
       m.promptSection({ runId, taskId: task.meta.id, dispatchTools: true })
         .source;
-    expect(ask(memory, 'r-000005')).toBe('memory');
     // The store miscounts its rows after the first call, as a racing writer could.
     const countEntries = shared.countEntries.bind(shared);
     let calls = 0;
     shared.countEntries = () => countEntries() + (calls++ > 0 ? 1 : 0);
     expect(memory.importLedger()?.outcome).toBe('MISMATCH');
     shared.countEntries = countEntries;
-    expect(ask(memory, 'r-000006')).toBe('ledger');
+    expect(ask(memory, 'r-000006')).toBe('memory');
     memory.close();
     const reopened = open();
-    expect(ask(reopened, 'r-000007')).toBe('ledger');
+    expect(ask(reopened, 'r-000007')).toBe('memory');
     reopened.close();
   });
 });

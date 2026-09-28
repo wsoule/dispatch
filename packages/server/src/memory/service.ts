@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import type { EventBus } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { Messaging } from '../messaging/service.js';
+import type { OverseerToolContext } from '../orchestrator/overseerTools.js';
 import {
   memoryDbPath,
   personalMemoryDir,
@@ -92,6 +93,7 @@ export interface OpenMemoryDeps {
 }
 
 const LAST_IMPORT_KEY = 'ledger-import:last';
+const CUTOVER_KEY = 'ledger-cutover-at';
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -128,6 +130,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     reason = message(err);
     console.error(`dispatchd: memory unavailable: ${reason}`);
   }
+  // The first boot of a build with the cutover; ledger rows written after it
+  // become proposals, never entries.
+  if (shared !== null && shared.meta(CUTOVER_KEY) === null)
+    shared.setMeta(CUTOVER_KEY, now().toISOString());
   let identities: MemoryIdentities | null = null;
   let identitiesReason = 'identities.db will not open';
   try {
@@ -198,6 +204,17 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   else registerMemoryGate(deps.messaging, engine);
   const ids = createMemoryIds();
   let last = readLastImport(shared);
+  // One recovery at a time, so two never raise a gate for the same proposal.
+  let recovering: Promise<unknown> = Promise.resolve();
+  const raisePending = (): Promise<{ raised: number }> => {
+    if (engine === null) return Promise.resolve({ raised: 0 });
+    const next = recovering.then(
+      () => engine.recover(),
+      () => engine.recover()
+    );
+    recovering = next;
+    return next;
+  };
 
   // A dry run reports without writing and leaves the stored report alone.
   const importLedger = (
@@ -211,7 +228,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       store: shared,
       ids,
       now: now(),
-      cutoverAt: shared.meta('ledger-cutover-at'),
+      cutoverAt: shared.meta(CUTOVER_KEY),
       dryRun: opts.dryRun,
     });
     if (opts.dryRun === true) return report;
@@ -223,6 +240,11 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       );
     if (report.memory.imported + report.memory.proposed > 0)
       host.changed({ scope: 'team' });
+    // The import stores its proposals with no gate; recovery raises them.
+    if (report.outcome === 'ok' && report.memory.proposed > 0)
+      void raisePending().catch((err: unknown) =>
+        console.error('dispatchd: raising imported memory gates failed', err)
+      );
     return report;
   };
 
@@ -235,13 +257,13 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       console.error('dispatchd: ledger import failed', err);
     }
   };
-  // The run's '## Memory' section, or 'ledger' while memory is unavailable or no import has succeeded.
+  // The run's '## Memory' section; text is null while memory is unavailable.
   const promptSection = (input: {
     runId: string;
     taskId: string;
     dispatchTools: boolean;
   }): MemoryPromptSection => {
-    if (engine === null || last?.outcome !== 'ok') return { source: 'ledger' };
+    if (engine === null) return { source: 'memory', text: null };
     try {
       const out = engine.index({
         principal: {
@@ -264,7 +286,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
         `dispatchd: memory index for run ${input.runId} failed`,
         err
       );
-      return { source: 'ledger' };
+      return { source: 'memory', text: null };
     }
   };
 
@@ -323,7 +345,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     promptSection,
     recover: async () => {
       if (engine === null || shared === null) return { raised: 0, closed: 0 };
-      const { raised } = await engine.recover();
+      const { raised } = await raisePending();
       return {
         raised,
         closed: closeStrayMemoryGates(deps.messaging.engine, shared),
@@ -348,5 +370,24 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       personal.close();
       identities?.close();
     },
+  };
+}
+
+// The overseer's memory reads, as its own agent principal: it sees what its
+// owner's agents see and never decides.
+export function overseerMemory(
+  memory: Pick<MemoryService, 'requireEngine'>,
+  address: string
+): NonNullable<OverseerToolContext['memory']> {
+  const principal: Principal = { address, canDecide: false, kind: 'agent' };
+  return {
+    search: (input) => {
+      const engine = memory.requireEngine();
+      return {
+        hits: engine.search(principal, input),
+        search: engine.searchMode(),
+      };
+    },
+    read: (ref) => memory.requireEngine().read(principal, ref),
   };
 }

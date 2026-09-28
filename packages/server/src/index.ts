@@ -81,7 +81,7 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
-import { openMemory } from './memory/service.js';
+import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
   closeOrphanedGates,
@@ -1155,12 +1155,9 @@ async function bootServer(
   // probed jj through that seam would decide a demo repo was jj-colocated and
   // take the jj rebase path against a repo with no jj at all.
   const jj = new JjManager(rootDir);
-  // Shared with apiCtx below so a decision an agent records mid-run is
-  // visible to buildTaskPrompt on the very next dispatch, no restart needed.
-  //
-  // Backed by the same store the tasks came from: the database's ledger table
-  // when this project has one, and `.dispatch/ledger.jsonl` otherwise. Both
-  // satisfy `LedgerStorePort`, so nothing downstream branches on which.
+  // The audit ledger: the daemon's receipts, plus lesson rows memory imports.
+  // Backed by the same store the tasks came from (the database's ledger table,
+  // or `.dispatch/ledger.jsonl`); both satisfy `LedgerStorePort`.
   const ledgerStore: LedgerStorePort =
     stores.records?.ledger ?? new LedgerStore(rootDir);
   // Built here, above the Orchestrator, rather than beside ReviewRunner where
@@ -1247,7 +1244,6 @@ async function bootServer(
     judgments,
     events,
     jj,
-    ledgerStore,
     findingStore,
     // `null` on the file backend, where the run transcript is evidence's only
     // home. On sqlite this is what puts commands and mutations into the
@@ -1522,6 +1518,7 @@ async function bootServer(
       mergeQueue,
       openGates: () => openHumanDecisions(messaging.engine),
       ledgerStore,
+      memory: overseerMemory(memory, overseerAddress),
       messaging: overseerToolMessaging(messaging.engine),
       ownerRef: actorContext.humanRef,
     }),

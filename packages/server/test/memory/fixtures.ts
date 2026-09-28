@@ -1,5 +1,11 @@
-import { DEFAULT_MEMORY } from '@dispatch/core';
-import type { PolicyRuling } from '@dispatch/core';
+import {
+  DEFAULT_MEMORY,
+  dispatchDbPath,
+  generateLedgerId,
+  openDispatchDb,
+  SqliteLedgerStore,
+} from '@dispatch/core';
+import type { AddLedgerInput, LedgerEntry, PolicyRuling } from '@dispatch/core';
 import {
   createMemoryIds,
   MemoryEngine,
@@ -19,7 +25,8 @@ import type {
   ValidMemoryInput,
 } from '@dispatch/memory';
 import type { DeliveryEngine } from '@dispatch/protocol';
-import { join } from 'node:path';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 
 import type { OpenMemoryDeps } from '../../src/memory/service.js';
 import { GateHandlers } from '../../src/messaging/gates.js';
@@ -188,4 +195,39 @@ export function storedProposal(
   );
   shared.insertProposal(p);
   return p;
+}
+
+// A time before any test daemon's cutover, so a row seeded with it imports as an entry.
+export const BEFORE_CUTOVER = '2026-01-01T00:00:00.000Z';
+
+// Writes a ledger row into the project's own ledger (dispatch.db when the
+// daemon made one, else ledger.jsonl), as an older build or a pull would.
+export function seedLedger(
+  root: string,
+  input: AddLedgerInput,
+  createdAt = new Date().toISOString()
+): LedgerEntry {
+  if (existsSync(dispatchDbPath(root))) {
+    const db = openDispatchDb(dispatchDbPath(root));
+    try {
+      return new SqliteLedgerStore(db).add(input, createdAt);
+    } finally {
+      db.close();
+    }
+  }
+  const entry: LedgerEntry = {
+    id: generateLedgerId(createdAt),
+    epicId: input.epicId ?? null,
+    sourceTaskId: input.sourceTaskId ?? null,
+    kind: input.kind,
+    title: input.title,
+    detail: input.detail,
+    appliesTo: input.appliesTo ?? [],
+    createdAt,
+    authoredBy: input.authoredBy,
+  };
+  const file = join(root, '.dispatch', 'ledger.jsonl');
+  mkdirSync(dirname(file), { recursive: true });
+  appendFileSync(file, `${JSON.stringify(entry)}\n`);
+  return entry;
 }

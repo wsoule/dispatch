@@ -8,7 +8,7 @@ import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { openMemory } from '../../src/memory/service.js';
-import { quietDaemon } from './fixtures.js';
+import { BEFORE_CUTOVER, quietDaemon, seedLedger } from './fixtures.js';
 
 function setup() {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'memory-service-')));
@@ -32,12 +32,16 @@ describe('openMemory', () => {
   it('imports at boot and again on ledger.changed, announcing a team change', () => {
     const t = setup();
     expect(t.memory.importLedger()?.outcome).toBe('ok');
-    t.ledgerStore.add({
-      kind: 'hazard',
-      title: 'lesson',
-      detail: 'd',
-      authoredBy: 'human:wyat',
-    });
+    seedLedger(
+      t.root,
+      {
+        kind: 'hazard',
+        title: 'lesson',
+        detail: 'd',
+        authoredBy: 'human:wyat',
+      },
+      BEFORE_CUTOVER
+    );
     t.events.broadcast({ type: 'ledger.changed' });
     expect(t.memory.shared?.countEntries()).toBe(1);
     expect(t.seen).toContainEqual({ type: 'memory.changed', scope: 'team' });
@@ -46,12 +50,16 @@ describe('openMemory', () => {
 
   it('keeps the last import across a reopen, and a dry run never replaces it', () => {
     const t = setup();
-    t.ledgerStore.add({
-      kind: 'hazard',
-      title: 'lesson',
-      detail: 'd',
-      authoredBy: 'human:wyat',
-    });
+    seedLedger(
+      t.root,
+      {
+        kind: 'hazard',
+        title: 'lesson',
+        detail: 'd',
+        authoredBy: 'human:wyat',
+      },
+      BEFORE_CUTOVER
+    );
     expect(t.memory.importLedger()?.memory.imported).toBe(1);
     expect(t.memory.importLedger({ dryRun: true })?.outcome).toBe('dry-run');
     expect(t.memory.lastLedgerImport()?.outcome).toBe('ok');

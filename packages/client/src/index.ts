@@ -32,7 +32,6 @@ export type {
   ConfirmResult,
   ConnectEventsOptions,
   CreateFindingInput,
-  CreateLedgerInput,
   Delivery,
   DeliveryState,
   DeliveryVia,

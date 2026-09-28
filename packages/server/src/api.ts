@@ -71,7 +71,6 @@ import {
 } from './api/files.js';
 import {
   createFinding,
-  createLedgerEntry,
   listFindings,
   listLedger,
   updateFinding,
@@ -685,10 +684,9 @@ async function updateTask(
 
 // Credits whoever actually left the comment. `runId` is how the MCP
 // `task_comment` tool (called BY an agent from inside a run) says "this came
-// from the run I'm in" — mirrors findings.ts's ledgerAuthorFor, but unlike
-// that helper a missing/unresolvable runId here is NEVER the daemon's human:
-// this endpoint has no other caller, so an unresolvable run must still yield
-// 'none' rather than crediting whoever happens to be operating the daemon.
+// from the run I'm in"; a missing/unresolvable runId is NEVER the daemon's
+// human: this endpoint has no other caller, so an unresolvable run must still
+// yield 'none' rather than crediting whoever happens to be operating the daemon.
 function commentAuthorFor(ctx: ApiContext, runId: string | null): string {
   if (runId === null) return 'none';
   const run = ctx.orchestrator.getRun(runId);
@@ -6054,9 +6052,6 @@ export async function handleApi(
     if (segments[0] === 'ledger') {
       if (segments.length === 1 && method === 'GET') {
         return listLedger(ctx, url);
-      }
-      if (segments.length === 1 && method === 'POST') {
-        return await createLedgerEntry(req, ctx);
       }
     }
 

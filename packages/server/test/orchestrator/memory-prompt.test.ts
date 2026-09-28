@@ -30,25 +30,16 @@ class NoToolsExecutor extends StallingExecutor {
   readonly profile = { ...DEFAULT_EXECUTOR_PROFILE, dispatchMcp: false };
 }
 
-// A port that records every request and always asks for the ledger section.
+// A port that records every request and never has anything to show.
 function recordingPort() {
   const calls: Parameters<MemoryPromptPort['promptSection']>[0][] = [];
   const port: MemoryPromptPort = {
     promptSection: (input) => {
       calls.push(input);
-      return { source: 'ledger' };
+      return { source: 'memory', text: null };
     },
   };
   return { calls, port };
-}
-
-function addLedgerLesson(): void {
-  new LedgerStore(project.root()).add({
-    kind: 'hazard',
-    title: 'ledger lesson',
-    detail: 'd',
-    authoredBy: '',
-  });
 }
 
 describe('dispatch prompt memory', () => {
@@ -105,21 +96,14 @@ describe('dispatch prompt memory', () => {
     await waitFor(() => stateOf(resumed.id) === 'failed');
   });
 
-  // Until an import succeeds, prompts keep the ledger section.
-  it('falls back to the ledger section while the port says so', async () => {
-    addLedgerLesson();
-    const t = withPort({ promptSection: () => ({ source: 'ledger' }) });
-    const task = t.store.create({ title: 'fallback' });
-    const meta = await t.orchestrator.dispatch(task.meta.id, 'claude');
-    expect(t.executor.started.at(-1)?.prompt).toContain(
-      '## Findings and decisions from earlier work'
-    );
-    expect(t.executor.started.at(-1)?.prompt).toContain('ledger lesson');
-    await t.orchestrator.cancel(meta.id);
-  });
-
-  it('falls back to the ledger section when the port throws, and still dispatches', async () => {
-    addLedgerLesson();
+  // The ledger never reaches a prompt: a broken port costs only the section.
+  it('drops the memory section when the port throws, and still dispatches', async () => {
+    new LedgerStore(project.root()).add({
+      kind: 'hazard',
+      title: 'ledger lesson',
+      detail: 'd',
+      authoredBy: '',
+    });
     const t = withPort({
       promptSection: () => {
         throw new Error('memory broke');
@@ -128,7 +112,9 @@ describe('dispatch prompt memory', () => {
     const task = t.store.create({ title: 'still runs' });
     const meta = await t.orchestrator.dispatch(task.meta.id, 'claude');
     expect(meta.state).toBe('running');
-    expect(t.executor.started.at(-1)?.prompt).toContain('ledger lesson');
+    const prompt = t.executor.started.at(-1)?.prompt;
+    expect(prompt).not.toContain('## Memory');
+    expect(prompt).not.toContain('ledger lesson');
     await t.orchestrator.cancel(meta.id);
   });
 });

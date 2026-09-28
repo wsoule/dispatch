@@ -104,9 +104,12 @@ const MESSAGING_TOOLS: ReadonlySet<string> = new Set(
   DISPATCH_MESSAGING_TOOLS.map((tool) => `mcp__dispatch__${tool}`)
 );
 
-// Read-only memory lookups; gating them would make the human approve a search.
+// Memory tools: a shared write already waits on the memory gate and a personal
+// one can be undone, so gating them would only make the human approve twice.
 export const MEMORY_TOOLS: ReadonlySet<string> = new Set(
-  ['memory_search', 'memory_read'].map((tool) => `mcp__dispatch__${tool}`)
+  ['memory_search', 'memory_read', 'memory_save', 'memory_forget'].map(
+    (tool) => `mcp__dispatch__${tool}`
+  )
 );
 
 // Claude Code tools that cannot do their job inside a dispatched run, removed
