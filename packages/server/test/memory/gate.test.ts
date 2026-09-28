@@ -92,6 +92,21 @@ describe('memory gates on the bus', () => {
     messaging.close();
   });
 
+  // A recover that overlaps a live propose raises the same proposal's gate twice at once.
+  it('two overlapping raises for one proposal send one gate', async () => {
+    const messaging = openBus();
+    await messaging.recover();
+    const { shared } = testEngine();
+    const p = storedProposal(shared, 'raced');
+    const [a, b] = await Promise.all([
+      raiseMemoryGate(messaging.engine, 'human:wyat', p, 'hazard'),
+      raiseMemoryGate(messaging.engine, 'human:wyat', p, 'hazard'),
+    ]);
+    expect(b).toBe(a);
+    expect(memoryGates(messaging.engine).map((m) => m.id)).toEqual([a]);
+    messaging.close();
+  });
+
   it('closeStrayMemoryGates closes a duplicate and the gate of a decided proposal, keeping the recorded one', async () => {
     const messaging = openBus();
     await messaging.recover();

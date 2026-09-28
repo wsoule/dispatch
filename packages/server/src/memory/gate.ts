@@ -32,8 +32,8 @@ function openGateFor(
   });
 }
 
-// Sends the owner a content-free memory gate, or returns the one already open
-// for this proposal. The title and body stay in memory.db.
+// Sends the owner a content-free memory gate (the text stays in memory.db), keyed
+// by proposal so overlapping raises share one; an already open gate is reused.
 export async function raiseMemoryGate(
   engine: DeliveryEngine,
   ownerRef: string,
@@ -62,6 +62,7 @@ export async function raiseMemoryGate(
         scope: p.scope,
         kind,
       },
+      idempotencyKey: `memory-gate:${p.id}`,
     },
     SYSTEM_SENDER
   );
