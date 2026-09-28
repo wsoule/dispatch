@@ -3421,6 +3421,8 @@ export interface ApiClient {
   markDocReviewed(ref: string): Promise<DocRecord>;
   sealDoc(ref: string): Promise<DocRecord>;
   revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
+  /** Copies a personal doc's head into a new team draft (its owner only). */
+  promoteDoc(ref: string): Promise<DocSaveResult>;
   deleteDoc(ref: string): Promise<void>;
   listDocRevisions(
     ref: string,
@@ -4352,6 +4354,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ rev }),
       }),
+    promoteDoc: (ref) =>
+      request(target, `${docPath(ref)}/promote`, { method: 'POST' }),
     // send(), not request(): the server answers 204 with no body.
     deleteDoc: async (ref) => {
       await send(target, docPath(ref), { method: 'DELETE' });

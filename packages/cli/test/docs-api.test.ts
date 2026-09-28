@@ -121,6 +121,14 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('promotes a personal doc by its ~handle', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await api.promote('~notes');
+    expect(seen.map((s) => [s.method, s.path, s.body])).toEqual([
+      ['POST', '/api/docs/~notes/promote', '{}'],
+    ]);
+  });
+
   it('throws a CliError naming the field for other failures', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await expect(api.get('missing')).rejects.toThrow(

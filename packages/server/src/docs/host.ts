@@ -5,10 +5,11 @@ import type {
   TaskStorePort,
 } from '@dispatch/core';
 import { TaskParseError } from '@dispatch/core';
-import type { Operator } from '@dispatch/memory';
+import type { MemoryStore, MemoryStores, Operator } from '@dispatch/memory';
 import type { MessageStore } from '@dispatch/protocol';
 
 import type { EventBus } from '../events.js';
+import { IDENTITY_PATTERN } from '../memory/identities.js';
 import type { Principal } from '../messaging/principal.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import type { RunMeta } from '../orchestrator/types.js';
@@ -71,12 +72,51 @@ const A2A_PROVENANCE_PREFIX = 'Requested over A2A by ';
 
 type DocsRuns = Pick<Orchestrator, 'list' | 'taskIdOfRun'>;
 type DocsMessages = Pick<MessageStore, 'getMessage' | 'thread' | 'deliveries'>;
+type MemoryEntryScope = 'personal' | 'project' | 'team';
 
-// The daemon's DocsHost. The orchestrator and messaging are bound late (boot
-// order); until then runs resolve to nothing and threads do not exist.
+// What docs need from memory: operators, and which entries exist and who sees them.
+interface DocsMemoryPort {
+  operatorOf(principal: Principal): Operator | null;
+  entryScope(id: string): MemoryEntryScope | null;
+  // Memory's own rule: shared entries, or the principal's operator's personal ones.
+  entryVisible(id: string, principal: Principal): boolean;
+}
+
+// The memory service as docs reach it. A sentinel identity (identities.db down,
+// a reused handle) is shared by many humans, so it gets no personal scope.
+export function docsMemoryPort(memory: {
+  host: Pick<DocsMemoryPort, 'operatorOf'>;
+  shared: Pick<MemoryStore, 'getEntry'> | null;
+  stores: Pick<MemoryStores, 'locatePersonal'>;
+}): DocsMemoryPort {
+  const operatorOf = (principal: Principal): Operator | null => {
+    const op = memory.host.operatorOf(principal);
+    return op !== null && IDENTITY_PATTERN.test(op.identity) ? op : null;
+  };
+  const owner = (id: string): string | null =>
+    memory.stores.locatePersonal?.(id) ?? null;
+  return {
+    operatorOf,
+    entryScope: (id) => {
+      const shared = memory.shared?.getEntry(id) ?? null;
+      if (shared !== null) return shared.scope;
+      return owner(id) === null ? null : 'personal';
+    },
+    entryVisible: (id, principal) => {
+      if ((memory.shared?.getEntry(id) ?? null) !== null) return true;
+      const identity = owner(id);
+      return identity !== null && operatorOf(principal)?.identity === identity;
+    },
+  };
+}
+
+// The daemon's DocsHost. The orchestrator, messaging and memory are bound late
+// (boot order); until then runs resolve to nothing, threads and memory entries
+// do not exist, and no one has an operator.
 export class DaemonDocsHost implements DocsHost {
   private runs: DocsRuns | null = null;
   private messages: DocsMessages | null = null;
+  private memory: DocsMemoryPort | null = null;
   private readonly listeners = new Set<(change: DocChange) => void>();
   private readonly debounced = new Map<string, ReturnType<typeof setTimeout>>();
 
@@ -96,13 +136,17 @@ export class DaemonDocsHost implements DocsHost {
     this.messages = store;
   }
 
+  bindMemory(port: DocsMemoryPort): void {
+    this.memory = port;
+  }
+
   onChange(listener: (change: DocChange) => void): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
   }
 
-  operatorOf(_principal: Principal): Operator | null {
-    return null;
+  operatorOf(principal: Principal): Operator | null {
+    return this.memory?.operatorOf(principal) ?? null;
   }
 
   private runMeta(principal: Principal): RunMeta | undefined {
@@ -172,8 +216,10 @@ export class DaemonDocsHost implements DocsHost {
         const root = this.messages?.getMessage(target.id) ?? null;
         return root !== null && root.thread === root.id;
       }
+      case 'memory':
+        return this.memoryScope(target.id) !== null;
       default:
-        // Memory entries arrive with personal scope; docs are the service's.
+        // Docs are checked by the service.
         return false;
     }
   }
@@ -198,13 +244,13 @@ export class DaemonDocsHost implements DocsHost {
       );
   }
 
-  memoryScope(_id: string): 'personal' | 'project' | 'team' | null {
-    return null;
+  memoryScope(id: string): MemoryEntryScope | null {
+    return this.memory?.entryScope(id) ?? null;
   }
 
-  // No memory entry is visible until memory's personal scope binds here.
-  memoryVisible(_id: string, _principal: Principal): boolean {
-    return false;
+  // No memory entry is visible until memory binds here.
+  memoryVisible(id: string, principal: Principal): boolean {
+    return this.memory?.entryVisible(id, principal) ?? false;
   }
 
   // doc.changed is a bare refetch signal; amends coalesce per doc, and a

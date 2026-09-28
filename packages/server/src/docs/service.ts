@@ -275,6 +275,11 @@ function parseLinkText(text: string): LinkTarget {
   };
 }
 
+// A handle as callers write it: ~slug for a personal doc.
+function writtenHandle(row: DocRow): string {
+  return row.scope === 'personal' ? `~${row.handle}` : row.handle;
+}
+
 function toLink(l: LinkRow): DocLink {
   return {
     doc: l.docId,
@@ -392,9 +397,15 @@ export class DocsService {
     };
   }
 
-  // Namespaces the actor may read: the team's only, until personal docs exist.
-  private namespaces(_actor: DocsActor): string[] {
-    return ['team'];
+  // The actor's operator's personal namespace; null when it acts for no human.
+  private personalNs(actor: DocsActor): string | null {
+    return actor.operator === null ? null : `p:${actor.operator.identity}`;
+  }
+
+  // Namespaces the actor may read: the team's, and its operator's personal one.
+  private namespaces(actor: DocsActor): string[] {
+    const mine = this.personalNs(actor);
+    return mine === null ? ['team'] : ['team', mine];
   }
 
   // An A2A run sees only team docs linked by hand to its own task.
@@ -459,10 +470,16 @@ export class DocsService {
     throw forbidden('review and verify runs read docs and never write them');
   }
 
+  // Whether the doc's status keeps direct changes to decide tier: an accepted
+  // team doc. A personal doc's status is a label its owner's principals ignore.
+  private gated(doc: DocRow): boolean {
+    return doc.scope === 'team' && doc.status === 'accepted';
+  }
+
   private requireWritable(actor: DocsActor, doc: DocRow): void {
     this.requireDraftWriter(actor);
     if (doc.status === 'archived') throw archivedError();
-    if (doc.status === 'accepted' && !actor.decider) {
+    if (this.gated(doc) && !actor.decider) {
       throw forbidden(
         'only decide-tier humans edit accepted docs directly',
         'doc'
@@ -470,19 +487,51 @@ export class DocsService {
     }
   }
 
-  private requireDecider(actor: DocsActor, doc: DocRow, what: string): void {
-    if (doc.scope === 'team' && actor.decider) return;
-    throw forbidden(`only a decide-tier human may ${what}`, 'doc');
+  // Whether the actor is a personal doc's owner, acting as a human.
+  private isOwner(actor: DocsActor, doc: DocRow): boolean {
+    return (
+      actor.kind === 'human' &&
+      doc.ownerIdentity !== null &&
+      actor.operator?.identity === doc.ownerIdentity
+    );
   }
 
-  // A doc argument: doc-<id>, or a team handle and then a retired slug. A
-  // ~slug names a personal doc, which no one has yet.
+  // Team docs' lifecycle is decide tier; a personal doc's is its owner's, as a human.
+  private requireDecider(actor: DocsActor, doc: DocRow, what: string): void {
+    if (doc.scope === 'team' ? actor.decider : this.isOwner(actor, doc)) return;
+    throw forbidden(
+      doc.scope === 'team'
+        ? `only a decide-tier human may ${what}`
+        : `only the owner may ${what}`,
+      'doc'
+    );
+  }
+
+  // A doc argument: doc-<id>; ~slug among the operator's personal docs; else a
+  // team handle. Handles fall back to retired slugs. A decide-tier human asking
+  // for another human's personal doc by id learns why (403); anyone else 404s.
   private resolve(actor: DocsActor, ref: string): DocRow {
     const store = this.store();
     let row: DocRow | null = null;
     if (ref.startsWith('doc-')) row = store.doc(ref);
-    else if (!ref.startsWith('~'))
+    else if (ref.startsWith('~')) {
+      const ns = this.personalNs(actor);
+      const slug = ref.slice(1);
+      row =
+        ns === null
+          ? null
+          : (store.docByHandle(ns, slug) ?? store.docByAlias(ns, slug));
+    } else
       row = store.docByHandle('team', ref) ?? store.docByAlias('team', ref);
+    if (
+      row !== null &&
+      row.scope === 'personal' &&
+      ref.startsWith('doc-') &&
+      actor.decider &&
+      !this.canSee(actor, row)
+    ) {
+      throw forbidden('this personal doc belongs to another human', 'doc');
+    }
     if (row === null || !this.canSee(actor, row))
       throw new DocsError('not-found', `doc ${ref} not found`, 'doc');
     return row;
@@ -630,14 +679,16 @@ export class DocsService {
     doc.indexedHash = rev.hash;
   }
 
-  // Derived `mention` links from [[slug]] in a sealed head, team docs only.
+  // Derived `mention` links from a sealed head: [[slug]] names a team doc, and
+  // [[~slug]] only inside a personal doc, one of its owner's.
   private rebuildMentions(doc: DocRow, rev: RevisionRow): void {
     const store = this.store();
     const rows: LinkRow[] = [];
     for (const m of mentionsOf(rev.body)) {
-      if (m.personal) continue;
+      if (m.personal && doc.scope !== 'personal') continue;
+      const ns = m.personal ? doc.ns : 'team';
       const target =
-        store.docByHandle('team', m.slug) ?? store.docByAlias('team', m.slug);
+        store.docByHandle(ns, m.slug) ?? store.docByAlias(ns, m.slug);
       if (target === null || target.id === doc.id) continue;
       rows.push({
         docId: doc.id,
@@ -803,11 +854,31 @@ export class DocsService {
   // ---- the write path -------------------------------------------------------
 
   create(actor: DocsActor, input: DocCreateInput): DocSaveResult {
+    return this.createDoc(actor, input, null);
+  }
+
+  // A new doc; `origin` is set only by the service (promote), never from a
+  // request. The first revision carries `carries`' unreviewed state, if given.
+  private createDoc(
+    actor: DocsActor,
+    input: DocCreateInput,
+    origin: string | null,
+    carries?: RevisionMeta
+  ): DocSaveResult {
     const store = this.store();
     this.requireDraftWriter(actor);
     const scope = input.scope ?? 'team';
-    if (scope !== 'team')
-      throw forbidden('personal docs need memory v1', 'scope');
+    let ns = 'team';
+    let owner: Operator | null = null;
+    if (scope === 'personal') {
+      if (actor.operator === null)
+        throw forbidden(
+          'no personal scope: this caller acts for no human',
+          'scope'
+        );
+      ns = `p:${actor.operator.identity}`;
+      owner = actor.operator;
+    }
     const title = this.checkTitle(input.title, 'title');
     const body = this.checkBody(input.body, 'body');
     const now = this.host.now();
@@ -839,16 +910,16 @@ export class DocsService {
         `at most ${DOCS_LIMITS.linksPerDoc} links`,
         'links'
       );
-    const slug = this.pickSlug('team', input.slug, title);
+    const slug = this.pickSlug(ns, input.slug, title);
     const doc: DocRow = {
       id: this.newId('doc'),
-      ns: 'team',
+      ns,
       slug,
       handle: slug,
       title,
       scope,
-      ownerIdentity: null,
-      ownerHuman: null,
+      ownerIdentity: owner?.identity ?? null,
+      ownerHuman: owner?.human ?? null,
       status: 'draft',
       archivedFrom: null,
       restoredStatus: null,
@@ -857,7 +928,7 @@ export class DocsService {
       reviewedRev: null,
       unreviewed: false,
       conflicted: false,
-      origin: null,
+      origin,
       publishedPath: null,
       publishedRev: null,
       publishedTask: null,
@@ -884,6 +955,7 @@ export class DocsService {
         summary: 'created',
         sealed: cfg.coalesceMinutes === 0,
         numbered: true,
+        restores: carries,
         at,
       });
       store.insertRevision(rev);
@@ -1205,7 +1277,7 @@ export class DocsService {
   setStatus(actor: DocsActor, ref: string, status: DocStatus): DocRecord {
     const doc = this.resolve(actor, ref);
     this.requireDecider(actor, doc, "change a doc's status");
-    if (status === 'accepted') {
+    if (status === 'accepted' && doc.scope === 'team') {
       throw new DocsError(
         'invalid',
         'accepting needs the doc gate, which arrives in docs v1',
@@ -1304,6 +1376,32 @@ export class DocsService {
         summary: 'deleted',
       });
     });
+  }
+
+  // A personal doc's head copied into a new team draft, with no history; the
+  // owner does it once, as a human. The draft keeps any unreviewed agent text flagged.
+  promote(actor: DocsActor, ref: string): DocSaveResult {
+    const doc = this.resolve(actor, ref);
+    if (doc.scope !== 'personal')
+      throw new DocsError('invalid', 'only a personal doc is promoted', 'doc');
+    if (!this.isOwner(actor, doc))
+      throw forbidden('only the owner promotes a personal doc', 'doc');
+    const origin = `promoted:${doc.id}`;
+    const existing = this.store().docByOrigin(origin);
+    if (existing !== null)
+      throw new DocsError(
+        'conflict',
+        `already promoted as ${existing.handle}`,
+        'doc'
+      );
+    this.write(() => this.sealInTx(doc, this.headOf(doc)));
+    const head = this.headOf(doc);
+    return this.createDoc(
+      actor,
+      { title: head.title, body: head.body, scope: 'team' },
+      origin,
+      head
+    );
   }
 
   // ---- links ----------------------------------------------------------------
@@ -1438,12 +1536,13 @@ export class DocsService {
       throw forbidden('agents add context links only', field);
   }
 
-  // Whether `actor` may move a task's spec link off `displaced`.
+  // Whether `actor` may move a task's spec link off `displaced`: a doc it
+  // could write directly.
   private mayDisplace(actor: DocsActor, displaced: DocRow): boolean {
     return (
       actor.decider ||
-      (displaced.scope === 'team' &&
-        displaced.status === 'draft' &&
+      (displaced.status !== 'archived' &&
+        !this.gated(displaced) &&
         this.mayWriteDrafts(actor))
     );
   }
@@ -1465,7 +1564,7 @@ export class DocsService {
       existing !== undefined &&
       existing.rel !== rel &&
       existing.rel !== 'context' &&
-      doc.status === 'accepted' &&
+      this.gated(doc) &&
       !actor.decider
     ) {
       throw forbidden(
@@ -1588,11 +1687,7 @@ export class DocsService {
       existing.rel,
       'target'
     );
-    if (
-      existing.rel !== 'context' &&
-      doc.status === 'accepted' &&
-      !actor.decider
-    ) {
+    if (existing.rel !== 'context' && this.gated(doc) && !actor.decider) {
       throw forbidden(
         `only a decide-tier human removes the ${existing.rel} link of an accepted doc`,
         'target'
@@ -2077,7 +2172,7 @@ export class DocsService {
       else if (c.depth > 1) tag = `ancestor ${c.rel}`;
       return {
         tag,
-        handle: c.row.scope === 'personal' ? `~${c.row.handle}` : c.row.handle,
+        handle: writtenHandle(c.row),
         status: c.row.status,
         unreviewed: c.row.unreviewed,
         conflicted: c.row.conflicted,
@@ -2115,7 +2210,7 @@ export class DocsService {
     if (spec !== undefined) {
       const head = this.headOf(spec.row);
       inline = {
-        handle: spec.row.handle,
+        handle: writtenHandle(spec.row),
         n: head.n ?? 0,
         body: head.body,
         maxBytes: cfg.inlineSpecBytes,

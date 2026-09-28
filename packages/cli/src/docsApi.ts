@@ -109,6 +109,8 @@ export interface DocsApi {
     to: string | number
   ): Promise<{ chunks: { equal: boolean; a: string[]; b: string[] }[] }>;
   revert(ref: string, rev: string | number): Promise<DocSaveResult>;
+  // A personal doc's head as a new team draft; its owner only.
+  promote(ref: string): Promise<DocSaveResult>;
   setStatus(ref: string, status: DocStatus): Promise<DocRecord>;
   reviewed(ref: string): Promise<DocRecord>;
   remove(ref: string): Promise<void>;
@@ -222,6 +224,7 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
         `${docPath(ref)}/diff?from=${encodeURIComponent(String(from))}&to=${encodeURIComponent(String(to))}`
       ),
     revert: (ref, rev) => json('POST', `${docPath(ref)}/revert`, { rev }),
+    promote: (ref) => json('POST', `${docPath(ref)}/promote`, {}),
     setStatus: (ref, status) =>
       json('POST', `${docPath(ref)}/status`, { status }),
     reviewed: (ref) => json('POST', `${docPath(ref)}/reviewed`, {}),

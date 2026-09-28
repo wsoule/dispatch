@@ -541,6 +541,15 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
   }
 
   docs
+    .command('promote <ref>')
+    .description('Copy a personal doc into a new team draft (its owner only)')
+    .option(...tokenOpt)
+    .action(async (ref: string, o: { token?: string }) => {
+      const r = await (await docsClient(ctx, o.token)).promote(ref);
+      ctx.log(`promoted to ${r.handle}`);
+    });
+
+  docs
     .command('reviewed <ref>')
     .description("Mark a doc's head reviewed")
     .option(...tokenOpt)

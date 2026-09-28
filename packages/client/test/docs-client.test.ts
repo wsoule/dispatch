@@ -163,6 +163,19 @@ describe('docs bindings', () => {
     }
   });
 
+  it('promotes a personal doc through a body-less POST', async () => {
+    const s = stub(201, { handle: 'notes' });
+    try {
+      expect(await createApiClient(BASE, 't').promoteDoc('~notes')).toEqual({
+        handle: 'notes',
+      } as never);
+      expect(s.calls[0].url).toBe(`${BASE}/api/docs/~notes/promote`);
+      expect(s.calls[0].init?.method).toBe('POST');
+    } finally {
+      s.restore();
+    }
+  });
+
   it('deletes through a 204 that has no body', async () => {
     const s = stub(204, null);
     try {

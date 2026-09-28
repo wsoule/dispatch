@@ -60,7 +60,7 @@ import {
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
-import { DaemonDocsHost } from './docs/host.js';
+import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
 import { openDocs } from './docs/open.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
@@ -1321,6 +1321,7 @@ async function bootServer(
   });
   docsHost.bindRuns(orchestrator);
   docsHost.bindMessaging(messaging.store);
+  docsHost.bindMemory(docsMemoryPort(memory));
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the

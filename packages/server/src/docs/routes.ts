@@ -432,6 +432,11 @@ export async function handleDocsRoute(
             });
             return jsonResponse({ links: linked });
           });
+        case 'promote':
+          return await write(async () => {
+            await body();
+            return jsonResponse(docs.promote(actor, ref), 201);
+          });
         default:
           return null;
       }
