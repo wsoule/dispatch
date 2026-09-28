@@ -174,10 +174,11 @@ the binding: `as` is the client's address, `envelope` its `envelope/v1` metadata
 [§8.3](08-a2a-binding.md#s8.3), [§8.4](08-a2a-binding.md#s8.4) and
 [§8.8](08-a2a-binding.md#s8.8), the recipient rule against the scripted host's
 list ([§12.4.2](12-conformance.md#s12.4.2)), and sends it as the client, with no
-decide authority. Without `answers` the message has no `taskId` and opens a
-task. `answers` names an open question to the client, and stands for the
-`taskId` of the task that asks it: the message then answers that question, as a
-continuation does ([§8.4](08-a2a-binding.md#s8.4)).
+decide authority. Without `answers` the message has no `taskId` and starts a new
+exchange ([§8.4](08-a2a-binding.md#s8.4)). `answers` names an open question to
+the client, and stands for the `taskId` of the task that asks it: the message
+then answers that question, as a continuation does
+([§8.4](08-a2a-binding.md#s8.4)).
 
 An `a2a.project` step's result carries `gates` when the state is
 `AUTH_REQUIRED`: the `gates` list of `gate/v1` ([§8.5](08-a2a-binding.md#s8.5))

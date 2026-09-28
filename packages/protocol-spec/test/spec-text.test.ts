@@ -16,7 +16,8 @@ const text = new Map(
 // across lines still matches.
 const flat = (body: string): string => body.replace(/\s+/g, ' ');
 const all = flat([...text.values()].join('\n'));
-const ids = new Set(loadVectors().vectors.map((v) => v.id));
+const { vectors } = loadVectors();
+const ids = new Set(vectors.map((v) => v.id));
 
 // One section's own prose, up to the next numbered heading, flattened.
 function section(n: string): string {
@@ -285,5 +286,43 @@ describe('the DMP text and the kit', () => {
   it('says a session reached through a channel is notified, not pushed', () => {
     const schemes = section('3.4');
     expect(schemes.match(/pushed or notified/g)?.length).toBe(2);
+  });
+
+  // Each subsection of §8 is served under its own extension URI, so it names
+  // every vector that lists it.
+  it('names each a2a-binding vector in every subsection of 8 it lists', () => {
+    const missing = vectors
+      .filter((v) => v.class === 'a2a-binding')
+      .flatMap((v) =>
+        v.sections
+          .filter((s) => s.startsWith('8.'))
+          .filter((s) => !section(s).includes(`\`${v.id}\``))
+          .map((s) => `${s}: ${v.id}`)
+      );
+    expect(missing).toEqual([]);
+  });
+
+  // The reference bridge opens a task only for a question (or a handoff) and
+  // answers a message or a notice with a direct reply.
+  it('says a message without a taskId starts an exchange, not always a task', () => {
+    const envelope = section('8.4');
+    expect(envelope).toContain(
+      'A message without a `taskId` starts a new exchange. A question opens a task; a `message` or a `notice` opens none'
+    );
+    expect(section('8.2')).toContain(
+      '| the question or handoff that opens an exchange |'
+    );
+    expect(section('12.4.3')).toContain(
+      'Without `answers` the message has no `taskId` and starts a new exchange'
+    );
+    for (const n of ['8.4', '12.4.3'])
+      expect(section(n)).not.toContain('has no `taskId` and opens a task');
+  });
+
+  // The reference codec reads work/v1's skill before the envelope's kind.
+  it('lets a work/v1 skill decide what a message starts before its kind', () => {
+    expect(section('8.4')).toContain(
+      "When `work/v1` names a `skill` ([§8.6](08-a2a-binding.md#s8.6)), the skill decides what the message starts and the envelope's `kind` is not read"
+    );
   });
 });

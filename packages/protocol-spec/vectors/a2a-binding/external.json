@@ -333,7 +333,7 @@
       "class": "a2a-binding",
       "level": "MUST",
       "profile": "core",
-      "sections": ["8.2", "8.4"],
+      "sections": ["8.4"],
       "given": {
         "agents": [
           {
