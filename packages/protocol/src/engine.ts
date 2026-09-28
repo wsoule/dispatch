@@ -1704,12 +1704,17 @@ export class DeliveryEngine {
     changed: string[],
     closeHlc: string | undefined
   ): Delivery[] {
+    const answer =
+      s.answerId === null ? null : this.store.getMessage(s.answerId);
+    // A stored message that was never an answer to q cannot settle it.
+    if (
+      answer !== null &&
+      !this.store.answerCandidates(q.id).some((c) => c.message.id === answer.id)
+    )
+      return [];
     this.store.putSettlement(s);
     if (s.answerId === null) return [];
-    const answer = this.store.getMessage(s.answerId);
     if (answer !== null) {
-      // An id that names some other message is not this question's answer.
-      if (answer.replyTo !== q.id) return [];
       changed.push(...this.swapSettled(q.id, s.answerId));
       return this.markAnswered(q.id);
     }

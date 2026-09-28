@@ -461,18 +461,26 @@ describe("elsewhere: Bob's question, received here", () => {
 
   it('ignores a settle that names a message not answering the question', async () => {
     await engine.receive(remote('m-other'), fromBob([here('human:wyat')]));
-    engine.applySettlement(
-      {
-        t: 'settle',
-        question: q.id,
-        answer: 'm-other',
-        at: '2026-09-26T10:05:00.000Z',
-      },
-      BOB
+    await engine.receive(
+      remote('m-reply', { thread: q.thread, replyTo: q.id }),
+      fromBob([here('human:wyat')])
     );
-    expect(store.getMessage('m-other')?.kind).toBe('message');
-    expect(store.settledAs('m-other')).toBeNull();
+    for (const answer of ['m-other', 'm-reply'])
+      engine.applySettlement(
+        { t: 'settle', question: q.id, answer, at: '2026-09-26T10:05:00.000Z' },
+        BOB
+      );
+    for (const id of ['m-other', 'm-reply']) {
+      expect(store.getMessage(id)?.kind).toBe('message');
+      expect(store.settledAs(id)).toBeNull();
+    }
     expect(store.answersTo(q.id)).toEqual([]);
+    expect(store.settlement(q.id)).toBeNull();
+    await engine.receive(answerTo(q, 'm-a2', 'human:cy'), {
+      replica: CY,
+      targets: [there('human:bob')],
+    });
+    expect(store.settledAs('m-a2')).toBe('pending');
   });
 
   it("clocks the settler's close here, so it sorts after what this replica has seen", () => {
