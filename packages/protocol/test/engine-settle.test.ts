@@ -12,6 +12,7 @@ import { FakeFederation, FakeHost } from './fakeHost.js';
 const ME = 'wyat-0000000a';
 const BOB = 'bob-0000000b';
 const CY = 'cy-0000000c';
+const ADA = 'ada-0000000d';
 const TASK_ID = 't-00000a01';
 const TASK = `task:${TASK_ID}`;
 const wyat = { address: 'human:wyat', canDecide: true };
@@ -277,6 +278,69 @@ describe('an answer that arrived before its question', () => {
     expect(host.hooks('notifyHuman')).not.toContainEqual([
       'human:wyat',
       'm-q5',
+    ]);
+  });
+
+  it('leaves the question open when the answers that came first would have been refused', async () => {
+    const q6 = remote('m-q6', {
+      kind: 'question',
+      blocking: true,
+      to: ['human:wyat', 'human:cy'],
+      choices: ['ship', 'wait'],
+    });
+    await engine.receive(
+      { ...answerTo(q6, 'm-a6', 'human:cy'), choice: 'panic' },
+      { replica: CY, targets: [there('human:bob'), here('human:wyat')] }
+    );
+    await engine.receive(
+      { ...answerTo(q6, 'm-a7', 'human:ada'), choice: 'ship' },
+      { replica: ADA, targets: [there('human:bob'), here('human:wyat')] }
+    );
+    const r = await engine.receive(
+      q6,
+      fromBob([here('human:wyat'), there('human:cy', [CY])])
+    );
+    expect(r.deliveries.map((d) => [d.recipient, d.state])).toEqual([
+      ['human:wyat', 'notified'],
+    ]);
+    expect(host.hooks('notifyHuman')).toContainEqual(['human:wyat', 'm-q6']);
+    expect(store.answersTo('m-q6')).toEqual([]);
+    expect(['m-a6', 'm-a7'].map((id) => store.settledAs(id))).toEqual([
+      'candidate',
+      'candidate',
+    ]);
+  });
+
+  it('answers the question with the first early answer that holds up', async () => {
+    const q8 = remote('m-q8', {
+      kind: 'question',
+      blocking: true,
+      to: ['human:wyat', 'human:cy'],
+      choices: ['ship', 'wait'],
+    });
+    const fromCy = {
+      replica: CY,
+      targets: [there('human:bob'), here('human:wyat')],
+    };
+    await engine.receive(
+      { ...answerTo(q8, 'm-a8', 'human:cy'), choice: 'panic' },
+      fromCy
+    );
+    await engine.receive(
+      { ...answerTo(q8, 'm-a9', 'human:cy'), choice: 'wait' },
+      fromCy
+    );
+    const r = await engine.receive(
+      q8,
+      fromBob([here('human:wyat'), there('human:cy', [CY])])
+    );
+    expect(r.deliveries.map((d) => [d.recipient, d.state])).toEqual([
+      ['human:wyat', 'answered'],
+    ]);
+    expect(store.answersTo('m-q8').map((m) => m.id)).toEqual(['m-a9']);
+    expect(['m-a8', 'm-a9'].map((id) => store.settledAs(id))).toEqual([
+      'candidate',
+      'pending',
     ]);
   });
 });

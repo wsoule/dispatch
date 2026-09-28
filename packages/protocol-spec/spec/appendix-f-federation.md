@@ -327,11 +327,14 @@ The **settler** of a question is its origin, the replica it was created on.
   is published the same way, with `closed` set, and only the settler closes a
   question.
 - **Elsewhere**, the first answer seen is kept as the answer, pending, and later
-  ones as candidate replies. A `settle` entry makes the accepted answer the
-  answer, every other a reply, and the question's deliveries `answered`, in one
-  transaction; one that arrives before its answer waits for it. A `settle` with
-  `closed` writes the close here. A `refused` entry for a local answer turns it
-  back into a reply and reopens the question's deliveries it had answered.
+  ones as candidate replies. Answers seen before their question are checked
+  against it when it arrives: the first that passes participation and the checks
+  that need the question stays the answer, and the rest are candidates. A
+  `settle` entry makes the accepted answer the answer, every other a reply, and
+  the question's deliveries `answered`, in one transaction; one that arrives
+  before its answer waits for it. A `settle` with `closed` writes the close
+  here. A `refused` entry for a local answer turns it back into a reply and
+  reopens the question's deliveries it had answered.
 - **Only the settler is believed.** A `settle` entry from any other replica is
   refused.
 

@@ -1182,12 +1182,13 @@ export class DeliveryEngine {
     // With the parent missing here, a stored root stands in for participation
     // and the breaker, so a reply joins only a thread its sender is in.
     const joined = replyTarget ?? root;
-    if (joined !== null)
-      this.authorizeRemoteReply(
-        joined,
-        message.from,
-        origin,
-        fed,
+    if (
+      joined !== null &&
+      !this.remoteParticipant(joined, message.from, origin.replica, fed)
+    )
+      throw new MessagingError(
+        'forbidden',
+        `${message.from} is not a participant of ${joined.id}`,
         joined === replyTarget ? 'replyTo' : 'thread'
       );
     // Received mode keeps a peer's newer ref types; a missing parent skips
@@ -1267,11 +1268,9 @@ export class DeliveryEngine {
         valid === null
           ? []
           : this.honourSettlement(storedMessage, valid, changed, closeHlc);
-      // An answer that arrived first already answers this question here.
-      const answeredFirst =
-        asking && this.store.answersTo(message.id).length > 0
-          ? this.markAnswered(message.id)
-          : [];
+      const answeredFirst = asking
+        ? this.answerEarly(storedMessage, fed, changed)
+        : [];
       return [
         ...honoured,
         ...answeredFirst,
@@ -1425,15 +1424,14 @@ export class DeliveryEngine {
     );
   }
 
-  // A remote reply's sender must act for the target's sender or a recipient (here
-  // or remote), or be a human whose replica homes one; never for this system.
-  private authorizeRemoteReply(
+  // Whether a sender on `replica` acts for `target`'s sender or a recipient (here
+  // or remote), or is a human whose replica homes one; never for this system.
+  private remoteParticipant(
     target: Message,
     from: Address,
-    origin: RemoteOrigin,
-    fed: FederationHooks,
-    field: 'replyTo' | 'thread'
-  ): void {
+    replica: string,
+    fed: FederationHooks
+  ): boolean {
     const taskOf = (runId: string) =>
       this.host.taskOfRun(runId) ?? fed.remoteRunTask(runId);
     const fromTask = from.startsWith('run:')
@@ -1441,7 +1439,7 @@ export class DeliveryEngine {
       : null;
     const actsFor = (address: Address): boolean => {
       if (address === SYSTEM_ADDRESS)
-        return from === SYSTEM_ADDRESS && target.origin === origin.replica;
+        return from === SYSTEM_ADDRESS && target.origin === replica;
       if (address === from) return true;
       if (fromTask === null) return false;
       return (
@@ -1451,7 +1449,7 @@ export class DeliveryEngine {
       );
     };
     const remoteRows = this.store.remoteDeliveries({ messageId: target.id });
-    const participant =
+    return (
       actsFor(target.from) ||
       target.to.some(actsFor) ||
       this.store
@@ -1459,13 +1457,67 @@ export class DeliveryEngine {
         .some((d) => actsFor(d.recipient)) ||
       remoteRows.some((r) => actsFor(r.recipient)) ||
       (from.startsWith('human:') &&
-        remoteRows.some((r) => r.homes.includes(origin.replica)));
-    if (!participant)
-      throw new MessagingError(
-        'forbidden',
-        `${from} is not a participant of ${target.id}`,
-        field
+        remoteRows.some((r) => r.homes.includes(replica)))
+    );
+  }
+
+  // Answers that reached this replica before their question, checked against
+  // it now: the first that holds up answers it, the rest wait as candidates.
+  private answerEarly(
+    question: Message,
+    fed: FederationHooks,
+    changed: string[]
+  ): Delivery[] {
+    // A settle from the question's origin already chose; honour it as is.
+    if (this.store.settlement(question.id) !== null)
+      return this.store.answersTo(question.id).length > 0
+        ? this.markAnswered(question.id)
+        : [];
+    const early = this.store
+      .answerCandidates(question.id)
+      .filter((c) => c.settledAs === 'pending' || c.settledAs === 'candidate');
+    const first =
+      early.find((c) => this.earlyAnswerHolds(question, c.message, fed)) ??
+      null;
+    // Demote before promoting, as the one-answer index needs.
+    for (const c of early) {
+      if (c === first || c.settledAs === 'candidate') continue;
+      this.store.setSettled(c.message.id, 'message', 'candidate');
+      changed.push(c.message.id);
+    }
+    if (first === null) return [];
+    if (first.settledAs !== 'pending') {
+      this.store.setSettled(first.message.id, 'answer', 'pending');
+      changed.push(first.message.id);
+    }
+    return this.markAnswered(question.id);
+  }
+
+  // Whether an answer stored before its question would have been accepted had
+  // the question been here: participation and the checks that need the parent.
+  private earlyAnswerHolds(
+    question: Message,
+    answer: Message,
+    fed: FederationHooks
+  ): boolean {
+    if (
+      answer.origin === undefined ||
+      !this.remoteParticipant(question, answer.from, answer.origin, fed)
+    )
+      return false;
+    try {
+      validateSendInput(
+        toSendInput({ ...answer, kind: 'answer' }),
+        answer.from,
+        false,
+        question,
+        { gateTypes: this.gateTypes, origin: 'received' }
       );
+      return true;
+    } catch (err) {
+      if (err instanceof MessagingError) return false;
+      throw err;
+    }
   }
 
   // A received target's first delivery, as plan() gives it, except that a run
