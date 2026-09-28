@@ -79,11 +79,14 @@ import type {
   Executor,
   ExecutorEvents,
   ExecutorInfo,
+  ExecutorMemoryOptions,
   ExecutorProfile,
   ExecutorRun,
   ExecutorStartOptions,
+  MemoryMode,
   MemoryPromptPort,
   NormalizedEntry,
+  PreparedMemory,
   ReviewFailure,
   RunKind,
   RunMeta,
@@ -294,6 +297,11 @@ function refuseExecuteOnDerivedTask(task: TaskDoc): void {
   );
 }
 
+// A caller-built prompt with a memory section after it; unchanged when there is none.
+function withSection(prompt: string, section: string | null): string {
+  return section === null ? prompt : `${prompt}\n\n${section}`;
+}
+
 // How a reviewed run was closed out, for refusal messages: a run merged by
 // hand and picked up by the external-merge reconciler reads "merged as
 // <sha>", which tells the operator why their resume was refused far better
@@ -380,7 +388,7 @@ export class Orchestrator {
   private mintRunToken: ((runId: string) => string) | null = null;
   // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
   private approvalGate: ApprovalGatePort | null = null;
-  // Renders each dispatch prompt's memory section (see setMemoryPort); null keeps the ledger section.
+  // Chooses each run's memory mode and prompt section (see setMemoryPort); null leaves both out.
   private memoryPort: MemoryPromptPort | null = null;
   // When each run's claims were last refreshed from git status — see
   // scheduleClaimsRefresh's cooldown check.
@@ -466,7 +474,7 @@ export class Orchestrator {
     this.approvalGate = port;
   }
 
-  // Installed by the memory service at boot; until then prompts carry the ledger section.
+  // Installed by the memory service at boot; until then runs start with no memory mode.
   setMemoryPort(port: MemoryPromptPort | null): void {
     this.memoryPort = port;
   }
@@ -869,8 +877,7 @@ export class Orchestrator {
           }
         : {}),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta);
 
     this.ctx.store.update(
       taskId,
@@ -892,12 +899,15 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task, executorName, runId),
+        prompt: this.promptForTask(task, executorName, prepared?.text ?? null),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, (section) =>
+          this.promptForTask(task, executorName, section)
+        ),
       },
       executor
     );
@@ -964,8 +974,7 @@ export class Orchestrator {
       memoryLineage: runId,
       claims: [...task.meta.writes],
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta);
 
     // A throwing buildPrompt would otherwise strand this run in `provisioning`,
     // which counts as live: the task could never be dispatched again.
@@ -990,12 +999,15 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt,
+        prompt: withSection(prompt, prepared?.text ?? null),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, (section) =>
+          withSection(prompt, section)
+        ),
       },
       executor
     );
@@ -4406,6 +4418,11 @@ export class Orchestrator {
     if (meta === undefined) return;
     // Nothing will ever refresh a terminal run's claims again.
     this.lastClaimsCheck.delete(runId);
+    const port = this.memoryPort;
+    if (port !== null)
+      this.bestEffort(`ending memory for run ${runId}`, () => {
+        port.runEnded(meta);
+      });
     this.invokeHooksSafely(this.terminalHooks, meta);
   }
 
@@ -4500,8 +4517,43 @@ export class Orchestrator {
         this.stoppingRuns.add(runId);
         this.releaseParkedApprovals(runId, 'the run ended');
       },
+      onMemoryMode: (mode, detail) =>
+        this.recordMemoryMode(runId, mode, detail),
+      onMemoryRecall: (paths, via) => {
+        const meta = this.registry.get(runId);
+        if (meta === undefined || this.memoryPort === null) return;
+        const port = this.memoryPort;
+        this.bestEffort(`recording memory recalls for run ${runId}`, () => {
+          port.recall(runId, runLineage(meta), paths, via);
+        });
+      },
       onFinish: (finish) => this.handleFinish(runId, finish),
     };
+  }
+
+  // Export mode's load check moved the run to another memory mode: kept on a
+  // state line, with the executor's reason in the Session log.
+  private recordMemoryMode(
+    runId: string,
+    mode: MemoryMode,
+    detail: string
+  ): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return;
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { memoryMode: mode, updatedAt: now });
+    const entry: NormalizedEntry = {
+      ts: now,
+      kind: 'system',
+      text: `Memory mode ${mode}: ${detail}`,
+    };
+    this.bestEffort(`recording memory mode for run ${runId}`, () => {
+      const transcript = this.transcriptFor(runId);
+      transcript.appendState(meta.state, now, { memoryMode: mode });
+      transcript.appendEntry(entry);
+    });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
   // Keeps RunMeta.subagents current from the `agent` entries as they are
@@ -4772,8 +4824,7 @@ export class Orchestrator {
         ? { stackBaseCommit: oldMeta.stackBaseCommit }
         : {}),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta);
 
     // The user's feedback is this run's opening conversation turn — record
     // it on the NEW run's transcript (mirroring the live-run branch of
@@ -4823,6 +4874,9 @@ export class Orchestrator {
         maxBudgetUsd: caps.maxBudgetUsd,
         model: oldMeta.model,
         effort: oldMeta.effort,
+        ...this.memoryOption(prepared, (section) =>
+          this.freshPromptFor(oldMeta.taskId, executorName, section)
+        ),
       },
       executor
     );
@@ -4917,8 +4971,7 @@ export class Orchestrator {
         ? { stackBaseCommit: meta.stackBaseCommit }
         : {}),
     };
-    this.registry.create(newMeta);
-    this.transcriptFor(newRunId).writeHeader(newMeta);
+    const prepared = this.registerRun(newMeta);
 
     // A fresh start opens the successor's Session log with the reason, so a
     // reader of that log is never left inferring from an agent that orients
@@ -4942,9 +4995,14 @@ export class Orchestrator {
       });
     }
 
+    // A continuing session's prompt is the continuation; a fresh one gets the brief.
+    const briefing = (section: string | null): string =>
+      continuing
+        ? this.promptForTask(task, executorName, section)
+        : `${this.promptForTask(task, executorName, section)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
     const prompt = continuing
       ? renderContinuationPrompt(meta, newRunId)
-      : `${this.promptForTask(task, executorName, newRunId)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
+      : briefing(prepared?.text ?? null);
 
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
@@ -4987,6 +5045,7 @@ export class Orchestrator {
         maxBudgetUsd: caps.maxBudgetUsd,
         model: meta.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, briefing),
       },
       executor
     );
@@ -5019,7 +5078,7 @@ export class Orchestrator {
   private promptForTask(
     task: TaskDoc,
     executorName: string,
-    runId: string
+    memorySection: string | null
   ): string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
@@ -5034,28 +5093,84 @@ export class Orchestrator {
     return buildTaskPrompt(
       task,
       parentEpic,
-      this.memorySection(task.meta.id, runId, dispatchTools),
+      memorySection,
       this.orientationFor(task.meta.id),
       dispatchTools,
       this.ctx.actorContext?.humanRef ?? null
     );
   }
 
-  // The run's `## Memory` text, or null. Never throws: a broken memory store
-  // costs the section, never the dispatch.
-  private memorySection(
+  // The task's brief with `section` as its memory, for a restart that has only
+  // the brief to open with; null when the task is gone or will not read.
+  private freshPromptFor(
     taskId: string,
-    runId: string,
-    dispatchTools: boolean
+    executorName: string,
+    section: string | null
   ): string | null {
-    if (this.memoryPort === null) return null;
     try {
-      return this.memoryPort.promptSection({ runId, taskId, dispatchTools })
-        .text;
+      const task = this.ctx.store.get(taskId);
+      return task === null
+        ? null
+        : this.promptForTask(task, executorName, section);
     } catch (err) {
-      console.error(`dispatchd: memory index for run ${runId} failed`, err);
+      console.error(
+        `dispatchd: no fallback prompt for task ${taskId}: ${(err as Error).message}`
+      );
       return null;
     }
+  }
+
+  // Records a new run, asks the memory port once how it carries memory, and
+  // writes its transcript header with the chosen mode.
+  private registerRun(meta: RunMeta): PreparedMemory | null {
+    this.registry.create(meta);
+    const prepared = this.prepareMemory(meta);
+    this.transcriptFor(meta.id).writeHeader(this.registry.get(meta.id) ?? meta);
+    return prepared;
+  }
+
+  // The port's answer for a new run, or null without a port. A throwing port
+  // costs the memory section, never the dispatch, and leaves auto memory off.
+  private prepareMemory(meta: RunMeta): PreparedMemory | null {
+    const port = this.memoryPort;
+    if (port === null) return null;
+    const profile = this.executorProfile(meta.executor);
+    let prepared: PreparedMemory;
+    try {
+      prepared = port.prepare({
+        runId: meta.id,
+        taskId: meta.taskId,
+        lineage: runLineage(meta),
+        runKind: runKind(meta),
+        isClaude: profile.autoMemory === true,
+        dispatchTools: profile.dispatchMcp !== false,
+      });
+    } catch (err) {
+      console.error(
+        `dispatchd: preparing memory for run ${meta.id} failed`,
+        err
+      );
+      prepared = { text: null, indexSection: null, memory: { mode: 'prompt' } };
+    }
+    this.registry.updateMeta(meta.id, { memoryMode: prepared.memory.mode });
+    return prepared;
+  }
+
+  // The start option a prepared run passes; export mode adds the prompt a
+  // prompt-mode restart opens with, which carries the index section instead.
+  private memoryOption(
+    prepared: PreparedMemory | null,
+    fallbackPrompt: (section: string | null) => string | null
+  ): { memory?: ExecutorMemoryOptions } {
+    if (prepared === null) return {};
+    if (prepared.memory.mode !== 'export') return { memory: prepared.memory };
+    const fallback = fallbackPrompt(prepared.indexSection);
+    return {
+      memory:
+        fallback === null
+          ? prepared.memory
+          : { ...prepared.memory, fallbackPrompt: fallback },
+    };
   }
 
   // The repo facts injected into this task's prompt (see orientation.ts): the

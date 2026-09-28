@@ -22,7 +22,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from './types.js';
-import type { ApprovalDecision } from './types.js';
+import type { ApprovalDecision, ExecutorMemoryOptions } from './types.js';
 
 // Same short collision-resistant hex tag as plan.ts's generatePlanId, and
 // local to this package for the same reason: a overseer conversation is a purely
@@ -139,12 +139,20 @@ export interface OverseerRecord {
   updatedAt: string;
 }
 
+/** The memory service's overseer half: each turn's memory mode, and its ingest. */
+interface OverseerMemoryPort {
+  prepareOverseer(conversationId: string): ExecutorMemoryOptions;
+  ingestOverseer(conversationId: string): Promise<void>;
+}
+
 export interface OverseerManagerContext {
   rootDir: string;
   registry: OverseerToolRegistry;
   events: EventBus;
   /** Where conversation lines are posted and decisions raised as gates. */
   bus?: OverseerBus;
+  /** Chooses each turn's memory mode; absent leaves Claude's own auto memory. */
+  memory?: OverseerMemoryPort;
 }
 
 // What a mutating tool call returns to the model. Deliberately explicit that
@@ -298,7 +306,38 @@ export class OverseerManager {
           tool: toolName,
           text: describeToolCall(toolName, input),
         }),
+      ...this.memoryFor(conversationId),
     };
+  }
+
+  // The turn's memory mode, its export written first. A failure leaves auto
+  // memory off rather than loading anyone's native notes.
+  private memoryFor(conversationId: string): {
+    memory?: ExecutorMemoryOptions;
+  } {
+    const port = this.ctx.memory;
+    if (port === undefined) return {};
+    try {
+      return { memory: port.prepareOverseer(conversationId) };
+    } catch (err) {
+      console.error(
+        `overseer: preparing memory for ${conversationId} failed`,
+        err
+      );
+      return { memory: { mode: 'prompt' } };
+    }
+  }
+
+  // Ingests what the turn left in its export directory, as the owner's.
+  private ingestMemory(conversationId: string): void {
+    this.ctx.memory
+      ?.ingestOverseer(conversationId)
+      .catch((err: unknown) =>
+        console.error(
+          `overseer: ingesting memory for ${conversationId} failed`,
+          err
+        )
+      );
   }
 
   private requireBackend(name: string): OverseerBackend {
@@ -459,6 +498,7 @@ export class OverseerManager {
       // parked would otherwise sit on the record forever, undecidable in any
       // way that could matter.
       this.sweepApprovals(conversationId);
+      this.ingestMemory(conversationId);
     }
   }
 

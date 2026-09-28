@@ -230,6 +230,29 @@ describe('ClaudeOverseer session wiring', () => {
     expect(captured?.maxBudgetUsd).toBeUndefined();
   });
 
+  it('applies the turn’s memory mode beside the floor’s settings', async () => {
+    const { toolset } = stubToolset();
+    const dir = '/h/.dispatch/runs/k/claude-memory/o-wc-1';
+    const exported = await runTurn(successStream(), toolset, undefined, {
+      memory: { mode: 'export', dir },
+    });
+    expect(exported.captured?.settings).toMatchObject({
+      env: { CLAUDE_CODE_SIMPLE: '0', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0' },
+      disableSkillShellExecution: true,
+      autoMemoryEnabled: true,
+      autoMemoryDirectory: dir,
+    });
+    expect(exported.captured?.additionalDirectories).toEqual([dir]);
+    const prompt = await runTurn(successStream(), toolset, undefined, {
+      memory: { mode: 'prompt' },
+    });
+    expect(prompt.captured?.settings).toMatchObject({
+      env: { CLAUDE_CODE_SIMPLE: '0', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+      autoMemoryEnabled: false,
+    });
+    expect(prompt.captured?.additionalDirectories).toBeUndefined();
+  });
+
   it('tells the model that a mutating call only queues an action', async () => {
     const { toolset } = stubToolset();
     const { captured } = await runTurn(successStream(), toolset);

@@ -12,6 +12,10 @@ import type {
 } from '@anthropic-ai/claude-agent-sdk';
 import type { z } from 'zod';
 
+import {
+  claudeMemorySettings,
+  mergeFlagSettings,
+} from '../../memory/claudeModes.js';
 import { openClaudeQuery, rewriteMissingCliError } from '../claudeCli.js';
 import { cartoMcpServers } from '../executors/claude.js';
 import { floorGuard } from '../floorHook.js';
@@ -209,6 +213,13 @@ export class ClaudeOverseer implements OverseerBackend {
             }
             return decision;
           };
+    // The turn's memory mode, applied as the executor applies a run's; no load
+    // check, since a human is on the other end of every turn.
+    const memory = claudeMemorySettings(
+      opts.memory?.mode ?? 'native',
+      opts.memory?.dir
+    );
+    const floor = floorGuard(holdForHuman);
     const options: Options = {
       cwd: this.rootDir,
       // Pre-approves the registry's own tools; everything else still reaches
@@ -250,7 +261,15 @@ export class ClaudeOverseer implements OverseerBackend {
       // skip canUseTool or let a settings PermissionRequest hook answer first
       // (see floorGuard). With no one to ask, the call is refused, as
       // canUseTool refuses it.
-      ...floorGuard(holdForHuman),
+      hooks: floor.hooks,
+      // The memory mode's settings sit beside the floor's, both env pins kept.
+      settings: mergeFlagSettings(
+        floor.settings as Record<string, unknown>,
+        memory.settings
+      ) as Options['settings'],
+      ...(memory.additionalDirectories.length > 0
+        ? { additionalDirectories: memory.additionalDirectories }
+        : {}),
       // No background tasks: a sub-agent or shell that outlives the turn keeps
       // running after the query closes, when nothing can answer the floor
       // hook, and under bypassPermissions a background sub-agent's floor

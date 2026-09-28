@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore, updateConfig } from '@dispatch/core';
 import type { Message } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -17,6 +17,7 @@ import type {
 } from '../src/orchestrator/overseerBackend.js';
 import { FakeOverseer } from '../src/orchestrator/overseers/fake.js';
 import type { FakeOverseerScript } from '../src/orchestrator/overseers/fake.js';
+import { claudeMemoryDir, projectKeyOf } from '../src/orchestrator/paths.js';
 import type { ApprovalDecision } from '../src/orchestrator/types.js';
 import { json } from './json.js';
 import { BEFORE_CUTOVER, seedLedger } from './memory/fixtures.js';
@@ -468,6 +469,53 @@ describe('overseer memory tools', () => {
       ],
     });
     expect(ledger.result.content).toMatchObject({ entries: [], total: 0 });
+  });
+
+  it('exports the owner’s memory to each turn and ingests what the turn wrote', async () => {
+    const seen: OverseerTurnOptions[] = [];
+    // Writes a note into the turn's export directory, as Claude would.
+    const backend: OverseerBackend = {
+      start: (_prompt, _toolset, options = {}) => {
+        seen.push(options);
+        const dir = options.memory?.dir;
+        if (dir !== undefined)
+          writeFileSync(
+            join(dir, 'overseer-note.md'),
+            '---\nname: overseer-note\ndescription: the merge queue runs lint first\nmetadata:\n  type: project\n---\nSeen in the queue.\n'
+          );
+        return Promise.resolve({ reply: 'noted', sessionId: 's-o' });
+      },
+      sendMessage: () => Promise.resolve({ reply: 'ok' }),
+    };
+    updateConfig(root, { memory: { claudeAutoMemory: 'export' } });
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerOverseers: (overseerManager) => {
+        overseerManager.registerBackend('claude', backend);
+      },
+      memoryPreflight: () => Promise.resolve({ ok: true, version: '2.1.210' }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    const own = handle.memory.personal.personal('self');
+    own.setMeta(`claude-import:${projectKeyOf(root)}`, 'complete');
+    await handle.memory.refreshPreflight();
+
+    const { record } = await startConversation('remember the queue order');
+    await settled(record.id);
+    expect(seen[0].memory).toEqual({
+      mode: 'export',
+      dir: claudeMemoryDir(root, `o-${record.id}`),
+    });
+    await waitFor(() =>
+      Promise.resolve(
+        own
+          .listEntries()
+          .some((e) => e.title === 'the merge queue runs lint first')
+      )
+    );
   });
 });
 

@@ -81,6 +81,7 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
+import type { PreflightResult } from './memory/claudeModes.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
@@ -311,6 +312,9 @@ export interface StartServerOptions {
   // A main-thread heartbeat gap longer than this is logged as a stall, with
   // the section the daemon was in (see EventLoopWatchdog). Defaults to 5s.
   watchdogStallMs?: number;
+  // Replaces the Claude export preflight (CLI version, env, managed settings),
+  // so a test can choose export mode without a real Claude Code install.
+  memoryPreflight?: () => Promise<PreflightResult>;
   // Exit on its own after this long with no requests, no connected client
   // and no live work (see IdleShutdown for the full rule). Unset means never:
   // only a daemon the CLI spawned in the background sets it, since a
@@ -1291,6 +1295,9 @@ async function bootServer(
       stores.records === null
         ? join(rootDir, '.dispatch', 'ledger.jsonl')
         : null,
+    ...(opts.memoryPreflight === undefined
+      ? {}
+      : { preflight: opts.memoryPreflight }),
   });
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
@@ -1527,6 +1534,7 @@ async function bootServer(
       owner: actorContext.humanRef,
       overseer: overseerAddress,
     }),
+    memory,
   });
   if (opts.registerOverseers !== undefined) {
     opts.registerOverseers(overseerManager);

@@ -1,3 +1,4 @@
+import { resolveSettings } from '@anthropic-ai/claude-agent-sdk';
 import { isAbsolute } from 'node:path';
 
 import type { RunKind } from '../orchestrator/types.js';
@@ -150,6 +151,24 @@ function managedOverride(managed: Record<string, unknown>): string | null {
   if (envOf(managed).CLAUDE_CODE_DISABLE_AUTO_MEMORY !== undefined)
     return 'managed settings set CLAUDE_CODE_DISABLE_AUTO_MEMORY';
   return null;
+}
+
+// The managed tier's settings, merged in precedence order, as the CLI would
+// resolve them in `cwd`; null when no managed source sets anything.
+export async function resolveManagedSettings(
+  cwd: string
+): Promise<Record<string, unknown> | null> {
+  const resolved = await resolveSettings({
+    cwd,
+    settingSources: ['user', 'project', 'local'],
+  });
+  let managed: Record<string, unknown> | null = null;
+  for (const { source, settings } of resolved.sources) {
+    if (source !== 'managed') continue;
+    const layer = settings as Record<string, unknown>;
+    managed = managed === null ? layer : mergeFlagSettings(managed, layer);
+  }
+  return managed;
 }
 
 // Checks export mode can work: a probed CLI at least as new as the probe, no

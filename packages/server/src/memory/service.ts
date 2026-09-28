@@ -8,14 +8,20 @@ import {
   personalIdentityFor,
   SqliteMemoryStore,
 } from '@dispatch/memory';
-import type { MemoryStore, MemoryStores, Principal } from '@dispatch/memory';
+import type {
+  MemoryStore,
+  MemoryStores,
+  Operator,
+  Principal,
+} from '@dispatch/memory';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { unwatchFile, watchFile } from 'node:fs';
+import { existsSync, unwatchFile, watchFile } from 'node:fs';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { Messaging } from '../messaging/service.js';
+import { resolveClaudeCli } from '../orchestrator/claudeCli.js';
 import type { OverseerToolContext } from '../orchestrator/overseerTools.js';
 import {
   claudeMemoryDir,
@@ -23,9 +29,13 @@ import {
   personalMemoryDir,
   projectKeyOf,
 } from '../orchestrator/paths.js';
+import { runLineage } from '../orchestrator/types.js';
 import type {
+  ExecutorMemoryOptions,
   MemoryPromptPort,
-  MemoryPromptSection,
+  PreparedMemory,
+  RunKind,
+  RunMeta,
 } from '../orchestrator/types.js';
 import {
   ClaudeExportManager,
@@ -33,6 +43,13 @@ import {
   runLineageOpen,
   runLineageTarget,
 } from './claudeExport.js';
+import {
+  chooseMemoryMode,
+  EXPORT_PROMPT_LINE,
+  resolveManagedSettings,
+  runPreflight,
+} from './claudeModes.js';
+import type { PreflightResult } from './claudeModes.js';
 import { startDecayScheduler } from './decay.js';
 import { closeStrayMemoryGates, registerMemoryGate } from './gate.js';
 import {
@@ -48,6 +65,12 @@ import {
 } from './ledgerImport.js';
 import type { LedgerImportReport } from './ledgerImport.js';
 import { PersonalStores } from './personalStores.js';
+
+/** A run's memory section; `text` is null when there is nothing to show. */
+interface MemoryPromptSection {
+  source: 'memory';
+  text: string | null;
+}
 
 interface MemoryHealth {
   available: boolean;
@@ -80,6 +103,18 @@ export interface MemoryService extends MemoryPromptPort {
   requireEngine(): MemoryEngine;
   importLedger(opts?: { dryRun?: boolean }): LedgerImportReport | null;
   lastLedgerImport(): LedgerImportReport | null;
+  /** The run's `## Memory` section, recording its index recalls. */
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): MemoryPromptSection;
+  /** The overseer conversation's memory mode for its next turn, its export written. */
+  prepareOverseer(conversationId: string): ExecutorMemoryOptions;
+  /** Ingests what the overseer's last turn left in its export directory. */
+  ingestOverseer(conversationId: string): Promise<void>;
+  /** Re-runs the export preflight that prepare reads from its cache. */
+  refreshPreflight(): Promise<PreflightResult>;
   /** Boot, after messaging.recover(): raises unsent gates, closes strays, sweeps Claude exports, then starts decay. */
   recover(): Promise<{ raised: number; closed: number }>;
   health(principal: Principal | null): MemoryHealth;
@@ -104,15 +139,55 @@ export interface OpenMemoryDeps {
   watchLedgerFile?: string | null;
   /** How often leftover Claude export directories are swept; hourly unless a test shortens it. */
   exportSweepMs?: number;
+  /** The export preflight; the real one checks the Claude Code CLI, env and managed settings. */
+  preflight?: () => Promise<PreflightResult>;
   now?: () => Date;
 }
 
 const LAST_IMPORT_KEY = 'ledger-import:last';
 const CUTOVER_KEY = 'ledger-cutover-at';
+// The oldest Claude Code version the live probe passed on.
+const PROBE_KEY = 'claude-probe-passed';
 const HOUR_MS = 3_600_000;
+const UNLOADED_NOTE =
+  'Your auto-memory directory is not active; save memories with memory_save.';
+const IMPORT_STATES = ['complete', 'failed', 'unconfirmed', 'running'] as const;
+
+type ImportState = (typeof IMPORT_STATES)[number];
+
+// A session's chosen mode: export names its written directory; review and
+// verify runs get prompt mode with no index.
+type SessionMode =
+  | { mode: 'export'; dir: string }
+  | { mode: 'native' | 'prompt'; index: boolean };
+
+// One Claude session whose memory mode is being chosen: a run, or an overseer turn.
+interface SessionTarget {
+  principal: Principal;
+  // The export directory's name: a run lineage or `o-<conversation>`.
+  name: string;
+  taskId: string | null;
+  runKind: RunKind | 'overseer';
+  isClaude: boolean;
+}
 
 function message(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+const runPrincipal = (runId: string): Principal => ({
+  address: `run:${runId}`,
+  canDecide: false,
+  kind: 'run',
+});
+
+// The owner's Claude-import state for the project, or null when none is recorded.
+function importState(
+  store: MemoryStore,
+  projectKey: string
+): ImportState | null {
+  const raw = store.meta(`claude-import:${projectKey}`);
+  return IMPORT_STATES.find((state) => state === raw) ?? null;
 }
 
 // The last committed import report, or null when none was stored or it no longer parses.
@@ -331,37 +406,195 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       console.error('dispatchd: ledger import failed', err);
     }
   };
-  // The run's '## Memory' section; text is null while memory is unavailable.
-  const promptSection = (input: {
-    runId: string;
-    taskId: string;
-    dispatchTools: boolean;
-  }): MemoryPromptSection => {
-    if (engine === null) return { source: 'memory', text: null };
+  // The run's '## Memory' section, or null while memory is unavailable. An
+  // export records its own index recalls, so `record` is false for one.
+  const indexSection = (
+    input: { runId: string; taskId: string; dispatchTools: boolean },
+    record: boolean
+  ): string | null => {
+    if (engine === null) return null;
     try {
-      const out = engine.index({
-        principal: {
-          address: `run:${input.runId}`,
-          canDecide: false,
-          kind: 'run',
-        },
+      return engine.index({
+        principal: runPrincipal(input.runId),
         taskId: input.taskId,
         runId: input.runId,
         variant: input.dispatchTools ? 'tools' : 'no-tools',
+        recordRecalls: record,
         onRecallError: (err) =>
           console.error(
             `dispatchd: recording index recalls for run ${input.runId} failed`,
             err
           ),
-      });
-      return { source: 'memory', text: out.text };
+      }).text;
     } catch (err) {
       console.error(
         `dispatchd: memory index for run ${input.runId} failed`,
         err
       );
-      return { source: 'memory', text: null };
+      return null;
     }
+  };
+
+  // The last export preflight: prepare reads it, so no dispatch waits on the CLI.
+  let preflight: PreflightResult = {
+    ok: false,
+    reason: 'the export preflight has not finished',
+  };
+  const exportPreflight =
+    deps.preflight ??
+    (() =>
+      runPreflight({
+        env: process.env,
+        probePassed: shared?.meta(PROBE_KEY) ?? null,
+        cliVersion: async () => (await resolveClaudeCli()).version,
+        resolveManaged: () => resolveManagedSettings(deps.rootDir),
+      }));
+  const refreshPreflight = async (): Promise<PreflightResult> => {
+    try {
+      preflight = await exportPreflight();
+    } catch (err) {
+      preflight = { ok: false, reason: message(err) };
+    }
+    return preflight;
+  };
+  void refreshPreflight();
+  const preflightTimer = setInterval(() => void refreshPreflight(), HOUR_MS);
+  preflightTimer.unref();
+
+  // Who the principal acts for; null for no one, or when that cannot be told.
+  const operatorFor = (principal: Principal): Operator | null => {
+    try {
+      return engine === null
+        ? host.operatorOf(principal)
+        : engine.viewer(principal).operator;
+    } catch (err) {
+      console.error(
+        `dispatchd: could not tell who ${principal.address} acts for`,
+        err
+      );
+      return null;
+    }
+  };
+  // The identity's personal store, or null when it will not open (D30's reused handle too).
+  const openPersonal = (identity: string): MemoryStore | null => {
+    try {
+      return stores.personal(identity);
+    } catch (err) {
+      if (err instanceof MemoryError) return null;
+      throw err;
+    }
+  };
+  // Picks a session's memory mode; the export is written only once every other
+  // step says export.
+  const chooseMode = (t: SessionTarget): SessionMode => {
+    const operator = operatorFor(t.principal);
+    const personalStore =
+      operator === null ? null : openPersonal(operator.identity);
+    const operatorIsOwner = operator?.human === deps.ownerRef;
+    const choice = chooseMemoryMode({
+      isClaude: t.isClaude,
+      runKind: t.runKind,
+      hasOperator: operator !== null,
+      personalAvailable: personalStore !== null,
+      operatorIsOwner,
+      ownerImport:
+        operatorIsOwner && personalStore !== null
+          ? importState(personalStore, projectKeyOf(deps.rootDir))
+          : null,
+      claudeAutoMemory: config().claudeAutoMemory,
+      preflight,
+      exportWritten: () => {
+        if (claudeExport === null) return false;
+        try {
+          claudeExport.prepare({
+            name: t.name,
+            principal: t.principal,
+            taskId: t.taskId,
+          });
+          return true;
+        } catch (err) {
+          console.error(
+            `dispatchd: writing the Claude memory export ${t.name} failed`,
+            err
+          );
+          return false;
+        }
+      },
+    });
+    return choice.mode === 'export'
+      ? { mode: 'export', dir: claudeMemoryDir(deps.rootDir, t.name) }
+      : { mode: choice.mode, index: choice.index };
+  };
+
+  // Each export-mode run's directory watch, by lineage, until the run ends.
+  const watches = new Map<string, { runId: string; stop: () => void }>();
+  const prepare: MemoryPromptPort['prepare'] = (input): PreparedMemory => {
+    const target = {
+      name: input.lineage,
+      principal: runPrincipal(input.runId),
+      taskId: input.taskId,
+    };
+    const choice = chooseMode({
+      ...target,
+      runKind: input.runKind,
+      isClaude: input.isClaude,
+    });
+    if (choice.mode !== 'export') {
+      const section = choice.index ? indexSection(input, true) : null;
+      return {
+        text: section,
+        indexSection: section,
+        memory: { mode: choice.mode },
+      };
+    }
+    const section = indexSection(input, false);
+    if (claudeExport !== null) {
+      watches.get(input.lineage)?.stop();
+      watches.set(input.lineage, {
+        runId: input.runId,
+        stop: claudeExport.watch(target),
+      });
+    }
+    const probe = shared?.meta(PROBE_KEY) ?? null;
+    return {
+      text: EXPORT_PROMPT_LINE,
+      indexSection: section,
+      memory: {
+        mode: 'export',
+        dir: choice.dir,
+        ...(probe === null ? {} : { probeVersion: probe }),
+        unloadedNote:
+          section === null ? UNLOADED_NOTE : `${section}\n\n${UNLOADED_NOTE}`,
+      },
+    };
+  };
+  // The export's files the agent read become recalls; any other path is ignored.
+  const recall: MemoryPromptPort['recall'] = (runId, lineage, paths, via) => {
+    if (claudeExport === null) return;
+    try {
+      claudeExport.recordRecalls(runId, lineage, paths, via);
+    } catch (err) {
+      console.error(
+        `dispatchd: recording recalls for run ${runId} failed`,
+        err
+      );
+    }
+  };
+  // The run's final scan; its directory stays until the lineage closes.
+  const runEnded = (meta: RunMeta): void => {
+    const name = runLineage(meta);
+    const watched = watches.get(name);
+    if (watched === undefined || watched.runId !== meta.id) return;
+    watched.stop();
+    watches.delete(name);
+    claudeExport
+      ?.ingest({ name, principal: runPrincipal(meta.id), taskId: meta.taskId })
+      .catch((err: unknown) =>
+        console.error(
+          `dispatchd: ingesting run ${meta.id}'s memory failed`,
+          err
+        )
+      );
   };
 
   // Whether the principal's own personal store opens; null when it acts for no one.
@@ -429,7 +662,32 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     },
     importLedger,
     lastLedgerImport: () => last,
-    promptSection,
+    promptSection: (input) => ({
+      source: 'memory',
+      text: indexSection(input, true),
+    }),
+    prepare,
+    recall,
+    runEnded,
+    prepareOverseer: (conversationId) => {
+      const choice = chooseMode({
+        principal: overseer,
+        name: `o-${conversationId}`,
+        taskId: null,
+        runKind: 'overseer',
+        isClaude: true,
+      });
+      return choice.mode === 'export'
+        ? { mode: 'export', dir: choice.dir }
+        : { mode: choice.mode };
+    },
+    ingestOverseer: async (conversationId) => {
+      const name = `o-${conversationId}`;
+      if (claudeExport === null) return;
+      if (!existsSync(claudeMemoryDir(deps.rootDir, name))) return;
+      await claudeExport.ingest({ name, principal: overseer, taskId: null });
+    },
+    refreshPreflight,
     recover: async () => {
       try {
         if (engine === null || shared === null) return { raised: 0, closed: 0 };
@@ -459,6 +717,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     }),
     close: () => {
       clearInterval(exportSweep);
+      clearInterval(preflightTimer);
       claudeExport?.close();
       decay.stop();
       unsubscribe();

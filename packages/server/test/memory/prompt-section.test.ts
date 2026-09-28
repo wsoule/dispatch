@@ -9,8 +9,10 @@ import { join } from 'node:path';
 import { EventBus } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { openMemory } from '../../src/memory/service.js';
-import type { MemoryPromptSection } from '../../src/orchestrator/types.js';
+import type { MemoryService } from '../../src/memory/service.js';
 import { quietDaemon } from './fixtures.js';
+
+type MemoryPromptSection = ReturnType<MemoryService['promptSection']>;
 
 // A project with one task and memory.db beside it; `imported` runs the ledger import.
 function setup({ imported = true } = {}) {

@@ -26,10 +26,12 @@ import { activeExperiments } from '../experiments.js';
 import type { ExperimentName } from '../experiments.js';
 import { floorGuard } from '../floorHook.js';
 import type { FloorPolicy } from '../floorHook.js';
+import { DEFAULT_EXECUTOR_PROFILE } from '../types.js';
 import type {
   ApprovalDecision,
   Executor,
   ExecutorEvents,
+  ExecutorProfile,
   ExecutorRun,
   ExecutorStartOptions,
   NormalizedEntry,
@@ -799,6 +801,12 @@ function guardZeroTurnFinish(
  * raises the orchestrator's approval flow and waits for `approve()`.
  */
 export class ClaudeExecutor implements Executor {
+  // Claude's defaults, and it applies the memory mode a run starts in.
+  readonly profile: ExecutorProfile = {
+    ...DEFAULT_EXECUTOR_PROFILE,
+    autoMemory: true,
+  };
+
   // Defaults to the real SDK's `query()`; tests inject a stub that yields a
   // scripted `SDKMessage` stream instead of spinning up a real Agent SDK
   // session (which claude-executor.test.ts's DISPATCH_CLAUDE_SMOKE-gated
