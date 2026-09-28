@@ -211,6 +211,17 @@ describe('send with federation hooks', () => {
     ]);
   });
 
+  it('a system close sorts after its question with hooks on', async () => {
+    const { message: q } = await engine.send(
+      { to: ['human:bob'], kind: 'question', body: 'which way?' },
+      human
+    );
+    const closed = engine.close(q.id, 'the run ended');
+    expect(closed.hlc).toBe(`1758880000000.0002.${ME}`);
+    expect(store.getMessage(closed.id)?.hlc).toBe(closed.hlc);
+    expect(store.thread(q.thread).map((m) => m.id)).toEqual([q.id, closed.id]);
+  });
+
   it("reads one message's local deliveries", async () => {
     const { message } = await engine.send(
       { to: ['human:ada', 'human:bob'], kind: 'message', body: 'x' },

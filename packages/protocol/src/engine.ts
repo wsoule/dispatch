@@ -917,7 +917,7 @@ export class DeliveryEngine {
     );
   }
 
-  // A system answer that skips validation and hooks — used when the host
+  // A system answer that skips validation and placement — used when the host
   // itself is closing out a question (e.g. the asking run ended).
   close(questionId: string, reason: string): Message {
     const target = this.store.getMessage(questionId);
@@ -950,6 +950,9 @@ export class DeliveryEngine {
       wake: 'none',
       createdAt: this.nowIso(),
     };
+    // Clocked like a send, so the close sorts after its question in the thread.
+    const fed = this.host.federation;
+    if (fed !== undefined) answer.hlc = fed.hlc();
     const answered = this.store.transaction(() => {
       this.store.insertMessage(answer);
       return this.markAnswered(questionId);
