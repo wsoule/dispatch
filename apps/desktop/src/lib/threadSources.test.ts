@@ -235,6 +235,32 @@ describe('rowControl', () => {
     });
   });
 
+  it('gives a decider the memory card for a memory gate, and a teammate the reason', () => {
+    const memoryGate = msg('m-mem', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data: {
+        type: 'memory',
+        proposalId: 'mp-000001',
+        action: 'add',
+        scope: 'team',
+        kind: 'hazard',
+      },
+    });
+    const decider = rowControl(memoryGate, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({ kind: 'memory', proposalId: 'mp-000001' });
+    expect(offersAnswer(decider)).toBe(true);
+    expect(
+      rowControl(memoryGate, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+  });
+
   it('shows a system gate of an unknown type as a decision card to a decider, and read-only to a teammate', () => {
     const unknown = msg('m-u', {
       from: 'agent:dispatch',
