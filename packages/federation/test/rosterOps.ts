@@ -174,7 +174,7 @@ export function team(founder: string, keys: ReadonlyMap<string, KeyInfo>) {
 
 // Hypothetical later levels that keep rights at level 1: level 2 adds pairs
 // that decide no right, level 3 an rv 99 op.
-const LEVELS: ReadonlyMap<number, readonly string[]> = new Map([
+export const LEVELS: ReadonlyMap<number, readonly string[]> = new Map([
   [2, ['license@2', 'transport@2', 'invite@2', 'hosts@2', 'note@1']],
   [3, ['zap@99']],
 ]);

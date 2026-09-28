@@ -123,8 +123,8 @@ export interface RosterView {
 }
 
 /**
- * How a build reads a body whose (action, rv) is outside Known(1): its meaning
- * as an rv 1 body, or null when this build cannot read it.
+ * How a build reads a pair outside Known(1): its meaning as an rv 1 body, which
+ * the fold refuses when it would decide a right, or null when it cannot read it.
  */
 export type LaterPairs = (body: Readonly<Record<string, unknown>>) => unknown;
 
@@ -637,16 +637,29 @@ function kindOf(body: unknown): Kind {
   return shape(b) ? 'known' : 'malformed';
 }
 
+// The actions that decide admission, roles, ranks, revocations or the
+// recovery key: a later pair never reads as one of them.
+const RIGHTS = new Set([
+  'found',
+  'admit',
+  'role',
+  'revoke',
+  'recover',
+  'recovery-key',
+  'dismiss',
+]);
+
 // An op as this build reads it: a pair outside Known(1) is unknown, and pauses
-// the caller, unless `later` reads it.
+// the caller, unless `later` reads it as something other than a right.
 function itemOf(op: RosterOpRef, later: LaterPairs): Item {
   const kind = kindOf(op.body);
   if (kind === 'known') return { op, kind, body: op.body };
   if (kind === 'malformed') return { op, kind, body: 'malformed' };
   const meaning = later(op.body as unknown as Record<string, unknown>);
   if (meaning === null) return { op, kind, body: 'unknown' };
-  const body = kindOf(meaning) === 'known' ? (meaning as RosterBody) : null;
-  return { op, kind, body: body ?? 'malformed' };
+  if (kindOf(meaning) !== 'known') return { op, kind, body: 'malformed' };
+  const body = meaning as RosterBody;
+  return { op, kind, body: RIGHTS.has(body.action) ? 'malformed' : body };
 }
 
 function removalOf({ op, kind: read, body }: Item): Removal | null {

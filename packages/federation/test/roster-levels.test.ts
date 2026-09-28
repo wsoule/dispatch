@@ -1,13 +1,14 @@
 import { ed25519FromSeed } from '@dispatch/protocol/federation';
 import { describe, expect, it } from 'bun:test';
 
-import { foldRoster, foldRosterAt, KNOWN_ROSTER_PAIRS } from '../src/roster.js';
+import { foldRosterAt, KNOWN_ROSTER_PAIRS } from '../src/roster.js';
 import type { LaterPairs, RosterOpRef, RosterView } from '../src/roster.js';
 import {
   admit,
   demote,
   handleOf,
   keysFor,
+  LEVELS,
   op,
   revoke,
   rosterOf,
@@ -44,21 +45,36 @@ function pairOf(body: unknown): string | null {
 const outsideKnown = (o: RosterOpRef): boolean =>
   !KNOWN_ROSTER_PAIRS.has(pairOf(o.body) ?? '');
 
-// A random op set: admissions, fights, pairs from every level of the table,
-// unreadable and malformed ops, recovers, and dismisses mostly naming ops
-// outside Known(1). With `fights`, mostly removals among the admins.
+// Every pair the level table reads, and pairs no level reads, most of them
+// shaped as rights.
+const TABLE_PAIRS = [...LEVELS.values()].flat();
+const UNREAD_PAIRS = [
+  'found@2',
+  'admit@2',
+  'role@2',
+  'revoke@2',
+  'recover@2',
+  'recovery-key@2',
+  'dismiss@2',
+  'close-legacy@2',
+  'x-garbage@7',
+];
+
+// A random op set on one shared clock, some ops backdated, drawing on every
+// pair the table reads; with `fights`, mostly removals among the admins.
 function randomOps(rand: () => number, fights: boolean): RosterOpRef[] {
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
   const seqs = new Map<string, number>(ALL.map((r) => [r, 1]));
-  const clock = new Map<string, number>(ALL.map((r) => [r, 0]));
+  let now = 0;
   const ops: RosterOpRef[] = [];
-  const mk = (replica: string, body: Record<string, unknown>, back = false) => {
+  const mk = (replica: string, body: Record<string, unknown>) => {
     const seq = (seqs.get(replica) ?? 1) + 1;
     seqs.set(replica, seq);
-    const ms = back
-      ? -5000 - Math.floor(rand() * 100)
-      : (clock.get(replica) ?? 0) + 1 + Math.floor(rand() * 40);
-    if (!back) clock.set(replica, ms);
+    now += 1 + Math.floor(rand() * 40);
+    const at = rand();
+    let ms = now;
+    if (at < 0.03) ms = -5000 - Math.floor(rand() * 100);
+    else if (at < 0.18) ms = 1 + Math.floor(rand() * now);
     const o = op(replica, seq, ms, body);
     ops.push(o);
     return o;
@@ -70,7 +86,81 @@ function randomOps(rand: () => number, fights: boolean): RosterOpRef[] {
     );
     return { replica: target, afterSeq, afterHash: `h-${target}-${afterSeq}` };
   };
-  if (rand() < 0.15) mk(P, { rv: 7, action: 'x-garbage' }, true);
+  const named = () => {
+    const odd = ops.filter(outsideKnown);
+    const o =
+      odd.length > 0 && rand() < 0.85
+        ? pick(odd)
+        : pick(ops.length > 0 ? ops : [t.found]);
+    return { replica: o.replica, seq: o.seq, hash: o.hash };
+  };
+  // The fields a Known(1) op of `action` carries, so a later pair of that
+  // action reads with the shape of a right.
+  const fieldsOf = (
+    action: string,
+    by: string,
+    target: string,
+    k: number
+  ): Record<string, unknown> => {
+    switch (action) {
+      case 'found':
+        return { name: 'evil', legacy: [], recoveryPub: OTHER.signPub };
+      case 'admit': {
+        const r = rand() < 0.5 ? P : target;
+        const role = pick(['member', 'admin']);
+        return {
+          replica: r,
+          handle: handleOf(r),
+          role,
+          fingerprint: `FP-${r}`,
+        };
+      }
+      case 'revoke':
+        return { reason: 'r', ...cut(target) };
+      case 'role':
+        return rand() < 0.5
+          ? { replica: target, role: 'admin' }
+          : { role: 'member', ...cut(target) };
+      case 'hosts':
+        return {
+          replica: target,
+          hosts: pick([[], [`h${k}`], [`${handleOf(target)}-x`]]),
+          ...(rand() < 0.5 ? cut(target) : {}),
+        };
+      case 'close-legacy':
+        return { entries: [] };
+      case 'license':
+        return { key: `k-${k}` };
+      case 'invite':
+        return {
+          id: `i-${k}`,
+          pub: 'p',
+          handle: handleOf(by),
+          expires: '2027-01-01T00:00:00.000Z',
+        };
+      case 'recover':
+        return { proof: (t.recover(by, 0, 0).body as { proof: string }).proof };
+      case 'recovery-key':
+        return { pub: OTHER.signPub };
+      case 'dismiss':
+        return named();
+      case 'transport':
+        return { kind: 'relay', url: `u-${k}` };
+      default:
+        return { text: 'n' };
+    }
+  };
+  const pairOp = (pair: string, by: string, target: string, k: number) => {
+    const at = pair.lastIndexOf('@');
+    const action = pair.slice(0, at);
+    const rv = Number(pair.slice(at + 1));
+    mk(by, { ...fieldsOf(action, by, target, k), rv, action });
+  };
+  if (rand() < 0.15) {
+    const seq = (seqs.get(P) ?? 1) + 1;
+    seqs.set(P, seq);
+    ops.push(op(P, seq, -5000, { rv: 7, action: 'x-garbage' }));
+  }
   if (rand() < 0.1) mk(Q, { rv: 7, action: 'x-garbage' });
   if (rand() < 0.3) {
     const seq = (seqs.get(Q) ?? 1) + 1;
@@ -85,6 +175,9 @@ function randomOps(rand: () => number, fights: boolean): RosterOpRef[] {
       handle: handleOf(r),
       role: rand() < 0.6 ? 'admin' : 'member',
       fingerprint: `FP-${r}`,
+      ...(rand() < 0.4
+        ? { hosts: [`${handleOf(r)}-x`, `${handleOf(r)}-y`] }
+        : {}),
     });
   if (rand() < 0.5)
     mk(A, {
@@ -97,45 +190,33 @@ function randomOps(rand: () => number, fights: boolean): RosterOpRef[] {
     });
   const n = 4 + Math.floor(rand() * 12);
   for (let k = 0; k < n; k++) {
-    const by = pick(fights ? [A, ...MEMBERS] : ALL);
-    const target = pick(
-      (fights ? [A, ...MEMBERS] : ALL).filter((x) => x !== by)
-    );
+    const pool = fights ? [A, ...MEMBERS] : ALL;
+    const by = pick(pool);
+    const target = pick(pool.filter((x) => x !== by));
     const x = rand();
-    const rv = rand() < 0.5 ? 2 : 1;
-    if (fights && x < 0.6) {
+    if (x < (fights ? 0.45 : 0.12)) {
       if (rand() < 0.7)
         mk(by, { action: 'revoke', reason: 'r', ...cut(target) });
       else mk(by, { action: 'role', role: 'member', ...cut(target) });
-    } else if (x < 0.1)
-      mk(by, { action: 'revoke', reason: 'r', ...cut(target) });
-    else if (x < 0.16)
-      mk(by, { action: 'role', role: 'member', ...cut(target) });
-    else if (x < 0.21)
+    } else if (x < (fights ? 0.75 : 0.5))
+      pairOp(
+        rand() < 0.7 ? pick(TABLE_PAIRS) : pick(UNREAD_PAIRS),
+        by,
+        target,
+        k
+      );
+    else if (x < (fights ? 0.8 : 0.6))
       mk(by, { action: 'role', replica: target, role: 'admin' });
-    else if (x < 0.25) mk(by, { rv, action: 'license', key: `k-${k}` });
-    else if (x < 0.29)
-      mk(by, { rv, action: 'transport', kind: 'relay', url: `u-${k}` });
-    else if (x < 0.33)
-      mk(by, {
-        rv,
-        action: 'invite',
-        id: `i-${k}`,
-        pub: 'p',
-        handle: handleOf(by),
-        expires: '2027-01-01T00:00:00.000Z',
-      });
-    else if (x < 0.37)
-      mk(by, {
-        rv,
-        action: 'hosts',
-        replica: target,
-        hosts: rand() < 0.5 ? [`h${k}`] : [],
-        ...(rand() < 0.5 ? cut(target) : {}),
-      });
-    else if (x < 0.39) mk(by, { action: 'note', text: 'n' });
-    else if (x < 0.41) mk(by, { action: 'recovery-key', pub: OTHER.signPub });
-    else if (x < 0.43)
+    else if (x < (fights ? 0.82 : 0.7))
+      pairOp(
+        pick(['license@1', 'transport@1', 'invite@1', 'hosts@1']),
+        by,
+        target,
+        k
+      );
+    else if (x < (fights ? 0.84 : 0.73))
+      mk(by, { action: 'recovery-key', pub: OTHER.signPub });
+    else if (x < (fights ? 0.86 : 0.76))
       mk(A, {
         action: 'admit',
         replica: P,
@@ -143,22 +224,9 @@ function randomOps(rand: () => number, fights: boolean): RosterOpRef[] {
         role: pick(['member', 'admin']),
         fingerprint: `FP-${P}`,
       });
-    else if (x < 0.46) mk(by, { rv: '1', action: 'admit', replica: target });
-    else if (x < 0.54) mk(by, { rv: 99, action: 'zap' });
-    else if (x < 0.6) mk(by, { rv: 7, action: 'x-garbage' });
-    else {
-      const odd = ops.filter(outsideKnown);
-      const named =
-        odd.length > 0 && rand() < 0.85
-          ? pick(odd)
-          : pick(ops.length > 0 ? ops : [t.found]);
-      mk(by, {
-        action: 'dismiss',
-        replica: named.replica,
-        seq: named.seq,
-        hash: named.hash,
-      });
-    }
+    else if (x < (fights ? 0.88 : 0.8))
+      mk(by, { rv: '1', action: 'admit', replica: target });
+    else mk(by, { action: 'dismiss', ...named() });
   }
   return ops;
 }
@@ -414,9 +482,9 @@ describe('the level table', () => {
     }
   });
 
-  it('judges a dismiss in the base fold, where no op a dismiss names can empower it', () => {
+  it('never lets a later pair empower a dismiss, whether or not a dismiss names it', () => {
     const [B, C] = MEMBERS;
-    // A level that lets a later pair decide rights: a promotion at rv 2.
+    // A level that reads a promotion at rv 2 as a right, which is refused.
     const breaking: LaterPairs = (b) =>
       b.action === 'role' && b.rv === 2 ? { ...b, rv: 1 } : null;
     const grant = op(A, 3, 20, {
@@ -445,32 +513,103 @@ describe('the level table', () => {
         hash: grant.hash,
       }),
     ];
-    const v = foldRosterAt(t.input(ops), breaking);
-    expect(v.members.get(B)?.role).toBe('admin');
-    expect(v.dismissed).toEqual([]);
-    expect(v.unknown?.hash).toBe(byC.hash);
+    for (const set of [ops, ops.slice(0, -1)]) {
+      const v = foldRosterAt(t.input(set), breaking);
+      expect(v.members.get(B)?.role).toBe('member');
+      expect(v.dismissed).toEqual([]);
+      expect(v.unknown?.hash).toBe(byC.hash);
+    }
   });
 
-  it('catches a level that reads a later pair as a right', () => {
-    const [B, C] = MEMBERS;
-    // A level that lets a later pair decide rights: a revocation at rv 2.
-    const breaking: LaterPairs = (b) =>
-      b.action === 'revoke' && b.rv === 2 ? { ...b, rv: 1 } : null;
-    const ops = [
+  it('refuses a later pair read as a right, so no level lets one decide it', () => {
+    const [B, C, D] = MEMBERS;
+    // A level that reads every pair at rv 2 as its rv 1 meaning.
+    const breaking: LaterPairs = (b) => (b.rv === 2 ? { ...b, rv: 1 } : null);
+    const base = [
       admit(A, 2, 10, B, 'admin'),
       admit(A, 3, 20, C, 'admin'),
-      revoke(C, 2, 100, B, 1),
-      revoke(B, 2, 110, C, 1, 2),
+      admit(A, 4, 25, D),
     ];
-    // Level 1 holds B's counter inert above C's cut, and so neither pauses
-    // nor agrees with the breaking level, where B wins the fight.
-    const level1 = foldRoster(t.input(ops));
-    const broken = foldRosterAt(t.input(ops), breaking);
-    expect(level1.unknown).toBeNull();
-    expect([...level1.revoked.keys()]).toEqual([B]);
-    expect([...broken.revoked.keys()]).toEqual([C]);
-    expect(
-      standingOf(foldRosterAt(t.input(ops.slice(0, 3)), breaking))
-    ).not.toEqual(standingOf(broken));
+    const recover = t.recover(Q, 2, 80);
+    const rights = [
+      op(A, 5, 30, {
+        rv: 2,
+        action: 'admit',
+        replica: P,
+        handle: handleOf(P),
+        role: 'admin',
+        fingerprint: `FP-${P}`,
+      }),
+      op(A, 5, 40, { rv: 2, action: 'recovery-key', pub: 'next' }),
+      demote(A, 5, 50, B, 1, 2),
+      op(C, 2, 60, { rv: 2, action: 'role', replica: D, role: 'admin' }),
+      revoke(B, 2, 70, C, 1, 2),
+      {
+        ...recover,
+        body: { ...recover.body, rv: 2 } as unknown as RosterOpRef['body'],
+      },
+      op(A, 5, 90, {
+        rv: 2,
+        action: 'found',
+        name: 'evil',
+        legacy: [],
+        recoveryPub: OTHER.signPub,
+      }),
+    ];
+    const expected = rosterOf(t.at(1, base));
+    for (const o of rights) {
+      const v = foldRosterAt(t.input([...base, o]), breaking);
+      expect({ o: o.body.action, v: rosterOf(v) }).toEqual({
+        o: o.body.action,
+        v: expected,
+      });
+    }
+  });
+
+  it('holds a later pair void at every level wherever its publisher holds no right', () => {
+    const [, C, D] = MEMBERS;
+    const base = [
+      admit(A, 2, 100, O, 'member', { observer: true }),
+      admit(A, 3, 110, C, 'admin'),
+      revoke(A, 4, 200, C, 1),
+      admit(A, 5, 210, D, 'admin'),
+    ];
+    const inert = [
+      // An observer's.
+      op(O, 2, 300, {
+        rv: 2,
+        action: 'invite',
+        id: 'i-o',
+        pub: 'p',
+        handle: handleOf(O),
+        expires: '2027-01-01T00:00:00.000Z',
+      }),
+      op(O, 2, 300, { rv: 99, action: 'zap' }),
+      // One above an accepted revocation's cut.
+      op(C, 2, 300, {
+        rv: 2,
+        action: 'transport',
+        kind: 'relay',
+        url: 'https://evil.test',
+      }),
+      // A pending replica's.
+      op(P, 2, 300, { rv: 2, action: 'license', key: 'k' }),
+      // One positioned before the founding, and one before its admission.
+      op(D, 2, -5000, { rv: 2, action: 'hosts', replica: D, hosts: ['dx'] }),
+      op(D, 2, 150, { rv: 2, action: 'transport', kind: 'relay', url: 'u' }),
+    ];
+    for (const o of inert) {
+      for (const level of [1, 2, 3]) {
+        const v = t.at(level, [...base, o]);
+        expect({ o: o.hash, level, paused: v.unknown, v: rosterOf(v) }).toEqual(
+          {
+            o: o.hash,
+            level,
+            paused: null,
+            v: rosterOf(t.at(level, base)),
+          }
+        );
+      }
+    }
   });
 });
