@@ -4,6 +4,7 @@ import type {
   DocLinking,
   DocListParams,
   DocRead,
+  DocRevisionInfo,
   DocSummary,
   ServerEvent,
 } from '@dispatch/client';
@@ -59,6 +60,10 @@ export async function refetchDocAfterSave(
 const NO_DOCS: DocSummary[] = [];
 const NO_LINKING: DocLinking[] = [];
 const NO_HITS: DocHit[] = [];
+const NO_REVISIONS: DocRevisionInfo[] = [];
+
+// The most revisions the history panel lists, the route's own cap.
+const HISTORY_LIMIT = 200;
 
 function ready(client: ApiClient | null): ApiClient {
   if (client === null) throw new Error('dispatchd client not ready');
@@ -126,4 +131,35 @@ export function useDocSearch(
     queryFn: () => ready(client).searchDocs(query, { limit }),
   });
   return q.data?.hits ?? NO_HITS;
+}
+
+// A doc's numbered revisions, newest first, as the history panel and the merge
+// view's labels read them.
+export function useDocRevisions(
+  client: ApiClient | null,
+  port: number | undefined,
+  ref: string
+) {
+  const q = useQuery({
+    queryKey: [...docsKey(port), 'revisions', ref],
+    enabled: client !== null,
+    queryFn: () =>
+      ready(client).listDocRevisions(ref, { limit: HISTORY_LIMIT }),
+  });
+  return { revisions: q.data?.revisions ?? NO_REVISIONS, error: q.error };
+}
+
+// The daemon's line diff from one revision to another; idle until both are picked.
+export function useDocDiff(
+  client: ApiClient | null,
+  port: number | undefined,
+  ref: string,
+  pair: { from: string | number; to: string | number } | null
+) {
+  const q = useQuery({
+    queryKey: [...docsKey(port), 'diff', ref, pair?.from, pair?.to],
+    enabled: client !== null && pair !== null,
+    queryFn: () => ready(client).diffDoc(ref, pair?.from ?? '', pair?.to ?? ''),
+  });
+  return { diff: q.data ?? null, loading: q.isLoading, error: q.error };
 }

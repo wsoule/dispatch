@@ -1,13 +1,26 @@
 import type { ApiClient, DocRead, DocSummary } from '@dispatch/client';
 import { ApiError } from '@dispatch/client';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { expect, test } from 'bun:test';
+import {
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { expect, mock, test } from 'bun:test';
+import type { ReactNode } from 'react';
 
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import { CONFLICT_HOLD_MS } from '../lib/docBuffer';
 import { AUTOSAVE_DEBOUNCE_MS } from '../lib/editorBuffer';
-import { DocsView } from './DocsView';
+
+// The doc page's diffs reach `PierreWorkerPool`, whose `?worker&url` import
+// `bun test` cannot resolve; stubbed the way TaskView.test.tsx does.
+void mock.module('@/components/runs/PierreWorkerPool', () => ({
+  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
+}));
+const { DocsView } = await import('./DocsView');
 
 const summary = {
   id: 'doc-1',
@@ -16,6 +29,7 @@ const summary = {
   scope: 'team',
   status: 'draft',
   unreviewed: true,
+  reviewedRev: null,
   conflicted: false,
   restored: null,
   rel: null,
@@ -55,12 +69,16 @@ function renderView(opts: {
   save?: ApiClient['saveDocBody'];
   doc?: DocSummary;
   revisions?: ApiClient['listDocRevisions'];
+  diff?: ApiClient['diffDoc'];
+  text?: string;
 }) {
   const calls: string[] = [];
   const doc = opts.doc ?? summary;
   const client = {
     listDocs: () => Promise.resolve({ docs: [doc], total: 1 }),
-    getDoc: () => Promise.resolve({ ...read, doc }),
+    getDoc: () =>
+      Promise.resolve({ ...read, doc, text: opts.text ?? read.text }),
+    diffDoc: opts.diff,
     saveDocBody:
       opts.save ??
       (() =>
@@ -541,6 +559,128 @@ test('a 409 loads the marked text under the banner', async () => {
     )
   ).toBeDefined();
   expect(editor.value).toBe('<<<<<<< head (rev 2, run:r-1)\n');
+});
+
+test('the merge view resolves a 409 block by block and saves the text without markers', async () => {
+  const marked =
+    '# Auth\n<<<<<<< head (rev 2, run:r-1)\nagent line\n||||||| base (rev 1)\nbody\n=======\nmine\n>>>>>>> yours\nmiddle\n<<<<<<< head (rev 2, run:r-1)\nagent tail\n=======\nmy tail\n>>>>>>> yours\n';
+  const resolved = '# Auth\nagent line\nmiddle\nmy tail\n';
+  const bodies: string[] = [];
+  const save = ((_ref: string, input: { body: string }) => {
+    bodies.push(input.body);
+    return Promise.resolve(
+      bodies.length === 1
+        ? {
+            ok: false,
+            conflict: {
+              code: 'conflict',
+              reason: 'merge-conflict',
+              head: {
+                id: 'rev-2',
+                n: 2,
+                hash: 'h2',
+                body: '# Auth\nagent line\n',
+                author: 'run:r-1',
+              },
+              base: { id: 'rev-1', n: 1 },
+              hunks: [],
+              marked,
+            },
+          }
+        : {
+            ok: true,
+            result: {
+              status: 'saved',
+              handle: 'auth',
+              rev: { id: 'rev-3', n: 3, hash: 'h3' },
+              doc: summary,
+            },
+          }
+    );
+  }) as unknown as ApiClient['saveDocBody'];
+  renderView({ canDecide: true, save });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  const editor =
+    await screen.findByLabelText<HTMLTextAreaElement>('Editing auth');
+  fireEvent.change(editor, { target: { value: '# Auth\nmine\n' } });
+  fireEvent.click(
+    await screen.findByRole(
+      'button',
+      { name: 'Open merge view' },
+      { timeout: 3000 }
+    )
+  );
+  const saveResolution = screen.getByRole<HTMLButtonElement>('button', {
+    name: 'Save resolution',
+  });
+  expect(saveResolution.disabled).toBe(true);
+  fireEvent.click(
+    within(screen.getByRole('region', { name: 'Conflict 1 of 2' })).getByRole(
+      'button',
+      { name: 'Take head' }
+    )
+  );
+  expect(saveResolution.disabled).toBe(true);
+  fireEvent.click(
+    within(screen.getByRole('region', { name: 'Conflict 2 of 2' })).getByRole(
+      'button',
+      { name: 'Take yours' }
+    )
+  );
+  fireEvent.click(saveResolution);
+  await waitFor(() => expect(bodies).toEqual(['# Auth\nmine\n', resolved]));
+  expect(editor.value).toBe(resolved);
+  await waitFor(() =>
+    expect(screen.queryByText(/changed the same lines/)).toBeNull()
+  );
+});
+
+test('a stored merge offers the merge view, naming each side by revision', async () => {
+  const text =
+    '<<<<<<< rev-01A\nH\n||||||| rev-01O\nB\n=======\nM\n>>>>>>> rev-01B\n';
+  const revisions = (() =>
+    Promise.resolve({
+      revisions: [
+        { id: 'rev-01B', n: 8, author: 'human:wyat', summary: 'saved' },
+        { id: 'rev-01A', n: 7, author: 'run:r-1', summary: 'edited' },
+      ],
+    })) as unknown as ApiClient['listDocRevisions'];
+  renderView({ canDecide: true, text, revisions });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  fireEvent.click(await screen.findByRole('button', { name: 'Merge' }));
+  expect(await screen.findByText('head · rev 7 by run:r-1')).toBeDefined();
+  expect(screen.getByText('yours · rev 8 by human:wyat')).toBeDefined();
+});
+
+test('Mark reviewed shows the diff from the last review to the newest revision', async () => {
+  const asked: unknown[] = [];
+  const diff = ((ref: string, from: string, to: number) => {
+    asked.push([ref, from, to]);
+    return Promise.resolve({
+      chunks: [{ equal: false, a: ['body\n'], b: ['agent text\n'] }],
+      spent: false,
+    });
+  }) as unknown as ApiClient['diffDoc'];
+  const revisions = (() =>
+    Promise.resolve({
+      revisions: [
+        { id: 'rev-2', n: 2, author: 'run:r-1', summary: 'edited', hash: 'h2' },
+        {
+          id: 'rev-1',
+          n: 1,
+          author: 'human:wyat',
+          summary: 'created',
+          hash: 'h1',
+        },
+      ],
+    })) as unknown as ApiClient['listDocRevisions'];
+  const doc = { ...summary, reviewedRev: 'rev-1' } as unknown as DocSummary;
+  renderView({ canDecide: true, doc, revisions, diff });
+  fireEvent.click(await screen.findByText('Auth refactor'));
+  fireEvent.click(await screen.findByRole('button', { name: 'Mark reviewed' }));
+  expect(await screen.findByText('rev 2 · run:r-1 · edited')).toBeDefined();
+  expect(screen.queryByText('rev 1 · human:wyat · created')).toBeNull();
+  expect(asked).toEqual([['doc-1', 'rev-1', 2]]);
 });
 
 // The view as App mounts it: the doc and section navigation names, and each

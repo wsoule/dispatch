@@ -1,4 +1,5 @@
 import type {
+  DocDiff,
   DocRead,
   DocRecord,
   DocRevisionInfo,
@@ -91,4 +92,67 @@ export function anchorLine(
 ): number | null {
   if (anchor === '') return null;
   return outline.find((e) => e.anchor === anchor)?.line ?? null;
+}
+
+// Unchanged lines kept around each change in a doc diff, as git keeps them.
+const DIFF_CONTEXT = 3;
+
+// One unified diff line: ' ' kept, '-' only in the older, '+' only in the newer.
+interface PatchLine {
+  mark: ' ' | '-' | '+';
+  text: string;
+}
+
+// A hunk header's range: from 0 when it holds no lines, git's convention.
+function hunkRange(before: number, count: number): string {
+  return `${count === 0 ? before : before + 1},${count}`;
+}
+
+// The daemon's line chunks for two revisions as a one-file unified diff, the
+// patch DiffSurface renders; empty when the two bodies are equal.
+export function docDiffPatch(name: string, chunks: DocDiff['chunks']): string {
+  const lines: PatchLine[] = [];
+  for (const c of chunks) {
+    if (c.equal) {
+      for (const text of c.a) lines.push({ mark: ' ', text });
+      continue;
+    }
+    for (const text of c.a) lines.push({ mark: '-', text });
+    for (const text of c.b) lines.push({ mark: '+', text });
+  }
+  const changed = lines.flatMap((l, i) => (l.mark === ' ' ? [] : [i]));
+  if (changed.length === 0) return '';
+  // Changes at most two contexts apart share a hunk, as their context touches.
+  const hunks: { start: number; end: number }[] = [];
+  for (const i of changed) {
+    const last = hunks[hunks.length - 1];
+    if (last !== undefined && i - DIFF_CONTEXT <= last.end) {
+      last.end = Math.min(lines.length, i + 1 + DIFF_CONTEXT);
+    } else {
+      hunks.push({
+        start: Math.max(0, i - DIFF_CONTEXT),
+        end: Math.min(lines.length, i + 1 + DIFF_CONTEXT),
+      });
+    }
+  }
+  let out = `diff --git a/${name} b/${name}\n--- a/${name}\n+++ b/${name}\n`;
+  let olds = 0;
+  let news = 0;
+  let at = 0;
+  for (const { start, end } of hunks) {
+    for (; at < start; at += 1) {
+      if (lines[at].mark !== '+') olds += 1;
+      if (lines[at].mark !== '-') news += 1;
+    }
+    const body = lines.slice(start, end);
+    const oldCount = body.filter((l) => l.mark !== '+').length;
+    const newCount = body.filter((l) => l.mark !== '-').length;
+    out += `@@ -${hunkRange(olds, oldCount)} +${hunkRange(news, newCount)} @@\n`;
+    for (const l of body) {
+      out += l.text.endsWith('\n')
+        ? `${l.mark}${l.text}`
+        : `${l.mark}${l.text}\n\\ No newline at end of file\n`;
+    }
+  }
+  return out;
 }

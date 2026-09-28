@@ -5,6 +5,7 @@ import { openDocBuffer } from './docBuffer';
 import {
   anchorLine,
   docBadges,
+  docDiffPatch,
   docStatusLine,
   filterDocs,
   revisionsSinceReview,
@@ -121,5 +122,62 @@ describe('anchorLine', () => {
     const outline = [entry('title', 0)];
     expect(anchorLine(outline, '')).toBeNull();
     expect(anchorLine(outline, 'gone')).toBeNull();
+  });
+});
+
+describe('docDiffPatch', () => {
+  const lines = (from: number, to: number): string[] =>
+    Array.from({ length: to - from + 1 }, (_, i) => `${from + i}\n`);
+
+  it('cuts one hunk per change with three lines of context', () => {
+    const patch = docDiffPatch('spec.md', [
+      { equal: true, a: lines(1, 5), b: lines(1, 5) },
+      { equal: false, a: ['6\n'], b: ['six\n'] },
+      { equal: true, a: lines(7, 14), b: lines(7, 14) },
+      { equal: false, a: [], b: ['15\n'] },
+    ]);
+    expect(patch).toBe(
+      [
+        'diff --git a/spec.md b/spec.md',
+        '--- a/spec.md',
+        '+++ b/spec.md',
+        '@@ -3,7 +3,7 @@',
+        ' 3',
+        ' 4',
+        ' 5',
+        '-6',
+        '+six',
+        ' 7',
+        ' 8',
+        ' 9',
+        '@@ -12,3 +12,4 @@',
+        ' 12',
+        ' 13',
+        ' 14',
+        '+15',
+        '',
+      ].join('\n')
+    );
+  });
+
+  it('joins changes whose context would touch into one hunk', () => {
+    const patch = docDiffPatch('spec.md', [
+      { equal: false, a: ['1\n'], b: ['one\n'] },
+      { equal: true, a: lines(2, 7), b: lines(2, 7) },
+      { equal: false, a: ['8\n'], b: [] },
+    ]);
+    expect(patch.match(/^@@ .* @@$/gm)).toEqual(['@@ -1,8 +1,7 @@']);
+  });
+
+  it('marks a last line with no newline, and counts from 0 into an empty body', () => {
+    expect(docDiffPatch('a.md', [{ equal: false, a: [], b: ['x'] }])).toBe(
+      'diff --git a/a.md b/a.md\n--- a/a.md\n+++ b/a.md\n@@ -0,0 +1,1 @@\n+x\n\\ No newline at end of file\n'
+    );
+  });
+
+  it('is empty when nothing changed', () => {
+    expect(
+      docDiffPatch('a.md', [{ equal: true, a: ['x\n'], b: ['x\n'] }])
+    ).toBe('');
   });
 });
