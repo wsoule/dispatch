@@ -4,6 +4,7 @@ import { LedgerStore } from '../../src/ledger.js';
 import { EXPORT_PROMPT_LINE } from '../../src/memory/claudeModes.js';
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import { transcriptPath } from '../../src/orchestrator/paths.js';
+import { RepoDigestCache } from '../../src/orchestrator/repoDigest.js';
 import { replayTranscript } from '../../src/orchestrator/transcript.js';
 import { DEFAULT_EXECUTOR_PROFILE } from '../../src/orchestrator/types.js';
 import type {
@@ -50,8 +51,11 @@ function recordingPort(
 }
 
 // An orchestrator with a stalling 'claude' executor and `port` as its memory.
-function withPort(port: MemoryPromptPort) {
-  const { orchestrator, store } = makeOrchestrator(project.root());
+function withPort(
+  port: MemoryPromptPort,
+  extra: Parameters<typeof makeOrchestrator>[1] = {}
+) {
+  const { orchestrator, store } = makeOrchestrator(project.root(), extra);
   const executor = new StallingExecutor();
   orchestrator.registerExecutor('claude', executor);
   orchestrator.setMemoryPort(port);
@@ -85,6 +89,16 @@ class AutoMemoryFake extends FakeExecutor {
   override start(opts: ExecutorStartOptions, events: ExecutorEvents) {
     this.started.push(opts);
     return super.start(opts, events);
+  }
+}
+
+// A repo-map cache that counts how often a prompt's orientation read it.
+class CountingDigestCache extends RepoDigestCache {
+  reads = 0;
+
+  override current() {
+    this.reads += 1;
+    return super.current();
   }
 }
 
@@ -164,28 +178,30 @@ describe('dispatch prompt memory', () => {
     await t.orchestrator.cancel(meta.id);
   });
 
-  it('records an export fallback on a state line and in the Session log', async () => {
-    const { port } = recordingPort(exportAnswer);
-    const t = withPort(port);
-    const executor = new AutoMemoryExecutor();
-    t.orchestrator.registerExecutor('claude', executor);
-    const task = t.store.create({ title: 'Bump pnpm' });
-    const meta = await t.orchestrator.dispatch(task.meta.id, 'claude');
-    const detail =
-      'Claude Code 2.1.210 loaded /Users/x/.claude/projects/-a/memory/MEMORY.md instead of the export';
-    executor.events[0].onMemoryMode?.('export-fallback', detail);
-    expect(t.orchestrator.getRun(meta.id)?.meta.memoryMode).toBe(
-      'export-fallback'
-    );
-    const replayed = replayTranscript(transcriptPath(project.root(), meta.id));
-    expect(replayed?.meta.memoryMode).toBe('export-fallback');
-    expect(
-      replayed?.entries.some(
-        (e) => e.kind === 'system' && e.text?.includes(detail) === true
-      )
-    ).toBe(true);
-    await t.orchestrator.cancel(meta.id);
-  });
+  it.each(['export-fallback', 'export-unloaded'] as const)(
+    'records %s on a state line and in the Session log',
+    async (mode) => {
+      const { port } = recordingPort(exportAnswer);
+      const t = withPort(port);
+      const executor = new AutoMemoryExecutor();
+      t.orchestrator.registerExecutor('claude', executor);
+      const task = t.store.create({ title: 'Bump pnpm' });
+      const meta = await t.orchestrator.dispatch(task.meta.id, 'claude');
+      const detail = `Claude Code 2.1.210 moved this run to ${mode}`;
+      executor.events[0].onMemoryMode?.(mode, detail);
+      expect(t.orchestrator.getRun(meta.id)?.meta.memoryMode).toBe(mode);
+      const replayed = replayTranscript(
+        transcriptPath(project.root(), meta.id)
+      );
+      expect(replayed?.meta.memoryMode).toBe(mode);
+      expect(
+        replayed?.entries.some(
+          (e) => e.kind === 'system' && e.text?.includes(detail) === true
+        )
+      ).toBe(true);
+      await t.orchestrator.cancel(meta.id);
+    }
+  );
 
   it('forwards recalls with the run’s lineage and tells the port when the run ends', async () => {
     const { recalls, ended, port } = recordingPort(exportAnswer);
@@ -287,5 +303,97 @@ describe('dispatch prompt memory', () => {
     expect(executor.started[0].memory).toEqual({ mode: 'prompt' });
     expect(meta.memoryMode).toBe('prompt');
     await orchestrator.cancel(meta.id);
+  });
+
+  it('reads the orientation once for an export run’s prompt and its fallback', async () => {
+    const digestCache = new CountingDigestCache(project.root());
+    const t = withPort(recordingPort(exportAnswer).port, { digestCache });
+    t.orchestrator.registerExecutor('claude', new AutoMemoryExecutor());
+    const task = t.store.create({ title: 'Bump pnpm' });
+    const meta = await t.orchestrator.dispatch(task.meta.id, 'claude');
+    expect(digestCache.reads).toBe(1);
+    await t.orchestrator.cancel(meta.id);
+  });
+
+  // The fallback is best effort: a brief that will not build must not strand the run.
+  it('starts a continuing export resume without a fallback when its brief will not build', async () => {
+    const t = withPort(recordingPort(exportAnswer).port);
+    const executor = new AutoMemoryFake({
+      session: 's-1',
+      finish: { state: 'failed', error: 'boom', sessionId: 's-1' },
+    });
+    t.orchestrator.registerExecutor('claude', executor);
+    const epic = t.store.create({ title: 'Toolchain' });
+    const task = t.store.create({ title: 'Bump pnpm', parent: epic.meta.id });
+    const first = await t.orchestrator.dispatch(task.meta.id, 'claude');
+    const stateOf = (id: string) => t.orchestrator.getRun(id)?.meta.state;
+    await waitFor(() => stateOf(first.id) === 'failed');
+    const get = t.store.get.bind(t.store);
+    t.store.get = (id) => {
+      if (id === epic.meta.id) throw new Error('EIO: epic unreadable');
+      return get(id);
+    };
+    const resumed = t.orchestrator.resumeRun(first.id);
+    await waitFor(() => stateOf(resumed.id) === 'failed');
+    expect(executor.started[1].memory).toMatchObject({ mode: 'export' });
+    expect(executor.started[1].memory?.fallbackPrompt).toBeUndefined();
+  });
+});
+
+describe('aux run memory', () => {
+  it('gives a review run the port’s mode, and a fix-loop implementer the export and its fallback', async () => {
+    const { calls, port } = recordingPort((input) =>
+      input.runKind === 'review'
+        ? { text: null, indexSection: null, memory: { mode: 'prompt' } }
+        : exportAnswer()
+    );
+    const t = withPort(port);
+    const executor = new AutoMemoryExecutor();
+    t.orchestrator.registerExecutor('claude', executor);
+    const task = t.store.create({ title: 'aux' });
+    const aux = (kind: 'review' | 'execute', prompt: string) =>
+      t.orchestrator.dispatchAuxRun({
+        taskId: task.meta.id,
+        kind,
+        head: 'main',
+        buildPrompt: () => prompt,
+      });
+    const review = await aux('review', 'REVIEW THIS');
+    expect(executor.started[0].prompt).toBe('REVIEW THIS');
+    expect(executor.started[0].memory).toEqual({ mode: 'prompt' });
+    expect(review.memoryMode).toBe('prompt');
+    await t.orchestrator.cancel(review.id);
+
+    const fix = await aux('execute', 'FIX THIS');
+    expect(executor.started[1].prompt).toBe(
+      `FIX THIS\n\n${EXPORT_PROMPT_LINE}`
+    );
+    expect(executor.started[1].memory).toMatchObject({
+      mode: 'export',
+      dir: DIR,
+      fallbackPrompt: `FIX THIS\n\n${SECTION}`,
+    });
+    expect(calls.map((c) => c.runKind)).toEqual(['review', 'execute']);
+    await t.orchestrator.cancel(fix.id);
+  });
+
+  // The port started following the run's export, so a failed start must end it.
+  it('ends the run’s memory when its prompt cannot be built', () => {
+    const { ended, port } = recordingPort(exportAnswer);
+    const t = withPort(port);
+    const task = t.store.create({ title: 'fix loop' });
+    expect(() =>
+      t.orchestrator.dispatchAuxRun({
+        taskId: task.meta.id,
+        kind: 'execute',
+        head: 'main',
+        buildPrompt: () => {
+          throw new Error('no diff to fix');
+        },
+      })
+    ).toThrow('no diff to fix');
+    const runs = t.orchestrator.list().filter((r) => r.taskId === task.meta.id);
+    expect(runs.map((r) => r.state)).toEqual(['failed']);
+    expect(ended).toEqual(runs.map((r) => r.id));
   });
 });

@@ -163,7 +163,7 @@ export interface OrchestratorContext {
   // back cannot wait out the real half-minute quiet window per attempt.
   autoResumeQuietMs?: number;
   autoResumeMaxAttempts?: number;
-  // The repo-map cache injected into run prompts (see promptForTask). Defaults
+  // The repo-map cache injected into run prompts (see taskBrief). Defaults
   // to one over `rootDir`, same pattern as `jj`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
@@ -367,7 +367,7 @@ export class Orchestrator {
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
   private readonly findingStore: FindingStorePort;
-  // The repo map injected into every run prompt (see promptForTask). Held on
+  // The repo map injected into every run prompt (see taskBrief). Held on
   // the orchestrator rather than built per dispatch so its single-flight
   // background refresh really is one refresh, not one per concurrent dispatch.
   private readonly digestCache: RepoDigestCache;
@@ -900,21 +900,20 @@ export class Orchestrator {
 
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
+    const brief = this.taskBrief(task, executorName);
     this.startAndRegister(
       runId,
       {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task, executorName, prepared?.text ?? null),
+        prompt: brief(prepared?.text ?? null),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
         effort: meta.effort,
-        ...this.memoryOption(prepared, (section) =>
-          this.promptForTask(task, executorName, section)
-        ),
+        ...this.memoryOption(prepared, brief),
       },
       executor
     );
@@ -993,6 +992,7 @@ export class Orchestrator {
       this.transition(runId, 'failed', {
         error: `failed to prepare ${opts.kind} run: ${message}`,
       });
+      this.endRunMemory(runId);
       this.worktrees.remove(wtPath, branch, runId);
       throw new OrchestratorClientError(
         `failed to prepare ${opts.kind} run: ${message}`
@@ -4425,12 +4425,18 @@ export class Orchestrator {
     if (meta === undefined) return;
     // Nothing will ever refresh a terminal run's claims again.
     this.lastClaimsCheck.delete(runId);
-    const port = this.memoryPort;
-    if (port !== null)
-      this.bestEffort(`ending memory for run ${runId}`, () => {
-        port.runEnded(meta);
-      });
+    this.endRunMemory(runId);
     this.invokeHooksSafely(this.terminalHooks, meta);
+  }
+
+  // Tells the memory port a run ended, so it stops following the run's export.
+  private endRunMemory(runId: string): void {
+    const meta = this.registry.get(runId);
+    const port = this.memoryPort;
+    if (meta === undefined || port === null) return;
+    this.bestEffort(`ending memory for run ${runId}`, () => {
+      port.runEnded(meta);
+    });
   }
 
   // C2(b): runs every hook in `hooks` against `meta`, isolating each call —
@@ -5002,14 +5008,17 @@ export class Orchestrator {
       });
     }
 
-    // A continuing session's prompt is the continuation; a fresh one gets the brief.
-    const briefing = (section: string | null): string =>
-      continuing
-        ? this.promptForTask(task, executorName, section)
-        : `${this.promptForTask(task, executorName, section)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
-    const prompt = continuing
-      ? renderContinuationPrompt(meta, newRunId)
-      : briefing(prepared?.text ?? null);
+    // A continuing session's prompt is the continuation, and its fallback the
+    // brief when that builds; a fresh one gets the brief with the notice.
+    const brief = continuing ? null : this.taskBrief(task, executorName);
+    const briefing = (section: string | null): string | null =>
+      brief === null
+        ? this.freshPromptFor(meta.taskId, executorName, section)
+        : `${brief(section)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
+    const prompt =
+      brief === null
+        ? renderContinuationPrompt(meta, newRunId)
+        : `${brief(prepared?.text ?? null)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
 
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
@@ -5082,11 +5091,12 @@ export class Orchestrator {
   // exact text is unit-testable independent of the orchestrator. A corrupt
   // parent epic file degrades to "no epic context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  private promptForTask(
+  // The epic and orientation are read once; each call renders with its own
+  // memory section, so a run's prompt and its fallback share them.
+  private taskBrief(
     task: TaskDoc,
-    executorName: string,
-    memorySection: string | null
-  ): string {
+    executorName: string
+  ): (memorySection: string | null) => string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
       try {
@@ -5097,14 +5107,17 @@ export class Orchestrator {
     }
     const dispatchTools =
       this.executorProfile(executorName).dispatchMcp !== false;
-    return buildTaskPrompt(
-      task,
-      parentEpic,
-      memorySection,
-      this.orientationFor(task.meta.id),
-      dispatchTools,
-      this.ctx.actorContext?.humanRef ?? null
-    );
+    const orientation = this.orientationFor(task.meta.id);
+    const humanRef = this.ctx.actorContext?.humanRef ?? null;
+    return (memorySection) =>
+      buildTaskPrompt(
+        task,
+        parentEpic,
+        memorySection,
+        orientation,
+        dispatchTools,
+        humanRef
+      );
   }
 
   // The task's brief with `section` as its memory, for a restart that has only
@@ -5116,9 +5129,7 @@ export class Orchestrator {
   ): string | null {
     try {
       const task = this.ctx.store.get(taskId);
-      return task === null
-        ? null
-        : this.promptForTask(task, executorName, section);
+      return task === null ? null : this.taskBrief(task, executorName)(section);
     } catch (err) {
       console.error(
         `dispatchd: no fallback prompt for task ${taskId}: ${(err as Error).message}`
@@ -5195,7 +5206,7 @@ export class Orchestrator {
   // cached repo map, and who else is running right now. Collecting reads a
   // handful of small files and this project's own transcripts; a failure
   // anywhere in there costs the section, never the dispatch, because a
-  // throwing promptForTask strands the run in `provisioning`.
+  // throwing taskBrief strands the run in `provisioning`.
   private orientationFor(taskId: string): RepoOrientation | null {
     try {
       return collectOrientation({
