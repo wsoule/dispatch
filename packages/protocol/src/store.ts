@@ -203,7 +203,8 @@ export interface MessageStore {
   maxRowid(): number;
   ensureChannel(name: string, at: string, auto: boolean): void;
   channels(): ChannelRecord[];
-  addMember(channel: string, member: Address, at: string): void;
+  /** Adds a member; false when it was already in the channel. */
+  addMember(channel: string, member: Address, at: string): boolean;
   removeMember(channel: string, member: Address): boolean;
   members(channel: string): Address[];
   channelsOf(member: Address): string[];

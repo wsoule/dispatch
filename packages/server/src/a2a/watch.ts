@@ -51,10 +51,13 @@ export class BridgeWatch {
   }
 
   private onEngine(e: EngineEvent): void {
+    if (e.type === 'membership') return;
     const message =
       e.type === 'message'
         ? e.message
-        : this.deps.engine.getMessage(e.delivery.messageId);
+        : this.deps.engine.getMessage(
+            e.type === 'remote' ? e.messageId : e.delivery.messageId
+          );
     if (message === null) return;
     for (const row of this.deps.store.openTasks())
       if (row.contextId === message.thread) this.schedule(row.id);

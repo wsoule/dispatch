@@ -285,8 +285,9 @@ the payload:
    agent rows.
 4. **Participation.** When the `replyTo` target is stored here, the sender must
    participate in it ([§4.6](04-messages.md#s4.6)), counting remote rows too.
-   When it is not stored here, the thread is partial on this replica and the
-   message is accepted.
+   When it is not stored here, the thread is partial on this replica: the sender
+   must participate in the thread's root when that is stored here, and otherwise
+   the message is accepted.
 5. **Validate** the message as received ([§4.4](04-messages.md#s4.4)), with
    `canDecide` false, so no remote sender decides, and a received ref of an
    unknown identifier type is kept. When the reply target is missing, the checks
@@ -326,11 +327,14 @@ The **settler** of a question is its origin, the replica it was created on.
   is published the same way, with `closed` set, and only the settler closes a
   question.
 - **Elsewhere**, the first answer seen is kept as the answer, pending, and later
-  ones as candidate replies. A `settle` entry makes the accepted answer the
-  answer, every other a reply, and the question's deliveries `answered`, in one
-  transaction; one that arrives before its answer waits for it. A `settle` with
-  `closed` writes the close here. A `refused` entry for a local answer turns it
-  back into a reply and reopens the question's deliveries it had answered.
+  ones as candidate replies. Answers seen before their question are checked
+  against it when it arrives: the first that passes participation and the checks
+  that need the question stays the answer, and the rest are candidates. A
+  `settle` entry makes the accepted answer the answer, every other a reply, and
+  the question's deliveries `answered`, in one transaction; one that arrives
+  before its answer waits for it. A `settle` with `closed` writes the close
+  here. A `refused` entry for a local answer turns it back into a reply and
+  reopens the question's deliveries it had answered.
 - **Only the settler is believed.** A `settle` entry from any other replica is
   refused.
 

@@ -379,6 +379,8 @@ export class Orchestrator {
   // Mints each run's messaging token at start (see setRunTokenMinter); null
   // leaves runs without one, as in fixtures that never set it.
   private mintRunToken: ((runId: string) => string) | null = null;
+  // Mints every new run's id; a synced board installs a longer one at boot.
+  private mintRunId: (now: string) => string = (now) => generateRunId(now);
   // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
   private approvalGate: ApprovalGatePort | null = null;
   // Renders each dispatch prompt's memory section (see setMemoryPort); null keeps the ledger section.
@@ -462,6 +464,11 @@ export class Orchestrator {
   // token file (runTokenPath) and passes the executor only that path.
   setRunTokenMinter(mint: (runId: string) => string): void {
     this.mintRunToken = mint;
+  }
+
+  // Called once at boot, before any run starts, to change how run ids are minted.
+  setRunIdMinter(mint: (now: string) => string): void {
+    this.mintRunId = mint;
   }
 
   // Installed by messaging at boot: raises and settles the gate a parked tool call waits on.
@@ -831,7 +838,7 @@ export class Orchestrator {
 
     const { base: baseBranch, stackParents } = await this.resolveBase(task);
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     // Suffixed with the run's own hex tag (stripping its `r-` prefix) so two
     // runs against the same task never collide on branch name — a task can
     // have several finished-but-unreviewed runs sitting in parallel until
@@ -946,7 +953,7 @@ export class Orchestrator {
     );
 
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     const branch = `${DISPATCH_BRANCH_PREFIX}${opts.kind}-${opts.taskId}-${runId.slice(2)}`;
     const wtPath = worktreePath(this.ctx.rootDir, runId);
     this.worktrees.add(wtPath, branch, opts.head);
@@ -4738,7 +4745,7 @@ export class Orchestrator {
       substituted,
     } = this.resolveExecutorForResume(oldMeta.executor);
     const now = new Date().toISOString();
-    const runId = generateRunId(now);
+    const runId = this.mintRunId(now);
     const meta: RunMeta = {
       id: runId,
       taskId: oldMeta.taskId,
@@ -4891,7 +4898,7 @@ export class Orchestrator {
       substituted,
     } = this.resolveExecutorForResume(meta.executor);
     const now = new Date().toISOString();
-    const newRunId = generateRunId(now);
+    const newRunId = this.mintRunId(now);
     const continuing = meta.sessionId !== undefined;
     const newMeta: RunMeta = {
       id: newRunId,
