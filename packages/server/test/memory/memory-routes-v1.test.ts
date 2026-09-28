@@ -361,6 +361,44 @@ describe('personal privacy', () => {
   });
 });
 
+// The booted daemon decides A2A provenance the way docs does: the a2a label.
+describe('A2A provenance', () => {
+  it('a run of an a2a-labelled task acts for no one and lists no project memory', async () => {
+    await fetch(`${base}/api/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        scope: 'project',
+        kind: 'convention',
+        title: 'PROJECT-ONLY convention',
+        body: 'b',
+      }),
+    });
+    const titlesFor = async (token: string): Promise<string[]> =>
+      (
+        await json<{ entries: { title: string }[] }>(
+          await rawFetch(`${base}/api/memory`, { headers: authHeaders(token) })
+        )
+      ).entries.map((e) => e.title);
+    const operatorOf = async (runId: string): Promise<string | null> =>
+      (
+        await json<{ meta: { operator?: string | null } }>(
+          await fetch(`${base}/api/runs/${runId}`)
+        )
+      ).meta.operator ?? null;
+
+    const plain = await liveRun('ordinary task');
+    expect(await titlesFor(runToken())).toContain('PROJECT-ONLY convention');
+    expect(await operatorOf(plain.runId)).toBe('human:test');
+
+    const asked = await liveRun('asked over A2A', { labels: ['a2a'] });
+    expect(await titlesFor(runToken())).not.toContain(
+      'PROJECT-ONLY convention'
+    );
+    expect(await operatorOf(asked.runId)).toBeNull();
+  });
+});
+
 describe('the memory gate', () => {
   it('a run’s team proposal raises a content-free gate; the feed and webhook never carry its title', async () => {
     const hook = await webhook();

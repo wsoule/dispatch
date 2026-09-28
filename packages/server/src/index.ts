@@ -1278,6 +1278,9 @@ async function bootServer(
     // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
+    // Memory and docs share one A2A-provenance answer: the a2a label or the
+    // bridge's provenance line, failing closed on an unparsable task.
+    isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
   });
   orchestrator.setDocsPort(docs.service);
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
