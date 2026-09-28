@@ -1698,6 +1698,54 @@ describe('a revocation sure to stand', () => {
   // Each set's standing, the same at every level and on the relay.
   const SURE: [string, RosterOpRef[], ReturnType<typeof summary>][] = [
     [
+      'keeps a doomed removal in the check of the revocation that cuts it below',
+      [
+        admit(A, 2, 10, P, 'admin'),
+        admit(P, 2, 16, D, 'member'),
+        admit(A, 3, 20, D, 'admin'),
+        admit(D, 2, 24, B, 'admin'),
+        admit(B, 2, 28, C, 'member'),
+        admit(A, 5, 30, C, 'admin'),
+        demote(B, 3, 32, P, 1),
+        revoke(C, 2, 42, A, 6),
+        revoke(A, 7, 43, D, 1),
+        revoke(C, 3, 56, P, 1),
+      ],
+      {
+        admins: [D, B],
+        members: [C],
+        revoked: [
+          [A, 6],
+          [P, 1],
+        ],
+      },
+    ],
+    [
+      'drops a revocation that holds only by a cut another sure one dooms',
+      [
+        admit(A, 5, 30, C, 'admin'),
+        admit(A, 6, 35, B, 'admin'),
+        admit(B, 2, 40, D, 'member'),
+        admit(A, 7, 44, D, 'admin'),
+        op(A, 9, 71, { action: 'role', replica: D, role: 'admin' }),
+        revoke(D, 3, 10 ** 9 + 148, B, 2),
+        revoke(B, 4, 117, C, 1),
+        revoke(B, 5, 133, A, 8),
+        revoke(B, 6, 137, C, 0),
+        revoke(B, 7, 141, D, 4),
+        revoke(C, 3, 156, D, 5),
+        revoke(D, 6, 160, B, 1),
+      ],
+      {
+        admins: [A, C],
+        members: [],
+        revoked: [
+          [B, 2],
+          [D, 5],
+        ],
+      },
+    ],
+    [
       'never takes a replica revoked before its admission as sure of its right',
       [
         admit(A, 2, 5, B, 'admin'),
