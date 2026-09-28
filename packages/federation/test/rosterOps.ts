@@ -130,6 +130,9 @@ export const dismiss = (
 export const junk = (by: string, seq: number, ms: number): RosterOpRef =>
   op(by, seq, ms, { rv: 7, action: 'x-garbage' });
 
+/** What a fold may set besides its ops: the relay, and the license key. */
+export type Extra = { relay?: boolean; licensePublicKey?: string | null };
+
 /** A team founded by `founder` with the recovery code RECOVERY. */
 export function team(founder: string, keys: ReadonlyMap<string, KeyInfo>) {
   const found = op(founder, 1, 0, {
@@ -141,7 +144,7 @@ export function team(founder: string, keys: ReadonlyMap<string, KeyInfo>) {
   const teamId = found.hash.slice(0, 32);
   const input = (
     ops: readonly RosterOpRef[],
-    extra: { relay?: boolean } = {}
+    extra: Extra = {}
   ): FoldInput => ({
     founder: { replica: founder, seq: 1 },
     ops: [found, ...ops],
@@ -153,17 +156,17 @@ export function team(founder: string, keys: ReadonlyMap<string, KeyInfo>) {
   return {
     found,
     input,
-    fold: (ops: readonly RosterOpRef[], extra: { relay?: boolean } = {}) =>
+    fold: (ops: readonly RosterOpRef[], extra: Extra = {}) =>
       foldRoster(input(ops, extra)),
     /** The fold as a build at `level` of the level table runs it. */
-    at: (
+    at: (level: number, ops: readonly RosterOpRef[], extra: Extra = {}) =>
+      foldRosterAt(input(ops, extra), laterAt(level)),
+    /** Accepted removals at `level` that won no fight yet lack their right. */
+    unfounded: (
       level: number,
       ops: readonly RosterOpRef[],
-      extra: { relay?: boolean } = {}
-    ) => foldRosterAt(input(ops, extra), laterAt(level)),
-    /** Accepted removals at `level` that won no fight yet lack their right. */
-    unfounded: (level: number, ops: readonly RosterOpRef[]) =>
-      unfoundedRemovals(input(ops), laterAt(level)),
+      extra: Extra = {}
+    ) => unfoundedRemovals(input(ops, extra), laterAt(level)),
     recover: (replica: string, seq: number, ms: number): RosterOpRef =>
       op(replica, seq, ms, {
         action: 'recover',

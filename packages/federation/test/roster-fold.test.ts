@@ -894,6 +894,29 @@ describe('foldRoster', () => {
     expect(v.licenseBy).toBe(A);
   });
 
+  it('ignores a license shared by a member, a pending replica or a revoked admin, though its key verifies', () => {
+    const lk = testKeys();
+    const license = (by: string, seq: number, ms: number) =>
+      op(by, seq, ms, {
+        action: 'license',
+        key: licenseFor(lk.privateKey, { seats: 9 }),
+      });
+    const v = fold(
+      [
+        admit(A, 2, 100, B),
+        admit(A, 3, 110, C, 'admin'),
+        revoke(A, 4, 120, C, 1),
+        license(B, 2, 200),
+        license(D, 2, 210),
+        license(C, 2, 220),
+      ],
+      { licensePublicKey: lk.publicKey }
+    );
+    expect(v.license.kind).toBe('free');
+    expect(v.seats).toBe(3);
+    expect(v.licenseBy).toBeNull();
+  });
+
   it('lets a member invite only for their own handle', () => {
     const invite = (by: string, seq: number, id: string, handle: string) =>
       op(by, seq, 200 + seq, {

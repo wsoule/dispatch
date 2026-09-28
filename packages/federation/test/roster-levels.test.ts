@@ -3,6 +3,7 @@ import { describe, expect, it } from 'bun:test';
 
 import { foldRosterAt, KNOWN_ROSTER_PAIRS } from '../src/roster.js';
 import type { LaterPairs, RosterOpRef, RosterView } from '../src/roster.js';
+import { licenseFor, testKeys } from './licenseKeys.js';
 import {
   admit,
   demote,
@@ -243,10 +244,8 @@ function shuffled<T>(rand: () => number, xs: readonly T[]): T[] {
   return out;
 }
 
-// Hinge chains: an admin admits a replica as a member and the founder then as
-// an admin, or the reverse, so cutting one admit flips rights further down.
-// Removals cut just below those admits, among later hosts cuts and dismisses
-// of them; each replica's clock rises with its seq.
+// Hinge chains: removals cut an admitter just below its admit of a replica, so
+// that replica's second admit counts; later hosts cuts and dismisses ride along.
 function hingeOps(rand: () => number): RosterOpRef[] {
   const pick = <T>(xs: readonly T[]): T => xs[Math.floor(rand() * xs.length)];
   const seqs = new Map<string, number>();
@@ -775,11 +774,44 @@ describe('the level table', () => {
       }
     }
   });
+
+  it('applies a later license only from an admin, though a non-admin key verifies', () => {
+    const [B] = MEMBERS;
+    const lk = testKeys();
+    const extra = { licensePublicKey: lk.publicKey };
+    const license = (by: string, seq: number, ms: number) =>
+      op(by, seq, ms, {
+        rv: 2,
+        action: 'license',
+        key: licenseFor(lk.privateKey, { seats: 9 }),
+      });
+    const base = [
+      admit(A, 2, 100, B),
+      admit(A, 3, 110, O, 'member', { observer: true }),
+    ];
+    for (const level of AT.filter((l) => l >= 2))
+      expect(t.at(level, [...base, license(A, 4, 200)], extra).seats).toBe(9);
+    // A member's, a pending replica's and an observer's.
+    for (const o of [
+      license(B, 2, 200),
+      license(P, 2, 210),
+      license(O, 2, 220),
+    ])
+      for (const level of AT) {
+        const v = t.at(level, [...base, o], extra);
+        expect({
+          o: o.replica,
+          level,
+          seats: v.seats,
+          by: v.licenseBy,
+        }).toEqual({ o: o.replica, level, seats: 3, by: null });
+      }
+  });
 });
 
 describe('a later removal among a revocation fight', () => {
   const [B, C, D] = MEMBERS;
-  // A hosts cut at rv 2: levels 2 and 3 read it as a removal, level 1 cannot.
+  // A hosts cut at rv 2: levels 2 and up read it as a removal, level 1 cannot.
   const laterCut = (by: string, seq: number, ms: number) =>
     op(by, seq, ms, {
       rv: 2,
@@ -789,9 +821,8 @@ describe('a later removal among a revocation fight', () => {
       afterSeq: 1,
       afterHash: `h-${M}-1`,
     });
-  // Hinge admits: an admin a fight can cut admits a replica as a member, then
-  // the founder admits it as an admin, which counts once the first is cut.
-  // P's later cut shares P's rank with P's revoke of D, and comes first.
+  // Hinge admits: a fight can cut a replica's member admit, so the founder's
+  // admin admit counts. P's later cut ranks with P's revoke of D, and is first.
   const PICK = {
     later: laterCut(P, 4, 20),
     rest: [
