@@ -13,8 +13,53 @@ interface DocEditorProps {
   placeAt?: { line: number } | null;
 }
 
-// Pixels per line when the textarea's computed line height is not a length.
-const FALLBACK_LINE_PX = 20;
+// The styles that decide where a textarea's lines wrap, copied onto its mirror.
+const WRAP_STYLES = [
+  'font-family',
+  'font-size',
+  'font-stretch',
+  'font-style',
+  'font-variant',
+  'font-weight',
+  'letter-spacing',
+  'line-height',
+  'overflow-wrap',
+  'padding-left',
+  'padding-right',
+  'tab-size',
+  'text-indent',
+  'text-transform',
+  'white-space',
+  'word-break',
+  'word-spacing',
+] as const;
+
+// How far below the top of a textarea's text `offset` starts, measured on a
+// hidden copy that wraps as the textarea does, since long lines soft-wrap.
+function textTop(el: HTMLTextAreaElement, offset: number): number {
+  const style = getComputedStyle(el);
+  const mirror = document.createElement('div');
+  for (const name of WRAP_STYLES) {
+    mirror.style.setProperty(name, style.getPropertyValue(name));
+  }
+  Object.assign(mirror.style, {
+    position: 'absolute',
+    top: '0',
+    left: '-9999px',
+    visibility: 'hidden',
+    boxSizing: 'border-box',
+    width: `${el.clientWidth}px`,
+    border: '0',
+  });
+  mirror.textContent = el.value.slice(0, offset);
+  const marker = document.createElement('span');
+  marker.textContent = '.';
+  mirror.append(marker);
+  document.body.append(mirror);
+  const top = marker.offsetTop;
+  mirror.remove();
+  return top;
+}
 
 // A doc's markdown source in a textarea, as the Files view edits (native undo,
 // IME and accessibility), or the same text rendered as its preview.
@@ -34,8 +79,7 @@ export function DocEditor({
       .split('\n', placeAt.line)
       .reduce((n, line) => n + line.length + 1, 0);
     el.setSelectionRange(offset, offset);
-    const px = Number.parseFloat(getComputedStyle(el).lineHeight);
-    el.scrollTop = placeAt.line * (Number.isFinite(px) ? px : FALLBACK_LINE_PX);
+    el.scrollTop = textTop(el, offset);
   }, [placeAt]);
   if (previewing) {
     return (
