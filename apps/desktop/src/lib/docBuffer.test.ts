@@ -2,15 +2,19 @@ import type { DocConflict, DocSaveResult } from '@dispatch/client';
 import { describe, expect, it } from 'bun:test';
 
 import {
+  autosaveDelay,
   beginDocSave,
   docSaveConflicted,
   docSaveFailed,
   docSaveSucceeded,
+  docShouldFlush,
   docShouldSave,
   editDocBuffer,
+  isRefusal,
   openDocBuffer,
   reloadIfClean,
 } from './docBuffer';
+import { AUTOSAVE_DEBOUNCE_MS } from './editorBuffer';
 
 const BASE = { rev: 'rev-1', n: 1, hash: 'h1' };
 const result = (
@@ -159,11 +163,63 @@ describe('docBuffer', () => {
     expect(docShouldSave(tookHead)).toBe(false);
   });
 
+  it('review focus 1: leaving sends the held marked text rather than dropping it', () => {
+    const conflict = conflictOf(
+      'merge-conflict',
+      { id: 'rev-5', n: 5, hash: 'h5', body: 'head\n', author: 'run:r-1' },
+      '<<<<<<< head (rev 5, run:r-1)\nhead\n=======\nmine\n>>>>>>> yours\n'
+    );
+    const b = docSaveConflicted(sent('mine\n'), conflict);
+    expect(docShouldSave(b)).toBe(false);
+    expect(docShouldFlush(b)).toBe(true);
+    // A save in flight is waited out, not doubled.
+    expect(docShouldFlush(beginDocSave(b))).toBe(false);
+  });
+
   it('a failed save keeps the text and reports why', () => {
-    const b = docSaveFailed(sent('mine\n'), 'daemon went away');
+    const b = docSaveFailed(sent('mine\n'), 'daemon went away', false);
     expect(b.buffer.text).toBe('mine\n');
     expect(b.buffer.status).toBe('error');
     expect(b.buffer.error).toBe('daemon went away');
+  });
+
+  it('backs autosave off while saves keep failing, and resets on success', () => {
+    let b = docSaveFailed(sent('mine\n'), 'daemon went away', false);
+    expect(docShouldSave(b)).toBe(true);
+    expect(autosaveDelay(b)).toBe(AUTOSAVE_DEBOUNCE_MS * 2);
+    b = docSaveFailed(beginDocSave(b), 'daemon went away', false);
+    expect(autosaveDelay(b)).toBe(AUTOSAVE_DEBOUNCE_MS * 4);
+    for (let i = 0; i < 20; i += 1) {
+      b = docSaveFailed(beginDocSave(b), 'daemon went away', false);
+    }
+    expect(autosaveDelay(b)).toBeLessThanOrEqual(60_000);
+    b = docSaveSucceeded(
+      beginDocSave(b),
+      result('saved', { id: 'rev-2', n: 2, hash: 'h2' }),
+      null
+    );
+    expect(autosaveDelay(editDocBuffer(b, 'mine\nmore\n'))).toBe(
+      AUTOSAVE_DEBOUNCE_MS
+    );
+  });
+
+  it('a refused save waits for the next keystroke instead of retrying', () => {
+    const b = docSaveFailed(sent('mine\n'), 'archived; restore it first', true);
+    expect(docShouldSave(b)).toBe(false);
+    expect(docShouldFlush(b)).toBe(false);
+    const typed = editDocBuffer(b, 'mine\nmore\n');
+    expect(docShouldSave(typed)).toBe(true);
+    expect(autosaveDelay(typed)).toBe(AUTOSAVE_DEBOUNCE_MS);
+  });
+
+  it('counts a 4xx other than 429 as a refusal', () => {
+    expect(isRefusal({ status: 409, message: 'archived' })).toBe(true);
+    expect(isRefusal({ status: 400 })).toBe(true);
+    expect(isRefusal({ status: 404 })).toBe(true);
+    expect(isRefusal({ status: 429 })).toBe(false);
+    expect(isRefusal({ status: 503 })).toBe(false);
+    expect(isRefusal(new Error('fetch failed'))).toBe(false);
+    expect(isRefusal(null)).toBe(false);
   });
 
   it('reloads a clean buffer on a newer head, and never a dirty one', () => {

@@ -6,17 +6,24 @@ import { docsKey, refetchDocAfterSave, useDoc } from '../../hooks/useDocs';
 import { describeError } from '../../lib/actionFeedback';
 import type { DocBuffer } from '../../lib/docBuffer';
 import {
+  autosaveDelay,
   beginDocSave,
   docSaveConflicted,
   docSaveFailed,
   docSaveSucceeded,
+  docShouldFlush,
   docShouldSave,
   editDocBuffer,
+  isRefusal,
   openDocBuffer,
   reloadIfClean,
 } from '../../lib/docBuffer';
-import { docBadges, docStatusLine, revisionsSinceReview } from '../../lib/docs';
-import { AUTOSAVE_DEBOUNCE_MS } from '../../lib/editorBuffer';
+import {
+  docBadges,
+  docStatusLine,
+  revisionsSinceReview,
+  sameRevisions,
+} from '../../lib/docs';
 import { DocEditor } from './DocEditor';
 import { DocLinksRail } from './DocLinksRail';
 import { Button } from '@/ui/button';
@@ -28,77 +35,120 @@ interface DocPageProps {
   canDecide: boolean;
 }
 
+// The most saves a page sends once it unmounts; a 409 on the way out marks
+// the text against the new head, which then goes out again.
+const LEAVE_SAVES = 3;
+
 // One doc: badges and actions, the links rail, and a markdown source editor
 // with a preview toggle, autosaving with its base revision and body hash.
 export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
+  // The buffer lives in a ref so a save that lands after unmount still sees
+  // it; `buf` mirrors it for rendering and the autosave timer.
+  const bufRef = useRef<DocBuffer | null>(null);
   const [buf, setBuf] = useState<DocBuffer | null>(null);
+  const inFlight = useRef<Promise<void> | null>(null);
+  const mounted = useRef(true);
   const [previewing, setPreviewing] = useState(false);
   // The revisions a Mark reviewed would cover, shown before it acts.
   const [confirming, setConfirming] = useState<DocRevisionInfo[] | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  // The save loop reads the latest buffer without re-arming on every keystroke.
-  const bufRef = useRef<DocBuffer | null>(null);
-  bufRef.current = buf;
+
+  const update = useCallback((next: (b: DocBuffer) => DocBuffer): void => {
+    if (bufRef.current === null) return;
+    bufRef.current = next(bufRef.current);
+    setBuf(bufRef.current);
+  }, []);
 
   useEffect(() => {
     if (read === null) return;
     const base = { rev: read.rev.id, n: read.rev.n, hash: read.rev.hash };
-    setBuf((prev) =>
-      prev === null
+    bufRef.current =
+      bufRef.current === null
         ? openDocBuffer(read.doc.id, read.text, base)
-        : reloadIfClean(prev, read)
-    );
+        : reloadIfClean(bufRef.current, read);
+    setBuf(bufRef.current);
   }, [read]);
 
-  const save = useCallback(async () => {
-    const current = bufRef.current;
-    if (current === null || !docShouldSave(current)) return;
-    const sending = beginDocSave(current);
-    setBuf(sending);
-    try {
-      const out = await client.saveDocBody(refId, {
-        baseRev: sending.base.rev,
-        baseHash: sending.base.hash,
-        body: sending.buffer.text,
-      });
-      // `in` narrows here: this app compiles without strictNullChecks, where `ok` does not.
-      if ('conflict' in out) {
-        const { conflict } = out;
-        setBuf((prev) =>
-          prev === null ? prev : docSaveConflicted(prev, conflict)
-        );
-      } else {
-        const { result } = out;
-        // The save landed either way; without the merged text the buffer keeps its own.
-        const head =
-          result.status === 'merged'
-            ? await client.getDoc(refId, { rev: result.rev.id }).then(
-                (r) => r.text,
-                () => null
-              )
-            : null;
-        setBuf((prev) =>
-          prev === null ? prev : docSaveSucceeded(prev, result, head)
-        );
+  // Sends the buffer once. `leaving` also sends text the conflict hold keeps.
+  const save = useCallback(
+    (leaving = false): Promise<void> => {
+      const current = bufRef.current;
+      if (current === null) return Promise.resolve();
+      if (!(leaving ? docShouldFlush(current) : docShouldSave(current))) {
+        return Promise.resolve();
       }
-    } catch (err) {
-      setBuf((prev) =>
-        prev === null ? prev : docSaveFailed(prev, describeError(err))
-      );
-    }
-    await refetchDocAfterSave(queryClient, port, refId);
-  }, [client, port, queryClient, refId]);
+      const sending = beginDocSave(current);
+      bufRef.current = sending;
+      setBuf(sending);
+      const since = Date.now();
+      const run = async (): Promise<void> => {
+        try {
+          const out = await client.saveDocBody(refId, {
+            baseRev: sending.base.rev,
+            baseHash: sending.base.hash,
+            body: sending.buffer.text,
+          });
+          // `in` narrows here: this app compiles without strictNullChecks, where `ok` does not.
+          if ('conflict' in out) {
+            const { conflict } = out;
+            update((b) => docSaveConflicted(b, conflict));
+          } else {
+            const { result } = out;
+            // The save landed either way; without the merged text the buffer keeps its own.
+            const head =
+              result.status === 'merged'
+                ? await client.getDoc(refId, { rev: result.rev.id }).then(
+                    (r) => r.text,
+                    () => null
+                  )
+                : null;
+            update((b) => docSaveSucceeded(b, result, head));
+          }
+        } catch (err) {
+          update((b) => docSaveFailed(b, describeError(err), isRefusal(err)));
+        }
+        if (!mounted.current) return;
+        const fresh = await refetchDocAfterSave(
+          queryClient,
+          port,
+          refId,
+          since
+        );
+        if (fresh !== null) update((b) => reloadIfClean(b, fresh));
+      };
+      const pending = run();
+      inFlight.current = pending;
+      return pending;
+    },
+    [client, port, queryClient, refId, update]
+  );
 
   useEffect(() => {
     if (buf === null || !docShouldSave(buf)) return;
-    const timer = setTimeout(() => void save(), AUTOSAVE_DEBOUNCE_MS);
+    const timer = setTimeout(() => void save(), autosaveDelay(buf));
     return () => clearTimeout(timer);
   }, [buf, save]);
 
-  // Leaving the doc sends what the debounce still held rather than dropping it.
-  useEffect(() => () => void save(), [save]);
+  // Leaving waits out a save in flight, then sends what the debounce or the
+  // conflict hold still kept, rather than dropping it.
+  const leave = useCallback(async (): Promise<void> => {
+    for (let i = 0; i < LEAVE_SAVES; i += 1) {
+      if (inFlight.current !== null) await inFlight.current;
+      const current = bufRef.current;
+      if (current === null || !docShouldFlush(current)) return;
+      await save(true);
+    }
+  }, [save]);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      void leave();
+    };
+  }, [leave]);
 
   // Runs one header action, reporting its failure and refreshing the docs after it.
   const act = (work: () => Promise<unknown>): void => {
@@ -108,6 +158,15 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
       (err: unknown) => setActionError(describeError(err))
     );
   };
+
+  // The revisions a review would cover now, newest first.
+  const unreviewedRevisions = async (
+    reviewedRev: string | null
+  ): Promise<DocRevisionInfo[]> =>
+    revisionsSinceReview(
+      (await client.listDocRevisions(refId)).revisions,
+      reviewedRev
+    );
 
   if (read === null || buf === null) {
     return error === null ? null : (
@@ -168,8 +227,7 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
             size="sm"
             onClick={() =>
               act(async () => {
-                const { revisions } = await client.listDocRevisions(refId);
-                setConfirming(revisionsSinceReview(revisions, doc.reviewedRev));
+                setConfirming(await unreviewedRevisions(doc.reviewedRev));
               })
             }
           >
@@ -182,7 +240,10 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
             variant="ghost"
             onClick={() =>
               act(() =>
-                client.setDocStatus(refId, archived ? 'draft' : 'archived')
+                client.setDocStatus(
+                  refId,
+                  archived ? (doc.archivedFrom ?? 'draft') : 'archived'
+                )
               )
             }
           >
@@ -213,6 +274,16 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
               size="sm"
               onClick={() =>
                 act(async () => {
+                  // POST /reviewed reviews whatever the head is now, so a list
+                  // that moved since it loaded is shown again first.
+                  const now = await unreviewedRevisions(doc.reviewedRev);
+                  if (!sameRevisions(now, confirming)) {
+                    setConfirming(now);
+                    setActionError(
+                      'The doc changed since this list loaded. Check it again.'
+                    );
+                    return;
+                  }
                   await client.markDocReviewed(refId);
                   setConfirming(null);
                 })
@@ -245,11 +316,7 @@ export function DocPage({ client, port, refId, canDecide }: DocPageProps) {
             label={`Editing ${doc.handle}`}
             previewing={previewing}
             readOnly={archived}
-            onChange={(text) =>
-              setBuf((prev) =>
-                prev === null ? prev : editDocBuffer(prev, text)
-              )
-            }
+            onChange={(text) => update((b) => editDocBuffer(b, text))}
           />
         </main>
         <DocLinksRail links={read.links} />

@@ -2,6 +2,7 @@ import type { DocConflict, DocSaveResult } from '@dispatch/client';
 
 import type { EditorBuffer } from './editorBuffer';
 import {
+  AUTOSAVE_DEBOUNCE_MS,
   beginSave,
   editBuffer,
   openBuffer,
@@ -24,6 +25,10 @@ export interface DocBuffer {
   buffer: EditorBuffer;
   base: DocBase;
   conflict: { headN: number; headAuthor: string } | null;
+  // Saves failed in a row, which back autosave off.
+  failures: number;
+  // The daemon refused the last save (a 4xx); autosave waits for the next keystroke.
+  refused: boolean;
 }
 
 // The marker lines a 409's text carries (Merge's labels), so autosave waits for
@@ -35,31 +40,64 @@ export function openDocBuffer(
   text: string,
   base: DocBase
 ): DocBuffer {
-  return { doc, buffer: openBuffer(doc, text), base, conflict: null };
+  return {
+    doc,
+    buffer: openBuffer(doc, text),
+    base,
+    conflict: null,
+    failures: 0,
+    refused: false,
+  };
 }
 
-// A keystroke. Editing back to the head's text settles a conflict: nothing is left to save.
+// A keystroke, which also retries a refused save. Editing back to the head's
+// text settles a conflict: nothing is left to save.
 export function editDocBuffer(b: DocBuffer, text: string): DocBuffer {
   const buffer = editBuffer(b.buffer, text);
   return {
     ...b,
     buffer,
     conflict: buffer.status === 'clean' ? null : b.conflict,
+    failures: 0,
+    refused: false,
   };
+}
+
+// Whether leaving the doc should send its text: marked blocks and all, since a
+// 409 stored nothing and the buffer is the only copy of the caller's side.
+export function docShouldFlush(b: DocBuffer): boolean {
+  return !b.refused && shouldSave(b.buffer);
 }
 
 export function docShouldSave(b: DocBuffer): boolean {
   if (b.conflict !== null && CONFLICT_MARKER.test(b.buffer.text)) return false;
-  return shouldSave(b.buffer);
+  return docShouldFlush(b);
+}
+
+// The autosave wait: the debounce, doubled per failed save up to about 40 s.
+export function autosaveDelay(b: DocBuffer): number {
+  return AUTOSAVE_DEBOUNCE_MS * 2 ** Math.min(b.failures, 6);
+}
+
+// A 4xx other than 429 is the daemon refusing the save (archived, deleted,
+// too large); sending the same text again cannot succeed.
+export function isRefusal(err: unknown): boolean {
+  if (typeof err !== 'object' || err === null) return false;
+  const status = (err as { status?: unknown }).status;
+  return (
+    typeof status === 'number' &&
+    status >= 400 &&
+    status < 500 &&
+    status !== 429
+  );
 }
 
 export function beginDocSave(b: DocBuffer): DocBuffer {
   return { ...b, buffer: beginSave(b.buffer) };
 }
 
-// A save came back. A merged save with nothing typed since reloads the merged
-// head; with typing since, the next save is based on this save's own revision,
-// or the merge would win wholesale and drop the other side's edit.
+// A merged save with nothing typed since reloads the merged head; with typing
+// since, the next save bases on its own revision so the merge keeps both sides.
 export function docSaveSucceeded(
   b: DocBuffer,
   result: DocSaveResult,
@@ -80,6 +118,7 @@ export function docSaveSucceeded(
       buffer: saveSucceeded(b.buffer),
       base: { rev: mine.id, n: mine.n, hash: mine.hash },
       conflict: null,
+      failures: 0,
     };
   }
   return {
@@ -87,6 +126,7 @@ export function docSaveSucceeded(
     buffer: saveSucceeded(b.buffer),
     base: { rev: result.rev.id, n: result.rev.n, hash: result.rev.hash },
     conflict: null,
+    failures: 0,
   };
 }
 
@@ -121,11 +161,22 @@ export function docSaveConflicted(
     base: { rev: head.id, n: head.n, hash: head.hash },
     conflict:
       text === head.body ? null : { headN: head.n, headAuthor: head.author },
+    failures: 0,
+    refused: false,
   };
 }
 
-export function docSaveFailed(b: DocBuffer, message: string): DocBuffer {
-  return { ...b, buffer: saveFailed(b.buffer, message) };
+export function docSaveFailed(
+  b: DocBuffer,
+  message: string,
+  refused: boolean
+): DocBuffer {
+  return {
+    ...b,
+    buffer: saveFailed(b.buffer, message),
+    failures: b.failures + 1,
+    refused,
+  };
 }
 
 // doc.changed: a clean buffer follows the new head; a dirty one keeps typing

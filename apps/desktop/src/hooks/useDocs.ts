@@ -29,17 +29,29 @@ export function applyDocsEvent(
   void queryClient.invalidateQueries({ queryKey: docsKey(port) });
 }
 
-// A read in flight when a save lands may predate it, and would reload a clean
-// buffer with older text: drop it and fetch again.
+// A read in flight or answered since the save began at `since` may predate the
+// save or follow it: fetch again, and return the fresh read to apply.
 export async function refetchDocAfterSave(
   queryClient: QueryClient,
   port: number | undefined,
-  ref: string
-): Promise<void> {
+  ref: string,
+  since: number
+): Promise<DocRead | null> {
   const key = docKey(port, ref);
-  if (queryClient.getQueryState(key)?.fetchStatus !== 'fetching') return;
+  const state = queryClient.getQueryState<DocRead>(key);
+  if (
+    state === undefined ||
+    (state.fetchStatus !== 'fetching' && state.dataUpdatedAt <= since)
+  ) {
+    return null;
+  }
+  const asked = Date.now();
   await queryClient.cancelQueries({ queryKey: key, exact: true });
   await queryClient.invalidateQueries({ queryKey: key, exact: true });
+  const after = queryClient.getQueryState<DocRead>(key);
+  return after?.data !== undefined && after.dataUpdatedAt >= asked
+    ? after.data
+    : null;
 }
 
 const NO_DOCS: DocSummary[] = [];

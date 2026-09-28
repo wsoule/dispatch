@@ -58,6 +58,18 @@ export function revisionsSinceReview(
   return revisions.filter((r) => (r.n ?? 0) > reviewedN);
 }
 
+// Whether two revision lists name the same revisions at the same hashes, so a
+// Confirm still covers exactly what its list showed.
+export function sameRevisions(
+  a: readonly DocRevisionInfo[],
+  b: readonly DocRevisionInfo[]
+): boolean {
+  return (
+    a.length === b.length &&
+    a.every((r, i) => r.id === b[i].id && r.hash === b[i].hash)
+  );
+}
+
 export function docStatusLine(b: DocBuffer | null): string {
   if (b === null) return '';
   if (b.buffer.status === 'saving') return 'Saving…';

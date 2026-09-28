@@ -7,6 +7,7 @@ import {
   docStatusLine,
   filterDocs,
   revisionsSinceReview,
+  sameRevisions,
 } from './docs';
 
 const doc = (over: Partial<DocSummary>): DocSummary =>
@@ -78,6 +79,15 @@ describe('docs helpers', () => {
     expect(revisionsSinceReview(revisions, 'rev-0').map((r) => r.n)).toEqual([
       3, 2, 1,
     ]);
+  });
+
+  it('tells a revision list apart from one with a new or amended revision', () => {
+    const one = { ...rev('rev-1', 1), hash: 'h1' };
+    expect(sameRevisions([one], [{ ...one }])).toBe(true);
+    expect(
+      sameRevisions([one], [{ ...rev('rev-2', 2), hash: 'h2' }, one])
+    ).toBe(false);
+    expect(sameRevisions([one], [{ ...one, hash: 'h9' }])).toBe(false);
   });
 
   it('says where the buffer stands against its base', () => {
