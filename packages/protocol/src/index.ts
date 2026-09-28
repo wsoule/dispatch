@@ -20,6 +20,7 @@ export {
   GATE_TYPES,
   gateOf,
   isSystemMarker,
+  MEMORY_GATE_KINDS,
   REF_TYPES,
   validateSendInput,
 } from './envelope.js';

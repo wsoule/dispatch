@@ -290,6 +290,21 @@ describe('policyDecisionClassifier', () => {
     h.stop();
   });
 
+  it('records a resolved memory proposal only from the rung that accepts it', () => {
+    const h = harness();
+    const classify = policyDecisionClassifier(h.root);
+    const item = (state: 'open' | 'resolved') =>
+      ({ kind: 'memory', state }) as Parameters<typeof classify>[0];
+    h.setPolicy('policy:\n  rung: 3\n');
+    expect(classify(item('resolved'))).toBe('blocking');
+    h.setPolicy('policy:\n  rung: 4\n');
+    expect(classify(item('resolved'))).toBe('recorded');
+    expect(classify(item('open'))).toBe('blocking');
+    h.setPolicy('policy:\n  rung: 4\n  gates:\n    memory: block\n');
+    expect(classify(item('resolved'))).toBe('blocking');
+    h.stop();
+  });
+
   // Policy only ever answers tool approvals; the other approval gates were
   // decided by a human, so a resolved one never reads as auto-decided.
   it('records only resolved tool approvals under the approval gate', () => {

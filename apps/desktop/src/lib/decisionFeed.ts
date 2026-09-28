@@ -13,6 +13,7 @@ import type { TaskTab } from './appNav';
 type DecisionKind =
   | 'approval'
   | 'scope-request'
+  | 'memory'
   | 'question'
   | 'fix-loop-capped'
   | 'run-stalled';
@@ -88,8 +89,8 @@ export type DecisionTarget =
  * notification is a door and not just a fact. Pinning matters: the chat tab
  * renders the approval/scope/question cards only for the run it is pinned to.
  *
- * - approval / scope-request / question → the run's chat transcript, where the
- *   answer/approve cards render inline.
+ * - approval / scope-request / memory / question → the run's chat transcript,
+ *   where the answer/approve cards render inline.
  * - fix-loop-capped → the task's details tab, where FixLoopSection takes the
  *   ruling.
  * - run-stalled → the run's diff: the stranded work is the thing to look at.

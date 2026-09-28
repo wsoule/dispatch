@@ -102,6 +102,18 @@ describe('decisionTarget', () => {
     }
   });
 
+  test('a memory proposal opens where gate questions do', () => {
+    expect(decisionTarget(item({ kind: 'memory' }))).toEqual(
+      decisionTarget(item({ kind: 'question' }))
+    );
+    expect(decisionTarget(item({ kind: 'memory' }))).toEqual({
+      kind: 'task',
+      taskId: 't-1',
+      tab: 'chat',
+      runId: 'r-1',
+    });
+  });
+
   test('a capped fix loop opens the task details tab, where the ruling happens', () => {
     expect(
       decisionTarget(item({ kind: 'fix-loop-capped', runId: undefined }))

@@ -774,6 +774,13 @@ export type GateData =
       conversation: string;
       actionId: string;
       summary: string;
+    }
+  | {
+      type: 'memory';
+      proposalId: string; // the content stays in memory.db
+      action: 'add' | 'supersede' | 'retire';
+      scope: 'project' | 'team';
+      kind: MemoryKind;
     };
 
 // Structural mirrors of @dispatch/memory's views and the memory routes'
