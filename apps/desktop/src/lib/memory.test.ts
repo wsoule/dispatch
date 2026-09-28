@@ -5,10 +5,11 @@ import {
   activityItems,
   memoryQueryKey,
   memoryQueryRootKey,
+  memorySettingsModel,
   proposalCardModel,
 } from './memory';
 import type { Content } from './memory.test-helper';
-import { content, entry, proposal } from './memory.test-helper';
+import { content, entry, health, proposal, report } from './memory.test-helper';
 
 describe('proposalCardModel', () => {
   it('shows what an add would save, who asked and from which task', () => {
@@ -178,5 +179,107 @@ describe('activityItems', () => {
     expect(activityItems([row('saved', { memoryId: null })])[0]?.undoable).toBe(
       false
     );
+  });
+});
+
+describe('memorySettingsModel', () => {
+  it('surfaces config warnings, the parity report, an unconfirmed Claude import and pinned overflow', () => {
+    const model = memorySettingsModel(
+      health({
+        configWarnings: [
+          {
+            key: 'memory.indexTokens',
+            message:
+              'memory.indexTokens must be an integer from 200 to 4000; using 1000',
+          },
+        ],
+        ledgerImport: report({ outcome: 'ok' }),
+        claudeImport: {
+          state: 'unconfirmed',
+          source: null,
+          candidates: ['/Users/x/.claude/projects/-a/memory'],
+        },
+        personal: {
+          available: false,
+          reason: 'personal memory unavailable: database is locked',
+        },
+        pinnedOverflow: true,
+      })
+    );
+    expect(model).toMatchObject({
+      status: 'ok',
+      claudeImport: 'unconfirmed',
+      candidates: ['/Users/x/.claude/projects/-a/memory'],
+      personalUnavailable: 'personal memory unavailable: database is locked',
+      pinnedOverflow: true,
+    });
+    expect(model.warnings).toEqual([
+      'memory.indexTokens must be an integer from 200 to 4000; using 1000',
+    ]);
+    expect(model.parityText).toContain('ledger rows read');
+    expect(
+      memorySettingsModel(
+        health({ available: false, reason: 'too new', claudeImport: null })
+      ).status
+    ).toBe('unavailable');
+    expect(
+      memorySettingsModel(health({ claudeImport: null })).claudeImport
+    ).toBe('unknown');
+  });
+
+  it('renders the parity report in the import’s own layout', () => {
+    expect(memorySettingsModel(health({ ledgerImport: report() })).parityText)
+      .toBe(`outcome: ok
+ledger rows read        330   (constraint 0 · hazard 319 · decision 11 · handoff 0)
+→ memory                 15   (imported 15 · proposed 0 · truncated 0 · already imported 0, of which deleted 0)
+→ audit-only            315   (policy 0 · floor 0 · scope 1 · undeclared-writes 300 · dep-map 14 · handoff 0)
+damaged                   0
+memory rows       0 → 15
+open proposals    0 → 0`);
+    expect(
+      memorySettingsModel(
+        health({
+          ledgerImport: report({
+            outcome: 'MISMATCH',
+            mismatches: ['read 330 ≠ memory 15 + audit 314 + damaged 0'],
+          }),
+        })
+      ).parityText?.split('\n')[0]
+    ).toBe('outcome: MISMATCH — read 330 ≠ memory 15 + audit 314 + damaged 0');
+    expect(memorySettingsModel(health()).parityText).toBeNull();
+  });
+
+  it('says what the store holds, or why it is closed', () => {
+    expect(memorySettingsModel(health()).store).toBe(
+      '15 entries · 2 open proposals · full-text search'
+    );
+    expect(
+      memorySettingsModel(
+        health({ entries: 1, openProposals: 0, search: 'like' })
+      ).store
+    ).toBe('1 entry · no open proposals · plain search (no FTS5)');
+    expect(
+      memorySettingsModel(
+        health({
+          available: false,
+          reason: 'memory.db is from a newer Dispatch',
+        })
+      ).store
+    ).toBe('Unavailable: memory.db is from a newer Dispatch');
+  });
+
+  it('names the Claude notes’ source once imported, and a null state as unknown', () => {
+    expect(memorySettingsModel(health())).toMatchObject({
+      claudeImport: 'complete',
+      claudeSource: '/Users/x/.claude/projects/-a/memory',
+    });
+    expect(
+      memorySettingsModel(
+        health({ claudeImport: { state: null, source: null, candidates: [] } })
+      ).claudeImport
+    ).toBe('unknown');
+    expect(
+      memorySettingsModel(health({ personal: null })).personalUnavailable
+    ).toBeNull();
   });
 });

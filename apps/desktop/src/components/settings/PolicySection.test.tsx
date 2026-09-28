@@ -155,6 +155,21 @@ test('receipts list only policy auto-decisions and click through to the task', a
   expect(opened).toEqual(['t-aaaaaa']);
 });
 
+// Lessons moved to memory; the receipts are the ledger's audit class alone.
+test('reads receipts from the ledger’s audit class', async () => {
+  const filters: unknown[] = [];
+  const client = {
+    fetchLedger: (filter?: unknown) => {
+      filters.push(filter);
+      return Promise.resolve([]);
+    },
+  } as unknown as ApiClient;
+  render(
+    <PolicySection config={configAt(2)} onSave={noSave} client={client} />
+  );
+  await waitFor(() => expect(filters).toEqual([{ class: 'audit' }]));
+});
+
 test('an empty ledger explains where receipts will land', async () => {
   render(
     <PolicySection

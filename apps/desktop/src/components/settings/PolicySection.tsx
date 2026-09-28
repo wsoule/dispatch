@@ -300,7 +300,7 @@ export function PolicySection({
     if (client === null) return;
     let cancelled = false;
     client
-      .fetchLedger()
+      .fetchLedger({ class: 'audit' })
       .then((entries) => {
         if (cancelled) return;
         setReceipts(policyReceipts(entries, RECEIPT_LIMIT));
