@@ -253,6 +253,8 @@ interface Resolved {
   ctx: Context;
   ev: Evaluation;
   resolution: Map<string, Resolution>;
+  /** The fold's views under only senior cuts, made on first need. */
+  senior: () => readonly Evaluation[];
 }
 
 type Folds = (standing: readonly Dismiss[]) => Fold;
@@ -277,7 +279,10 @@ function foldsWithout(
       if (known !== undefined) return known;
       const ctx = contextOf(input, items, named);
       for (const i of ctx.items) if (i.body === 'unknown') paused.add(i);
-      const fold = { ctx, ...resolve(ctx) };
+      const { ev, resolution } = resolve(ctx);
+      let views: readonly Evaluation[] | null = null;
+      const senior = () => (views ??= seniorViews(ctx, ev));
+      const fold = { ctx, ev, resolution, senior };
       seen.set(key, fold);
       return fold;
     };
@@ -285,7 +290,7 @@ function foldsWithout(
     const granted = (d: Dismiss): boolean =>
       (grants.get(d.item.op.replica) ?? []).some((g) => !named.has(g));
     const allows = (d: Dismiss): boolean =>
-      granted(d) && mayDismiss(resolved().ev, d);
+      granted(d) && mayDismiss(resolved(), d);
     const held = (d: Dismiss): boolean =>
       granted(d) && heldDown(resolved().ev, d.item.op);
     return { effect, resolved, allows, held };
@@ -621,20 +626,51 @@ function mayBeAdmins(
   return admins;
 }
 
-// An admin may dismiss its own roster ops and those of any replica it outranks
-// at that op, so no one escapes a higher-ranked admin's cut this way.
-function mayDismiss(ev: Evaluation, { item, target }: Dismiss): boolean {
+// An admin may dismiss its own roster ops and those of a replica it outranks
+// there, cuts by that replica's juniors aside: it could still win those fights.
+function mayDismiss(fold: Resolved, { item, target }: Dismiss): boolean {
+  const { ev } = fold;
   const { op } = item;
   if (target === null || !rightsAt(ev, op.replica, op.seq, op).admin)
     return false;
   const named = target.op;
   if (named.replica === op.replica) return true;
-  const at = (p: RosterOpRef): RankAt => ({
-    replica: p.replica,
-    seq: p.seq,
-    pos: p,
-  });
-  return compareRank(ev, at(op), at(named)) < 0;
+  const mine = rankOf(ev, rankAt(op));
+  // Only the founding grants the founder's tier, so it outranks every other.
+  if (mine.tier === TIER.found) return true;
+  if (compareRanks(ev.order, mine, rankOf(ev, rankAt(named))) >= 0)
+    return false;
+  return (
+    compareRanks(ev.order, mine, bestRank(fold.senior(), rankAt(named))) < 0
+  );
+}
+
+// Whether a cut counts toward its target's rank for dismisses: its publisher
+// outranked the target at its afterSeq, or it is the target's own.
+function seniorCut(
+  ev: Evaluation,
+  views: readonly Evaluation[],
+  c: Removal
+): boolean {
+  if (c.kind === 'hosts' || c.op.replica === c.target) return true;
+  const target = { replica: c.target, seq: c.afterSeq, pos: c.op };
+  return (
+    compareRanks(ev.order, rankOf(ev, rankAt(c.op)), bestRank(views, target)) <
+    0
+  );
+}
+
+// The fold under its senior cuts alone, on its own grants and re-evaluated to
+// restore a cut grantor's; repeats until every cut left is senior in them.
+function seniorViews(ctx: Context, ev: Evaluation): readonly Evaluation[] {
+  let cuts = ev.cuts;
+  let views: readonly Evaluation[] = [ev];
+  for (;;) {
+    const kept = cuts.filter((c) => seniorCut(ev, views, c));
+    if (kept.length === cuts.length) return views;
+    cuts = kept;
+    views = [ev, { ...ev, cuts, cutsOn: byTarget(cuts) }, evaluate(ctx, cuts)];
+  }
 }
 
 /** Whether `replica`'s op `seq` may speak for `handle`. Observers speak for nobody. */
@@ -981,20 +1017,24 @@ function addPeople(ev: Evaluation, handles: readonly string[]): void {
   }
 }
 
+function byTarget(cuts: readonly Removal[]): Map<string, Removal[]> {
+  const out = new Map<string, Removal[]>();
+  for (const c of cuts) {
+    const list = out.get(c.target);
+    if (list === undefined) out.set(c.target, [c]);
+    else list.push(c);
+  }
+  return out;
+}
+
 function evaluate(
   ctx: Context,
   cuts: readonly Removal[],
   notes = false
 ): Evaluation {
-  const cutsOn = new Map<string, Removal[]>();
-  for (const c of cuts) {
-    const list = cutsOn.get(c.target);
-    if (list === undefined) cutsOn.set(c.target, [c]);
-    else list.push(c);
-  }
   const ev: Evaluation = {
     cuts,
-    cutsOn,
+    cutsOn: byTarget(cuts),
     order: ctx.order,
     holders: new Map(),
     grants: new Map(),
@@ -1396,12 +1436,16 @@ const MEMBER = 3;
 const NO_RIGHTS = 4;
 
 type RankAt = { replica: string; seq: number; pos: Position | null };
+type Rank = { tier: number; by: Grant | null };
+
+const rankAt = (op: RosterOpRef): RankAt => ({
+  replica: op.replica,
+  seq: op.seq,
+  pos: op,
+});
 
 // A publisher's tier at an op and the grant that orders it within the tier.
-function rankOf(
-  ev: Evaluation,
-  at: RankAt
-): { tier: number; by: Grant | null } {
+function rankOf(ev: Evaluation, at: RankAt): Rank {
   const rights = rightsAt(ev, at.replica, at.seq, at.pos);
   if (rights.firstAdmin !== null)
     return { tier: TIER[rights.firstAdmin.source], by: rights.firstAdmin };
@@ -1412,22 +1456,29 @@ function rankOf(
 
 // Rank at an op: the founder, admins by their first standing admin grant,
 // recovered admins, then members by admission, which none can backdate.
-function compareRank(ev: Evaluation, a: RankAt, b: RankAt): number {
-  const ra = rankOf(ev, a);
-  const rb = rankOf(ev, b);
+function compareRanks(order: Evaluation['order'], ra: Rank, rb: Rank): number {
   if (ra.tier !== rb.tier) return ra.tier - rb.tier;
   if (ra.by === null || rb.by === null) return 0;
-  return ev.order(ra.by.pos, rb.by.pos);
+  return order(ra.by.pos, rb.by.pos);
+}
+
+function compareRank(ev: Evaluation, a: RankAt, b: RankAt): number {
+  return compareRanks(ev.order, rankOf(ev, a), rankOf(ev, b));
+}
+
+// The highest rank a replica holds at an op in any of several views of a fold.
+function bestRank(views: readonly Evaluation[], at: RankAt): Rank {
+  let best: Rank = { tier: NO_RIGHTS, by: null };
+  for (const ev of views) {
+    const r = rankOf(ev, at);
+    if (compareRanks(ev.order, r, best) < 0) best = r;
+  }
+  return best;
 }
 
 // Removals by their publishers' rank at each removal, then by position.
 function byRank(ev: Evaluation, a: Removal, b: Removal): number {
-  const at = (r: Removal) => ({
-    replica: r.op.replica,
-    seq: r.op.seq,
-    pos: r.op,
-  });
-  const d = compareRank(ev, at(a), at(b));
+  const d = compareRank(ev, rankAt(a.op), rankAt(b.op));
   if (d !== 0) return d;
   return ev.order(a.op, b.op);
 }
@@ -1451,7 +1502,7 @@ function notesOf(
     unknown ??= { ...positionOf(op), hash: op.hash };
     const named = `${op.replica}'s roster op at seq ${op.seq} (${op.hash})`;
     // A dismissed op still pauses when judging an invalid dismiss needed a fold
-    // that held it; dismissing that dismiss lifts the pause.
+    // that held it; another dismiss of the op keeps it out of that fold too.
     const by = [
       ...new Set(
         effect.filter((d) => d.target?.op === op).map((d) => d.item.op.replica)
@@ -1462,7 +1513,7 @@ function notesOf(
       message:
         by.length === 0
           ? `${NEWER_ROSTER}, or an admin can dismiss ${named}`
-          : `${NEWER_ROSTER}; ${by.join(', ')} dismissed ${named}, but judging an invalid dismiss read it, and an admin can dismiss that dismiss`,
+          : `${NEWER_ROSTER}; ${by.join(', ')} dismissed ${named}, but judging an invalid dismiss read it; an admin can lift the pause by dismissing that op again`,
     });
   }
   for (const d of dismisses) {

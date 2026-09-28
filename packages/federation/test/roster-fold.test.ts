@@ -801,7 +801,7 @@ describe('foldRoster', () => {
     expect(rosterOf(v)).toEqual(rosterOf(expected));
   });
 
-  it("pauses on an op a once-admin's invalid dismiss brings back, until an admin dismisses that dismiss", () => {
+  it("pauses on an op a once-admin's invalid dismiss brings back, until an admin dismisses the op again or that dismiss", () => {
     const junk = op(B, 2, 300, { action: 'teleport' });
     const byC = dismiss(C, 2, 400, junk);
     const base = [
@@ -821,7 +821,7 @@ describe('foldRoster', () => {
     ]);
     expect(v.problems).toContainEqual({
       subject: `op:${B}:2`,
-      message: `a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue; ${C} dismissed ${B}'s roster op at seq 2 (${junk.hash}), but judging an invalid dismiss read it, and an admin can dismiss that dismiss`,
+      message: `a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue; ${C} dismissed ${B}'s roster op at seq 2 (${junk.hash}), but judging an invalid dismiss read it; an admin can lift the pause by dismissing that op again`,
     });
     expect(v.problems).toContainEqual({
       subject: `op:${B}:3`,
@@ -833,6 +833,12 @@ describe('foldRoster', () => {
       junk.hash,
       hostile.hash,
     ]);
+    // Dismissing the junk again, as the pause problem says, lifts it too.
+    for (const again of [dismiss(C, 3, 420, junk), dismiss(A, 5, 430, junk)]) {
+      const v2 = fold([...base, hostile, again]);
+      expect(v2.unknown).toBeNull();
+      expect(rosterOf(v2).members).toEqual(rosterOf(v).members);
+    }
   });
 
   it('lets an admin undo a dismiss it outranks, alike in a build that cannot read that dismiss', () => {
@@ -848,6 +854,151 @@ describe('foldRoster', () => {
     const older = fold([...base, unreadable(byC), byA]);
     expect(older.unknown).toBeNull();
     expect(rosterOf(older)).toEqual(rosterOf(newer));
+  });
+
+  it('never lets a lower-ranked admin win a revocation fight by dismissing a counter-move', () => {
+    const cRev = revoke(C, 2, 310, B, 1);
+    const aRev = revoke(A, 3, 310, B, 1);
+    const recovered = revoke(A, 2, 310, A2, 2);
+    const promote = op(C, 2, 200, {
+      action: 'role',
+      replica: D,
+      role: 'admin',
+    });
+    const dRev = revoke(D, 2, 320, B, 1);
+    const chained = [
+      admit(A, 2, 100, C, 'admin'),
+      admit(A, 3, 200, B, 'admin'),
+      admit(C, 2, 150, D, 'admin'),
+      revoke(B, 2, 300, C, 1),
+      dRev,
+    ];
+    const cases = [
+      // B, admitted after C, dismisses C's counter-revocation.
+      {
+        base: [
+          admit(A, 2, 100, C, 'admin'),
+          admit(A, 3, 200, B, 'admin'),
+          revoke(B, 2, 300, C, 1),
+          cRev,
+        ],
+        d: dismiss(B, 3, 400, cRev),
+        named: cRev,
+        winner: C,
+        loser: B,
+      },
+      // B dismisses the founder's.
+      {
+        base: [admit(A, 2, 100, B, 'admin'), revoke(B, 2, 300, A, 2), aRev],
+        d: dismiss(B, 3, 400, aRev),
+        named: aRev,
+        winner: A,
+        loser: B,
+      },
+      // A replica holding a leaked recovery code dismisses the founder's.
+      {
+        base: [
+          op(A2, 2, 200, { action: 'recover', proof: recoveryProof(A2) }),
+          revoke(A2, 3, 300, A, 1),
+          recovered,
+        ],
+        d: dismiss(A2, 4, 400, recovered),
+        named: recovered,
+        winner: A,
+        loser: A2,
+      },
+      // B dismisses C's promotion of D, which armed D's counter-revocation.
+      {
+        base: [
+          admit(A, 2, 100, C, 'admin'),
+          admit(A, 3, 110, D),
+          promote,
+          admit(A, 4, 300, B, 'admin'),
+          revoke(B, 2, 400, C, 1),
+          revoke(D, 2, 410, B, 1),
+        ],
+        d: dismiss(B, 3, 600, promote),
+        named: promote,
+        winner: D,
+        loser: B,
+      },
+      // B's cut of C voids C's admission of D, so B's fold shows D no admin.
+      {
+        base: chained,
+        d: dismiss(B, 3, 400, dRev),
+        named: dRev,
+        winner: D,
+        loser: B,
+      },
+      // B also revokes D, a cut that counts only while B's cut of C does.
+      {
+        base: [...chained, revoke(B, 3, 310, D, 1)],
+        d: dismiss(B, 4, 400, dRev),
+        named: dRev,
+        winner: D,
+        loser: B,
+      },
+    ];
+    for (const { base, d, named, winner, loser } of cases) {
+      const expected = fold(base);
+      expect(roles(expected)[winner]).toBe('admin');
+      expect(expected.revoked.has(loser)).toBe(true);
+      const v = fold([...base, d]);
+      expect({ d: d.hash, roster: rosterOf(v) }).toEqual({
+        d: d.hash,
+        roster: rosterOf(expected),
+      });
+      expect(v.problems).toContainEqual({
+        subject: `op:${loser}:${d.seq}`,
+        message: `${loser} may not dismiss ${named.replica}'s roster op at seq ${named.seq}; ignored`,
+      });
+    }
+  });
+
+  it('keeps the earlier-ranked admin the winner however many dismisses each side sends', () => {
+    const counter = revoke(A, 2, 310, A2, 2);
+    const base = [
+      op(A2, 2, 200, { action: 'recover', proof: recoveryProof(A2) }),
+      revoke(A2, 3, 300, A, 1),
+      counter,
+    ];
+    // A2 and the founder take turns dismissing the other's latest op.
+    const chain: RosterOpRef[] = [];
+    let named = counter;
+    for (let n = 0; n < 4; n++) {
+      const d =
+        n % 2 === 0
+          ? dismiss(A2, 4 + n, 400 + n, named)
+          : dismiss(A, 3 + n, 400 + n, named);
+      chain.push(d);
+      named = d;
+      const v = fold([...base, ...chain]);
+      expect({ n, roles: roles(v), revoked: [...v.revoked.keys()] }).toEqual({
+        n,
+        roles: { [A]: 'admin' },
+        revoked: [A2],
+      });
+    }
+  });
+
+  it("leaves a senior's ops past a junior's cut to admins that outrank the senior", () => {
+    const junk = op(C, 2, 400, { action: 'teleport' });
+    const base = [
+      admit(A, 2, 100, C, 'admin'),
+      admit(A, 3, 200, B, 'admin'),
+      revoke(B, 2, 300, C, 1),
+      junk,
+    ];
+    // C could still win a fight with B, so B's cut never outranks what C sends.
+    const byB = fold([...base, dismiss(B, 3, 500, junk)]);
+    expect(byB.unknown).toEqual(pausedAt(junk));
+    expect(byB.problems).toContainEqual({
+      subject: `op:${B}:3`,
+      message: `${B} may not dismiss ${C}'s roster op at seq 2; ignored`,
+    });
+    const byA = fold([...base, dismiss(A, 4, 500, junk)]);
+    expect(byA.unknown).toBeNull();
+    expect(byA.revoked.has(C)).toBe(true);
   });
 
   it("ignores a dismiss of an admin's dismiss from a replica no admin made one", () => {

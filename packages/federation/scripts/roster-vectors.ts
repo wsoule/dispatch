@@ -1,4 +1,9 @@
-import { ed25519FromSeed, sha256Hex } from '@dispatch/protocol/federation';
+import {
+  ed25519FromSeed,
+  sha256Hex,
+  signText,
+  TAG,
+} from '@dispatch/protocol/federation';
 import type { RosterBody } from '@dispatch/protocol/federation';
 import { writeFileSync } from 'node:fs';
 
@@ -46,7 +51,8 @@ const OBS = 'obs-00000010';
 const handleOf = (r: string) => r.slice(0, r.lastIndexOf('-'));
 const DAY = 24 * 60 * 60 * 1000;
 const T0 = Date.parse('2026-09-26T00:00:00.000Z');
-const RECOVERY_PUB = ed25519FromSeed(Buffer.alloc(32, 7)).signPub;
+const RECOVERY = ed25519FromSeed(Buffer.alloc(32, 7));
+const RECOVERY_PUB = RECOVERY.signPub;
 
 const keys = new Map<string, KeyInfo>(
   [A, B, C, D, B2, A2, OBS].map((r) => [
@@ -81,6 +87,16 @@ const FOUND = op(A, 1, 0, {
   legacy: [],
   recoveryPub: RECOVERY_PUB,
 });
+
+// A recover proven with the founding's recovery code, as a leaked code allows.
+const recover = (replica: string, seq: number, ms: number) =>
+  op(replica, seq, ms, {
+    action: 'recover',
+    proof: signText(
+      RECOVERY.signPriv,
+      `${TAG.recovery}\n${FOUND.hash.slice(0, 32)}\n${replica}\n${keys.get(replica)?.signPub ?? ''}`
+    ),
+  });
 
 const admit = (
   by: string,
@@ -176,6 +192,17 @@ const ONCE_ADMIN = [
   C_JUNK_DISMISSED,
   B_UNDOES,
 ];
+// Each loser of a revocation fight dismisses the winner's counter-revocation.
+const C_COUNTERS = revoke(C, 2, 310, B, 1);
+const A_COUNTERS = revoke(A, 3, 310, B, 1);
+// B2 recovers with a leaked code, and it and the founder dismiss in turn.
+const RECOVERED_FIGHT = [
+  recover(B2, 2, 200),
+  revoke(B2, 3, 300, A, 1),
+  revoke(A, 2, 310, B2, 2),
+];
+const B2_DISMISSES = dismiss(B2, 4, 400, revoke(A, 2, 310, B2, 2));
+const A_UNDOES = dismiss(A, 3, 401, B2_DISMISSES);
 
 const ATTEST = [
   { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },
@@ -557,6 +584,45 @@ export const SCENARIOS: readonly RosterScenario[] = [
   scenario('dismiss-by-once-admin-dismissed', [
     ...ONCE_ADMIN,
     dismiss(C, 3, 420, B_UNDOES),
+  ]),
+  scenario('dismiss-counter-revocation', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 200, B, 'admin'),
+    revoke(B, 2, 300, C, 1),
+    C_COUNTERS,
+    dismiss(B, 3, 400, C_COUNTERS),
+  ]),
+  scenario('dismiss-founder-counter', [
+    admit(A, 2, 100, B, 'admin'),
+    revoke(B, 2, 300, A, 2),
+    A_COUNTERS,
+    dismiss(B, 3, 400, A_COUNTERS),
+  ]),
+  scenario('dismiss-recovered-counter', [...RECOVERED_FIGHT, B2_DISMISSES]),
+  // The last dismiss is B2's, and the founder still wins.
+  scenario('dismiss-ping-pong', [
+    ...RECOVERED_FIGHT,
+    B2_DISMISSES,
+    A_UNDOES,
+    dismiss(B2, 5, 402, A_UNDOES),
+  ]),
+  // B dismisses C's promotion of D, which armed D's winning counter-revocation.
+  scenario('dismiss-armed-promotion', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 110, D),
+    PROMOTE,
+    admit(A, 4, 300, B, 'admin'),
+    revoke(B, 2, 400, C, 1),
+    revoke(D, 2, 410, B, 1),
+    dismiss(B, 3, 600, PROMOTE),
+  ]),
+  // C could still win a fight with B, so B may not dismiss C's later junk.
+  scenario('dismiss-past-junior-cut', [
+    admit(A, 2, 100, C, 'admin'),
+    admit(A, 3, 200, B, 'admin'),
+    revoke(B, 2, 300, C, 1),
+    op(C, 2, 400, { action: 'teleport' }),
+    dismiss(B, 3, 500, op(C, 2, 400, { action: 'teleport' })),
   ]),
   scenario('dismiss-outranked', [
     admit(A, 2, 100, C, 'admin'),

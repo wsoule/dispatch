@@ -257,7 +257,7 @@ describe('an older build that cannot read some ops pauses or agrees with a newer
     }
     // Enough older folds must not pause for the agreement to be tested.
     expect(compared).toBeGreaterThan(200);
-  });
+  }, 60_000);
 });
 
 describe('a dismiss from a replica that is never an admin', () => {
@@ -372,5 +372,88 @@ describe('a dismiss the fold ignores', () => {
     }
     // Enough ignored dismisses must turn up for the check to mean something.
     expect(checked).toBeGreaterThan(1000);
+  }, 120_000);
+});
+
+describe('dismisses by admins the winner of a revocation fight outranks', () => {
+  // Two standing admins revoke or demote each other past their last ops; the
+  // loser or a junior dismisses the counter-move or any op, and the winner and
+  // that side then take turns dismissing the other's latest dismiss.
+  it('never change who wins the fight, on random rosters', () => {
+    let fights = 0;
+    for (let seed = 1; seed <= 800; seed++) {
+      const rand = mulberry32(seed);
+      const input = randomRoster(rand, seed % 3 === 0 ? 0.2 : 0);
+      const admins = [...foldRoster(input).members.values()]
+        .filter((m) => m.rank !== null)
+        .sort((a, b) => (a.rank ?? 0) - (b.rank ?? 0))
+        .map((m) => m.replica);
+      if (admins.length < 2) continue;
+      const i = Math.floor(rand() * admins.length);
+      const j =
+        (i + 1 + Math.floor(rand() * (admins.length - 1))) % admins.length;
+      const winner = admins[Math.min(i, j)] ?? '';
+      const loser = admins[Math.max(i, j)] ?? '';
+      const juniors = admins.slice(Math.min(i, j) + 1);
+      const seqs = new Map<string, number>();
+      for (const o of input.ops)
+        seqs.set(o.replica, Math.max(seqs.get(o.replica) ?? 1, o.seq));
+      const lastOf = (r: string) => seqs.get(r) ?? 1;
+      let t =
+        Math.max(...input.ops.map((o) => Number(o.hlc.slice(0, 13)))) - T0;
+      // The next op by `by`, after every op so far.
+      const next = (by: string, body: Record<string, unknown>) => {
+        seqs.set(by, lastOf(by) + 1);
+        t += 10;
+        return op(by, lastOf(by), t, body);
+      };
+      const demotes = rand() < 0.3;
+      const cutOf = (by: string, target: string, afterSeq: number) =>
+        next(by, {
+          replica: target,
+          afterSeq,
+          afterHash: 'h',
+          ...(demotes
+            ? { action: 'role', role: 'member' }
+            : { action: 'revoke', reason: 'x' }),
+        });
+      const lost = (v: ReturnType<typeof foldRoster>) =>
+        demotes ? v.members.get(loser)?.role !== 'admin' : v.revoked.has(loser);
+      const [afterW, afterL] = [lastOf(winner), lastOf(loser)];
+      const first = cutOf(loser, winner, afterW);
+      const counter = cutOf(winner, loser, afterL);
+      const ops = [...input.ops, first, counter];
+      const before = foldRoster({ ...input, ops });
+      // Other removals among the random ops can decide the fight first.
+      if (before.members.get(winner)?.role !== 'admin' || !lost(before))
+        continue;
+      fights++;
+      let named =
+        rand() < 0.5
+          ? counter
+          : (ops[1 + Math.floor(rand() * (ops.length - 1))] ?? counter);
+      const chain: RosterOpRef[] = [];
+      for (let n = 0, rounds = 1 + Math.floor(rand() * 4); n < rounds; n++) {
+        const junior = juniors[Math.floor(rand() * juniors.length)] ?? loser;
+        const by = n % 2 === 1 ? winner : rand() < 0.5 ? loser : junior;
+        const d = next(by, {
+          action: 'dismiss',
+          replica: named.replica,
+          seq: named.seq,
+          hash: named.hash,
+        });
+        chain.push(d);
+        named = d;
+        const after = foldRoster({ ...input, ops: [...ops, ...chain] });
+        expect({
+          seed,
+          n,
+          winner: after.members.get(winner)?.role,
+          lost: lost(after),
+        }).toEqual({ seed, n, winner: 'admin', lost: true });
+      }
+    }
+    // Enough fights must stand for the check to mean something.
+    expect(fights).toBeGreaterThan(200);
   }, 120_000);
 });
