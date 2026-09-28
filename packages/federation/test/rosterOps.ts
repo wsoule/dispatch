@@ -175,11 +175,12 @@ export function team(founder: string, keys: ReadonlyMap<string, KeyInfo>) {
   };
 }
 
-// Hypothetical later levels that keep rights at level 1: level 2 adds pairs
-// that decide no right, level 3 an rv 99 op.
+// Hypothetical later levels: level 2 adds pairs that decide no right, level 3
+// an rv 99 op, and level 4 reads pairs shaped as rights, which the fold refuses.
 export const LEVELS: ReadonlyMap<number, readonly string[]> = new Map([
   [2, ['license@2', 'transport@2', 'invite@2', 'hosts@2', 'note@1']],
   [3, ['zap@99']],
+  [4, ['admit@2', 'role@2', 'revoke@2', 'recovery-key@2']],
 ]);
 
 // A later pair's meaning in rv 1 terms; note@1 is read and does nothing.

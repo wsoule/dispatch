@@ -670,8 +670,8 @@ function kindOf(body: unknown): Kind {
   return shape(b) ? 'known' : 'malformed';
 }
 
-// The actions that decide admission, roles, ranks, revocations or the
-// recovery key: a later pair never reads as one of them.
+// What a later pair is never read as: the actions that decide admission, roles,
+// ranks, revocations or the recovery key, and dismiss.
 const RIGHTS = new Set([
   'found',
   'admit',
@@ -682,8 +682,8 @@ const RIGHTS = new Set([
   'dismiss',
 ]);
 
-// An op as this build reads it: a pair outside Known(1) is unknown, and pauses
-// the caller, unless `later` reads it as something other than a right.
+// An op as this build reads it: a later pair `later` cannot read is unknown,
+// pausing only where its publisher stands; one read as a right is malformed.
 function itemOf(op: RosterOpRef, later: LaterPairs): Item {
   const kind = kindOf(op.body);
   if (kind === 'known') return { op, kind, body: op.body };

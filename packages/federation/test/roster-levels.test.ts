@@ -12,6 +12,7 @@ import {
   keysFor,
   LEVELS,
   op,
+  pausedAt,
   revoke,
   rosterOf,
   standingOf,
@@ -53,15 +54,14 @@ const outsideKnown = (o: RosterOpRef): boolean =>
 const TABLE_PAIRS = [...LEVELS.values()].flat();
 const UNREAD_PAIRS = [
   'found@2',
-  'admit@2',
-  'role@2',
-  'revoke@2',
   'recover@2',
-  'recovery-key@2',
   'dismiss@2',
   'close-legacy@2',
   'x-garbage@7',
 ];
+// Level 1 reads Known(1) alone; the table's highest level reads every pair in it.
+const AT = [1, ...LEVELS.keys()];
+const TOP = Math.max(...AT);
 
 // A random op set on one shared clock, some ops backdated, drawing on every
 // pair the table reads; with `fights`, mostly removals among the admins.
@@ -382,7 +382,7 @@ describe('the level table', () => {
     for (let seed = 1; seed <= SEEDS; seed++) {
       const rand = mulberry32(seed);
       const ops = opsFor(seed, rand);
-      for (const level of [1, 2, 3]) {
+      for (const level of AT) {
         const v = t.at(level, ops);
         const again = t.at(level, [
           ...shuffled(rand, ops),
@@ -405,8 +405,8 @@ describe('the level table', () => {
       const known = new Set(
         [t.found, ...ops].filter((o) => !outsideKnown(o)).map((o) => o.hash)
       );
-      const top = t.at(3, ops);
-      for (const level of [1, 2]) {
+      const top = t.at(TOP, ops);
+      for (const level of AT.filter((l) => l < TOP)) {
         const low = t.at(level, ops);
         if (low.unknown !== null) continue;
         compared++;
@@ -438,7 +438,7 @@ describe('the level table', () => {
           .slice(0, 3)
           .map((o) => [o]),
       ];
-      for (const level of [1, 2, 3]) {
+      for (const level of AT) {
         const standing = standingOf(t.at(level, ops));
         for (const drop of drops) {
           if (drop.length === 0) continue;
@@ -464,7 +464,7 @@ describe('the level table', () => {
   it('lets no dismiss, valid or not, change a right, rank or revocation, at any level', () => {
     for (let seed = 1; seed <= SEEDS; seed++) {
       const ops = opsFor(seed, mulberry32(seed));
-      for (const level of [1, 2, 3])
+      for (const level of AT)
         expect({
           seed,
           level,
@@ -480,7 +480,7 @@ describe('the level table', () => {
   it('accepts no removal that lacks its right in the final fold, unless it won a fight', () => {
     for (let seed = 1; seed <= SEEDS; seed++) {
       const ops = opsFor(seed, mulberry32(seed));
-      for (const level of [1, 2, 3])
+      for (const level of AT)
         expect({ seed, level, unfounded: t.unfounded(level, ops) }).toEqual({
           seed,
           level,
@@ -492,7 +492,7 @@ describe('the level table', () => {
   it('never pauses the relay, which folds what a daemon at its level folds', () => {
     for (let seed = 1; seed <= SEEDS; seed += 3) {
       const ops = opsFor(seed, mulberry32(seed));
-      for (const level of [1, 2, 3]) {
+      for (const level of AT) {
         const relay = t.at(level, ops, { relay: true });
         expect({ seed, level, paused: relay.unknown }).toEqual({
           seed,
@@ -504,21 +504,28 @@ describe('the level table', () => {
     }
   }, 120_000);
 
-  it('voids a later removal whose publisher holds no right at it in the final roster', () => {
+  it('voids a later removal whose publisher lacks its right at it in the final roster', () => {
     const [B, C, D] = MEMBERS;
-    // A hosts cut at rv 2, which levels 2 and 3 read as a removal.
-    const cutBy = (by: string, seq: number, ms: number) =>
+    // A hosts cut at rv 2, which levels 2 and up read as a removal.
+    const cutBy = (
+      by: string,
+      seq: number,
+      ms: number,
+      replica = M,
+      hosts = ['mx'],
+      afterSeq = 1
+    ) =>
       op(by, seq, ms, {
         rv: 2,
         action: 'hosts',
-        replica: M,
-        hosts: ['mx'],
-        afterSeq: 1,
-        afterHash: `h-${M}-1`,
+        replica,
+        hosts,
+        afterSeq,
+        afterHash: `h-${replica}-${afterSeq}`,
       });
     const cases = [
       {
-        // C's cut wins a fight it takes no part in; B then revokes C below it.
+        // B revokes C below C's cut, amid a fight between B and P.
         later: cutBy(C, 2, 41),
         rest: [
           admit(A, 2, 15, C, 'admin'),
@@ -529,7 +536,26 @@ describe('the level table', () => {
           revoke(P, 2, 64, B, 1),
           revoke(B, 3, 78, C, 1),
         ],
+        target: M,
         hosts: ['mx', 'my'],
+        pauses: false,
+      },
+      {
+        // B demotes C below C's cut instead: C still stands at it, so level 1
+        // pauses, but lacks the admin right a hosts cut needs.
+        later: cutBy(C, 2, 41),
+        rest: [
+          admit(A, 2, 15, C, 'admin'),
+          admit(A, 3, 25, B, 'admin'),
+          admit(A, 4, 28, P, 'admin'),
+          admit(A, 5, 37, M, 'member', { hosts: ['mx', 'my'] }),
+          revoke(B, 2, 47, P, 1),
+          revoke(P, 2, 64, B, 1),
+          demote(B, 3, 78, C, 1),
+        ],
+        target: M,
+        hosts: ['mx', 'my'],
+        pauses: true,
       },
       {
         // The founder's cut, above the revocation that cuts it after seq 3.
@@ -541,7 +567,37 @@ describe('the level table', () => {
           revoke(D, 5, 64, B, 1),
           revoke(B, 4, 50, A, 3),
         ],
+        target: M,
         hosts: [],
+        pauses: false,
+      },
+      {
+        // The founder's cut of B, above D's revocation of it after seq 4,
+        // among a fight over C and other later ops.
+        later: cutBy(A, 6, 77, B, ['zz'], 3),
+        rest: [
+          admit(A, 2, 15, B),
+          admit(A, 3, 18, C, 'admin'),
+          admit(A, 4, 31, D, 'admin'),
+          op(A, 5, 69, { rv: 2, action: 'transport', kind: 'relay', url: 'u' }),
+          revoke(D, 2, 73, A, 5),
+          revoke(D, 3, 74, A, 4),
+          op(A, 7, -2000, {
+            rv: 2,
+            action: 'invite',
+            id: 'i-a',
+            pub: 'p',
+            handle: handleOf(A),
+            expires: '2027-01-01T00:00:00.000Z',
+          }),
+          revoke(D, 4, 112, C, 0),
+          cutBy(A, 8, 125, D, [], 3),
+          revoke(C, 3, 136, A, 2),
+          revoke(A, 9, 143, C, 1),
+        ],
+        target: B,
+        hosts: [],
+        pauses: false,
       },
       {
         // With no admin left, P's revoke is voided, and D, the cut's
@@ -560,25 +616,27 @@ describe('the level table', () => {
           demote(A, 7, 75, D, 2),
           revoke(A, 8, 80, C, 3),
         ],
+        target: M,
         hosts: ['mx', 'my'],
+        pauses: false,
       },
     ];
-    for (const { later, rest, hosts } of cases) {
+    for (const { later, rest, target, hosts, pauses } of cases) {
       const ops = [...rest, later];
       const known = new Set([t.found, ...rest].map((o) => o.hash));
-      for (const level of [1, 2, 3]) {
+      for (const level of AT) {
         const v = t.at(level, ops);
         expect({
           later: later.hash,
           level,
           paused: v.unknown,
-          hosts: v.members.get(M)?.hosts,
+          hosts: v.members.get(target)?.hosts,
           cut: v.resolution.get(later.hash) ?? 'void',
           v: agreed(v, known),
         }).toEqual({
           later: later.hash,
           level,
-          paused: null,
+          paused: pauses && level === 1 ? pausedAt(later) : null,
           hosts,
           cut: 'void',
           v: agreed(t.at(level, rest), known),
@@ -704,7 +762,7 @@ describe('the level table', () => {
       op(D, 2, 150, { rv: 2, action: 'transport', kind: 'relay', url: 'u' }),
     ];
     for (const o of inert) {
-      for (const level of [1, 2, 3]) {
+      for (const level of AT) {
         const v = t.at(level, [...base, o]);
         expect({ o: o.hash, level, paused: v.unknown, v: rosterOf(v) }).toEqual(
           {
@@ -798,7 +856,7 @@ describe('a later removal among a revocation fight', () => {
   it('re-checks until no accepted removal rests on one a pass demoted', () => {
     for (const { later, rest } of SPLITS)
       for (const ops of [rest, [...rest, later]])
-        for (const level of [1, 2, 3])
+        for (const level of AT)
           expect({ level, unfounded: t.unfounded(level, ops) }).toEqual({
             level,
             unfounded: [],
@@ -810,7 +868,7 @@ describe('a later removal among a revocation fight', () => {
       const ops = [...rest, later];
       const relay = t.at(1, ops, { relay: true });
       expect(summary(relay)).toEqual(expected);
-      for (const level of [1, 2, 3])
+      for (const level of AT)
         expect({
           later: later.hash,
           level,
@@ -821,7 +879,7 @@ describe('a later removal among a revocation fight', () => {
 
   it('changes no standing when the later cut is dropped', () => {
     for (const { later, rest } of SPLITS)
-      for (const level of [1, 2, 3])
+      for (const level of AT)
         expect({
           later: later.hash,
           level,
@@ -848,7 +906,7 @@ describe('a later removal among a revocation fight', () => {
     // A pending replica's dismiss of the later cut is invalid but eligible.
     const steered = [...set, dismiss(Q, 2, 75, PICK.later)];
     for (const ops of [set, steered])
-      for (const level of [1, 2, 3])
+      for (const level of AT)
         expect({ level, dismissed: t.at(level, ops).dismissed }).toEqual({
           level,
           dismissed: [{ replica: A, seq: 17, hash: V.hash, by: P }],
@@ -861,7 +919,7 @@ describe('a later removal among a revocation fight', () => {
     const byB = dismiss(B, 6, 70, PICK.later);
     expect(t.at(1, [...ops, byB]).dismissed.map((d) => d.by)).toEqual([B]);
     for (const named of [dismiss(A, 17, 70, PICK.later), byB])
-      for (const level of [1, 2, 3])
+      for (const level of AT)
         expect({
           level,
           s: standingOf(t.at(level, [...ops, named])),
