@@ -238,6 +238,32 @@ function clientRecordingUploads(
   });
 }
 
+// A client whose task links one spec doc, recording each docs-linking target.
+function clientLinkingASpec(asked: string[]): ApiClient {
+  const pending = () => new Promise<never>(() => {});
+  return new Proxy({} as ApiClient, {
+    get(_target, key) {
+      if (key === 'docsLinking') {
+        return (target: string) => {
+          asked.push(target);
+          return Promise.resolve({
+            docs: [
+              {
+                doc: { id: 'doc-1', title: 'Burgess spec', status: 'draft' },
+                rel: 'spec',
+                source: 'manual',
+                fromParent: false,
+              },
+            ],
+          });
+        };
+      }
+      if (typeof key === 'symbol' || key === 'then') return undefined;
+      return pending;
+    },
+  });
+}
+
 function newLog(): Log {
   return {
     updates: [],
@@ -499,29 +525,9 @@ describe('TaskPage', () => {
   });
 
   test('the Docs block follows the attachments row and opens a linked doc', async () => {
-    const pending = () => new Promise<never>(() => {});
-    const client = new Proxy({} as ApiClient, {
-      get(_target, key) {
-        if (key === 'docsLinking') {
-          return () =>
-            Promise.resolve({
-              docs: [
-                {
-                  doc: { id: 'doc-1', title: 'Burgess spec', status: 'draft' },
-                  rel: 'spec',
-                  source: 'manual',
-                  fromParent: false,
-                },
-              ],
-            });
-        }
-        if (typeof key === 'symbol' || key === 'then') return undefined;
-        return pending;
-      },
-    });
     const opened: [string, string | null][] = [];
     mountPage(task('t-8f2a', 'Apply', {}, BODY), {
-      client,
+      client: clientLinkingASpec([]),
       port: 4100,
       canLinkDocs: true,
       onOpenDoc: (id, anchor) => opened.push([id, anchor]),
@@ -534,11 +540,17 @@ describe('TaskPage', () => {
     expect(row?.nextElementSibling?.textContent).toContain('Docs');
   });
 
-  test('no Docs block for a caller who cannot read docs', () => {
+  test('no Docs block, and no docs request, for a caller who cannot read docs', async () => {
+    const asked: string[] = [];
     mountPage(task('t-8f2a', 'Apply', {}, BODY), {
-      client: clientRecordingUploads([]),
+      client: clientLinkingASpec(asked),
       port: 4100,
+      canLinkDocs: true,
     });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(asked).toEqual([]);
     expect(screen.queryByRole('heading', { name: 'Docs' })).toBeNull();
   });
 
