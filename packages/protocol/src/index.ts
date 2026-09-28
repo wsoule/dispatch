@@ -4,6 +4,7 @@ export {
   GATE_RAISERS,
   gateTypeOf,
   hasGateData,
+  isDecidingAuthor,
   raiserOf,
 } from './constants.js';
 export type { GateRaiser } from './constants.js';

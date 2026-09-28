@@ -4,6 +4,11 @@
 /** The daemon's own identity: sender of gates, notices and breaker flags. */
 export const SYSTEM_ADDRESS = 'agent:dispatch';
 
+/** A human or the system: the only authors whose answers take effect. */
+export function isDecidingAuthor(address: string): boolean {
+  return address === SYSTEM_ADDRESS || address.startsWith('human:');
+}
+
 export type GateRaiser = 'system' | 'system-or-decider' | 'session';
 
 // Who may raise each gate type. A type missing here is system-only.
@@ -42,6 +47,5 @@ export function gateTypeOf(
     return null;
   const type = (m.data as { type: string }).type;
   if (known.has(type)) return type;
-  const from = m.from ?? '';
-  return from === SYSTEM_ADDRESS || from.startsWith('human:') ? type : null;
+  return isDecidingAuthor(m.from ?? '') ? type : null;
 }
