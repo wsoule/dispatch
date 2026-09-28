@@ -1,6 +1,13 @@
 import type { DocRevisionInfo } from '@dispatch/core';
 import { parseDocFile } from '@dispatch/core';
-import { afterAll, describe, expect, it } from 'bun:test';
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from 'bun:test';
 import {
   mkdirSync,
   mkdtempSync,
@@ -11,22 +18,27 @@ import {
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
+import { daemonFilePath } from '../src/commands/daemon.js';
 import { editLoop, exportDocs, importFiles } from '../src/commands/docs.js';
+import type { CliContext } from '../src/context.js';
 import type { DocsApi, ImportReportInfo } from '../src/docsApi.js';
+import { makeProgram } from '../src/program.js';
 
 // A DocsApi whose saveBody answers a scripted sequence and records what it got.
 function fakeApi(
-  outcomes: ('conflict' | 'base-changed' | 'saved' | 'proposed')[]
+  outcomes: ('conflict' | 'base-changed' | 'saved' | 'proposed')[],
+  scope: 'team' | 'personal' = 'team'
 ) {
   const saves: { baseRev: string | number; baseHash?: string; body: string }[] =
     [];
   let seals = 0;
+  const doc = { handle: 'spec', scope };
   const api = {
     get: () =>
       Promise.resolve({
-        doc: { handle: 'spec' },
+        doc,
         rev: { id: 'rev-1', n: 1, hash: 'h1' },
         text: 'original\n',
       }),
@@ -79,6 +91,7 @@ function fakeApi(
       return Promise.resolve({
         ok: true as const,
         result: {
+          doc,
           handle: 'spec',
           rev: { id: 'rev-3', n: 3, hash: 'h3' },
           status: next === 'proposed' ? 'proposed' : 'saved',
@@ -201,6 +214,17 @@ describe('dispatch docs edit', () => {
       })
     ).rejects.toThrow('the editor exited with 1');
     expect(saves).toEqual([]);
+  });
+
+  it('names a personal doc it saved ~slug', async () => {
+    const { api } = fakeApi(['saved'], 'personal');
+    const lines: string[] = [];
+    await editLoop(api, '~spec', {
+      tmpDir,
+      runEditor: (path) => (writeFileSync(path, 'x\n'), 0),
+      log: (l) => lines.push(l),
+    });
+    expect(lines).toEqual(['saved ~spec rev 3']);
   });
 
   it('prints the gate when an accepted doc takes the save as a proposal', async () => {
@@ -396,6 +420,144 @@ describe('dispatch docs export', () => {
     expect('meta' in parsed ? parsed.meta.authors : parsed.error).toEqual([
       'human:wyat',
       'run:r-1',
+    ]);
+  });
+
+  it('keeps a personal and a team doc of one handle in separate files and histories', async () => {
+    const summary = (id: string, scope: string) => ({
+      id,
+      handle: 'notes',
+      title: 'Notes',
+      status: 'draft',
+      scope,
+      updatedAt: '2026-09-26T11:00:00.000Z',
+    });
+    const api = {
+      list: () =>
+        Promise.resolve({
+          docs: [summary('doc-t', 'team'), summary('doc-p', 'personal')],
+          total: 2,
+        }),
+      get: (id: string) =>
+        Promise.resolve({
+          rev: rev(1, [], 'human:wyat'),
+          links: [],
+          text: `${id}\n`,
+        }),
+      history: () => Promise.resolve({ revisions: [rev(1, [], 'human:wyat')] }),
+      revision: (id: string) => Promise.resolve({ body: `${id} rev 1\n` }),
+    } as unknown as DocsApi;
+    const out = join(tmpDir, 'export-scopes');
+    expect(await exportDocs(api, out, true)).toBe(2);
+    expect(readFileSync(join(out, '.history', 'notes', '1.md'), 'utf8')).toBe(
+      'doc-t rev 1\n'
+    );
+    expect(
+      readFileSync(join(out, 'personal', '.history', 'notes', '1.md'), 'utf8')
+    ).toBe('doc-p rev 1\n');
+  });
+});
+
+describe('dispatch docs handles', () => {
+  const personal = {
+    id: 'doc-p',
+    handle: 'notes',
+    title: 'Notes',
+    scope: 'personal',
+    status: 'draft',
+    unreviewed: false,
+    head: { n: 2 },
+  };
+  const team = { ...personal, id: 'doc-t', scope: 'team' };
+  const saved = (rev: number) => ({
+    doc: personal,
+    handle: 'notes',
+    rev: { id: `rev-${rev}`, n: rev, hash: 'h' },
+    status: 'saved',
+  });
+  let root: string;
+  let home: string;
+  let lines: string[];
+  let server: ReturnType<typeof Bun.serve>;
+  const savedHome = process.env.DISPATCH_HOME;
+  const run = (...argv: string[]) => {
+    const ctx: CliContext = { cwd: root, log: (l) => lines.push(l) };
+    return makeProgram(ctx).parseAsync(argv, { from: 'user' });
+  };
+
+  beforeEach(async () => {
+    root = realpathSync(mkdtempSync(join(tmpdir(), 'docs-cmd-root-')));
+    home = realpathSync(mkdtempSync(join(tmpdir(), 'docs-cmd-home-')));
+    process.env.DISPATCH_HOME = home;
+    lines = [];
+    await run('init');
+    lines = [];
+    server = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: (req) => {
+        const { pathname } = new URL(req.url);
+        if (pathname === '/api/health') return Response.json({ ok: true });
+        if (pathname === '/api/docs' && req.method === 'POST')
+          return Response.json(saved(1), { status: 201 });
+        if (pathname === '/api/docs')
+          return Response.json({ docs: [personal, team], total: 2 });
+        if (pathname === '/api/docs/~notes/revert')
+          return Response.json(saved(3));
+        if (pathname === '/api/docs/~notes')
+          return Response.json({
+            doc: personal,
+            rev: { n: 2, author: 'human:wyat' },
+            outline: [],
+            text: 'x\n',
+          });
+        return Response.json({ error: 'not found' }, { status: 404 });
+      },
+    });
+    mkdirSync(dirname(daemonFilePath(root)), { recursive: true });
+    writeFileSync(
+      daemonFilePath(root),
+      JSON.stringify({
+        port: server.port,
+        pid: process.pid,
+        rootDir: root,
+        startedAt: new Date().toISOString(),
+        agentToken: 'agent-token',
+      })
+    );
+  });
+
+  afterEach(() => {
+    void server.stop(true);
+    if (savedHome === undefined) delete process.env.DISPATCH_HOME;
+    else process.env.DISPATCH_HOME = savedHome;
+    rmSync(root, { recursive: true, force: true });
+    rmSync(home, { recursive: true, force: true });
+  });
+
+  it('prints a personal doc as ~slug wherever it names one', async () => {
+    const file = join(root, 'body.md');
+    writeFileSync(file, 'x\n');
+    const token = ['--token', 'app-token'];
+    await run(
+      'docs',
+      'new',
+      'Notes',
+      '--scope',
+      'personal',
+      '--file',
+      file,
+      ...token
+    );
+    await run('docs', 'revert', '~notes', '1', ...token);
+    await run('docs', 'list', ...token);
+    await run('docs', 'show', '~notes', ...token);
+    expect(lines.slice(0, 5)).toEqual([
+      'created ~notes rev 1',
+      'saved ~notes rev 3',
+      '~notes\tdraft\trev 2\tNotes',
+      'notes\tdraft\trev 2\tNotes',
+      '~notes · draft · rev 2 by human:wyat · Notes',
     ]);
   });
 });
