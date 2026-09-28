@@ -15,7 +15,7 @@ import { Button } from '@/ui/button';
 import { EmptyState } from '@/ui/chrome';
 
 export interface TaskPreviewTabProps {
-  data: DispatchProjectData;
+  data: Pick<DispatchProjectData, 'client' | 'port' | 'daemonBaseUrl'>;
   selectedRun: RunMeta | undefined;
 }
 

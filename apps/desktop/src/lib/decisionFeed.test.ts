@@ -91,12 +91,12 @@ describe('pendingDecisionCount', () => {
 });
 
 describe('decisionTarget', () => {
-  test('gates and prompts open the run chat, pinned to the run', () => {
+  test('gates and prompts open the run transcript, pinned to the run', () => {
     for (const kind of ['approval', 'scope-request', 'question'] as const) {
       expect(decisionTarget(item({ kind }))).toEqual({
         kind: 'task',
         taskId: 't-1',
-        tab: 'chat',
+        tab: 'run',
         runId: 'r-1',
       });
     }
@@ -120,17 +120,17 @@ describe('decisionTarget', () => {
     ).toEqual({ kind: 'thread', messageId: 'm-000002' });
   });
 
-  test('a capped fix loop opens the task details tab, where the ruling happens', () => {
+  test('a capped fix loop opens the task review, where the ruling happens', () => {
     expect(
       decisionTarget(item({ kind: 'fix-loop-capped', runId: undefined }))
-    ).toEqual({ kind: 'task', taskId: 't-1', tab: 'details', runId: null });
+    ).toEqual({ kind: 'task', taskId: 't-1', tab: 'review', runId: null });
   });
 
-  test('a stalled run opens its diff — the stranded work is the object', () => {
+  test('a stalled run opens its review — the stranded work is the object', () => {
     expect(decisionTarget(item({ kind: 'run-stalled' }))).toEqual({
       kind: 'task',
       taskId: 't-1',
-      tab: 'diff',
+      tab: 'review',
       runId: 'r-1',
     });
   });

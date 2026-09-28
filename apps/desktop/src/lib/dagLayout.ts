@@ -1,4 +1,4 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 /**
  * The minimal node shape the layout needs — deliberately not `TaskDoc`, so anything with
@@ -15,7 +15,7 @@ export interface DagTask {
 }
 
 /** Adapts a real task to the layout's minimal shape. */
-export function dagTaskFromDoc(doc: TaskDoc): DagTask {
+export function dagTaskFromDoc(doc: TaskListItem): DagTask {
   return {
     id: doc.meta.id,
     title: doc.meta.title,
@@ -240,6 +240,42 @@ function gridLayout(tasks: DagTask[], dims: NodeDims): DagLayoutResult {
 }
 
 /**
+ * The real dependency edges among `tasks`, both ways: `blockedBy` entries pointing outside
+ * the set (or at the task itself) are dropped — the rule every consumer of the layering
+ * shares, so a graph, its waves and the stack rail agree on what a dependency is.
+ */
+function dependencyMaps(tasks: DagTask[]): {
+  byId: Map<string, DagTask>;
+  blockersOf: Map<string, string[]>;
+  dependentsOf: Map<string, string[]>;
+} {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const blockersOf = new Map<string, string[]>();
+  const dependentsOf = new Map<string, string[]>();
+  for (const t of tasks) {
+    const real = t.blockedBy.filter((id) => id !== t.id && byId.has(id));
+    blockersOf.set(t.id, real);
+    for (const blockerId of real) {
+      const bucket = dependentsOf.get(blockerId);
+      if (bucket !== undefined) bucket.push(t.id);
+      else dependentsOf.set(blockerId, [t.id]);
+    }
+  }
+  return { byId, blockersOf, dependentsOf };
+}
+
+/**
+ * Each task's wave: its 0-based layer in the longest-path (Kahn) layering the graph draws
+ * its columns from — wave 0 has no blockers in the set, wave n waits on something in wave
+ * n-1. Unlike `dagLayout`, a set with no edges is one wave rather than a wrapped grid. What
+ * a fan-out's wave bar and the Flight Plan both count in.
+ */
+export function dagWaves(tasks: DagTask[]): Map<string, number> {
+  const { byId, blockersOf, dependentsOf } = dependencyMaps(tasks);
+  return computeLayers(tasks, byId, blockersOf, dependentsOf);
+}
+
+/**
  * Hand-rolled layered ("Sugiyama-style") layout for an epic's dependency graph — no charting
  * library, since an epic's task count tops out in the dozens (see `DAG_NODE_WIDTH`'s comment).
  * `tasks` is expected to be one epic's children; `blockedBy` edges pointing outside that set
@@ -261,19 +297,7 @@ export function dagLayout(
     nodeHeight: opts?.nodeHeight ?? DAG_NODE_HEIGHT,
   };
 
-  const byId = new Map(tasks.map((t) => [t.id, t]));
-
-  const blockersOf = new Map<string, string[]>();
-  const dependentsOf = new Map<string, string[]>();
-  for (const t of tasks) {
-    const real = t.blockedBy.filter((id) => id !== t.id && byId.has(id));
-    blockersOf.set(t.id, real);
-    for (const blockerId of real) {
-      const bucket = dependentsOf.get(blockerId);
-      if (bucket !== undefined) bucket.push(t.id);
-      else dependentsOf.set(blockerId, [t.id]);
-    }
-  }
+  const { byId, blockersOf, dependentsOf } = dependencyMaps(tasks);
 
   const edges: DagEdge[] = [];
   for (const t of tasks) {

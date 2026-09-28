@@ -1,4 +1,5 @@
 import { isClientAddress, isReservedName } from '@dispatch/a2a';
+import { canonicalKind } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
@@ -574,7 +575,10 @@ export function listChannels(ctx: ApiContext): Response {
   const childrenByParent = new Map<string, TaskDoc[]>();
   const epicIds: string[] = [];
   for (const task of ctx.store.list()) {
-    if (task.meta.kind === 'epic') epicIds.push(task.meta.id);
+    // A milestone is what an epic became; its channel keeps the `epic/` name.
+    if (canonicalKind(task.meta.kind) === 'milestone') {
+      epicIds.push(task.meta.id);
+    }
     if (task.meta.parent !== null) {
       const siblings = childrenByParent.get(task.meta.parent);
       if (siblings === undefined)

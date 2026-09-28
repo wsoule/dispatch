@@ -56,11 +56,15 @@ export type GlobalKeyCommand =
   | 'new-task'
   /** Open the keyboard-shortcuts reference (`?`). */
   | 'open-shortcuts'
-  /** The `g` chords: `g s` Settings, `g i` Inbox, `g t` Tasks, `g c` Control room, `g a`
-   * Overseer (Linear's "Agent"). */
+  /** The `g` chords: `g h` Home, `g s` Settings, `g i` Inbox, `g t` Tasks, `g r` Projects
+   * (the roadmap), `g f` Live (work in flight), `g c` Control room, `g a` Overseer
+   * (Linear's "Agent"). */
+  | 'goto-home'
   | 'goto-settings'
   | 'goto-inbox'
   | 'goto-tasks'
+  | 'goto-projects'
+  | 'goto-live'
   | 'goto-control-room'
   | 'goto-overseer'
   /** Jump straight to the Nth entry in the sidebar's primary rail. */
@@ -68,9 +72,12 @@ export type GlobalKeyCommand =
 
 // The second key of each `g` chord.
 const G_CHORDS: Record<string, GlobalKeyCommand> = {
+  h: 'goto-home',
   s: 'goto-settings',
   i: 'goto-inbox',
   t: 'goto-tasks',
+  r: 'goto-projects',
+  f: 'goto-live',
   c: 'goto-control-room',
   a: 'goto-overseer',
 };
@@ -87,6 +94,20 @@ export function resolveChordPrefix(
   if (ctx.isTyping || ctx.modalOpen) return null;
   if (ctx.pendingPrefix !== null) return null;
   return input.key === 'g' ? 'g' : null;
+}
+
+/** The command an armed `g` chord's second key completes, or null. `useGlobalKeyboard`
+ * resolves it before any view sees the key, so a focused list's own `f` (filter), `s` or
+ * `a` (pickers) never eats `g f`, `g s` or `g a`. */
+export function resolveChordKey(
+  input: KeyInput,
+  ctx: GlobalKeyboardContext
+): GlobalKeyCommand | null {
+  if (ctx.pendingPrefix !== 'g') return null;
+  if (input.metaKey || input.ctrlKey || ctx.isTyping || ctx.modalOpen) {
+    return null;
+  }
+  return G_CHORDS[input.key] ?? null;
 }
 
 /** Maps one keydown to the app-root command it should trigger, or `null` if this keystroke
@@ -141,7 +162,7 @@ export function resolveGlobalKeyCommand(
 
   // An armed `g` resolves the chord's second key, or nothing — the hook drops the prefix
   // either way, so a stray `g x` never leaks `x` into a later keystroke.
-  if (ctx.pendingPrefix === 'g') return G_CHORDS[input.key] ?? null;
+  if (ctx.pendingPrefix === 'g') return resolveChordKey(input, ctx);
 
   if (input.key === '[') return 'toggle-sidebar';
   if (input.key === 'c') return 'new-task';

@@ -139,6 +139,13 @@ test('Create task saves the edited draft, dismisses it and leaves', async () => 
   expect(done()).toBe(1);
 });
 
+test('a draft started inside a container saves the task under it', async () => {
+  const { created } = mount({ draft: draftRecord({ parent: 'e-7' }) });
+  fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+  await act(async () => {});
+  expect(created[0]).toMatchObject({ parent: 'e-7' });
+});
+
 test('a failed create keeps the draft with the error inline', async () => {
   const { dismissed, done } = mount({
     onCreate: () => Promise.reject(new Error('daemon said no')),

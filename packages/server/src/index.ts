@@ -1,6 +1,7 @@
 import {
   ActorContext,
   describeDroppedEntry,
+  FileCommentStore,
   formatMigrationReport,
   generateSyncedRunId,
   generateSyncedTaskId,
@@ -18,6 +19,7 @@ import {
 } from '@dispatch/core';
 import type {
   CartoMode,
+  CommentStorePort,
   ExecutorCommand,
   GitReader,
   ProjectStores,
@@ -47,6 +49,7 @@ import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
 import { BrowserRegistry } from './browser/registry.js';
 import { TaskCache } from './cache.js';
+import { compressForNetwork } from './compression.js';
 import { ConversationStore } from './conversations.js';
 import {
   assertRootNotServed,
@@ -86,6 +89,7 @@ import { LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
+import { webhookUrlFor } from './linear/webhook.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
@@ -462,27 +466,35 @@ export function resolveStoreBackend(rootDir: string): TaskStoreBackend {
   return 'sqlite';
 }
 
-// Rebuilds `cache` from `store`, and never lets a rebuild kill the daemon:
-// per-file parse failures are logged once each (they're also surfaced via
-// `cache.problems()` at `GET /api/health`), and if the rebuild throws outright
-// — e.g. the tasks directory itself is unreadable for a moment — that's
-// logged too and the previous (last-good) cache contents are simply left in
-// place, since `TaskCache.rebuild` only mutates its table after a successful
-// scan. This runs both at boot and on every watcher-triggered change, which
-// is exactly where the reviewer reproduced a crash: a bad file must degrade
+// Brings `cache` up to date with `store` — just `ids` when the caller knows
+// which tasks changed, the whole store when it does not — and returns the ids
+// whose rows changed. Never lets that kill the daemon: a parse failure is
+// logged when it first appears (and surfaced via `cache.problems()` at
+// `GET /api/health`), and if the read throws outright — e.g. the tasks
+// directory itself is unreadable for a moment — that's logged too and the
+// last-good rows stay, since the cache only writes after a successful read.
+// This runs both at boot and on every watcher-triggered change, which is
+// exactly where the reviewer reproduced a crash: a bad file must degrade
 // service, not end the process.
-function safeRebuild(store: TaskStorePort, cache: TaskCache): void {
+function safeSync(
+  store: TaskStorePort,
+  cache: TaskCache,
+  ids: readonly string[] | null = null
+): string[] {
   try {
-    const errors = cache.rebuild(store);
-    for (const err of errors) {
-      console.error(
-        `dispatchd: skipping unparsable task file ${err.file}: ${err.message}`
-      );
+    const known = new Set(cache.problems());
+    const changed =
+      ids === null ? cache.resync(store) : cache.refresh(store, ids);
+    for (const problem of cache.problems()) {
+      if (known.has(problem)) continue;
+      console.error(`dispatchd: skipping unparsable task file ${problem}`);
     }
+    return changed;
   } catch (err) {
     console.error(
       `dispatchd: cache rebuild failed, keeping last-good cache: ${(err as Error).message}`
     );
+    return [];
   }
 }
 
@@ -522,7 +534,8 @@ function withCors(
       'content-type, authorization, idempotency-key'
     );
     // The allowed origin is request-dependent, so caches must key on it.
-    res.headers.set('vary', 'origin');
+    // Appended: a gzipped reply already varies by accept-encoding.
+    res.headers.append('vary', 'origin');
   }
   return res;
 }
@@ -1003,31 +1016,37 @@ async function bootServer(
         );
   const store: TaskStorePort = syncedStore ?? stores.tasks;
   const cache = new TaskCache();
-  safeRebuild(store, cache);
   const events = new EventBus();
 
-  // Rebuild + broadcast on any on-disk change, regardless of who made it.
-  // API mutations below also rebuild + broadcast directly, so an API write
-  // will make the watcher fire again for the same change — one `task.changed`
-  // from the handler, one from the watcher noticing the write. We accept that
-  // duplicate rather than adding a suppression window: clients treat
-  // `task.changed` as "go refetch" with no payload, so a duplicate refetch is
-  // harmless, and the plan calls this out as the deliberately simple option.
+  // Refresh + broadcast on any on-disk change, regardless of who made it:
+  // the watcher names the tasks whose files changed, the cache re-reads just
+  // those, and the broadcast names the ones whose content really differs. An
+  // API write refreshes the cache itself before the watcher sees the file, so
+  // its echo compares equal and costs no second `task.changed`. A change the
+  // watcher cannot tie to a task falls back to a full resync. The cache's
+  // first load comes after the watcher's first listing, so nothing between
+  // them is missed.
   //
   // Only the file backend has a directory to watch, and only it needs one:
   // watching exists because a task file can change under a running daemon
   // (a git checkout, a hand edit, the board syncer). On the database backend
   // the daemon is the only writer by construction, so every change already
-  // comes through an API handler that rebuilds and broadcasts itself — there
-  // is no third party to notice.
+  // comes through an API handler that refreshes and broadcasts itself —
+  // there is no third party to notice.
   const watcher =
     store instanceof TaskStore
-      ? watchTasks(store.tasksDir, () => {
-          watchdog.mark('task watcher: cache rebuild');
-          safeRebuild(store, cache);
-          events.broadcast({ type: 'task.changed' });
+      ? watchTasks(store.tasksDir, (ids) => {
+          watchdog.mark('task watcher: cache refresh');
+          const changed = safeSync(store, cache, ids);
+          if (changed.length > 0) {
+            events.broadcast({ type: 'task.changed', ids: changed });
+          }
         })
       : null;
+  safeSync(store, cache);
+  // Serialized now, so the desktop's first request (every task, no bodies)
+  // is answered from memory instead of built during a cold load.
+  cache.queryMetaJson({ includeArchived: true });
 
   // The board syncer: commits and pushes outstanding task files from a
   // private worktree, gated on config.yml's `autoCommit`. No trunk to pin to
@@ -1086,17 +1105,18 @@ async function bootServer(
           rootDir,
           stores,
           actor: actorContext,
-          run: defaultGitRunner,
+          run: defaultAsyncGitRunner,
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
         });
-  // One export before the server serves anything: it creates the log on a
-  // project turning receipts on for the first time, and reconciles one left
-  // dirty by a daemon that died mid-burst. Never fatal — a project that cannot
-  // write its receipt log still has a working board, and exportNow reports
-  // rather than throws.
-  receiptsScheduler?.exportNow();
+  // One full export as the daemon comes up: it creates the log on a project
+  // turning receipts on for the first time, and reconciles one left dirty by a
+  // daemon that died mid-burst. In the background, in slices, so the server
+  // answers while it runs. Never fatal — a project that cannot write its
+  // receipt log still has a working board, and exportNow reports rather than
+  // rejects.
+  void receiptsScheduler?.exportNow();
 
   // Board sync, when on: publish the board as it stands (once, the first
   // time), then exchange changes with the other replicas on the remote. A
@@ -1130,11 +1150,14 @@ async function bootServer(
         branch: syncConfig.branch,
         intervalMs: syncConfig.intervalSec * 1000,
         ...syncSeats(team),
-        // A teammate's change lands like a local edit: the cache is rebuilt
-        // and every client told, so boards refresh without anyone reloading.
+        // A teammate's change lands like a local edit: the cache is resynced
+        // and every client told which tasks moved, so boards refresh without
+        // anyone reloading.
         onBoardChanged: () => {
-          safeRebuild(store, cache);
-          events.broadcast({ type: 'task.changed' });
+          const changed = safeSync(store, cache);
+          if (changed.length > 0) {
+            events.broadcast({ type: 'task.changed', ids: changed });
+          }
         },
       });
       const published = syncedStore.bootstrap();
@@ -1160,7 +1183,7 @@ async function bootServer(
     // ledger entries too, and those announce themselves on their own events.
     // Keyed on `task.changed` alone, a review raising twenty findings would put
     // nothing in the audit trail until an unrelated task edit came along.
-    if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged();
+    if (isReceiptEvent(event)) receiptsScheduler?.notifyChanged(event);
   });
   // The orchestrator's own executor registry: the real 'claude' backend, plus
   // 'codex' when its CLI is installed. A call that omits `executor` runs on
@@ -1191,6 +1214,9 @@ async function bootServer(
   // task merged. One instance, shared by everything that reads findings.
   const findingStore: FindingStorePort =
     stores.records?.findings ?? new FindingStore(rootDir);
+  // Task comments: the database's table, or `.dispatch/comments/` on files.
+  const commentStore: CommentStorePort =
+    stores.records?.comments ?? new FileCommentStore(rootDir);
 
   // The reverse-dependency map ReviewRunner scopes reviews with. Carto backs
   // it when available; the built-in scanner is the fallback. Source changes
@@ -1267,6 +1293,7 @@ async function bootServer(
     events,
     jj,
     findingStore,
+    comments: commentStore,
     // `null` on the file backend, where the run transcript is evidence's only
     // home. On sqlite this is what puts commands and mutations into the
     // database, which is what the receipts exporter materializes the git audit
@@ -1623,9 +1650,15 @@ async function bootServer(
     cache,
     events,
     client: opts.linearClient,
+    localHumanRef: actorContext.humanRef,
+    comments: commentStore,
+    webhookUrl: webhookUrlFor(opts.publicOrigins ?? []),
   });
   const unsubscribeLinear = events.subscribe((event) => {
     if (event.type === 'task.changed') linearSync.notifyTaskChanged();
+    if (event.type === 'comment.changed') {
+      linearSync.notifyCommentChanged(event.taskId, event.commentIds);
+    }
   });
   linearSync.start();
 
@@ -1829,6 +1862,7 @@ async function bootServer(
     inboxTriage,
     findingStore,
     ledgerStore,
+    commentStore,
     reviewRunner,
     verificationRunner,
     fixLoop,
@@ -2005,7 +2039,15 @@ async function bootServer(
             idle === null
               ? await handleApi(req, apiCtx)
               : await idle.track(() => handleApi(req, apiCtx));
-          return withCors(response, origin, ownOriginSet);
+          return withCors(
+            await compressForNetwork(
+              req,
+              response,
+              srv.requestIP(req)?.address ?? null
+            ),
+            origin,
+            ownOriginSet
+          );
         }
 
         if (webDistDir !== null) {
@@ -2154,7 +2196,7 @@ async function bootServer(
       browsers.shutdown();
       boardSyncScheduler?.stop();
       // Before stores.close() below, since the exporter reads the database.
-      receiptsScheduler?.stop();
+      await receiptsScheduler?.stop();
       // `server.stop(true)` force-closes every open connection, WebSockets
       // included — that fires our `websocket.close` handler for each client,
       // which removes it from `events` on the way out. See the note on

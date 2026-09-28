@@ -5,6 +5,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   writeFileSync,
@@ -23,7 +24,11 @@ import {
   isReceiptEvent,
   ReceiptsScheduler,
 } from '../../src/receipts/scheduler.js';
+import type { AsyncGitRunner } from '../../src/sync/worktree.js';
 import { gitReaderFor, run } from '../sync/helpers.js';
+
+// The exporter's runner is async; the tests' own git reads stay synchronous.
+const runAsync: AsyncGitRunner = (cwd, args) => Promise.resolve(run(cwd, args));
 
 let home: string;
 let previousHome: string | undefined;
@@ -67,7 +72,7 @@ function exporterFor(s: ProjectStores): ReceiptsExporter {
   return new ReceiptsExporter(
     s,
     ActorContext.resolve(root, gitReaderFor(root)),
-    run
+    runAsync
   );
 }
 
@@ -78,12 +83,12 @@ function log(dir: string): string[] {
 }
 
 describe('ReceiptsExporter', () => {
-  it('creates the log as a git repository and commits the first export', () => {
+  it('creates the log as a git repository and commits the first export', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
 
-    const result = exporterFor(s).exportOnce(dir);
+    const result = await exporterFor(s).exportOnce(dir);
 
     expect(result.state).toBe('committed');
     expect(result.commit).toMatch(/^[0-9a-f]{40}$/);
@@ -98,29 +103,29 @@ describe('ReceiptsExporter', () => {
     expect(tracked).toMatch(/\.dispatch\/tasks\/t-[0-9a-f]{6}-first-task\.md/);
   });
 
-  it('commits nothing when the database has not changed', () => {
+  it('commits nothing when the database has not changed', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
     const exporter = exporterFor(s);
-    exporter.exportOnce(dir);
+    await exporter.exportOnce(dir);
 
-    const second = exporter.exportOnce(dir);
+    const second = await exporter.exportOnce(dir);
 
     expect(second.state).toBe('clean');
     expect(second.commit).toBeNull();
     expect(log(dir)).toHaveLength(1);
   });
 
-  it('records an edit as a new commit, so git log is the task history', () => {
+  it('records an edit as a new commit, so git log is the task history', async () => {
     const s = stores();
     const task = s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
     const exporter = exporterFor(s);
-    exporter.exportOnce(dir);
+    await exporter.exportOnce(dir);
 
     s.tasks.update(task.meta.id, { status: 'review' });
-    const result = exporter.exportOnce(dir);
+    const result = await exporter.exportOnce(dir);
 
     expect(result.state).toBe('committed');
     expect(log(dir)).toHaveLength(2);
@@ -135,15 +140,15 @@ describe('ReceiptsExporter', () => {
     expect(before).toContain('status: ready');
   });
 
-  it('commits the deletion when a task leaves the database', () => {
+  it('commits the deletion when a task leaves the database', async () => {
     const s = stores();
     const task = s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
     const exporter = exporterFor(s);
-    exporter.exportOnce(dir);
+    await exporter.exportOnce(dir);
 
     s.tasks.remove(task.meta.id);
-    const result = exporter.exportOnce(dir);
+    const result = await exporter.exportOnce(dir);
 
     expect(result.state).toBe('committed');
     expect(result.removed).toBe(1);
@@ -163,38 +168,58 @@ describe('ReceiptsExporter', () => {
     expect(revived.status).toBe(0);
   });
 
-  it('commits a tree left dirty by a daemon that died before committing', () => {
+  it('commits a tree left dirty by a daemon that died before committing', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
     const exporter = exporterFor(s);
-    exporter.exportOnce(dir);
+    await exporter.exportOnce(dir);
     // What a kill -9 between materialize and commit leaves behind. The
     // materializer will report nothing changed, so only asking git keeps this
     // from sitting uncommitted forever.
     writeFileSync(join(dir, '.dispatch', 'stray.jsonl'), '{"orphan":true}\n');
 
-    const result = exporter.exportOnce(dir);
+    const result = await exporter.exportOnce(dir);
 
     expect(result.state).toBe('committed');
     expect(log(dir)).toHaveLength(2);
   });
 
-  it('reports a failure instead of throwing out of the daemon', () => {
+  it('reports a failure instead of throwing out of the daemon', async () => {
     const s = stores();
     // A path that cannot be a directory, so `mkdir` inside ensureRepo fails.
     const blocked = logDir('blocked');
     writeFileSync(blocked, 'not a directory');
 
-    const result = exporterFor(s).exportOnce(blocked);
+    const result = await exporterFor(s).exportOnce(blocked);
 
     expect(result.state).toBe('failed');
     expect(result.commit).toBeNull();
   });
 });
 
+describe('ReceiptsExporter slicing', () => {
+  it('hands the event loop back mid-pass, and gives up there when stopped', async () => {
+    const s = stores();
+    for (let i = 0; i < 600; i += 1) {
+      s.tasks.create({ kind: 'task', title: `Task ${i}` });
+    }
+    const dir = logDir();
+
+    const result = await exporterFor(s).exportOnce(dir, {}, () => true);
+
+    expect(result.state).toBe('failed');
+    expect(result.detail).toContain('stopped');
+    // It yielded before the last task, and committed none of what it wrote.
+    const written = readdirSync(join(dir, '.dispatch', 'tasks')).length;
+    expect(written).toBeGreaterThan(0);
+    expect(written).toBeLessThan(600);
+    expect(log(dir)).toEqual([]);
+  });
+});
+
 describe('ReceiptsExporter ownership', () => {
-  it('refuses to adopt a directory it did not create', () => {
+  it('refuses to adopt a directory it did not create', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     // Someone's real repository: `receipts.dir` pointed at a checkout, or at
@@ -216,7 +241,7 @@ describe('ReceiptsExporter ownership', () => {
     ]);
     const before = run(theirs, ['rev-parse', 'HEAD']).stdout.trim();
 
-    const result = exporterFor(s).exportOnce(theirs);
+    const result = await exporterFor(s).exportOnce(theirs);
 
     expect(result.state).toBe('failed');
     expect(result.detail).toContain('not created by dispatch');
@@ -227,23 +252,23 @@ describe('ReceiptsExporter ownership', () => {
     expect(run(theirs, ['status', '--porcelain']).stdout.trim()).toBe('');
   });
 
-  it('refuses a log inside the project repo', () => {
+  it('refuses a log inside the project repo', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
 
     // `receipts.dir: .` — the most damaging plausible typo.
-    const result = exporterFor(s).exportOnce(root);
+    const result = await exporterFor(s).exportOnce(root);
 
     expect(result.state).toBe('failed');
     expect(result.detail).toContain('inside the project itself');
     expect(existsSync(join(root, 'README.md'))).toBe(false);
   });
 
-  it('refuses a log that belongs to a different project', () => {
+  it('refuses a log that belongs to a different project', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
-    expect(exporterFor(s).exportOnce(dir).state).toBe('committed');
+    expect((await exporterFor(s).exportOnce(dir)).state).toBe('committed');
     // The same directory, now claimed by a second project — two boards pruning
     // each other's task files and committing the deletions.
     const otherRoot = mkdtempSync(join(tmpdir(), 'dispatch-other-project-'));
@@ -254,10 +279,10 @@ describe('ReceiptsExporter ownership', () => {
     });
     opened.push(other);
 
-    const result = new ReceiptsExporter(
+    const result = await new ReceiptsExporter(
       other,
       ActorContext.resolve(root, gitReaderFor(root)),
-      run
+      runAsync
     ).exportOnce(dir);
 
     expect(result.state).toBe('failed');
@@ -265,41 +290,41 @@ describe('ReceiptsExporter ownership', () => {
     rmSync(otherRoot, { recursive: true, force: true });
   });
 
-  it('adopts a log it created before, and one whose .git was deleted', () => {
+  it('adopts a log it created before, and one whose .git was deleted', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
     const exporter = exporterFor(s);
-    expect(exporter.exportOnce(dir).state).toBe('committed');
+    expect((await exporter.exportOnce(dir)).state).toBe('committed');
 
     // Second pass: the marker proves ownership, so it is adopted, not refused.
-    expect(exporter.exportOnce(dir).state).toBe('clean');
+    expect((await exporter.exportOnce(dir)).state).toBe('clean');
 
     // The marker, not the repository, is what proves ownership — a log whose
     // .git someone deleted is still ours to rebuild.
     rmSync(join(dir, '.git'), { recursive: true, force: true });
-    const rebuilt = exporter.exportOnce(dir);
+    const rebuilt = await exporter.exportOnce(dir);
     expect(rebuilt.state).toBe('committed');
     expect(log(dir)).toHaveLength(1);
   });
 
-  it('reports rather than throws when git is not on PATH', () => {
+  it('reports rather than rejects when git is not on PATH', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
-    // Bun.spawnSync THROWS on a missing executable rather than returning a
-    // non-zero status, and every caller of exportOnce is a timer callback or
-    // the boot path — an escaping throw there takes the daemon down.
-    const missingGit: typeof run = (cwd, args) => {
+    // Spawning THROWS on a missing executable rather than returning a non-zero
+    // status, and every caller of exportOnce is a timer callback or the boot
+    // path — an escaping rejection there takes the daemon down.
+    const missingGit: AsyncGitRunner = (cwd, args) => {
       const result = Bun.spawnSync(['definitely-not-git', ...args], {
         cwd,
         stdout: 'pipe',
         stderr: 'pipe',
       });
-      return {
+      return Promise.resolve({
         status: result.exitCode,
         stdout: result.stdout.toString('utf8'),
         stderr: result.stderr.toString('utf8'),
-      };
+      });
     };
     const exporter = new ReceiptsExporter(
       s,
@@ -307,14 +332,11 @@ describe('ReceiptsExporter ownership', () => {
       missingGit
     );
 
-    let result: ReturnType<typeof exporter.exportOnce> | undefined;
-    expect(() => {
-      result = exporter.exportOnce(logDir());
-    }).not.toThrow();
-    expect(result?.state).toBe('failed');
+    const result = await exporter.exportOnce(logDir());
+    expect(result.state).toBe('failed');
   });
 
-  it('does not stall on a machine-global commit signing policy', () => {
+  it('does not stall on a machine-global commit signing policy', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
@@ -342,7 +364,7 @@ describe('ReceiptsExporter ownership', () => {
     const previousGlobal = process.env.GIT_CONFIG_GLOBAL;
     process.env.GIT_CONFIG_GLOBAL = gitconfig;
     try {
-      expect(exporterFor(s).exportOnce(dir).state).toBe('committed');
+      expect((await exporterFor(s).exportOnce(dir)).state).toBe('committed');
       // The policy really is in effect for the log — and stays in effect,
       // because the override rides on each command rather than being written
       // into the log's own config, where it could drift or be lost.
@@ -359,11 +381,11 @@ describe('ReceiptsExporter ownership', () => {
     }
   });
 
-  it('attributes commits without writing identity into the repo config', () => {
+  it('attributes commits without writing identity into the repo config', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const dir = logDir();
-    expect(exporterFor(s).exportOnce(dir).state).toBe('committed');
+    expect((await exporterFor(s).exportOnce(dir)).state).toBe('committed');
 
     const author = run(dir, ['log', '--format=%an <%ae>', '-1']).stdout.trim();
     expect(author).not.toBe('');
@@ -436,12 +458,16 @@ describe('isReceiptEvent', () => {
 });
 
 describe('ReceiptsScheduler', () => {
-  function schedulerFor(s: ProjectStores, debounceMs = 5): ReceiptsScheduler {
+  function schedulerFor(
+    s: ProjectStores,
+    debounceMs = 5,
+    git: AsyncGitRunner = runAsync
+  ): ReceiptsScheduler {
     return new ReceiptsScheduler({
       rootDir: root,
       stores: s,
       actor: ActorContext.resolve(root, gitReaderFor(root)),
-      run,
+      run: git,
       events: new EventBus(),
       debounceMs,
       // Large enough never to fire: these tests assert exact commit counts, and
@@ -450,22 +476,32 @@ describe('ReceiptsScheduler', () => {
     });
   }
 
-  it('exports once at boot', () => {
+  // Polls until the log holds `count` commits. An export's git runs as child
+  // processes, so no fixed sleep outlasts it on a loaded machine.
+  async function waitForCommits(dir: string, count: number): Promise<void> {
+    for (let i = 0; i < 400; i++) {
+      if (existsSync(join(dir, '.git')) && log(dir).length >= count) return;
+      await Bun.sleep(25);
+    }
+    throw new Error(`the receipt log never reached ${count} commit(s)`);
+  }
+
+  it('exports once at boot', async () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const scheduler = schedulerFor(s);
 
-    const result = scheduler.exportNow();
+    const result = await scheduler.exportNow();
 
     expect(result?.state).toBe('committed');
     expect(log(defaultReceiptsDir(root))).toHaveLength(1);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
   it('coalesces a burst of changes into a single commit', async () => {
     const s = stores();
     const scheduler = schedulerFor(s, 10);
-    scheduler.exportNow();
+    await scheduler.exportNow();
     const dir = defaultReceiptsDir(root);
     const before = log(dir).length;
 
@@ -473,17 +509,84 @@ describe('ReceiptsScheduler', () => {
       s.tasks.create({ kind: 'task', title: `Task ${i}` });
       scheduler.notifyChanged();
     }
-    await Bun.sleep(60);
+    await waitForCommits(dir, before + 1);
+    await Bun.sleep(100);
 
     expect(log(dir).length).toBe(before + 1);
     expect(log(dir)[0]).toContain('5 task(s)');
-    scheduler.stop();
+    await scheduler.stop();
+  });
+
+  it('exports just the tasks a change names, until a full pass', async () => {
+    const s = stores();
+    const named = s.tasks.create({ kind: 'task', title: 'Named' });
+    const other = s.tasks.create({ kind: 'task', title: 'Other' });
+    const scheduler = schedulerFor(s, 10);
+    await scheduler.exportNow();
+    const dir = defaultReceiptsDir(root);
+    const before = log(dir).length;
+    const otherFile = `.dispatch/tasks/${other.meta.id}-other.md`;
+
+    s.tasks.update(named.meta.id, { status: 'review' });
+    s.tasks.update(other.meta.id, { status: 'review' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [named.meta.id] });
+    await waitForCommits(dir, before + 1);
+
+    // Tasks only: the records were not rewritten, so they are not counted.
+    expect(log(dir)[0]).toBe('receipts: 2 task(s)');
+    const touched = run(dir, ['show', '--name-only', '--format=', 'HEAD']);
+    expect(touched.stdout.trim()).toBe(
+      `.dispatch/tasks/${named.meta.id}-named.md`
+    );
+    expect(run(dir, ['show', `HEAD:${otherFile}`]).stdout).toContain(
+      'status: ready'
+    );
+
+    await scheduler.exportNow();
+    expect(run(dir, ['show', `HEAD:${otherFile}`]).stdout).toContain(
+      'status: review'
+    );
+    await scheduler.stop();
+  });
+
+  it('holds a change that arrives mid-pass for the next pass', async () => {
+    const s = stores();
+    const first = s.tasks.create({ kind: 'task', title: 'First' });
+    // Parks the first pass at its `git add` until the test lets it go.
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let gated = false;
+    const git: AsyncGitRunner = async (cwd, args) => {
+      if (args[0] === 'add' && !gated) {
+        gated = true;
+        await gate;
+      }
+      return run(cwd, args);
+    };
+    const scheduler = schedulerFor(s, 5, git);
+    const dir = defaultReceiptsDir(root);
+    const booting = scheduler.exportNow();
+    while (!gated) await Bun.sleep(5);
+
+    const late = s.tasks.create({ kind: 'task', title: 'Late' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [late.meta.id] });
+    await Bun.sleep(30);
+    release();
+    await booting;
+    await waitForCommits(dir, 2);
+
+    const tracked = run(dir, ['ls-tree', '-r', '--name-only', 'HEAD']).stdout;
+    expect(tracked).toContain(`${first.meta.id}-first.md`);
+    expect(tracked).toContain(`${late.meta.id}-late.md`);
+    await scheduler.stop();
   });
 
   it('exports a finding raised with no task edit at all', async () => {
     const s = stores();
     const scheduler = schedulerFor(s, 10);
-    scheduler.exportNow();
+    await scheduler.exportNow();
     const dir = defaultReceiptsDir(root);
     const before = log(dir).length;
     const records = s.records;
@@ -498,12 +601,11 @@ describe('ReceiptsScheduler', () => {
       raisedBy: 'reviewer',
     });
     // What the daemon does on `finding.changed` — no task was touched.
-    scheduler.notifyChanged();
-    await Bun.sleep(60);
+    scheduler.notifyChanged({ type: 'finding.changed' });
+    await waitForCommits(dir, before + 1);
 
-    expect(log(dir).length).toBe(before + 1);
     expect(log(dir)[0]).toContain('1 finding(s)');
-    scheduler.stop();
+    await scheduler.stop();
   });
 
   it('sweeps up evidence, which changes without emitting any event', async () => {
@@ -515,12 +617,12 @@ describe('ReceiptsScheduler', () => {
       rootDir: root,
       stores: s,
       actor: ActorContext.resolve(root, gitReaderFor(root)),
-      run,
+      run: runAsync,
       events: new EventBus(),
       debounceMs: 10,
       sweepMs: 15,
     });
-    scheduler.exportNow();
+    await scheduler.exportNow();
     const dir = defaultReceiptsDir(root);
     const before = log(dir).length;
     const records = s.records;
@@ -533,10 +635,9 @@ describe('ReceiptsScheduler', () => {
       summary: '1 pass',
       at: '2026-09-01T10:00:00.000Z',
     });
-    await Bun.sleep(80);
-    scheduler.stop();
+    await waitForCommits(dir, before + 1);
+    await scheduler.stop();
 
-    expect(log(dir).length).toBeGreaterThan(before);
     expect(
       existsSync(join(dir, '.dispatch', 'evidence', 'r-000009.jsonl'))
     ).toBe(true);
@@ -551,12 +652,12 @@ describe('ReceiptsScheduler', () => {
     s.tasks.create({ kind: 'task', title: 'First task' });
     const scheduler = schedulerFor(s);
 
-    expect(scheduler.exportNow()).toBeNull();
+    expect(await scheduler.exportNow()).toBeNull();
     scheduler.notifyChanged();
-    await Bun.sleep(40);
+    await Bun.sleep(100);
 
     expect(existsSync(defaultReceiptsDir(root))).toBe(false);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
   it('picks up a config edit that re-enables it, without a restart', async () => {
@@ -567,40 +668,129 @@ describe('ReceiptsScheduler', () => {
     const s = stores();
     s.tasks.create({ kind: 'task', title: 'First task' });
     const scheduler = schedulerFor(s);
-    expect(scheduler.exportNow()).toBeNull();
+    expect(await scheduler.exportNow()).toBeNull();
 
     writeFileSync(
       join(root, '.dispatch', 'config.yml'),
       'receipts:\n  enabled: true\n'
     );
     scheduler.notifyChanged();
-    await Bun.sleep(40);
+    await waitForCommits(defaultReceiptsDir(root), 1);
 
     expect(log(defaultReceiptsDir(root))).toHaveLength(1);
-    scheduler.stop();
+    await scheduler.stop();
   });
 
-  it('stands down on an unreadable config instead of taking the daemon down', () => {
+  // The files a log's HEAD holds.
+  function tracked(dir: string): string[] {
+    return run(dir, ['ls-tree', '-r', '--name-only', 'HEAD'])
+      .stdout.trim()
+      .split('\n');
+  }
+  const taskFiles = (dir: string): string[] =>
+    tracked(dir).filter((f) => f.startsWith('.dispatch/tasks/'));
+
+  it('writes the whole board when a change re-enables it, not just that change', async () => {
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'receipts:\n  enabled: false\n'
+    );
+    const s = stores();
+    const edited = s.tasks.create({ kind: 'task', title: 'Edited' });
+    s.tasks.create({ kind: 'task', title: 'Untouched' });
+    s.tasks.create({ kind: 'task', title: 'Also untouched' });
+    const scheduler = schedulerFor(s);
+    expect(await scheduler.exportNow()).toBeNull();
+
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'receipts:\n  enabled: true\n'
+    );
+    s.tasks.update(edited.meta.id, { status: 'review' });
+    // What the daemon broadcasts for an ordinary edit.
+    scheduler.notifyChanged({ type: 'task.changed', ids: [edited.meta.id] });
+    const dir = defaultReceiptsDir(root);
+    await waitForCommits(dir, 1);
+
+    expect(taskFiles(dir)).toHaveLength(3);
+    expect(tracked(dir)).toContain('README.md');
+    await scheduler.stop();
+  });
+
+  it('rebuilds a log deleted under it whole, from a change naming one task', async () => {
+    const s = stores();
+    const edited = s.tasks.create({ kind: 'task', title: 'Edited' });
+    s.tasks.create({ kind: 'task', title: 'Untouched' });
+    const scheduler = schedulerFor(s);
+    await scheduler.exportNow();
+    const dir = defaultReceiptsDir(root);
+    rmSync(dir, { recursive: true, force: true });
+
+    s.tasks.update(edited.meta.id, { status: 'review' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [edited.meta.id] });
+    await waitForCommits(dir, 1);
+
+    expect(taskFiles(dir)).toHaveLength(2);
+    expect(tracked(dir)).toContain('README.md');
+    await scheduler.stop();
+  });
+
+  it('writes the whole board when receipts.dir points back at an older log', async () => {
+    const s = stores();
+    const edited = s.tasks.create({ kind: 'task', title: 'Edited' });
+    const other = s.tasks.create({ kind: 'task', title: 'Other' });
+    const scheduler = schedulerFor(s);
+    await scheduler.exportNow();
+    const first = defaultReceiptsDir(root);
+    const otherFile = `.dispatch/tasks/${other.meta.id}-other.md`;
+
+    // Away to another log, where the other task moves on.
+    const second = logDir('elsewhere');
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      `receipts:\n  dir: ${second}\n`
+    );
+    s.tasks.update(other.meta.id, { status: 'review' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [other.meta.id] });
+    await waitForCommits(second, 1);
+
+    // And back: a change naming only the edited task still brings the
+    // first log's copy of the other one up to date.
+    writeFileSync(
+      join(root, '.dispatch', 'config.yml'),
+      'receipts:\n  enabled: true\n'
+    );
+    s.tasks.update(edited.meta.id, { status: 'review' });
+    scheduler.notifyChanged({ type: 'task.changed', ids: [edited.meta.id] });
+    await waitForCommits(first, 2);
+
+    expect(run(first, ['show', `HEAD:${otherFile}`]).stdout).toContain(
+      'status: review'
+    );
+    await scheduler.stop();
+  });
+
+  it('stands down on an unreadable config instead of taking the daemon down', async () => {
     writeFileSync(join(root, '.dispatch', 'config.yml'), 'receipts: [oh no\n');
     const s = stores();
     const scheduler = schedulerFor(s);
 
-    expect(() => scheduler.exportNow()).not.toThrow();
-    expect(scheduler.exportNow()).toBeNull();
-    scheduler.stop();
+    expect(await scheduler.exportNow()).toBeNull();
+    expect(await scheduler.exportNow()).toBeNull();
+    await scheduler.stop();
   });
 
   it('makes no further commits after stop()', async () => {
     const s = stores();
     const scheduler = schedulerFor(s, 10);
-    scheduler.exportNow();
+    await scheduler.exportNow();
     const dir = defaultReceiptsDir(root);
     const before = log(dir).length;
 
     s.tasks.create({ kind: 'task', title: 'Late task' });
     scheduler.notifyChanged();
-    scheduler.stop();
-    await Bun.sleep(40);
+    await scheduler.stop();
+    await Bun.sleep(60);
 
     expect(log(dir).length).toBe(before);
   });

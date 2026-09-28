@@ -4,7 +4,7 @@ import type { NavState } from './appNav';
 import { initialNavState, navReducer } from './appNav';
 
 describe('navReducer', () => {
-  test('selectProject switches section to project, defaults to overview, and clears peek/run', () => {
+  test('selectProject switches section to project, lands on the Cockpit home, and clears peek/run', () => {
     const state: NavState = {
       ...initialNavState,
       section: 'global',
@@ -19,7 +19,7 @@ describe('navReducer', () => {
     });
     expect(next.section).toBe('project');
     expect(next.activeProjectId).toBe('proj-a');
-    expect(next.projectView).toBe('overview');
+    expect(next.projectView).toBe('cockpit');
     expect(next.peekTaskId).toBeNull();
     expect(next.activeRunId).toBeNull();
   });
@@ -286,7 +286,7 @@ describe('navReducer', () => {
     state = navReducer(state, {
       type: 'openTask',
       taskId: 'task-42',
-      tab: 'chat',
+      tab: 'run',
       runId: 'run-42',
     });
 
@@ -301,7 +301,7 @@ describe('navReducer', () => {
     state = navReducer(state, {
       type: 'openTask',
       taskId: 'task-9',
-      tab: 'chat',
+      tab: 'run',
       runId: 'run-7',
     });
 
@@ -328,7 +328,7 @@ describe('history', () => {
   const view = (state: NavState) => `${state.section}:${state.projectView}`;
 
   test('back returns to where you came from, not a fixed destination', () => {
-    let state = initialNavState; // overview
+    let state = initialNavState; // cockpit
     state = navReducer(state, { type: 'setProjectView', view: 'inbox' });
     state = navReducer(state, { type: 'setProjectView', view: 'branches' });
     expect(view(state)).toBe('project:branches');
@@ -336,7 +336,7 @@ describe('history', () => {
     state = navReducer(state, { type: 'back' });
     expect(view(state)).toBe('project:inbox');
     state = navReducer(state, { type: 'back' });
-    expect(view(state)).toBe('project:overview');
+    expect(view(state)).toBe('project:cockpit');
   });
 
   test('forward works after going back', () => {
@@ -345,7 +345,7 @@ describe('history', () => {
       view: 'inbox',
     });
     state = navReducer(state, { type: 'back' });
-    expect(view(state)).toBe('project:overview');
+    expect(view(state)).toBe('project:cockpit');
     state = navReducer(state, { type: 'forward' });
     expect(view(state)).toBe('project:inbox');
   });
@@ -371,7 +371,7 @@ describe('history', () => {
   test('re-selecting the current view does not add an entry', () => {
     const state = navReducer(initialNavState, {
       type: 'setProjectView',
-      view: 'overview',
+      view: 'cockpit',
     });
     expect(state.history).toHaveLength(1);
   });
@@ -565,22 +565,22 @@ describe('openTask', () => {
     const state = navReducer(peeked, {
       type: 'openTask',
       taskId: 't-1',
-      tab: 'chat',
+      tab: 'run',
       runId: 'r-9',
     });
     expect(state.projectView).toBe('task');
     expect(state.activeTaskId).toBe('t-1');
-    expect(state.taskTab).toBe('chat');
+    expect(state.taskTab).toBe('run');
     expect(state.activeRunId).toBe('r-9');
     expect(state.peekTaskId).toBeNull();
   });
 
-  test('defaults tab to details and run to null', () => {
+  test('defaults tab to auto and run to null', () => {
     const state = navReducer(initialNavState, {
       type: 'openTask',
       taskId: 't-1',
     });
-    expect(state.taskTab).toBe('details');
+    expect(state.taskTab).toBe('auto');
     expect(state.activeRunId).toBeNull();
   });
 
@@ -595,7 +595,7 @@ describe('openTask', () => {
     const forward = navReducer(back, { type: 'forward' });
     expect(forward.projectView).toBe('task');
     expect(forward.activeTaskId).toBe('t-1');
-    expect(forward.taskTab).toBe('details');
+    expect(forward.taskTab).toBe('auto');
   });
 
   test('re-opening the identical task/tab/run is not a new destination', () => {
@@ -619,15 +619,15 @@ describe('setTaskTab', () => {
       type: 'openTask',
       taskId: 't-1',
     });
-    const switched = navReducer(opened, { type: 'setTaskTab', tab: 'diff' });
-    expect(switched.taskTab).toBe('diff');
+    const switched = navReducer(opened, { type: 'setTaskTab', tab: 'review' });
+    expect(switched.taskTab).toBe('review');
     expect(switched.history.length).toBe(opened.history.length);
   });
 
   test('is a no-op off the task view', () => {
     const state = navReducer(initialNavState, {
       type: 'setTaskTab',
-      tab: 'diff',
+      tab: 'review',
     });
     expect(state).toBe(initialNavState);
   });
@@ -663,7 +663,7 @@ describe('task view teardown', () => {
       projectId: 'p-2',
     });
     expect(switched.activeTaskId).toBeNull();
-    expect(switched.projectView).toBe('overview');
+    expect(switched.projectView).toBe('cockpit');
   });
 
   test('escape on the task view acts as back', () => {

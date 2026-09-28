@@ -14,8 +14,20 @@ function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-interface TaskDocBody {
+interface TaskDocMeta {
+  meta: { id: string };
+}
+
+interface ThreadComment {
+  author: string;
   body: string;
+}
+
+// The route now writes into the task's comment thread; read that back.
+async function thread(taskId: string): Promise<ThreadComment[]> {
+  return json<ThreadComment[]>(
+    await fetch(`${baseUrl}/api/tasks/${taskId}/comments`)
+  );
 }
 
 async function waitFor(
@@ -120,32 +132,39 @@ function postComment(
   });
 }
 
-// Covers the exact path packages/mcp/src/tools.ts's task_comment proxies
-// through when a live run + healthy daemon can resolve the calling agent.
-describe('a task comment records who left it', () => {
+// The pre-thread route older MCP servers' task_comment still proxies to.
+describe('a legacy task note records who left it, in the thread', () => {
   it('credits the agent running the run named by runId', async () => {
     const taskId = await createTask('mid-run note');
     const runId = await liveRun(taskId);
-    const doc = await json<TaskDocBody>(
+    const doc = await json<TaskDocMeta>(
       await postComment(taskId, { text: 'made progress', runId })
     );
-    expect(doc.body).toContain('made progress — agent:test/claude');
+    // Still answers with the task, which is what old servers read.
+    expect(doc.meta.id).toBe(taskId);
+    expect(await thread(taskId)).toMatchObject([
+      { author: 'agent:test/claude', body: 'made progress' },
+    ]);
   });
 
   it("credits 'none', not the local human, when runId doesn't resolve to a known run", async () => {
     const taskId = await createTask('stale run');
-    const doc = await json<TaskDocBody>(
-      await postComment(taskId, { text: 'made progress', runId: 'r-nosuch1' })
-    );
-    expect(doc.body).toContain('made progress — none');
+    await postComment(taskId, { text: 'made progress', runId: 'r-nosuch1' });
+    expect(await thread(taskId)).toMatchObject([
+      { author: 'none', body: 'made progress' },
+    ]);
   });
 
   it("credits 'none' when no runId is given at all — this endpoint has no direct-human caller", async () => {
     const taskId = await createTask('no run context');
-    const doc = await json<TaskDocBody>(
+    const doc = await json<{ body: string }>(
       await postComment(taskId, { text: 'made progress' })
     );
-    expect(doc.body).toContain('made progress — none');
+    // Nothing lands in Activity any more.
+    expect(doc.body).not.toContain('made progress');
+    expect(await thread(taskId)).toMatchObject([
+      { author: 'none', body: 'made progress' },
+    ]);
   });
 
   it('404s an unknown task', async () => {

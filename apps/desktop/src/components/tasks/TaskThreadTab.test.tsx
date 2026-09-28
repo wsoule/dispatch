@@ -11,6 +11,8 @@ import {
 import { expect, mock, test } from 'bun:test';
 
 import type { MessageAccess } from '../../lib/daemonAuth';
+import type { RefAction } from '../../lib/threadSources';
+import { openRefWith } from '../../lib/threadSources';
 import { dataWith } from '../settings/fixtures.test-helper';
 import { TaskThreadTab } from './TaskThreadTab';
 
@@ -67,7 +69,8 @@ function clientWith(threads: Message[]) {
 
 function renderTab(
   client: ReturnType<typeof clientWith>,
-  access: MessageAccess = DECIDER
+  access: MessageAccess = DECIDER,
+  onOpenRef: (action: RefAction) => void = () => {}
 ) {
   const data = dataWith({
     client: client as unknown as ApiClient,
@@ -90,7 +93,7 @@ function renderTab(
       <TaskThreadTab
         data={data}
         taskId="t-000001"
-        onOpenRef={() => {}}
+        onOpenRef={onOpenRef}
         onOpenOverseer={() => {}}
       />
     </QueryClientProvider>
@@ -136,6 +139,57 @@ test("lists the task's threads, opens one, and sends to the task by default", as
   );
   // The sent message's thread opens.
   await waitFor(() => expect(client.getMessage).toHaveBeenCalledWith('m-02'));
+});
+
+// A run's note to its task, pointing at a task, a file, another message and a doc section.
+const note: Message = {
+  ...root,
+  to: ['task:t-000001'],
+  body: 'Moved the cart schema',
+  refs: [
+    { type: 'task', id: 't-000002' },
+    { type: 'file', id: 'src/cart.ts' },
+    { type: 'message', id: 'm-00' },
+    { type: 'doc', id: 'doc-01K', at: 'api' },
+  ],
+};
+
+test("a thread's links go where they point: a task to its page, a run to its transcript", async () => {
+  const went: string[] = [];
+  const client = clientWith([note]);
+  client.getMessage = mock(() => Promise.resolve(note));
+  client.getThread = mock(() =>
+    Promise.resolve({ messages: [note], deliveries: [] })
+  );
+  renderTab(
+    client,
+    DECIDER,
+    openRefWith({
+      openTask: (taskId, tab, runId) =>
+        went.push(['task', taskId, tab, runId].filter(Boolean).join(' ')),
+      openThread: (messageId) => went.push(`thread ${messageId}`),
+      openImpact: (subject) =>
+        went.push(`impact ${subject.kind} ${subject.id}`),
+      openDoc: (docId, anchor) => went.push(`doc ${docId} ${anchor}`),
+    })
+  );
+  const list = screen.getByRole('complementary', { name: 'Thread list' });
+  fireEvent.click(
+    await within(list).findByRole('option', { name: /Moved the cart schema/ })
+  );
+  const thread = screen.getByRole('region', { name: 'Thread' });
+  fireEvent.click(await within(thread).findByText('task:t-000002'));
+  fireEvent.click(within(thread).getByText('file:src/cart.ts'));
+  fireEvent.click(within(thread).getByText('message:m-00'));
+  fireEvent.click(within(thread).getByText('doc:doc-01K#api'));
+  fireEvent.click(within(thread).getByRole('button', { name: /r-000001/ }));
+  expect(went).toEqual([
+    'task t-000002 auto',
+    'impact file src/cart.ts',
+    'thread m-00',
+    'doc doc-01K api',
+    'task t-000001 run r-000001',
+  ]);
 });
 
 test('a task with no messages says so', async () => {

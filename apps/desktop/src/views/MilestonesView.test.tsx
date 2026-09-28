@@ -6,11 +6,21 @@ import type {
   RunMeta,
 } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { statusModelOf } from '@dispatch/core/browser';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { type ReactNode, useEffect } from 'react';
 
-import { testConfig } from '../components/settings/fixtures.test-helper';
+import {
+  linearWorkflowConfig,
+  testConfig,
+} from '../components/settings/fixtures.test-helper';
 import {
   type CreateTaskPreset,
   type ShellActions,
@@ -24,10 +34,16 @@ import {
   TOGGLED_MILESTONES_STORAGE_KEY,
 } from '../lib/collapsedEpics';
 import type { WorkEpicOptions } from '../lib/epicSession';
+import { setActiveStatusModel } from '../lib/statusModel';
 import { type FocusEpicRequest, MilestonesView } from './MilestonesView';
 
 // Collapse state is session-scoped; start every test with nothing folded.
 beforeEach(() => window.sessionStorage.clear());
+// Unmount before resetting, so the reset does not redraw a mounted view outside act.
+afterEach(() => {
+  cleanup();
+  setActiveStatusModel(null);
+});
 
 function task(
   id: string,
@@ -170,6 +186,8 @@ function session(
     maxSpendUsd: 60,
     maxRuns: 20,
     startedAt: '2026-09-20T00:00:00.000Z',
+    startedBy: null,
+    scope: 'plan',
     updatedAt: '2026-09-20T00:00:00.000Z',
     active: state === 'active',
     ...overrides,
@@ -259,8 +277,8 @@ function dialogTitle(): string | null {
   );
 }
 
-const payments = task('e-1', 'Payments', { kind: 'epic' });
-const shipped = task('e-2', 'Shipped', { kind: 'epic' });
+const payments = task('e-1', 'Payments', { kind: 'milestone' });
+const shipped = task('e-2', 'Shipped', { kind: 'milestone' });
 
 test('each milestone is a status-tinted GroupHeader with a ◔ n/m progress glyph over ListRows', () => {
   const { container } = renderMilestones(
@@ -385,7 +403,57 @@ test('a finished milestone sinks to the bottom, starts collapsed, and reopens on
   ).toBeNull();
 });
 
-test('j/k and Enter walk and open the rows; + presets the milestone', () => {
+test('a mirrored workflow folds, sinks and tints a finished milestone on its first load', () => {
+  const tasks = [
+    shipped,
+    task('t-9', 'Old work', { parent: 'e-2', status: 'Done' }),
+    task('t-8', 'Dropped work', { parent: 'e-2', status: 'Canceled' }),
+    payments,
+    task('t-1', 'Charge card', { parent: 'e-1', status: 'QA' }),
+    task('t-2', 'Refund flow', { parent: 'e-1', status: 'Todo' }),
+  ];
+  const Shell = shellWith({ presets: [], views: [] });
+  // As in useDispatchProject: config lands after the tasks, and the open project's model
+  // is set in an effect after the render that carries it.
+  function App({ config }: { config: DispatchProjectData['config'] }) {
+    useEffect(() => {
+      setActiveStatusModel(config === null ? null : statusModelOf(config));
+    }, [config]);
+    const data = {
+      ...dataWith(tasks, [shipped, payments]),
+      config,
+    } as DispatchProjectData;
+    return (
+      <Shell>
+        <MilestonesView data={data} onOpenTask={() => {}} />
+      </Shell>
+    );
+  }
+  const { container, rerender } = render(<App config={null} />);
+  act(() => rerender(<App config={linearWorkflowConfig} />));
+
+  const headers = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="group-header"]')
+  );
+  const nameOf = (h: HTMLElement | undefined) =>
+    h?.querySelector('[data-slot="group-header-name"]')?.textContent;
+  expect(headers.map(nameOf)).toEqual(['Payments', 'Shipped']);
+  // Shipped is finished under Linear's types: folded, done-tinted, every child counted.
+  expect(screen.queryByText('Old work')).toBeNull();
+  expect(headers[1]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-done)'
+  );
+  expect(
+    headers[1]?.querySelector('[data-slot="milestone-progress"]')?.textContent
+  ).toBe('2/2');
+  // Payments rolls up to its review-role status, not the built-in `ready`.
+  expect(headers[0]?.querySelector('[aria-label="Status: QA"]')).not.toBeNull();
+  expect(headers[0]?.style.getPropertyValue('--tint')).toBe(
+    'var(--status-progress)'
+  );
+});
+
+test('j/k and Enter walk and open the rows; + files the new task under the milestone', () => {
   const opened: string[] = [];
   const { log } = renderMilestones(
     dataWith(
@@ -420,7 +488,43 @@ test('j/k and Enter walk and open the rows; + presets the milestone', () => {
   ).toBe('true');
 
   fireEvent.click(screen.getByRole('button', { name: 'New task in Payments' }));
-  expect(log.presets).toEqual([{ milestone: 'e-1' }]);
+  // The container is the new task's parent, not a free-text milestone.
+  expect(log.presets).toEqual([{ epic: 'e-1' }]);
+});
+
+test('milestones sit under their project, and a parent issue is a row, not a milestone', () => {
+  const project = task('p-1', 'Storefront', { kind: 'project' });
+  const beta = task('m-1', 'Beta', { kind: 'milestone', parent: 'p-1' });
+  const parentIssue = task('t-1', 'Checkout', { parent: 'm-1' });
+  const { container, log } = renderMilestones(
+    dataWith(
+      [
+        project,
+        beta,
+        parentIssue,
+        task('t-2', 'Card form', { parent: 't-1' }),
+        task('t-3', 'Receipt', { parent: 't-1' }),
+      ],
+      // Every container, the parent issue included, as the app derives it.
+      [project, beta, parentIssue]
+    )
+  );
+  const names = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="group-header-name"]')
+  ).map((n) => n.textContent);
+  expect(names).toEqual(['Storefront › Beta']);
+  const rows = Array.from(
+    container.querySelectorAll<HTMLElement>('[data-slot="list-row"]')
+  ).map((r) => r.dataset.rowId);
+  expect(rows).toEqual(['t-1', 't-2', 't-3']);
+  expect(
+    container.querySelector('[data-slot="milestone-progress"]')?.textContent
+  ).toBe('0/3');
+
+  fireEvent.click(
+    screen.getByRole('button', { name: 'New task in Storefront › Beta' })
+  );
+  expect(log.presets).toEqual([{ epic: 'm-1' }]);
 });
 
 test('with no milestones the empty state offers Plan work…', () => {
@@ -712,8 +816,8 @@ test('rows under a session carry a phase pill, the run cost and open findings, a
   fireEvent.click(rowOf('t-1'));
   fireEvent.click(rowOf('t-2'));
   expect(opened).toEqual([
-    ['t-3', 'chat', 'r-9'],
-    ['t-1', 'details', undefined],
+    ['t-3', 'run', 'r-9'],
+    ['t-1', 'auto', undefined],
     ['t-2', undefined, undefined],
   ]);
 });
@@ -791,30 +895,60 @@ test('a focusEpic request unfolds a finished milestone and opens the dialog when
 });
 
 test('a focusEpic request without dispatch scrolls the milestone into view and nothing more', () => {
-  const scrolled: [string | null, ScrollIntoViewOptions | undefined][] = [];
-  const original = Element.prototype.scrollIntoView;
-  Element.prototype.scrollIntoView = function (
+  const scrolled: [string | null, ScrollToOptions | undefined][] = [];
+  const original = Element.prototype.scrollTo;
+  Element.prototype.scrollTo = function (
     this: Element,
-    arg?: boolean | ScrollIntoViewOptions
+    arg?: number | ScrollToOptions
   ) {
     scrolled.push([
-      this.getAttribute('data-group-key'),
+      this.getAttribute('aria-label'),
       typeof arg === 'object' ? arg : undefined,
     ]);
-  };
+  } as typeof Element.prototype.scrollTo;
+  // happy-dom has no layout; give each scroller a browser's extent so offsets are not clamped.
+  const extent = Object.getOwnPropertyDescriptors(HTMLElement.prototype);
+  Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+    configurable: true,
+    get: () => 10_000,
+  });
+  Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+    configurable: true,
+    get: () => 500,
+  });
   try {
     renderMilestones(
       dataWith(
-        [payments, task('t-1', 'Charge card', { parent: 'e-1' })],
-        [payments]
+        [
+          task('e-0', 'Onboarding', { kind: 'milestone' }),
+          task('t-0', 'Welcome mail', { parent: 'e-0' }),
+          payments,
+          task('t-1', 'Charge card', { parent: 'e-1' }),
+        ],
+        [task('e-0', 'Onboarding', { kind: 'milestone' }), payments]
       ),
       () => {},
       { epicId: 'e-1', dispatch: false, nonce: 1 }
     );
   } finally {
-    Element.prototype.scrollIntoView = original;
+    Element.prototype.scrollTo = original;
+    for (const key of ['scrollHeight', 'clientHeight'] as const) {
+      const descriptor = extent[key];
+      if (descriptor === undefined)
+        delete (HTMLElement.prototype as never)[key];
+      else Object.defineProperty(HTMLElement.prototype, key, descriptor);
+    }
   }
-  expect(scrolled).toEqual([['milestone:e-1', { block: 'start' }]]);
+  // The virtual grid scrolls itself until Payments' header (row 2, under Onboarding's
+  // header and task) starts the viewport.
+  const headerIndex = Number(
+    document
+      .querySelector('[data-group-key="milestone:e-1"]')
+      ?.parentElement?.getAttribute('data-index')
+  );
+  expect(headerIndex).toBe(2);
+  expect(scrolled.every(([label]) => label === 'Milestones')).toBe(true);
+  expect(scrolled.at(-1)?.[1]?.top).toBe(2 * 36);
   expect(screen.getByText('Charge card')).not.toBeNull();
   expect(dialogTitle()).toBeNull();
 });

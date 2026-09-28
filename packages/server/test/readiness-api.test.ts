@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import type { ServerHandle, StartServerOptions } from '../src/index.js';
 import { startServer } from '../src/index.js';
 import type { JudgmentClient } from '../src/judgments/client.js';
+import { readinessHash, ReadinessStore } from '../src/judgments/readiness.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth } from './testAuth.js';
 
@@ -137,6 +138,37 @@ describe('readiness on the ready route', () => {
     expect(factor?.value).toBe(0);
   });
 
+  it('attaches the same readings to the meta and id projections', async () => {
+    const store = new TaskStore(root);
+    const bare = store.create({ title: 'Bare', status: 'ready' });
+    const full = store.create({
+      title: 'Full',
+      status: 'ready',
+      description: 'Change src/x.ts so the thing works.',
+    });
+    await boot({ judgments: bodyAwareClient() });
+
+    const docs = (await (
+      await fetch(`${baseUrl}/api/tasks/ready`)
+    ).json()) as ReadyTask[];
+    const lean = (await (
+      await fetch(`${baseUrl}/api/tasks/ready?fields=meta`)
+    ).json()) as ReadyTask[];
+    const ids = (await (
+      await fetch(`${baseUrl}/api/tasks/ready?fields=id`)
+    ).json()) as { id: string; readiness?: { level: number } }[];
+
+    expect(lean).toEqual(
+      docs.map((doc) => ({ meta: doc.meta, readiness: doc.readiness }))
+    );
+    expect(ids).toEqual(
+      docs.map((doc) => ({ id: doc.meta.id, readiness: doc.readiness }))
+    );
+    const levels = new Map(ids.map((t) => [t.id, t.readiness?.level]));
+    expect(levels.get(bare.meta.id)).toBe(0);
+    expect(levels.get(full.meta.id)).toBe(3);
+  });
+
   it('leaves the ready route and the queue untouched without a client', async () => {
     const store = new TaskStore(root);
     const bare = store.create({ title: 'Bare', status: 'ready' });
@@ -157,5 +189,44 @@ describe('readiness on the ready route', () => {
     const factor = queue.tasks[0].factors.find((f) => f.key === 'readiness');
     expect(factor?.weight).toBe(0);
     expect(factor?.detail).toBe('not judged');
+  });
+
+  // The cache map is what the board and the Cockpit paint first, so a reading judged
+  // against text since edited must not come back from it: the ready route drops it too.
+  it('serves only cached readings that still match their task', async () => {
+    const store = new TaskStore(root);
+    const edited = store.create({ title: 'Edited', status: 'ready' });
+    const kept = store.create({ title: 'Kept', status: 'ready' });
+    await boot({ judgments: bodyAwareClient() });
+    await fetch(`${baseUrl}/api/tasks/ready`);
+
+    const patched = await fetch(`${baseUrl}/api/tasks/${edited.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ description: 'Change src/y.ts so it works.' }),
+    });
+    expect(patched.status).toBe(200);
+
+    const cache = (await (
+      await fetch(`${baseUrl}/api/tasks/readiness`)
+    ).json()) as Record<string, { level: number }>;
+    expect(Object.keys(cache)).toEqual([kept.meta.id]);
+    expect(cache[kept.meta.id].level).toBe(0);
+  });
+
+  it('serves no cached readings without a client, as the ready route attaches none', async () => {
+    const store = new TaskStore(root);
+    const bare = store.create({ title: 'Bare', status: 'ready' });
+    // Judged by a past session and still matching the task's text.
+    new ReadinessStore(root).save({
+      [bare.meta.id]: {
+        hash: readinessHash(bare),
+        reading: { level: 0, label: 'x', confidence: 1, splitProbability: 0 },
+      },
+    });
+    await boot({ judgments: null });
+
+    const cache = await (await fetch(`${baseUrl}/api/tasks/readiness`)).json();
+    expect(cache).toEqual({});
   });
 });

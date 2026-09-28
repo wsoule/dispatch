@@ -305,15 +305,15 @@ export function waveSteps(waves: readonly EpicWave[]): Step[] {
 }
 
 /** Where clicking a row's phase pill lands: a failed run's transcript,
- * otherwise the task's details (the ruling control lives there). */
+ * otherwise the task page on whatever its state calls for. */
 export function drillTargetFor(child: EpicProgressChild): {
   tab: TaskTab;
   runId?: string;
 } {
   if (child.phase === 'failed') {
     return child.runId === undefined
-      ? { tab: 'chat' }
-      : { tab: 'chat', runId: child.runId };
+      ? { tab: 'run' }
+      : { tab: 'run', runId: child.runId };
   }
-  return { tab: 'details' };
+  return { tab: 'auto' };
 }

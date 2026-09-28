@@ -1,3 +1,4 @@
+import { isContainerKind } from '@dispatch/core';
 import type {
   PolicyRuling as CorePolicyRuling,
   TaskDoc,
@@ -64,10 +65,11 @@ export function settle<T>(call: () => T): Promise<T> {
   }
 }
 
-// Why `task` can never be woken ('an epic', 'landed', 'dropped'), or null when
-// a wake may dispatch it. Checked when a wake gate is raised and again when it runs.
+// Why `task` can never be woken ('an epic' for any container, 'landed', 'dropped'),
+// or null when a wake may dispatch it. Checked when a wake gate is raised and again
+// when it runs.
 export function wakeRefusal(task: TaskDoc): string | null {
-  if (task.meta.kind === 'epic') return 'an epic';
+  if (isContainerKind(task.meta.kind)) return 'an epic';
   if (task.meta.status === 'landed' || task.meta.status === 'dropped')
     return task.meta.status;
   return null;

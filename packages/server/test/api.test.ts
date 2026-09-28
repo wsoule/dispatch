@@ -396,6 +396,61 @@ describe('archived tasks', () => {
   });
 });
 
+describe('GET /api/tasks?fields=meta', () => {
+  it('returns each task without its body, honouring the other filters', async () => {
+    const created = await json(
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'Lean', description: 'Long prose' }),
+      })
+    );
+    const full = await json(await fetch(`${baseUrl}/api/tasks`));
+    const lean = await json(
+      await fetch(`${baseUrl}/api/tasks?fields=meta&archived=1`)
+    );
+    expect(full[0].body).toContain('Long prose');
+    expect(lean).toEqual([{ meta: created.meta }]);
+  });
+
+  it('400s an unknown projection', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks?fields=body`);
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toMatch(/unknown fields/);
+  });
+});
+
+describe('GET /api/tasks/ready projections', () => {
+  it('serves the same queue without bodies or as bare ids', async () => {
+    for (const title of ['First', 'Second']) {
+      await fetch(`${baseUrl}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title, description: 'Long prose' }),
+      });
+    }
+    const full = await json(await fetch(`${baseUrl}/api/tasks/ready`));
+    const lean = await json(
+      await fetch(`${baseUrl}/api/tasks/ready?fields=meta`)
+    );
+    const ids = await json(await fetch(`${baseUrl}/api/tasks/ready?fields=id`));
+    expect(full).toHaveLength(2);
+    expect(full[0].body).toContain('Long prose');
+    expect(lean).toEqual(
+      full.map((doc: { meta: unknown }) => ({ meta: doc.meta }))
+    );
+    expect(ids).toEqual(
+      full.map((doc: { meta: { id: string } }) => ({ id: doc.meta.id }))
+    );
+  });
+
+  it('400s an unknown projection', async () => {
+    const res = await fetch(`${baseUrl}/api/tasks/ready?fields=body`);
+    expect(res.status).toBe(400);
+    expect((await json(res)).error).toMatch(/unknown fields/);
+  });
+});
+
 describe('error paths', () => {
   it('404s a missing task id', async () => {
     const res = await fetch(`${baseUrl}/api/tasks/t-000000`);
@@ -459,7 +514,7 @@ describe('error paths', () => {
     });
     expect(res.status).toBe(400);
     expect((await json(res)).error).toBe(
-      'invalid kind: wombat (expected task|epic)'
+      'invalid kind: wombat (expected task|initiative|project|milestone|epic)'
     );
     expect(taskFileNames(root)).toEqual([]);
   });
@@ -531,7 +586,7 @@ describe('error paths', () => {
     });
     expect(res.status).toBe(201);
     const body = await json(res);
-    expect(body.meta.kind).toBe('epic');
+    expect(body.meta.kind).toBe('milestone');
     expect(body.meta.priority).toBe('high');
     expect(body.meta.assignee).toBe('agent');
     expect(taskFileNames(root)).toHaveLength(1);
@@ -733,13 +788,83 @@ describe('WebSocket task.changed broadcast', () => {
     });
 
     const changed = nextMessage();
-    await fetch(`${baseUrl}/api/tasks`, {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: 'Triggers broadcast' }),
     });
-    expect(await changed).toEqual({ type: 'task.changed' });
+    const created = (await res.json()) as { meta: { id: string } };
+    // The event names the task it touched, so clients can refetch just it.
+    expect(await changed).toEqual({
+      type: 'task.changed',
+      ids: [created.meta.id],
+    });
 
     ws.close();
   });
+
+  it("names a hand-edited task, and does not echo the daemon's own write", async () => {
+    const ws = new WebSocket(wsUrl(handle));
+    const changes: unknown[] = [];
+    ws.addEventListener('message', (ev) => {
+      const parsed = JSON.parse(ev.data as string) as { type: string };
+      if (parsed.type === 'task.changed') changes.push(parsed);
+    });
+    await new Promise<void>((resolve, reject) => {
+      ws.addEventListener('open', () => resolve());
+      ws.addEventListener('error', () => reject(new Error('WS open failed')));
+    });
+
+    // Another writer, straight to disk: the watcher names what it saw.
+    const doc = new TaskStore(root).create({ title: 'Edited by hand' });
+    for (let i = 0; i < 300 && changes.length === 0; i++) await Bun.sleep(50);
+    expect(changes).toEqual([{ type: 'task.changed', ids: [doc.meta.id] }]);
+
+    changes.length = 0;
+    const res = await fetch(`${baseUrl}/api/tasks/${doc.meta.id}`, {
+      method: 'PATCH',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Edited through the API' }),
+    });
+    expect(res.status).toBe(200);
+    // Past the watcher's debounce: the write's own file event reads back
+    // what the handler already cached, so only the handler announces it.
+    await Bun.sleep(1000);
+    expect(changes).toEqual([{ type: 'task.changed', ids: [doc.meta.id] }]);
+
+    ws.close();
+  }, 30_000);
+});
+
+describe('the task watcher', () => {
+  // A git pull or checkout lands many task files at once; the fs events for
+  // it can name only a few (Bun 1.3 on macOS), and the rest must still show.
+  it('serves every task another writer adds and edits in one burst', async () => {
+    const outside = new TaskStore(root);
+    const added = Array.from(
+      { length: 12 },
+      (_, n) => outside.create({ title: `from a teammate ${n}` }).meta.id
+    );
+    const served = async (): Promise<Map<string, string>> => {
+      const res = await fetch(`${baseUrl}/api/tasks`);
+      const docs = (await res.json()) as {
+        meta: { id: string; title: string };
+      }[];
+      return new Map(docs.map((d) => [d.meta.id, d.meta.title]));
+    };
+    let seen = await served();
+    for (let i = 0; i < 300 && seen.size < added.length; i++) {
+      await Bun.sleep(50);
+      seen = await served();
+    }
+    expect([...seen.keys()].sort()).toEqual([...added].sort());
+
+    for (const id of added) outside.update(id, { title: `edited ${id}` });
+    const edited = () => [...seen].filter(([id, t]) => t === `edited ${id}`);
+    for (let i = 0; i < 300 && edited().length < added.length; i++) {
+      await Bun.sleep(50);
+      seen = await served();
+    }
+    expect(edited()).toHaveLength(added.length);
+  }, 60_000);
 });

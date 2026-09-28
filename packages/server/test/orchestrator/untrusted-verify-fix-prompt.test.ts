@@ -1,4 +1,5 @@
 import type { Finding, TaskDoc, VerifyConfig } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import { buildFixPrompt } from '../../src/orchestrator/fixLoop.js';
@@ -25,6 +26,7 @@ function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...overrides,
     },
     body: '## Description\n\nAdd a rate limiter.\n\n## Activity\n',

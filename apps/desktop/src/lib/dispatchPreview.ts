@@ -1,6 +1,6 @@
 import type { RunMeta } from '@dispatch/client';
 import { claimConflictsWithWrites } from '@dispatch/core/browser';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 import { formatUsd } from './epicSession';
 import { isTerminalRunState } from './runState';
@@ -91,7 +91,7 @@ export function liveClaimsFrom(
 
 export interface BuildDispatchPreviewInput {
   /** The tasks the user selected, in the order they should start. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   /** Ids that are dependency-clear and have no live run. */
   readyIds: ReadonlySet<string>;
   /** How many agents are already running for this project. */

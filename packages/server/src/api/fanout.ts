@@ -68,10 +68,10 @@ export async function fanoutTask(
 
   for (const variant of variants) {
     const task = ctx.store.create(variantTaskInput(source, variant));
-    // Rebuilt per variant rather than once at the end: `dispatch` reads the
+    // Refreshed per variant rather than once at the end: `dispatch` reads the
     // task back through the store, and a cache that has not caught up would
     // make the second variant fail to find the task the first just created.
-    ctx.cache.rebuild(ctx.store);
+    ctx.cache.refresh(ctx.store, [task.meta.id]);
     try {
       const run = await ctx.orchestrator.dispatch(
         task.meta.id,
@@ -103,8 +103,9 @@ export async function fanoutTask(
     }
   }
 
-  ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  const ids = result.variants.map((v) => v.task.meta.id);
+  ctx.cache.refresh(ctx.store, ids);
+  ctx.events.broadcast({ type: 'task.changed', ids });
   ctx.events.broadcast({ type: 'run.changed' });
   return jsonResponse(result, 201);
 }

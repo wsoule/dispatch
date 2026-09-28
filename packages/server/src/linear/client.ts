@@ -1,15 +1,30 @@
 import type {
+  LinearAttachment,
+  LinearComment,
+  LinearInitiative,
+  LinearInitiativeInput,
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearMilestoneInput,
+  LinearProject,
+  LinearProjectInput,
+  LinearProjectMilestone,
+  LinearProjectStatus,
+  LinearRelation,
+  LinearTruncatedField,
+  LinearUser,
   LinearWorkflowState,
+  TaskCycle,
 } from '@dispatch/core';
+
+import * as Q from './queries.js';
 
 const LINEAR_API_URL = 'https://api.linear.app/graphql';
 
-// Ceiling on a single page walk. At Linear's 250-per-page maximum this is 10,000
-// issues; hitting it is reported rather than silently dropping the rest.
-const MAX_PAGES = 40;
+// Ceiling on one page walk, in nodes: 10,000 issues plus headroom. Hitting it
+// is reported (`truncated`) rather than silently dropping the rest.
+const MAX_WALK_NODES = 12_000;
 
 /** Why a call failed, so callers can back off on `rate-limit` instead of retrying blindly. */
 type LinearErrorKind = 'auth' | 'rate-limit' | 'network' | 'graphql' | 'http';
@@ -44,10 +59,41 @@ export interface LinearIssueRef {
   updatedAt: string;
 }
 
-/** A page walk's result. `truncated` means the page cap stopped the walk before the last page. */
+/** A page walk's result. `truncated` means the node cap stopped the walk early. */
+export interface LinearPage<T> {
+  nodes: T[];
+  truncated: boolean;
+}
+
 export interface LinearIssuePage {
   issues: LinearIssue[];
   truncated: boolean;
+}
+
+/** Everything about the linked team a pass needs besides its issues. */
+export interface LinearWorkspace {
+  viewer: LinearUser;
+  team: LinearTeam;
+  states: LinearWorkflowState[];
+  members: LinearUser[];
+  projectStatuses: LinearProjectStatus[];
+}
+
+/** Which entity kinds changed since a cursor, from one cheap request. */
+export interface LinearProbe {
+  issues: boolean;
+  comments: boolean;
+  projects: boolean;
+  milestones: boolean;
+  initiatives: boolean;
+}
+
+export interface LinearWebhookInput {
+  url: string;
+  teamId: string;
+  secret: string;
+  label: string;
+  resourceTypes: string[];
 }
 
 /** The surface the sync engine talks to. Implemented for real below, faked in tests. */
@@ -55,103 +101,103 @@ export interface LinearClient {
   viewer(): Promise<LinearResult<LinearViewer>>;
   teams(): Promise<LinearResult<LinearTeam[]>>;
   workflowStates(teamId: string): Promise<LinearResult<LinearWorkflowState[]>>;
+  workspace(teamId: string): Promise<LinearResult<LinearWorkspace>>;
+  /** The team's labels plus workspace labels, group labels excluded. */
   labels(teamId: string): Promise<LinearResult<LinearLabel[]>>;
+  cycles(teamId: string): Promise<LinearResult<TaskCycle[]>>;
+  users(ids: string[]): Promise<LinearResult<LinearUser[]>>;
+  probe(teamId: string, since: string): Promise<LinearResult<LinearProbe>>;
+  /** `onPage` hears the running count after each page, for progress. */
   issuesUpdatedSince(
     teamId: string,
-    since: string | null
+    since: string | null,
+    onPage?: (fetched: number) => void
   ): Promise<LinearResult<LinearIssuePage>>;
+  issuesByIds(ids: string[]): Promise<LinearResult<LinearIssue[]>>;
   /** Just the display fields, for filling in chips on issues that may never change again. */
   issueLinks(teamId: string): Promise<LinearResult<LinearIssueRef[]>>;
+  comments(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearComment>>>;
+  commentsByIds(ids: string[]): Promise<LinearResult<LinearComment[]>>;
+  projects(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearProject>>>;
+  projectMilestones(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearProjectMilestone>>>;
+  initiatives(
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearInitiative>>>;
   createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>>;
   updateIssue(
     id: string,
     input: LinearIssueInput
   ): Promise<LinearResult<LinearIssue>>;
+  archiveIssue(id: string): Promise<LinearResult<LinearIssue>>;
+  unarchiveIssue(id: string): Promise<LinearResult<LinearIssue>>;
+  createRelation(input: {
+    issueId: string;
+    relatedIssueId: string;
+    type: string;
+  }): Promise<LinearResult<LinearRelation>>;
+  deleteRelation(id: string): Promise<LinearResult<null>>;
+  createLabel(input: {
+    name: string;
+    teamId: string;
+    color?: string;
+  }): Promise<LinearResult<LinearLabel>>;
+  /** Recolors a label (Linear requires every label to have a color). */
+  updateLabel(
+    id: string,
+    input: { color: string }
+  ): Promise<LinearResult<LinearLabel>>;
+  linkAttachment(
+    issueId: string,
+    url: string,
+    title: string
+  ): Promise<LinearResult<LinearAttachment>>;
+  deleteAttachment(id: string): Promise<LinearResult<null>>;
+  createComment(input: {
+    issueId: string;
+    body: string;
+    parentId?: string;
+  }): Promise<LinearResult<LinearComment>>;
+  updateComment(id: string, body: string): Promise<LinearResult<LinearComment>>;
+  deleteComment(id: string): Promise<LinearResult<null>>;
+  createProject(
+    input: LinearProjectInput & { name: string; teamIds: string[] }
+  ): Promise<LinearResult<LinearProject>>;
+  updateProject(
+    id: string,
+    input: LinearProjectInput
+  ): Promise<LinearResult<LinearProject>>;
+  createMilestone(
+    input: LinearMilestoneInput & { name: string; projectId: string }
+  ): Promise<LinearResult<LinearProjectMilestone>>;
+  updateMilestone(
+    id: string,
+    input: LinearMilestoneInput
+  ): Promise<LinearResult<LinearProjectMilestone>>;
+  createInitiative(
+    input: LinearInitiativeInput & { name: string }
+  ): Promise<LinearResult<LinearInitiative>>;
+  updateInitiative(
+    id: string,
+    input: LinearInitiativeInput
+  ): Promise<LinearResult<LinearInitiative>>;
+  /** Adds a project to an initiative; the membership row's id. */
+  linkProjectInitiative(
+    projectId: string,
+    initiativeId: string
+  ): Promise<LinearResult<string>>;
+  unlinkProjectInitiative(linkId: string): Promise<LinearResult<null>>;
+  createWebhook(input: LinearWebhookInput): Promise<LinearResult<string>>;
+  deleteWebhook(id: string): Promise<LinearResult<null>>;
 }
-
-const ISSUE_FIELDS = `
-  id
-  identifier
-  title
-  description
-  priority
-  url
-  createdAt
-  updatedAt
-  archivedAt
-  state { id name type }
-  labels { nodes { id name color } }
-  team { id key }
-`;
-
-const VIEWER_QUERY = `query Viewer { viewer { id name email } }`;
-
-const TEAMS_QUERY = `query Teams($after: String) {
-  teams(first: 50, after: $after) {
-    nodes { id key name }
-    pageInfo { hasNextPage endCursor }
-  }
-}`;
-
-// Linear splits the scalar it expects for a team id by position: the top-level
-// `team(id:)` lookup takes `String!`, while the id comparators inside a filter
-// (`IssueFilter.team.id.eq`) take `ID`. GraphQL does not coerce between the two,
-// so a query declaring the wrong one fails validation before it ever runs
-// ("Variable '$teamId' of type 'String!' used in position expecting type 'ID'").
-// Keep `String!` on the `team(id:)` queries and `ID!` on the filtered ones.
-const STATES_QUERY = `query WorkflowStates($teamId: String!) {
-  team(id: $teamId) { states(first: 100) { nodes { id name type } } }
-}`;
-
-const LABELS_QUERY = `query IssueLabels($teamId: String!) {
-  team(id: $teamId) { labels(first: 250) { nodes { id name color } } }
-}`;
-
-const ISSUES_QUERY = `query IssuesUpdatedSince($teamId: ID!, $since: DateTimeOrDuration, $after: String) {
-  issues(
-    filter: { team: { id: { eq: $teamId } }, updatedAt: { gt: $since } }
-    first: 250
-    after: $after
-    orderBy: updatedAt
-    includeArchived: true
-  ) {
-    nodes { ${ISSUE_FIELDS} }
-    pageInfo { hasNextPage endCursor }
-  }
-}`;
-
-const ISSUES_QUERY_ALL = `query IssuesAll($teamId: ID!, $after: String) {
-  issues(
-    filter: { team: { id: { eq: $teamId } } }
-    first: 250
-    after: $after
-    orderBy: updatedAt
-    includeArchived: true
-  ) {
-    nodes { ${ISSUE_FIELDS} }
-    pageInfo { hasNextPage endCursor }
-  }
-}`;
-
-const ISSUE_LINKS_QUERY = `query IssueLinks($teamId: ID!, $after: String) {
-  issues(
-    filter: { team: { id: { eq: $teamId } } }
-    first: 250
-    after: $after
-    includeArchived: true
-  ) {
-    nodes { id identifier url updatedAt }
-    pageInfo { hasNextPage endCursor }
-  }
-}`;
-
-const CREATE_MUTATION = `mutation IssueCreate($input: IssueCreateInput!) {
-  issueCreate(input: $input) { success issue { ${ISSUE_FIELDS} } }
-}`;
-
-const UPDATE_MUTATION = `mutation IssueUpdate($id: String!, $input: IssueUpdateInput!) {
-  issueUpdate(id: $id, input: $input) { success issue { ${ISSUE_FIELDS} } }
-}`;
 
 interface GraphQLError {
   message?: string;
@@ -168,35 +214,289 @@ interface Connection<N> {
   pageInfo: { hasNextPage: boolean; endCursor: string | null };
 }
 
+interface Nested<N> {
+  nodes: N[];
+  pageInfo?: { hasNextPage: boolean };
+}
+
+type IdRef = { id: string } | null | undefined;
+
+interface RelationNode {
+  id: string;
+  type: string;
+  issue: { id: string };
+  relatedIssue: { id: string };
+}
+
 interface IssueNode {
   id: string;
   identifier: string;
   title: string;
   description: string | null;
   priority: number;
+  estimate?: number | null;
   url: string;
   createdAt: string;
   updatedAt: string;
   archivedAt: string | null;
+  dueDate?: string | null;
   state: LinearWorkflowState | null;
-  labels?: { nodes: LinearLabel[] };
   team: { id: string; key: string } | null;
+  assignee?: IdRef;
+  creator?: IdRef;
+  cycle?: TaskCycle | null;
+  project?: IdRef;
+  projectMilestone?: IdRef;
+  parent?: IdRef;
+  labels?: Nested<{ id: string; name: string }>;
+  relations?: Nested<RelationNode>;
+  inverseRelations?: Nested<RelationNode>;
+  attachments?: Nested<LinearAttachment>;
+  children?: Nested<{ id: string }>;
+}
+
+interface CommentNode {
+  id: string;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  user: IdRef;
+  parent: IdRef;
+  issue: IdRef;
+}
+
+interface ProjectNode {
+  id: string;
+  name: string;
+  description: string | null;
+  content: string | null;
+  icon: string | null;
+  color: string | null;
+  startDate: string | null;
+  targetDate: string | null;
+  priority: number | null;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  lead: IdRef;
+  status: LinearProjectStatus | null;
+  teams?: { nodes: { id: string }[] };
+  initiativeToProjects?: { nodes: { id: string; initiative: IdRef }[] };
+}
+
+interface MilestoneNode {
+  id: string;
+  name: string;
+  description: string | null;
+  targetDate: string | null;
+  sortOrder: number | null;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  project: IdRef;
+}
+
+interface InitiativeNode {
+  id: string;
+  name: string;
+  description: string | null;
+  content: string | null;
+  status: string | null;
+  targetDate: string | null;
+  color: string | null;
+  icon: string | null;
+  url: string;
+  createdAt: string;
+  updatedAt: string;
+  archivedAt: string | null;
+  owner: IdRef;
+  creator: IdRef;
+}
+
+interface LabelNode {
+  id: string;
+  name: string;
+  color: string | null;
+  isGroup?: boolean;
+  team: IdRef;
+  parent: { name: string } | null;
+}
+
+interface UserNode {
+  id: string;
+  name: string;
+  displayName: string | null;
+  email: string | null;
+  avatarUrl: string | null;
+  active: boolean | null;
+}
+
+const idOf = (ref: IdRef): string | null => ref?.id ?? null;
+
+function toRelation(node: RelationNode): LinearRelation {
+  return {
+    id: node.id,
+    type: node.type,
+    issueId: node.issue.id,
+    relatedIssueId: node.relatedIssue.id,
+  };
 }
 
 function toIssue(node: IssueNode): LinearIssue {
+  const truncated: LinearTruncatedField[] = [];
+  const more = (list: Nested<unknown> | undefined) =>
+    list?.pageInfo?.hasNextPage === true;
+  if (more(node.labels)) truncated.push('labels');
+  if (more(node.relations) || more(node.inverseRelations)) {
+    truncated.push('relations');
+  }
+  if (more(node.attachments)) truncated.push('attachments');
+  if (more(node.children)) truncated.push('children');
+  const relations = new Map<string, LinearRelation>();
+  for (const r of [
+    ...(node.relations?.nodes ?? []),
+    ...(node.inverseRelations?.nodes ?? []),
+  ]) {
+    relations.set(r.id, toRelation(r));
+  }
   return {
     id: node.id,
     identifier: node.identifier,
     title: node.title,
     description: node.description ?? null,
     priority: typeof node.priority === 'number' ? node.priority : 0,
+    estimate: node.estimate ?? null,
     url: node.url,
     createdAt: node.createdAt,
     updatedAt: node.updatedAt,
     archivedAt: node.archivedAt ?? null,
+    dueDate: node.dueDate ?? null,
     state: node.state ?? null,
-    labels: node.labels?.nodes ?? [],
+    labels: (node.labels?.nodes ?? []).map((l) => ({ id: l.id, name: l.name })),
     team: node.team ?? null,
+    assigneeId: idOf(node.assignee),
+    creatorId: idOf(node.creator),
+    cycle:
+      node.cycle === null || node.cycle === undefined
+        ? null
+        : {
+            id: node.cycle.id,
+            number: node.cycle.number,
+            name: node.cycle.name ?? null,
+            startsAt: node.cycle.startsAt,
+            endsAt: node.cycle.endsAt,
+          },
+    projectId: idOf(node.project),
+    projectMilestoneId: idOf(node.projectMilestone),
+    parentId: idOf(node.parent),
+    childIds: (node.children?.nodes ?? []).map((c) => c.id),
+    relations: [...relations.values()],
+    attachments: (node.attachments?.nodes ?? []).map((a) => ({
+      id: a.id,
+      title: a.title,
+      url: a.url,
+      subtitle: a.subtitle ?? null,
+      sourceType: a.sourceType ?? null,
+    })),
+    truncated,
+  };
+}
+
+function toComment(node: CommentNode): LinearComment | null {
+  const issueId = idOf(node.issue);
+  if (issueId === null) return null;
+  return {
+    id: node.id,
+    issueId,
+    body: node.body,
+    userId: idOf(node.user),
+    parentId: idOf(node.parent),
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    archivedAt: node.archivedAt ?? null,
+  };
+}
+
+function toProject(node: ProjectNode): LinearProject {
+  return {
+    id: node.id,
+    name: node.name,
+    summary: node.description ?? '',
+    content: node.content ?? null,
+    icon: node.icon ?? null,
+    color: node.color ?? null,
+    startDate: node.startDate ?? null,
+    targetDate: node.targetDate ?? null,
+    leadId: idOf(node.lead),
+    status: node.status ?? null,
+    priority: node.priority ?? 0,
+    url: node.url,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    archivedAt: node.archivedAt ?? null,
+    teamIds: (node.teams?.nodes ?? []).map((t) => t.id),
+    initiatives: (node.initiativeToProjects?.nodes ?? []).flatMap((link) => {
+      const initiativeId = idOf(link.initiative);
+      return initiativeId === null ? [] : [{ id: link.id, initiativeId }];
+    }),
+  };
+}
+
+function toMilestone(node: MilestoneNode): LinearProjectMilestone | null {
+  const projectId = idOf(node.project);
+  if (projectId === null) return null;
+  return {
+    id: node.id,
+    name: node.name,
+    description: node.description ?? null,
+    targetDate: node.targetDate ?? null,
+    sortOrder: node.sortOrder ?? 0,
+    projectId,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    archivedAt: node.archivedAt ?? null,
+  };
+}
+
+function toInitiative(node: InitiativeNode): LinearInitiative {
+  return {
+    id: node.id,
+    name: node.name,
+    description: node.description ?? null,
+    content: node.content ?? null,
+    ownerId: idOf(node.owner),
+    creatorId: idOf(node.creator),
+    status: node.status ?? 'Planned',
+    targetDate: node.targetDate ?? null,
+    color: node.color ?? null,
+    icon: node.icon ?? null,
+    url: node.url,
+    createdAt: node.createdAt,
+    updatedAt: node.updatedAt,
+    archivedAt: node.archivedAt ?? null,
+  };
+}
+
+function toLabel(node: LabelNode): LinearLabel {
+  return {
+    id: node.id,
+    name: node.name,
+    ...(node.color === null ? {} : { color: node.color }),
+    group: node.parent?.name ?? null,
+    teamId: idOf(node.team),
+  };
+}
+
+function toUser(node: UserNode): LinearUser {
+  return {
+    id: node.id,
+    name: node.name,
+    displayName: node.displayName ?? node.name,
+    email: node.email ?? null,
+    avatarUrl: node.avatarUrl ?? null,
+    active: node.active ?? true,
   };
 }
 
@@ -225,11 +525,24 @@ function isAuthError(status: number, errors: GraphQLError[]): boolean {
 function backoffFromHeaders(headers: Headers): number {
   const raw =
     headers.get('x-ratelimit-endpoint-requests-reset') ??
-    headers.get('x-ratelimit-requests-reset');
+    headers.get('x-ratelimit-requests-reset') ??
+    headers.get('x-ratelimit-complexity-reset');
   const resetAt = raw === null ? Number.NaN : Number(raw);
   if (!Number.isFinite(resetAt)) return 60_000;
   const wait = resetAt - Date.now();
   return wait > 0 && wait < 3_600_000 ? wait : 60_000;
+}
+
+function chunk<T>(items: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < items.length; i += size) {
+    out.push(items.slice(i, i + size));
+  }
+  return out;
+}
+
+function rejected(what: string): LinearFailure {
+  return { ok: false, kind: 'graphql', error: `linear rejected the ${what}` };
 }
 
 export interface HttpLinearClientOptions {
@@ -319,18 +632,19 @@ export class HttpLinearClient implements LinearClient {
     return { ok: true, data: body.data };
   }
 
-  // Walks Relay-style `first`/`after` pages until `hasNextPage` is false, stopping short if the
-  // API ever keeps claiming another page — an unbounded loop here would burn the hourly budget.
+  // Walks Relay-style `first`/`after` pages until `hasNextPage` is false, stopping short
+  // once the node cap is reached — an unbounded loop here would burn the hourly budget.
   private async paginate<N>(
     query: string,
     variables: Record<string, unknown>,
-    pick: (data: unknown) => Connection<N> | null | undefined
-  ): Promise<LinearResult<{ nodes: N[]; truncated: boolean }>> {
+    pick: (data: unknown) => Connection<N> | null | undefined,
+    onPage?: (fetched: number) => void
+  ): Promise<LinearResult<LinearPage<N>>> {
     const nodes: N[] = [];
     let after: string | null = null;
     let truncated = false;
-    for (let page = 0; ; page++) {
-      if (page >= MAX_PAGES) {
+    for (;;) {
+      if (nodes.length >= MAX_WALK_NODES) {
         truncated = true;
         break;
       }
@@ -342,6 +656,7 @@ export class HttpLinearClient implements LinearClient {
       const connection = pick(result.data);
       if (connection === null || connection === undefined) break;
       nodes.push(...connection.nodes);
+      onPage?.(nodes.length);
       if (!connection.pageInfo.hasNextPage) break;
       after = connection.pageInfo.endCursor;
       if (after === null) break;
@@ -349,16 +664,97 @@ export class HttpLinearClient implements LinearClient {
     return { ok: true, data: { nodes, truncated } };
   }
 
+  // A root-field page walk mapped node by node, dropping nodes the mapper rejects.
+  private async walk<N, T>(
+    query: string,
+    variables: Record<string, unknown>,
+    key: string,
+    map: (node: N) => T | null,
+    onPage?: (fetched: number) => void
+  ): Promise<LinearResult<LinearPage<T>>> {
+    const result = await this.paginate<N>(
+      query,
+      variables,
+      (data) => (data as Record<string, Connection<N> | undefined>)[key],
+      onPage
+    );
+    if (!result.ok) return result;
+    const nodes: T[] = [];
+    for (const node of result.data.nodes) {
+      const mapped = map(node);
+      if (mapped !== null) nodes.push(mapped);
+    }
+    return { ok: true, data: { nodes, truncated: result.data.truncated } };
+  }
+
+  // Walks `ids` a page at a time through an `id: { in }` query.
+  private async byIds<N, T>(
+    query: string,
+    ids: string[],
+    size: number,
+    key: string,
+    map: (node: N) => T | null
+  ): Promise<LinearResult<T[]>> {
+    const out: T[] = [];
+    for (const batch of chunk(ids, size)) {
+      const result = await this.walk(query, { ids: batch }, key, map);
+      if (!result.ok) return result;
+      out.push(...result.data.nodes);
+    }
+    return { ok: true, data: out };
+  }
+
+  // One mutation whose payload carries `success` and the written entity under `entity`.
+  private async mutate<N, T>(
+    query: string,
+    variables: Record<string, unknown>,
+    field: string,
+    entity: string,
+    map: (node: N) => T | null,
+    what: string
+  ): Promise<LinearResult<T>> {
+    const result = await this.request<
+      Record<string, (Record<string, unknown> & { success: boolean }) | null>
+    >(query, variables);
+    if (!result.ok) return result;
+    const payload = result.data[field];
+    if (payload === null || payload === undefined || !payload.success) {
+      return rejected(what);
+    }
+    const node = payload[entity] as N | null | undefined;
+    const mapped = node === null || node === undefined ? null : map(node);
+    return mapped === null ? rejected(what) : { ok: true, data: mapped };
+  }
+
+  // A mutation whose payload is only `{ success }`.
+  private async run(
+    query: string,
+    variables: Record<string, unknown>,
+    field: string,
+    what: string
+  ): Promise<LinearResult<null>> {
+    const result = await this.request<
+      Record<string, { success: boolean } | null>
+    >(query, variables);
+    if (!result.ok) return result;
+    return result.data[field]?.success === true
+      ? { ok: true, data: null }
+      : rejected(what);
+  }
+
   async viewer(): Promise<LinearResult<LinearViewer>> {
-    const result = await this.request<{ viewer: LinearViewer }>(VIEWER_QUERY);
-    return result.ok ? { ok: true, data: result.data.viewer } : result;
+    const result = await this.request<{ viewer: UserNode }>(Q.VIEWER_QUERY);
+    if (!result.ok) return result;
+    const v = result.data.viewer;
+    return { ok: true, data: { id: v.id, name: v.name, email: v.email ?? '' } };
   }
 
   async teams(): Promise<LinearResult<LinearTeam[]>> {
-    const result = await this.paginate<LinearTeam>(
-      TEAMS_QUERY,
+    const result = await this.walk<LinearTeam, LinearTeam>(
+      Q.TEAMS_QUERY,
       {},
-      (data) => (data as { teams?: Connection<LinearTeam> }).teams
+      'teams',
+      (t) => t
     );
     return result.ok ? { ok: true, data: result.data.nodes } : result;
   }
@@ -368,82 +764,487 @@ export class HttpLinearClient implements LinearClient {
   ): Promise<LinearResult<LinearWorkflowState[]>> {
     const result = await this.request<{
       team: { states: { nodes: LinearWorkflowState[] } } | null;
-    }>(STATES_QUERY, { teamId });
+    }>(Q.STATES_QUERY, { teamId });
     if (!result.ok) return result;
     return { ok: true, data: result.data.team?.states.nodes ?? [] };
   }
 
-  async labels(teamId: string): Promise<LinearResult<LinearLabel[]>> {
+  async workspace(teamId: string): Promise<LinearResult<LinearWorkspace>> {
     const result = await this.request<{
-      team: { labels: { nodes: LinearLabel[] } } | null;
-    }>(LABELS_QUERY, { teamId });
+      viewer: UserNode;
+      team: {
+        id: string;
+        key: string;
+        name: string;
+        states: { nodes: LinearWorkflowState[] };
+        members: Nested<UserNode>;
+      } | null;
+      projectStatuses: { nodes: LinearProjectStatus[] } | null;
+    }>(Q.WORKSPACE_QUERY, { teamId });
     if (!result.ok) return result;
-    return { ok: true, data: result.data.team?.labels.nodes ?? [] };
+    const { team } = result.data;
+    if (team === null) {
+      return { ok: false, kind: 'graphql', error: `unknown team: ${teamId}` };
+    }
+    return {
+      ok: true,
+      data: {
+        viewer: toUser(result.data.viewer),
+        team: { id: team.id, key: team.key, name: team.name },
+        states: team.states.nodes,
+        members: team.members.nodes.map(toUser),
+        projectStatuses: result.data.projectStatuses?.nodes ?? [],
+      },
+    };
   }
 
-  async issuesUpdatedSince(
-    teamId: string,
-    since: string | null
-  ): Promise<LinearResult<LinearIssuePage>> {
-    const result = await this.paginate<IssueNode>(
-      since === null ? ISSUES_QUERY_ALL : ISSUES_QUERY,
-      since === null ? { teamId } : { teamId, since },
-      (data) => (data as { issues?: Connection<IssueNode> }).issues
-    );
-    return result.ok
-      ? {
-          ok: true,
-          data: {
-            issues: result.data.nodes.map(toIssue),
-            truncated: result.data.truncated,
-          },
-        }
-      : result;
-  }
-
-  async issueLinks(teamId: string): Promise<LinearResult<LinearIssueRef[]>> {
-    const result = await this.paginate<LinearIssueRef>(
-      ISSUE_LINKS_QUERY,
-      { teamId },
-      (data) => (data as { issues?: Connection<LinearIssueRef> }).issues
+  async labels(teamId: string): Promise<LinearResult<LinearLabel[]>> {
+    const result = await this.walk<LabelNode, LinearLabel>(
+      Q.LABELS_QUERY,
+      {},
+      'issueLabels',
+      (node) => {
+        const owner = idOf(node.team);
+        if (node.isGroup === true) return null;
+        return owner === null || owner === teamId ? toLabel(node) : null;
+      }
     );
     return result.ok ? { ok: true, data: result.data.nodes } : result;
   }
 
-  async createIssue(
-    input: LinearIssueInput
-  ): Promise<LinearResult<LinearIssue>> {
-    const result = await this.request<{
-      issueCreate: { success: boolean; issue: IssueNode | null };
-    }>(CREATE_MUTATION, { input });
+  async cycles(teamId: string): Promise<LinearResult<TaskCycle[]>> {
+    const result = await this.paginate<TaskCycle>(
+      Q.CYCLES_QUERY,
+      { teamId },
+      (data) =>
+        (data as { team?: { cycles?: Connection<TaskCycle> } }).team?.cycles
+    );
     if (!result.ok) return result;
-    const { success, issue } = result.data.issueCreate;
-    if (!success || issue === null) {
-      return {
-        ok: false,
-        kind: 'graphql',
-        error: 'linear rejected the create',
-      };
-    }
-    return { ok: true, data: toIssue(issue) };
+    return {
+      ok: true,
+      data: result.data.nodes.map((c) => ({
+        id: c.id,
+        number: c.number,
+        name: c.name ?? null,
+        startsAt: c.startsAt,
+        endsAt: c.endsAt,
+      })),
+    };
   }
 
-  async updateIssue(
+  users(ids: string[]): Promise<LinearResult<LinearUser[]>> {
+    return this.byIds(Q.USERS_QUERY, ids, 50, 'users', toUser);
+  }
+
+  async probe(
+    teamId: string,
+    since: string
+  ): Promise<LinearResult<LinearProbe>> {
+    type Hit = { nodes: unknown[] } | null | undefined;
+    const result = await this.request<Record<string, Hit>>(Q.PROBE_QUERY, {
+      teamId,
+      since,
+    });
+    if (!result.ok) return result;
+    const hit = (key: string) => (result.data[key]?.nodes.length ?? 0) > 0;
+    return {
+      ok: true,
+      data: {
+        issues: hit('issues'),
+        comments: hit('comments'),
+        projects: hit('projects'),
+        milestones: hit('projectMilestones'),
+        initiatives: hit('initiatives'),
+      },
+    };
+  }
+
+  async issuesUpdatedSince(
+    teamId: string,
+    since: string | null,
+    onPage?: (fetched: number) => void
+  ): Promise<LinearResult<LinearIssuePage>> {
+    const result = await this.walk<IssueNode, LinearIssue>(
+      since === null ? Q.ISSUES_QUERY_ALL : Q.ISSUES_QUERY,
+      since === null ? { teamId } : { teamId, since },
+      'issues',
+      toIssue,
+      onPage
+    );
+    return result.ok
+      ? {
+          ok: true,
+          data: { issues: result.data.nodes, truncated: result.data.truncated },
+        }
+      : result;
+  }
+
+  issuesByIds(ids: string[]): Promise<LinearResult<LinearIssue[]>> {
+    return this.byIds(
+      Q.ISSUES_BY_ID_QUERY,
+      ids,
+      Q.ISSUE_PAGE,
+      'issues',
+      toIssue
+    );
+  }
+
+  async issueLinks(teamId: string): Promise<LinearResult<LinearIssueRef[]>> {
+    const result = await this.walk<LinearIssueRef, LinearIssueRef>(
+      Q.ISSUE_LINKS_QUERY,
+      { teamId },
+      'issues',
+      (r) => r
+    );
+    return result.ok ? { ok: true, data: result.data.nodes } : result;
+  }
+
+  comments(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearComment>>> {
+    return this.walk(
+      since === null ? Q.COMMENTS_QUERY_ALL : Q.COMMENTS_QUERY,
+      since === null ? { teamId } : { teamId, since },
+      'comments',
+      toComment
+    );
+  }
+
+  commentsByIds(ids: string[]): Promise<LinearResult<LinearComment[]>> {
+    return this.byIds(
+      Q.COMMENTS_BY_ID_QUERY,
+      ids,
+      Q.COMMENT_PAGE,
+      'comments',
+      toComment
+    );
+  }
+
+  projects(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearProject>>> {
+    return this.walk(
+      since === null ? Q.PROJECTS_QUERY_ALL : Q.PROJECTS_QUERY,
+      since === null ? { teamId } : { teamId, since },
+      'projects',
+      toProject
+    );
+  }
+
+  projectMilestones(
+    teamId: string,
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearProjectMilestone>>> {
+    return this.walk(
+      since === null ? Q.MILESTONES_QUERY_ALL : Q.MILESTONES_QUERY,
+      since === null ? { teamId } : { teamId, since },
+      'projectMilestones',
+      toMilestone
+    );
+  }
+
+  initiatives(
+    since: string | null
+  ): Promise<LinearResult<LinearPage<LinearInitiative>>> {
+    return this.walk(
+      since === null ? Q.INITIATIVES_QUERY_ALL : Q.INITIATIVES_QUERY,
+      since === null ? {} : { since },
+      'initiatives',
+      toInitiative
+    );
+  }
+
+  createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {
+    return this.mutate(
+      Q.ISSUE_CREATE,
+      { input },
+      'issueCreate',
+      'issue',
+      toIssue,
+      'create'
+    );
+  }
+
+  updateIssue(
     id: string,
     input: LinearIssueInput
   ): Promise<LinearResult<LinearIssue>> {
-    const result = await this.request<{
-      issueUpdate: { success: boolean; issue: IssueNode | null };
-    }>(UPDATE_MUTATION, { id, input });
-    if (!result.ok) return result;
-    const { success, issue } = result.data.issueUpdate;
-    if (!success || issue === null) {
-      return {
-        ok: false,
-        kind: 'graphql',
-        error: 'linear rejected the update',
-      };
-    }
-    return { ok: true, data: toIssue(issue) };
+    return this.mutate(
+      Q.ISSUE_UPDATE,
+      { id, input },
+      'issueUpdate',
+      'issue',
+      toIssue,
+      'update'
+    );
+  }
+
+  archiveIssue(id: string): Promise<LinearResult<LinearIssue>> {
+    return this.mutate(
+      Q.ISSUE_ARCHIVE,
+      { id },
+      'issueArchive',
+      'entity',
+      toIssue,
+      'archive'
+    );
+  }
+
+  unarchiveIssue(id: string): Promise<LinearResult<LinearIssue>> {
+    return this.mutate(
+      Q.ISSUE_UNARCHIVE,
+      { id },
+      'issueUnarchive',
+      'entity',
+      toIssue,
+      'unarchive'
+    );
+  }
+
+  createRelation(input: {
+    issueId: string;
+    relatedIssueId: string;
+    type: string;
+  }): Promise<LinearResult<LinearRelation>> {
+    return this.mutate(
+      Q.RELATION_CREATE,
+      { input },
+      'issueRelationCreate',
+      'issueRelation',
+      toRelation,
+      'relation'
+    );
+  }
+
+  deleteRelation(id: string): Promise<LinearResult<null>> {
+    return this.run(
+      Q.RELATION_DELETE,
+      { id },
+      'issueRelationDelete',
+      'relation delete'
+    );
+  }
+
+  createLabel(input: {
+    name: string;
+    teamId: string;
+    color?: string;
+  }): Promise<LinearResult<LinearLabel>> {
+    return this.mutate(
+      Q.LABEL_CREATE,
+      { input },
+      'issueLabelCreate',
+      'issueLabel',
+      toLabel,
+      'label'
+    );
+  }
+
+  updateLabel(
+    id: string,
+    input: { color: string }
+  ): Promise<LinearResult<LinearLabel>> {
+    return this.mutate(
+      Q.LABEL_UPDATE,
+      { id, input },
+      'issueLabelUpdate',
+      'issueLabel',
+      toLabel,
+      'label update'
+    );
+  }
+
+  linkAttachment(
+    issueId: string,
+    url: string,
+    title: string
+  ): Promise<LinearResult<LinearAttachment>> {
+    return this.mutate(
+      Q.ATTACHMENT_LINK,
+      { issueId, url, title },
+      'attachmentLinkURL',
+      'attachment',
+      (a: LinearAttachment) => ({
+        id: a.id,
+        title: a.title,
+        url: a.url,
+        subtitle: a.subtitle ?? null,
+        sourceType: a.sourceType ?? null,
+      }),
+      'attachment'
+    );
+  }
+
+  deleteAttachment(id: string): Promise<LinearResult<null>> {
+    return this.run(
+      Q.ATTACHMENT_DELETE,
+      { id },
+      'attachmentDelete',
+      'attachment delete'
+    );
+  }
+
+  createComment(input: {
+    issueId: string;
+    body: string;
+    parentId?: string;
+  }): Promise<LinearResult<LinearComment>> {
+    return this.mutate(
+      Q.COMMENT_CREATE,
+      { input },
+      'commentCreate',
+      'comment',
+      toComment,
+      'comment'
+    );
+  }
+
+  updateComment(
+    id: string,
+    body: string
+  ): Promise<LinearResult<LinearComment>> {
+    return this.mutate(
+      Q.COMMENT_UPDATE,
+      { id, input: { body } },
+      'commentUpdate',
+      'comment',
+      toComment,
+      'comment update'
+    );
+  }
+
+  deleteComment(id: string): Promise<LinearResult<null>> {
+    return this.run(
+      Q.COMMENT_DELETE,
+      { id },
+      'commentDelete',
+      'comment delete'
+    );
+  }
+
+  createProject(
+    input: LinearProjectInput & { name: string; teamIds: string[] }
+  ): Promise<LinearResult<LinearProject>> {
+    return this.mutate(
+      Q.PROJECT_CREATE,
+      { input },
+      'projectCreate',
+      'project',
+      toProject,
+      'project'
+    );
+  }
+
+  updateProject(
+    id: string,
+    input: LinearProjectInput
+  ): Promise<LinearResult<LinearProject>> {
+    return this.mutate(
+      Q.PROJECT_UPDATE,
+      { id, input },
+      'projectUpdate',
+      'project',
+      toProject,
+      'project update'
+    );
+  }
+
+  createMilestone(
+    input: LinearMilestoneInput & { name: string; projectId: string }
+  ): Promise<LinearResult<LinearProjectMilestone>> {
+    return this.mutate(
+      Q.MILESTONE_CREATE,
+      { input },
+      'projectMilestoneCreate',
+      'projectMilestone',
+      toMilestone,
+      'milestone'
+    );
+  }
+
+  updateMilestone(
+    id: string,
+    input: LinearMilestoneInput
+  ): Promise<LinearResult<LinearProjectMilestone>> {
+    return this.mutate(
+      Q.MILESTONE_UPDATE,
+      { id, input },
+      'projectMilestoneUpdate',
+      'projectMilestone',
+      toMilestone,
+      'milestone update'
+    );
+  }
+
+  createInitiative(
+    input: LinearInitiativeInput & { name: string }
+  ): Promise<LinearResult<LinearInitiative>> {
+    return this.mutate(
+      Q.INITIATIVE_CREATE,
+      { input },
+      'initiativeCreate',
+      'initiative',
+      toInitiative,
+      'initiative'
+    );
+  }
+
+  updateInitiative(
+    id: string,
+    input: LinearInitiativeInput
+  ): Promise<LinearResult<LinearInitiative>> {
+    return this.mutate(
+      Q.INITIATIVE_UPDATE,
+      { id, input },
+      'initiativeUpdate',
+      'initiative',
+      toInitiative,
+      'initiative update'
+    );
+  }
+
+  linkProjectInitiative(
+    projectId: string,
+    initiativeId: string
+  ): Promise<LinearResult<string>> {
+    return this.mutate(
+      Q.INITIATIVE_LINK,
+      { input: { projectId, initiativeId } },
+      'initiativeToProjectCreate',
+      'initiativeToProject',
+      (node: { id: string }) => node.id,
+      'initiative link'
+    );
+  }
+
+  unlinkProjectInitiative(linkId: string): Promise<LinearResult<null>> {
+    return this.run(
+      Q.INITIATIVE_UNLINK,
+      { id: linkId },
+      'initiativeToProjectDelete',
+      'initiative unlink'
+    );
+  }
+
+  createWebhook(input: LinearWebhookInput): Promise<LinearResult<string>> {
+    return this.mutate(
+      Q.WEBHOOK_CREATE,
+      { input },
+      'webhookCreate',
+      'webhook',
+      (node: { id: string }) => node.id,
+      'webhook'
+    );
+  }
+
+  deleteWebhook(id: string): Promise<LinearResult<null>> {
+    return this.run(
+      Q.WEBHOOK_DELETE,
+      { id },
+      'webhookDelete',
+      'webhook delete'
+    );
   }
 }

@@ -393,6 +393,9 @@ reindenting
 reinstallable
 RELS
 renderable
+reparent
+reparented
+reparents
 reparsed
 replayable
 repoint

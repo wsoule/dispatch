@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
 import { ListRow } from './list-row';
@@ -176,4 +176,35 @@ test('with another role no slot carries a role', () => {
   for (const slot of slots) {
     expect(slot.getAttribute('role')).toBeNull();
   }
+});
+
+// A virtualized list mounts rows every scroll frame, so an idle, unticked row draws a
+// native checkbox and the Base UI checkbox takes over on intent.
+test('an idle row draws a plain select box that still ticks', () => {
+  let toggled: boolean | undefined;
+  render(<ListRow title="Row" onSelectToggle={(next) => (toggled = next)} />);
+  const box = screen.getByRole('checkbox', { name: 'Select' });
+  expect(box.tagName).toBe('INPUT');
+  fireEvent.click(box);
+  expect(toggled).toBe(true);
+});
+
+test('a selected or focused row renders the real checkbox', () => {
+  for (const props of [{ selected: true }, { focused: true }]) {
+    const { container, unmount } = render(
+      <ListRow title="Row" onSelectToggle={() => {}} {...props} />
+    );
+    const box = container.querySelector('[data-slot="list-row-select"] > *');
+    expect(box?.tagName).not.toBe('INPUT');
+    unmount();
+  }
+});
+
+test('keyboard focus moves onto the real checkbox when the plain one is focused', () => {
+  render(<ListRow title="Row" onSelectToggle={() => {}} />);
+  const cold = screen.getByRole('checkbox', { name: 'Select' });
+  act(() => cold.focus());
+  const live = screen.getByRole('checkbox', { name: 'Select' });
+  expect(live).not.toBe(cold);
+  expect(document.activeElement).toBe(live);
 });

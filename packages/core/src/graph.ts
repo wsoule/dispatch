@@ -1,7 +1,14 @@
 // This module must stay free of node:* imports — it is exported as the
 // browser-safe '@dispatch/core/graph' subpath consumed by the desktop webview.
-import { isDoneStatus, isSatisfiedForDispatchStatus } from './status.js';
-import type { Priority, TaskDoc } from './types.js';
+import { isContainer, parentIdsOf } from './kinds.js';
+import {
+  DEFAULT_STATUS_MODEL,
+  isDoneStatus,
+  isSatisfiedForDispatchStatus,
+  isUnstartedStatus,
+} from './status.js';
+import type { StatusModel } from './status.js';
+import type { Priority, TaskDoc, TaskListItem } from './types.js';
 
 export const PRIORITY_ORDER: Record<Priority, number> = {
   urgent: 0,
@@ -11,16 +18,22 @@ export const PRIORITY_ORDER: Record<Priority, number> = {
   none: 4,
 };
 
-export function isDone(t: TaskDoc): boolean {
-  return isDoneStatus(t.meta.status);
+export function isDone(
+  t: TaskListItem,
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): boolean {
+  return isDoneStatus(t.meta.status, model);
 }
 
 /**
  * Whether a blocker no longer holds up *dispatching* its dependents — see
  * `isSatisfiedForDispatchStatus` in status.ts for the reasoning.
  */
-export function isSatisfiedForDispatch(t: TaskDoc): boolean {
-  return isSatisfiedForDispatchStatus(t.meta.status);
+export function isSatisfiedForDispatch(
+  t: TaskListItem,
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): boolean {
+  return isSatisfiedForDispatchStatus(t.meta.status, model);
 }
 
 /**
@@ -31,10 +44,11 @@ export function isSatisfiedForDispatch(t: TaskDoc): boolean {
  * isSatisfiedForDispatch). A single source of truth here ensures that future
  * changes to sort order or filtering strategy apply to both consistently.
  */
-function filterAndSortByReadiness(
-  tasks: TaskDoc[],
-  isSatisfied: (t: TaskDoc) => boolean
-): TaskDoc[] {
+function filterAndSortByReadiness<T extends TaskListItem>(
+  tasks: readonly T[],
+  isSatisfied: (t: T) => boolean,
+  model: StatusModel
+): T[] {
   // `byId` is the blocker-resolution set and MUST be built from everything
   // passed in, archived included, because an unresolvable blocker id counts as
   // satisfied below. Callers used to exclude archived tasks before calling in,
@@ -43,9 +57,13 @@ function filterAndSortByReadiness(
   // undefined, and "dangling ids do not block" did the rest. Archiving is a
   // filing action and must never be a scheduling one.
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+  // A container (by kind or by having children) is never itself ready work.
+  const parentIds = parentIdsOf(tasks);
   return (
     tasks
-      .filter((t) => t.meta.kind === 'task' && t.meta.status === 'ready')
+      .filter((t) => !isContainer(t.meta, parentIds))
+      // The ready queue is every unstarted status, not a name.
+      .filter((t) => isUnstartedStatus(t.meta.status, model))
       // Archived tasks are excluded HERE, as candidates, not by the caller —
       // that is the whole point of the note above. An archived task is never
       // ready work, but it is still a real blocker.
@@ -79,8 +97,63 @@ function filterAndSortByReadiness(
  * badge, and merge-queue ordering all mean by "ready", and none of those
  * should start calling a task with an unmerged blocker ready.
  */
-export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
-  return filterAndSortByReadiness(tasks, isSatisfiedForDispatch);
+export function dispatchableTasks<T extends TaskListItem = TaskDoc>(
+  tasks: readonly T[],
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): T[] {
+  return filterAndSortByReadiness(
+    tasks,
+    (t) => isSatisfiedForDispatch(t, model),
+    model
+  );
+}
+
+/** What a fan-out knows about one blocker beyond its status. */
+export interface FanoutBlocker {
+  /** A teammate's (core's `fanoutHolder` is non-null for it). */
+  held: boolean;
+  /** Its work sits on a Dispatch run branch a dependent can stack on. */
+  hasRunBranch: boolean;
+}
+
+/**
+ * Whether a blocker lets a fan-out start its dependents. Done always does; the
+ * review and landing roles only with a run branch to stack on that is no
+ * teammate's. A teammate's In Review (or one moved there by hand) has no such
+ * branch, so a dependent cut then would lack that work: it waits for done.
+ */
+export function releasesFanoutDependents(
+  status: string,
+  model: StatusModel,
+  blocker: FanoutBlocker
+): boolean {
+  if (isDoneStatus(status, model)) return true;
+  return (
+    !blocker.held &&
+    blocker.hasRunBranch &&
+    isSatisfiedForDispatchStatus(status, model)
+  );
+}
+
+/**
+ * The blockers still holding `task` back in a fan-out, by
+ * `releasesFanoutDependents`. An id `lookup` cannot resolve never holds, as in
+ * `dispatchableTasks`.
+ */
+export function fanoutWaitingOn<T extends TaskListItem>(
+  task: T,
+  lookup: (id: string) => T | null | undefined,
+  model: StatusModel,
+  describe: (blocker: T) => FanoutBlocker
+): string[] {
+  return task.meta.blockedBy.filter((id) => {
+    const blocker = lookup(id);
+    return (
+      blocker !== null &&
+      blocker !== undefined &&
+      !releasesFanoutDependents(blocker.meta.status, model, describe(blocker))
+    );
+  });
 }
 
 /**
@@ -92,8 +165,11 @@ export function dispatchableTasks(tasks: TaskDoc[]): TaskDoc[] {
  * the results itself. Pre-filtering them out removes them from blocker
  * resolution too, which reads as "blocker satisfied".
  */
-export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
-  return filterAndSortByReadiness(tasks, isDone);
+export function readyTasks<T extends TaskListItem = TaskDoc>(
+  tasks: readonly T[],
+  model: StatusModel = DEFAULT_STATUS_MODEL
+): T[] {
+  return filterAndSortByReadiness(tasks, (t) => isDone(t, model), model);
 }
 
 /**
@@ -116,7 +192,7 @@ export function readyTasks(tasks: TaskDoc[]): TaskDoc[] {
  * with multiple overlapping cycles may surface more than one path touching
  * the same ids, which is fine for reporting purposes.
  */
-export function findDependencyCycles(tasks: TaskDoc[]): string[][] {
+export function findDependencyCycles(tasks: TaskListItem[]): string[][] {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));
   const UNVISITED = 0;
   const VISITING = 1;
@@ -166,7 +242,7 @@ export interface TaskStack {
  * one is not a stack).
  */
 export function computeStack(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   taskId: string
 ): TaskStack | null {
   const byId = new Map(tasks.map((t) => [t.meta.id, t]));

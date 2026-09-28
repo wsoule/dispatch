@@ -416,7 +416,7 @@ export function refAction(
   }
 }
 
-/** Where a sender's name leads: a run to its chat, a task to its page, anyone else nowhere. */
+/** Where a sender's name leads: a run to its transcript, a task to its page, anyone else nowhere. */
 export function addressAction(
   address: string,
   lookups: Pick<ThreadLookups, 'taskIdOfRun'>
@@ -435,7 +435,7 @@ export function addressAction(
 
 /** The app's navigation verbs a ref needs. */
 export interface RefNavigation {
-  openTask: (taskId: string, tab: 'details' | 'chat', runId?: string) => void;
+  openTask: (taskId: string, tab: 'auto' | 'run', runId?: string) => void;
   openThread: (messageId: string) => void;
   openImpact: (subject: { kind: 'file'; id: string }) => void;
   /** The Docs view on one doc, scrolled to `anchor`'s section when set. */
@@ -444,9 +444,9 @@ export interface RefNavigation {
 
 export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
   return (action) => {
-    if (action.kind === 'task') nav.openTask(action.taskId, 'details');
+    if (action.kind === 'task') nav.openTask(action.taskId, 'auto');
     else if (action.kind === 'run') {
-      nav.openTask(action.taskId, 'chat', action.runId);
+      nav.openTask(action.taskId, 'run', action.runId);
     } else if (action.kind === 'file') {
       nav.openImpact({ kind: 'file', id: action.path });
     } else if (action.kind === 'doc') {

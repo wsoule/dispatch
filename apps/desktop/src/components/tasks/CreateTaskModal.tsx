@@ -2,18 +2,22 @@ import type {
   Assignee,
   CreateInput,
   Priority,
-  TaskDoc,
   TaskKind,
+  TaskListItem,
 } from '@dispatch/core/browser';
+import { isContainerKind, isValidParentKind } from '@dispatch/core/browser';
 import {
+  Box,
   Check,
   ChevronDown,
-  Flag,
+  CircleDot,
+  Diamond,
   Layers,
-  Milestone,
+  type LucideIcon,
   Paperclip,
   SquareCheck,
   Tag,
+  Target,
   X,
 } from 'lucide-react';
 import type {
@@ -36,7 +40,7 @@ import {
 import { useShellActions } from '../shell/ShellActionsContext';
 import { useToasts } from '../shell/Toasts';
 import { AssigneeAvatar } from './AssigneeAvatar';
-import { PickerPopover } from './detail/PickerPopover';
+import { type PickerItem, PickerPopover } from './detail/PickerPopover';
 import { PriorityIcon } from './PriorityIcon';
 import { StatusIcon } from './StatusIcon';
 import { cn } from '@/lib/utils';
@@ -60,25 +64,34 @@ import {
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 import { Input } from '@/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 import { Textarea } from '@/ui/textarea';
 
 // Fixed, non-config-driven enums — see TaskDetailModal.tsx for why these
 // mirror core/types.ts's constants instead of importing them at runtime.
-const KINDS: TaskKind[] = ['task', 'epic'];
+const KINDS: TaskKind[] = ['task', 'milestone', 'project', 'initiative'];
 const PRIORITIES: Priority[] = ['urgent', 'high', 'medium', 'low', 'none'];
 const ASSIGNEES: Assignee[] = ['agent', 'human', 'none'];
 
-// Menu values can't be the empty string, so this stands in for the "no epic" choice and is
-// mapped back to `null` at the onChange boundary.
-const NO_EPIC = '__none__';
+// Picker values can't be the empty string, so this stands in for the "no parent" choice and
+// is mapped back to `null` at the onSelect boundary.
+const NO_PARENT = '__none__';
+
+// The glyph each kind wears in the parent picker, as in the task rail's hierarchy.
+const KIND_ICON: Record<string, LucideIcon> = {
+  initiative: Target,
+  project: Box,
+  milestone: Diamond,
+  task: CircleDot,
+};
 
 export const CREATE_TASK_TITLE_KEY = 'dispatch:create-task-title';
 export const CREATE_TASK_DESCRIPTION_KEY = 'dispatch:create-task-description';
 
 interface CreateTaskModalProps {
   statuses: string[];
-  epics: TaskDoc[];
+  /** Every container (a container kind, or an issue with sub-issues) — where a new task
+   * can be filed. */
+  epics: TaskListItem[];
   /** The crumb's project chip (`[project] › New task`); the app name until a project is open. */
   projectName?: string;
   /** Pre-selects the status — kept for callers that pass it directly; the shell's
@@ -89,7 +102,7 @@ interface CreateTaskModalProps {
   /** Resolves with the created doc so pending files can be attached to it; `undefined`
    * (what `withActionFeedback` yields on a failure it already toasted) or `null` leaves
    * the dialog open with its draft and files intact. */
-  onCreate: (input: CreateInput) => Promise<TaskDoc | null | undefined>;
+  onCreate: (input: CreateInput) => Promise<TaskListItem | null | undefined>;
   /** Given, the footer paperclip and paste/drop on the body collect files that are
    * uploaded once the task exists. */
   onUploadAttachments?: (taskId: string, files: File[]) => Promise<void>;
@@ -220,62 +233,85 @@ function PropertyChip({
   );
 }
 
-// A chip whose value is one line of free text (the milestone name): the popover holds a
-// 28px input and Enter commits it.
-function TextChip({
-  label,
-  glyph,
+// Where a new task of `kind` may be filed: containers broad enough to hold it, then issues
+// that already have sub-issues, archived ones left out — the rail's "Move to" rule.
+function parentOptions(
+  kind: TaskKind,
+  epics: readonly TaskListItem[]
+): TaskListItem[] {
+  const containers: TaskListItem[] = [];
+  const parents: TaskListItem[] = [];
+  for (const epic of epics) {
+    if (epic.meta.archivedAt !== undefined) continue;
+    if (!isValidParentKind(kind, epic.meta.kind)) continue;
+    if (isContainerKind(epic.meta.kind)) containers.push(epic);
+    else parents.push(epic);
+  }
+  return [...containers, ...parents];
+}
+
+// The `Parent` chip: the container the task is filed under, picked from a searchable list
+// so a project with hundreds of milestones and parent issues stays one keystroke away.
+function ParentChip({
   value,
-  placeholder,
+  kind,
+  epics,
   onChange,
 }: {
-  label: string;
-  glyph: ReactNode;
   value: string | null;
-  placeholder: string;
-  onChange: (value: string) => void;
+  kind: TaskKind;
+  epics: readonly TaskListItem[];
+  onChange: (parent: string | null) => void;
 }) {
-  const [text, setText] = useState('');
-  const unset = value === null;
-
-  function commit() {
-    const next = text.trim();
-    if (next === '') return;
-    onChange(next);
-    setText('');
-  }
-
+  const selected =
+    value === null ? undefined : epics.find((e) => e.meta.id === value);
+  const Icon =
+    selected === undefined
+      ? Layers
+      : (KIND_ICON[selected.meta.kind] ?? CircleDot);
+  const items = (): PickerItem[] => [
+    ...(value === null
+      ? []
+      : [
+          {
+            value: NO_PARENT,
+            label: 'No parent',
+            glyph: <X className="size-3.5" />,
+          },
+        ]),
+    ...parentOptions(kind, epics).map((epic) => {
+      const Glyph = KIND_ICON[epic.meta.kind] ?? CircleDot;
+      return {
+        value: epic.meta.id,
+        label: epic.meta.title,
+        hint: kindLabel(epic.meta.kind),
+        glyph: <Glyph className="size-3.5" />,
+        selected: epic.meta.id === value,
+      };
+    }),
+  ];
   return (
-    <Popover>
-      <PopoverTrigger
-        aria-label={label}
-        data-slot="property-chip"
-        data-unset={unset || undefined}
-        render={
-          <SelectPill
-            icon={glyph}
-            className={unset ? 'text-muted-foreground' : undefined}
-          />
-        }
-      >
-        {unset ? label : value}
-      </PopoverTrigger>
-      <PopoverContent align="start" className="flex w-64 flex-col gap-2">
-        <Input
-          aria-label={placeholder}
-          placeholder={placeholder}
-          value={text}
-          autoFocus
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') {
-              e.preventDefault();
-              commit();
-            }
-          }}
-        />
-      </PopoverContent>
-    </Popover>
+    <PickerPopover
+      triggerLabel="Parent"
+      triggerClassName={cn(
+        PILL_BUTTON_CLASS,
+        value === null && 'text-muted-foreground'
+      )}
+      placeholder="Project, milestone or issue…"
+      items={items}
+      limit={50}
+      onSelect={(next) => onChange(next === NO_PARENT ? null : next)}
+    >
+      <Icon />
+      <span className="min-w-0 truncate">
+        {value === null ? 'Parent' : (selected?.meta.title ?? value)}
+      </span>
+      <ChevronDown
+        aria-hidden
+        className="text-muted-foreground size-3"
+        strokeWidth={2}
+      />
+    </PickerPopover>
   );
 }
 
@@ -304,7 +340,7 @@ export function CreateTaskModal({
   const [description, setDescription] = usePersistedDraft(
     CREATE_TASK_DESCRIPTION_KEY
   );
-  const [kind, setKind] = useState<TaskKind>('task');
+  const [kind, setKind] = useState<TaskKind>(createPreset?.kind ?? 'task');
   const [priority, setPriority] = useState<Priority>('none');
   const [assignee, setAssignee] = useState<Assignee>('none');
   const [status, setStatus] = useState(
@@ -312,9 +348,6 @@ export function CreateTaskModal({
   );
   const [parent, setParent] = useState<string | null>(
     createPreset?.epic ?? null
-  );
-  const [milestone, setMilestone] = useState<string | null>(
-    createPreset?.milestone ?? null
   );
   const [labels, setLabels] = useState<string[]>([]);
   // Files chosen before the task exists; uploaded against its id once created.
@@ -371,7 +404,6 @@ export function CreateTaskModal({
         assignee,
         status: asStatus,
         parent,
-        milestone,
         labels,
         description,
       });
@@ -407,6 +439,16 @@ export function CreateTaskModal({
     }
   }
 
+  // A broader kind can outgrow its parent (a project cannot sit in a milestone), so a
+  // parent the new kind cannot live under is dropped rather than sent to be refused.
+  function changeKind(next: TaskKind) {
+    setKind(next);
+    const current = epics.find((e) => e.meta.id === parent);
+    if (current !== undefined && !isValidParentKind(next, current.meta.kind)) {
+      setParent(null);
+    }
+  }
+
   // `⌘⏎` from any field creates; a chip input that already consumed its Enter is skipped.
   function onKeyDown(e: KeyboardEvent<HTMLDivElement>) {
     if (e.defaultPrevented) return;
@@ -431,18 +473,10 @@ export function CreateTaskModal({
     label: assigneeLabel(a),
     glyph: <AssigneeAvatar assignee={a} size={16} />,
   }));
-  const epicOptions: ChipOption[] = [
-    { value: NO_EPIC, label: 'No epic', glyph: <Milestone /> },
-    ...epics.map((epic) => ({
-      value: epic.meta.id,
-      label: epic.meta.title,
-      glyph: <Milestone />,
-    })),
-  ];
   const kindOptions: ChipOption[] = KINDS.map((k) => ({
     value: k,
     label: kindLabel(k),
-    glyph: k === 'epic' ? <Layers /> : <SquareCheck />,
+    glyph: k === 'task' ? <SquareCheck /> : <Layers />,
   }));
 
   return (
@@ -555,25 +589,16 @@ export function CreateTaskModal({
               candidates={labelCatalogue}
               onChange={setLabels}
             />
-            <PropertyChip
-              value={parent ?? NO_EPIC}
-              options={epicOptions}
-              onChange={(v) => setParent(v === NO_EPIC ? null : v)}
-              label="Epic"
-              menuTitle="Add to epic"
-              unset={parent === null}
-            />
-            <TextChip
-              label="Milestone"
-              glyph={<Flag />}
-              value={milestone}
-              placeholder="Milestone name"
-              onChange={setMilestone}
+            <ParentChip
+              value={parent}
+              kind={kind}
+              epics={epics}
+              onChange={setParent}
             />
             <PropertyChip
               value={kind}
               options={kindOptions}
-              onChange={(v) => setKind(v as TaskKind)}
+              onChange={(v) => changeKind(v as TaskKind)}
               label="Kind"
               menuTitle="Kind"
             />

@@ -135,12 +135,12 @@ export function policyDecisionClassifier(
  * Appends one Activity line to a task the way the orchestrator narrates its
  * own mechanics (orchestrator.ts appendTaskActivity): timestamped, credited to
  * 'none' — the policy is the project's standing instruction, not a person
- * acting in the moment — and followed by the cache rebuild every task write
+ * acting in the moment — and followed by the cache refresh every task write
  * owes the read surfaces.
  */
 export function policyActivityAppender(ctx: {
   store: TaskStorePort;
-  cache: Pick<TaskCache, 'rebuild'>;
+  cache: Pick<TaskCache, 'refresh'>;
   events: Pick<EventBus, 'broadcast'>;
 }): (taskId: string, text: string) => void {
   return (taskId, text) => {
@@ -150,8 +150,8 @@ export function policyActivityAppender(ctx: {
       { appendActivity: `${now} ${text}`, activityActor: 'none' },
       now
     );
-    ctx.cache.rebuild(ctx.store);
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.cache.refresh(ctx.store, [taskId]);
+    ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   };
 }
 

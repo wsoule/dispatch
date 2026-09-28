@@ -399,4 +399,29 @@ describe('BranchGraph', () => {
       container.querySelector('[data-slot="branch-graph-empty"]')?.textContent
     ).toBe('No tasks');
   });
+
+  test('a band draws only its lines and clips the gutter to them', () => {
+    const chain = Array.from({ length: 40 }, (_, i) =>
+      task(
+        `t-${String(i).padStart(2, '0')}`,
+        i === 0 ? [] : [`t-${String(i - 1).padStart(2, '0')}`]
+      )
+    );
+    const { container } = render(
+      <BranchGraph tasks={chain} band={{ start: 16, end: 32 }} />
+    );
+    const drawn = lines(container).map((line) => line.dataset['taskId']);
+    expect(drawn).toHaveLength(16);
+    expect(drawn[0]).toBe('t-16');
+    const svg = container.querySelector('[data-slot="branch-gutter"]');
+    expect(svg?.getAttribute('height')).toBe(String(16 * BRANCH_LINE_HEIGHT));
+    expect(svg?.getAttribute('viewBox')?.split(' ')[1]).toBe(
+      String(16 * BRANCH_LINE_HEIGHT)
+    );
+    // The 15 inside the band plus the one in and the one out; not the other 22.
+    expect(edgePaths(container)).toHaveLength(17);
+    expect(container.querySelectorAll('[data-slot="branch-dot"]')).toHaveLength(
+      16
+    );
+  });
 });

@@ -1,6 +1,7 @@
 import {
   ConfigError,
   findDependencyCycles,
+  isValidParentKind,
   loadConfig,
   parseTaskFile,
 } from '@dispatch/core';
@@ -203,14 +204,17 @@ export function registerDoctorCommand(program: Command, ctx: CliContext): void {
       for (const { file, doc } of parsed) {
         if (doc.meta.parent && !ids.has(doc.meta.parent)) {
           issues.push({ file, problem: `dangling parent: ${doc.meta.parent}` });
-        } else if (
-          doc.meta.parent &&
-          docsById.get(doc.meta.parent)?.meta.kind !== 'epic'
-        ) {
-          issues.push({
-            file,
-            problem: `parent is not an epic: ${doc.meta.parent}`,
-          });
+        } else if (doc.meta.parent) {
+          const parentKind = docsById.get(doc.meta.parent)?.meta.kind;
+          if (
+            parentKind !== undefined &&
+            !isValidParentKind(doc.meta.kind, parentKind)
+          ) {
+            issues.push({
+              file,
+              problem: `a ${parentKind} cannot parent a ${doc.meta.kind}: ${doc.meta.parent}`,
+            });
+          }
         }
         for (const dep of doc.meta.blockedBy) {
           if (dep === doc.meta.id) {

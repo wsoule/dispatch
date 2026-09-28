@@ -1,25 +1,35 @@
 import {
   dispatchDbPath,
   formatMigrationReport,
+  formatMilestoneMigrationReport,
   formatRetireReport,
   hasLegacyState,
   importLegacyProject,
   initProjectStores,
   loadConfig,
+  migrateLegacyMilestones,
   openProjectStores,
   readProjectBackend,
   receiptLogDir,
   retireLegacySources,
+  statusModelOf,
   totalImported,
   writeProjectBackend,
 } from '@dispatch/core';
-import type { MigrationReport, ProjectStores } from '@dispatch/core';
+import type {
+  MigrationReport,
+  MilestoneMigrationReport,
+  ProjectStores,
+} from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
+import { createTaskApiClient } from '../apiClient.js';
 import { type CliContext, CliError } from '../context.js';
+import { projectRoot } from '../projectRoot.js';
 import { findRunningDaemon } from './daemon.js';
+import { databaseBacked, requireStore } from './task.js';
 
 // `dispatch migrate` — the one-time move of a project's markdown-and-JSONL
 // state into the daemon's database. The import itself lives in @dispatch/core
@@ -67,12 +77,32 @@ export function registerMigrateCommand(
       'allow --retire in a repo with a git remote (the receipt log is per-machine, so teammates get an empty board)',
       false
     )
+    .option(
+      '--milestones',
+      'turn legacy milestone strings into project tasks and reparent their tasks under them',
+      false
+    )
+    .option('--json', 'print the --milestones report as JSON', false)
     .action(
       async (opts: {
         dryRun: boolean;
         retire: boolean;
         forceSolo: boolean;
+        milestones: boolean;
+        json: boolean;
       }) => {
+        if (opts.milestones) {
+          const report = await runMilestoneMigration(ctx, opts.dryRun);
+          ctx.log(
+            opts.json
+              ? JSON.stringify(report, null, 2)
+              : formatMilestoneMigrationReport(report)
+          );
+          if (!report.parity) {
+            throw new CliError('milestone migration count parity failed');
+          }
+          return;
+        }
         ctx.log(
           opts.retire
             ? await runRetire(ctx, opts.dryRun, opts.forceSolo)
@@ -80,6 +110,37 @@ export function registerMigrateCommand(
         );
       }
     );
+}
+
+/**
+ * `dispatch migrate --milestones`: the legacy milestone -> project move
+ * (core's milestoneMigration.ts). Through the daemon when one runs — it is
+ * the single writer and keeps its cache current — else on the markdown
+ * directly; a database-backed project needs its daemon.
+ */
+async function runMilestoneMigration(
+  ctx: CliContext,
+  dryRun: boolean
+): Promise<MilestoneMigrationReport> {
+  const root = projectRoot(ctx.cwd);
+  const daemon = await findRunningDaemon(root).catch(() => null);
+  if (daemon !== null) {
+    return createTaskApiClient(
+      `http://127.0.0.1:${daemon.port}`,
+      daemon.agentToken
+    ).migrateMilestones(dryRun);
+  }
+  if (databaseBacked(root)) {
+    throw new CliError(
+      'dispatchd is not running — this project keeps its tasks in the ' +
+        "daemon's database. Start it with: dispatch serve"
+    );
+  }
+  const store = requireStore(ctx);
+  return migrateLegacyMilestones(store, {
+    dryRun,
+    status: statusModelOf(loadConfig(store.rootDir)).roles.ready,
+  });
 }
 
 /**

@@ -4,7 +4,7 @@ import type {
   RunKind,
   RunMeta,
 } from '@dispatch/client';
-import type { Priority, TaskDoc } from '@dispatch/core/browser';
+import type { Priority, TaskListItem } from '@dispatch/core/browser';
 
 import type { FeedState } from './feedState';
 import { deriveFeedState, FEED_STATE_ORDER } from './feedState';
@@ -82,8 +82,8 @@ export interface FeedModel {
 
 export interface BuildFeedInput {
   runs: RunMeta[];
-  tasks: TaskDoc[];
-  epics: TaskDoc[];
+  tasks: TaskListItem[];
+  epics: TaskListItem[];
   readyIds: ReadonlySet<string>;
   blockedIds: ReadonlySet<string>;
   mergeQueue: MergeQueueSnapshot | null;

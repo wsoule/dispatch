@@ -1,5 +1,6 @@
 import { TaskStore } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -70,6 +71,7 @@ function taskDoc(): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '## Description\n\nMake first-run sync non-destructive.\n\n## Acceptance Criteria\n\n- syncing twice never overwrites local edits\n',
   };

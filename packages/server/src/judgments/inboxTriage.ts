@@ -1,5 +1,5 @@
 import type { TaskDoc } from '@dispatch/core';
-import { isDone } from '@dispatch/core';
+import { isContainer, isDone, parentIdsOf } from '@dispatch/core';
 import { choice, noul } from '@typesafe-ai/sdk';
 import type {
   ChoiceQuestion,
@@ -130,8 +130,9 @@ export function triageCandidates(
 ): TriageCandidate[] {
   const mine = tokens(item.text);
   const scored: { candidate: TriageCandidate; score: number }[] = [];
+  const parentIds = parentIdsOf(tasks);
   for (const task of tasks) {
-    if (isDone(task) || task.meta.kind === 'epic') continue;
+    if (isDone(task) || isContainer(task.meta, parentIds)) continue;
     const score = jaccard(mine, tokens(task.meta.title));
     if (score > 0)
       scored.push({
@@ -155,8 +156,9 @@ export function triageCandidates(
 
 /** The open epics an item could belong to, with their first body line. */
 export function triageEpics(tasks: TaskDoc[]): TriageEpic[] {
+  const parentIds = parentIdsOf(tasks);
   return tasks
-    .filter((t) => t.meta.kind === 'epic' && !isDone(t))
+    .filter((t) => isContainer(t.meta, parentIds) && !isDone(t))
     .map((t) => ({
       id: t.meta.id,
       title: t.meta.title,

@@ -313,12 +313,17 @@ describe('a daemon on the sqlite backend', () => {
     });
 
     const changed = nextMessage();
-    await fetch(`${baseUrl}/api/tasks`, {
+    const res = await fetch(`${baseUrl}/api/tasks`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ title: 'watch me' }),
     });
-    expect(await changed).toEqual({ type: 'task.changed' });
+    const created = (await res.json()) as { meta: { id: string } };
+    // The event names the task it touched, so clients can refetch just it.
+    expect(await changed).toEqual({
+      type: 'task.changed',
+      ids: [created.meta.id],
+    });
     ws.close();
   });
 

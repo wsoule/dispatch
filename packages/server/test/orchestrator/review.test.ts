@@ -1,5 +1,6 @@
 import { ActorContext, TaskStore } from '@dispatch/core';
 import type { Finding, TaskDoc, TaskRisk } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -99,6 +100,7 @@ function taskDoc(risk: TaskRisk, writes: string[] = []): TaskDoc {
       risk,
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '## Description\n\nMake first-run sync non-destructive.\n',
   };

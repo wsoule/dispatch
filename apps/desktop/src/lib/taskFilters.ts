@@ -1,5 +1,5 @@
 import type { RunState } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 
 import { formatShortDate } from './taskDates';
 import { assigneeLabel, priorityLabel, statusLabel } from './taskDisplay';
@@ -276,7 +276,7 @@ export interface FilterContext {
 
 // A scalar facet's value on one task, as the string the clause's values are compared with.
 function scalarValue(
-  doc: TaskDoc,
+  doc: TaskListItem,
   facet: Exclude<FilterFacet, 'labels' | 'created' | 'updated'>,
   ctx: FilterContext
 ): string {
@@ -298,7 +298,7 @@ function scalarValue(
 
 /** Whether one task satisfies one clause. */
 function matchesClause(
-  doc: TaskDoc,
+  doc: TaskListItem,
   clause: FilterClause,
   ctx: FilterContext = {}
 ): boolean {
@@ -326,7 +326,7 @@ function matchesClause(
 /** Whether one task passes the whole set: every clause under `and`, any under `or`. An
  * empty set passes everything. */
 export function matchesTaskFilterSet(
-  doc: TaskDoc,
+  doc: TaskListItem,
   filters: TaskFilterSet,
   ctx: FilterContext = {}
 ): boolean {
@@ -340,10 +340,10 @@ export function matchesTaskFilterSet(
 /** The tasks that pass. Returns the same array when nothing is active, so callers keep
  * referential stability on the common unfiltered path. */
 export function applyTaskFilters(
-  tasks: TaskDoc[],
+  tasks: TaskListItem[],
   filters: TaskFilterSet,
   ctx: FilterContext = {}
-): TaskDoc[] {
+): TaskListItem[] {
   if (filters.clauses.length === 0) return tasks;
   return tasks.filter((doc) => matchesTaskFilterSet(doc, filters, ctx));
 }
@@ -368,7 +368,7 @@ export function filterValueLabel(
     case 'status':
       return statusLabel(value);
     case 'priority':
-      return priorityLabel(value as TaskDoc['meta']['priority']);
+      return priorityLabel(value as TaskListItem['meta']['priority']);
     case 'assignee':
       return assigneeLabel(value);
     case 'epic':

@@ -1,4 +1,4 @@
-import { loadConfig } from '@dispatch/core';
+import { isContainer, loadConfig, parentIdsOf } from '@dispatch/core';
 
 import {
   type AiFilterVocabulary,
@@ -40,10 +40,11 @@ function vocabularyFor(ctx: AiFilterRouteContext): AiFilterVocabulary {
   const labels = new Set<string>();
   const milestones = new Set<string>();
   const epics: AiFilterVocabulary['epics'] = [];
+  const parentIds = parentIdsOf(docs);
   for (const doc of docs) {
     for (const label of doc.meta.labels) labels.add(label);
     if (doc.meta.milestone !== null) milestones.add(doc.meta.milestone);
-    if (doc.meta.kind === 'epic') {
+    if (isContainer(doc.meta, parentIds)) {
       epics.push({ id: doc.meta.id, title: doc.meta.title });
     }
   }

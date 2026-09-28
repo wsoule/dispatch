@@ -2,13 +2,14 @@ import type { Assignee } from '@dispatch/core/browser';
 
 import { colorForProject } from '../../lib/projectColor';
 import { assigneeLabel, assigneeRef } from '../../lib/taskDisplay';
+import { usePeople } from '../people/PeopleContext';
 import { cn } from '@/lib/utils';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
 
 export interface AssigneeAvatarProps {
   assignee: Assignee;
   /** The person's display name, for initials (`Wyat Soule` → `WS`). Falls back to the
-   * ref's handle, then to the assignee kind. */
+   * people registry's name for the ref, then the ref's handle, then the assignee kind. */
   name?: string;
   /** 18px on rows and cards (default); 16px on activity timeline lines. */
   size?: 16 | 18;
@@ -25,8 +26,8 @@ const SIZE_CLASS: Record<16 | 18, string> = {
 /**
  * Linear's 18px assignee circle: an agent is `AG` on the in-progress yellow (the one
  * Dispatch-specific thing about assignees — at a glance the board says which cards the
- * fleet owns), a person is their initials on a colour hashed from their name, and unassigned
- * is an empty dashed ring.
+ * fleet owns), a person is their photo when the registry has one or else their initials on
+ * a colour hashed from their name, and unassigned is an empty dashed ring.
  */
 export function AssigneeAvatar({
   assignee,
@@ -36,6 +37,7 @@ export function AssigneeAvatar({
 }: AssigneeAvatarProps) {
   const kind = assigneeRef(assignee)?.kind ?? 'none';
   const sizeClass = SIZE_CLASS[size];
+  const person = usePeople().personFor(assignee);
 
   if (kind === 'none') {
     const label = assigneeLabel(assignee);
@@ -66,7 +68,24 @@ export function AssigneeAvatar({
     );
   }
 
-  const displayName = name ?? assigneeLabel(assignee);
+  const displayName = name ?? person?.name ?? assigneeLabel(assignee);
+  const avatarUrl = person?.avatarUrl ?? null;
+  if (avatarUrl !== null && avatarUrl !== '') {
+    return (
+      <img
+        src={avatarUrl}
+        alt={displayName}
+        title={displayName}
+        data-slot="assignee-avatar"
+        data-kind="human"
+        className={cn(
+          'inline-block size-[18px] shrink-0 rounded-pill object-cover',
+          sizeClass,
+          className
+        )}
+      />
+    );
+  }
   return (
     <InitialsAvatar
       name={displayName}

@@ -2,8 +2,12 @@ import type {
   CommandEvidence,
   CreateInput,
   Finding,
+  LabelDefinition,
   LedgerEntry,
+  MilestoneMigrationReport,
   MutationEvidence,
+  Person,
+  TaskComment,
   TaskDoc,
   UpdatePatch,
 } from '@dispatch/core';
@@ -42,7 +46,8 @@ export interface RunMeta {
   turns?: number;
   sessionId?: string;
   error?: string;
-  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  /** ActorRef of the human the run is for (who dispatched it, or started its
+   *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
   model?: string;
   reviewedAt?: string;
@@ -71,6 +76,9 @@ export interface RunMeta {
     failed: number;
     stopped: number;
   };
+  // What a live run's agent is doing, in words, and when it said so; absent
+  // before its first step and once terminal — mirrors RunMeta.lastStep.
+  lastStep?: { text: string; at: string };
 }
 
 export interface NormalizedEntry {
@@ -282,7 +290,8 @@ interface EpicSessionOptions {
 // The subset of packages/server/src/events.ts's ServerEvent union that
 // `--watch` acts on — deliberately partial; any other event is ignored.
 export type ServerEvent =
-  | { type: 'task.changed' }
+  | { type: 'task.changed'; ids?: string[] }
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -433,8 +442,37 @@ export interface TaskApiClient {
   listTasks(query?: TaskListQuery): Promise<TaskDoc[]>;
   readyTasks(): Promise<TaskDoc[]>;
   getTask(id: string): Promise<TaskDoc>;
+  /** A `milestone` names a project or milestone the daemon files the task
+   * under (as `parent`); it 400s when none matches and never stores it. */
   createTask(input: CreateInput): Promise<TaskDoc>;
+  /** `milestone` moves the task the same way `createTask`'s does. */
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
+  /** `POST /api/migrations/milestones`: legacy milestones to projects. */
+  migrateMilestones(dryRun: boolean): Promise<MilestoneMigrationReport>;
+  /** `GET /api/people`: the people registry and the caller's own ref. */
+  listPeople(): Promise<{ me: string; people: Person[] }>;
+  /** `GET /api/labels`: the label registry (colors and external links). */
+  listLabels(): Promise<{ labels: LabelDefinition[] }>;
+  /** `PUT /api/labels`: one label's color; `null` clears it. */
+  setLabelColor(
+    name: string,
+    color: string | null
+  ): Promise<{ labels: LabelDefinition[] }>;
+  /** `GET /api/tasks/:id/comments`, oldest first. */
+  listComments(id: string): Promise<TaskComment[]>;
+  /** `POST /api/tasks/:id/comments`, credited to the caller by the server. */
+  addComment(
+    id: string,
+    input: { body: string; parentId?: string | null; runId?: string }
+  ): Promise<TaskComment>;
+  /** Author only (403 otherwise). */
+  updateComment(
+    id: string,
+    commentId: string,
+    patch: { body: string }
+  ): Promise<TaskComment>;
+  /** Author only; removes its replies too, and 409s while others replied. */
+  deleteComment(id: string, commentId: string): Promise<{ removed: string[] }>;
   /**
    * `GET /api/health`, reduced to what doctor reports: `problems` are records
    * the daemon's last cache rebuild could not read (they never appear in
@@ -497,6 +535,35 @@ export function createTaskApiClient(
         ...jsonBody(patch),
         method: 'PATCH',
       }),
+    migrateMilestones: (dryRun) =>
+      request(target, '/api/migrations/milestones', jsonBody({ dryRun })),
+    listPeople: () => request(target, '/api/people'),
+    listLabels: () => request(target, '/api/labels'),
+    setLabelColor: (name, color) =>
+      request(target, '/api/labels', {
+        ...jsonBody({ name, color }),
+        method: 'PUT',
+      }),
+    listComments: (id) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
+    addComment: (id, input) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments`,
+        jsonBody(input)
+      ),
+    updateComment: (id, commentId, patch) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { ...jsonBody(patch), method: 'PATCH' }
+      ),
+    deleteComment: (id, commentId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'DELETE' }
+      ),
   };
 }
 

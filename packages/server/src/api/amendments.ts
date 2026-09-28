@@ -74,7 +74,7 @@ export async function amendTask(
     reason: body.reason,
     source,
   });
-  ctx.cache.rebuild(ctx.store);
+  ctx.cache.refresh(ctx.store, [id]);
 
   // Through the memory write policy: a deciding human writes it, anyone else
   // (the shared agentToken included) proposes it.
@@ -93,6 +93,6 @@ export async function amendTask(
     console.error(`dispatchd: amendment ${id} could not reach memory`, err);
   }
 
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse({ ...updated, memory });
 }

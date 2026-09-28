@@ -7,6 +7,7 @@ import {
   isSatisfiedForDispatch,
   PRIORITY_ORDER,
 } from './graph.js';
+import type { StatusModel } from './status.js';
 import type { TaskDoc } from './types.js';
 
 /**
@@ -102,6 +103,8 @@ export interface RankOptions {
    *  judged yet — the readiness factor drops out of the weighted mean
    *  entirely, so the ranking is byte-for-byte what it was without it. */
   readiness?: Record<string, ReadinessLevel>;
+  /** The project's status model; the built-in one when omitted. */
+  statuses?: StatusModel;
 }
 
 /** What a factor is, without the function that computes it: the shape config
@@ -359,7 +362,7 @@ export function rankTasks(
   options: RankOptions
 ): ScoredTask[] {
   const nowMs = Date.parse(options.now);
-  const candidates = dispatchableTasks(tasks);
+  const candidates = dispatchableTasks(tasks, options.statuses);
   const ctx: ScoringContext = {
     // An unparseable `now` would make every age reading NaN, so fall back to
     // the epoch, which pins that factor at 0 rather than poisoning the score.

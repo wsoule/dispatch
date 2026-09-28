@@ -5,12 +5,7 @@ import {
   writeCredential,
   writeProjectCredential,
 } from '@dispatch/core';
-import type {
-  LinearIssue,
-  LinearIssueInput,
-  LinearLabel,
-  LinearWorkflowState,
-} from '@dispatch/core';
+import type { LinearWorkflowState } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,15 +13,8 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
-import type {
-  LinearClient,
-  LinearIssuePage,
-  LinearIssueRef,
-  LinearResult,
-  LinearTeam,
-  LinearViewer,
-} from '../src/linear/client.js';
 import { json } from './json.js';
+import { FakeLinearClient } from './linearFake.js';
 import { rawFetch, useTestAuth } from './testAuth.js';
 
 const STATES: LinearWorkflowState[] = [
@@ -34,67 +22,11 @@ const STATES: LinearWorkflowState[] = [
   { id: 's-done', name: 'Done', type: 'completed' },
 ];
 
-// Serves fixed metadata and records writes; the API tests never open a socket to
-// Linear, and never mutate anything but this object.
-class StubLinearClient implements LinearClient {
-  created: LinearIssueInput[] = [];
-
-  viewer(): Promise<LinearResult<LinearViewer>> {
-    return Promise.resolve({
-      ok: true,
-      data: { id: 'u-1', name: 'Test', email: 'test@example.com' },
-    });
-  }
-
-  teams(): Promise<LinearResult<LinearTeam[]>> {
-    return Promise.resolve({
-      ok: true,
-      data: [{ id: 'team-1', key: 'HYD', name: 'Hydrogen' }],
-    });
-  }
-
-  workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
-    return Promise.resolve({ ok: true, data: STATES });
-  }
-
-  labels(): Promise<LinearResult<LinearLabel[]>> {
-    return Promise.resolve({ ok: true, data: [] });
-  }
-
-  issuesUpdatedSince(): Promise<LinearResult<LinearIssuePage>> {
-    return Promise.resolve({
-      ok: true,
-      data: { issues: [], truncated: false },
-    });
-  }
-
-  issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
-    return Promise.resolve({ ok: true, data: [] });
-  }
-
-  createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {
-    this.created.push(input);
-    return Promise.resolve({
-      ok: false,
-      kind: 'graphql',
-      error: 'not exercised',
-    });
-  }
-
-  updateIssue(): Promise<LinearResult<LinearIssue>> {
-    return Promise.resolve({
-      ok: false,
-      kind: 'graphql',
-      error: 'not exercised',
-    });
-  }
-}
-
 let root: string;
 let fakeHome: string;
 let handle: ServerHandle;
 let baseUrl: string;
-let stub: StubLinearClient;
+let stub: FakeLinearClient;
 const originalHome = process.env.DISPATCH_HOME;
 const originalKey = process.env.LINEAR_API_KEY;
 
@@ -104,7 +36,9 @@ beforeEach(async () => {
   delete process.env.LINEAR_API_KEY;
   root = mkdtempSync(join(tmpdir(), 'dispatch-linear-api-'));
   TaskStore.init(root);
-  stub = new StubLinearClient();
+  // Serves fixed metadata; the API tests never open a socket to Linear.
+  stub = new FakeLinearClient();
+  stub.states = STATES;
   handle = await startServer({
     rootDir: root,
     port: 0,
@@ -130,7 +64,7 @@ describe('GET /api/linear/status', () => {
     expect(body.enabled).toBe(false);
     expect(body.teamId).toBeNull();
     expect(body.direction).toBe('both');
-    expect(body.intervalSec).toBe(300);
+    expect(body.intervalSec).toBe(30);
     expect(body.statusMap.landed).toBe('Done');
     expect(body.keySource).toBeNull();
     expect(body.lastSyncAt).toBeNull();
