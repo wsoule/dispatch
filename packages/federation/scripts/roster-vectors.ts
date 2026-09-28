@@ -154,6 +154,9 @@ const JUNK = op(C, 2, 200, { action: 'teleport' });
 // B promotes D, and C, which outranks B, dismisses the promotion.
 const ADMIT_C = admit(A, 2, 100, C, 'admin');
 const B_PROMOTES = op(B, 2, 200, { action: 'role', replica: D, role: 'admin' });
+// The revoked B's junk, which the founder dismisses.
+const B_JUNK = op(B, 2, 300, { action: 'teleport' });
+const JUNK_DISMISSED = dismiss(A, 4, 400, B_JUNK);
 
 const ATTEST = [
   { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },
@@ -487,6 +490,15 @@ export const SCENARIOS: readonly RosterScenario[] = [
     B_PROMOTES,
     dismiss(C, 2, 300, B_PROMOTES),
     dismiss(A2, 2, 310, ADMIT_C),
+  ]),
+  // Only A may undo its dismiss; the revoked B and the pending C may not.
+  scenario('dismiss-of-dismiss-refused', [
+    admit(A, 2, 100, B),
+    revoke(A, 3, 200, B, 1),
+    B_JUNK,
+    JUNK_DISMISSED,
+    dismiss(B, 3, 410, JUNK_DISMISSED),
+    dismiss(C, 2, 440, JUNK_DISMISSED),
   ]),
   scenario('dismiss-outranked', [
     admit(A, 2, 100, C, 'admin'),

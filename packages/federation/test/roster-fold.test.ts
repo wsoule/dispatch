@@ -696,6 +696,50 @@ describe('foldRoster', () => {
     });
   });
 
+  it('pauses on an op read while judging an invalid dismiss until another admin dismisses it again', () => {
+    const admitC = admit(A, 2, 100, C, 'admin');
+    const junk = op(B, 2, 300, { action: 'teleport' });
+    const base = [
+      admitC,
+      admit(A, 3, 110, B),
+      revoke(A, 4, 200, B, 1),
+      junk,
+      dismiss(C, 2, 400, junk),
+    ];
+    expect(fold(base).unknown).toBeNull();
+    // Judging B's dismiss needs a fold without C's, which holds the junk.
+    const hostile = dismiss(B, 3, 410, admitC);
+    const v = fold([...base, hostile]);
+    expect(v.unknown).toEqual(pausedAt(junk));
+    expect(v.dismissed.map((d) => d.by)).toEqual([C]);
+    expect(v.problems).toContainEqual({
+      subject: `op:${B}:2`,
+      message: `a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue, or an admin other than ${C} can dismiss ${B}'s roster op at seq 2 (${junk.hash}) again`,
+    });
+    expect(
+      fold([...base, hostile, dismiss(A, 5, 500, junk)]).unknown
+    ).toBeNull();
+  });
+
+  it("refuses a dismiss of another replica's dismiss, so no one else brings a dismissed op back", () => {
+    const junk = op(B, 2, 300, { action: 'teleport' });
+    const byA = dismiss(A, 4, 400, junk);
+    const base = [admit(A, 2, 100, B), revoke(A, 3, 200, B, 1), junk, byA];
+    expect(fold(base).unknown).toBeNull();
+    // The revoked B and the pending C each name A's dismiss.
+    for (const hostile of [dismiss(B, 3, 410, byA), dismiss(C, 2, 440, byA)]) {
+      const v = fold([...base, hostile]);
+      expect(v.unknown).toBeNull();
+      expect(v.dismissed).toEqual([
+        { replica: B, seq: 2, hash: junk.hash, by: A },
+      ]);
+      expect(v.problems).toContainEqual({
+        subject: `op:${hostile.replica}:${hostile.seq}`,
+        message: `only ${A} may undo its dismiss at seq 4; ignored`,
+      });
+    }
+  });
+
   it('closes the legacy window: an admin any time, anyone admitted after the deadline, first valid wins', () => {
     const attest = [
       { replica: 'old-00000099', throughSeq: 4, digest: 'd'.repeat(64) },

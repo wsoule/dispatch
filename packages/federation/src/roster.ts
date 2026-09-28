@@ -448,7 +448,8 @@ function resolve(ctx: Context): {
 }
 
 // Every dismiss, and the op it names when it may drop one. One naming an op
-// this daemon does not hold names nothing, for now.
+// this daemon does not hold names nothing, for now. Only a dismiss's publisher
+// may undo it, so no one else can bring back an op an admin dismissed.
 function dismissesOf(input: FoldInput, items: readonly Item[]): Dismiss[] {
   const id = (op: { replica: string; seq: number; hash: string }) =>
     `${op.replica}\n${op.seq}\n${op.hash}`;
@@ -466,6 +467,13 @@ function dismissesOf(input: FoldInput, items: readonly Item[]): Dismiss[] {
       target.op.seq === input.founder.seq
     )
       none('the founding cannot be dismissed; ignored');
+    else if (
+      isAction(target.body, 'dismiss') &&
+      target.op.replica !== item.op.replica
+    )
+      none(
+        `only ${target.op.replica} may undo its dismiss at seq ${target.op.seq}; ignored`
+      );
     else out.push({ item, target, refused: null });
   }
   return out;
@@ -1282,9 +1290,20 @@ function notesOf(
   const ops = [...paused].map((i) => i.op).sort(comparePositions);
   for (const op of ops) {
     unknown ??= { ...positionOf(op), hash: op.hash };
+    const named = `${op.replica}'s roster op at seq ${op.seq} (${op.hash})`;
+    // A dismissed op still pauses when judging an invalid dismiss needed a fold
+    // that held it; another admin's dismiss of it lifts the pause.
+    const by = [
+      ...new Set(
+        effect.filter((d) => d.target?.op === op).map((d) => d.item.op.replica)
+      ),
+    ];
     problems.push({
       subject: at(op),
-      message: `${NEWER_ROSTER}, or an admin can dismiss ${op.replica}'s roster op at seq ${op.seq} (${op.hash})`,
+      message:
+        by.length === 0
+          ? `${NEWER_ROSTER}, or an admin can dismiss ${named}`
+          : `${NEWER_ROSTER}, or an admin other than ${by.join(', ')} can dismiss ${named} again`,
     });
   }
   for (const d of dismisses) {

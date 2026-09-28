@@ -77,6 +77,9 @@ function agrees(input: FoldInput, hidden: ReadonlySet<string>): boolean {
   return true;
 }
 
+// Every build that folds rosters reads an rv 1 dismiss, so none is ever hidden.
+const hideable = (o: RosterOpRef): boolean => o.body.action !== 'dismiss';
+
 const REPLICAS = [
   'ada-0000000a',
   'bob-0000000b',
@@ -216,7 +219,7 @@ function randomRoster(rand: () => number): FoldInput {
 describe('an older build that cannot read some ops pauses or agrees with a newer one', () => {
   for (const scenario of SCENARIOS) {
     it(scenario.name, () => {
-      for (const o of scenario.input.ops.slice(1))
+      for (const o of scenario.input.ops.slice(1).filter(hideable))
         agrees(scenario.input, new Set([o.hash]));
     });
   }
@@ -226,11 +229,13 @@ describe('an older build that cannot read some ops pauses or agrees with a newer
     for (let seed = 1; seed <= 600; seed++) {
       const rand = mulberry32(seed);
       const input = randomRoster(rand);
-      const rest = input.ops.slice(1);
+      const rest = input.ops.slice(1).filter(hideable);
       const founding = input.ops[0]?.hash;
-      const named = rest.flatMap((o) =>
-        'hash' in o.body && o.body.hash !== founding ? [o.body.hash] : []
-      );
+      const named = input.ops
+        .flatMap((o) =>
+          'hash' in o.body && o.body.hash !== founding ? [o.body.hash] : []
+        )
+        .filter((hash) => rest.some((o) => o.hash === hash));
       const hideSets = [
         rest.filter(() => rand() < 0.2).map((o) => o.hash),
         named.filter(() => rand() < 0.7),
