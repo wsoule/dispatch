@@ -1,5 +1,6 @@
 import type {
   ApiClient,
+  DocHit,
   DocLinking,
   DocListParams,
   DocRead,
@@ -57,6 +58,7 @@ export async function refetchDocAfterSave(
 
 const NO_DOCS: DocSummary[] = [];
 const NO_LINKING: DocLinking[] = [];
+const NO_HITS: DocHit[] = [];
 
 function ready(client: ApiClient | null): ApiClient {
   if (client === null) throw new Error('dispatchd client not ready');
@@ -105,4 +107,19 @@ export function useDocsLinking(
     queryFn: () => ready(client).docsLinking(target ?? ''),
   });
   return q.data?.docs ?? NO_LINKING;
+}
+
+// The daemon's search hits for `query` (titles, headings and text); none while it is empty.
+export function useDocSearch(
+  client: ApiClient | null,
+  port: number | undefined,
+  query: string,
+  limit: number
+): DocHit[] {
+  const q = useQuery({
+    queryKey: [...docsKey(port), 'search', query, limit],
+    enabled: client !== null && query !== '',
+    queryFn: () => ready(client).searchDocs(query, { limit }),
+  });
+  return q.data?.hits ?? NO_HITS;
 }

@@ -159,6 +159,40 @@ test('Link doc finds a doc by title and links it as context', async () => {
   );
 });
 
+test('Link doc also finds docs by their text through the daemon search', async () => {
+  const linked: unknown[] = [];
+  const searched: string[] = [];
+  const client = {
+    docsLinking: () => Promise.resolve({ docs: [] }),
+    listDocs: () => Promise.resolve({ docs: [], total: 0 }),
+    searchDocs: (q: string) => {
+      searched.push(q);
+      return Promise.resolve({
+        hits: [
+          { doc: 'doc-rl', handle: 'rl', title: 'Rate limits', anchor: 'a' },
+          { doc: 'doc-rl', handle: 'rl', title: 'Rate limits', anchor: 'b' },
+        ],
+      });
+    },
+    linkDoc: (ref: string, input: unknown) => {
+      linked.push([ref, input]);
+      return Promise.resolve({ links: [] });
+    },
+  } as unknown as ApiClient;
+  mount(client);
+  fireEvent.click(await screen.findByRole('button', { name: 'Link doc' }));
+  fireEvent.change(screen.getByRole('textbox', { name: 'Find a doc' }), {
+    target: { value: 'throttle' },
+  });
+  const picks = await screen.findAllByRole('button', { name: 'Rate limits' });
+  expect(picks).toHaveLength(1);
+  expect(searched).toEqual(['throttle']);
+  fireEvent.click(picks[0]);
+  await waitFor(() =>
+    expect(linked).toEqual([['doc-rl', { target: 'task:t-1', rel: 'context' }]])
+  );
+});
+
 test('a caller who may not link sees the docs and no New spec or Link doc', async () => {
   const client = {
     docsLinking: () => Promise.resolve({ docs: [link('p', 'plan')] }),

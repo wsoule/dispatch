@@ -2,7 +2,12 @@ import type { ApiClient, DocLinking } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 
-import { docsKey, useDocList, useDocsLinking } from '../../../hooks/useDocs';
+import {
+  docsKey,
+  useDocList,
+  useDocSearch,
+  useDocsLinking,
+} from '../../../hooks/useDocs';
 import { describeError } from '../../../lib/actionFeedback';
 import { docBadges, filterDocs } from '../../../lib/docs';
 import { MainSection } from '../detail/MainSection';
@@ -11,6 +16,10 @@ import { Input } from '@/ui/input';
 
 // How many docs the Link doc picker lists for its query.
 const PICKER_ROWS = 8;
+// Search hits the picker asks for: several may name one doc's sections.
+const PICKER_HITS = 20;
+// How long typing must pause before the picker searches the daemon.
+const PICKER_SEARCH_MS = 150;
 
 // A task's own links by role; links it inherits from its epics come last.
 export function groupTaskDocs(linking: readonly DocLinking[]): {
@@ -151,7 +160,8 @@ export function TaskDocsBlock({
   );
 }
 
-// Finds an active doc by title or handle among those the task does not link yet.
+// Finds an active doc the task does not link yet: listed docs by title or
+// handle as typed, then the daemon's search hits, which cover every doc's text.
 function DocPicker({
   client,
   port,
@@ -164,20 +174,36 @@ function DocPicker({
   onPick: (docId: string) => void;
 }) {
   const [query, setQuery] = useState('');
+  const [searched, setSearched] = useState('');
+  useEffect(() => {
+    const timer = setTimeout(() => setSearched(query.trim()), PICKER_SEARCH_MS);
+    return () => clearTimeout(timer);
+  }, [query]);
   const { docs } = useDocList(client, port, { limit: 200 });
+  const hits = useDocSearch(client, port, searched, PICKER_HITS);
   // Focused on mount rather than through `autoFocus`: the picker opens only on a click.
   const field = useRef<HTMLInputElement>(null);
   useEffect(() => {
     field.current?.focus();
   }, []);
-  const matches = filterDocs(docs, {
+  const listed = filterDocs(docs, {
     query,
     scope: 'all',
     status: 'active',
     unreviewedOnly: false,
-  })
-    .filter((d) => !linked.has(d.id))
-    .slice(0, PICKER_ROWS);
+  }).map((d) => ({ id: d.id, title: d.title }));
+  const found =
+    searched === query.trim()
+      ? hits.map((h) => ({ id: h.doc, title: h.title }))
+      : [];
+  const seen = new Set(linked);
+  const matches: { id: string; title: string }[] = [];
+  for (const d of [...listed, ...found]) {
+    if (matches.length === PICKER_ROWS) break;
+    if (seen.has(d.id)) continue;
+    seen.add(d.id);
+    matches.push(d);
+  }
   return (
     <div className="flex flex-col gap-1">
       <Input
