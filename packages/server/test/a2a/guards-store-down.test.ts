@@ -113,6 +113,12 @@ it('still refuses to dispatch or move a gated draft when a2a.db is refused', asy
   expect(h.orchestrator.list()).toEqual([]);
 });
 
+it('treats a handed-off task as A2A provenance even with a2a.db refused', () => {
+  expect(handle!.a2a.taskOrigin(draftId)).toBe('a2a');
+  const plain = TaskStore.init(root).create({ title: 'local work' });
+  expect(handle!.a2a.taskOrigin(plain.meta.id)).toBeNull();
+});
+
 it('still reverts a hand edit, and the gate stays open', async () => {
   const doc = TaskStore.init(root); // the same task files the daemon reads
   doc.update(draftId, { status: 'ready' });

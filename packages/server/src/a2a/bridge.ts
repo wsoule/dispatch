@@ -1,5 +1,6 @@
 import type { A2AStore, TaskRow } from '@dispatch/a2a';
 import {
+  hasA2AProvenance,
   isClientAddress,
   openA2ADb,
   SqliteA2AStore,
@@ -81,6 +82,9 @@ export interface A2ABridge {
     caller: { tier: AuthTier; ref: string }
   ): Promise<PatchGuard>;
   proposalOpen(taskId: string): boolean;
+  // 'a2a' when a client handed the task off: its runs act for no one and
+  // read team memory only.
+  taskOrigin(taskId: string): 'a2a' | null;
   // Puts every gated draft something moved back in Draft; returns how many.
   recheckProposals(): number;
   close(): Promise<void>;
@@ -362,6 +366,21 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     guardTaskPatch: (taskId, patch, caller) =>
       guardTaskPatch(guardDeps, taskId, patch, caller),
     proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
+    // a2a.db is the record; while it is down or failing, the task's own
+    // provenance answers instead, so a refused file never reads as local work.
+    taskOrigin(taskId) {
+      if (store !== null) {
+        try {
+          return store.taskForDispatchTask(taskId) === null ? null : 'a2a';
+        } catch (err) {
+          console.error(
+            `dispatchd: could not read ${taskId}'s A2A record`,
+            err
+          );
+        }
+      }
+      return hasA2AProvenance(deps.tasks.get(taskId)) ? 'a2a' : null;
+    },
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {

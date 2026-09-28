@@ -156,8 +156,10 @@ export class DaemonMemoryHost implements MemoryHost {
   }
 
   // Policy for the memory gate; a proposal with no task reads as elevated,
-  // which caps it below the gate's rung.
+  // which caps it below the gate's rung, and an A2A task's always waits.
   rule(p: MemoryProposal): PolicyRuling {
+    if (p.taskId !== null && this.deps.orchestrator.isA2ATask(p.taskId))
+      return { mode: 'block' };
     const task = p.taskId === null ? null : safeTask(this.deps.store, p.taskId);
     return consultProjectPolicy(
       this.deps.rootDir,

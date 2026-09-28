@@ -1261,6 +1261,8 @@ async function bootServer(
     opts.judgments === undefined
       ? createJudgmentClient(rootDir)
       : opts.judgments;
+  // Set once the bridge opens: a2a.db's record of every handed-off task.
+  let a2aRecord: ((taskId: string) => boolean) | null = null;
   const orchestrator = new Orchestrator({
     rootDir,
     store,
@@ -1280,9 +1282,10 @@ async function bootServer(
     // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
-    // Memory and docs share one A2A-provenance answer: the a2a label or the
-    // bridge's provenance line, failing closed on an unparsable task.
-    isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
+    // Docs' fail-closed answer (the a2a label, the provenance line, a task
+    // that does not parse), plus a2a.db's record once the bridge has opened.
+    isA2ATask: (taskId) =>
+      docsHost.a2aOrigin(taskId) || (a2aRecord?.(taskId) ?? false),
   });
   orchestrator.setDocsPort(docs.service);
   if (syncConfig !== null) orchestrator.setRunIdMinter(generateSyncedRunId);
@@ -1410,6 +1413,7 @@ async function bootServer(
     mark: (label) => watchdog.mark(label),
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
   });
+  a2aRecord = (taskId) => a2a.taskOrigin(taskId) === 'a2a';
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
