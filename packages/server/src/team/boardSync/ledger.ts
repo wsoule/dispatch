@@ -41,9 +41,8 @@ export interface SyncProblem {
   at: string;
 }
 
-/** A replica id: the operator's handle, so a log file says whose it is, and
- *  random hex, so two of one person's machines are still two replicas.
- *  Lowercase, since ids become git paths, HPKE info and sealing aad. */
+/** A replica id: the lowercased handle, since ids become git paths and sealing
+ *  aad, and random hex, so two of one person's machines are two replicas. */
 export function newReplicaId(handle: string): string {
   const cleaned = handle
     .toLowerCase()

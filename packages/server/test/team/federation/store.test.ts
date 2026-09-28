@@ -8,7 +8,13 @@ import {
 } from '@dispatch/protocol/federation';
 import { Database } from 'bun:sqlite';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import {
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  realpathSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -80,6 +86,20 @@ describe('FedStore.append', () => {
     const [a, b] = [parseOpHlc(key.hlc), parseOpHlc(next.hlc)];
     expect(a !== null && b !== null && compareHlc(b, a) > 0).toBe(true);
     expect(fed.head()).toEqual({ seq: 5, hash: opHash(next), hlc: next.hlc });
+    ledger.close();
+  });
+
+  it('refuses a second key op, which every verifier would halt on', () => {
+    const ledger = new SyncLedger(join(dir, 'state.db'), 'ada');
+    const keys = generateReplicaKeys();
+    const fed = new FedStore(ledger, keys);
+    fed.append({ type: 'key', body: keyBody(keys) });
+    const before = fed.head();
+    expect(() => fed.append({ type: 'key', body: keyBody(keys) })).toThrow(
+      'a log has one key op'
+    );
+    expect(fed.head()).toEqual(before);
+    expect(fed.outbox()).toHaveLength(1);
     ledger.close();
   });
 
@@ -311,7 +331,7 @@ describe('pins, cursors, problems and the audit log', () => {
   });
 });
 
-describe('a lost key file (spec "Replica keys", F-D35)', () => {
+describe('a lost key file', () => {
   it('starts over as a new replica when the key file is lost but state.db is not', () => {
     const statePath = join(dir, 'state.db');
     const ledger = new SyncLedger(statePath, 'ada');
@@ -352,6 +372,104 @@ describe('a lost key file (spec "Replica keys", F-D35)', () => {
     const key = fresh.append({ type: 'key', body: keyBody(fresh.keys) });
     expect(key.seq).toBe(4);
     expect(key.prev).toBe(ZERO_HASH);
+    reopened.close();
+  });
+
+  it('starts over as a new replica when the key file names another replica', () => {
+    const statePath = join(dir, 'state.db');
+    const ledger = new SyncLedger(statePath, 'ada');
+    const old = ledger.replica;
+    const oldKeys = loadOrCreateKeys(dir, old);
+    const fed = new FedStore(ledger, oldKeys);
+    fed.append({ type: 'key', body: keyBody(fed.keys) });
+    ledger.close();
+    // A lost state.db made this machine another replica, then a backup came back.
+    const between = new SyncLedger(join(dir, 'lost.db'), 'ada');
+    loadOrCreateKeys(dir, between.replica);
+    between.close();
+
+    expect(rekeyIfKeysLost(dir, statePath, 'ada')).toBe(old);
+    const reopened = new SyncLedger(statePath, 'ada');
+    expect([old, between.replica]).not.toContain(reopened.replica);
+    const fresh = new FedStore(
+      reopened,
+      loadOrCreateKeys(dir, reopened.replica)
+    );
+    expect(fresh.keys.signPub).not.toBe(oldKeys.signPub);
+    expect(fresh.head()).toBeNull();
+    expect(readdirSync(join(dir, 'keys')).sort()).toEqual(
+      [
+        `replica-${old}.retired.json`,
+        `replica-${between.replica}.retired.json`,
+        'replica.json',
+      ].sort()
+    );
+    const problem = fresh
+      .problems()
+      .find((p) => p.subject === `replica:${old}`);
+    expect(problem?.message).toContain(`revoke ${old} and ${between.replica}`);
+    reopened.close();
+  });
+
+  it('forgets what its dropped ops said and what it published under the old id', () => {
+    const statePath = join(dir, 'state.db');
+    const ledger = new SyncLedger(statePath, 'ada');
+    const old = ledger.replica;
+    const fed = new FedStore(ledger, loadOrCreateKeys(dir, old));
+    fed.append({ type: 'key', body: keyBody(fed.keys) });
+    const insertRoster = fed.db.query(
+      'INSERT INTO fed_roster (replica, seq, hlc, hash, body_json) VALUES (?, ?, ?, ?, ?)'
+    );
+    const roster = (target: string) => {
+      const op = fed.append({
+        type: 'roster',
+        body: { rv: 1, action: 'admit', replica: target },
+      });
+      insertRoster.run(op.replica, op.seq, op.hlc, opHash(op), '{}');
+      return op;
+    };
+    const sent = roster('bob-0000000b');
+    fed.published(sent.seq);
+    const unsent = roster('cy-0000000c');
+    insertRoster.run(
+      'bob-0000000b',
+      unsent.seq,
+      unsent.hlc,
+      'b'.repeat(64),
+      '{}'
+    );
+    fed.db
+      .query(
+        "INSERT INTO fed_published (kind, ref, hash) VALUES ('agent', 'agent:ada', 'h')"
+      )
+      .run();
+    ledger.close();
+    rmSync(join(dir, 'keys', 'replica.json'));
+
+    expect(rekeyIfKeysLost(dir, statePath, 'ada')).toBe(old);
+    const db = new Database(statePath);
+    expect(
+      db.query('SELECT replica, seq FROM fed_roster ORDER BY replica').all()
+    ).toEqual([
+      { replica: old, seq: sent.seq },
+      { replica: 'bob-0000000b', seq: unsent.seq },
+    ]);
+    expect(db.query('SELECT kind FROM fed_published').all()).toEqual([]);
+    db.close();
+  });
+
+  it('keeps the id and its own retired keys for a replica that never started a chain', () => {
+    const statePath = join(dir, 'state.db');
+    const ledger = new SyncLedger(statePath, 'ada');
+    const replica = ledger.replica;
+    const keys = loadOrCreateKeys(dir, replica);
+    ledger.close();
+    loadOrCreateKeys(dir, 'ada-ffffffff');
+
+    expect(rekeyIfKeysLost(dir, statePath, 'ada')).toBeNull();
+    const reopened = new SyncLedger(statePath, 'ada');
+    expect(reopened.replica).toBe(replica);
+    expect(loadOrCreateKeys(dir, replica)).toEqual(keys);
     reopened.close();
   });
 

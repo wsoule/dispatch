@@ -78,9 +78,8 @@ interface CursorRow {
   halted: string | null;
 }
 
-// This replica's federation state in the ledger's state.db: its signed op
-// chain and outbox, the keys it pinned, how far it read each log, its
-// current problems and the append-only audit log.
+// This replica's federation state in state.db: its signed chain and outbox,
+// pinned keys, read cursors, current problems and the append-only audit log.
 export class FedStore {
   readonly replica: string;
 
@@ -127,14 +126,15 @@ export class FedStore {
     return { seq: Number(seq), hash, hlc };
   }
 
-  // Mints this replica's next v2 op: the next seq (past the v1 counter too),
-  // a fresh tick, prev = the head's hash. The op, the head and anything the
-  // caller records under the same stamp land in one transaction.
+  // Mints the next v2 op, past the v1 counter and chained to the head; the op,
+  // the head and the caller's writes under its stamp land in one transaction.
   append(input: AppendInput): FederatedOp {
     return this.ledger.atomically(() => {
       const head = this.head();
       if (head === null && input.type !== 'key')
         throw new Error('the first op of a log is its key op');
+      if (head !== null && input.type === 'key')
+        throw new Error('a log has one key op');
       const stamp = this.ledger.nextStamp(head?.seq ?? 0);
       input.onStamp?.(stamp);
       const sealedPart = input.seal?.(stamp);

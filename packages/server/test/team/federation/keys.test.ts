@@ -2,6 +2,7 @@ import { publicOfPrivate } from '@dispatch/protocol/federation';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   chmodSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -56,16 +57,28 @@ describe('replica keys on disk', () => {
     ).toBe(true);
   });
 
-  it('never retires a key file over an earlier retired one', () => {
+  it('gives a returning replica its own retired keys, never new ones', () => {
     const first = loadOrCreateKeys(dir, 'ada-0000000a');
-    loadOrCreateKeys(dir, 'ada-1111111b');
-    const second = loadOrCreateKeys(dir, 'ada-0000000a');
-    loadOrCreateKeys(dir, 'ada-1111111b');
-    expect(second.signPub).not.toBe(first.signPub);
+    const other = loadOrCreateKeys(dir, 'ada-1111111b');
+    expect(loadOrCreateKeys(dir, 'ada-0000000a')).toEqual(first);
+    expect(loadOrCreateKeys(dir, 'ada-1111111b')).toEqual(other);
     expect(readdirSync(join(dir, 'keys')).sort()).toEqual([
+      'replica-ada-0000000a.retired.json',
+      'replica.json',
+    ]);
+  });
+
+  it('never retires a key file over an earlier retired one', () => {
+    const keys = join(dir, 'keys');
+    loadOrCreateKeys(dir, 'ada-0000000a');
+    copyFileSync(
+      join(keys, 'replica.json'),
+      join(keys, 'replica-ada-0000000a.retired.json')
+    );
+    loadOrCreateKeys(dir, 'ada-1111111b');
+    expect(readdirSync(keys).sort()).toEqual([
       'replica-ada-0000000a.retired-2.json',
       'replica-ada-0000000a.retired.json',
-      'replica-ada-1111111b.retired.json',
       'replica.json',
     ]);
   });
@@ -88,11 +101,19 @@ describe('replica keys on disk', () => {
     );
   });
 
-  it('refuses a key file that is not one', () => {
+  it('refuses a key file that is not one, saying how to start over', () => {
     mkdirSync(join(dir, 'keys'), { recursive: true });
     writeFileSync(join(dir, 'keys', 'replica.json'), '{"v":2}');
     expect(() => loadOrCreateKeys(dir, 'ada-0000000a')).toThrow(
-      'is not a replica key file'
+      'is not a replica key file; move it aside and join as a new replica'
     );
+  });
+
+  it('writes the key file whole, leaving no temporary file behind', () => {
+    mkdirSync(join(dir, 'keys'), { recursive: true });
+    writeFileSync(join(dir, 'keys', 'replica.json.tmp'), '{"v":1,"repl');
+    const keys = loadOrCreateKeys(dir, 'ada-0000000a');
+    expect(readdirSync(join(dir, 'keys'))).toEqual(['replica.json']);
+    expect(loadOrCreateKeys(dir, 'ada-0000000a')).toEqual(keys);
   });
 });
