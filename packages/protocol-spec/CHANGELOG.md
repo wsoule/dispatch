@@ -74,3 +74,18 @@ vector ids (see §14.2).
   `core.answers.a-reply-to-an-ended-recipient-reaches-the-successor-session`,
   `core.answers.a-reply-naming-an-ended-session-its-target-never-reached-fails`,
   `core.wake.a-humans-wake-to-a-session-of-no-work-item-fails`.
+- [additive] The A2A binding (§8) and the `a2a-binding` vector class:
+  `envelope/v1` and `gate/v1` are permanent, while `work/v1` and the `a2a`
+  scheme stay provisional; gate data and answers to gates never reach a client,
+  an external sender never speaks as the system address, and a client's data is
+  wrapped under the `envelope/v1` URI. Vectors:
+  `a2a.egress.gate-data-never-reaches-a-client`,
+  `a2a.egress.a-gate-with-a-local-recipient-is-refused-whole`,
+  `a2a.egress.a-reply-to-a-gate-never-reaches-a-client`,
+  `a2a.external.never-speaks-as-the-system`,
+  `a2a.external.an-answer-from-a-client-is-never-a-close`,
+  `a2a.external.gate-shaped-data-is-wrapped`,
+  `a2a.envelope-ext.refuses-a-bad-recipient`,
+  `a2a.work-ext.refuses-a-handoff-without-a-title`,
+  `a2a.projection.row-7-never-a-question-with-gate-data`, and every other vector
+  under `vectors/a2a-binding/`.

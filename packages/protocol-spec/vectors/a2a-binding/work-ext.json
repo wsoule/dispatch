@@ -1,0 +1,420 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "a2a-binding",
+  "area": "work-ext",
+  "vectors": [
+    {
+      "id": "a2a.work-ext.accepts-a-handoff",
+      "title": "A handoff request with a title, acceptance criteria, writes, a priority and labels is accepted",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "acceptance": ["429 after 10 uploads a minute"],
+            "writes": ["src/upload/**"],
+            "priority": "high",
+            "labels": ["api"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.accepts-a-status-request",
+      "title": "A status request, with or without a task id, is accepted",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "status",
+            "task": "m-01"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-an-unknown-skill",
+      "title": "A skill other than handoff or status is refused on work.skill",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "deploy"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.skill"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-handoff-without-a-title",
+      "title": "A handoff needs a title: refused on work.title",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.title"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.counts-the-title-in-bytes",
+      "title": "A title is at most 200 bytes of UTF-8: 51 four-byte characters are refused on work.title",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀🚀"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.title"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-two-line-acceptance-entry",
+      "title": "Each acceptance entry is one line: refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "acceptance": ["a\nb"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.acceptance[0]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-more-than-50-writes",
+      "title": "At most 50 writes: 51 are refused on work.writes",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "writes": [
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts",
+              "a.ts"
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.writes"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-an-absolute-write",
+      "title": "A write is repo-relative: an absolute path is refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "writes": ["/etc/passwd"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.writes[0]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-write-that-climbs-out",
+      "title": "A write may not climb out of the repository with ..: refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "writes": ["src/ok.ts", "src/../../outside.ts"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.writes[1]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-windows-path",
+      "title": "A write with a drive letter or a backslash is refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "writes": ["C:\\repo\\a.ts"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.writes[0]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-an-unknown-priority",
+      "title": "priority is urgent, high, medium, low or none: refused on work.priority",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "priority": "asap"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.priority"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-label-over-50-bytes",
+      "title": "A label is at most 50 bytes: refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Rate-limit uploads",
+            "labels": ["lllllllllllllllllllllllllllllllllllllllllllllllllll"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "work.labels[0]"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

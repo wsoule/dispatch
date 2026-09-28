@@ -366,7 +366,10 @@
       "section": "5.9",
       "raisedBy": "system",
       "choices": ["approve", "deny"],
-      "data": { "target": "address", "message": "message id" },
+      "data": {
+        "target": "address",
+        "message": "message id"
+      },
       "effect": "wake the target unless it no longer qualifies (5.9)",
       "vectors": [
         "core.wake.approve-applies-before-publishing",
@@ -406,7 +409,10 @@
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
       "raisedBy": "session",
       "choices": ["grant", "deny"],
-      "data": { "paths": "string[]", "reason": "string" },
+      "data": {
+        "paths": "string[]",
+        "reason": "string"
+      },
       "effect": "widen the session's writes (C.3)",
       "vectors": [
         "env.envelope.only-sessions-raise-scope-gates",
@@ -687,20 +693,43 @@
     {
       "value": "https://dispatch.foo/a2a/ext/envelope/v1",
       "scope": "a2a",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "8.4",
       "reference": "spec/08-a2a-binding.md#s8.4",
-      "vectors": []
+      "vectors": [
+        "a2a.envelope-ext.accepts-recipients-choices-and-message-refs",
+        "a2a.envelope-ext.accepts-no-envelope",
+        "a2a.envelope-ext.refuses-urgent",
+        "a2a.envelope-ext.refuses-a-wake-request",
+        "a2a.envelope-ext.refuses-a-private-use-kind",
+        "a2a.envelope-ext.refuses-an-unknown-kind",
+        "a2a.envelope-ext.refuses-a-bad-recipient",
+        "a2a.envelope-ext.refuses-a-ref-type-other-than-task-or-message",
+        "a2a.envelope-ext.refuses-a-ref-anchor",
+        "a2a.envelope-ext.refuses-more-than-20-choices",
+        "a2a.envelope-ext.refuses-a-choice-over-200-bytes",
+        "a2a.envelope-ext.refuses-blocking-that-is-not-a-boolean",
+        "a2a.external.the-host-sets-id-thread-and-from",
+        "a2a.external.defaults-to-a-blocking-question-to-the-owner",
+        "a2a.external.never-speaks-as-the-system",
+        "a2a.external.gate-shaped-data-is-wrapped",
+        "a2a.external.several-data-parts-become-one-array"
+      ]
     },
     {
       "value": "https://dispatch.foo/a2a/ext/gate/v1",
       "scope": "a2a",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "8.5",
       "reference": "spec/08-a2a-binding.md#s8.5",
-      "vectors": []
+      "vectors": [
+        "a2a.projection.row-8-an-open-gate-needs-authorization",
+        "a2a.egress.gate-data-never-reaches-a-client",
+        "a2a.egress.a-gate-with-a-local-recipient-is-refused-whole",
+        "a2a.egress.a-reply-to-a-gate-never-reaches-a-client"
+      ]
     },
     {
       "value": "https://dispatch.foo/a2a/ext/work/v1",

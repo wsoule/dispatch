@@ -13,8 +13,11 @@ markers, the voiding of answers and the exemption from participation all trust
 the system address, so a forged one would defeat them.
 
 Keyword: MUST. Vectors: `a2a-binding`, which check that an external sender never
-maps to the system address; otherwise not tested, since authentication happens
-before this document's rules ([§12.5](12-conformance.md#s12.5)).
+maps to the system address and that a close or marker it sends never reads as
+one (`a2a.external.never-speaks-as-the-system`,
+`a2a.external.an-answer-from-a-client-is-never-a-close`); otherwise not tested,
+since authentication happens before this document's rules
+([§12.5](12-conformance.md#s12.5)).
 
 ## 13.2 Deciding principals
 
@@ -84,12 +87,15 @@ Keyword: MUST (documentation), SHOULD (deletion). Not tested.
 ## 13.9 Egress through bindings
 
 Gate data never leaves a host through a binding ([§5.8](05-gates.md#s5.8)). Each
-binding MUST state what else it exports. For A2A, the export rules of
-[§8](08-a2a-binding.md#s8) are normative; for federation,
+binding MUST state what else it exports. For A2A, the export table of
+[§8.8](08-a2a-binding.md#s8.8) is normative; for federation,
 [Appendix F](appendix-f-federation.md#sF) states them for information.
 
-Keyword: MUST. Vectors: `a2a-binding`; another binding brings its own
-([§12.5](12-conformance.md#s12.5)).
+Keyword: MUST. Vectors: `a2a-binding`
+(`a2a.egress.gate-data-never-reaches-a-client`,
+`a2a.egress.a-gate-with-a-local-recipient-is-refused-whole`,
+`a2a.egress.a-reply-to-a-gate-never-reaches-a-client`); another binding brings
+its own ([§12.5](12-conformance.md#s12.5)).
 
 ## 13.10 Logging
 

@@ -283,7 +283,13 @@
             "world"
           ]
         },
-        "as": { "$ref": "#/$defs/sender" },
+        "as": {
+          "description": "The sender; for a2a.inbound, the client's address alone.",
+          "anyOf": [
+            { "$ref": "#/$defs/sender" },
+            { "type": "string", "minLength": 1 }
+          ]
+        },
         "input": {
           "description": "A send input, a reply's members, or the string an address parse reads."
         },
@@ -301,12 +307,16 @@
         "workItem": { "type": "string" },
         "form": { "enum": ["push", "digest"] },
         "external": { "type": "boolean" },
-        "extension": {},
-        "raw": {},
-        "facts": {},
-        "envelope": {},
-        "body": {},
-        "parts": {},
+        "extension": { "enum": ["envelope", "work"] },
+        "raw": {
+          "description": "The extension's metadata as a client sent it."
+        },
+        "facts": { "type": "object" },
+        "envelope": {
+          "description": "The envelope/v1 metadata as a client sent it."
+        },
+        "body": { "type": "string" },
+        "parts": { "type": "array" },
         "change": { "$ref": "#/$defs/change" }
       },
       "required": ["op"],
@@ -314,14 +324,18 @@
         {
           "if": { "properties": { "op": { "const": "send" } } },
           "then": {
-            "properties": { "as": true, "input": true },
+            "properties": { "as": { "$ref": "#/$defs/sender" }, "input": true },
             "required": ["as", "input"]
           }
         },
         {
           "if": { "properties": { "op": { "const": "reply" } } },
           "then": {
-            "properties": { "as": true, "message": true, "input": true },
+            "properties": {
+              "as": { "$ref": "#/$defs/sender" },
+              "message": true,
+              "input": true
+            },
             "required": ["as", "message", "input"]
           }
         },
@@ -353,7 +367,10 @@
         {
           "if": { "properties": { "op": { "const": "canRead" } } },
           "then": {
-            "properties": { "message": true, "as": true },
+            "properties": {
+              "message": true,
+              "as": { "$ref": "#/$defs/sender" }
+            },
             "required": ["message", "as"]
           }
         },
@@ -385,7 +402,7 @@
         {
           "if": { "properties": { "op": { "const": "validate" } } },
           "then": {
-            "properties": { "as": true, "input": true },
+            "properties": { "as": { "$ref": "#/$defs/sender" }, "input": true },
             "required": ["as", "input"]
           }
         },
@@ -410,7 +427,11 @@
         {
           "if": { "properties": { "op": { "const": "a2a.inbound" } } },
           "then": {
-            "properties": { "as": true, "envelope": true, "body": true },
+            "properties": {
+              "as": { "type": "string", "minLength": 1 },
+              "envelope": true,
+              "body": true
+            },
             "required": ["as", "envelope", "body"]
           }
         },

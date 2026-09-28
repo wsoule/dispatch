@@ -145,7 +145,7 @@ that fails fails only itself: later steps still run. Each step's outcome is
 | `parseAddress` | `input`                                                                                                      | the parsed address ([§3.1](03-addresses.md#s3.1))         |
 | `validate`     | `as`, `input`, `replyTarget`? (a message id), `origin`? (`local` or `received`, [§4.4](04-messages.md#s4.4)) | `{}`                                                      |
 | `render`       | `message`, `form`? (`push`, the default, or `digest`), `external`?                                           | `{ "text" }` ([§6.8](06-delivery.md#s6.8))                |
-| `a2a.validate` | `extension`, `raw`                                                                                           | `{}` ([§8](08-a2a-binding.md#s8))                         |
+| `a2a.validate` | `extension` (`envelope` or `work`), `raw`                                                                    | `{}` ([§8](08-a2a-binding.md#s8))                         |
 | `a2a.project`  | `facts`                                                                                                      | `{ "state", "stage"? }` ([§8.7](08-a2a-binding.md#s8.7))  |
 | `a2a.inbound`  | `as`, `envelope`, `body`, `parts`?: a message arriving through the A2A binding                               | as `send` ([§8.8](08-a2a-binding.md#s8.8))                |
 | `world`        | `change`: exactly one of the changes below                                                                   | no result                                                 |
@@ -157,7 +157,27 @@ step 3 it keeps only the lookup: an input that sets `replyTo` when `replyTarget`
 names no message fails `not-found` on `replyTo`. `parseAddress` refuses an
 address as `invalid` ([§3.1](03-addresses.md#s3.1)); no input field carries it,
 so no vector names the error's field. `send`, `reply`, `close` and `a2a.inbound`
-create a message. A `world` step changes the world between steps:
+create a message.
+
+`a2a.validate` checks `raw`, an extension's metadata as a client sent it.
+`a2a.inbound` takes a message as a client sent it through the binding: `as` is
+the client's address, `envelope` its `envelope/v1` metadata (or null), `body`
+its text and `parts` its data parts; the host applies
+[§8.4](08-a2a-binding.md#s8.4) and [§8.8](08-a2a-binding.md#s8.8) and sends it
+as the client, with no decide authority. An `a2a.project` step's `facts` names
+only what its row reads, and every other fact takes its default, so a task is by
+default an ask that matches row 12: `skill` (`ask` or `handoff`; `ask`), `root`
+(the message that opened the task; a blocking question from the client to the
+owner), `canceledAt` and `declinedAt` (times; null), `answer` (the root's
+answer; null), `openQuestions` (open questions to the client; none), `openGates`
+(`{ id, type, openedAt }` of the open gates in scope; none), `task` (the
+handoff's work item, `{ id, title, status, approved }`, or `"deleted"`; null),
+`dropped` (`client` or `other`; null), `recipientTaskDropped` (false),
+`rootDeliveries` (the states of the root's deliveries; none) and `scope` (the
+in-scope messages; none). A message fact lists only the fields it needs and
+takes the default root's for the rest.
+
+A `world` step changes the world between steps:
 
 | Change           | Value                                                                         |
 | ---------------- | ----------------------------------------------------------------------------- |
@@ -218,7 +238,8 @@ The hook calls are `push { session, message }`, `notify { session, message }`,
 `decide { target, message }`, `onAnswered { question, answer }`,
 `published { message }` (the host made the message visible to readers, as it
 does for every stored message and every close) and, for `a2a-binding` vectors,
-`admitExternal`.
+`admitExternal { recipient, message }` (the host decided whether an external
+recipient gets the message, [§8.8](08-a2a-binding.md#s8.8)).
 
 **Always checked.** Whatever `then` says, every message id and every delivery id
 is unique and an identifier of at most 64 bytes; generated message ids increase

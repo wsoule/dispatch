@@ -314,6 +314,51 @@ describe('runVector', () => {
     expect(await check(v)).toEqual([]);
   });
 
+  it('classifies given.external addresses and records each admission', async () => {
+    const client = 'agent:wyat/a2a.acme';
+    const v: Vector = {
+      ...held,
+      id: 'core.external.the-host-classifies-and-admits',
+      given: {
+        owner: 'human:wyat',
+        agents: [{ address: client, status: 'approved' }],
+        external: { [client]: 'client' },
+      },
+      when: [
+        {
+          op: 'send',
+          as: HUMAN,
+          input: { to: [client], kind: 'message', body: 'Shipped.' },
+        },
+        {
+          op: 'send',
+          as: { address: '$system', canDecide: true },
+          input: {
+            to: [client],
+            kind: 'question',
+            blocking: true,
+            choices: ['approve', 'deny'],
+            body: 'Wake?',
+            data: { type: 'wake', target: 'task:t-4a8cce', message: '$s1' },
+          },
+        },
+      ],
+      then: {
+        steps: [
+          { ok: true, result: { message: '$s1' } },
+          { ok: false, error: { code: 'forbidden', field: 'data' } },
+        ],
+        deliveries: [{ message: '$s1', recipient: client, state: 'held' }],
+        calls: [
+          { hook: 'admitExternal', recipient: client, message: '$s1' },
+          { hook: 'published', message: '$s1' },
+        ],
+        noOtherMessages: true,
+      },
+    };
+    expect(await check(v)).toEqual([]);
+  });
+
   it('reports a world change it does not know as unsupported', async () => {
     await expect(
       runVector({ ...held, when: [{ op: 'world', change: { teleport: 1 } }] })

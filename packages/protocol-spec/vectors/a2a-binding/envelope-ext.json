@@ -1,0 +1,386 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "a2a-binding",
+  "area": "envelope-ext",
+  "vectors": [
+    {
+      "id": "a2a.envelope-ext.accepts-recipients-choices-and-message-refs",
+      "title": "envelope/v1 metadata with recipients, a kind, choices and a message ref is accepted",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "choices": ["yes", "no"],
+            "refs": [
+              {
+                "type": "message",
+                "id": "m-1"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.accepts-no-envelope",
+      "title": "A message with no envelope/v1 metadata is accepted, and takes the defaults",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": null
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-urgent",
+      "title": "A client cannot mark its message urgent: refused on urgent",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "urgent": true
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "forbidden",
+              "field": "urgent"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-a-wake-request",
+      "title": "A client cannot ask to wake a session: refused on wake",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "wake": "request"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "forbidden",
+              "field": "wake"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-a-private-use-kind",
+      "title": "A client cannot send an x- kind: refused on kind",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "kind": "x-deploy"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "forbidden",
+              "field": "kind"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-an-unknown-kind",
+      "title": "A kind outside message, question, answer, handoff and notice is invalid",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "kind": "shout"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "kind"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-a-bad-recipient",
+      "title": "envelope/v1 metadata whose to[] entry spans two lines is refused on that slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "to": ["human:a\nhuman:b"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "to[0]"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-a-ref-type-other-than-task-or-message",
+      "title": "A client may ref only tasks and messages: a file ref is invalid on its type",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "refs": [
+              {
+                "type": "file",
+                "id": "src/api.ts"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "refs[0].type"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-a-ref-anchor",
+      "title": "A client ref carries no at: refused on refs[0].at",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "refs": [
+              {
+                "type": "message",
+                "id": "m-1",
+                "at": "abc123"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "refs[0].at"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-more-than-20-choices",
+      "title": "At most 20 choices: a question offering 21 is refused on choices",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "choices": [
+              "c0",
+              "c1",
+              "c2",
+              "c3",
+              "c4",
+              "c5",
+              "c6",
+              "c7",
+              "c8",
+              "c9",
+              "c10",
+              "c11",
+              "c12",
+              "c13",
+              "c14",
+              "c15",
+              "c16",
+              "c17",
+              "c18",
+              "c19",
+              "c20"
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "choices"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-a-choice-over-200-bytes",
+      "title": "A choice is at most 200 bytes of UTF-8, counted in bytes: 67 three-byte characters are refused",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "choice": "€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€€"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "choice"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.envelope-ext.refuses-blocking-that-is-not-a-boolean",
+      "title": "blocking is true or false: a string is refused on blocking",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.4"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "envelope",
+          "raw": {
+            "blocking": "yes"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": {
+              "code": "invalid",
+              "field": "blocking"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}
