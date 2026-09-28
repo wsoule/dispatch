@@ -115,12 +115,15 @@ describe('the ledger cutover', () => {
     );
     handle.memory.shared!.close();
     expect(
-      handle.memory.promptSection({
+      handle.memory.prepare({
         runId: 'r-000001',
         taskId: task.meta.id,
+        lineage: 'r-000001',
+        runKind: 'execute',
+        isClaude: true,
         dispatchTools: true,
       })
-    ).toEqual({ source: 'memory', text: null });
+    ).toEqual({ text: null, indexSection: null, memory: { mode: 'prompt' } });
   });
 
   it('POST /api/ledger is gone and GET /api/ledger?class=audit returns receipts only', async () => {

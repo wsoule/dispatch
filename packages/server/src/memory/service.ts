@@ -66,12 +66,6 @@ import {
 import type { LedgerImportReport } from './ledgerImport.js';
 import { PersonalStores } from './personalStores.js';
 
-/** A run's memory section; `text` is null when there is nothing to show. */
-interface MemoryPromptSection {
-  source: 'memory';
-  text: string | null;
-}
-
 interface MemoryHealth {
   available: boolean;
   reason: string | null;
@@ -103,12 +97,6 @@ export interface MemoryService extends MemoryPromptPort {
   requireEngine(): MemoryEngine;
   importLedger(opts?: { dryRun?: boolean }): LedgerImportReport | null;
   lastLedgerImport(): LedgerImportReport | null;
-  /** The run's `## Memory` section, recording its index recalls. */
-  promptSection(input: {
-    runId: string;
-    taskId: string;
-    dispatchTools: boolean;
-  }): MemoryPromptSection;
   /** The overseer conversation's memory mode for its next turn, its export written. */
   prepareOverseer(conversationId: string): ExecutorMemoryOptions;
   /** Ingests what the overseer's last turn left in its export directory. */
@@ -141,6 +129,8 @@ export interface OpenMemoryDeps {
   exportSweepMs?: number;
   /** The export preflight; the real one checks the Claude Code CLI, env and managed settings. */
   preflight?: () => Promise<PreflightResult>;
+  /** How often the export preflight re-runs; hourly unless a test shortens it. */
+  preflightRefreshMs?: number;
   now?: () => Date;
 }
 
@@ -458,7 +448,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     return preflight;
   };
   void refreshPreflight();
-  const preflightTimer = setInterval(() => void refreshPreflight(), HOUR_MS);
+  const preflightTimer = setInterval(
+    () => void refreshPreflight(),
+    deps.preflightRefreshMs ?? HOUR_MS
+  );
   preflightTimer.unref();
 
   // Who the principal acts for; null for no one, or when that cannot be told.
@@ -662,10 +655,6 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     },
     importLedger,
     lastLedgerImport: () => last,
-    promptSection: (input) => ({
-      source: 'memory',
-      text: indexSection(input, true),
-    }),
     prepare,
     recall,
     runEnded,

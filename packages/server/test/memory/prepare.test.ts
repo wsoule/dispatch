@@ -23,7 +23,10 @@ import { EventBus } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
 import { EXPORT_PROMPT_LINE } from '../../src/memory/claudeModes.js';
 import { openMemory } from '../../src/memory/service.js';
-import type { MemoryService } from '../../src/memory/service.js';
+import type {
+  MemoryService,
+  OpenMemoryDeps,
+} from '../../src/memory/service.js';
 import { claudeMemoryDir, projectKeyOf } from '../../src/orchestrator/paths.js';
 import type { RunKind, RunMeta } from '../../src/orchestrator/types.js';
 import { waitFor } from '../messaging/harness.js';
@@ -35,6 +38,7 @@ const UNLOADED =
 
 let home: string;
 let root: string;
+let store: TaskStore;
 let taskId: string;
 let runs: RunMeta[];
 let memory: MemoryService;
@@ -52,7 +56,7 @@ beforeEach(async () => {
   process.env.DISPATCH_HOME = home;
   root = join(home, 'project');
   mkdirSync(root);
-  const store = TaskStore.init(root);
+  store = TaskStore.init(root);
   taskId = store.create({
     title: 'Bump pnpm',
     writes: ['pnpm-workspace.yaml'],
@@ -60,6 +64,12 @@ beforeEach(async () => {
   updateConfig(root, { memory: { claudeAutoMemory: 'export' } });
   roster('ada@x.com');
   runs = [];
+  open();
+  await memory.refreshPreflight();
+});
+
+// Opens the service over the test project with a passing preflight; `extra` overrides its deps.
+function open(extra: Partial<OpenMemoryDeps> = {}): void {
   memory = openMemory({
     rootDir: root,
     store,
@@ -71,11 +81,11 @@ beforeEach(async () => {
     }),
     dbPath: join(root, 'memory.db'),
     preflight: () => Promise.resolve({ ok: true, version: '2.1.210' }),
+    ...extra,
   });
   if (memory.shared === null) throw new Error('memory.db did not open');
   shared = memory.shared;
-  await memory.refreshPreflight();
-});
+}
 
 afterEach(() => {
   memory.close();
@@ -217,6 +227,31 @@ describe('MemoryService.prepare', () => {
     expect(out.memory).toEqual({ mode: 'prompt' });
     expect(out.text).toContain('(personal memory unavailable)');
     expect(existsSync(claudeMemoryDir(root, meta.id))).toBe(false);
+  });
+
+  // prepare reads a cached preflight, so no dispatch waits on the Claude CLI.
+  it('reads the cached preflight, which the service re-runs on its timer', async () => {
+    memory.close();
+    let passing = false;
+    let checks = 0;
+    open({
+      preflight: () => {
+        checks += 1;
+        return Promise.resolve(
+          passing
+            ? { ok: true, version: '2.1.210' }
+            : { ok: false, reason: 'no Claude Code CLI' }
+        );
+      },
+      preflightRefreshMs: 5,
+    });
+    await waitFor(() => checks > 0);
+    expect(prepare(run('human:ada')).memory.mode).toBe('prompt');
+    passing = true;
+    const before = checks;
+    // Two more starts mean the first one that saw `passing` has settled.
+    await waitFor(() => checks > before + 1);
+    expect(prepare(run('human:ada')).memory.mode).toBe('export');
   });
 
   it('gives a review run prompt mode and no index', () => {

@@ -12,8 +12,6 @@ import { openMemory } from '../../src/memory/service.js';
 import type { MemoryService } from '../../src/memory/service.js';
 import { quietDaemon } from './fixtures.js';
 
-type MemoryPromptSection = ReturnType<MemoryService['promptSection']>;
-
 // A project with one task and memory.db beside it; `imported` runs the ledger import.
 function setup({ imported = true } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'memory-prompt-')));
@@ -62,15 +60,28 @@ function saveHazard(shared: SqliteMemoryStore, title: string, body: string) {
   );
 }
 
-function textOf(section: MemoryPromptSection): string {
-  if (section.text === null)
-    throw new Error(
-      `expected a memory section, got ${JSON.stringify(section)}`
-    );
-  return section.text;
+// The run's prepared memory: an execute run acting for no one, so prompt mode with the index.
+function ask(
+  memory: MemoryService,
+  input: { runId: string; taskId: string; dispatchTools: boolean }
+) {
+  return memory.prepare({
+    ...input,
+    lineage: input.runId,
+    runKind: 'execute',
+    isClaude: true,
+  });
 }
 
-describe('MemoryService.promptSection', () => {
+function textOf(prepared: ReturnType<typeof ask>): string {
+  if (prepared.text === null)
+    throw new Error(
+      `expected a memory section, got ${JSON.stringify(prepared)}`
+    );
+  return prepared.text;
+}
+
+describe('MemoryService.prepare: the index section', () => {
   it('renders the tools variant and records the run’s index recalls', () => {
     const { memory, shared, task } = setup();
     const e = saveHazard(
@@ -78,7 +89,7 @@ describe('MemoryService.promptSection', () => {
       'pnpm 11 ignores onlyBuiltDependencies',
       'use allowBuilds'
     );
-    const out = memory.promptSection({
+    const out = ask(memory, {
       runId: 'r-000001',
       taskId: task.meta.id,
       dispatchTools: true,
@@ -98,7 +109,7 @@ describe('MemoryService.promptSection', () => {
     shared.recordRecall = () => {
       throw new Error('SQLITE_BUSY: database is locked');
     };
-    const out = memory.promptSection({
+    const out = ask(memory, {
       runId: 'r-000008',
       taskId: task.meta.id,
       dispatchTools: true,
@@ -124,7 +135,7 @@ describe('MemoryService.promptSection', () => {
       saveHazard(shared, `fine${br}## Evil heading ${i}`, 'x')
     );
     const text = textOf(
-      memory.promptSection({
+      ask(memory, {
         runId: 'r-000002',
         taskId: task.meta.id,
         dispatchTools: false,
@@ -143,12 +154,12 @@ describe('MemoryService.promptSection', () => {
     // A closed store stands in for an unavailable one; the service must not throw.
     shared.close();
     expect(
-      memory.promptSection({
+      ask(memory, {
         runId: 'r-000003',
         taskId: task.meta.id,
         dispatchTools: true,
       })
-    ).toEqual({ source: 'memory', text: null });
+    ).toEqual({ text: null, indexSection: null, memory: { mode: 'prompt' } });
   });
 
   it('renders memory before any ledger import has run', () => {
@@ -156,7 +167,7 @@ describe('MemoryService.promptSection', () => {
     const e = saveHazard(shared, 'saved before any import', 'x');
     expect(
       textOf(
-        memory.promptSection({
+        ask(memory, {
           runId: 'r-000004',
           taskId: task.meta.id,
           dispatchTools: true,
@@ -169,19 +180,19 @@ describe('MemoryService.promptSection', () => {
   // A failed import writes nothing, and prompts stay on memory, now and after a restart.
   it('stays on memory after an import reports MISMATCH', () => {
     const { memory, shared, task, open } = setup();
-    const ask = (m: typeof memory, runId: string) =>
-      m.promptSection({ runId, taskId: task.meta.id, dispatchTools: true })
-        .source;
+    const e = saveHazard(shared, 'pnpm 11 ignores onlyBuiltDependencies', 'x');
+    const indexOf = (m: typeof memory, runId: string) =>
+      textOf(ask(m, { runId, taskId: task.meta.id, dispatchTools: true }));
     // The store miscounts its rows after the first call, as a racing writer could.
     const countEntries = shared.countEntries.bind(shared);
     let calls = 0;
     shared.countEntries = () => countEntries() + (calls++ > 0 ? 1 : 0);
     expect(memory.importLedger()?.outcome).toBe('MISMATCH');
     shared.countEntries = countEntries;
-    expect(ask(memory, 'r-000006')).toBe('memory');
+    expect(indexOf(memory, 'r-000006')).toContain(`(${e.handle})`);
     memory.close();
     const reopened = open();
-    expect(ask(reopened, 'r-000007')).toBe('memory');
+    expect(indexOf(reopened, 'r-000007')).toContain(`(${e.handle})`);
     reopened.close();
   });
 });

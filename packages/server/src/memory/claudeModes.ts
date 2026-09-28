@@ -156,9 +156,10 @@ function managedOverride(managed: Record<string, unknown>): string | null {
 // The managed tier's settings, merged in precedence order, as the CLI would
 // resolve them in `cwd`; null when no managed source sets anything.
 export async function resolveManagedSettings(
-  cwd: string
+  cwd: string,
+  resolve: typeof resolveSettings = resolveSettings
 ): Promise<Record<string, unknown> | null> {
-  const resolved = await resolveSettings({
+  const resolved = await resolve({
     cwd,
     settingSources: ['user', 'project', 'local'],
   });
