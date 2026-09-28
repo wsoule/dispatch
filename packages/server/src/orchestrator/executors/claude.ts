@@ -268,8 +268,8 @@ const MEMORY_PENDING_DENIAL =
 // How long the load check waits for the CLI to list the memory files it loaded.
 const MEMORY_CHECK_MS = 30_000;
 
-// The `memoryFiles` types of CLAUDE.md files in the bundled CLI (2.1.207). Any
-// other type outside the export, such as `AutoMem`, counts as native memory.
+// The `memoryFiles` types of CLAUDE.md files. Any other type outside the export
+// counts as native: the live probe saw `AutoMem`, and 2.1.283 adds `AutoMemPinned`.
 const CLAUDE_MD_FILE_TYPES: ReadonlySet<string> = new Set([
   'User',
   'Project',

@@ -23,6 +23,10 @@ export interface ModeInput {
   exportWritten: () => boolean;
 }
 
+// The oldest Claude Code version the live export-mode probe passed on; boot
+// records it, and null would keep export mode off.
+export const PROBED_CLAUDE_CODE_VERSION: string | null = '2.1.207';
+
 // The line an export-mode prompt carries in place of the memory index.
 export const EXPORT_PROMPT_LINE =
   'Your memory index is MEMORY.md in your auto-memory directory, managed by Dispatch. ' +

@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
+import { PROBED_CLAUDE_CODE_VERSION } from '../../src/memory/claudeModes.js';
 import { openMemory, overseerMemory } from '../../src/memory/service.js';
 import type { OpenMemoryDeps } from '../../src/memory/service.js';
 import { GateHandlers } from '../../src/messaging/gates.js';
@@ -151,6 +152,31 @@ describe('openMemory', () => {
     expect(reopened.meta('last_decay_at')).toBeNull();
     expect(existsSync(join(t.root, 'personal', 'self.db.bak'))).toBe(false);
     t.memory.personal.close();
+  });
+
+  it('records the probed Claude Code version at boot, replacing an older one', () => {
+    const t = setup();
+    expect(t.memory.shared?.meta('claude-probe-passed')).toBe(
+      PROBED_CLAUDE_CODE_VERSION
+    );
+    t.memory.shared?.setMeta('claude-probe-passed', '0.0.1');
+    t.memory.close();
+    const reopened = setup({ dbPath: join(t.root, 'memory.db') });
+    expect(reopened.memory.shared?.meta('claude-probe-passed')).toBe(
+      PROBED_CLAUDE_CODE_VERSION
+    );
+    reopened.memory.close();
+  });
+
+  it('forgets a recorded probe when this build has none, so export is never chosen', () => {
+    const t = setup();
+    t.memory.close();
+    const reopened = setup({
+      dbPath: join(t.root, 'memory.db'),
+      probedClaudeVersion: null,
+    });
+    expect(reopened.memory.shared?.meta('claude-probe-passed')).toBeNull();
+    reopened.memory.close();
   });
 
   it('never announces personal ids', () => {

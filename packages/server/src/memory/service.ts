@@ -54,6 +54,7 @@ import type { ClaudeImportReport } from './claudeImport.js';
 import {
   chooseMemoryMode,
   EXPORT_PROMPT_LINE,
+  PROBED_CLAUDE_CODE_VERSION,
   resolveManagedSettings,
   runPreflight,
 } from './claudeModes.js';
@@ -153,6 +154,8 @@ export interface OpenMemoryDeps {
   preflight?: () => Promise<PreflightResult>;
   /** How often the export preflight re-runs; hourly unless a test shortens it. */
   preflightRefreshMs?: number;
+  /** The version boot records as probed; this build's own unless a test overrides it. */
+  probedClaudeVersion?: string | null;
   now?: () => Date;
 }
 
@@ -236,6 +239,15 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   // become proposals, never entries.
   if (shared !== null && shared.meta(CUTOVER_KEY) === null)
     shared.setMeta(CUTOVER_KEY, now().toISOString());
+  // Every boot records this build's probe, so a value an older build left never outlives it.
+  const probed =
+    deps.probedClaudeVersion === undefined
+      ? PROBED_CLAUDE_CODE_VERSION
+      : deps.probedClaudeVersion;
+  if (shared !== null) {
+    if (probed === null) shared.deleteMeta(PROBE_KEY);
+    else shared.setMeta(PROBE_KEY, probed);
+  }
   let identities: MemoryIdentities | null = null;
   let identitiesReason = 'identities.db will not open';
   try {
