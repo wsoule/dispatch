@@ -13,6 +13,12 @@ const FENCE_RUN = /~{4,}/;
 // it wraps can never contain its own delimiter.
 const FENCE_BAR = '~~~~~~~~';
 
+// CommonMark ends a line at \r\n, \r or \n; splitting on \n alone would let a
+// bare \r hide a fence line from the escaping below.
+function lines(text: string): string[] {
+  return text.replace(/\r\n?/g, '\n').split('\n');
+}
+
 // An untrusted value sitting inside a line of prompt text (a title, a command,
 // a summary), folded so it cannot start a line of its own.
 export function untrustedInline(text: string): string {
@@ -22,8 +28,7 @@ export function untrustedInline(text: string): string {
 // An untrusted multi-line value, with every line that would otherwise pose as
 // a heading or a fence neutralised.
 export function untrustedBlock(text: string): string {
-  return text
-    .split('\n')
+  return lines(text)
     .map((line) => (STRUCTURAL_LINE.test(line) ? `\\${line}` : line))
     .join('\n');
 }
@@ -31,8 +36,7 @@ export function untrustedBlock(text: string): string {
 // An untrusted block between labelled fences, its own fence-like lines escaped
 // and the delimiter widened until the content cannot contain it.
 export function untrustedFenced(label: string, text: string): string {
-  const body = text
-    .split('\n')
+  const body = lines(text)
     .map((line) => (FENCE_RUN.test(line) ? `\\${line}` : line))
     .join('\n');
   let bar = FENCE_BAR;

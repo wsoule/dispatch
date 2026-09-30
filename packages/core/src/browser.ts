@@ -83,3 +83,4 @@ export {
   upsertMember,
 } from './team.js';
 export type { DroppedEntry, TeamMember } from './team.js';
+export { untrustedFenced } from './untrusted.js';
