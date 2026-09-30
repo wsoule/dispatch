@@ -87,7 +87,14 @@ export function docGateHandler(
       );
       return;
     }
-    if (p.gate !== question.id) return;
+    if (p.gate !== question.id) {
+      host.notice(
+        answer.from,
+        question.id,
+        'That doc gate was replaced by a newer one; nothing changed. Answer the open gate.'
+      );
+      return;
+    }
     const decides =
       answer.from === SYSTEM_ADDRESS ||
       (answer.from.startsWith('human:') && host.canDecide(answer.from));

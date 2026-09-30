@@ -131,6 +131,42 @@ describe('gate safety', () => {
     ).toBe(false);
   });
 
+  it('keeps one gate when two writes raise one at once, closing the other', async () => {
+    const second =
+      service.edit(service.actorFor(AGENT), 'spec', {
+        ops: [{ op: 'append', text: 'v3' }],
+      }).proposal ?? '';
+    const [a, b] = await Promise.all([
+      service.ensureGate(second),
+      service.ensureGate(second),
+    ]);
+    const recorded = service.proposalForGate(second)?.gate ?? '';
+    expect([a, b]).toEqual([recorded, recorded]);
+    expect(host.openGates.filter((g) => g.proposal === second)).toEqual([
+      { id: recorded, proposal: second },
+    ]);
+    expect(host.gatesClosed).toEqual([
+      {
+        gate: host.gatesRaised.find((g) => g !== gate && g !== recorded) ?? '',
+        reason: 'this doc proposal is held by another gate',
+      },
+    ]);
+  });
+
+  it('tells the answerer of a replaced gate that nothing changed', async () => {
+    await service.regate(proposal);
+    await docGateHandler(service, host)(
+      question(),
+      answer('human:bob', 'approve')
+    );
+    expect(service.proposalForGate(proposal)?.state).toBe('open');
+    expect(host.notices.at(-1)).toMatchObject({
+      to: 'human:bob',
+      replyTo: gate,
+      body: 'That doc gate was replaced by a newer one; nothing changed. Answer the open gate.',
+    });
+  });
+
   it('closes gates whose proposal is no longer open', async () => {
     host.openGates = [
       { id: 'm-stray', proposal: 'rev-gone' },

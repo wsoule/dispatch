@@ -1758,7 +1758,12 @@ export class DocsService {
       this.closeGateQuietly(id, `this doc proposal is ${now?.state ?? 'gone'}`);
       return null;
     }
-    if (now.gate !== null) return now.gate;
+    // A concurrent call recorded its gate first; this one would never apply.
+    if (now.gate !== null) {
+      if (now.gate !== id)
+        this.closeGateQuietly(id, 'this doc proposal is held by another gate');
+      return now.gate;
+    }
     this.write(() => store.putProposal({ ...now, gate: id }));
     return id;
   }
