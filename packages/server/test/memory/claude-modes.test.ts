@@ -78,12 +78,6 @@ describe('chooseMemoryMode', () => {
     ],
     ['export not writable', { exportWritten: () => false }, 'prompt', true],
     ['everything in place', {}, 'export', true],
-    [
-      'the overseer skips the run-kind step',
-      { runKind: 'overseer' as const },
-      'export',
-      true,
-    ],
   ])('%s', (_name, over, mode, index) => {
     const out = chooseMemoryMode({ ...base, ...over });
     expect<unknown[]>([out.mode, out.index]).toEqual([mode, index]);

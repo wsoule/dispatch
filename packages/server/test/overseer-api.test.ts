@@ -1,7 +1,7 @@
 import { TaskStore, updateConfig } from '@dispatch/core';
 import type { Message } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -471,18 +471,13 @@ describe('overseer memory tools', () => {
     expect(ledger.result.content).toMatchObject({ entries: [], total: 0 });
   });
 
-  it('exports the owner’s memory to each turn and ingests what the turn wrote', async () => {
+  // Request-tier callers read overseer transcripts, so no turn carries the
+  // owner's personal memory, even with the export on and the import complete.
+  it('writes no export for an overseer turn, whatever the Claude setting', async () => {
     const seen: OverseerTurnOptions[] = [];
-    // Writes a note into the turn's export directory, as Claude would.
     const backend: OverseerBackend = {
       start: (_prompt, _toolset, options = {}) => {
         seen.push(options);
-        const dir = options.memory?.dir;
-        if (dir !== undefined)
-          writeFileSync(
-            join(dir, 'overseer-note.md'),
-            '---\nname: overseer-note\ndescription: the merge queue runs lint first\nmetadata:\n  type: project\n---\nSeen in the queue.\n'
-          );
         return Promise.resolve({ reply: 'noted', sessionId: 's-o' });
       },
       sendMessage: () => Promise.resolve({ reply: 'ok' }),
@@ -499,23 +494,15 @@ describe('overseer memory tools', () => {
     });
     useTestAuth(handle);
     baseUrl = `http://127.0.0.1:${handle.port}`;
-    const own = handle.memory.personal.personal('self');
-    own.setMeta(`claude-import:${projectKeyOf(root)}`, 'complete');
+    handle.memory.personal
+      .personal('self')
+      .setMeta(`claude-import:${projectKeyOf(root)}`, 'complete');
     await handle.memory.refreshPreflight();
 
     const { record } = await startConversation('remember the queue order');
     await settled(record.id);
-    expect(seen[0].memory).toEqual({
-      mode: 'export',
-      dir: claudeMemoryDir(root, `o-${record.id}`),
-    });
-    await waitFor(() =>
-      Promise.resolve(
-        own
-          .listEntries()
-          .some((e) => e.title === 'the merge queue runs lint first')
-      )
-    );
+    expect(seen).toHaveLength(1);
+    expect(existsSync(claudeMemoryDir(root, `o-${record.id}`))).toBe(false);
   });
 });
 

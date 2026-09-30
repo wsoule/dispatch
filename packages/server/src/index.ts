@@ -1539,7 +1539,6 @@ async function bootServer(
       owner: actorContext.humanRef,
       overseer: overseerAddress,
     }),
-    memory,
   });
   if (opts.registerOverseers !== undefined) {
     opts.registerOverseers(overseerManager);

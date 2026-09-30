@@ -15,7 +15,7 @@ import type {
   Principal,
 } from '@dispatch/memory';
 import { SYSTEM_ADDRESS } from '@dispatch/protocol';
-import { existsSync, unwatchFile, watchFile } from 'node:fs';
+import { unwatchFile, watchFile } from 'node:fs';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -31,7 +31,6 @@ import {
 } from '../orchestrator/paths.js';
 import { runLineage } from '../orchestrator/types.js';
 import type {
-  ExecutorMemoryOptions,
   MemoryPromptPort,
   PreparedMemory,
   RunKind,
@@ -113,10 +112,6 @@ export interface MemoryService extends MemoryPromptPort {
   requireEngine(): MemoryEngine;
   importLedger(opts?: { dryRun?: boolean }): LedgerImportReport | null;
   lastLedgerImport(): LedgerImportReport | null;
-  /** The overseer conversation's memory mode for its next turn, its export written. */
-  prepareOverseer(conversationId: string): ExecutorMemoryOptions;
-  /** Ingests what the overseer's last turn left in its export directory. */
-  ingestOverseer(conversationId: string): Promise<void>;
   /** Re-runs the export preflight that prepare reads from its cache. */
   refreshPreflight(): Promise<PreflightResult>;
   /** Boot: imports the owner's Claude notes unless this project already recorded an import. */
@@ -177,13 +172,13 @@ type SessionMode =
   | { mode: 'export'; dir: string }
   | { mode: 'native' | 'prompt'; index: boolean };
 
-// One Claude session whose memory mode is being chosen: a run, or an overseer turn.
+// One run's Claude session whose memory mode is being chosen.
 interface SessionTarget {
   principal: Principal;
-  // The export directory's name: a run lineage or `o-<conversation>`.
+  // The export directory's name: the run's lineage.
   name: string;
   taskId: string | null;
-  runKind: RunKind | 'overseer';
+  runKind: RunKind;
   isClaude: boolean;
 }
 
@@ -345,12 +340,6 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
           config,
           now,
         });
-  // The overseer acts for the owner, so its conversations export the owner's memory.
-  const overseer: Principal = {
-    address: `agent:${deps.ownerRef.slice('human:'.length)}/overseer`,
-    canDecide: false,
-    kind: 'agent',
-  };
   // Scans leftover export directories and deletes those whose lineage closed.
   const sweepExports = async (): Promise<void> => {
     if (claudeExport === null) return;
@@ -358,10 +347,10 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       const runs = deps.orchestrator.list();
       const nowMs = now().getTime();
       await claudeExport.sweep({
+        // An overseer directory is closed, never ingested: the overseer
+        // writes no one's memory.
         targetOf: (name) =>
-          name.startsWith('o-')
-            ? { name, principal: overseer, taskId: null }
-            : runLineageTarget(runs, name),
+          name.startsWith('o-') ? null : runLineageTarget(runs, name),
         isOpen: (name) =>
           name.startsWith('o-')
             ? overseerLineageOpen(claudeMemoryDir(deps.rootDir, name), nowMs)
@@ -761,24 +750,6 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
     prepare,
     recall,
     runEnded,
-    prepareOverseer: (conversationId) => {
-      const choice = chooseMode({
-        principal: overseer,
-        name: `o-${conversationId}`,
-        taskId: null,
-        runKind: 'overseer',
-        isClaude: true,
-      });
-      return choice.mode === 'export'
-        ? { mode: 'export', dir: choice.dir }
-        : { mode: choice.mode };
-    },
-    ingestOverseer: async (conversationId) => {
-      const name = `o-${conversationId}`;
-      if (claudeExport === null) return;
-      if (!existsSync(claudeMemoryDir(deps.rootDir, name))) return;
-      await claudeExport.ingest({ name, principal: overseer, taskId: null });
-    },
     refreshPreflight,
     importClaudeOnce: async () => {
       const store = openPersonal('self');

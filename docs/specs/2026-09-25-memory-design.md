@@ -135,7 +135,7 @@ Its dependencies:
 ```text
 $DISPATCH_HOME/.dispatch/runs/<projectKey>/memory.db                        project + team scopes, proposals
 $DISPATCH_HOME/.dispatch/runs/<projectKey>/claude-memory/<lineage>/         one run lineage's Claude export
-$DISPATCH_HOME/.dispatch/runs/<projectKey>/claude-memory/o-<conversation>/  one overseer conversation's export
+$DISPATCH_HOME/.dispatch/runs/<projectKey>/claude-memory/o-<conversation>/  an overseer export an older build left; closed, never ingested
 $DISPATCH_HOME/.dispatch/memory/identities.db                               personal identities and their aliases
 $DISPATCH_HOME/.dispatch/memory/<identity>.db                               one human's personal scope
 ```
@@ -286,7 +286,8 @@ the model, effort, claims and session but not `dispatchedBy`.
   personal entries, a personal `memory_save` is `forbidden`, and the run uses
   `prompt` mode. No run ever falls back to the project owner.
 - **Other principals.**
-  - The owner's overseer acts for the owner.
+  - The owner's overseer reads memory as `agent:dispatch`, for no one: every
+    request-tier caller can read its transcripts (see Overseer).
   - `agent:<op>/<name>` acts for `human:<op>`. The exception is names starting
     with `a2a.`, which are reserved for A2A clients (a2a-bridge-design.md
     "Addresses"). They have no operator and are refused on every memory route
@@ -447,7 +448,7 @@ only narrow which tasks it is relevant to.
 
 | Scope    | Who reads it                                                                                                     | Who writes it directly                                               | Leaves the machine           |
 | -------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------- |
-| personal | its human; runs whose operator is that human; agents registered under them (never `a2a.` agents); their overseer | its human; runs and agents acting for them (undoable)                | never                        |
+| personal | its human; runs whose operator is that human; agents registered under them (never `a2a.` agents)                | its human; runs and agents acting for them (undoable)                | never                        |
 | project  | every principal of this project on this daemon, except `a2a.` agents and A2A-provenance runs                     | decide-tier humans; everyone else proposes through the `memory` gate | never                        |
 | team     | as project, plus teammates' daemons once replicated (v2), minus `a2a.` agents                                    | as project                                                           | board sync and receipts (v2) |
 
@@ -1286,7 +1287,7 @@ of the `## Memory` section:
 
 ### Other Claude sessions
 
-Every Claude SDK session Dispatch starts that is not a run or the overseer gets
+Every Claude SDK session Dispatch starts that is not a run, the overseer included, gets
 `autoMemoryEnabled: false` and `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'`
 through one helper in `orchestrator/claudeCli.ts`. That covers the planner, the
 repo digest, the AI task filter, the inbox clusterer and commit-message
@@ -1543,22 +1544,17 @@ as personal memory, because repointing would otherwise hide them from runs.
 
 ### Overseer
 
-- The owner's overseer (`agent:<owner>/overseer`) runs Claude in `rootDir` with
-  the same setting sources (`overseers/claude.ts:213`, `:280`).
-- It goes through the same mode procedure, with the owner as operator (step 2
-  does not apply).
-- Its directory is `claude-memory/o-<conversationId>/`. The conversation resumes
-  the same Claude session every turn (`overseers/claude.ts:291`), so the name is
-  fixed for the conversation's life.
-  - The directory is ingested after every turn.
-  - It is deleted after 24 hours without a turn, and re-exported under the same
-    name if the conversation resumes, so old paths in its history still resolve.
-  - Boot recovery treats `o-` directories by the same 24-hour rule.
-- Its index has no task context, so it ranks by specificity 1 for everything.
-- Its writes follow the same rules as a run's. Its proposals have no task, so
-  they always wait for a human (Proposals, step 5).
-- `memory_search` and `memory_read` join its status tools
-  (`overseerTools.ts:424-432`).
+Every request-tier caller can start an overseer conversation and read its
+transcript, so the overseer is not a personal reader until its conversations
+are private to the owner.
+
+- Its `memory_search` and `memory_read` read as `agent:dispatch`: project and
+  team scope only, never the owner's personal entries (`overseerTools.ts`).
+- Each turn runs with Claude's auto memory off (`autoMemoryEnabled: false`,
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`), so it never loads the owner's native
+  Claude notes, and nothing is exported to it or ingested from it.
+- An `o-<conversation>` directory an older build left is closed by the same
+  24-hour rule as a run's, without being ingested.
 
 ## Decay jobs
 
@@ -1595,7 +1591,7 @@ Each transition appends a revision with cause `decay`. The pass emits one
 Personal memory belongs to one human:
 
 - **Readers.** Only that human, runs whose operator they are, agents registered
-  under them, and their own overseer can read it.
+  under them can read it. The overseer cannot (see Overseer).
   - Unlike messaging, where a deciding human acts as anyone (spec :451-453), a
     decide-tier human gets a 403 on another human's personal entries, and the
     project owner is no exception.

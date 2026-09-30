@@ -159,12 +159,9 @@ describe('ClaudeOverseer session wiring', () => {
         command: 'gh release create v2.0.0',
       })
     ).toBe('deny');
-    expect(captured?.settings).toEqual(floorGuard('deny').settings);
-    // The overseer keeps Claude's native auto memory, as a run does.
-    expect(
-      (captured?.settings as { autoMemoryEnabled?: boolean } | undefined)
-        ?.autoMemoryEnabled
-    ).toBeUndefined();
+    expect(captured?.settings).toMatchObject(
+      floorGuard('deny').settings as Record<string, unknown>
+    );
   });
 
   // The hook holds a floor command through the same authorizeTool gate
@@ -230,27 +227,19 @@ describe('ClaudeOverseer session wiring', () => {
     expect(captured?.maxBudgetUsd).toBeUndefined();
   });
 
-  it('applies the turn’s memory mode beside the floor’s settings', async () => {
+  // Its transcripts are readable by request-tier callers, so it never loads
+  // the owner's native Claude notes.
+  it('keeps Claude’s auto memory off beside the floor’s settings', async () => {
     const { toolset } = stubToolset();
-    const dir = '/h/.dispatch/runs/k/claude-memory/o-wc-1';
-    const exported = await runTurn(successStream(), toolset, undefined, {
-      memory: { mode: 'export', dir },
-    });
-    expect(exported.captured?.settings).toMatchObject({
-      env: { CLAUDE_CODE_SIMPLE: '0', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '0' },
-      disableSkillShellExecution: true,
-      autoMemoryEnabled: true,
-      autoMemoryDirectory: dir,
-    });
-    expect(exported.captured?.additionalDirectories).toEqual([dir]);
-    const prompt = await runTurn(successStream(), toolset, undefined, {
-      memory: { mode: 'prompt' },
-    });
-    expect(prompt.captured?.settings).toMatchObject({
+    const { captured } = await runTurn(successStream(), toolset);
+    const settings = captured?.settings as Record<string, unknown> | undefined;
+    expect(settings).toMatchObject({
       env: { CLAUDE_CODE_SIMPLE: '0', CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1' },
+      disableSkillShellExecution: true,
       autoMemoryEnabled: false,
     });
-    expect(prompt.captured?.additionalDirectories).toBeUndefined();
+    expect(settings?.autoMemoryDirectory).toBeUndefined();
+    expect(captured?.additionalDirectories).toBeUndefined();
   });
 
   it('tells the model that a mutating call only queues an action', async () => {

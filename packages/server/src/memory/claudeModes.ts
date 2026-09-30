@@ -11,7 +11,7 @@ export type PreflightResult =
 
 export interface ModeInput {
   isClaude: boolean;
-  runKind: RunKind | 'overseer';
+  runKind: RunKind;
   hasOperator: boolean;
   // False when the operator's personal store will not open, a reused handle included.
   personalAvailable: boolean;
@@ -42,7 +42,7 @@ export function chooseMemoryMode(i: ModeInput): {
 } {
   if (!i.isClaude)
     return { mode: 'prompt', index: true, reason: 'not a Claude executor' };
-  if (i.runKind !== 'execute' && i.runKind !== 'overseer')
+  if (i.runKind !== 'execute')
     return {
       mode: 'prompt',
       index: false,

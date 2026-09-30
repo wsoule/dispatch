@@ -2,7 +2,7 @@ import type { EffortLevel } from '@dispatch/core';
 import type { z } from 'zod';
 
 import type { OverseerAction } from './overseerTools.js';
-import type { ApprovalDecision, ExecutorMemoryOptions } from './types.js';
+import type { ApprovalDecision } from './types.js';
 
 /**
  * The seam between the overseer's conversation bookkeeping (OverseerManager)
@@ -114,8 +114,6 @@ export interface OverseerTurnOptions {
    * only the calls that did not go through it.
    */
   onToolUse?: (toolName: string, input: unknown) => void;
-  /** How the turn's session carries memory; absent leaves Claude's own auto memory. */
-  memory?: ExecutorMemoryOptions;
 }
 
 /** One settled assistant turn: the text reply, and the handle to resume from. */
