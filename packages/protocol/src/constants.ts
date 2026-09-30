@@ -15,6 +15,7 @@ export const ADDRESS_SCHEMES = [
   'task',
   'run',
   'channel',
+  'a2a',
 ] as const;
 
 export const BUILT_IN_KINDS = [
