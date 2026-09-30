@@ -59,8 +59,8 @@ from the daemon's credential tiers
 
 ## C.3 Gate types
 
-Dispatch implements `wake` ([§5.9](05-gates.md#s5.9)) and the six permanent
-types below, and a host that claims the profile declares all seven
+Dispatch implements `wake` ([§5.9](05-gates.md#s5.9)) and the seven permanent
+types below, and a host that claims the profile declares all eight
 ([§12.1](12-conformance.md#s12.1)). Each effect is idempotent and applied as
 [§5.5](05-gates.md#s5.5) says.
 
@@ -72,6 +72,7 @@ types below, and a host that claims the profile declares all seven
 | `overseer-action`    | system            | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
 | `task-proposal`      | system            | approve, decline               | `task`, `proposedBy`, `message`                                                |
 | `memory`             | system-or-decider | approve, reject                | `proposalId`, `action`, `scope`, `kind`                                        |
+| `doc`                | system            | approve, reject                | `doc`, `proposal`, `taskId`?, `runId`?                                         |
 
 **`tool-approval`.** The system raises it to the owner as a blocking question
 when a session or the overseer parks a tool call for approval, with refs to the
@@ -140,7 +141,7 @@ host and never travels in the gate. `action` is `add`, `supersede` or `retire`,
 `constraint`, `hazard`, `decision`, `fact` or `reference`. Any other shape fails
 `invalid` on `data` or the field. `approve` applies the proposal; `reject`
 discards it. The system rejects a proposal no one decided within the project's
-`proposalTtlDays` (14 by default) with an `x-expired` marker
+memory `proposalTtlDays` (14 by default) with an `x-expired` marker
 ([§C.4](appendix-c-dispatch-profile.md#sC.4)). Vectors:
 `core.gates.memory-is-raised-by-the-system-or-a-deciding-human`,
 `core.gates.memory-is-refused-from-a-session-or-an-agent`,
@@ -150,13 +151,23 @@ discards it. The system rejects a proposal no one decided within the project's
 `env.envelope.a-memory-gate-names-its-action-and-kind`,
 `env.envelope.memory-gates-have-a-fixed-shape`.
 
-**Provisional types.** One more type is registered as provisional
-([§11.6](11-registries.md#s11.6)), and joins the profile when the Dispatch
-feature that raises it ships with vectors:
-
-| Type  | Raised by | Choices         | Data besides `type`                    | Effect                                     |
-| ----- | --------- | --------------- | -------------------------------------- | ------------------------------------------ |
-| `doc` | system    | approve, reject | `doc`, `proposal`, `taskId`?, `runId`? | apply or reject a proposed document change |
+**`doc`.** The system raises it to the owner when a principal who may not edit
+an accepted team document directly proposes an edit to it, with refs to the
+document and to the proposer's work item and session when there are any. Its
+shape is fixed ([§5.3](05-gates.md#s5.3)): kind `question`, `blocking` true,
+`choices` exactly `approve` then `reject`, and data
+`{ "type": "doc", "doc", "proposal", "taskId"?, "runId"? }`. `doc` is the
+document's `doc-` id and `proposal` the proposed revision's `rev-` id; the
+proposed text stays with the host and never travels in the gate. `taskId` and
+`runId` name the proposer's work item and session. Any other shape fails
+`invalid` on `data`, `data.doc` or `data.proposal`. `approve` applies the
+proposed revision; `reject` discards it. When the project's autonomy policy
+approves the proposal, or the proposal expires after the project's docs
+`proposalTtlDays`, the system closes the gate ([§4.8](04-messages.md#s4.8)).
+Vectors: `core.gates.doc-is-raised-only-by-the-system`,
+`core.gates.doc-needs-a-deciding-answer`,
+`env.envelope.a-doc-gate-names-its-doc-and-proposal`,
+`env.envelope.doc-gates-have-a-fixed-shape`.
 
 ## C.4 Markers
 

@@ -55,6 +55,13 @@ vector ids (see §14.2).
   send may ref a document by its id and a section anchor (§4.3, App. C.1), and a
   vector that needs a profile ref type is a `dispatch` vector (§12.3). Vectors:
   `core.refs.a-local-doc-ref-is-accepted`.
+- [additive] The `doc` gate type is permanent: only the system address raises
+  it, its shape is fixed, naming a document and its proposed revision and never
+  the text, and only a deciding principal answers it (App. C.3). Vectors:
+  `core.gates.doc-is-raised-only-by-the-system`,
+  `core.gates.doc-needs-a-deciding-answer`,
+  `env.envelope.a-doc-gate-names-its-doc-and-proposal`,
+  `env.envelope.doc-gates-have-a-fixed-shape`.
 
 ## 1.0.0-draft.1 (2026-09-28)
 

@@ -1073,6 +1073,161 @@
         ],
         "gateEffects": ["$s1"]
       }
+    },
+    {
+      "id": "core.gates.doc-is-raised-only-by-the-system",
+      "title": "A deciding human or a session may not raise a doc gate, whose raisedBy is system; the system may",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {
+        "workItems": [{ "id": "t-4a8cce", "liveSession": "run:r-9f2c01" }],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["human:ada"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-9f2c01", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } },
+          { "ok": true }
+        ],
+        "messages": [
+          {
+            "id": "$s3",
+            "from": "$system",
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.gates.doc-needs-a-deciding-answer",
+      "title": "A human without the decide tier may not answer a doc gate; a deciding human's reject applies its effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.2", "5.5", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "Keep the old wording.", "choice": "reject" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": false, "error": { "code": "forbidden", "field": "replyTo" } },
+          { "ok": true }
+        ],
+        "messages": [
+          { "id": "$s1", "from": "$system", "data": { "type": "doc" } },
+          {
+            "id": "$s3",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "choice": "reject"
+          }
+        ],
+        "noOtherMessages": true,
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s3" }
+        ],
+        "gateEffects": ["$s1"]
+      }
     }
   ]
 }

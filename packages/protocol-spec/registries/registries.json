@@ -504,7 +504,7 @@
     {
       "value": "doc",
       "scope": "docs",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -517,7 +517,12 @@
         "runId": "run id, optional"
       },
       "effect": "apply or reject the document change (C.3)",
-      "vectors": []
+      "vectors": [
+        "core.gates.doc-is-raised-only-by-the-system",
+        "core.gates.doc-needs-a-deciding-answer",
+        "env.envelope.a-doc-gate-names-its-doc-and-proposal",
+        "env.envelope.doc-gates-have-a-fixed-shape"
+      ]
     }
   ],
   "system-markers": [

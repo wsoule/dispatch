@@ -2708,6 +2708,131 @@
           { "ok": false, "error": { "code": "invalid", "field": "data" } }
         ]
       }
+    },
+    {
+      "id": "env.envelope.a-doc-gate-names-its-doc-and-proposal",
+      "title": "A doc gate names a doc- id and a rev- proposal; others are refused on data.doc and data.proposal, and taskId and runId are optional",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "handbook",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "data.doc" } },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "data.proposal" }
+          },
+          { "ok": true }
+        ]
+      }
+    },
+    {
+      "id": "env.envelope.doc-gates-have-a-fixed-shape",
+      "title": "A doc gate is a blocking question offering approve then reject; any other shape is refused on data",
+      "class": "envelope",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {},
+      "when": [
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        },
+        {
+          "op": "validate",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "run:r-9f2c01 proposes an edit to an accepted doc.",
+            "choices": ["approve", "deny"],
+            "data": {
+              "type": "doc",
+              "doc": "doc-01k6abcdefghjkmnpqrstvwxyz",
+              "proposal": "rev-01k6abcdefghjkmnpqrstvwxyz",
+              "taskId": "t-4a8cce",
+              "runId": "r-9f2c01"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "data" } },
+          { "ok": false, "error": { "code": "invalid", "field": "data" } }
+        ]
+      }
     }
   ]
 }
