@@ -451,9 +451,16 @@ An entry has one of three scopes:
   is saved for one project only. A run writes its operator's personal memory
   directly, and the Inbox can undo it. Nobody else sees it. A run's operator is
   whoever started, continued or woke it; the owner only on the app token, and no
-  one when an agent, a run or policy did. An agent registered in your name reads
-  your personal memory only once you approve it with the app token, so one
-  approved before that rule must be approved again.
+  one when an agent, a run or policy did. An epic's auto-fill acts for whoever
+  last started or resumed the epic, and only on tasks that person created and
+  last edited. The desktop app and a signed-in browser present the app token;
+  the CLI presents the daemon file's agent token, so a run the owner starts from
+  the CLI acts for no one unless the CLI is given the app token (`--token` or
+  `DISPATCH_APP_TOKEN`). A teammate below `decide` cannot message a live run
+  that acts for someone else; they message its task or that person instead. An
+  agent registered in your name reads your personal memory only once you approve
+  it with the app token, so one approved before that rule must be approved
+  again.
 - **Team** is the default for a code lesson: the constraints, hazards and
   decisions every run of this project should know. The ledger's old lessons were
   imported here; the ledger keeps the audit receipts. Replicating team memory to

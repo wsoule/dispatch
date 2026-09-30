@@ -275,10 +275,32 @@ task's latest execute run's operator. It is separate from `dispatchedBy`, which
 keeps its meaning: who pressed dispatch, used for claims and decision ownership
 (`orchestrator/types.ts:322-327`).
 
+Ruling MEM-R8 adds four points:
+
+- **Epic sessions.** Starting or resuming an epic session sets its `startedBy`
+  to the caller by the rule above. A teammate's resume re-keys it to the
+  teammate, and a resume on the agentToken clears it.
+- **Epic auto-fill.** A fill run acts for `startedBy` only on a task that human
+  created and last edited (title or body, Activity aside). Otherwise it acts for
+  no one. `TaskAuthorship` (`orchestrator/taskAuthorship.ts`, persisted beside
+  `epic-sessions.json`) records the creator and last editor. It is recorded by
+  `POST /api/tasks`, `PATCH /api/tasks/:id` and plan confirm. A task created any
+  other way, or changed since its last recorded edit, has no author.
+- **Messaging a live run.** A request-tier human may not deliver into a live run
+  whose operator is another human. This covers `POST /api/messages` to `run:`,
+  overseer `message_run`, and a review send-back or request-changes on a live
+  run. The refusal is a 403 that names the task and the operator to message
+  instead. The decide tier and the run's own operator may deliver.
+- **The owner's CLI acts for no one.** This is a behaviour change, documented
+  and not fixed. The CLI presents the daemon file's agentToken, so a run it
+  starts acts for no one unless the CLI is given the app token (`--token` or
+  `DISPATCH_APP_TOKEN`). The desktop app and the sign-in cookie act for the
+  owner.
+
 | How the run starts                                                                                                                                   | `operator`                                                                                                                                                                                                                                        |
 | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dispatch()` credited to a human (`orchestrator.ts:884-886`, stamped at `:903`)                                                                      | `dispatchedBy`                                                                                                                                                                                                                                    |
-| `dispatch()` by the epic auto-fill, `actor: 'none'` (`orchestrator/epic.ts:846-848`)                                                                 | the epic session's new `startedBy` (`EpicSession`, `epic.ts:72-86`) when a human started it; otherwise none                                                                                                                                       |
+| `dispatch()` by the epic auto-fill, `actor: 'none'` (`orchestrator/epic.ts:846-848`)                                                                 | the epic session's `startedBy` (`EpicSession`, `epic.ts:72-86`: whoever last started or resumed it) on a task they created and last edited; otherwise none                                                                                        |
 | resume (`resumeRun`, `orchestrator.ts:4955-5016`), request-changes (`requestChanges`, `:4826-4860`), `dispatchOrResume` and overseer `dispatch_task` | whoever asked for it, by the rule above; a teammate continuing the owner's run acts for the teammate. The boot recovery sweep, with no one asking, keeps the run's own                                                                            |
 | wake (`messaging/host.ts`): a task or `run:` wake, or a gated wake a human approved                                                                  | the human sender, or the human who approved the gate, by the rule above; an agent or run wake under the auto policy has none                                                                                                                      |
 | aux runs (`dispatchAuxRun`, `:956-1006`): review (`review.ts:836`), verify (`verify.ts:250`), fix-loop implementer (`fixLoop.ts:722`)                | a required `operator` option: the human who started it (review, verify, Review & fix, fix-loop advance), by the rule above; one the system starts after a run (auto review, fix-loop continuation, policy verify retry) keeps that run's operator |
