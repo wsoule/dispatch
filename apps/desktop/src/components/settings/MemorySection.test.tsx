@@ -194,6 +194,19 @@ describe('MemorySection', () => {
     expect(client.importClaude.mock.calls[0]).toEqual([]);
   });
 
+  it('says so when the owner answered they have no Claude notes', async () => {
+    renderSection(
+      memoryClient({
+        health: health({
+          claudeImport: { state: 'complete', source: null, candidates: [] },
+        }),
+      })
+    );
+    expect(
+      await screen.findByText('You said you have no Claude notes.')
+    ).toBeTruthy();
+  });
+
   it('shows the Claude import only to the daemon’s own human', async () => {
     renderSection(memoryClient({ health: health({ claudeImport: null }) }));
     await screen.findByText('15 entries · 2 open proposals · full-text search');

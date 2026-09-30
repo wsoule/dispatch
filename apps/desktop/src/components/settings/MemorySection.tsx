@@ -189,7 +189,7 @@ function claudeStateText(model: MemorySettingsModel): string {
   switch (model.claudeImport) {
     case 'complete':
       return model.claudeSource === null
-        ? 'Imported.'
+        ? 'You said you have no Claude notes.'
         : `Imported from ${model.claudeSource}`;
     case 'failed':
       return 'The last import failed. Try it again.';

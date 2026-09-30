@@ -49,7 +49,7 @@ import {
   lastClaudeImport,
   mainCheckoutOf,
 } from './claudeImport.js';
-import type { ClaudeImportReport } from './claudeImport.js';
+import type { ClaudeImportReport, SourceSearch } from './claudeImport.js';
 import {
   chooseMemoryMode,
   EXPORT_PROMPT_LINE,
@@ -659,6 +659,18 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
   // Imports run one at a time; `claudeWrites` counts those queued that write.
   let claudeQueue: Promise<unknown> = Promise.resolve();
   let claudeWrites = 0;
+  // A search that finds nothing keeps a completed import's source, or its
+  // "no Claude notes" answer, rather than asking the owner again.
+  const keepAnswer = (
+    store: MemoryStore,
+    search: SourceSearch
+  ): SourceSearch | { explicit: string } | { none: true } => {
+    if (search.found !== null || importState(store, projectKey) !== 'complete')
+      return search;
+    const last = lastClaudeImport(store, projectKey);
+    if (last === null) return search;
+    return last.source === null ? { none: true } : { explicit: last.source };
+  };
   const importClaude: MemoryService['importClaude'] = (opts = {}) => {
     const writes = opts.dryRun !== true;
     if (writes) claudeWrites += 1;
@@ -671,13 +683,16 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
             ? { none: true as const }
             : opts.from !== undefined
               ? { explicit: opts.from }
-              : await findClaudeMemorySource({
-                  rootDir: deps.rootDir,
-                  mainCheckout: mainCheckoutOf(deps.rootDir),
-                  env: claudeEnv.env,
-                  home: claudeEnv.home,
-                  resolveEffective: claudeEnv.resolveEffective,
-                });
+              : keepAnswer(
+                  store,
+                  await findClaudeMemorySource({
+                    rootDir: deps.rootDir,
+                    mainCheckout: mainCheckoutOf(deps.rootDir),
+                    env: claudeEnv.env,
+                    home: claudeEnv.home,
+                    resolveEffective: claudeEnv.resolveEffective,
+                  })
+                );
         const report = await importClaudeNotes({
           source,
           store,

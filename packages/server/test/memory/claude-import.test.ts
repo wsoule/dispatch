@@ -11,6 +11,7 @@ import {
   mkdtempSync,
   readFileSync,
   realpathSync,
+  renameSync,
   rmSync,
   symlinkSync,
   writeFileSync,
@@ -464,5 +465,34 @@ describe('the daemon’s one-time import', () => {
       source: null,
       imported: 0,
     });
+  });
+
+  // Import again, with nothing found where Claude keeps notes, keeps the
+  // owner's earlier answer instead of asking again.
+  it('a plain re-run after --from or --none keeps that answer', async () => {
+    const elsewhere = join(fakeHome, 'notes');
+    renameSync(memoryDir, elsewhere);
+    const post = async (query = '') =>
+      (
+        (await (
+          await fetch(`${base}/api/memory/import/claude${query}`, {
+            method: 'POST',
+          })
+        ).json()) as { report: Record<string, unknown> }
+      ).report;
+    const state = () => self().meta(`claude-import:${projectKeyOf(root)}`);
+    expect(await post(`?from=${encodeURIComponent(elsewhere)}`)).toMatchObject({
+      state: 'complete',
+      source: elsewhere,
+    });
+    writeFileSync(join(elsewhere, 'later.md'), 'a note written later');
+    expect(await post()).toMatchObject({
+      state: 'complete',
+      source: elsewhere,
+      imported: 1,
+    });
+    expect(await post('?none=1')).toMatchObject({ state: 'complete' });
+    expect(await post()).toMatchObject({ state: 'complete', source: null });
+    expect(state()).toBe('complete');
   });
 });
