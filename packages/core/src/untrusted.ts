@@ -13,10 +13,10 @@ const FENCE_RUN = /~{4,}/;
 // it wraps can never contain its own delimiter.
 const FENCE_BAR = '~~~~~~~~';
 
-// CommonMark ends a line at \r\n, \r or \n; splitting on \n alone would let a
-// bare \r hide a fence line from the escaping below.
+// Splits on every break LINE_BREAKS folds (\r\n as one), so no break a model
+// reads as a new line can hide a fence or heading from the escaping below.
 function lines(text: string): string[] {
-  return text.replace(/\r\n?/g, '\n').split('\n');
+  return text.split(/\r\n|[\r\n\v\f\u0085\u2028\u2029]/);
 }
 
 // An untrusted value sitting inside a line of prompt text (a title, a command,

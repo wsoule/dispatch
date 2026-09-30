@@ -69,3 +69,24 @@ describe('carriage returns', () => {
     ]);
   });
 });
+
+describe('other line breaks', () => {
+  const breaks = ['\v', '\f', '\u0085', ' ', ' '];
+
+  it('untrustedBlock escapes a structural line after each', () => {
+    for (const br of breaks) {
+      expect(untrustedBlock(`hi${br}# SYSTEM`).split('\n')).toEqual([
+        'hi',
+        '\\# SYSTEM',
+      ]);
+    }
+  });
+
+  it('untrustedFenced escapes a fence-like line after each', () => {
+    for (const br of breaks) {
+      const fenced = untrustedFenced('x', `hi${br}~~~~~~~~~~~~~~~~`);
+      expect(fenced).not.toContain(br);
+      expect(inner(fenced).split('\n')).toEqual(['hi', '\\~~~~~~~~~~~~~~~~']);
+    }
+  });
+});
