@@ -199,6 +199,7 @@ describe('overseerMemory', () => {
       address: 'human:wyat',
       canDecide: true,
       kind: 'human',
+      ownerCredential: true,
     };
     const personal = await engine.save(owner, {
       scope: 'personal',

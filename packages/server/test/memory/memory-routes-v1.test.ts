@@ -3,8 +3,10 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ApiContext } from '../../src/api.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { importClaudeRoute } from '../../src/memory/routes.js';
 import { FakeOverseer } from '../../src/orchestrator/overseers/fake.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth, wsUrl } from '../testAuth.js';
@@ -331,6 +333,66 @@ describe('personal privacy', () => {
       ])
         expect(transcript).not.toContain(secret);
     }
+  });
+
+  // Owner-ness belongs to the daemon's own app token, never to a handle.
+  it('only the owner’s own credential holds the owner’s personal memory and the Claude import', async () => {
+    const secret = await json<{ id: string }>(
+      await fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'personal',
+          kind: 'fact',
+          title: 'OWNER-SECRET',
+          body: 'b',
+        }),
+      })
+    );
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const minted = await rawFetch(`${base}/api/team/tokens`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+      body: JSON.stringify({ handle: 'test', tier: 'request' }),
+    });
+    expect(minted.status).toBe(400);
+    const own = await fetch(`${base}/api/team/tokens`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: 'test', tier: 'request' }),
+    });
+    expect(own.status).toBe(400);
+    // A token minted for the owner's handle before this refusal speaks for no one.
+    const stolen = handle.team.teammates.issue('test', 'request');
+    const listed = await rawFetch(`${base}/api/memory?scope=personal`, {
+      headers: authHeaders(stolen),
+    });
+    expect(listed.status).toBe(401);
+    // Even named as the owner, a principal without the owner's credential gets nothing personal.
+    const impostor = {
+      address: 'human:test',
+      canDecide: true,
+      kind: 'human',
+    } as const;
+    expect(handle.memory.host.operatorOf(impostor)?.identity).not.toBe('self');
+    expect(
+      handle.memory
+        .engine!.list(impostor, { scope: 'personal' })
+        .map((e) => e.id)
+    ).not.toContain(secret.id);
+    expect(handle.memory.health(impostor).claudeImport).toBeNull();
+    const ctx = {
+      principal: impostor,
+      actorContext: { humanRef: 'human:test' },
+      memory: handle.memory,
+    } as unknown as ApiContext;
+    await expect(
+      importClaudeRoute(ctx, new URL(`${base}/api/memory/import/claude?none=1`))
+    ).rejects.toThrow("only the daemon's own human");
+    const mine = await json<{ entries: { id: string }[] }>(
+      await fetch(`${base}/api/memory?scope=personal`)
+    );
+    expect(mine.entries.map((e) => e.id)).toContain(secret.id);
   });
 
   // origin and cause belong to the importer, amendments and ingest.
@@ -675,6 +737,7 @@ describe('Settings → Memory routes', () => {
     address: 'human:test',
     canDecide: true,
     kind: 'human',
+    ownerCredential: true,
   } as const;
   const CLAUDE_AGENT = {
     address: 'agent:test/claude-code',

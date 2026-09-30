@@ -62,4 +62,17 @@ describe('TokenRegistry', () => {
     expect(reg.resolve('app-bbb')?.tier).toBe('operator');
     expect(asked.map((d) => d.equals(sha256('app-bbb')))).not.toContain(true);
   });
+
+  test("a teammate token naming the operator's handle matches no one", () => {
+    const source: CredentialSource = {
+      lookup: () => ({
+        kind: 'valid',
+        identity: { handle: 'wyat', ref: 'human:wyat', tier: 'decide' },
+      }),
+      list: () => [],
+    };
+    const reg = new TokenRegistry(BUILT_IN, 'wyat', source);
+    expect(reg.lookup('stolen')).toEqual({ kind: 'unknown' });
+    expect(reg.resolve('app-bbb')?.tier).toBe('operator');
+  });
 });

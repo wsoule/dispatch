@@ -491,7 +491,8 @@ export async function importClaudeRoute(
   if (
     !(
       principal.kind === 'human' &&
-      principal.address === ctx.actorContext.humanRef
+      principal.address === ctx.actorContext.humanRef &&
+      principal.ownerCredential === true
     )
   )
     throw new MemoryError(

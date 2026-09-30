@@ -32,6 +32,8 @@ import { notifyLiveRuns } from './liveNotify.js';
 // The identity a human resolves to when their handle's roster email changed
 // since it was bound; every personal store call refuses it with 409.
 export const REUSED_HANDLE_IDENTITY = '!reused-handle';
+// The identity of a human named as the owner without the owner's credential.
+export const NOT_OWNER_IDENTITY = '!not-owner';
 // The identity every human resolves to while identities.db will not open.
 export const IDENTITIES_DOWN_IDENTITY = '!identities-down';
 
@@ -90,15 +92,16 @@ export class DaemonMemoryHost implements MemoryHost {
   // agent:<op>/<name> for human:<op>; agent:dispatch and A2A clients for no one.
   operatorOf(principal: Principal): Operator | null {
     if (isA2AAgent(principal.address)) return null;
-    if (principal.kind === 'human') return this.bind(principal.address);
+    if (principal.kind === 'human')
+      return this.bind(principal.address, principal.ownerCredential === true);
     if (principal.kind === 'run') {
       const runId = principal.address.slice('run:'.length);
       const run = this.deps.orchestrator.list().find((r) => r.id === runId);
       const op = run === undefined ? null : runOperator(run);
-      return op === null ? null : this.bind(op);
+      return op === null ? null : this.bind(op, true);
     }
     const match = /^agent:([^/]+)\//.exec(principal.address);
-    return match === null ? null : this.bind(`human:${match[1]}`);
+    return match === null ? null : this.bind(`human:${match[1]}`, true);
   }
 
   projectKey(): string {
@@ -225,8 +228,11 @@ export class DaemonMemoryHost implements MemoryHost {
   }
 
   // The identity behind `human`; the owner is always `self`. A handle bound
-  // to someone else, or identities.db down, resolves to a refusing sentinel.
-  private bind(human: string): Operator {
+  // to someone else, the owner's handle without the owner's credential, or
+  // identities.db down, resolves to a refusing sentinel.
+  private bind(human: string, ownerCredential: boolean): Operator {
+    if (human === this.deps.ownerRef && !ownerCredential)
+      return { human, identity: NOT_OWNER_IDENTITY };
     const identities = this.deps.identities;
     if (identities === null)
       return { human, identity: IDENTITIES_DOWN_IDENTITY };

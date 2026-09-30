@@ -104,7 +104,7 @@ export class TokenRegistry {
 
   constructor(
     pair: { agentToken: string; appToken: string },
-    operatorHandle: string,
+    private readonly operatorHandle: string,
     private readonly teammates: CredentialSource | null = null
   ) {
     // Highest tier first, so the app token still wins if the two were ever
@@ -145,7 +145,15 @@ export class TokenRegistry {
         identity: { handle: own.handle, ref: own.ref, tier: own.tier },
       };
     }
-    return this.teammates?.lookup(digest) ?? { kind: 'unknown' };
+    const teammate = this.teammates?.lookup(digest) ?? { kind: 'unknown' };
+    // Only the built-in pair speaks for the operator; a teammate token naming
+    // their handle matches no one.
+    if (
+      teammate.kind === 'valid' &&
+      teammate.identity.handle === this.operatorHandle
+    )
+      return { kind: 'unknown' };
+    return teammate;
   }
 
   /** Who currently holds credentials, without the credentials. */

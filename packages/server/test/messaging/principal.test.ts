@@ -157,7 +157,12 @@ describe('resolvePrincipal', () => {
     const result = resolvePrincipal(ctx, tokens.appToken);
     expect(result).toEqual({
       ok: true,
-      principal: { address: 'human:wyat', canDecide: true, kind: 'human' },
+      principal: {
+        address: 'human:wyat',
+        canDecide: true,
+        kind: 'human',
+        ownerCredential: true,
+      },
     });
   });
 

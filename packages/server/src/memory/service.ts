@@ -64,6 +64,7 @@ import { closeStrayMemoryGates, registerMemoryGate } from './gate.js';
 import {
   DaemonMemoryHost,
   IDENTITIES_DOWN_IDENTITY,
+  NOT_OWNER_IDENTITY,
   REUSED_HANDLE_IDENTITY,
 } from './host.js';
 import type { DaemonMemoryHostDeps } from './host.js';
@@ -274,6 +275,12 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
         throw new MemoryError(
           'conflict',
           'this handle was bound to someone else; link or start fresh',
+          'identity'
+        );
+      if (identity === NOT_OWNER_IDENTITY)
+        throw new MemoryError(
+          'forbidden',
+          "only the owner's own credential reaches the owner's personal memory",
           'identity'
         );
       if (identity === IDENTITIES_DOWN_IDENTITY)
@@ -817,7 +824,8 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       claudeImport:
         principal !== null &&
         principal.kind === 'human' &&
-        principal.address === deps.ownerRef
+        principal.address === deps.ownerRef &&
+        principal.ownerCredential === true
           ? claudeImportHealth()
           : null,
     }),
