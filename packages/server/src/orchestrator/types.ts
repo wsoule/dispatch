@@ -114,6 +114,8 @@ export interface MemoryPromptPort {
     runKind: RunKind;
     isClaude: boolean;
     dispatchTools: boolean;
+    // The run resumes a session, so its prompt is the continuation, not the index.
+    continues: boolean;
   }): PreparedMemory;
   // The agent read exported files; `lineage` names the export directory.
   recall(

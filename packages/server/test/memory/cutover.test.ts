@@ -122,6 +122,7 @@ describe('the ledger cutover', () => {
         runKind: 'execute',
         isClaude: true,
         dispatchTools: true,
+        continues: false,
       })
     ).toEqual({ text: null, indexSection: null, memory: { mode: 'prompt' } });
   });

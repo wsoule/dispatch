@@ -117,7 +117,7 @@ function run(operator: string | null, kind: RunKind = 'execute'): RunMeta {
   return meta;
 }
 
-function prepare(meta: RunMeta) {
+function prepare(meta: RunMeta, continues = false) {
   return memory.prepare({
     runId: meta.id,
     taskId,
@@ -125,6 +125,7 @@ function prepare(meta: RunMeta) {
     runKind: meta.kind ?? 'execute',
     isClaude: true,
     dispatchTools: true,
+    continues,
   });
 }
 
@@ -165,6 +166,20 @@ describe('MemoryService.prepare', () => {
     expect(out.text).toContain(`(${e.handle})`);
     expect(out.indexSection).toBe(out.text);
     expect(existsSync(claudeMemoryDir(root, meta.id))).toBe(false);
+  });
+
+  // A continuing session's prompt is the continuation, which carries no index.
+  it('records no index recalls for a run that continues a session', () => {
+    hazard();
+    memory.personal
+      .personal('self')
+      .setMeta(`claude-import:${projectKeyOf(root)}`, 'unconfirmed');
+    const fresh = run('human:wyat');
+    prepare(fresh);
+    expect(shared.recallsForRun(fresh.id)).toHaveLength(1);
+    const resumed = run('human:wyat');
+    expect(prepare(resumed, true).memory).toEqual({ mode: 'native' });
+    expect(shared.recallsForRun(resumed.id)).toEqual([]);
   });
 
   it('exports a teammate’s memory once the preflight passes, and records its index recalls', async () => {

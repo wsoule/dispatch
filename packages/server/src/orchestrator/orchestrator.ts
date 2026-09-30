@@ -4837,7 +4837,7 @@ export class Orchestrator {
         ? { stackBaseCommit: oldMeta.stackBaseCommit }
         : {}),
     };
-    const prepared = this.registerRun(meta);
+    const prepared = this.registerRun(meta, true);
 
     // The user's feedback is this run's opening conversation turn — record
     // it on the NEW run's transcript (mirroring the live-run branch of
@@ -4984,7 +4984,7 @@ export class Orchestrator {
         ? { stackBaseCommit: meta.stackBaseCommit }
         : {}),
     };
-    const prepared = this.registerRun(newMeta);
+    const prepared = this.registerRun(newMeta, continuing);
 
     // A fresh start opens the successor's Session log with the reason, so a
     // reader of that log is never left inferring from an agent that orients
@@ -5140,22 +5140,27 @@ export class Orchestrator {
 
   // Records a new run, asks the memory port once how it carries memory, and
   // writes its transcript header with the chosen mode.
-  private registerRun(meta: RunMeta): PreparedMemory | null {
+  private registerRun(meta: RunMeta, continues = false): PreparedMemory | null {
     this.registry.create(meta);
-    const prepared = this.prepareMemory(meta);
+    const prepared = this.prepareMemory(meta, continues);
     this.transcriptFor(meta.id).writeHeader(this.registry.get(meta.id) ?? meta);
     return prepared;
   }
 
   // How a new run carries memory, recorded on it; null for a non-Claude run
   // with no port. A missing or throwing port leaves auto memory off.
-  private prepareMemory(meta: RunMeta): PreparedMemory | null {
+  private prepareMemory(
+    meta: RunMeta,
+    continues: boolean
+  ): PreparedMemory | null {
     const port = this.memoryPort;
     const profile = this.executorProfile(meta.executor);
     // Only the port may choose native, so a Claude run started without one gets prompt.
     if (port === null && profile.autoMemory !== true) return null;
     const prepared =
-      port === null ? PROMPT_ONLY : this.askMemoryPort(port, meta, profile);
+      port === null
+        ? PROMPT_ONLY
+        : this.askMemoryPort(port, meta, profile, continues);
     this.registry.updateMeta(meta.id, { memoryMode: prepared.memory.mode });
     return prepared;
   }
@@ -5164,7 +5169,8 @@ export class Orchestrator {
   private askMemoryPort(
     port: MemoryPromptPort,
     meta: RunMeta,
-    profile: ExecutorProfile
+    profile: ExecutorProfile,
+    continues: boolean
   ): PreparedMemory {
     try {
       return port.prepare({
@@ -5174,6 +5180,7 @@ export class Orchestrator {
         runKind: runKind(meta),
         isClaude: profile.autoMemory === true,
         dispatchTools: profile.dispatchMcp !== false,
+        continues,
       });
     } catch (err) {
       console.error(

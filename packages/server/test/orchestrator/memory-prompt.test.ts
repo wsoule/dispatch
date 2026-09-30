@@ -131,6 +131,7 @@ describe('dispatch prompt memory', () => {
         runKind: 'execute',
         isClaude: false,
         dispatchTools: true,
+        continues: false,
       },
     ]);
     const started = t.executor.started.at(-1);
@@ -232,9 +233,9 @@ describe('dispatch prompt memory', () => {
     await waitFor(() => stateOf(failed.id) === 'failed');
     const resumed = t.orchestrator.resumeRun(failed.id);
     expect(resumed.sessionId).toBeUndefined();
-    expect(calls.map((c) => [c.runId, c.lineage])).toEqual([
-      [failed.id, failed.id],
-      [resumed.id, resumed.id],
+    expect(calls.map((c) => [c.runId, c.lineage, c.continues])).toEqual([
+      [failed.id, failed.id, false],
+      [resumed.id, resumed.id, false],
     ]);
     await waitFor(() => stateOf(resumed.id) === 'failed');
   });
@@ -258,7 +259,11 @@ describe('dispatch prompt memory', () => {
       resume: true,
     });
     await waitFor(() => stateOf(changed.id) === 'failed');
-    expect(calls.map((c) => c.lineage)).toEqual([first.id, first.id, first.id]);
+    expect(calls.map((c) => [c.lineage, c.continues])).toEqual([
+      [first.id, false],
+      [first.id, true],
+      [first.id, true],
+    ]);
     for (const started of executor.started.slice(1)) {
       expect(started.resumeSessionId).toBe('s-1');
       expect(started.prompt).not.toContain('## Memory');

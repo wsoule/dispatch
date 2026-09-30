@@ -70,6 +70,7 @@ function ask(
     lineage: input.runId,
     runKind: 'execute',
     isClaude: true,
+    continues: false,
   });
 }
 

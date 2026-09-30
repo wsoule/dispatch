@@ -564,7 +564,9 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       isClaude: input.isClaude,
     });
     if (choice.mode !== 'export') {
-      const section = choice.index ? indexSection(input, true) : null;
+      const section = choice.index
+        ? indexSection(input, !input.continues)
+        : null;
       return {
         text: section,
         indexSection: section,
