@@ -1073,10 +1073,13 @@ or in `deleted_origins`.
 **The cutover.** The first boot of the build that removes the ledger's lesson
 writers (v1) records `meta.ledger-cutover-at`.
 
-- Rows created before it import as `active` entries: parity with what prompts
-  already carried.
-- Rows created after it can only come from elsewhere: a teammate's older build
-  through a `git pull`, or a hand edit. They import as open `add` proposals,
+- Rows the first import after it finds, created before it, import as `active`
+  entries: parity with what prompts already carried. That import records
+  `meta.ledger-cutover-swept-at`.
+- Every other row can only come from elsewhere: a teammate's older build
+  through a `git pull`, or a hand edit. That covers a row created after the
+  cutover, one with no parseable `createdAt`, and any row the first import did
+  not see, whatever `createdAt` it claims. They import as open `add` proposals,
   authored `agent:dispatch`, showing the row's `authoredBy` as a claim. With no
   task, they read as `elevated` and wait for a human.
 - In v0 there is no cutover and no gate, and every row imports as `active` with

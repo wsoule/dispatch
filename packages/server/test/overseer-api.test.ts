@@ -20,7 +20,11 @@ import type { FakeOverseerScript } from '../src/orchestrator/overseers/fake.js';
 import { claudeMemoryDir, projectKeyOf } from '../src/orchestrator/paths.js';
 import type { ApprovalDecision } from '../src/orchestrator/types.js';
 import { json } from './json.js';
-import { BEFORE_CUTOVER, seedLedger } from './memory/fixtures.js';
+import {
+  BEFORE_CUTOVER,
+  importAtCutover,
+  seedLedger,
+} from './memory/fixtures.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth, wsUrl } from './testAuth.js';
 
@@ -455,7 +459,7 @@ describe('overseer memory tools', () => {
       },
       BEFORE_CUTOVER
     );
-    handle.memory.importLedger();
+    importAtCutover(handle.memory);
 
     const { record } = await startConversation('what do we know about pnpm?');
     await settled(record.id);

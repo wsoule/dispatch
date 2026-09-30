@@ -69,7 +69,8 @@ describe('openMemory', () => {
       BEFORE_CUTOVER
     );
     t.events.broadcast({ type: 'ledger.changed' });
-    expect(t.memory.shared?.countEntries()).toBe(1);
+    // After the first import, a row that arrives waits for a human.
+    expect(t.memory.shared?.countOpenProposals()).toBe(1);
     expect(t.seen).toContainEqual({ type: 'memory.changed', scope: 'team' });
     t.memory.close();
   });

@@ -158,6 +158,8 @@ export interface OpenMemoryDeps {
 
 const LAST_IMPORT_KEY = 'ledger-import:last';
 const CUTOVER_KEY = 'ledger-cutover-at';
+// Set by the first import after the cutover.
+const CUTOVER_SWEPT_KEY = 'ledger-cutover-swept-at';
 // The oldest Claude Code version the live probe passed on.
 const PROBE_KEY = 'claude-probe-passed';
 const HOUR_MS = 3_600_000;
@@ -399,9 +401,12 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       ids,
       now: now(),
       cutoverAt: shared.meta(CUTOVER_KEY),
+      cutoverSwept: shared.meta(CUTOVER_SWEPT_KEY) !== null,
       dryRun: opts.dryRun,
     });
     if (opts.dryRun === true) return report;
+    if (shared.meta(CUTOVER_KEY) !== null)
+      shared.setMeta(CUTOVER_SWEPT_KEY, now().toISOString());
     last = report;
     shared.setMeta(LAST_IMPORT_KEY, JSON.stringify(report));
     if (report.outcome === 'MISMATCH')

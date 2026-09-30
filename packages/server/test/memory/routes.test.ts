@@ -8,7 +8,7 @@ import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from '../testAuth.js';
-import { BEFORE_CUTOVER, seedLedger } from './fixtures.js';
+import { BEFORE_CUTOVER, importAtCutover, seedLedger } from './fixtures.js';
 
 function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
@@ -49,7 +49,7 @@ function seedLesson(input: Partial<AddLedgerInput> & { title: string }): void {
     { kind: 'hazard', detail: 'detail', authoredBy: 'human:test', ...input },
     BEFORE_CUTOVER
   );
-  handle.memory.importLedger();
+  importAtCutover(handle.memory);
 }
 
 describe('memory read routes', () => {

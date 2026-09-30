@@ -61,6 +61,7 @@ const run = (
     ids: createMemoryIds(),
     now: NOW,
     cutoverAt: null,
+    cutoverSwept: false,
     ...extra,
   });
 
@@ -345,6 +346,7 @@ describe('importLedger', () => {
       ids: createMemoryIds(),
       now: NOW,
       cutoverAt: null,
+      cutoverSwept: false,
     });
     expect(report.outcome).toBe('MISMATCH');
     expect(report.mismatches[0]).toContain('memory rows');
@@ -372,6 +374,7 @@ describe('importLedger', () => {
       ids: createMemoryIds(),
       now: NOW,
       cutoverAt: null,
+      cutoverSwept: false,
     });
     expect(report.outcome).toBe('ok');
     expect(report.memoryRows).toEqual({ before: 1, after: 2 });

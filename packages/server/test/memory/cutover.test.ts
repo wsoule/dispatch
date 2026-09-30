@@ -105,6 +105,32 @@ describe('the ledger cutover', () => {
     expect(p.gate).toMatch(/^m-/);
   });
 
+  // Once the boot's import has run, every unseen row came from elsewhere,
+  // whatever createdAt it claims.
+  it('proposes a row that arrives later claiming an old or empty createdAt', async () => {
+    for (const createdAt of ['2020-01-01T00:00:00.000Z', '']) {
+      seedLedger(
+        root,
+        {
+          kind: 'hazard',
+          title: `claims ${createdAt === '' ? 'no time' : createdAt}`,
+          detail: 'd',
+          authoredBy: 'human:test',
+        },
+        createdAt
+      );
+    }
+    const report = handle.memory.importLedger()!;
+    expect(report.memory).toMatchObject({ proposed: 2, imported: 0 });
+    expect(
+      handle.memory.engine!.list(OWNER, { scope: 'team' }).map((e) => e.title)
+    ).toEqual([]);
+    const authors = handle.memory
+      .engine!.proposals(OWNER, 'open')
+      .map((p) => p.author);
+    expect(authors).toEqual(['agent:dispatch', 'agent:dispatch']);
+  });
+
   it('prompts use memory even when it is unavailable: no ledger fallback after v0', async () => {
     const task = await json<{ meta: { id: string } }>(
       await fetch(`${base}/api/tasks`, {
