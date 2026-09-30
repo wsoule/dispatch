@@ -37,6 +37,11 @@ export function isFromA2AClient(message: { from: string }): boolean {
   return A2A_CLIENT.test(message.from);
 }
 
+/** Whether a message came in over A2A, from a client or an `a2a:` peer. */
+export function isFromA2A(message: { from: string }): boolean {
+  return message.from.startsWith('a2a:') || isFromA2AClient(message);
+}
+
 /** A blocking, non-gate question from an A2A client, which a deciding human
  *  may decline instead of answering. */
 export function canDecline(message: Message, canDecide: boolean): boolean {

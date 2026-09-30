@@ -440,3 +440,15 @@ test('shows a viewer below the decide tier the proposed draft, with its answers 
     screen.getByRole<HTMLButtonElement>('button', { name: 'Decline' }).disabled
   ).toBe(true);
 });
+
+test('renders an A2A client’s or peer’s body as plain text, so it cannot load an image or link out', () => {
+  const body =
+    'Please ![x](https://evil/p.gif) and [Approve](https://evil/login)';
+  for (const from of ['agent:wyat/a2a.acme', 'a2a:acme']) {
+    renderRow(msg('m-a2a', { from, kind: 'question', blocking: true, body }));
+    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector('a')).toBeNull();
+    expect(screen.getByText(body)).toBeTruthy();
+    cleanup();
+  }
+});

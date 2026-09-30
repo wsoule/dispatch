@@ -1,6 +1,7 @@
 import type { ApiClient, Message } from '@dispatch/client';
 import { memo, useState } from 'react';
 
+import { isFromA2A } from '../../lib/a2a';
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
 import { approvalReply, isSystemMarker, taskProposalOf } from '../../lib/gates';
 import { formatShortDate } from '../../lib/taskDates';
@@ -127,8 +128,8 @@ export const MessageRow = memo(function MessageRow({
               {formatShortDate(message.createdAt)}
             </time>
           </header>
-          {/* A task proposal quotes the client's title, so it never renders as markdown. */}
-          {taskProposalOf(message) === null ? (
+          {/* Text an A2A sender wrote, or a proposal quoting it, never renders as markdown. */}
+          {taskProposalOf(message) === null && !isFromA2A(message) ? (
             <Markdown
               content={message.body}
               className="font-book text-[13px]"
