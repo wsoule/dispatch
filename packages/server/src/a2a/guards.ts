@@ -1,5 +1,5 @@
 import type { A2AStore, HandoffStatuses } from '@dispatch/a2a';
-import { hasA2AProvenance, PROVENANCE_PREFIX } from '@dispatch/a2a';
+import { hasA2AProvenance } from '@dispatch/a2a';
 import type {
   TaskDoc,
   TaskRisk,
@@ -41,10 +41,6 @@ const RISK_RANK: Record<TaskRisk, number> = {
   critical: 2,
 };
 const REVERT_LINE = 'reverted: A2A proposal awaits the owner';
-const PROVENANCE_ROOT = new RegExp(
-  `${PROVENANCE_PREFIX}\\S+ \\(message ([^)\\s]+)\\)\\.`,
-  'g'
-);
 
 function awaiting(taskId: string): string {
   return `${taskId} is an A2A proposal awaiting the owner; answer it in Needs you`;
@@ -74,27 +70,38 @@ export function openProposalFor(
   return openProposals(deps).find((p) => p.taskId === taskId) ?? null;
 }
 
-// a2a.db answers when open; with it down, fail closed on the task's own provenance.
+// a2a.db answers when it links the task; otherwise fail closed on its provenance.
 function isA2ATask(deps: GuardDeps, taskId: string): boolean {
-  return deps.store !== null
-    ? deps.store.taskForDispatchTask(taskId) !== null
-    : hasA2AProvenance(deps.tasks.get(taskId));
+  return (
+    (deps.store?.taskForDispatchTask(taskId) ?? null) !== null ||
+    hasA2AProvenance(deps.tasks.get(taskId))
+  );
 }
 
-// Whether the task came from an A2A handoff the system has not accepted; with
-// a2a.db down, the last provenance line names the root, and none fails closed.
+// The roots of every task-proposal gate the system asked about `taskId`, from
+// messages.db, so nothing in the task's own text can name one.
+function proposalRoots(deps: GuardDeps, taskId: string): string[] {
+  return deps.engine
+    .messagesFrom(SYSTEM_ADDRESS, '', ['question'])
+    .flatMap((q) => {
+      const gate = q.origin === undefined ? gateOf(q) : null;
+      return gate?.type === 'task-proposal' && gate.task === taskId
+        ? [gate.message]
+        : [];
+    });
+}
+
+// Whether the task came from an A2A handoff the system has not accepted.
+// Without an a2a.db row, the gates in messages.db name the root; none fails closed.
 function unapprovedHandoff(deps: GuardDeps, task: TaskDoc | null): boolean {
   if (task === null) return false;
-  let root: string | null;
-  if (deps.store !== null) {
-    const row = deps.store.taskForDispatchTask(task.meta.id);
-    if (row?.skill !== 'handoff') return false;
-    root = row.id;
-  } else {
-    if (!hasA2AProvenance(task)) return false;
-    root = [...task.body.matchAll(PROVENANCE_ROOT)].at(-1)?.[1] ?? null;
-  }
-  return root === null || deps.engine.answerOf(root)?.choice !== 'accept';
+  const accepted = (root: string) =>
+    deps.engine.answerOf(root)?.choice === 'accept';
+  const row = deps.store?.taskForDispatchTask(task.meta.id) ?? null;
+  if (row !== null) return row.skill === 'handoff' && !accepted(row.id);
+  if (!hasA2AProvenance(task)) return false;
+  const roots = proposalRoots(deps, task.meta.id);
+  return roots.length === 0 || !roots.every(accepted);
 }
 
 export function dispatchRefusal(deps: GuardDeps, task: TaskDoc): string | null {
