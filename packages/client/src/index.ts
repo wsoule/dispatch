@@ -56,6 +56,8 @@ export type {
   DocLinking,
   DocListParams,
   DocOp,
+  DocProposal,
+  DocProposalView,
   DocRead,
   DocRecord,
   DocRevisionInfo,

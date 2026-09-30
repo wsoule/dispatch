@@ -180,6 +180,8 @@ export type RowControl =
   | { kind: 'scope'; paths: string[]; reason: string }
   /** A memory gate; its card reads the proposal, which the message never carries. */
   | { kind: 'memory'; proposalId: string }
+  /** A doc gate; its card reads the proposal through the docs API. */
+  | { kind: 'doc'; doc: string; proposal: string }
   /** An A2A client's handoff; its card shows the draft to every viewer. */
   | {
       kind: 'task-proposal';
@@ -242,6 +244,10 @@ export function rowControl(
     if (gate.type === 'memory') {
       return { kind: 'memory', proposalId: gate.proposalId };
     }
+    // Only the system raises doc gates; a look-alike gets plain choices.
+    if (gate.type === 'doc' && message.from === SYSTEM) {
+      return { kind: 'doc', doc: gate.doc, proposal: gate.proposal };
+    }
     return { kind: 'choices', choices: message.choices ?? [], gate: true };
   }
   if (!message.to.includes(ctx.me)) return { kind: 'none' };
@@ -255,7 +261,15 @@ export function rowControl(
 /** A row control that draws something to answer with. */
 type AnswerControl = Extract<
   RowControl,
-  { kind: 'tool-approval' | 'scope' | 'memory' | 'task-proposal' | 'choices' }
+  {
+    kind:
+      | 'tool-approval'
+      | 'scope'
+      | 'memory'
+      | 'doc'
+      | 'task-proposal'
+      | 'choices';
+  }
 >;
 
 /** Whether a row's control gives this viewer a gate card or at least one
@@ -267,7 +281,8 @@ export function offersAnswer(control: RowControl): control is AnswerControl {
   return (
     control.kind === 'tool-approval' ||
     control.kind === 'scope' ||
-    control.kind === 'memory'
+    control.kind === 'memory' ||
+    control.kind === 'doc'
   );
 }
 

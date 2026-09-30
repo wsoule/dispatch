@@ -248,6 +248,19 @@ describe('gateNotification', () => {
       kind: 'memory',
     });
   });
+  it('titles a doc gate as an edit to review', () => {
+    const doc = msg('m-d', {
+      from: 'agent:dispatch',
+      body: 'run:r-1 proposes an edit to an accepted doc. Review it in Needs you.',
+      choices: ['approve', 'reject'],
+      data: { type: 'doc', doc: 'doc-1', proposal: 'rev-p', runId: 'r-1' },
+    });
+    expect(gateNotification(doc, () => 'Checkout')).toEqual({
+      title: 'Doc edit to review',
+      body: 'run:r-1 proposes an edit to an accepted doc. Review it in Needs you.',
+      kind: 'doc',
+    });
+  });
   it('stays quiet for a gate no human is asked, and for an overseer tool approval', () => {
     expect(
       gateNotification({ ...approval, to: ['agent:wyat/codex'] }, () => 'x')

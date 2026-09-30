@@ -1105,6 +1105,8 @@ export type {
   DocLink,
   DocLinking,
   DocOp,
+  DocProposal,
+  DocProposalView,
   DocRead,
   DocRecord,
   DocRevisionInfo,

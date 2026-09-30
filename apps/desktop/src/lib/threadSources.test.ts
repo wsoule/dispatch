@@ -262,6 +262,31 @@ describe('rowControl', () => {
     ).toEqual({ kind: 'read-only', reason: 'needs decide' });
   });
 
+  it("gives a decider the doc card for the system's doc gate, and a look-alike only its choices", () => {
+    const data = { type: 'doc', doc: 'doc-1', proposal: 'rev-p', runId: 'r-1' };
+    const docGate = msg('m-doc', {
+      from: 'agent:dispatch',
+      kind: 'question',
+      blocking: true,
+      choices: ['approve', 'reject'],
+      data,
+    });
+    const decider = rowControl(docGate, {
+      me: ME,
+      open: true,
+      access: DECIDER,
+    });
+    expect(decider).toEqual({ kind: 'doc', doc: 'doc-1', proposal: 'rev-p' });
+    expect(offersAnswer(decider)).toBe(true);
+    expect(
+      rowControl(docGate, { me: ME, open: true, access: TEAMMATE })
+    ).toEqual({ kind: 'read-only', reason: 'needs decide' });
+    const lookAlike = { ...docGate, from: 'agent:wyat/impostor' };
+    expect(
+      rowControl(lookAlike, { me: ME, open: true, access: DECIDER })
+    ).toEqual({ kind: 'choices', choices: ['approve', 'reject'], gate: true });
+  });
+
   it('gives everyone who sees a task proposal its card, with answers only for a decider', () => {
     const proposal = msg('m-p', {
       from: 'agent:dispatch',

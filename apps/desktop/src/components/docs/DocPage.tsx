@@ -2,7 +2,12 @@ import type { ApiClient, DocRevisionInfo } from '@dispatch/client';
 import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { docsKey, refetchDocAfterSave, useDoc } from '../../hooks/useDocs';
+import {
+  docsKey,
+  refetchDocAfterSave,
+  useDoc,
+  useOpenDocProposals,
+} from '../../hooks/useDocs';
 import { describeError } from '../../lib/actionFeedback';
 import type { DocBuffer } from '../../lib/docBuffer';
 import {
@@ -22,6 +27,7 @@ import {
   anchorLine,
   docBadges,
   docDiffPatch,
+  docStatusActions,
   docStatusLine,
   revisionAuthor,
   revisionsSinceReview,
@@ -67,6 +73,11 @@ export function DocPage({
 }: DocPageProps) {
   const queryClient = useQueryClient();
   const { read, error } = useDoc(client, port, refId);
+  const proposals = useOpenDocProposals(
+    client,
+    port,
+    read?.doc.status === 'accepted' ? read.doc.id : null
+  );
   // The buffer lives in a ref so a save that lands after unmount still sees
   // it; `buf` mirrors it for rendering and the autosave timer.
   const bufRef = useRef<DocBuffer | null>(null);
@@ -176,6 +187,14 @@ export function DocPage({
       await save();
     }
   }, [save]);
+
+  // Sends the text, then refuses to seal a head the buffer still disagrees with.
+  const flushForSeal = async (): Promise<void> => {
+    await flush();
+    const problem =
+      bufRef.current === null ? null : docSealProblem(bufRef.current);
+    if (problem !== null) throw new Error(problem);
+  };
 
   // Read through a ref so a new connection's `save` does not count as leaving.
   const flushRef = useRef(flush);
@@ -318,12 +337,7 @@ export function DocPage({
             variant="ghost"
             onClick={() =>
               act(async () => {
-                await flush();
-                const problem =
-                  bufRef.current === null
-                    ? null
-                    : docSealProblem(bufRef.current);
-                if (problem !== null) throw new Error(problem);
+                await flushForSeal();
                 await client.sealDoc(refId);
               })
             }
@@ -346,23 +360,34 @@ export function DocPage({
             Mark reviewed
           </Button>
         )}
-        {canDecide && (
-          <Button
-            size="sm"
-            variant="ghost"
-            onClick={() =>
-              act(() =>
-                client.setDocStatus(
-                  refId,
-                  archived ? (doc.archivedFrom ?? 'draft') : 'archived'
-                )
-              )
-            }
-          >
-            {archived ? 'Restore' : 'Archive'}
-          </Button>
-        )}
+        {canDecide &&
+          docStatusActions(doc).map(({ label, status }) => (
+            <Button
+              key={label}
+              size="sm"
+              variant={status === 'accepted' ? 'default' : 'ghost'}
+              onClick={() =>
+                act(async () => {
+                  // Accepting seals the head, so it waits on the text as Save version does.
+                  if (status === 'accepted') await flushForSeal();
+                  await client.setDocStatus(refId, status);
+                })
+              }
+            >
+              {label}
+            </Button>
+          ))}
       </header>
+      {doc.status === 'accepted' && proposals.length > 0 && (
+        <div className="flex flex-col gap-0.5 border-b border-[var(--color-border)] px-3 py-1 text-xs">
+          <p>Open proposals, each waiting on its gate in Needs you:</p>
+          <ul>
+            {proposals.map((p) => (
+              <li key={p.rev}>{`${p.rev} · ${p.author} · ${p.createdAt}`}</li>
+            ))}
+          </ul>
+        </div>
+      )}
       {actionError !== null && (
         <p
           role="alert"
