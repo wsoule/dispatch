@@ -6,6 +6,40 @@ vector ids (see §14.2).
 
 ## Unreleased
 
+- [additive] The `task-proposal` gate type is permanent: only the system address
+  raises it, only a deciding principal answers it, and its answer chooses
+  `approve` or `decline` (§8.6, App. C.3). Vectors:
+  `core.gates.task-proposal-is-raised-only-by-the-system`,
+  `core.gates.task-proposal-needs-a-deciding-answer`,
+  `core.gates.task-proposal-is-answered-with-approve-or-decline`,
+  `a2a.projection.row-8-a-handoff-waits-on-its-proposal`.
+- [additive] The `work/v1` extension is permanent, with the task-state rows for
+  handoffs: a request's limits, a write's repository rule, and rows 2, 4, 6, 8,
+  9 and 10 for a handoff (§8.6, §8.7). Vectors:
+  `a2a.work-ext.accepts-a-handoff-with-every-field`,
+  `a2a.work-ext.accepts-a-status-request`,
+  `a2a.work-ext.refuses-an-unknown-skill`,
+  `a2a.work-ext.refuses-a-handoff-without-a-title`,
+  `a2a.work-ext.refuses-a-title-over-200-bytes`,
+  `a2a.work-ext.refuses-a-multi-line-title`,
+  `a2a.work-ext.refuses-more-than-20-acceptance-criteria`,
+  `a2a.work-ext.refuses-a-criterion-over-500-bytes`,
+  `a2a.work-ext.refuses-more-than-50-writes`,
+  `a2a.work-ext.refuses-a-write-outside-the-repository`,
+  `a2a.work-ext.refuses-an-unknown-priority`,
+  `a2a.work-ext.refuses-more-than-10-labels`,
+  `a2a.work-ext.refuses-a-request-that-is-not-an-object`,
+  `a2a.projection.row-2-a-declined-handoff`,
+  `a2a.projection.row-2-a-handoff-dropped-by-the-owner`,
+  `a2a.projection.row-4-a-deleted-handoff`,
+  `a2a.projection.row-6-a-landed-handoff`,
+  `a2a.projection.row-8-a-handoff-waits-on-its-proposal`,
+  `a2a.projection.row-9-a-working-handoff`,
+  `a2a.projection.row-9-a-handoff-in-review-has-a-stage`,
+  `a2a.projection.row-9-a-status-of-the-hosts-own`,
+  `a2a.projection.row-10-an-approved-draft-is-submitted`,
+  `a2a.projection.row-10-needs-approval`.
+
 ## 1.0.0-draft.1 (2026-09-28)
 
 - [editorial] The core text: §0-7, §9-14.

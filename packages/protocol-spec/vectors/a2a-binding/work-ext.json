@@ -1,0 +1,496 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "a2a-binding",
+  "area": "work-ext",
+  "vectors": [
+    {
+      "id": "a2a.work-ext.accepts-a-handoff-with-every-field",
+      "title": "A handoff naming a title, acceptance criteria, repo-relative writes, a priority and labels is accepted",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "acceptance": ["Exports over 100 per minute get 429"],
+            "writes": ["src/export/**", "docs/api.md"],
+            "priority": "high",
+            "labels": ["api", "Rate Limits"]
+          }
+        }
+      ],
+      "then": { "steps": [{ "ok": true }] }
+    },
+    {
+      "id": "a2a.work-ext.accepts-a-status-request",
+      "title": "A status request, with or without a task id, is accepted",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": { "skill": "status" }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": { "skill": "status", "task": "a2a-task-1" }
+        }
+      ],
+      "then": { "steps": [{ "ok": true }, { "ok": true }] }
+    },
+    {
+      "id": "a2a.work-ext.refuses-an-unknown-skill",
+      "title": "A skill other than handoff or status is refused on work.skill",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": { "skill": "deploy" }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.skill" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-handoff-without-a-title",
+      "title": "A handoff with no title, or a blank one, is refused on work.title",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": { "skill": "handoff" }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": { "skill": "handoff", "title": "  " }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.title" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.title" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-title-over-200-bytes",
+      "title": "A title over 200 UTF-8 bytes is refused on work.title; one of exactly 200 is accepted",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é"
+          }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é é éx"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.title" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-multi-line-title",
+      "title": "A title with a line break is refused on work.title",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["1.4", "8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": { "skill": "handoff", "title": "Fix it\nnow" }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.title" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-more-than-20-acceptance-criteria",
+      "title": "More than 20 acceptance criteria are refused on work.acceptance",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "acceptance": [
+              "criterion 0",
+              "criterion 1",
+              "criterion 2",
+              "criterion 3",
+              "criterion 4",
+              "criterion 5",
+              "criterion 6",
+              "criterion 7",
+              "criterion 8",
+              "criterion 9",
+              "criterion 10",
+              "criterion 11",
+              "criterion 12",
+              "criterion 13",
+              "criterion 14",
+              "criterion 15",
+              "criterion 16",
+              "criterion 17",
+              "criterion 18",
+              "criterion 19",
+              "criterion 20"
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.acceptance" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-criterion-over-500-bytes",
+      "title": "An acceptance criterion over 500 bytes is refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "acceptance": [
+              "ok",
+              "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.acceptance[1]" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-more-than-50-writes",
+      "title": "More than 50 writes are refused on work.writes",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "writes": [
+              "src/f0.ts",
+              "src/f1.ts",
+              "src/f2.ts",
+              "src/f3.ts",
+              "src/f4.ts",
+              "src/f5.ts",
+              "src/f6.ts",
+              "src/f7.ts",
+              "src/f8.ts",
+              "src/f9.ts",
+              "src/f10.ts",
+              "src/f11.ts",
+              "src/f12.ts",
+              "src/f13.ts",
+              "src/f14.ts",
+              "src/f15.ts",
+              "src/f16.ts",
+              "src/f17.ts",
+              "src/f18.ts",
+              "src/f19.ts",
+              "src/f20.ts",
+              "src/f21.ts",
+              "src/f22.ts",
+              "src/f23.ts",
+              "src/f24.ts",
+              "src/f25.ts",
+              "src/f26.ts",
+              "src/f27.ts",
+              "src/f28.ts",
+              "src/f29.ts",
+              "src/f30.ts",
+              "src/f31.ts",
+              "src/f32.ts",
+              "src/f33.ts",
+              "src/f34.ts",
+              "src/f35.ts",
+              "src/f36.ts",
+              "src/f37.ts",
+              "src/f38.ts",
+              "src/f39.ts",
+              "src/f40.ts",
+              "src/f41.ts",
+              "src/f42.ts",
+              "src/f43.ts",
+              "src/f44.ts",
+              "src/f45.ts",
+              "src/f46.ts",
+              "src/f47.ts",
+              "src/f48.ts",
+              "src/f49.ts",
+              "src/f50.ts"
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.writes" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-write-outside-the-repository",
+      "title": "An absolute write, a drive letter, a backslash or a .. segment is refused on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "writes": ["src/ok.ts", "/etc/passwd"]
+          }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "writes": ["C:/Windows"]
+          }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "writes": ["src\\x.ts"]
+          }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "writes": ["src/../../x"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.writes[1]" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.writes[0]" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.writes[0]" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.writes[0]" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-an-unknown-priority",
+      "title": "A priority outside urgent, high, medium, low and none is refused on work.priority",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "priority": "p0"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.priority" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-more-than-10-labels",
+      "title": "More than 10 labels are refused on work.labels, and a label over 50 bytes on its slot",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "labels": [
+              "l0",
+              "l1",
+              "l2",
+              "l3",
+              "l4",
+              "l5",
+              "l6",
+              "l7",
+              "l8",
+              "l9",
+              "l10"
+            ]
+          }
+        },
+        {
+          "op": "a2a.validate",
+          "extension": "work",
+          "raw": {
+            "skill": "handoff",
+            "title": "Add rate limiting to the export API",
+            "labels": ["xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.labels" }
+          },
+          {
+            "ok": false,
+            "error": { "code": "invalid", "field": "work.labels[0]" }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.work-ext.refuses-a-request-that-is-not-an-object",
+      "title": "A work/v1 request that is not an object is refused on work",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.6"],
+      "given": {},
+      "when": [
+        { "op": "a2a.validate", "extension": "work", "raw": ["handoff"] }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "invalid", "field": "work" } }
+        ]
+      }
+    }
+  ]
+}

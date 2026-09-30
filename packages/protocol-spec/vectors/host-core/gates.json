@@ -629,6 +629,226 @@
         ],
         "noOtherMessages": true
       }
+    },
+    {
+      "id": "core.gates.task-proposal-is-raised-only-by-the-system",
+      "title": "A deciding human or a session may not raise a task-proposal gate, whose raisedBy is system; the system may",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "8.6", "C.3"],
+      "given": {
+        "workItems": [{ "id": "t-4a8cce", "liveSession": "run:r-9f2c01" }],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["human:ada"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Approve the handoff?",
+            "choices": ["approve", "decline"],
+            "data": {
+              "type": "task-proposal",
+              "task": "t-4a8cce",
+              "proposedBy": "agent:wyat/a2a.acme",
+              "message": "m-root"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "run:r-9f2c01", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Approve the handoff?",
+            "choices": ["approve", "decline"],
+            "data": {
+              "type": "task-proposal",
+              "task": "t-4a8cce",
+              "proposedBy": "agent:wyat/a2a.acme",
+              "message": "m-root"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Approve the handoff?",
+            "choices": ["approve", "decline"],
+            "data": {
+              "type": "task-proposal",
+              "task": "t-4a8cce",
+              "proposedBy": "agent:wyat/a2a.acme",
+              "message": "m-root"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } },
+          { "ok": true }
+        ],
+        "messages": [
+          {
+            "id": "$s3",
+            "from": "$system",
+            "data": {
+              "type": "task-proposal",
+              "task": "t-4a8cce",
+              "proposedBy": "agent:wyat/a2a.acme",
+              "message": "m-root"
+            }
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.gates.task-proposal-needs-a-deciding-answer",
+      "title": "A human without the decide tier may not answer a task-proposal gate; a deciding human's decline applies its effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.2", "5.5", "8.6", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Approve the handoff?",
+            "choices": ["approve", "decline"],
+            "data": {
+              "type": "task-proposal",
+              "task": "t-4a8cce",
+              "proposedBy": "agent:wyat/a2a.acme",
+              "message": "m-root"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "Not this one.", "choice": "decline" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": false, "error": { "code": "forbidden", "field": "replyTo" } },
+          { "ok": true }
+        ],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "$system",
+            "data": { "type": "task-proposal" }
+          },
+          {
+            "id": "$s3",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "choice": "decline"
+          }
+        ],
+        "noOtherMessages": true,
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s3" }
+        ],
+        "gateEffects": ["$s1"]
+      }
+    },
+    {
+      "id": "core.gates.task-proposal-is-answered-with-approve-or-decline",
+      "title": "An answer to a task-proposal gate names approve or decline: another choice, or none, is refused on choice",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["4.7", "8.6", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Approve the handoff?",
+            "choices": ["approve", "decline"],
+            "data": {
+              "type": "task-proposal",
+              "task": "t-4a8cce",
+              "proposedBy": "agent:wyat/a2a.acme",
+              "message": "m-root"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "reject" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "fine" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": false, "error": { "code": "invalid", "field": "choice" } },
+          { "ok": false, "error": { "code": "invalid", "field": "choice" } },
+          { "ok": true }
+        ],
+        "messages": [
+          {
+            "id": "$s4",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "choice": "approve"
+          }
+        ],
+        "gateEffects": ["$s1"]
+      }
     }
   ]
 }

@@ -47,15 +47,16 @@ daemon runs for. The owner is asked whether to wake a target
 ([§C.8](appendix-c-dispatch-profile.md#sC.8)), told when the breaker stops
 agents in a thread ([§C.7](appendix-c-dispatch-profile.md#sC.7)) and told when
 an answer to a gate is set aside ([§5.7](05-gates.md#s5.7)). The system also
-raises the `tool-approval`, `agent-registration` and `overseer-action` gates to
-the owner ([§C.3](appendix-c-dispatch-profile.md#sC.3)). Which humans may decide
-follows from the daemon's credential tiers
+raises the `tool-approval`, `agent-registration`, `overseer-action` and
+`task-proposal` gates to the owner
+([§C.3](appendix-c-dispatch-profile.md#sC.3)). Which humans may decide follows
+from the daemon's credential tiers
 ([Appendix A](appendix-a-daemon-api.md#sA.1)).
 
 ## C.3 Gate types
 
-Dispatch implements `wake` ([§5.9](05-gates.md#s5.9)) and the four permanent
-types below, and a host that claims the profile declares all five
+Dispatch implements `wake` ([§5.9](05-gates.md#s5.9)) and the five permanent
+types below, and a host that claims the profile declares all six
 ([§12.1](12-conformance.md#s12.1)). Each effect is idempotent and applied as
 [§5.5](05-gates.md#s5.5) says.
 
@@ -65,6 +66,7 @@ types below, and a host that claims the profile declares all five
 | `scope`              | session   | grant, deny                    | `paths`, `reason`                                                              |
 | `agent-registration` | system    | approve, deny                  | `agent`, `client`, `requestedBy`?                                              |
 | `overseer-action`    | system    | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
+| `task-proposal`      | system    | approve, decline               | `task`, `proposedBy`, `message`                                                |
 
 **`tool-approval`.** The system raises it to the owner as a blocking question
 when a session or the overseer parks a tool call for approval, with refs to the
@@ -111,15 +113,23 @@ overseer, the project's own assistant, wants to take an action it queued:
 `summary` says what the action does. `confirm` runs the action; `cancel` drops
 it. Vector: `core.answers.a-human-decides-an-overseer-action-gate`.
 
-**Provisional types.** Three more types are registered as provisional
+**`task-proposal`.** The system raises it to the owner when an A2A client hands
+off work ([§8.6](08-a2a-binding.md#s8.6)), as a blocking question replying to
+the handoff: `task` names the drafted work item, `proposedBy` the client, and
+`message` the handoff. `approve` moves the draft to ready; `decline` drops it,
+and the client's task is rejected ([§8.7](08-a2a-binding.md#s8.7)). Vectors:
+`core.gates.task-proposal-is-raised-only-by-the-system`,
+`core.gates.task-proposal-needs-a-deciding-answer`,
+`core.gates.task-proposal-is-answered-with-approve-or-decline`.
+
+**Provisional types.** Two more types are registered as provisional
 ([§11.6](11-registries.md#s11.6)), and join the profile when the Dispatch
 feature that raises each one ships with vectors:
 
-| Type            | Raised by         | Choices          | Data besides `type`                                                                            | Effect                                                               |
-| --------------- | ----------------- | ---------------- | ---------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
-| `memory`        | system-or-decider | approve, reject  | `proposalId`, `action` (`add`, `supersede` or `retire`), `scope` (`project` or `team`), `kind` | apply or reject a proposed memory entry                              |
-| `task-proposal` | system            | approve, decline | `task`, `proposedBy`, `message`                                                                | promote or drop a drafted work item ([§8.6](08-a2a-binding.md#s8.6)) |
-| `doc`           | system            | approve, reject  | `doc`, `proposal`, `taskId`?, `runId`?                                                         | apply or reject a proposed document change                           |
+| Type     | Raised by         | Choices         | Data besides `type`                                                                            | Effect                                     |
+| -------- | ----------------- | --------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| `memory` | system-or-decider | approve, reject | `proposalId`, `action` (`add`, `supersede` or `retire`), `scope` (`project` or `team`), `kind` | apply or reject a proposed memory entry    |
+| `doc`    | system            | approve, reject | `doc`, `proposal`, `taskId`?, `runId`?                                                         | apply or reject a proposed document change |
 
 ## C.4 Markers
 
