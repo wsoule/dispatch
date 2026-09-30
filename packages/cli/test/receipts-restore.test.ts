@@ -1,4 +1,5 @@
 import {
+  DOCS_LIMITS,
   initProjectStores,
   materializeReceipts,
   openProjectStores,
@@ -12,6 +13,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -201,4 +203,73 @@ test('a log without team docs stages nothing', async () => {
   );
   expect(existsSync(staging)).toBe(false);
   expect(lines.some((l) => l.includes('staged'))).toBe(false);
+});
+
+// The staging directory `receipts restore` copies team docs into for `fresh`.
+function stagingFor(fresh: string): string {
+  return join(
+    process.env.DISPATCH_HOME ?? '',
+    '.dispatch',
+    'runs',
+    daemonFileKey(projectRoot(fresh)),
+    'docs-restore'
+  );
+}
+
+// Restores `remote` into a fresh checkout; returns it and what the CLI printed.
+async function restoreFresh(
+  remote: string
+): Promise<{ fresh: string; lines: string[] }> {
+  const fresh = temp('dispatch-fresh-');
+  git(fresh, 'init', '-q', '-b', 'main');
+  const lines: string[] = [];
+  await makeProgram({ cwd: fresh, log: (l) => lines.push(l) }).parseAsync(
+    ['receipts', 'restore', '--from', remote],
+    { from: 'user' }
+  );
+  return { fresh, lines };
+}
+
+test('a symlinked doc file in the log is not staged', async () => {
+  const secret = join(temp('dispatch-secret-'), 'secret.md');
+  writeFileSync(secret, 'not a doc\n');
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch', 'docs'), { recursive: true });
+    writeFileSync(join(log, '.dispatch', 'docs', 'a.md'), 'a doc\n');
+    symlinkSync(secret, join(log, '.dispatch', 'docs', 'leak.md'));
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  expect(existsSync(join(stagingFor(fresh), 'leak.md'))).toBe(false);
+  expect(readFileSync(join(stagingFor(fresh), 'a.md'), 'utf8')).toBe('a doc\n');
+  expect(lines).toContain('staged 1 doc(s) for the daemon to restore');
+  expect(lines.some((l) => l.includes('leak.md'))).toBe(true);
+});
+
+test('a symlinked .dispatch/docs stages nothing', async () => {
+  const outside = temp('dispatch-outside-');
+  writeFileSync(join(outside, 'a.md'), 'not from the log\n');
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch'), { recursive: true });
+    symlinkSync(outside, join(log, '.dispatch', 'docs'));
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  expect(existsSync(stagingFor(fresh))).toBe(false);
+  expect(lines.some((l) => l.includes('symlink'))).toBe(true);
+});
+
+test('a doc file over the receipt file limit is not staged, and is reported', async () => {
+  const { remote } = pushedLog((log) => {
+    mkdirSync(join(log, '.dispatch', 'docs'), { recursive: true });
+    writeFileSync(
+      join(log, '.dispatch', 'docs', 'huge.md'),
+      'x'.repeat(DOCS_LIMITS.receiptFileBytes + 1)
+    );
+    writeFileSync(join(log, '.dispatch', 'docs', 'a.md'), 'a doc\n');
+  });
+  const { fresh, lines } = await restoreFresh(remote);
+  expect(existsSync(join(stagingFor(fresh), 'huge.md'))).toBe(false);
+  expect(lines).toContain('staged 1 doc(s) for the daemon to restore');
+  expect(lines.some((l) => l.includes('huge.md') && l.includes('over'))).toBe(
+    true
+  );
 });

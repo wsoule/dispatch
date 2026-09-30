@@ -255,6 +255,10 @@ export const DOCS_LIMITS = {
   importSessionBytes: 64 * 1024 * 1024,
   imageBytes: 25 * 1024 * 1024,
   summaryBytes: 200,
+  // A receipt file: the largest body plus room for its frontmatter.
+  receiptFileBytes: 768 * 1024 + 64 * 1024,
+  // A merge writes two parents; a receipt file naming more is refused.
+  revisionParents: 8,
 } as const;
 
 // Route segments under /api/docs, so no slug can shadow one.

@@ -1,6 +1,7 @@
 import {
   absoluteGitLocation,
   DEFAULT_RECEIPTS_BRANCH,
+  DOCS_LIMITS,
   formatMigrationReport,
   initProjectStores,
   restoreReceipts,
@@ -12,6 +13,7 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readdirSync,
@@ -40,13 +42,40 @@ function remoteUrl(root: string, cwd: string, from: string): string {
   return absoluteGitLocation(cwd, from);
 }
 
-// Copies the clone's team docs to where the daemon's next boot restores them
-// (its run-state `docs-restore/`, 0700); returns how many it staged.
-function stageDocs(clone: string, root: string): number {
+// Copies the clone's regular `.md` team docs, each within the receipt file
+// limit, to the daemon's run-state `docs-restore/` (0700); a symlink is refused.
+function stageDocs(
+  clone: string,
+  root: string
+): { staged: number; problems: string[] } {
   const from = join(clone, '.dispatch', 'docs');
-  if (!existsSync(from)) return 0;
-  const files = readdirSync(from).filter((f) => f.endsWith('.md'));
-  if (files.length === 0) return 0;
+  if (!existsSync(from)) return { staged: 0, problems: [] };
+  if (!lstatSync(from).isDirectory()) {
+    return {
+      staged: 0,
+      problems: [
+        '.dispatch/docs is a symlink or not a directory; no docs staged',
+      ],
+    };
+  }
+  const problems: string[] = [];
+  const files = readdirSync(from)
+    .filter((f) => f.endsWith('.md'))
+    .filter((f) => {
+      const stat = lstatSync(join(from, f));
+      if (!stat.isFile()) {
+        problems.push(`.dispatch/docs/${f}: not a regular file; skipped`);
+        return false;
+      }
+      if (stat.size > DOCS_LIMITS.receiptFileBytes) {
+        problems.push(
+          `.dispatch/docs/${f}: over ${DOCS_LIMITS.receiptFileBytes} bytes; skipped`
+        );
+        return false;
+      }
+      return true;
+    });
+  if (files.length === 0) return { staged: 0, problems };
   const to = join(
     daemonHome(),
     '.dispatch',
@@ -57,7 +86,7 @@ function stageDocs(clone: string, root: string): number {
   mkdirSync(to, { recursive: true, mode: 0o700 });
   chmodSync(to, 0o700);
   for (const file of files) copyFileSync(join(from, file), join(to, file));
-  return files.length;
+  return { staged: files.length, problems };
 }
 
 export function registerReceiptsCommands(
@@ -114,9 +143,10 @@ export function registerReceiptsCommands(
           ctx.log(
             `evidence: ${result.runs} run(s), ${result.commands} command(s), ${result.mutations} mutation(s)`
           );
-          const staged = stageDocs(dir, root);
-          if (staged > 0)
-            ctx.log(`staged ${staged} doc(s) for the daemon to restore`);
+          const docs = stageDocs(dir, root);
+          if (docs.staged > 0)
+            ctx.log(`staged ${docs.staged} doc(s) for the daemon to restore`);
+          for (const problem of docs.problems) ctx.log(`problem: ${problem}`);
           for (const problem of result.problems) {
             ctx.log(`problem: ${problem.source}: ${problem.detail}`);
           }
