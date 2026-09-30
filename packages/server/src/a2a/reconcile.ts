@@ -2,9 +2,12 @@ import type { HandoffRequest, TaskRow } from '@dispatch/a2a';
 import {
   handoffSupported,
   parseWorkExt,
+  provenanceLine,
   shapeDraft,
   unwrapExternalData,
 } from '@dispatch/a2a';
+import type { TaskDoc } from '@dispatch/core';
+import { untrustedInline } from '@dispatch/core';
 import type { Message } from '@dispatch/protocol';
 import {
   isDecidingAuthor,
@@ -42,13 +45,23 @@ export function rowFor(client: string, m: Message): TaskRow {
 }
 
 // The handoff request a root's wrapped data carries; null when it has none.
-export function handoffWork(root: Message): HandoffRequest | null {
+function handoffWork(root: Message): HandoffRequest | null {
   const payload =
     root.data === undefined ? null : unwrapExternalData(root.data);
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
     return null;
   const work = parseWorkExt(payload.work);
   return work?.skill === 'handoff' ? work : null;
+}
+
+// Whether `task` is the draft `root` asked for: its exact title and provenance line.
+export function draftOfRoot(task: TaskDoc, root: Message): boolean {
+  const work = handoffWork(root);
+  return (
+    work !== null &&
+    task.meta.title === untrustedInline(work.title) &&
+    task.body.includes(provenanceLine(root.from, root.id))
+  );
 }
 
 // The draft a handoff root asked for, rebuilt from its wrapped work request;

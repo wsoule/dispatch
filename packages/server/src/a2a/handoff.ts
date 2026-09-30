@@ -19,7 +19,7 @@ import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
 import { closeGate, SYSTEM_SENDER } from '../messaging/gates.js';
 import type { BridgeDeps } from './port.js';
-import { rowFor } from './reconcile.js';
+import { draftOfRoot, rowFor } from './reconcile.js';
 import type { BridgeWatch } from './watch.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -168,13 +168,14 @@ async function answerRoot(
   }
 }
 
-// The A2A draft whose provenance line names `rootId`, for a row that never linked it.
+// The draft `rootId` asked for (title and provenance line), for a row that never linked it.
 export function orphanDraft(deps: BridgeDeps, rootId: string): TaskDoc | null {
-  const marker = `(message ${rootId})`;
+  const root = deps.engine.getMessage(rootId);
+  if (root === null) return null;
   return (
     deps.tasks
       .list()
-      .find((t) => t.meta.labels.includes('a2a') && t.body.includes(marker)) ??
+      .find((t) => t.meta.labels.includes('a2a') && draftOfRoot(t, root)) ??
     null
   );
 }

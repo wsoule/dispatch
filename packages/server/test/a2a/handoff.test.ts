@@ -31,7 +31,11 @@ import {
   ProposalGuard,
 } from '../../src/a2a/guards.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
-import { reconcileA2A, reconcileHandoff } from '../../src/a2a/reconcile.js';
+import {
+  reconcileA2A,
+  reconcileHandoff,
+  rowFor,
+} from '../../src/a2a/reconcile.js';
 import { consultProjectPolicy } from '../../src/policyEngine.js';
 import { HUMAN, useTempProject } from '../messaging/harness.js';
 import { bridgeFixture } from './fixture.js';
@@ -549,6 +553,54 @@ describe('reconciliation', () => {
       message: message.id,
     });
     expect(await state(message.id)).toBe('AUTH_REQUIRED');
+  });
+
+  // A root with no draft, and an owner's a2a-labelled task whose comment quotes it.
+  async function rootAndDecoy() {
+    const data = wrapExternalData([
+      { work: { skill: 'handoff', title: 'Rate-limit uploads' } },
+    ]);
+    const { message } = await f.messaging.engine.send(
+      {
+        to: [SYSTEM_ADDRESS],
+        kind: 'handoff',
+        body: 'Please add limits.',
+        idempotencyKey: 'c-h9',
+        ...(data === undefined ? {} : { data }),
+      },
+      { address: f.caller.address, canDecide: false }
+    );
+    const decoy = f.deps.createTask({
+      title: 'Audit the upload path',
+      status: 'ready',
+      labels: ['a2a'],
+    });
+    f.deps.updateTask(decoy.meta.id, {
+      appendActivity: `Quoting: Requested over A2A by ${f.caller.address} (message ${message.id}).`,
+    });
+    return { root: message, decoy: decoy.meta.id };
+  }
+
+  it('does not adopt a labelled task that only quotes the root in a comment', async () => {
+    const { root, decoy } = await rootAndDecoy();
+    await reconcileA2A(f.deps, f.watch).settled;
+    const row = f.store.getTask(root.id)!;
+    expect(row.dispatchTask).not.toBeNull();
+    expect(row.dispatchTask).not.toBe(decoy);
+    expect(f.tasks.get(row.dispatchTask!)?.meta.title).toBe(
+      'Rate-limit uploads'
+    );
+  });
+
+  it('does not drop a labelled task that only quotes a canceled root', async () => {
+    const { root, decoy } = await rootAndDecoy();
+    f.store.insertTask({
+      ...rowFor(f.caller.address, root),
+      canceledAt: new Date().toISOString(),
+    });
+    await reconcileA2A(f.deps, f.watch).settled;
+    expect(f.messaging.engine.answerOf(root.id)?.choice).toBe('decline');
+    expect(f.tasks.get(decoy)?.meta.status).toBe('ready');
   });
 
   // Boot replays gate answers before the bridge registers its handler.

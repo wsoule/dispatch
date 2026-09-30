@@ -1,12 +1,11 @@
 import type { A2AStore, HandoffStatuses } from '@dispatch/a2a';
-import { isClientAddress, provenanceLine } from '@dispatch/a2a';
+import { isClientAddress } from '@dispatch/a2a';
 import type {
   TaskDoc,
   TaskRisk,
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
-import { untrustedInline } from '@dispatch/core';
 import type {
   Address,
   DeliveryEngine,
@@ -19,7 +18,7 @@ import { SYSTEM_SENDER } from '../messaging/gates.js';
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
 import { proposalKey } from './handoff.js';
-import { handoffWork } from './reconcile.js';
+import { draftOfRoot } from './reconcile.js';
 
 // What the guards need; no BridgeDeps, because they must hold with a2a.db down.
 export interface GuardDeps {
@@ -114,12 +113,8 @@ function handoffRoots(deps: GuardDeps, task: TaskDoc): string[] {
     )
       return false;
     const linked = deps.store?.getTask(rootId)?.dispatchTask ?? null;
-    const work = handoffWork(root);
     return (
-      (linked === null || linked === task.meta.id) &&
-      work !== null &&
-      task.meta.title === untrustedInline(work.title) &&
-      task.body.includes(provenanceLine(root.from, rootId))
+      (linked === null || linked === task.meta.id) && draftOfRoot(task, root)
     );
   });
 }
