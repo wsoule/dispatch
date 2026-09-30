@@ -1,22 +1,30 @@
 import type { A2AStore, HandoffStatuses } from '@dispatch/a2a';
-import { hasA2AProvenance } from '@dispatch/a2a';
+import { isClientAddress, provenanceLine } from '@dispatch/a2a';
 import type {
   TaskDoc,
   TaskRisk,
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
-import type { Address, DeliveryEngine } from '@dispatch/protocol';
+import { untrustedInline } from '@dispatch/core';
+import type {
+  Address,
+  DeliveryEngine,
+  SqliteMessageStore,
+} from '@dispatch/protocol';
 import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
 import type { EventBus } from '../events.js';
 import { SYSTEM_SENDER } from '../messaging/gates.js';
 import type { AuthTier } from '../tiers.js';
 import { tierAllows } from '../tiers.js';
+import { proposalKey } from './handoff.js';
+import { handoffWork } from './reconcile.js';
 
 // What the guards need; no BridgeDeps, because they must hold with a2a.db down.
 export interface GuardDeps {
   engine: DeliveryEngine;
+  messages: Pick<SqliteMessageStore, 'byIdemKey'>;
   tasks: TaskStorePort;
   ownerRef: Address;
   updateTask(id: string, patch: UpdatePatch): TaskDoc;
@@ -70,38 +78,55 @@ export function openProposalFor(
   return openProposals(deps).find((p) => p.taskId === taskId) ?? null;
 }
 
-// a2a.db answers when it links the task; otherwise fail closed on its provenance.
+// a2a.db answers when it links the task; otherwise messages.db must tie it to a handoff.
 function isA2ATask(deps: GuardDeps, taskId: string): boolean {
-  return (
-    (deps.store?.taskForDispatchTask(taskId) ?? null) !== null ||
-    hasA2AProvenance(deps.tasks.get(taskId))
-  );
+  if ((deps.store?.taskForDispatchTask(taskId) ?? null) !== null) return true;
+  const task = deps.tasks.get(taskId);
+  return task !== null && handoffRoots(deps, task).length > 0;
 }
 
-// The roots of every task-proposal gate the system asked about `taskId`, from
-// messages.db, so nothing in the task's own text can name one.
-function proposalRoots(deps: GuardDeps, taskId: string): string[] {
-  return deps.engine
-    .messagesFrom(SYSTEM_ADDRESS, '', ['question'])
-    .flatMap((q) => {
-      const gate = q.origin === undefined ? gateOf(q) : null;
-      return gate?.type === 'task-proposal' && gate.task === taskId
-        ? [gate.message]
-        : [];
-    });
+const PROVENANCE = /Requested over A2A by \S+ \(message ([^)\s]+)\)\./g;
+
+// Roots messages.db ties to `task`, from those its provenance lines name: by a system
+// gate naming the task or, gateless (a failed link), a client root that drafted it.
+function handoffRoots(deps: GuardDeps, task: TaskDoc): string[] {
+  const named = new Set(
+    Array.from(task.body.matchAll(PROVENANCE), (m) => m[1])
+  );
+  return [...named].filter((rootId) => {
+    const gate = deps.messages.byIdemKey(SYSTEM_ADDRESS, proposalKey(rootId));
+    if (gate !== null) {
+      const data = gate.origin === undefined ? gateOf(gate) : null;
+      return data?.type === 'task-proposal' && data.task === task.meta.id;
+    }
+    const root = deps.engine.getMessage(rootId);
+    if (
+      root === null ||
+      root.origin !== undefined ||
+      root.kind !== 'handoff' ||
+      !root.to.includes(SYSTEM_ADDRESS) ||
+      !isClientAddress(root.from)
+    )
+      return false;
+    const linked = deps.store?.getTask(rootId)?.dispatchTask ?? null;
+    const work = handoffWork(root);
+    return (
+      (linked === null || linked === task.meta.id) &&
+      work !== null &&
+      task.meta.title === untrustedInline(work.title) &&
+      task.body.includes(provenanceLine(root.from, rootId))
+    );
+  });
 }
 
 // Whether the task came from an A2A handoff the system has not accepted.
-// Without an a2a.db row, the gates in messages.db name the root; none fails closed.
 function unapprovedHandoff(deps: GuardDeps, task: TaskDoc | null): boolean {
   if (task === null) return false;
   const accepted = (root: string) =>
     deps.engine.answerOf(root)?.choice === 'accept';
   const row = deps.store?.taskForDispatchTask(task.meta.id) ?? null;
   if (row !== null) return row.skill === 'handoff' && !accepted(row.id);
-  if (!hasA2AProvenance(task)) return false;
-  const roots = proposalRoots(deps, task.meta.id);
-  return roots.length === 0 || !roots.every(accepted);
+  return !handoffRoots(deps, task).every(accepted);
 }
 
 export function dispatchRefusal(deps: GuardDeps, task: TaskDoc): string | null {

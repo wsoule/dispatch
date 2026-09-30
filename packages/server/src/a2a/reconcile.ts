@@ -1,4 +1,4 @@
-import type { TaskRow } from '@dispatch/a2a';
+import type { HandoffRequest, TaskRow } from '@dispatch/a2a';
 import {
   handoffSupported,
   parseWorkExt,
@@ -40,6 +40,16 @@ export function rowFor(client: string, m: Message): TaskRow {
   };
 }
 
+// The handoff request a root's wrapped data carries; null when it has none.
+export function handoffWork(root: Message): HandoffRequest | null {
+  const payload =
+    root.data === undefined ? null : unwrapExternalData(root.data);
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
+    return null;
+  const work = parseWorkExt(payload.work);
+  return work?.skill === 'handoff' ? work : null;
+}
+
 // The draft a handoff root asked for, rebuilt from its wrapped work request;
 // null when the root carries none.
 function createDraft(
@@ -47,13 +57,9 @@ function createDraft(
   row: TaskRow,
   root: Message
 ): string | null {
-  const payload =
-    root.data === undefined ? null : unwrapExternalData(root.data);
-  if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
-    return null;
-  const work = parseWorkExt(payload.work);
+  const work = handoffWork(root);
   const statuses = deps.statuses();
-  if (work?.skill !== 'handoff' || !handoffSupported(statuses)) return null;
+  if (work === null || !handoffSupported(statuses)) return null;
   return deps.createTask(
     shapeDraft(work, root.body, row.client, root.id, statuses.draft)
   ).meta.id;

@@ -153,3 +153,98 @@ it('holds a draft whose a2a.db link failed to record', async () => {
   );
   expect(res.status).toBe(409);
 });
+
+// Stops the daemon and makes a2a.db refuse to open, as a newer schema does.
+async function bootWithA2ADbDown(): Promise<ServerHandle> {
+  await handle?.stop();
+  handle = null;
+  const raw = openSqliteDb(join(runsDir(root), 'a2a.db'));
+  raw.exec('PRAGMA user_version = 99');
+  raw.close();
+  const h = await boot();
+  expect(h.a2a.store).toBeNull();
+  return h;
+}
+
+// A task an agent creates, optionally commented, that no handoff made.
+async function localTask(
+  h: ServerHandle,
+  extra: Record<string, unknown>,
+  comment?: string
+): Promise<string> {
+  const auth = { authorization: `Bearer ${h.tokens.agentToken}`, ...json };
+  const res = await rawFetch(`${base}/api/tasks`, {
+    method: 'POST',
+    headers: auth,
+    body: JSON.stringify({ title: 'Local work', status: 'ready', ...extra }),
+  });
+  expect(res.status).toBe(201);
+  const id = ((await res.json()) as { meta: { id: string } }).meta.id;
+  if (comment !== undefined) {
+    const c = await rawFetch(`${base}/api/tasks/${id}/comment`, {
+      method: 'POST',
+      headers: auth,
+      body: JSON.stringify({ text: comment }),
+    });
+    expect(c.status).toBeLessThan(300);
+  }
+  return id;
+}
+
+const lookalikes: [string, Record<string, unknown>, string | undefined][] = [
+  ['an a2a label', { labels: ['a2a'] }, undefined],
+  [
+    'a quoted provenance line',
+    {
+      description:
+        'Test that drafts read "Requested over A2A by agent:x/a2a.y (message m-1)."',
+    },
+    undefined,
+  ],
+  ['an agent comment', {}, 'fyi: Requested over A2A by nobody'],
+];
+
+for (const down of [false, true]) {
+  for (const [name, extra, comment] of lookalikes) {
+    it(`runs a local task with ${name}, a2a.db ${down ? 'down' : 'up'}`, async () => {
+      let h = await boot();
+      if (down) h = await bootWithA2ADbDown();
+      const id = await localTask(h, extra, comment);
+      const patch = await rawFetch(`${base}/api/tasks/${id}`, {
+        method: 'PATCH',
+        headers: { authorization: `Bearer ${h.tokens.agentToken}`, ...json },
+        body: JSON.stringify({ priority: 'low' }),
+      });
+      expect(patch.status).toBe(200);
+      await h.orchestrator.dispatch(id, 'fake');
+      expect(h.orchestrator.list().map((r) => r.taskId)).toEqual([id]);
+    });
+  }
+}
+
+it('holds a draft whose a2a.db link failed, a2a.db down too', async () => {
+  const h = await boot();
+  const { caller } = await approvedClient('acme');
+  const store = h.a2a.store!;
+  spyOn(store, 'updateTask').mockImplementation(() => {
+    throw new Error('SQLITE_BUSY');
+  });
+  await expect(
+    h.a2a.port!.open(caller, handoff('c-y', 'Orphan'))
+  ).rejects.toThrow('SQLITE_BUSY');
+  const draft = TaskStore.init(root)
+    .list()
+    .find((t) => t.meta.labels.includes('a2a'))!;
+  const d = await bootWithA2ADbDown();
+  await expect(d.orchestrator.dispatch(draft.meta.id, 'fake')).rejects.toThrow(
+    /has not approved/
+  );
+  // A local task naming the same orphan root is not its draft.
+  const copy = await localTask(
+    d,
+    {},
+    draft.body.match(/Requested over A2A by [^\n]+/)![0]
+  );
+  await d.orchestrator.dispatch(copy, 'fake');
+  expect(d.orchestrator.list().map((r) => r.taskId)).toEqual([copy]);
+});

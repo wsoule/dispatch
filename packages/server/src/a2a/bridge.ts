@@ -156,6 +156,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
   // Installed before the a2a.db branch: a gated draft stays held either way.
   const guardDeps: GuardDeps = {
     engine: messaging.engine,
+    messages: messaging.store,
     tasks: deps.tasks,
     ownerRef: deps.ownerRef,
     updateTask: deps.updateTask,

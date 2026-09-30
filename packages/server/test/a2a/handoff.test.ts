@@ -601,6 +601,7 @@ describe('a proposal gate send that fails', () => {
   }
   const deps = (): GuardDeps => ({
     engine: f.messaging.engine,
+    messages: f.deps.messages,
     tasks: f.tasks,
     ownerRef: f.deps.ownerRef,
     updateTask: f.deps.updateTask,
@@ -743,6 +744,7 @@ describe('a handoff in a Linear-style project', () => {
   // moved by anything else goes back to the backlog status.
   const guardDeps = (): GuardDeps => ({
     engine: f.messaging.engine,
+    messages: f.deps.messages,
     tasks: f.tasks,
     ownerRef: f.deps.ownerRef,
     updateTask: f.deps.updateTask,
