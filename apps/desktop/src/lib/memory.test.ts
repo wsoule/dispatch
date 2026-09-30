@@ -354,7 +354,6 @@ describe('memorySettingsModel', () => {
     expect(model.warnings).toEqual([
       'memory.indexTokens must be an integer from 200 to 4000; using 1000',
     ]);
-    expect(model.parityText).toContain('ledger rows read');
     expect(
       memorySettingsModel(
         health({ available: false, reason: 'too new', claudeImport: null })
@@ -365,25 +364,12 @@ describe('memorySettingsModel', () => {
     ).toBe('unknown');
   });
 
-  it('renders the parity report in the import’s own layout', () => {
-    expect(memorySettingsModel(health({ ledgerImport: report() })).parityText)
-      .toBe(`outcome: ok
-ledger rows read        330   (constraint 0 · hazard 319 · decision 11 · handoff 0)
-→ memory                 15   (imported 15 · proposed 0 · truncated 0 · already imported 0, of which deleted 0)
-→ audit-only            315   (policy 0 · floor 0 · scope 1 · undeclared-writes 300 · dep-map 14 · handoff 0)
-damaged                   0
-memory rows       0 → 15
-open proposals    0 → 0`);
+  it('shows the daemon’s own parity report', () => {
     expect(
       memorySettingsModel(
-        health({
-          ledgerImport: report({
-            outcome: 'MISMATCH',
-            mismatches: ['read 330 ≠ memory 15 + audit 314 + damaged 0'],
-          }),
-        })
-      ).parityText?.split('\n')[0]
-    ).toBe('outcome: MISMATCH — read 330 ≠ memory 15 + audit 314 + damaged 0');
+        health({ ledgerImport: report(), ledgerImportText: 'outcome: ok' })
+      ).parityText
+    ).toBe('outcome: ok');
     expect(memorySettingsModel(health()).parityText).toBeNull();
   });
 

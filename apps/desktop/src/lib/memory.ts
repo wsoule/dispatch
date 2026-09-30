@@ -2,7 +2,6 @@
 // undo list, Settings → Memory, and the query keys `memory.changed` refetches.
 import type {
   ApiClient,
-  LedgerImportReport,
   MemoryActivityRow,
   MemoryEntryView,
   MemoryHealth,
@@ -193,46 +192,9 @@ export interface MemorySettingsModel {
   exportBlocked: string | null;
 }
 
-// The import's own orders, so the report reads the same as the CLI's.
-const LEDGER_KINDS = ['constraint', 'hazard', 'decision', 'handoff'];
-const AUDIT_REASONS = [
-  'policy',
-  'floor',
-  'scope',
-  'undeclared-writes',
-  'dep-map',
-  'handoff',
-];
-
 // `n thing` or `n things`.
 function counted(n: number, one: string, many: string): string {
   return `${n} ${n === 1 ? one : many}`;
-}
-
-// The parity block: a label padded to 22 columns, its count to 5, then the breakdown.
-function parityText(r: LedgerImportReport): string {
-  const line = (label: string, count: number, detail = '') => {
-    const head = `${label.padEnd(22)}${String(count).padStart(5)}`;
-    return detail === '' ? head : `${head}   (${detail})`;
-  };
-  const breakdown = (keys: readonly string[], counts: Record<string, number>) =>
-    keys.map((key) => `${key} ${counts[key] ?? 0}`).join(' · ');
-  const m = r.memory;
-  return [
-    r.outcome === 'MISMATCH'
-      ? `outcome: MISMATCH — ${r.mismatches.join('; ')}`
-      : `outcome: ${r.outcome}`,
-    line('ledger rows read', r.read, breakdown(LEDGER_KINDS, r.byKind)),
-    line(
-      '→ memory',
-      m.total,
-      `imported ${m.imported} · proposed ${m.proposed} · truncated ${m.truncated} · already imported ${m.alreadyImported}, of which deleted ${m.alreadyDeleted}`
-    ),
-    line('→ audit-only', r.audit.total ?? 0, breakdown(AUDIT_REASONS, r.audit)),
-    line('damaged', r.damaged),
-    `memory rows       ${r.memoryRows.before} → ${r.memoryRows.after}`,
-    `open proposals    ${r.openProposals.before} → ${r.openProposals.after}`,
-  ].join('\n');
 }
 
 /** Settings → Memory's view of the daemon's memory health. */
@@ -250,8 +212,7 @@ export function memorySettingsModel(health: MemoryHealth): MemorySettingsModel {
       ? `${counted(health.entries, 'entry', 'entries')} · ${proposals} · ${search}`
       : `Unavailable: ${health.reason ?? 'memory.db did not open'}`,
     warnings: health.configWarnings.map((w) => w.message),
-    parityText:
-      health.ledgerImport === null ? null : parityText(health.ledgerImport),
+    parityText: health.ledgerImportText,
     claudeImport: claude?.state ?? 'unknown',
     claudeSource: claude?.source ?? null,
     candidates: claude?.candidates ?? [],

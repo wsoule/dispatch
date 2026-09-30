@@ -894,6 +894,8 @@ export interface MemoryHealth {
   entries: number;
   openProposals: number;
   ledgerImport: LedgerImportReport | null;
+  /** The last import's parity block, as the CLI prints it. */
+  ledgerImportText: string | null;
   configWarnings: { key: string; message: string }[];
   lastDecayAt: string | null;
   /** The caller's own personal store; null when the caller acts for no one. */

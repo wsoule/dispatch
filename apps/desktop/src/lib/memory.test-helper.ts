@@ -127,6 +127,7 @@ export function health(over: Partial<MemoryHealth> = {}): MemoryHealth {
     entries: 15,
     openProposals: 2,
     ledgerImport: null,
+    ledgerImportText: null,
     configWarnings: [],
     lastDecayAt: null,
     personal: { available: true, reason: null },

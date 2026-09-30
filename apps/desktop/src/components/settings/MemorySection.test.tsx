@@ -119,6 +119,8 @@ describe('MemorySection', () => {
             },
           ],
           ledgerImport: report(),
+          ledgerImportText:
+            'outcome: ok\nledger rows read        330   (hazard 330)',
           personal: {
             available: false,
             reason: 'personal memory unavailable: database is locked',

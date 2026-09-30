@@ -82,6 +82,8 @@ interface MemoryHealth {
   entries: number;
   openProposals: number;
   ledgerImport: LedgerImportReport | null;
+  // The last import's parity block, as the CLI prints it.
+  ledgerImportText: string | null;
   configWarnings: MemoryConfigWarning[];
   lastDecayAt: string | null;
   // The caller's own personal store; null when the caller acts for no one.
@@ -814,6 +816,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
       entries: shared?.countEntries() ?? 0,
       openProposals: shared?.countOpenProposals() ?? 0,
       ledgerImport: last,
+      ledgerImportText: last === null ? null : renderImportReport(last),
       configWarnings: readMemoryConfig(deps.rootDir).warnings,
       lastDecayAt: shared?.meta('last_decay_at') ?? null,
       personal: principal === null ? null : personalHealth(principal),

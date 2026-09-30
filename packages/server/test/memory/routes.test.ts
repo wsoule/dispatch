@@ -6,6 +6,8 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { renderImportReport } from '../../src/memory/ledgerImport.js';
+import type { LedgerImportReport } from '../../src/memory/ledgerImport.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from '../testAuth.js';
 import { BEFORE_CUTOVER, importAtCutover, seedLedger } from './fixtures.js';
@@ -90,12 +92,17 @@ describe('memory read routes', () => {
     );
     const health = await json<{
       available: boolean;
-      ledgerImport: { outcome: string };
+      ledgerImport: LedgerImportReport;
+      ledgerImportText: string;
     }>(await fetch(`${base}/api/memory/health`));
     expect(health).toMatchObject({
       available: true,
       ledgerImport: { outcome: 'ok' },
     });
+    // Settings shows the CLI's own rendering rather than a copy of it.
+    expect(health.ledgerImportText).toBe(
+      renderImportReport(health.ledgerImport)
+    );
   });
 
   it('refuses the shared agent token, and A2A agents', async () => {
