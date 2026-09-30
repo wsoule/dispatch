@@ -5,10 +5,16 @@ import { dirname, join } from 'node:path';
 import { runsDir } from '../orchestrator/paths.js';
 import type { DaemonDocsHost } from './host.js';
 import { DocNotices } from './notices.js';
+import { applyStagedRestore } from './receipts.js';
 import { DocsService } from './service.js';
 import { openDocsDb, SqliteDocStore } from './store.js';
 
 const DOCS_SWEEP_MS = 60_000;
+
+// Where `dispatch receipts restore` stages a log's team docs for the next boot.
+export function docsRestoreDir(rootDir: string): string {
+  return join(runsDir(rootDir), 'docs-restore');
+}
 
 interface OpenDocs {
   service: DocsService;
@@ -82,6 +88,16 @@ export function openDocs(deps: {
     const reason = err instanceof Error ? err.message : String(err);
     console.error(`dispatchd: docs unavailable: ${reason}`);
     service = new DocsService({ store: null, unavailable: reason, ...common });
+  }
+  // Before the first sweep and the boot receipt export, so that pass writes them.
+  try {
+    const report = applyStagedRestore(service, docsRestoreDir(deps.rootDir));
+    if (report !== null && report.problems.length > 0) {
+      for (const p of report.problems)
+        console.error(`dispatchd: docs restore: ${p.file}: ${p.detail}`);
+    }
+  } catch (err) {
+    console.error('dispatchd: docs restore failed', err);
   }
   const notices = new DocNotices({
     service,

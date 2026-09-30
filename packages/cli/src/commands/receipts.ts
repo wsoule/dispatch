@@ -8,14 +8,22 @@ import {
 } from '@dispatch/core';
 import type { Command } from 'commander';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import type { CliContext } from '../context.js';
 import { CliError } from '../context.js';
 import { projectRoot } from '../projectRoot.js';
-import { findRunningDaemon } from './daemon.js';
+import { daemonFileKey, daemonHome, findRunningDaemon } from './daemon.js';
 
 /**
  * The location a `--from` names, absolute: one of this project's remotes when
@@ -30,6 +38,26 @@ function remoteUrl(root: string, cwd: string, from: string): string {
   });
   if (res.status === 0) return absoluteGitLocation(root, res.stdout.trim());
   return absoluteGitLocation(cwd, from);
+}
+
+// Copies the clone's team docs to where the daemon's next boot restores them
+// (its run-state `docs-restore/`, 0700); returns how many it staged.
+function stageDocs(clone: string, root: string): number {
+  const from = join(clone, '.dispatch', 'docs');
+  if (!existsSync(from)) return 0;
+  const files = readdirSync(from).filter((f) => f.endsWith('.md'));
+  if (files.length === 0) return 0;
+  const to = join(
+    daemonHome(),
+    '.dispatch',
+    'runs',
+    daemonFileKey(root),
+    'docs-restore'
+  );
+  mkdirSync(to, { recursive: true, mode: 0o700 });
+  chmodSync(to, 0o700);
+  for (const file of files) copyFileSync(join(from, file), join(to, file));
+  return files.length;
 }
 
 export function registerReceiptsCommands(
@@ -86,6 +114,9 @@ export function registerReceiptsCommands(
           ctx.log(
             `evidence: ${result.runs} run(s), ${result.commands} command(s), ${result.mutations} mutation(s)`
           );
+          const staged = stageDocs(dir, root);
+          if (staged > 0)
+            ctx.log(`staged ${staged} doc(s) for the daemon to restore`);
           for (const problem of result.problems) {
             ctx.log(`problem: ${problem.source}: ${problem.detail}`);
           }

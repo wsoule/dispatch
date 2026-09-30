@@ -62,7 +62,8 @@ import {
 } from './depmap.js';
 import { docGateHandler, docGatePort } from './docs/gate.js';
 import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
-import { openDocs } from './docs/open.js';
+import { docsRestoreDir, openDocs } from './docs/open.js';
+import { docsReceiptsStep } from './docs/receipts.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
@@ -1091,7 +1092,14 @@ async function bootServer(
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
+          steps: [docsReceiptsStep(docs.service, docsRestoreDir(rootDir))],
         });
+  // Team doc changes that reach a sealed head (seals, reviews, status, links,
+  // renames, deletes) export; open-revision amends and new heads wait for the seal.
+  docsHost.onChange((c) => {
+    if (c.scope === 'team' && c.kind !== 'amended' && c.kind !== 'revised')
+      receiptsScheduler?.notifyChanged();
+  });
   // One export before the server serves anything: it creates the log on a
   // project turning receipts on for the first time, and reconciles one left
   // dirty by a daemon that died mid-burst. Never fatal — a project that cannot

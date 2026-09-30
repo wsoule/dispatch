@@ -7,7 +7,7 @@ import { resolvePushTarget } from '../gitTarget.js';
 import type { AsyncGitRunner, GitRunner } from '../sync/worktree.js';
 import { defaultAsyncGitRunner } from '../sync/worktree.js';
 import { markBlockingSection } from '../watchdog.js';
-import type { ReceiptsResult } from './exporter.js';
+import type { ReceiptsResult, ReceiptsStep } from './exporter.js';
 import {
   receiptsEnabled,
   ReceiptsExporter,
@@ -38,6 +38,8 @@ export interface ReceiptsSchedulerDeps {
    * DEFAULT_SWEEP_MS; tests pass something large enough never to fire.
    */
   sweepMs?: number;
+  /** Writers of more of the log (team docs), run after the core records. */
+  steps?: readonly ReceiptsStep[];
 }
 
 // Matches BoardSyncScheduler's debounce, and for the same reason: long enough
@@ -99,7 +101,12 @@ export class ReceiptsScheduler {
   private lastPushValue: ReceiptsPush | null = null;
 
   constructor(private readonly deps: ReceiptsSchedulerDeps) {
-    this.exporter = new ReceiptsExporter(deps.stores, deps.actor, deps.run);
+    this.exporter = new ReceiptsExporter(
+      deps.stores,
+      deps.actor,
+      deps.run,
+      deps.steps
+    );
     // Runs unconditionally; runOnce re-reads the config, so a project with
     // receipts off generates no export traffic despite the timer ticking, and
     // switching it back on takes effect without a restart.

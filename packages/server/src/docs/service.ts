@@ -1,4 +1,5 @@
 import type {
+  DocFileMeta,
   DocHit,
   DocLink,
   DocLinking,
@@ -23,6 +24,7 @@ import type {
   RevisionCause,
 } from '@dispatch/core';
 import {
+  DOC_STATUSES,
   docBodyProblem,
   DOCS_LIMITS,
   docSlug,
@@ -46,6 +48,7 @@ import { diffChunks, merge3 } from './merge.js';
 import { applyOps } from './ops.js';
 import type { IndexLine, InlineSpec } from './prompt.js';
 import { renderDocsSection } from './prompt.js';
+import type { RestoreReport } from './receipts.js';
 import { carriesUnreviewed, unreviewedAtCreation } from './review.js';
 import {
   cutUtf8,
@@ -158,6 +161,15 @@ export interface DocsServiceDeps {
   orphans?: () => string[];
 }
 
+// A team doc as the receipt log writes it: its newest sealed head, the
+// distinct authors of that head's ancestry and its manual links.
+interface ReceiptsDoc {
+  row: DocRow;
+  head: RevisionRow;
+  authors: string[];
+  links: { target: string; rel: LinkRel }[];
+}
+
 // One section a search matched, before visibility and the per-doc cap.
 interface RawHit {
   docId: string;
@@ -177,6 +189,7 @@ const REOPENED = 'the doc was reopened as a draft; write to it directly';
 const MAX_OPEN_AGE_MS = HOUR_MS;
 const ANCESTOR_LEVELS = 8;
 const HITS_PER_DOC = 3;
+const RECEIPT_AUTHORS = 20;
 const NO_PERSONAL_SCOPE = 'no personal scope: this caller acts for no human';
 // A high surrogate with no low one after it, or a low one with no high one before.
 const UNPAIRED_SURROGATE =
@@ -3173,9 +3186,14 @@ export class DocsService {
     if (actor.kind !== 'human') throw forbidden('health is for humans');
     const warnings = this.deps.config().warnings.map((w) => w.message);
     const store = this.deps.store;
-    // The orphan list names other projects' paths on this host: decide tier only.
+    // The orphan list names other projects' paths on this host, and the
+    // restore report names files from the log: decide tier only.
+    const restore = actor.decider ? this.lastRestore() : null;
     const decide = actor.decider
-      ? { orphans: this.deps.orphans?.() ?? [] }
+      ? {
+          orphans: this.deps.orphans?.() ?? [],
+          ...(restore === null ? {} : { restore }),
+        }
       : {};
     if (store === null) {
       return {
@@ -3202,6 +3220,164 @@ export class DocsService {
       lastSweep: store.meta('sweep:last'),
       ...decide,
     };
+  }
+
+  // ---- the receipt log ------------------------------------------------------
+
+  // Whether this store holds `id` or deleted it, so its receipt file may go.
+  knowsDoc(id: string): boolean {
+    const store = this.store();
+    return store.doc(id) !== null || store.tombstone(id) !== null;
+  }
+
+  // Every team doc with a sealed revision, for the receipt log; null while
+  // docs are unavailable, so the log is left as it was.
+  receiptsDocs(): ReceiptsDoc[] | null {
+    const store = this.deps.store;
+    if (store === null) return null;
+    const { rows } = store.listDocs({
+      ns: ['team'],
+      statuses: DOC_STATUSES,
+      limit: Number.MAX_SAFE_INTEGER,
+      offset: 0,
+    });
+    const out: ReceiptsDoc[] = [];
+    for (const row of rows.sort((a, b) => a.handle.localeCompare(b.handle))) {
+      let head = store.revision(row.headId);
+      while (head !== null && !head.sealed) {
+        head = head.parents.length > 0 ? store.revision(head.parents[0]) : null;
+      }
+      if (head === null) continue;
+      const links = store
+        .links({ docId: row.id })
+        .filter(
+          (l) =>
+            l.source === 'manual' &&
+            (l.targetType !== 'doc' || store.doc(l.targetId)?.ns === 'team')
+        )
+        .map((l) => ({ target: `${l.targetType}:${l.targetId}`, rel: l.rel }));
+      out.push({ row, head, authors: this.ancestryAuthors(head), links });
+    }
+    return out;
+  }
+
+  // Distinct authors of `head` and its ancestors, breadth first, at most 20.
+  private ancestryAuthors(head: RevisionMeta): string[] {
+    const store = this.store();
+    const authors = new Set<string>();
+    const seen = new Set<string>([head.id]);
+    const queue: RevisionMeta[] = [head];
+    for (let i = 0; i < queue.length; i++) {
+      if (authors.size >= RECEIPT_AUTHORS) break;
+      authors.add(queue[i].author);
+      for (const parent of queue[i].parents) {
+        if (seen.has(parent)) continue;
+        seen.add(parent);
+        const meta = store.revisionMeta(parent);
+        if (meta !== null) queue.push(meta);
+      }
+    }
+    return [...authors].sort();
+  }
+
+  // A receipt file as a new team doc: one sealed, provisional `restore`
+  // revision keeping its ids, never trusted as reviewed or accepted.
+  restoreDoc(meta: DocFileMeta, body: string): 'restored' | 'skipped' {
+    const store = this.store();
+    if (this.knowsDoc(meta.id)) return 'skipped';
+    if (store.revisionMeta(meta.rev) !== null) {
+      throw new DocsError(
+        'conflict',
+        `revision ${meta.rev} is already held by another doc`,
+        'rev'
+      );
+    }
+    const at = this.nowIso();
+    const handle = this.pickSlug('team', undefined, meta.slug);
+    const title = meta.title.trim();
+    const rev: RevisionRow = {
+      id: meta.rev,
+      docId: meta.id,
+      n: Math.max(1, meta.n),
+      parents: meta.parents,
+      restoredParents: null,
+      title,
+      body,
+      hash: sha256(body),
+      bytes: utf8Bytes(body),
+      author: meta.author,
+      cause: 'restore',
+      summary: 'restored from the receipt log',
+      approval: null,
+      conflicted: false,
+      sealed: true,
+      unreviewed: unreviewedAtCreation({
+        author: meta.author,
+        cause: 'restore',
+        approval: null,
+        unverifiedVia: false,
+        parents: [],
+      }),
+      provisional: true,
+      via: null,
+      createdAt: meta.createdAt,
+      updatedAt: meta.createdAt,
+    };
+    const doc: DocRow = {
+      id: meta.id,
+      ns: 'team',
+      slug: handle,
+      handle,
+      title,
+      scope: 'team',
+      ownerIdentity: null,
+      ownerHuman: null,
+      status: meta.status === 'archived' ? 'archived' : 'draft',
+      archivedFrom: meta.status === 'archived' ? 'draft' : null,
+      restoredStatus: meta.status === 'accepted' ? 'accepted' : null,
+      restoredAt: meta.status === 'accepted' ? at : null,
+      headId: '',
+      reviewedRev: null,
+      unreviewed: false,
+      conflicted: false,
+      origin: null,
+      publishedPath: null,
+      publishedRev: null,
+      publishedTask: null,
+      publishedCommit: null,
+      createdBy: meta.author,
+      createdAt: at,
+      updatedBy: meta.author,
+      updatedAt: at,
+      indexedHash: null,
+    };
+    this.write(() => {
+      store.insertRevision(rev);
+      this.setHead(doc, rev, meta.author, at);
+      store.putDoc(doc);
+      this.reindex(doc, rev);
+      this.rebuildMentions(doc, rev);
+      store.putDoc(doc);
+      this.outbox.push({
+        doc: doc.id,
+        scope: 'team',
+        kind: 'created',
+        author: meta.author,
+        rev: rev.id,
+        summary: 'restored',
+      });
+    });
+    return 'restored';
+  }
+
+  // Keeps the last boot restore's report for the health route.
+  recordRestore(report: RestoreReport): void {
+    this.deps.store?.setMeta('restore:last', JSON.stringify(report));
+  }
+
+  private lastRestore(): RestoreReport | null {
+    const raw = this.deps.store?.meta('restore:last') ?? null;
+    return raw === null ? null : (JSON.parse(raw) as RestoreReport);
   }
 
   // Seals expired open heads and rebuilds stale section indexes; every 60 s and at boot.
