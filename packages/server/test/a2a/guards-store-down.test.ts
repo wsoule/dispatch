@@ -128,3 +128,16 @@ it('still reverts a hand edit, and the gate stays open', async () => {
     gateId
   );
 });
+
+it('holds a draft whose gate closed without the system accepting it', async () => {
+  const h = handle!;
+  await h.messaging.engine.reply(
+    gateId,
+    { body: '', choice: 'approve' },
+    { address: 'human:wyat', canDecide: true }
+  );
+  TaskStore.init(root).update(draftId, { status: 'ready' });
+  await expect(h.orchestrator.dispatch(draftId, 'fake')).rejects.toThrow(
+    /has not approved/
+  );
+});

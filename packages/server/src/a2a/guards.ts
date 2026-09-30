@@ -1,5 +1,5 @@
 import type { A2AStore, HandoffStatuses } from '@dispatch/a2a';
-import { hasA2AProvenance } from '@dispatch/a2a';
+import { hasA2AProvenance, PROVENANCE_PREFIX } from '@dispatch/a2a';
 import type {
   TaskDoc,
   TaskRisk,
@@ -41,9 +41,17 @@ const RISK_RANK: Record<TaskRisk, number> = {
   critical: 2,
 };
 const REVERT_LINE = 'reverted: A2A proposal awaits the owner';
+const PROVENANCE_ROOT = new RegExp(
+  `${PROVENANCE_PREFIX}\\S+ \\(message ([^)\\s]+)\\)\\.`,
+  'g'
+);
 
 function awaiting(taskId: string): string {
   return `${taskId} is an A2A proposal awaiting the owner; answer it in Needs you`;
+}
+
+function unapproved(taskId: string): string {
+  return `${taskId} is an A2A handoff the owner has not approved`;
 }
 
 // Every open task-proposal gate the system asked, from messages.db alone.
@@ -73,14 +81,30 @@ function isA2ATask(deps: GuardDeps, taskId: string): boolean {
     : hasA2AProvenance(deps.tasks.get(taskId));
 }
 
-export function dispatchRefusal(deps: GuardDeps, task: TaskDoc): string | null {
-  return openProposalFor(deps, task.meta.id) === null
-    ? null
-    : awaiting(task.meta.id);
+// Whether the task came from an A2A handoff the system has not accepted; with
+// a2a.db down, the last provenance line names the root, and none fails closed.
+function unapprovedHandoff(deps: GuardDeps, task: TaskDoc | null): boolean {
+  if (task === null) return false;
+  let root: string | null;
+  if (deps.store !== null) {
+    const row = deps.store.taskForDispatchTask(task.meta.id);
+    if (row?.skill !== 'handoff') return false;
+    root = row.id;
+  } else {
+    if (!hasA2AProvenance(task)) return false;
+    root = [...task.body.matchAll(PROVENANCE_ROOT)].at(-1)?.[1] ?? null;
+  }
+  return root === null || deps.engine.answerOf(root)?.choice !== 'accept';
 }
 
-// Below decide, a gated draft is frozen; at decide, a status change is the
-// owner's answer to the gate. After approval, only decide lowers the risk.
+export function dispatchRefusal(deps: GuardDeps, task: TaskDoc): string | null {
+  if (openProposalFor(deps, task.meta.id) !== null)
+    return awaiting(task.meta.id);
+  return unapprovedHandoff(deps, task) ? unapproved(task.meta.id) : null;
+}
+
+// Below decide, an unapproved handoff's task is frozen; at decide, a status
+// change answers its open gate. After approval, only decide lowers the risk.
 export async function guardTaskPatch(
   deps: GuardDeps,
   taskId: string,
@@ -115,6 +139,8 @@ export async function guardTaskPatch(
     }
     return { ok: true };
   }
+  if (!deciding && unapprovedHandoff(deps, deps.tasks.get(taskId)))
+    return { ok: false, status: 409, error: unapproved(taskId) };
   if (deciding || patch.risk === undefined) return { ok: true };
   const current = deps.tasks.get(taskId);
   if (

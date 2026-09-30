@@ -24,7 +24,11 @@ import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
 
 import type { GuardDeps } from '../../src/a2a/guards.js';
-import { guardTaskPatch, ProposalGuard } from '../../src/a2a/guards.js';
+import {
+  dispatchRefusal,
+  guardTaskPatch,
+  ProposalGuard,
+} from '../../src/a2a/guards.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
 import { reconcileA2A } from '../../src/a2a/reconcile.js';
 import { consultProjectPolicy } from '../../src/policyEngine.js';
@@ -476,6 +480,73 @@ describe('reconciliation', () => {
     await reconcileA2A(f.deps, f.watch).settled;
     expect(f.tasks.get(draft.meta.id)?.meta.status).toBe('ready');
     expect(f.messaging.engine.answerOf(id)).toMatchObject({ choice: 'accept' });
+  });
+});
+
+describe('a proposal gate send that fails', () => {
+  // Opens a handoff whose gate send throws once, as a crash after createTask would.
+  async function openWithoutGate() {
+    const engine = f.messaging.engine;
+    const send = engine.send.bind(engine);
+    engine.send = (input, sender) =>
+      gateOf(input)?.type === 'task-proposal'
+        ? Promise.reject(new Error('disk full'))
+        : send(input, sender);
+    await expect(f.port.open(f.caller, handoff())).rejects.toThrow('disk full');
+    engine.send = send;
+    const [row] = f.store.tasksOf(f.caller.address);
+    return row;
+  }
+  const deps = (): GuardDeps => ({
+    engine: f.messaging.engine,
+    tasks: f.tasks,
+    ownerRef: f.deps.ownerRef,
+    updateTask: f.deps.updateTask,
+    statuses: f.deps.statuses,
+    store: f.store,
+  });
+
+  it('holds the gateless draft: no request-tier move and no dispatch', async () => {
+    const row = await openWithoutGate();
+    expect(row.dispatchTask).not.toBeNull();
+    expect(row.gate).toBeNull();
+    const guard = await guardTaskPatch(
+      deps(),
+      row.dispatchTask!,
+      { status: 'ready' },
+      { tier: 'request', ref: 'agent:wyat/codex' }
+    );
+    expect(guard.ok).toBe(false);
+    expect(
+      dispatchRefusal(deps(), f.tasks.get(row.dispatchTask!)!)
+    ).not.toBeNull();
+    expect(f.tasks.get(row.dispatchTask!)?.meta.status).toBe('draft');
+  });
+
+  it('sends the missing gate when the client retries the same message', async () => {
+    const row = await openWithoutGate();
+    const again = await f.port.open(f.caller, handoff());
+    expect(again).toEqual({ kind: 'task', taskId: row.id });
+    const after = f.store.getTask(row.id)!;
+    expect(after.dispatchTask).toBe(row.dispatchTask);
+    expect(gateOf(gateQuestion(after))).toMatchObject({
+      type: 'task-proposal',
+      task: row.dispatchTask,
+    });
+    expect(
+      f.tasks.list().filter((t) => t.meta.labels.includes('a2a'))
+    ).toHaveLength(1);
+  });
+
+  it('still holds a declined handoff’s task once its gate is answered', async () => {
+    const { row, draft } = await open();
+    await f.messaging.engine.reply(
+      row.gate!,
+      { body: '', choice: 'decline' },
+      HUMAN
+    );
+    f.tasks.update(draft.meta.id, { status: 'ready' });
+    expect(dispatchRefusal(deps(), f.tasks.get(draft.meta.id)!)).not.toBeNull();
   });
 });
 

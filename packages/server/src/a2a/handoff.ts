@@ -91,6 +91,9 @@ export async function openHandoff(
   deps.store.insertTask(rowFor(caller.address, root));
   // A concurrent duplicate: the first send is building the draft and gate.
   if (sent.replayed === true) return { kind: 'task', taskId: root.id };
+  // A retry's reconcile may have built the draft while this send settled.
+  if ((deps.store.getTask(root.id)?.dispatchTask ?? null) !== null)
+    return { kind: 'task', taskId: root.id };
   const doc = deps.createTask(
     shapeDraft(work, input.body, caller.address, root.id, statuses.draft)
   );

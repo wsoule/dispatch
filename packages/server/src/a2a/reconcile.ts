@@ -57,7 +57,7 @@ function createDraft(
 // Brings one open handoff back to its draft, gate and effect: finds the draft
 // by its provenance line or rebuilds it, adopts or sends the proposal gate,
 // and applies an owner's answer the bridge missed. Returns the send, if any.
-function reconcileHandoff(
+export function reconcileHandoff(
   deps: BridgeDeps,
   hub: BridgeWatch,
   row: TaskRow

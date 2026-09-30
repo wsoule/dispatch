@@ -52,7 +52,7 @@ import type { RunResultsMemo } from './artifacts.js';
 import { authenticateA2AClient } from './auth.js';
 import { gatherFacts } from './facts.js';
 import { answerRoot, approvedTasksOf, openHandoff } from './handoff.js';
-import { rowFor } from './reconcile.js';
+import { reconcileHandoff, rowFor } from './reconcile.js';
 import type { BridgeWatch } from './watch.js';
 
 const MINUTE_MS = 60_000;
@@ -302,6 +302,13 @@ export class DaemonBridgePort implements BridgePort {
       if (prior.kind !== 'question' && prior.kind !== 'handoff')
         return this.delivered(prior);
       this.deps.store.insertTask(rowFor(caller.address, prior));
+      const row = this.deps.store.getTask(prior.id);
+      // A first try that failed before its draft or gate finishes them now.
+      if (
+        row?.skill === 'handoff' &&
+        (row.dispatchTask === null || row.gate === null)
+      )
+        await reconcileHandoff(this.deps, this.hub, row);
       return { kind: 'task', taskId: prior.id };
     }
     if (input.kind === 'status') return this.statusSkill(caller, input);
