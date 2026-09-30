@@ -1,8 +1,9 @@
 import type { PolicyRuling } from '@dispatch/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
 
-import type { DocsError } from '../../src/docs/errors.js';
+import { DocConflictError, DocsError } from '../../src/docs/errors.js';
 import type { DocsService } from '../../src/docs/service.js';
+import type { SqliteDocStore } from '../../src/docs/store.js';
 import {
   AGENT,
   DECIDER,
@@ -16,8 +17,9 @@ import {
 
 let service: DocsService;
 let host: FakeDocsHost;
+let store: SqliteDocStore;
 beforeEach(() => {
-  ({ service, host } = makeService());
+  ({ service, host, store } = makeService());
   host.operators.set('human:wyat', {
     human: 'human:wyat',
     identity: 'id-wyat',
@@ -105,6 +107,74 @@ describe('proposals', () => {
       }).status
     ).toBe('proposed');
     expect(host.risksAsked.at(-1)).toBe('elevated');
+  });
+
+  it('answers a failed policy approval as the failure, not a gate-less proposal', () => {
+    acceptedSpec();
+    host.ruling = () => {
+      // The doc is archived between the proposal's write and its approval.
+      const row = store.doc(service.read(as(OWNER), 'spec').doc.id);
+      if (row !== null) store.putDoc({ ...row, status: 'archived' });
+      return { mode: 'auto', gate: 'doc', rung: 4, authorizedBy: 'rung' };
+    };
+    let err: unknown = null;
+    try {
+      service.edit(as(RUN), 'spec', { ops: [{ op: 'append', text: 'x' }] });
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(DocsError);
+    expect((err as DocsError).code).toBe('conflict');
+    expect((err as DocsError).message).toContain('the doc was archived');
+    expect(
+      service.proposals(as(DECIDER), { state: ['failed'] }).map((p) => p.reason)
+    ).toEqual(['the doc was archived']);
+  });
+
+  it("merges a head-based whole-body save onto the author's open proposal", () => {
+    acceptedSpec();
+    const head = service.read(as(RUN), 'spec').rev;
+    const first = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'replace_section', section: 'API', text: 'v2' }],
+    });
+    const saved = service.saveBody(as(RUN), 'spec', {
+      baseRev: head.id,
+      body: '# Spec\n## API\nv1\n## Risks\nsome\n',
+    });
+    expect(saved).toMatchObject({
+      status: 'proposed',
+      proposal: first.proposal,
+    });
+    expect(service.revision(as(RUN), 'spec', first.proposal ?? '').body).toBe(
+      '# Spec\n## API\nv2\n## Risks\nsome\n'
+    );
+  });
+
+  it("refuses a head-based save that conflicts with the author's open proposal, naming it", () => {
+    acceptedSpec();
+    const head = service.read(as(RUN), 'spec').rev;
+    const first = service.edit(as(RUN), 'spec', {
+      ops: [{ op: 'replace_section', section: 'API', text: 'v2' }],
+    });
+    let conflict: DocConflictError | null = null;
+    try {
+      service.saveBody(as(RUN), 'spec', {
+        baseRev: head.id,
+        body: '# Spec\n## API\nv3\n## Risks\nnone\n',
+      });
+    } catch (e) {
+      if (e instanceof DocConflictError) conflict = e;
+    }
+    expect(conflict?.conflict).toMatchObject({
+      reason: 'merge-conflict',
+      head: {
+        id: first.proposal,
+        body: '# Spec\n## API\nv2\n## Risks\nnone\n',
+      },
+    });
+    expect(service.revision(as(RUN), 'spec', first.proposal ?? '').body).toBe(
+      '# Spec\n## API\nv2\n## Risks\nnone\n'
+    );
   });
 
   it('limits proposals per hour per author', () => {
@@ -342,9 +412,23 @@ describe('proposals', () => {
     expect(
       service.revision(as(OWNER), 'spec', p.proposal ?? '').body
     ).toContain('x\n');
-    expect(() =>
-      service.revision(as(TEAMMATE), 'spec', p.proposal ?? '')
-    ).toThrow('not found');
+    for (const viewer of [TEAMMATE, AGENT]) {
+      for (const look of [
+        () => service.revision(as(viewer), 'spec', p.proposal ?? ''),
+        () => service.proposal(as(viewer), p.proposal ?? ''),
+        () => service.diff(as(viewer), 'spec', 1, p.proposal ?? ''),
+        () => service.read(as(viewer), 'spec', { rev: p.proposal ?? '' }),
+      ]) {
+        let code: string | null = null;
+        try {
+          look();
+        } catch (err) {
+          if (err instanceof DocsError) code = err.code;
+        }
+        expect(code).toBe('not-found');
+      }
+      expect(service.proposals(as(viewer), {})).toEqual([]);
+    }
     expect(service.proposal(as(DECIDER), p.proposal ?? '').mergeable).toEqual({
       clean: true,
       headN: 1,
@@ -375,12 +459,30 @@ describe('proposals', () => {
   });
 
   it('accept seals and reviews the head and clears a restored mark', () => {
-    service.create(as(AGENT), { title: 'Agent doc', body: 'x\n' });
+    const made = service.create(as(AGENT), { title: 'Agent doc', body: 'x\n' });
     const accepted = service.setStatus(as(DECIDER), 'agent-doc', 'accepted');
     expect(accepted).toMatchObject({
       status: 'accepted',
       unreviewed: false,
       head: { sealed: true },
+    });
+    const row = store.doc(made.doc.id);
+    if (row === null) throw new Error('no doc row');
+    store.putDoc({
+      ...row,
+      restoredStatus: 'accepted',
+      restoredAt: '2026-09-26T09:00:00.000Z',
+    });
+    expect(service.read(as(DECIDER), 'agent-doc').doc.restored).toEqual({
+      status: 'accepted',
+      at: '2026-09-26T09:00:00.000Z',
+    });
+    expect(
+      service.setStatus(as(DECIDER), 'agent-doc', 'accepted').restored
+    ).toBeNull();
+    expect(store.doc(made.doc.id)).toMatchObject({
+      restoredStatus: null,
+      restoredAt: null,
     });
   });
 });

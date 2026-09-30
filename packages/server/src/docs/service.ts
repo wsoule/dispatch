@@ -1194,11 +1194,16 @@ export class DocsService {
         rung: ruling.rung,
         authorizedBy: ruling.authorizedBy,
       });
-      if (out.ok) {
-        this.recordPolicyApproval(p.rev, ruling);
-        const fresh = store.doc(doc.id) ?? doc;
-        return this.result(fresh, this.headOf(fresh), 'saved', extra);
+      if (!out.ok) {
+        throw new DocsError(
+          'conflict',
+          `proposal ${p.rev} was approved by policy but failed: ${out.reason}`,
+          'doc'
+        );
       }
+      this.recordPolicyApproval(p.rev, ruling);
+      const fresh = store.doc(doc.id) ?? doc;
+      return this.result(fresh, this.headOf(fresh), 'saved', extra);
     }
     return {
       ...this.result(doc, head, 'proposed', extra),
@@ -1305,6 +1310,8 @@ export class DocsService {
       this.sealIfOtherReads(actor, doc, head);
       throw this.baseChanged(head);
     }
+    if (own !== null && base.id !== own.rev)
+      return this.saveOntoProposal(actor, doc, own, base, body, title);
     if (base.id === head.id || base.id === own?.rev) {
       return this.directOrPropose(actor, doc, {
         body,
@@ -1410,6 +1417,54 @@ export class DocsService {
       return this.result(doc, merge, 'merged', {
         mine: { id: mine.id, n: mine.n, hash: mine.hash },
       });
+    });
+  }
+
+  // A proposer's save based elsewhere than its open proposal merges onto it:
+  // diff3(base, proposal, body), so the proposal's earlier edits survive.
+  private saveOntoProposal(
+    actor: DocsActor,
+    doc: DocRow,
+    own: DocProposal,
+    base: RevisionRow,
+    body: string,
+    title: string | undefined
+  ): DocSaveResult {
+    const prop = this.proposalRevision(own);
+    const merged = merge3(base.body, prop.body, body, {
+      head: `your open proposal ${prop.id}`,
+      base: `base (rev ${base.n ?? 0})`,
+      mine: 'yours',
+    });
+    if (!merged.clean) {
+      throw new DocConflictError({
+        code: 'conflict',
+        reason: 'merge-conflict',
+        head: {
+          id: prop.id,
+          n: base.n ?? 0,
+          hash: prop.hash,
+          body: prop.body,
+          author: prop.author,
+        },
+        base: { id: base.id, n: base.n ?? 0 },
+        hunks: merged.hunks,
+        marked: merged.marked,
+      });
+    }
+    if (docBodyProblem(merged.body) !== null) {
+      throw new DocsError(
+        'invalid',
+        'the merged body is over the limit; split the doc',
+        'body'
+      );
+    }
+    const mineTitle = title ?? base.title;
+    return this.directOrPropose(actor, doc, {
+      body: merged.body,
+      title: mineTitle !== base.title ? mineTitle : prop.title,
+      summary: 'saved',
+      cause: 'save',
     });
   }
 
