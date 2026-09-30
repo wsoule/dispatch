@@ -95,11 +95,7 @@ import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
 import type { PreflightResult } from './memory/claudeModes.js';
-import {
-  applyStagedMemoryRestore,
-  memoryReceiptsStep,
-  memoryRestoreDir,
-} from './memory/receipts.js';
+import { memoryReceiptsStep, memoryRestoreDir } from './memory/receipts.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
@@ -1452,13 +1448,13 @@ async function bootServer(
   // Team memory staged by `dispatch receipts restore` returns as proposals,
   // then the log is written again with memory in it.
   try {
-    const restored = await applyStagedMemoryRestore(
-      memory.engine,
-      memory.shared,
-      memoryRestoreDir(rootDir)
-    );
+    const restored = await memory.restoreStaged();
     for (const p of restored?.problems ?? [])
       console.error(`dispatchd: memory restore: ${p.file}: ${p.detail}`);
+    if (restored !== null && restored.deferred > 0)
+      console.error(
+        `dispatchd: memory restore: ${restored.deferred} staged file(s) wait for the next boot`
+      );
   } catch (err) {
     console.error('dispatchd: memory restore failed', err);
   }

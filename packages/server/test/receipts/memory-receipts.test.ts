@@ -282,6 +282,30 @@ describe('a staged memory restore', () => {
     expect(p.gate).toBe('m-gate');
   });
 
+  it('proposes at most the per-boot limit and leaves the rest staged', async () => {
+    const t = gatedEngine();
+    const lost = ['one', 'two', 'three'].map((n) => lostEntry(n));
+    for (const e of lost) stage(e);
+    const first = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir,
+      2
+    );
+    expect(first).toMatchObject({ restored: 2, deferred: 1, problems: [] });
+    expect(first?.pending).toContain(restoreDir);
+    expect(readdirSync(restoreDir)).toEqual([`${lost[2].id}.md`]);
+    const second = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir,
+      2
+    );
+    expect(second).toMatchObject({ restored: 1, deferred: 0, pending: null });
+    expect(existsSync(restoreDir)).toBe(false);
+    expect(t.shared.listProposals()).toHaveLength(3);
+  });
+
   it('skips a retired receipt', async () => {
     const t = gatedEngine();
     const old = lostEntry('superseded lesson');

@@ -20,6 +20,7 @@ import {
 import { runsDir } from '../../src/orchestrator/paths.js';
 import { testEngine } from '../memory/fixtures.js';
 import { initGitRepo } from '../orchestrator/helpers.js';
+import { useTestAuth } from '../testAuth.js';
 
 const originalHome = process.env.DISPATCH_HOME;
 const home = realpathSync(mkdtempSync(join(tmpdir(), 'memory-restore-home-')));
@@ -66,6 +67,7 @@ it('a receipt log restores team memory on a clean machine as agent proposals', a
     webDistDir: null,
     writeDaemonFile: false,
   });
+  useTestAuth(handle);
   try {
     const shared = handle.memory.shared;
     expect(shared).not.toBeNull();
@@ -82,6 +84,10 @@ it('a receipt log restores team memory on a clean machine as agent proposals', a
     expect(proposals[0].state).toBe('open');
     expect(proposals[0].gate).not.toBeNull();
     expect(existsSync(staging)).toBe(false);
+    const health = (await (
+      await fetch(`http://127.0.0.1:${handle.port}/api/memory/health`)
+    ).json()) as { restore?: { restored: number; deferred: number } };
+    expect(health.restore).toMatchObject({ restored: 1, deferred: 0 });
   } finally {
     await handle.stop();
     rmSync(root, { recursive: true, force: true });

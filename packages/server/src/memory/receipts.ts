@@ -130,9 +130,12 @@ export function memoryReceiptsStep(
 export interface MemoryRestoreReport {
   restored: number;
   skipped: number;
+  // Files left staged past the per-boot limit, for the next boot.
+  deferred: number;
   problems: { file: string; detail: string }[];
   // Where the kept staging directory is and how to clear it; null once removed.
   pending: string | null;
+  at: string;
 }
 
 // Dispatch itself proposes restored lessons: agent trust, so a human or
@@ -199,28 +202,43 @@ async function restoreFile(
   }
 }
 
-// Applies the receipt files the CLI staged; the directory goes once every
-// file is handled. Null when nothing is staged or memory is unavailable.
+// Most proposals one boot raises; the rest wait staged for the next boot.
+export const RESTORE_PER_BOOT = 50;
+
+// Applies the receipt files the CLI staged, removing each once handled, up to
+// `limit` proposals. Null when nothing is staged or memory is unavailable.
 export async function applyStagedMemoryRestore(
   engine: MemoryEngine | null,
   shared: MemoryStore | null,
-  restoreDir: string
+  restoreDir: string,
+  limit = RESTORE_PER_BOOT
 ): Promise<MemoryRestoreReport | null> {
   if (engine === null || shared === null || !existsSync(restoreDir))
     return null;
   const report: MemoryRestoreReport = {
     restored: 0,
     skipped: 0,
+    deferred: 0,
     problems: [],
     pending: null,
+    at: new Date().toISOString(),
   };
-  for (const file of stagedFiles(restoreDir)) {
+  const files = stagedFiles(restoreDir);
+  for (const [i, file] of files.entries()) {
+    if (report.restored >= limit) {
+      report.deferred = files.length - i;
+      break;
+    }
     const outcome = await restoreFile(engine, shared, restoreDir, file);
+    if (typeof outcome !== 'string') {
+      report.problems.push({ file, detail: outcome.problem });
+      continue;
+    }
     if (outcome === 'restored') report.restored++;
-    else if (outcome === 'skipped') report.skipped++;
-    else report.problems.push({ file, detail: outcome.problem });
+    else report.skipped++;
+    rmSync(join(restoreDir, file), { force: true });
   }
-  if (report.problems.length === 0)
+  if (report.problems.length === 0 && report.deferred === 0)
     rmSync(restoreDir, { recursive: true, force: true });
   else report.pending = clearHint(restoreDir);
   return report;

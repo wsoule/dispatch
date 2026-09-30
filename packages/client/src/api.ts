@@ -978,6 +978,16 @@ export interface MemoryHealth {
   pinnedOverflow: boolean;
   /** Why runs cannot use the Claude export (its preflight failed), or null. */
   exportBlocked: string | null;
+  /** The last receipt-log restore this daemon applied, or null. */
+  restore?: {
+    restored: number;
+    skipped: number;
+    /** Files left staged past the per-boot limit, for the next boot. */
+    deferred: number;
+    problems: { file: string; detail: string }[];
+    pending: string | null;
+    at: string;
+  } | null;
   /** The owner's Claude-notes import; null for anyone but the daemon's own human. */
   claudeImport: {
     state: 'complete' | 'failed' | 'unconfirmed' | 'running' | null;
