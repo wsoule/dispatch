@@ -1,0 +1,96 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dispatch.foo/protocol/1.0.0-draft.1/schemas/message.schema.json",
+  "title": "DMP message",
+  "description": "A stored message: the sixteen fields of section 4.1, and the two fields Appendix F defines. Informative: byte limits and the one-line rule are left to section 4.5.",
+  "type": "object",
+  "properties": {
+    "id": { "$ref": "#/$defs/identifier" },
+    "thread": { "$ref": "#/$defs/identifier" },
+    "replyTo": {
+      "anyOf": [{ "$ref": "#/$defs/identifier" }, { "type": "null" }]
+    },
+    "from": { "$ref": "#/$defs/address" },
+    "session": { "type": "string" },
+    "to": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/address" },
+      "minItems": 1,
+      "maxItems": 50
+    },
+    "kind": { "$ref": "#/$defs/kind" },
+    "body": { "type": "string" },
+    "refs": {
+      "type": "array",
+      "items": { "$ref": "ref.schema.json" },
+      "maxItems": 50
+    },
+    "data": {
+      "description": "Gate data (gate-data.schema.json), private data or a marker."
+    },
+    "urgent": { "type": "boolean" },
+    "blocking": { "type": "boolean" },
+    "choices": { "$ref": "#/$defs/choices" },
+    "choice": { "type": "string" },
+    "wake": { "enum": ["none", "request"] },
+    "createdAt": { "$ref": "#/$defs/timestamp" },
+    "origin": {
+      "description": "Appendix F: the replica that created a message received from another host. A host that does not implement Appendix F never emits it.",
+      "type": "string"
+    },
+    "hlc": {
+      "description": "Appendix F: the origin's hybrid clock when it sent the message, as `<ms>.<counter>.<replica>`. A host that does not implement Appendix F never emits it.",
+      "type": "string",
+      "pattern": "^[0-9]+\\.[0-9]+\\..+$"
+    }
+  },
+  "required": [
+    "id",
+    "thread",
+    "replyTo",
+    "from",
+    "to",
+    "kind",
+    "body",
+    "refs",
+    "urgent",
+    "blocking",
+    "wake",
+    "createdAt"
+  ],
+  "additionalProperties": false,
+  "$defs": {
+    "identifier": {
+      "description": "An identifier (section 1.4). ASCII, so 64 characters are 64 bytes.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]*$",
+      "maxLength": 64
+    },
+    "address": {
+      "description": "A scheme, a colon and a part of identifiers joined by `/` (section 3.1). The part's form per scheme is not expressed.",
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]*:[a-z0-9][a-z0-9._-]*(/[a-z0-9][a-z0-9._-]*)*$",
+      "maxLength": 256
+    },
+    "timestamp": {
+      "description": "RFC 3339 in UTC, in the fixed 24-character form (section 1.4).",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "kind": {
+      "description": "A built-in kind, or a private `x-` kind (section 4.2).",
+      "anyOf": [
+        { "enum": ["message", "question", "answer", "handoff", "notice"] },
+        { "type": "string", "pattern": "^x-[a-z0-9][a-z0-9-]*$" }
+      ]
+    },
+    "choices": {
+      "description": "The answers a question or handoff offers: 1 to 20 distinct strings.",
+      "type": "array",
+      "items": { "type": "string" },
+      "minItems": 1,
+      "maxItems": 20,
+      "uniqueItems": true
+    }
+  }
+}

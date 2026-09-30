@@ -9,6 +9,68 @@ export function isDecidingAuthor(address: string): boolean {
   return address === SYSTEM_ADDRESS || address.startsWith('human:');
 }
 
+export const ADDRESS_SCHEMES = [
+  'human',
+  'agent',
+  'task',
+  'run',
+  'channel',
+] as const;
+
+export const BUILT_IN_KINDS = [
+  'message',
+  'question',
+  'answer',
+  'handoff',
+  'notice',
+] as const;
+
+export const REF_TYPES = [
+  'task',
+  'run',
+  'file',
+  'commit',
+  'message',
+  'doc',
+] as const;
+
+// Every gate type this package defines a payload for; a host implements a subset.
+export const GATE_TYPES = [
+  'tool-approval',
+  'scope',
+  'wake',
+  'agent-registration',
+  'overseer-action',
+  'memory',
+  'task-proposal',
+  'doc',
+] as const;
+
+export const DELIVERY_STATES = [
+  'held',
+  'sending',
+  'pushed',
+  'notified',
+  'read',
+  'answered',
+] as const;
+
+/** The system markers: `data.type` values that mean something only from the system. */
+export const MARKERS = ['x-closed', 'x-breaker'] as const;
+
+/** The engine's error codes and the HTTP status a host answers each with. */
+export const ERROR_CODES = {
+  invalid: 400,
+  forbidden: 403,
+  'not-found': 404,
+  conflict: 409,
+  limited: 429,
+} as const;
+
+// Ceilings on one address and on each handle, operator, id and channel segment.
+export const MAX_ADDRESS_BYTES = 256;
+export const MAX_SEGMENT_BYTES = 64;
+
 export type GateRaiser = 'system' | 'system-or-decider' | 'session';
 
 // Who may raise each gate type. A type missing here is system-only.

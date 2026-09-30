@@ -70,7 +70,13 @@ export interface ReceiptsProblem {
 
 export interface ReceiptsExport {
   dir: string;
+  /**
+   * What the log holds after this pass. The record counts are only taken
+   * when the pass rewrote the records (see `records`); otherwise they are 0.
+   */
   tally: ReceiptsTally;
+  /** Whether this pass rewrote findings, ledger and evidence. */
+  records: boolean;
   /**
    * Log-relative paths whose CONTENT changed this pass — not every path
    * written. An export that changed nothing returns an empty list, which is
@@ -84,6 +90,22 @@ export interface ReceiptsExport {
    */
   removed: string[];
   problems: ReceiptsProblem[];
+}
+
+/**
+ * Which part of the database a pass writes out. The default, everything, is
+ * what makes the log self-healing; a scoped pass is what keeps one edit's
+ * receipt cheap on a board of thousands of tasks.
+ */
+export interface ReceiptsScope {
+  /**
+   * Just these tasks: each is written if the database holds it and its file
+   * removed if the database no longer does. Absent means every task, with the
+   * files of tasks that left the database pruned.
+   */
+  taskIds?: readonly string[];
+  /** Also rewrite findings, ledger, evidence and the README. Default true. */
+  records?: boolean;
 }
 
 export interface ReceiptsRestore {
@@ -226,6 +248,7 @@ directory is enough to rebuild it.
     .dispatch/findings.jsonl         review findings, one JSON object per line
     .dispatch/ledger.jsonl           decisions and hazards
     .dispatch/evidence/<runId>.jsonl commands run and guards mutation-tested
+    .dispatch/docs/<handle>.md       team documents, their head revision
 
 That is deliberately the same layout a file-backed Dispatch project uses, so
 restoring needs no special tooling.
@@ -241,6 +264,9 @@ under \`.dispatch/evidence/\` is read by the restore path specifically and has
 no file-backed equivalent, so it survives that route only through Dispatch's
 own restore rather than through the copy above.
 
+Team docs under \`.dispatch/docs/\` come back through
+\`dispatch receipts restore\`, which stages them for the daemon.
+
 ## What is NOT here
 
 \`.dispatch/config.yml\` and \`.dispatch/team.yml\` are committable project
@@ -252,70 +278,105 @@ repository and have no table in the database, so they do not reach this log.
 `;
 
 /**
- * Writes the whole of a project's database out to `dir` as a receipt log, and
- * reports what changed.
+ * Writes a project's database out to `dir` as a receipt log, and reports what
+ * changed: all of it by default, or the part `scope` names.
  *
- * A full materialization every pass, not an append: the log is always exactly
- * what the database holds right now, and git supplies the history. That is
- * what makes the export idempotent — running it twice against an unchanged
- * database changes nothing and commits nothing — and it is also the only way
- * deletions and edits show up at all, since an append-only log can only ever
- * grow.
+ * A materialization, not an append: the log is always exactly what the
+ * database holds right now, and git supplies the history. That is what makes
+ * the export idempotent — running it twice against an unchanged database
+ * changes nothing and commits nothing — and it is also the only way deletions
+ * and edits show up at all, since an append-only log can only ever grow.
  */
 export function materializeReceipts(
   stores: ProjectStores,
-  dir: string
+  dir: string,
+  scope: ReceiptsScope = {}
 ): ReceiptsExport {
+  const steps = receiptSteps(stores, dir, scope);
+  for (;;) {
+    const step = steps.next();
+    if (step.done === true) return step.value;
+  }
+}
+
+/**
+ * materializeReceipts one record at a time: the generator pauses after each
+ * task file and each run's evidence, so a caller on an event loop can hand the
+ * loop back between them. A full pass over thousands of tasks serializes every
+ * one, and done in one go it stalled the daemon for seconds.
+ */
+export function* receiptSteps(
+  stores: ProjectStores,
+  dir: string,
+  scope: ReceiptsScope = {}
+): Generator<void, ReceiptsExport, void> {
   const { tasks, records } = requireDatabase(stores);
   const problems: ReceiptsProblem[] = [];
   const changed: string[] = [];
   const removed: string[] = [];
+  const tasksDir = join(dir, TASKS_DIR);
 
   // Tasks, one markdown file each, through the same serializer the file
   // backend uses. A row that will not serialize costs itself and is named,
   // rather than taking the whole export down: an export that refuses to run
   // because of one damaged row is an audit trail that stops updating exactly
   // when something has gone wrong.
+  //
+  // A row that cannot be read is still IN the database, so its previously
+  // exported file is kept: pruning it would turn one damaged column into the
+  // deletion of the only copy of that task's history, and commit the deletion.
+  const scoped = scope.taskIds === undefined ? null : new Set(scope.taskIds);
   const expectedTaskFiles = new Set<string>();
   const unexportedTaskIds = new Set<string>();
-  const board = tasks.listSafe();
-  for (const error of board.errors) {
-    // `error.file` is the row id on this backend. The row is still IN the
-    // database — only unreadable — so its previously exported file has to be
-    // kept for the same reason a toMarkdown failure below keeps one: pruning
-    // it would turn one damaged column into the deletion of the only copy of
-    // that task's history, and commit the deletion.
-    unexportedTaskIds.add(error.file);
-    problems.push({
-      source: TASKS_DIR,
-      detail: `${error.file}: ${error.message}`,
-    });
-  }
-  let taskCount = 0;
-  for (const doc of board.docs) {
+  for (const id of scoped ?? tasks.ids()) {
     try {
-      const file = tasks.toMarkdown(doc.meta.id);
-      if (file === null) continue;
-      expectedTaskFiles.add(file.filename);
-      taskCount += 1;
-      if (writeIfChanged(join(dir, TASKS_DIR, file.filename), file.content)) {
-        changed.push(`${TASKS_DIR}/${file.filename}`);
+      const file = tasks.toMarkdown(id);
+      if (file !== null) {
+        expectedTaskFiles.add(file.filename);
+        if (writeIfChanged(join(tasksDir, file.filename), file.content)) {
+          changed.push(`${TASKS_DIR}/${file.filename}`);
+        }
       }
     } catch (err) {
-      unexportedTaskIds.add(doc.meta.id);
+      unexportedTaskIds.add(id);
       problems.push({
         source: TASKS_DIR,
-        detail: `${doc.meta.id}: ${(err as Error).message}`,
+        detail: `${id}: ${(err as Error).message}`,
       });
     }
+    yield;
   }
+  // A scoped pass prunes only files of the tasks it was given: one whose task
+  // left the database, or that it wrote under a new name.
   removed.push(
-    ...pruneTaskFiles(
-      join(dir, TASKS_DIR),
-      expectedTaskFiles,
-      unexportedTaskIds
-    )
+    ...pruneFiles(tasksDir, '.md', TASKS_DIR, (name) => {
+      if (expectedTaskFiles.has(name)) return true;
+      const id = taskIdFromFilename(name);
+      if (id !== null && unexportedTaskIds.has(id)) return true;
+      return scoped !== null && (id === null || !scoped.has(id));
+    })
   );
+  const taskCount = existsSync(tasksDir)
+    ? readdirSync(tasksDir).filter((name) => name.endsWith('.md')).length
+    : 0;
+
+  if (scope.records === false) {
+    return {
+      dir,
+      tally: {
+        tasks: taskCount,
+        findings: 0,
+        ledger: 0,
+        runs: 0,
+        commands: 0,
+        mutations: 0,
+      },
+      records: false,
+      changed,
+      removed,
+      problems,
+    };
+  }
 
   const findings = records.findings.listSafe({});
   for (const error of findings.errors) {
@@ -382,6 +443,7 @@ export function materializeReceipts(
     ) {
       changed.push(`${EVIDENCE_DIR}/${filename}`);
     }
+    yield;
   }
   removed.push(
     ...pruneFiles(join(dir, EVIDENCE_DIR), '.jsonl', EVIDENCE_DIR, (name) =>
@@ -401,33 +463,11 @@ export function materializeReceipts(
       commands,
       mutations,
     },
+    records: true,
     changed,
     removed,
     problems,
   };
-}
-
-/**
- * Deletes exported task files whose task is no longer in the database.
- *
- * A task the database dropped has to leave the working tree so the commit
- * records the deletion — that IS the audit trail for a removed task. But a
- * task that is still in the database and merely failed to serialize this pass
- * must keep its file: deleting it would turn one damaged row into the silent
- * loss of the last good receipt that row ever produced. Those are told apart
- * by the id the filename starts with, which is why `toMarkdown` guarantees the
- * `<id>-<slug>.md` shape.
- */
-function pruneTaskFiles(
-  tasksDir: string,
-  expected: Set<string>,
-  keepIds: Set<string>
-): string[] {
-  return pruneFiles(tasksDir, '.md', TASKS_DIR, (name) => {
-    if (expected.has(name)) return true;
-    const id = taskIdFromFilename(name);
-    return id !== null && keepIds.has(id);
-  });
 }
 
 // Removes every file in `dir` with the given extension that `keep` rejects,

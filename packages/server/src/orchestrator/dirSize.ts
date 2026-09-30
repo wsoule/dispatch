@@ -1,4 +1,4 @@
-import { readdirSync, statSync } from 'node:fs';
+import { readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 
 /**
@@ -25,8 +25,14 @@ export interface DirSize {
  * trees, and it would have to be made safe against paths with spaces on every
  * platform. Symlinks are counted by their own size and never followed, so a
  * link pointing back up the tree cannot send this into a loop.
+ *
+ * Async so a big worktree does not stall every other request while the
+ * Branches listing weighs it.
  */
-export function dirSizeBytes(root: string): DirSize {
+export async function dirSizeBytes(
+  root: string,
+  maxEntries = MAX_ENTRIES
+): Promise<DirSize> {
   let bytes = 0;
   let seen = 0;
   const stack: string[] = [root];
@@ -36,26 +42,39 @@ export function dirSizeBytes(root: string): DirSize {
     if (dir === undefined) break;
     let entries;
     try {
-      entries = readdirSync(dir, { withFileTypes: true });
+      entries = await readdir(dir, { withFileTypes: true });
     } catch {
       // A directory that vanished mid-walk (a worktree being removed while the
       // page polls) is not an error worth failing the whole listing over.
       continue;
     }
+    const files: string[] = [];
+    let truncated = false;
     for (const entry of entries) {
-      if (seen >= MAX_ENTRIES) return { bytes, truncated: true };
+      if (seen >= maxEntries) {
+        truncated = true;
+        break;
+      }
       seen += 1;
       const path = join(dir, entry.name);
       if (entry.isDirectory() && !entry.isSymbolicLink()) {
         stack.push(path);
-        continue;
-      }
-      try {
-        bytes += statSync(path, { throwIfNoEntry: false })?.size ?? 0;
-      } catch {
-        // Same reasoning as above: skip the entry, keep the total.
+      } else {
+        files.push(path);
       }
     }
+    // One directory's files at a time; a vanished entry counts as nothing,
+    // for the same reason as above.
+    const sizes = await Promise.all(
+      files.map((path) =>
+        stat(path).then(
+          (s) => s.size,
+          () => 0
+        )
+      )
+    );
+    for (const size of sizes) bytes += size;
+    if (truncated) return { bytes, truncated: true };
   }
   return { bytes, truncated: false };
 }

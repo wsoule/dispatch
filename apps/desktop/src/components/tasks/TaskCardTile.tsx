@@ -1,11 +1,16 @@
-import type { ReadinessReading, RunMeta, RunState } from '@dispatch/client';
-import type { TaskDoc, UpdatePatch } from '@dispatch/core/browser';
+import type {
+  MergeQueueEntryState,
+  ReadinessReading,
+  RunMeta,
+  RunState,
+} from '@dispatch/client';
+import type { TaskListItem, UpdatePatch } from '@dispatch/core/browser';
 import type {
   DraggableAttributes,
   DraggableSyntheticListeners,
 } from '@dnd-kit/core';
 import { ArrowRight } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useRef, useState } from 'react';
 
 import { readinessBadges } from '../../lib/judgmentBadges';
 import { resolveCardKeyAction } from '../../lib/keyboard';
@@ -14,6 +19,7 @@ import { formatCreated } from '../../lib/taskDates';
 import { TASK_PROPERTIES, type TaskProperty } from '../../lib/tasksPrefs';
 import { MergeLadderPill } from '../runs/MergeLadderDot';
 import { RunStatePill } from '../runs/RunStatePill';
+import { LandingBadge } from './LandingBadge';
 import {
   AssigneeControl,
   LabelsControl,
@@ -37,7 +43,7 @@ interface CardDragProps {
 }
 
 interface TaskCardTileProps {
-  doc: TaskDoc;
+  doc: TaskListItem;
   ready: boolean;
   blocked: boolean;
   /** State of this task's live (non-terminal) run, if it has one. */
@@ -49,21 +55,22 @@ interface TaskCardTileProps {
   epicTitle?: string;
   /** The project's configured status list, for the card's inline status picker. */
   statuses: string[];
+  // Callbacks take the task id so a board can hand every card the same stable functions.
   /** Changes this task's status inline from the card (optimistic, same path as drag-and-drop). */
-  onStatusChange: (status: string) => void;
+  onStatusChange: (id: string, status: string) => void;
   /** Edits this task's priority/assignee/labels inline from the card. */
-  onEditTask: (patch: UpdatePatch) => void;
-  onClick: () => void;
+  onEditTask: (id: string, patch: UpdatePatch) => void;
+  onClick: (id: string) => void;
   /** Dispatches this task directly from the card. Omitted (no action rendered) for cards that
    * aren't ready to start. */
-  onDispatch?: () => Promise<void>;
+  onDispatch?: (id: string) => Promise<void>;
   /** True when the Board's own j/k roving-focus cursor (see `BoardView`) is on this card —
    * moves real DOM focus onto the card so `:focus-visible` and screen readers agree with
    * what j/k just did. */
   focused?: boolean;
   /** Called whenever real DOM focus lands on this card (click, Tab, or the `focused` effect
    * above) — lets `BoardView` sync its `focusedTaskId` cursor to wherever focus actually is. */
-  onFocus?: () => void;
+  onFocus?: (id: string) => void;
   /** See `CardDragProps` — omitted for a card that isn't draggable. */
   drag?: CardDragProps;
   /** True for an archived task shown via Display › Show archived — dims the card and drops the
@@ -72,6 +79,9 @@ interface TaskCardTileProps {
   /** True when this task's latest run needs a human (see `deriveTaskAttentionById`) — a
    * `Needs you` pill on row 3, never a tinted card. */
   needsAttention?: boolean;
+  /** Where the task's run stands in the merge queue, while it is landing — a `Landing` pill
+   * on row 3. */
+  landing?: MergeQueueEntryState;
   /** Which properties the card shows (Display › Display properties). Defaults to all. */
   properties?: ReadonlySet<TaskProperty>;
   /** The daemon's readiness reading for this task, when judged — a thin spec
@@ -90,12 +100,13 @@ const ALL_PROPERTIES: ReadonlySet<TaskProperty> = new Set(TASK_PROPERTIES);
 /**
  * A Board card on Linear's four-row anatomy (§5): row 1 the id and ` › Epic` crumb with the
  * assignee avatar pushed right; row 2 the status glyph and a two-line title; row 3 the
- * priority glyph and the pills (labels, blocked, `Needs you`, live run mark, merge ladder);
+ * priority glyph and the pills (labels, blocked, `Needs you`, `Landing`, live run mark, merge
+ * ladder);
  * row 4 `Created Sep 13` with the Dispatch action on the right. Every card is the same
  * 322px `#1b1a1a` tile with a half-pixel ring — no coloured edge, no state tint; the
  * keyboard cursor and hover are neutral. Draggable via the optional `drag` prop.
  */
-export function TaskCardTile({
+export const TaskCardTile = memo(function TaskCardTile({
   doc,
   ready,
   blocked,
@@ -112,10 +123,12 @@ export function TaskCardTile({
   drag,
   archived = false,
   needsAttention = false,
+  landing,
   properties = ALL_PROPERTIES,
   readiness,
   labelCatalogue = [],
 }: TaskCardTileProps) {
+  const id = doc.meta.id;
   const [dispatching, setDispatching] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
   const has = (p: TaskProperty) => properties.has(p);
@@ -129,7 +142,7 @@ export function TaskCardTile({
     if (onDispatch === undefined) return;
     setDispatching(true);
     try {
-      await onDispatch();
+      await onDispatch(id);
     } finally {
       setDispatching(false);
     }
@@ -165,8 +178,8 @@ export function TaskCardTile({
         drag?.isDragging === true && 'opacity-40',
         archived && 'cursor-default opacity-55 hover:bg-surface-quaternary'
       )}
-      onClick={onClick}
-      onFocus={onFocus}
+      onClick={() => onClick(id)}
+      onFocus={onFocus === undefined ? undefined : () => onFocus(id)}
       onKeyDown={(e) => {
         const isDirectTarget = e.target === e.currentTarget;
         if (drag !== undefined && e.key === ' ' && isDirectTarget) {
@@ -179,7 +192,7 @@ export function TaskCardTile({
         }
         if (resolveCardKeyAction(e.key, isDirectTarget) === 'activate') {
           e.preventDefault();
-          onClick();
+          onClick(id);
           return;
         }
         if (!isDirectTarget) {
@@ -212,7 +225,7 @@ export function TaskCardTile({
           <span className="ml-auto flex shrink-0 items-center">
             <AssigneeControl
               value={doc.meta.assignee}
-              onChange={(a) => onEditTask({ assignee: a })}
+              onChange={(a) => onEditTask(id, { assignee: a })}
             />
           </span>
         )}
@@ -224,7 +237,7 @@ export function TaskCardTile({
             <StatusControl
               value={doc.meta.status}
               statuses={statuses}
-              onChange={onStatusChange}
+              onChange={(status) => onStatusChange(id, status)}
             />
           </span>
         )}
@@ -241,7 +254,7 @@ export function TaskCardTile({
           <span className="-ml-0.5 shrink-0">
             <PriorityControl
               value={doc.meta.priority}
-              onChange={(p) => onEditTask({ priority: p })}
+              onChange={(p) => onEditTask(id, { priority: p })}
             />
           </span>
         )}
@@ -265,7 +278,7 @@ export function TaskCardTile({
               variant="inline"
               value={doc.meta.labels}
               candidates={labelCatalogue}
-              onChange={(labels) => onEditTask({ labels })}
+              onChange={(labels) => onEditTask(id, { labels })}
             >
               {visibleLabels.map((label) => (
                 <LabelPill key={label} color={colorForLabel(label)}>
@@ -282,6 +295,9 @@ export function TaskCardTile({
             {badge}
           </LabelPill>
         ))}
+        {has('run') && landing !== undefined && !archived && (
+          <LandingBadge state={landing} />
+        )}
         {has('run') && liveRunState !== undefined && run !== undefined && (
           <RunStatePill meta={run} compact />
         )}
@@ -326,4 +342,4 @@ export function TaskCardTile({
       </div>
     </div>
   );
-}
+});

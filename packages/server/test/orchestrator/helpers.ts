@@ -1,4 +1,11 @@
 import type { Options, Query } from '@anthropic-ai/claude-agent-sdk';
+import { TaskStore } from '@dispatch/core';
+import type {
+  Amendment,
+  CreateInput,
+  TaskDoc,
+  UpdatePatch,
+} from '@dispatch/core';
 import {
   mkdtempSync,
   readFileSync,
@@ -9,6 +16,7 @@ import {
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 
+import type { TaskCache } from '../../src/cache.js';
 import type { OverseerToolContext } from '../../src/orchestrator/overseerTools.js';
 import type {
   Executor,
@@ -16,6 +24,49 @@ import type {
   ExecutorRun,
   ExecutorStartOptions,
 } from '../../src/orchestrator/types.js';
+
+/**
+ * A TaskStore for a test's own writes, which reach the cache the way edits
+ * made outside the daemon do in production: the file watcher re-reads each
+ * task it sees change. The daemon refreshes the cache for its own writes, so
+ * without this a task a test wrote straight to disk would never be seen.
+ */
+export class WatchedTaskStore extends TaskStore {
+  constructor(
+    rootDir: string,
+    private readonly cache: TaskCache
+  ) {
+    super(rootDir);
+  }
+
+  override create(input: CreateInput, now?: string): TaskDoc {
+    const doc = super.create(input, now);
+    this.cache.refresh(this, [doc.meta.id]);
+    return doc;
+  }
+
+  override update(id: string, patch: UpdatePatch, now?: string): TaskDoc {
+    const doc = super.update(id, patch, now);
+    this.cache.refresh(this, [id]);
+    return doc;
+  }
+
+  override amend(
+    id: string,
+    input: Omit<Amendment, 'date'>,
+    now?: string
+  ): TaskDoc {
+    const doc = super.amend(id, input, now);
+    this.cache.refresh(this, [id]);
+    return doc;
+  }
+
+  override remove(id: string): boolean {
+    const removed = super.remove(id);
+    this.cache.refresh(this, [id]);
+    return removed;
+  }
+}
 
 /**
  * An executor that starts, reports a session id, and then never finishes —

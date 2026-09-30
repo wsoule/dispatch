@@ -279,6 +279,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {
@@ -1723,6 +1724,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5", "13.13"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {
@@ -1863,6 +1865,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5", "13.13"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {
@@ -2001,6 +2004,7 @@
       "level": "MUST",
       "profile": "core",
       "sections": ["4.5", "13.13"],
+      "tags": ["structural"],
       "given": {},
       "when": [
         {

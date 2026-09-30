@@ -34,6 +34,7 @@ import {
 } from '../../src/orchestrator/types.js';
 import { StallingExecutor } from '../orchestrator/helpers.js';
 import {
+  LINEAR_STATUSES,
   makeOrchestrator,
   openRecovered,
   useTempProject,
@@ -424,8 +425,20 @@ describe('openMessaging', () => {
         message: 'm-x',
       },
     });
+    const sent = await messaging.engine.send(
+      gate('task-proposal'),
+      SYSTEM_SENDER
+    );
+    expect(sent.message.kind).toBe('question');
+    // Only the system raises a task proposal.
     await expect(
-      messaging.engine.send(gate('task-proposal'), SYSTEM_SENDER)
+      messaging.engine.send(gate('task-proposal'), {
+        address: 'human:wyat',
+        canDecide: true,
+      })
+    ).rejects.toMatchObject({ code: 'forbidden', field: 'data' });
+    await expect(
+      messaging.engine.send(gate('handoff-review'), SYSTEM_SENDER)
     ).rejects.toMatchObject({ code: 'invalid', field: 'data.type' });
     messaging.close();
   });
@@ -783,9 +796,16 @@ describe('wake gate handler', () => {
     messaging.close();
   });
 
-  for (const status of ['dropped', 'landed'] as const) {
+  // Canceled: a Linear-linked project's mirrored name for a dropped status.
+  for (const status of ['dropped', 'landed', 'Canceled'] as const) {
     it(`does not wake a task that became ${status} before the approval`, async () => {
       const { orchestrator, store } = makeOrchestrator(project.root());
+      if (status === 'Canceled') {
+        writeFileSync(
+          join(project.root(), '.dispatch', 'config.yml'),
+          LINEAR_STATUSES
+        );
+      }
       const executor = new StallingExecutor();
       orchestrator.registerExecutor('claude', executor);
       const task = store.create({ title: 'Closed out later' });

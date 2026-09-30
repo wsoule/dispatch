@@ -76,6 +76,17 @@ describe('useGlobalKeyboard', () => {
     expect(commands).toEqual(['new-task']);
   });
 
+  test('a key a view already consumed still ends the chord', () => {
+    const { commands } = mount();
+    dispatchKeydown('g');
+    // The Cockpit handles `g p` itself and cancels the "p".
+    dispatchKeydown('p', { defaultPrevented: true });
+    // A fresh `g t` is a clean chord, not a stale `g` swallowing the next one.
+    dispatchKeydown('g');
+    dispatchKeydown('t');
+    expect(commands).toEqual(['goto-tasks']);
+  });
+
   test('a bare modifier keydown does not end the chord', () => {
     const { commands } = mount();
     dispatchKeydown('g');

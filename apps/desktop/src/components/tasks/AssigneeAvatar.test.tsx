@@ -1,6 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, test } from 'bun:test';
 
+import { PeopleProvider } from '../people/PeopleContext';
 import { AssigneeAvatar } from './AssigneeAvatar';
 
 describe('AssigneeAvatar', () => {
@@ -57,5 +58,47 @@ describe('AssigneeAvatar', () => {
     expect(screen.getByRole('img', { name: 'Unassigned' }).className).toContain(
       'size-4'
     );
+  });
+});
+
+describe('AssigneeAvatar with the people registry', () => {
+  const people = [
+    { ref: 'human:maya', name: 'Maya Chen' },
+    {
+      ref: 'human:lena',
+      name: 'Lena Park',
+      avatarUrl: 'https://example.com/lena.png',
+    },
+  ];
+
+  test('a registered person reads by their name', () => {
+    render(
+      <PeopleProvider people={people} me="human:maya">
+        <AssigneeAvatar assignee="human:maya" />
+      </PeopleProvider>
+    );
+    expect(screen.getByRole('img', { name: 'Maya Chen' }).textContent).toBe(
+      'MC'
+    );
+  });
+
+  test('the legacy bare human is me', () => {
+    render(
+      <PeopleProvider people={people} me="human:maya">
+        <AssigneeAvatar assignee="human" />
+      </PeopleProvider>
+    );
+    expect(screen.getByRole('img', { name: 'Maya Chen' })).not.toBeNull();
+  });
+
+  test('a person with a photo shows it', () => {
+    render(
+      <PeopleProvider people={people} me={null}>
+        <AssigneeAvatar assignee="human:lena" />
+      </PeopleProvider>
+    );
+    const photo = screen.getByRole('img', { name: 'Lena Park' });
+    expect(photo.tagName).toBe('IMG');
+    expect(photo.getAttribute('src')).toBe('https://example.com/lena.png');
   });
 });

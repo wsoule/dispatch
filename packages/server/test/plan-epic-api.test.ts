@@ -613,7 +613,7 @@ describe('POST /api/plan/:id/confirm', () => {
     const epic = await json(
       await fetch(`${baseUrl}/api/tasks/${result.epicId}`)
     );
-    expect(epic.meta.kind).toBe('epic');
+    expect(epic.meta.kind).toBe('milestone');
     expect(epic.meta.status).toBe('ready');
 
     // The record remembers its epic so a list row can link to the milestone.

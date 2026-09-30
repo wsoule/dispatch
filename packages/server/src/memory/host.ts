@@ -23,6 +23,7 @@ import type { EventBus } from '../events.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import type { RunMeta } from '../orchestrator/types.js';
 import { runOperator } from '../orchestrator/types.js';
 import { consultProjectPolicy } from '../policyEngine.js';
 import { memoryGateKind, raiseMemoryGate } from './gate.js';
@@ -104,8 +105,7 @@ export class DaemonMemoryHost implements MemoryHost {
     if (principal.kind === 'human')
       return this.bind(principal.address, principal.ownerCredential === true);
     if (principal.kind === 'run') {
-      const runId = principal.address.slice('run:'.length);
-      const run = this.deps.orchestrator.list().find((r) => r.id === runId);
+      const run = this.runOf(principal);
       const op = run === undefined ? null : runOperator(run);
       return op === null ? null : this.bind(op, true);
     }
@@ -170,6 +170,17 @@ export class DaemonMemoryHost implements MemoryHost {
       : null;
   }
 
+  runTaskOf(principal: Principal): string | null {
+    return this.runOf(principal)?.taskId ?? null;
+  }
+
+  // A run principal's RunMeta, whatever its kind; undefined for anyone else.
+  private runOf(principal: Principal): RunMeta | undefined {
+    if (principal.kind !== 'run') return undefined;
+    const runId = principal.address.slice('run:'.length);
+    return this.deps.orchestrator.list().find((r) => r.id === runId);
+  }
+
   // A bare refetch signal; personal changes never carry an id (spec, Privacy).
   changed(change: MemoryChange): void {
     if (change.scope === 'personal') {
@@ -188,8 +199,10 @@ export class DaemonMemoryHost implements MemoryHost {
   }
 
   // Policy for the memory gate; a proposal with no task reads as elevated,
-  // which caps it below the gate's rung.
+  // which caps it below the gate's rung, and an A2A task's always waits.
   rule(p: MemoryProposal): PolicyRuling {
+    if (p.taskId !== null && this.deps.orchestrator.isA2ATask(p.taskId))
+      return { mode: 'block' };
     const task = p.taskId === null ? null : safeTask(this.deps.store, p.taskId);
     return consultProjectPolicy(
       this.deps.rootDir,

@@ -1,5 +1,9 @@
 export type { TaskStatus } from './status.js';
-export type TaskKind = 'task' | 'epic';
+import type { ContainerKind } from './kinds.js';
+
+// Linear's hierarchy: containers group tasks (see kinds.ts). Legacy `epic`
+// reads as `milestone`.
+export type TaskKind = 'task' | ContainerKind;
 export type Priority = 'urgent' | 'high' | 'medium' | 'low' | 'none';
 // A serialized ActorRef (see actor.ts): `none`, the legacy bare `human`/`agent`,
 // or a named `human:wyat` / `agent:wyat/claude`.
@@ -71,6 +75,72 @@ export interface TaskMeta {
   // bytes live gitignored under `.dispatch/attachments/<taskId>/` on the
   // machine that took the upload. Absent when the task has none.
   attachments?: TaskAttachment[];
+  // Linear-parity fields, defaulted on read (see defaultTaskFields) so files
+  // and rows written before them still parse.
+  /** Story points; null when not estimated. */
+  estimate: number | null;
+  /** ISO date; a container's target date. */
+  dueDate: string | null;
+  /** ISO date; containers only, in practice. */
+  startDate: string | null;
+  cycle: TaskCycle | null;
+  /** Ids of related tasks (Linear's "related" relation, symmetric). */
+  relatedTo: string[];
+  /** The task this one duplicates, or null. */
+  duplicateOf: string | null;
+  /** Extra initiative ids a project belongs to; `parent` holds the first. */
+  initiatives: string[];
+  /** Who created it, as an actor ref; null when unknown (older tasks). */
+  creator: Assignee | null;
+  /** Display color for a container (`#rrggbb`), or null. */
+  color: string | null;
+  /** Display icon name for a container, or null. */
+  icon: string | null;
+  /** Manual order among siblings (a project's milestones), low first; null
+   *  when unordered. */
+  sortOrder: number | null;
+}
+
+/** A Linear-style cycle (sprint) a task is scheduled into. */
+export interface TaskCycle {
+  id: string;
+  number: number;
+  name: string | null;
+  startsAt: string;
+  endsAt: string;
+}
+
+/** The Linear-parity fields of TaskMeta, as a task without them reads. */
+export type TaskFieldDefaults = Pick<
+  TaskMeta,
+  | 'estimate'
+  | 'dueDate'
+  | 'startDate'
+  | 'cycle'
+  | 'relatedTo'
+  | 'duplicateOf'
+  | 'initiatives'
+  | 'creator'
+  | 'color'
+  | 'icon'
+  | 'sortOrder'
+>;
+
+/** Fresh defaults for the Linear-parity fields (new arrays each call). */
+export function defaultTaskFields(): TaskFieldDefaults {
+  return {
+    estimate: null,
+    dueDate: null,
+    startDate: null,
+    cycle: null,
+    relatedTo: [],
+    duplicateOf: null,
+    initiatives: [],
+    creator: null,
+    color: null,
+    icon: null,
+    sortOrder: null,
+  };
 }
 
 export interface TaskAttachment {
@@ -82,8 +152,13 @@ export interface TaskAttachment {
   addedAt: string;
 }
 
-export interface TaskDoc {
+// A task without its markdown body: what `GET /api/tasks?fields=meta` returns,
+// so list views skip shipping and parsing every description.
+export interface TaskListItem {
   meta: TaskMeta;
+}
+
+export interface TaskDoc extends TaskListItem {
   body: string;
 }
 
@@ -95,7 +170,12 @@ export const PRIORITIES: readonly Priority[] = [
   'low',
   'none',
 ];
-export const KINDS: readonly TaskKind[] = ['task', 'epic'];
+export const KINDS: readonly TaskKind[] = [
+  'task',
+  'milestone',
+  'project',
+  'initiative',
+];
 export const ASSIGNEES: readonly Assignee[] = ['agent', 'human', 'none'];
 export const TASK_RISKS: readonly TaskRisk[] = [
   'routine',

@@ -2,9 +2,13 @@ import type { CommandEvidence, MutationEvidence } from '@dispatch/core';
 import { foldSubagents, summarizeSubagents } from '@dispatch/core';
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
   mkdirSync,
+  openSync,
   readFileSync,
+  readSync,
   writeFileSync,
 } from 'node:fs';
 import { dirname } from 'node:path';
@@ -225,6 +229,47 @@ export class Transcript {
     }
     return lines;
   }
+}
+
+// How much of a transcript's end recentEntries reads.
+const TAIL_BYTES = 64 * 1024;
+
+/**
+ * The log entries in the last `bytes` of a transcript, oldest first: a
+ * request path's view of what a run did lately without reading a long log
+ * whole. A line the window cuts, or one that does not parse, is skipped; an
+ * unreadable file has none.
+ */
+export function recentEntries(
+  path: string,
+  bytes = TAIL_BYTES
+): NormalizedEntry[] {
+  let text: string;
+  let fd: number | null = null;
+  try {
+    fd = openSync(path, 'r');
+    const size = fstatSync(fd).size;
+    const start = Math.max(0, size - bytes);
+    const buffer = Buffer.alloc(size - start);
+    readSync(fd, buffer, 0, buffer.length, start);
+    text = buffer.toString('utf8');
+    if (start > 0) text = text.slice(text.indexOf('\n') + 1);
+  } catch {
+    return [];
+  } finally {
+    if (fd !== null) closeSync(fd);
+  }
+  const entries: NormalizedEntry[] = [];
+  for (const raw of text.split('\n')) {
+    if (raw.trim() === '') continue;
+    try {
+      const line = JSON.parse(raw) as TranscriptLine;
+      if (line.type === 'entry') entries.push(line.entry);
+    } catch {
+      // A torn final line: the entries before it still stand.
+    }
+  }
+  return entries;
 }
 
 // The stack parents a state line leaves a run with. A line that carries no

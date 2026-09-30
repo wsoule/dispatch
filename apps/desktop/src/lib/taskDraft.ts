@@ -16,14 +16,15 @@ export interface EditableTaskDraft extends TaskDraft {
   parent: string | null;
 }
 
-/** Seeds the editable draft from a planner-returned `TaskDraft` plus the status the creator
- * was opened with. Every other field is taken from the draft as-is — the user edits it in
- * place before saving. */
+/** Seeds the editable draft from a planner-returned `TaskDraft` plus the status and the
+ * container (`parent`) the creator was opened with. Every other field is taken from the
+ * draft as-is — the user edits it in place before saving. */
 export function editableDraftFrom(
   draft: TaskDraft,
-  status: string
+  status: string,
+  parent: string | null = null
 ): EditableTaskDraft {
-  return { ...draft, status, parent: null };
+  return { ...draft, status, parent };
 }
 
 /** A draft is saveable once it has a title — the same single required field

@@ -61,32 +61,41 @@ function navRows(): string[] {
 }
 
 test('the exported view order is the ⌘N order App.tsx indexes into', () => {
-  // Rail order, which is also ⌘N order: Inbox and Threads, then Work, then the
-  // merge queue that leads Runs, then Code — the sections as they render.
+  // Rail order, which is also ⌘N order: Home, Inbox and Threads, then Work,
+  // then the merge queue that leads Runs, then Code — the sections as they
+  // render.
   expect(PROJECT_VIEW_ORDER).toEqual([
+    'cockpit',
     'inbox',
     'threads',
     'overview',
     'board',
+    'projects',
+    'live',
     'plans',
     'brain-dump',
     'landing',
     'branches',
     'files',
+    'docs',
     'terminals',
     'design',
     'impact',
   ]);
   expect(PROJECT_NAV_VIEWS.map((v) => v.label)).toEqual([
+    'Home',
     'Inbox',
     'Threads',
     'Overview',
     'Tasks',
+    'Projects',
+    'Live',
     'Plans',
     'Notes',
     'Merge queue',
     'Git',
     'Files',
+    'Docs',
     'Terminals',
     'Design',
     'Impact',
@@ -96,12 +105,15 @@ test('the exported view order is the ⌘N order App.tsx indexes into', () => {
 test('sections come in Linear order: fixed top group, then Work, Runs, Code, Live agents, Try', () => {
   mount(true);
   expect(navRows()).toEqual([
+    'cockpit',
     'inbox',
     'threads',
     'drafts',
     'overseer',
     'overview',
     'board',
+    'projects',
+    'live',
     'plans',
     'brain-dump',
     'landing',
@@ -109,6 +121,7 @@ test('sections come in Linear order: fixed top group, then Work, Runs, Code, Liv
     'all-agents',
     'branches',
     'files',
+    'docs',
     'terminals',
     'design',
     'impact',
@@ -139,10 +152,11 @@ test('a teammate below operator is not shown the host-only rows', () => {
   mount(true, { hideHostViews: true });
   const rows = navRows();
   // A shell and a browser carrying the host's cookies are operator-tier; the
-  // rest of Code (reading files, git history, impact) stays.
+  // rest of Code (reading files and docs, git history, impact) stays.
   expect(rows).not.toContain('terminals');
   expect(rows).not.toContain('design');
   expect(rows).toContain('files');
+  expect(rows).toContain('docs');
   expect(rows).toContain('branches');
 });
 
@@ -285,7 +299,7 @@ test('saved views nest under Tasks as indented rows and select through onSelectS
     'board',
     'view-v-1',
     'view-v-2',
-    'plans',
+    'projects',
   ]);
   const row = screen.getByRole('button', { name: 'Blocked urgent' });
   expect(row.className).toContain('pl-6');
@@ -340,7 +354,8 @@ test('Favorites lists starred views and tasks above Work and opens them', () => 
     },
   });
   const rows = navRows();
-  expect(rows.slice(0, 7)).toEqual([
+  expect(rows.slice(0, 8)).toEqual([
+    'cockpit',
     'inbox',
     'threads',
     'drafts',

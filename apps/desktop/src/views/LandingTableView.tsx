@@ -16,6 +16,7 @@ import {
   visibleLandingRows,
 } from '../lib/landingView';
 import { groupFailedAttempts } from '../lib/queueHistory';
+import { useStatusModelOf } from '../lib/statusModel';
 import { GroupHeader } from '@/ui/ai/group-header';
 import { ListRow } from '@/ui/ai/list-row';
 import { PageHeader, ViewTabs } from '@/ui/ai/page-header';
@@ -63,6 +64,7 @@ export function LandingTableView({
   onOpenPr,
 }: LandingTableViewProps) {
   const [filters, setFilters] = useState<LandingFilters>(readStoredFilters);
+  const model = useStatusModelOf(data.config);
   useEffect(() => {
     window.localStorage.setItem(
       FILTERS_STORAGE_KEY,
@@ -154,7 +156,7 @@ export function LandingTableView({
   );
   // Durable across daemon restarts, unlike the queue's in-memory history — see
   // `landedFromTasks`.
-  const landedTasks = landedFromTasks(data.tasksIncludingArchived);
+  const landedTasks = landedFromTasks(data.tasksIncludingArchived, model);
   // The queue's verdicts on runs that fell out of it. Neither the snapshot's
   // rows (no failed gate) nor its landed list (merged history only) carry
   // these, so a run the queue bounced would otherwise sit in "Open" looking

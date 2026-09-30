@@ -1,5 +1,6 @@
 import type {
   EffortLevel,
+  RunStep,
   SubagentEvent,
   SubagentSummary,
 } from '@dispatch/core';
@@ -126,6 +127,15 @@ export interface MemoryPromptPort {
   ): void;
   // A final scan of the run's export; the directory stays until its lineage closes.
   runEnded(meta: RunMeta): void;
+}
+
+/** Where the `## Docs` prompt section comes from (docs/service.ts). */
+export interface DocsPromptPort {
+  promptSection(input: {
+    runId: string;
+    taskId: string;
+    dispatchTools: boolean;
+  }): string | null;
 }
 
 export interface ExecutorRun {
@@ -374,11 +384,13 @@ export interface RunMeta {
   // The reasoning effort this run was started at; absent means the model's
   // own default. A resume keeps it, like `model`.
   effort?: EffortLevel;
-  // Serialized ActorRef of the human who pressed dispatch, e.g. `human:ada`.
-  // Absent for a run nobody dispatched by hand (an epic session's auto-fill)
-  // and for runs recorded before this field existed. It is what makes a run —
-  // and the files it claims, and the decisions it parks on — someone's on a
-  // daemon more than one person uses.
+  // Serialized ActorRef of the human the run is for, e.g. `human:ada`: who
+  // pressed dispatch, or started the fan-out that dispatched it. A resume,
+  // follow-up or review/verify run keeps its work's owner unless a person
+  // pressed for it. Absent for a run nobody owns (no human at all) and for
+  // runs recorded before this field existed. It is what makes a run — and the
+  // files it claims, and the decisions it parks on — someone's on a daemon
+  // more than one person uses.
   dispatchedBy?: string;
   // The human whose personal memory this run reads and writes (read it through
   // runOperator). null = no one; absent = recorded before the field.
@@ -472,6 +484,11 @@ export interface RunMeta {
   // so lists can show fan-out without reading the transcript. Absent until
   // the first sub-agent is spawned.
   subagents?: SubagentSummary;
+  // What a live run's agent is doing, in words (core's runStepFromEntry), and
+  // when it said so: kept current from its log entries as they are written,
+  // so a list read never opens a transcript. In memory only; absent before
+  // the first step and once the run is terminal.
+  lastStep?: RunStep;
 }
 
 // A run's kind, defaulted for the transcripts and registry entries written

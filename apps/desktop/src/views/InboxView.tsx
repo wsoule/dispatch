@@ -22,6 +22,7 @@ import { useNotificationInbox } from '../components/shell/NotificationInboxConte
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { TaskSpecView } from '../components/tasks/TaskSpecView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useTaskDoc, withBody } from '../hooks/useTaskDoc';
 import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
 import { tintForState } from '../lib/feedState';
@@ -94,10 +95,10 @@ interface InboxViewProps {
   onOpenPr: (number: number) => void;
 }
 
-/** Which task tab a row's click lands on: asks about the diff go to the diff;
- * everything else lands in the conversation. */
+/** Which task mode a row's click lands on: asks about the diff go to the review;
+ * everything else lands in the run's transcript. */
 function tabFor(state: FeedState): TaskTab {
-  return state === 'review' || state === 'ruling' ? 'diff' : 'chat';
+  return state === 'review' || state === 'ruling' ? 'review' : 'run';
 }
 
 /** The live rows' read keys, tagged with the project they were loaded for so a project
@@ -259,7 +260,7 @@ export function InboxView({
         openTask(item.row.taskId, tabFor(item.row.state), item.row.runId);
         return;
       case 'landing':
-        openTask(item.row.taskId, 'diff', item.row.runId);
+        openTask(item.row.taskId, 'review', item.row.runId);
         return;
       case 'pr':
         onOpenPr(item.pr.number);
@@ -845,8 +846,11 @@ function TaskSummary({
   project: DispatchProjectData;
 }) {
   const tasks = project.tasksIncludingArchived ?? project.tasks ?? [];
-  const doc = tasks.find((t) => t.meta.id === taskId);
-  if (doc === undefined) {
+  const full = useTaskDoc(project.client, project.port, taskId);
+  const listed = tasks.some((t) => t.meta.id === taskId);
+  if (listed && full === undefined) return null;
+  const doc = withBody(tasks, taskId, full);
+  if (doc === null) {
     return (
       <EmptyState
         heading="Task not loaded"

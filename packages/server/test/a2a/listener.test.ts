@@ -1,5 +1,6 @@
 import { openSqliteDb, TaskStore } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
+import { spawnSync } from 'node:child_process';
 import {
   existsSync,
   mkdirSync,
@@ -277,6 +278,117 @@ describe('the A2A listener', () => {
     expect(all).not.toContain('QUERY-MARKER-55e1');
   });
 
+  it('reports the settings it opens from, and keeps them through a disable', async () => {
+    const h = await boot();
+    const tunnel = {
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      port: await freePort(),
+      publicUrl: 'https://agent.example.com',
+      trustForwardedFor: true,
+    };
+    expect((await h.a2a.applySettings(tunnel)).settings).toEqual(tunnel);
+    expect((await h.a2a.disable()).settings).toEqual({
+      ...tunnel,
+      enabled: false,
+    });
+  });
+
+  it('reports a failing listener’s settings, not the defaults', async () => {
+    const h = await boot();
+    const failing = {
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      host: '0.0.0.0',
+      port: await freePort(),
+      publicUrl: 'https://agent.example.com',
+      tls: { certPath: join(root, 'missing.pem'), keyPath: join(root, 'k') },
+    };
+    expect(await h.a2a.applySettings(failing)).toMatchObject({
+      listening: false,
+      error: expect.stringContaining('missing.pem'),
+      settings: failing,
+    });
+  });
+
+  it('reports one-boot flags in its settings', async () => {
+    const port = await freePort();
+    const h = await boot({ a2a: { port } });
+    expect(h.a2a.status().settings).toEqual({
+      ...DEFAULT_LISTENER,
+      enabled: true,
+      port,
+    });
+  });
+
+  it('proposes a free port while the settings name none, and none once they do', async () => {
+    const h = await boot();
+    const suggested = h.a2a.status().suggestedPort;
+    expect(suggested).toBeGreaterThan(0);
+    expect(suggested).not.toBe(h.port);
+    const probe = Bun.serve({
+      port: suggested ?? 0,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(''),
+    });
+    await probe.stop(true);
+    const port = await freePort();
+    await h.a2a.applySettings({ ...DEFAULT_LISTENER, port });
+    expect(h.a2a.status().suggestedPort).toBeNull();
+  });
+
+  it('proposes a port nothing holds, not a fixed one', async () => {
+    const first = await boot();
+    const taken = first.a2a.status().suggestedPort;
+    expect(taken).not.toBeNull();
+    await first.stop();
+    handle = null;
+    const holder = Bun.serve({
+      port: taken!,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(''),
+    });
+    try {
+      const next = (await boot()).a2a.status().suggestedPort;
+      expect(next).not.toBeNull();
+      expect(next).not.toBe(taken);
+    } finally {
+      await holder.stop(true);
+    }
+  });
+
+  it('names the daemon’s team-local TLS files, and none without them', async () => {
+    const plain = await boot();
+    expect(plain.a2a.status().teamTls).toBeNull();
+    await plain.stop();
+    handle = null;
+    const dir = mkdtempSync(join(tmpdir(), 'a2a-team-tls-'));
+    const certPath = join(dir, 'cert.pem');
+    const keyPath = join(dir, 'key.pem');
+    const made = spawnSync('openssl', [
+      'req',
+      '-x509',
+      '-newkey',
+      'rsa:2048',
+      '-nodes',
+      '-keyout',
+      keyPath,
+      '-out',
+      certPath,
+      '-days',
+      '1',
+      '-subj',
+      '/CN=dispatch.test',
+    ]);
+    expect(made.status).toBe(0);
+    try {
+      const team = await boot({ host: '0.0.0.0', tls: { certPath, keyPath } });
+      expect(team.a2a.status().teamTls).toEqual({ certPath, keyPath });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('lists approved legacy a2a.* agents that have no clients row, never revoked or pending ones', async () => {
     const h = await boot();
     seedAgent(root, 'agent:test/a2a.legacy', 'legacy-token');
@@ -328,7 +440,14 @@ describe('the A2A listener', () => {
       const res = await rawFetch(`http://127.0.0.1:${port}/a2a/v1/tasks`);
       expect(res.status).toBe(500);
       expect(res.headers.get('content-type')).toContain('application/json');
-      expect(await res.json()).toEqual({ error: 'internal error' });
+      expect(await res.json()).toEqual({
+        error: {
+          code: 500,
+          status: 'INTERNAL',
+          message: 'internal error',
+          details: [],
+        },
+      });
     } finally {
       spy.mockRestore();
       await listener.close();

@@ -42,8 +42,9 @@ export interface ThreadPaneProps {
   onAnswer: MessageRowProps['onAnswer'];
   onOpen: (action: RefAction) => void;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
-  /** Reads a memory gate's proposal; without it there is no proposal to show. */
+  /** Declines an open question from an A2A client; without it there is no Decline. */
   client?: MessageRowProps['client'];
+  /** The daemon's port, keying a memory gate's proposal read. */
   port?: number;
   route: ReplyRoute;
   /** Sends under the reply draft's idempotency key, kept until a send or an edit. */

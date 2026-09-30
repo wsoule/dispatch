@@ -1,5 +1,24 @@
 export const CORE_VERSION = '0.24.0';
 export * from './status.js';
+export * from './kinds.js';
+export * from './containerRef.js';
+export * from './comments.js';
+export * from './people.js';
+export * from './labels.js';
+export {
+  formatMilestoneMigrationReport,
+  migrateLegacyMilestones,
+} from './milestoneMigration.js';
+export type {
+  MilestoneMigrationOptions,
+  MilestoneMigrationReport,
+  MilestoneProject,
+} from './milestoneMigration.js';
+export {
+  FileCommentStore,
+  generateCommentId,
+  SqliteCommentStore,
+} from './commentStore.js';
 export * from './types.js';
 export {
   ATTACHMENT_MAX_BYTES,
@@ -8,6 +27,8 @@ export {
   sanitizeAttachmentName,
 } from './attachments.js';
 export * from './subagents.js';
+export { runStepFromEntry } from './runStep.js';
+export type { RunStep, RunStepEntry } from './runStep.js';
 export * from './preview.js';
 export { absoluteGitLocation } from './gitLocation.js';
 export {
@@ -19,9 +40,11 @@ export {
   generateFindingId,
   generateLedgerId,
   generateRunId,
+  generateSyncedRunId,
   generateSyncedTaskId,
   generateTaskId,
   isTaskId,
+  SYNCED_RUN_ID_HEX,
   SYNCED_TASK_ID_HEX,
   TASK_ID_PATTERN,
   taskIdFromFilename,
@@ -68,7 +91,11 @@ export {
   untrustedBlock,
   untrustedFenced,
   untrustedInline,
+  untrustedVerbatim,
 } from './untrusted.js';
+export * from './docs.js';
+export { DEFAULT_DOCS, parseDocsConfig, readDocsConfig } from './docsConfig.js';
+export type { DocsConfig, DocsConfigWarning } from './docsConfig.js';
 export { memoryReadView } from './memoryRead.js';
 export {
   parseTaskFile,
@@ -79,6 +106,7 @@ export {
   getSection,
   removeSection,
   setSection,
+  splitSections,
 } from './taskfile.js';
 export type { Amendment } from './taskfile.js';
 export {
@@ -142,11 +170,16 @@ export {
   retireLegacySources,
 } from './retire.js';
 export type { RetiredSource, RetireOptions, RetireReport } from './retire.js';
-export { materializeReceipts, restoreReceipts } from './receipts.js';
+export {
+  materializeReceipts,
+  receiptSteps,
+  restoreReceipts,
+} from './receipts.js';
 export type {
   ReceiptsExport,
   ReceiptsProblem,
   ReceiptsRestore,
+  ReceiptsScope,
   ReceiptsTally,
 } from './receipts.js';
 export { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
@@ -169,8 +202,10 @@ export {
   PRIORITY_ORDER,
   findDependencyCycles,
   computeStack,
+  fanoutWaitingOn,
+  releasesFanoutDependents,
 } from './graph.js';
-export type { TaskStack } from './graph.js';
+export type { FanoutBlocker, TaskStack } from './graph.js';
 export {
   AGE_HORIZON_DAYS,
   DEFAULT_QUEUE_WEIGHTS,
@@ -305,27 +340,43 @@ export type {
   CredentialsFile,
   ProjectCredentials,
 } from './credentials.js';
+export * from './linearContainers.js';
+export * from './linearFields.js';
+export * from './linearLabels.js';
+export * from './linearMerge.js';
+export * from './linearPeople.js';
+export * from './linearStatuses.js';
 export {
   DEFAULT_STATUS_MAP,
   externalId,
-  issueFromTask,
   LINEAR_EXTERNAL_PREFIX,
+  linearExternal,
   parseExternal,
+  parseLinearExternal,
   priorityFromLinear,
   priorityToLinear,
   resolveConflict,
   resolveWorkflowState,
-  statusFromState,
-  taskCreateFromIssue,
-  taskPatchFromIssue,
 } from './linearMap.js';
 export type {
-  IssueMapContext,
+  LinearAttachment,
+  LinearEntity,
+  LinearRef,
+  LinearComment,
+  LinearInitiative,
+  LinearInitiativeInput,
   LinearIssue,
   LinearIssueInput,
   LinearLabel,
+  LinearMilestoneInput,
+  LinearProject,
+  LinearProjectInput,
+  LinearProjectMilestone,
+  LinearProjectStatus,
+  LinearRelation,
+  LinearTruncatedField,
+  LinearUser,
   LinearWorkflowState,
-  TaskMapContext,
 } from './linearMap.js';
 export { normalizeProjectPath } from './projectPath.js';
 export {
@@ -335,13 +386,16 @@ export {
 } from './registry.js';
 export type { RegisteredProject } from './registry.js';
 export {
+  describeDroppedEntry,
   handleFromEmail,
+  MAX_HANDLE_BYTES,
   parseTeam,
+  parseTeamReport,
   serializeTeam,
   TeamParseError,
   upsertMember,
 } from './team.js';
-export type { TeamMember } from './team.js';
+export type { DroppedEntry, TeamMember } from './team.js';
 export { ActorContext } from './actorContext.js';
 export type { GitReader } from './actorContext.js';
 export {

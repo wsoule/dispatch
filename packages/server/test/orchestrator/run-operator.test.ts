@@ -1,11 +1,18 @@
 import { ActorContext } from '@dispatch/core';
 import { beforeEach, describe, expect, it } from 'bun:test';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 import { FakeExecutor } from '../../src/orchestrator/executors/fake.js';
 import type { Orchestrator } from '../../src/orchestrator/orchestrator.js';
-import { runLineage, runOperator } from '../../src/orchestrator/types.js';
+import {
+  OrchestratorConflictError,
+  runLineage,
+  runOperator,
+} from '../../src/orchestrator/types.js';
 import type { RunMeta } from '../../src/orchestrator/types.js';
 import {
+  LINEAR_STATUSES,
   makeOrchestrator,
   useTempProject,
   waitFor,
@@ -343,4 +350,32 @@ describe('who a run acts for', () => {
     expect(runOperator(recovered)).toBe('human:wyat');
     await settled(orch, recovered, 'failed');
   });
+});
+
+describe('wakeTask', () => {
+  // A human's wake would otherwise continue the finished session and reopen it.
+  it.each(['Done', 'Canceled'])(
+    'refuses a task in a %s status of a Linear-style model',
+    async (status) => {
+      writeFileSync(
+        join(project.root(), '.dispatch', 'config.yml'),
+        LINEAR_STATUSES
+      );
+      const task = store.create({ title: `closed-${status}` });
+      await finished(
+        await orch.dispatch(task.meta.id, 'claude', { actor: 'human:wyat' })
+      );
+      store.update(task.meta.id, { status });
+      const runs = orch.list().length;
+      await expect(
+        orch.wakeTask(task.meta.id, {
+          actor: 'human:wyat',
+          continueFinished: true,
+          operator: 'human:wyat',
+        })
+      ).rejects.toBeInstanceOf(OrchestratorConflictError);
+      expect(orch.list().length).toBe(runs);
+      expect(store.get(task.meta.id)?.meta.status).toBe(status);
+    }
+  );
 });

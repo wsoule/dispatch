@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 
 import {
+  type ActionFeedbackCache,
   describeAction,
   describeError,
   withActionFeedback,
@@ -130,5 +131,24 @@ describe('success feedback', () => {
     await api.handleArchiveRun();
     expect(said).toEqual([]);
     expect(failed).toEqual(['nope']);
+  });
+
+  test('with a cache, an unchanged handler keeps its wrapper across rewraps', () => {
+    const cache: ActionFeedbackCache = new WeakMap();
+    const handleArchiveRun = () => Promise.resolve();
+    const first = withActionFeedback(
+      { handleArchiveRun, handleCancelRun: () => Promise.resolve() },
+      () => {},
+      undefined,
+      cache
+    );
+    const second = withActionFeedback(
+      { handleArchiveRun, handleCancelRun: () => Promise.resolve() },
+      () => {},
+      undefined,
+      cache
+    );
+    expect(second.handleArchiveRun).toBe(first.handleArchiveRun);
+    expect(second.handleCancelRun).not.toBe(first.handleCancelRun);
   });
 });

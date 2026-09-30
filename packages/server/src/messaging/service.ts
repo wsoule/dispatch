@@ -25,6 +25,7 @@ import {
   runKind,
   TERMINAL_RUN_STATES,
 } from '../orchestrator/types.js';
+import { statusModelFor } from '../statuses.js';
 import { tierAllows } from '../tiers.js';
 import {
   answeredWithOwnerCredential,
@@ -51,7 +52,7 @@ import {
 } from './toolApproval.js';
 
 // Gate types dispatchd implements a handler for; a sub-project adds its type
-// here with its handler.
+// here with its handler (task-proposal's is the A2A bridge's).
 const DISPATCH_GATE_TYPES = [
   'tool-approval',
   'scope',
@@ -59,6 +60,8 @@ const DISPATCH_GATE_TYPES = [
   'agent-registration',
   'overseer-action',
   'memory',
+  'task-proposal',
+  'doc',
 ] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.
@@ -241,7 +244,7 @@ export function openMessaging(deps: {
     try {
       const task = deps.store.get(taskId);
       if (task === null) return 'is missing';
-      const state = wakeRefusal(task);
+      const state = wakeRefusal(task, statusModelFor(deps.rootDir));
       return state === null ? null : `is ${state}`;
     } catch (err) {
       return `could not be read: ${err instanceof Error ? err.message : String(err)}`;
@@ -544,13 +547,14 @@ export function openMessaging(deps: {
       );
       return;
     }
-    const message = store.getMessage(e.delivery.messageId);
+    // Channel membership reaches no socket; only the federation router reads it.
+    if (e.type === 'membership') return;
+    const messageId = e.type === 'remote' ? e.messageId : e.delivery.messageId;
+    const deliveryId =
+      e.type === 'remote' ? `remote:${e.recipient}` : e.delivery.id;
+    const message = store.getMessage(messageId);
     deps.events.broadcast(
-      {
-        type: 'delivery.changed',
-        deliveryId: e.delivery.id,
-        messageId: e.delivery.messageId,
-      },
+      { type: 'delivery.changed', deliveryId, messageId },
       message === null ? () => false : messageAudience(store, message)
     );
   });

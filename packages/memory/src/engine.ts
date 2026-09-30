@@ -317,7 +317,8 @@ export class MemoryEngine {
 
   viewer(principal: Principal): Viewer {
     refuseA2A(principal);
-    const taskId = this.deps.host.taskOfPrincipal(principal);
+    // Any run of an A2A-provenance task, whatever its kind, is an A2A run.
+    const taskId = this.deps.host.runTaskOf(principal);
     const a2aRun =
       principal.kind === 'run' &&
       taskId !== null &&

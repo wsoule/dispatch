@@ -26,11 +26,22 @@ interface ListenOptions {
   token?: string;
 }
 
+// A typed name as `clients add` stores it; mirrors @dispatch/a2a's clientNameFor.
+function clientNameFor(raw: string): string {
+  const normalized = raw
+    .toLowerCase()
+    .replace(/[^a-z0-9._-]/g, '-')
+    .replace(/^[^a-z0-9]+/, '')
+    .slice(0, 36);
+  return `a2a.${normalized}`;
+}
+
 // The one client a name picks out: its address, its `a2a.` name, or the name
 // as typed; several matches (two owners' clients) need the address instead.
 function clientNamed(clients: A2AClientSummary[], arg: string): string {
+  const name = clientNameFor(arg);
   const matches = clients.filter(
-    (c) => c.address === arg || c.name === arg || c.name === `a2a.${arg}`
+    (c) => c.address === arg || c.name === arg || c.name === name
   );
   if (matches.length === 0) throw new CliError(`no A2A client ${arg}`);
   if (matches.length > 1) {
@@ -130,23 +141,25 @@ export function registerA2ACommands(program: Command, ctx: CliContext): void {
         throw new CliError('--tls-cert and --tls-key go together');
       }
       const client = await withAppToken(o.token, 'dispatch a2a listen');
-      printStatus(
-        await client.setListener({
-          enabled: true,
-          host: o.host ?? '127.0.0.1',
-          port,
-          publicUrl: o.publicUrl ?? null,
-          tls:
-            o.tlsCert === undefined || o.tlsKey === undefined
-              ? null
-              : {
-                  certPath: resolve(ctx.cwd, o.tlsCert),
-                  keyPath: resolve(ctx.cwd, o.tlsKey),
-                },
-          trustForwardedFor: o.trustForwardedFor === true,
-          standalone: o.standalone === true,
-        })
-      );
+      const status = await client.setListener({
+        enabled: true,
+        host: o.host ?? '127.0.0.1',
+        port,
+        publicUrl: o.publicUrl ?? null,
+        tls:
+          o.tlsCert === undefined || o.tlsKey === undefined
+            ? null
+            : {
+                certPath: resolve(ctx.cwd, o.tlsCert),
+                keyPath: resolve(ctx.cwd, o.tlsKey),
+              },
+        trustForwardedFor: o.trustForwardedFor === true,
+        standalone: o.standalone === true,
+      });
+      printStatus(status);
+      // Saved but closed (port in use, bad certificate): exit non-zero for scripts.
+      if (!status.listening)
+        throw new CliError('the A2A listener did not open');
     });
 
   a2a

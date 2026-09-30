@@ -102,6 +102,9 @@ export class TestMemoryHost implements MemoryHost {
       ? (this.runTasks.get(principal.address.slice('run:'.length)) ?? null)
       : null;
   }
+  runTaskOf(principal: Principal): string | null {
+    return this.taskOfPrincipal(principal);
+  }
   changed(change: MemoryChange): void {
     this.changes.push(change);
   }

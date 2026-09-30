@@ -1,13 +1,17 @@
 // Reads back what the daemon writes into a run transcript for a bus message:
 // renderForAgent's header and quoted body, and renderDigestLine's one line.
 
-const HEADER = /^\[message from (\S+) · (.+)\]$/;
+// renderForAgent labels an external sender `(external)` and a teammate's replica `(remote: …)`.
+const HEADER =
+  /^\[message from (\S+)(?: \((external|remote: [^)]*)\))? · (.+)\]$/;
 const QUOTED = /^│ (.*)$/;
 const DIGEST = /^📬(?: #(\S+) ·)? (\S+) from (\S+): (.*) \((m-[^\s)]+)\)$/u;
 
 /** A pushed message as the agent saw it, split back into its parts. */
 export interface DeliveredMessage {
   from: string;
+  /** The daemon labelled the sender external: its body is not to be trusted as markup. */
+  external: boolean;
   kind: string;
   urgent: boolean;
   messageId: string;
@@ -21,7 +25,7 @@ export function parseDeliveredText(text: string): DeliveredMessage | null {
   const lines = text.split('\n');
   const header = HEADER.exec(lines[0] ?? '');
   if (header === null) return null;
-  const tags = (header[2] ?? '').split(' · ');
+  const tags = (header[3] ?? '').split(' · ');
   const messageId = tags[tags.length - 1] ?? '';
   if (tags.length < 2 || !messageId.startsWith('m-')) return null;
   const body: string[] = [];
@@ -33,6 +37,7 @@ export function parseDeliveredText(text: string): DeliveredMessage | null {
   }
   return {
     from: header[1] ?? '',
+    external: header[2] === 'external',
     kind: tags[0] ?? '',
     urgent: tags.slice(1, -1).includes('urgent'),
     messageId,

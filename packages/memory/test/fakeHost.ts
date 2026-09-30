@@ -20,6 +20,8 @@ export class FakeMemoryHost implements MemoryHost {
   operators = new Map<string, Operator>();
   tasks = new Map<string, IndexContext>();
   runTasks = new Map<string, string>();
+  // Review and verify runs: they work a task but do not act as its run.
+  auxRunTasks = new Map<string, string>();
   changes: MemoryChange[] = [];
   clock = new Date('2026-09-25T10:00:00.000Z');
   ruling: PolicyRuling = { mode: 'block' };
@@ -44,6 +46,12 @@ export class FakeMemoryHost implements MemoryHost {
   taskOfPrincipal(principal: Principal): string | null {
     return principal.kind === 'run'
       ? (this.runTasks.get(principal.address.slice('run:'.length)) ?? null)
+      : null;
+  }
+  runTaskOf(principal: Principal): string | null {
+    const runId = principal.address.slice('run:'.length);
+    return principal.kind === 'run'
+      ? (this.runTasks.get(runId) ?? this.auxRunTasks.get(runId) ?? null)
       : null;
   }
   changed(change: MemoryChange): void {

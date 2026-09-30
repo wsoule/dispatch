@@ -15,7 +15,7 @@ import { errorResponse, jsonResponse } from './http.js';
 // The four attachment routes under /api/tasks/:id/attachments. The bytes live
 // under `.dispatch/attachments/<taskId>/` on this machine; the task's
 // frontmatter (or row) carries the list, so every write ends with the same
-// cache rebuild and `task.changed` broadcast a PATCH performs.
+// cache refresh and `task.changed` broadcast a PATCH performs.
 
 // The slice of ApiContext these routes touch, so a test can drive them with
 // a store and a fake event bus.
@@ -89,8 +89,8 @@ function persistList(
   attachments: TaskAttachment[]
 ): TaskDoc {
   const doc = ctx.store.update(id, { attachments });
-  ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  ctx.cache.refresh(ctx.store, [id]);
+  ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return doc;
 }
 

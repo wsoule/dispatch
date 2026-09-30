@@ -5,7 +5,7 @@ import {
   untrustedFenced,
   untrustedInline,
 } from '@dispatch/core';
-import type { TaskDoc } from '@dispatch/core';
+import type { TaskComment, TaskDoc } from '@dispatch/core';
 
 import { renderOrientationSection } from './orientation.js';
 import type { RepoOrientation } from './orientation.js';
@@ -14,6 +14,34 @@ import type { RunMeta, RunSurvey } from './types.js';
 // Re-exported from core (where @dispatch/mcp can reach them too) because
 // every prompt builder in this package imports them from './prompt.js'.
 export { untrustedBlock, untrustedFenced, untrustedInline };
+
+// The newest comments kept in a prompt, and the character budget they share.
+const PROMPT_COMMENT_LIMIT = 20;
+const PROMPT_COMMENT_CHARS = 8000;
+
+// A task's comment thread, oldest first, for the next run to read: the notes
+// earlier runs and teammates left with task_comment. Keeps the newest that fit
+// the budget and says how many older ones it left out. Null when there are none.
+export function renderCommentsSection(
+  comments: readonly TaskComment[]
+): string | null {
+  if (comments.length === 0) return null;
+  const kept: string[] = [];
+  let used = 0;
+  for (const c of [...comments].reverse()) {
+    if (kept.length === PROMPT_COMMENT_LIMIT) break;
+    const entry = `**${untrustedInline(c.author)}** · ${c.created}\n${untrustedBlock(c.body)}`;
+    if (kept.length > 0 && used + entry.length > PROMPT_COMMENT_CHARS) break;
+    kept.push(entry);
+    used += entry.length;
+  }
+  const omitted = comments.length - kept.length;
+  return [
+    '## Comments',
+    ...(omitted > 0 ? [`(${String(omitted)} earlier comments omitted.)`] : []),
+    ...kept.reverse(),
+  ].join('\n\n');
+}
 
 // Renders a task's recorded amendments after its description, with an
 // explicit line stating they take precedence over it where they conflict.
@@ -39,7 +67,11 @@ export function buildTaskPrompt(
   // their prompt must not send the agent after tools it does not have.
   dispatchTools = true,
   // The address the agent asks (the project owner); null names a placeholder.
-  human: string | null = null
+  human: string | null = null,
+  // The rendered `## Docs` section; null when docs are off or nothing links.
+  docsSection: string | null = null,
+  // The task's comment thread, oldest first; its newest entries join the prompt.
+  comments: readonly TaskComment[] = []
 ): string {
   // Lifted out of the raw body dump so it renders as its own block after
   // the description, with the override line, instead of an unmarked paragraph.
@@ -56,6 +88,9 @@ export function buildTaskPrompt(
     sections.push(renderAmendmentsSection(amendmentsText));
   }
 
+  const commentsSection = renderCommentsSection(comments);
+  if (commentsSection !== null) sections.push(commentsSection);
+
   if (parentEpic !== null) {
     sections.push(
       `## Parent epic: ${parentEpic.meta.id} — ${untrustedInline(parentEpic.meta.title)}\n\n${parentEpic.body.trim()}`
@@ -63,6 +98,7 @@ export function buildTaskPrompt(
   }
 
   if (memorySection !== null) sections.push(memorySection);
+  if (docsSection !== null) sections.push(docsSection);
 
   // The orientation section answers the questions the two instructions below
   // would otherwise send the agent off to answer for itself, so when it is
@@ -97,11 +133,11 @@ export function buildTaskPrompt(
             'and `task_comment` available now — other agents may be dispatched ' +
             'on other tasks in this tracker at the same time, so call `run_list` ' +
             'before assuming you have exclusive access to the repo, and log ' +
-            "meaningful progress with `task_comment`; this task's Activity log " +
+            "meaningful progress with `task_comment`; this task's comment thread " +
             'is the shared record other agents and humans will read.'
         : 'The dispatch MCP server is connected in this session, with ' +
             '`task_comment` available now — log meaningful progress with it; this ' +
-            "task's Activity log is the shared record other agents and humans will " +
+            "task's comment thread is the shared record other agents and humans will " +
             'read. Concurrency is already reported above, so you do not need to ' +
             'open with `run_list`.'
     );

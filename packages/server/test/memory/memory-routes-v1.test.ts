@@ -10,6 +10,7 @@ import { startServer } from '../../src/index.js';
 import { importClaudeRoute } from '../../src/memory/routes.js';
 import { SYSTEM_SENDER } from '../../src/messaging/gates.js';
 import { FakeOverseer } from '../../src/orchestrator/overseers/fake.js';
+import { approvedClient, useSeedBase } from '../a2a/seed.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth, wsUrl } from '../testAuth.js';
 
@@ -108,8 +109,13 @@ async function liveRun(
       body: JSON.stringify({ title, ...taskFields }),
     })
   );
+  return { runId: await dispatchLive(task.meta.id), taskId: task.meta.id };
+}
+
+// Dispatches an existing task with the app token and waits until its run is `running`.
+async function dispatchLive(taskId: string): Promise<string> {
   const meta = await json<{ id: string }>(
-    await fetch(`${base}/api/tasks/${task.meta.id}/runs`, {
+    await fetch(`${base}/api/tasks/${taskId}/runs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ executor: 'claude' }),
@@ -121,7 +127,31 @@ async function liveRun(
     );
     return r.meta.state === 'running';
   });
-  return { runId: meta.id, taskId: task.meta.id };
+  return meta.id;
+}
+
+// A client's handoff the owner approved: a task with a2a.db and messages.db evidence.
+async function handedOffTask(title: string): Promise<string> {
+  useSeedBase(base);
+  const { caller } = await approvedClient(`c${Date.now()}`);
+  const opened = await handle.a2a.port!.open(caller, {
+    clientMessageId: `m-${title}`,
+    contextId: null,
+    kind: 'handoff',
+    to: null,
+    replyTo: null,
+    body: 'Please do it.',
+    refs: [],
+    work: { skill: 'handoff', title },
+  });
+  if (opened.kind !== 'task') throw new Error('expected a task');
+  const row = handle.a2a.store!.getTask(opened.taskId)!;
+  await handle.messaging.engine.reply(
+    row.gate!,
+    { body: '', choice: 'approve' },
+    { address: handle.a2a.port!.deps.ownerRef, canDecide: true }
+  );
+  return row.dispatchTask!;
 }
 
 function runToken(): string {
@@ -422,6 +452,93 @@ describe('personal privacy', () => {
         'ledger:l-abcdef@2026-01-01T00:00:00.000Z'
       )
     ).toBeNull();
+  });
+});
+
+// The booted daemon decides A2A provenance the way docs does: from handoff
+// evidence, never the a2a label alone.
+describe('A2A provenance', () => {
+  it('a run of a handed-off task acts for no one and lists no project memory', async () => {
+    await fetch(`${base}/api/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        scope: 'project',
+        kind: 'convention',
+        title: 'PROJECT-ONLY convention',
+        body: 'b',
+      }),
+    });
+    const titlesFor = async (token: string): Promise<string[]> =>
+      (
+        await json<{ entries: { title: string }[] }>(
+          await rawFetch(`${base}/api/memory`, { headers: authHeaders(token) })
+        )
+      ).entries.map((e) => e.title);
+    const operatorOf = async (runId: string): Promise<string | null> =>
+      (
+        await json<{ meta: { operator?: string | null } }>(
+          await fetch(`${base}/api/runs/${runId}`)
+        )
+      ).meta.operator ?? null;
+
+    const plain = await liveRun('ordinary task');
+    expect(await titlesFor(runToken())).toContain('PROJECT-ONLY convention');
+    expect(await operatorOf(plain.runId)).toBe('human:test');
+
+    await liveRun('labelled only', { labels: ['a2a'] });
+    expect(await titlesFor(runToken())).toContain('PROJECT-ONLY convention');
+
+    const asked = await dispatchLive(await handedOffTask('asked over A2A'));
+    expect(await titlesFor(runToken())).not.toContain(
+      'PROJECT-ONLY convention'
+    );
+    expect(await operatorOf(asked)).toBeNull();
+  });
+
+  it('a review run of a handed-off task lists no project memory either', async () => {
+    await fetch(`${base}/api/memory`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        scope: 'project',
+        kind: 'convention',
+        title: 'PROJECT-ONLY convention',
+        body: 'b',
+      }),
+    });
+    // Starts a review run on a fresh task and lists memory with its token.
+    const reviewTitles = async (taskId: string): Promise<string[]> => {
+      await handle.orchestrator.dispatchAuxRun({
+        taskId,
+        kind: 'review',
+        head: 'main',
+        executor: 'claude',
+        buildPrompt: () => 'review this',
+        operator: null,
+      });
+      return (
+        await json<{ entries: { title: string }[] }>(
+          await rawFetch(`${base}/api/memory`, {
+            headers: authHeaders(runToken()),
+          })
+        )
+      ).entries.map((e) => e.title);
+    };
+
+    const plain = await json<{ meta: { id: string } }>(
+      await fetch(`${base}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'reviewed' }),
+      })
+    );
+    expect(await reviewTitles(plain.meta.id)).toContain(
+      'PROJECT-ONLY convention'
+    );
+    expect(await reviewTitles(await handedOffTask('reviewed'))).not.toContain(
+      'PROJECT-ONLY convention'
+    );
   });
 });
 

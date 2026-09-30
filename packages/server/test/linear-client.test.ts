@@ -145,6 +145,13 @@ describe('HttpLinearClient teamId variable types', () => {
     ['issuesUpdatedSince', (c) => c.issuesUpdatedSince('team-1', null)],
     ['issuesUpdatedSince since', (c) => c.issuesUpdatedSince('team-1', 'now')],
     ['issueLinks', (c) => c.issueLinks('team-1')],
+    ['probe', (c) => c.probe('team-1', 'now')],
+    ['comments', (c) => c.comments('team-1', null)],
+    ['comments since', (c) => c.comments('team-1', 'now')],
+    ['projects', (c) => c.projects('team-1', null)],
+    ['projects since', (c) => c.projects('team-1', 'now')],
+    ['projectMilestones', (c) => c.projectMilestones('team-1', null)],
+    ['projectMilestones since', (c) => c.projectMilestones('team-1', 'now')],
   ];
 
   for (const [name, call] of filtered) {
@@ -181,14 +188,45 @@ describe('HttpLinearClient teamId variable types', () => {
       (c) => c.workflowStates('team-1'),
       { states: { nodes: [] } },
     ],
-    ['labels', (c) => c.labels('team-1'), { labels: { nodes: [] } }],
+    [
+      'workspace',
+      (c) => c.workspace('team-1'),
+      {
+        id: 't',
+        key: 'K',
+        name: 'N',
+        states: { nodes: [] },
+        members: { nodes: [] },
+      },
+    ],
+    [
+      'cycles',
+      (c) => c.cycles('team-1'),
+      {
+        cycles: {
+          nodes: [],
+          pageInfo: { hasNextPage: false, endCursor: null },
+        },
+      },
+    ],
   ];
 
   for (const [name, call, team] of lookups) {
     it(`keeps $teamId as String! for ${name}`, async () => {
       const seen: { init?: RequestInit } = {};
       const client = new HttpLinearClient(KEY, {
-        fetchImpl: stubFetch({ body: { data: { team } } }, seen),
+        fetchImpl: stubFetch(
+          {
+            body: {
+              data: {
+                team,
+                viewer: { id: 'u', name: 'n', email: 'e' },
+                projectStatuses: { nodes: [] },
+              },
+            },
+          },
+          seen
+        ),
       });
       await call(client);
 
@@ -226,5 +264,341 @@ describe('HttpLinearClient pagination', () => {
     expect(result.ok).toBe(true);
     if (result.ok) expect(result.data.map((t) => t.id)).toEqual(['t-1', 't-2']);
     expect(call).toBe(2);
+  });
+});
+
+// Linear's published scoring: 0.1 per scalar, 1 per object, and a connection
+// multiplies its children by `first`. A query over 10,000 points is rejected
+// outright, so every document the client sends is checked against it here.
+function estimateComplexity(query: string): number {
+  const selection = query.slice(query.indexOf('{'));
+  const tokens =
+    selection.match(/\(|\)|\{|\}|first:\s*\d+|[A-Za-z_]\w*/g) ?? [];
+  let i = 0;
+  function block(): number {
+    let total = 0;
+    while (i < tokens.length && tokens[i] !== '}') {
+      const token = tokens[i++];
+      if (token === '{') continue;
+      let first = 1;
+      if (tokens[i] === '(') {
+        while (tokens[i] !== ')') {
+          const m = /^first:\s*(\d+)$/.exec(tokens[i]);
+          if (m !== null) first = Number(m[1]);
+          i++;
+        }
+        i++;
+      }
+      if (tokens[i] === '{') {
+        i++;
+        total += first * (1 + block());
+        i++;
+      } else if (!token.startsWith('first')) {
+        total += 0.1;
+      }
+    }
+    return total;
+  }
+  i = 1;
+  return block();
+}
+
+describe('Linear query complexity', () => {
+  it('keeps every query and mutation under the 10,000-point ceiling', async () => {
+    const queries = await import('../src/linear/queries.js');
+    const documents = Object.entries(queries).filter(
+      ([, value]) =>
+        typeof value === 'string' &&
+        (value.startsWith('query') || value.startsWith('mutation'))
+    ) as [string, string][];
+    expect(documents.length).toBeGreaterThan(20);
+    for (const [name, query] of documents) {
+      const cost = estimateComplexity(query);
+      if (cost >= 10_000) throw new Error(`${name} costs ~${cost}`);
+    }
+  });
+
+  it('prices a full issue page at a real, non-trivial cost', async () => {
+    const { ISSUES_QUERY } = await import('../src/linear/queries.js');
+    const cost = estimateComplexity(ISSUES_QUERY);
+    expect(cost).toBeGreaterThan(2_000);
+    expect(cost).toBeLessThan(10_000);
+  });
+});
+
+function issueNode(overrides: Record<string, unknown> = {}): unknown {
+  return {
+    id: 'i-1',
+    identifier: 'HYD-1',
+    title: 'T',
+    description: null,
+    priority: 2,
+    estimate: 3,
+    url: 'https://linear.app/x/issue/HYD-1',
+    createdAt: '2026-01-01T00:00:00.000Z',
+    updatedAt: '2026-01-02T00:00:00.000Z',
+    archivedAt: null,
+    dueDate: '2026-02-01',
+    state: {
+      id: 's',
+      name: 'Todo',
+      type: 'unstarted',
+      color: '#fff',
+      position: 1,
+    },
+    team: { id: 'team-1', key: 'HYD' },
+    assignee: { id: 'u-1' },
+    creator: { id: 'u-2' },
+    cycle: {
+      id: 'c-1',
+      number: 4,
+      name: null,
+      startsAt: '2026-01-01T00:00:00.000Z',
+      endsAt: '2026-01-15T00:00:00.000Z',
+    },
+    project: { id: 'p-1' },
+    projectMilestone: null,
+    parent: { id: 'i-0' },
+    labels: {
+      nodes: [{ id: 'l-1', name: 'bug' }],
+      pageInfo: { hasNextPage: false },
+    },
+    relations: {
+      nodes: [
+        {
+          id: 'r-1',
+          type: 'blocks',
+          issue: { id: 'i-1' },
+          relatedIssue: { id: 'i-9' },
+        },
+      ],
+      pageInfo: { hasNextPage: false },
+    },
+    inverseRelations: {
+      nodes: [
+        {
+          id: 'r-2',
+          type: 'duplicate',
+          issue: { id: 'i-8' },
+          relatedIssue: { id: 'i-1' },
+        },
+        {
+          id: 'r-1',
+          type: 'blocks',
+          issue: { id: 'i-1' },
+          relatedIssue: { id: 'i-9' },
+        },
+      ],
+      pageInfo: { hasNextPage: true },
+    },
+    attachments: {
+      nodes: [
+        {
+          id: 'a-1',
+          title: 'PR',
+          url: 'https://github.com/x/y/pull/1',
+          subtitle: null,
+          sourceType: 'github',
+        },
+      ],
+      pageInfo: { hasNextPage: false },
+    },
+    children: { nodes: [{ id: 'i-2' }], pageInfo: { hasNextPage: false } },
+    ...overrides,
+  };
+}
+
+function page(key: string, nodes: unknown[]): unknown {
+  return {
+    data: {
+      [key]: { nodes, pageInfo: { hasNextPage: false, endCursor: null } },
+    },
+  };
+}
+
+describe('HttpLinearClient issue mapping', () => {
+  it('flattens references and merges both relation directions', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch({ body: page('issues', [issueNode()]) }),
+    });
+    const result = await client.issuesByIds(['i-1']);
+    if (!result.ok) throw new Error(result.error);
+    const [issue] = result.data;
+    expect(issue.assigneeId).toBe('u-1');
+    expect(issue.creatorId).toBe('u-2');
+    expect(issue.projectId).toBe('p-1');
+    expect(issue.projectMilestoneId).toBeNull();
+    expect(issue.parentId).toBe('i-0');
+    expect(issue.childIds).toEqual(['i-2']);
+    expect(issue.estimate).toBe(3);
+    expect(issue.dueDate).toBe('2026-02-01');
+    expect(issue.cycle?.number).toBe(4);
+    expect(issue.relations.map((r) => r.id).sort()).toEqual(['r-1', 'r-2']);
+    expect(issue.relations.find((r) => r.id === 'r-2')).toEqual({
+      id: 'r-2',
+      type: 'duplicate',
+      issueId: 'i-8',
+      relatedIssueId: 'i-1',
+    });
+    expect(issue.attachments[0].url).toBe('https://github.com/x/y/pull/1');
+  });
+
+  it('marks a nested list the page cut short, and only that one', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch({ body: page('issues', [issueNode()]) }),
+    });
+    const result = await client.issuesByIds(['i-1']);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data[0].truncated).toEqual(['relations']);
+  });
+
+  it('asks for ids a page at a time', async () => {
+    const batches: number[] = [];
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: ((_url: string, init: RequestInit) => {
+        const body = JSON.parse(init.body as string) as {
+          variables: { ids: string[] };
+        };
+        batches.push(body.variables.ids.length);
+        return Promise.resolve(
+          new Response(JSON.stringify(page('issues', [])), {
+            headers: { 'content-type': 'application/json' },
+          })
+        );
+      }) as unknown as typeof fetch,
+    });
+    const { ISSUE_PAGE } = await import('../src/linear/queries.js');
+    const ids = Array.from({ length: ISSUE_PAGE * 2 + 5 }, (_, n) => `i-${n}`);
+    await client.issuesByIds(ids);
+    expect(batches).toEqual([ISSUE_PAGE, ISSUE_PAGE, 5]);
+  });
+});
+
+describe('HttpLinearClient labels', () => {
+  it('keeps the team’s and the workspace’s labels, never groups or other teams’', async () => {
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch({
+        body: page('issueLabels', [
+          {
+            id: 'l-1',
+            name: 'bug',
+            color: '#f00',
+            isGroup: false,
+            team: { id: 'team-1' },
+            parent: { name: 'Type' },
+          },
+          {
+            id: 'l-2',
+            name: 'infra',
+            color: '#0f0',
+            isGroup: false,
+            team: null,
+            parent: null,
+          },
+          {
+            id: 'l-3',
+            name: 'Type',
+            color: '#00f',
+            isGroup: true,
+            team: { id: 'team-1' },
+            parent: null,
+          },
+          {
+            id: 'l-4',
+            name: 'other',
+            color: '#000',
+            isGroup: false,
+            team: { id: 'team-2' },
+            parent: null,
+          },
+        ]),
+      }),
+    });
+    const result = await client.labels('team-1');
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data).toEqual([
+      {
+        id: 'l-1',
+        name: 'bug',
+        color: '#f00',
+        group: 'Type',
+        teamId: 'team-1',
+      },
+      { id: 'l-2', name: 'infra', color: '#0f0', group: null, teamId: null },
+    ]);
+  });
+});
+
+describe('HttpLinearClient label update', () => {
+  it('recolors a label and reads it back with its group', async () => {
+    const seen: { init?: RequestInit } = {};
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: stubFetch(
+        {
+          body: {
+            data: {
+              issueLabelUpdate: {
+                success: true,
+                issueLabel: {
+                  id: 'l-1',
+                  name: 'bug',
+                  color: '#0f783c',
+                  isGroup: false,
+                  team: { id: 'team-1' },
+                  parent: { name: 'Type' },
+                },
+              },
+            },
+          },
+        },
+        seen
+      ),
+    });
+    const result = await client.updateLabel('l-1', { color: '#0f783c' });
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data).toEqual({
+      id: 'l-1',
+      name: 'bug',
+      color: '#0f783c',
+      group: 'Type',
+      teamId: 'team-1',
+    });
+    const body = JSON.parse((seen.init?.body ?? '{}') as string) as {
+      query: string;
+      variables: unknown;
+    };
+    expect(body.query).toContain('issueLabelUpdate(id: $id, input: $input)');
+    expect(body.variables).toEqual({ id: 'l-1', input: { color: '#0f783c' } });
+  });
+});
+
+describe('HttpLinearClient walk cap', () => {
+  it('stops a walk that never ends and says so', async () => {
+    let calls = 0;
+    const client = new HttpLinearClient(KEY, {
+      fetchImpl: (() => {
+        calls++;
+        return Promise.resolve(
+          new Response(
+            JSON.stringify({
+              data: {
+                issues: {
+                  nodes: Array.from({ length: 40 }, (_, n) =>
+                    issueNode({ id: `i-${calls}-${n}` })
+                  ),
+                  pageInfo: { hasNextPage: true, endCursor: `c-${calls}` },
+                },
+              },
+            }),
+            { headers: { 'content-type': 'application/json' } }
+          )
+        );
+      }) as unknown as typeof fetch,
+    });
+    const result = await client.issuesUpdatedSince('team-1', null);
+    if (!result.ok) throw new Error(result.error);
+    expect(result.data.truncated).toBe(true);
+    expect(result.data.issues.length).toBe(12_000);
+    expect(calls).toBe(300);
   });
 });

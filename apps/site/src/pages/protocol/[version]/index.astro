@@ -1,0 +1,33 @@
+---
+import ProtocolDocument from '../../../components/ProtocolDocument.astro';
+import Protocol from '../../../layouts/Protocol.astro';
+import { readManifest } from '../../../lib/protocolSource';
+
+// One page per frozen version at its immutable URL, plus the alias pages
+// (/protocol/draft/, /protocol/1.0/) that show a version and name it canonical.
+// /protocol/ itself is the `latest` alias, in ../index.astro.
+export function getStaticPaths() {
+  const manifest = readManifest();
+  const versions = Object.keys(manifest.versions).map((version) => ({
+    params: { version },
+    props: { version, canonical: undefined },
+  }));
+  const aliases = Object.entries(manifest.aliases)
+    .filter(([alias]) => alias !== 'latest')
+    .map(([alias, target]) => ({
+      params: { version: alias },
+      props: { version: target, canonical: `/protocol/${target}/` },
+    }));
+  return [...versions, ...aliases];
+}
+
+interface Props {
+  version: string;
+  canonical: string | undefined;
+}
+const { version, canonical } = Astro.props;
+---
+
+<Protocol version={version} source="spec/" canonical={canonical}>
+  <ProtocolDocument version={version} />
+</Protocol>

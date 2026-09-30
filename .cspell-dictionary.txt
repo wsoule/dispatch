@@ -226,6 +226,8 @@ irrors
 isexe
 jaccard
 jridgewell
+jsdiff
+jsdiff's
 jsonpointer
 katex
 keepalives
@@ -235,7 +237,9 @@ keycaps
 keydowns
 keymap
 keyout
+Khanna
 kiro
+Kunal
 Lamport
 landable
 lede
@@ -266,6 +270,7 @@ mergebasesha
 mergedsha
 metacharacter
 METACHARS
+Metas
 misdescribe
 mktemp
 modelcontextprotocol
@@ -278,7 +283,9 @@ msvc
 musleabihf
 myconstant
 napi
+nbbbb
 ncarto
+ncccc
 neighbour
 neighbours
 neutralised
@@ -378,13 +385,18 @@ reflog
 refmove
 refspec
 refspecs
+regate
 registrator
 rehome
 rehomed
 reimplementation
 reindenting
 reinstallable
+RELS
 renderable
+reparent
+reparented
+reparents
 reparsed
 replayable
 repoint
@@ -417,6 +429,8 @@ rusqlite
 rustls
 rustup
 sandboxing
+satteri
+Sätteri
 scandir
 scannability
 schedulable
@@ -431,6 +445,7 @@ serialised
 serialises
 serialising
 sess
+setext
 shellout
 shiki
 shikijs
@@ -506,6 +521,7 @@ tybys
 typer
 typesafe
 uall
+überblick
 ulid
 ulids
 unanalysable
@@ -537,6 +553,7 @@ unhovered
 unhydratable
 unignorable
 unimportable
+UNINDEXED
 uninit
 unioned
 unioning
@@ -617,9 +634,12 @@ wsoule
 wyats
 wyatsoule
 xhigh
+xmpp
 xxxstarxxx
 Yegge
 Yegge's
 ypes
 zombied
 zwitch
+भाषा
+हिन्दी

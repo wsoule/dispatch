@@ -198,7 +198,7 @@ test('clicking a label pill opens the labels picker over the catalogue, not the 
   const patches: unknown[] = [];
   renderCard({
     onClick: () => (opened += 1),
-    onEditTask: (patch) => patches.push(patch),
+    onEditTask: (id, patch) => patches.push([id, patch]),
     labelCatalogue: ['docs', 'ui'],
   });
   const trigger = screen.getByRole('button', { name: 'Change labels' });
@@ -229,7 +229,9 @@ test('clicking a label pill opens the labels picker over the catalogue, not the 
     fireEvent.pointerDown(option);
     fireEvent.click(option);
   });
-  expect(patches).toEqual([{ labels: ['ui', 'api', 'infra', 'docs'] }]);
+  expect(patches).toEqual([
+    ['t-1', { labels: ['ui', 'api', 'infra', 'docs'] }],
+  ]);
   expect(opened).toBe(0);
 });
 
@@ -237,4 +239,11 @@ test('a card without labels grows no picker', () => {
   renderCard({ labelCatalogue: ['ui'] }, task({ labels: [] }));
   expect(screen.queryByRole('button', { name: 'Change labels' })).toBeNull();
   expect(slot('pills').querySelector('[data-slot=label-pill]')).toBeNull();
+});
+
+test('a card whose run is in the merge queue shows a Landing pill on row 3', () => {
+  renderCard({ landing: 'rebasing' });
+  const badge = slot('pills').querySelector('[data-slot=landing-badge]');
+  expect(badge?.textContent).toBe('Landing');
+  expect(badge?.getAttribute('title')).toBe('Landing · rebasing');
 });

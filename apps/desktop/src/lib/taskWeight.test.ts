@@ -1,4 +1,8 @@
 import type { TaskDoc } from '@dispatch/core/browser';
+import {
+  DEFAULT_STATUS_MODEL,
+  defaultTaskFields,
+} from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import { computeTaskWeights, describeWeight } from './taskWeight';
@@ -29,6 +33,7 @@ function makeTask(
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...overrides,
     },
     body: '',
@@ -39,7 +44,8 @@ describe('computeTaskWeights', () => {
   it('scores urgency from priority', () => {
     const weights = computeTaskWeights(
       [makeTask('a', { priority: 'urgent' }), makeTask('b')],
-      NOW
+      NOW,
+      DEFAULT_STATUS_MODEL
     );
     expect(weights.get('a')?.factors.urgency).toBe(8);
     expect(weights.get('b')?.factors.urgency).toBe(0);
@@ -56,7 +62,8 @@ describe('computeTaskWeights', () => {
         makeTask('open2', { blockedBy: ['blocker'] }),
         makeTask('done', { blockedBy: ['blocker'], status: 'landed' }),
       ],
-      NOW
+      NOW,
+      DEFAULT_STATUS_MODEL
     );
     const blocker = weights.get('blocker');
     expect(blocker?.unblocksCount).toBe(2);
@@ -68,7 +75,7 @@ describe('computeTaskWeights', () => {
       created: '2026-01-01T00:00:00.000Z',
     });
     const fresh = makeTask('fresh');
-    const weights = computeTaskWeights([old, fresh], NOW);
+    const weights = computeTaskWeights([old, fresh], NOW, DEFAULT_STATUS_MODEL);
     expect(weights.get('old')?.factors.age).toBe(3);
     expect(weights.get('fresh')?.factors.age).toBe(0);
   });
@@ -80,7 +87,8 @@ describe('computeTaskWeights', () => {
         makeTask('blocker'),
         makeTask('dropped', { status: 'dropped', blockedBy: ['blocker'] }),
       ],
-      NOW
+      NOW,
+      DEFAULT_STATUS_MODEL
     );
     expect(weights.get('landed')?.score).toBe(0);
     expect(weights.get('blocker')?.unblocksCount).toBe(0);
@@ -90,7 +98,8 @@ describe('computeTaskWeights', () => {
     // Guard: a task with an unknown custom status is treated as open, not terminal.
     const weights = computeTaskWeights(
       [makeTask('custom', { status: 'triage', priority: 'high' })],
-      NOW
+      NOW,
+      DEFAULT_STATUS_MODEL
     );
     expect(weights.get('custom')?.score).toBe(5);
   });
@@ -110,7 +119,8 @@ describe('describeWeight', () => {
         makeTask('blocker', { priority: 'high' }),
         makeTask('dep', { blockedBy: ['blocker'] }),
       ],
-      NOW
+      NOW,
+      DEFAULT_STATUS_MODEL
     );
     const text = describeWeight(weightOf(weights, 'blocker'));
     expect(text).toContain('Urgency 5');
@@ -119,7 +129,11 @@ describe('describeWeight', () => {
   });
 
   it('says so when a task unblocks nothing', () => {
-    const weights = computeTaskWeights([makeTask('a')], NOW);
+    const weights = computeTaskWeights(
+      [makeTask('a')],
+      NOW,
+      DEFAULT_STATUS_MODEL
+    );
     expect(describeWeight(weightOf(weights, 'a'))).toContain(
       'Unblocks nothing'
     );

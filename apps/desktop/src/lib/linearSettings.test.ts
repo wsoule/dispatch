@@ -3,20 +3,20 @@ import type {
   LinearIssueLink,
   LinearStatus,
   LinearSyncSummary,
-  LinearWorkflowState,
+  LinearWebhookStatus,
 } from '@dispatch/client';
 import { describe, expect, it, test } from 'bun:test';
 
 import {
   describeFetchFailure,
+  describeLinearDelivery,
+  formatLinearProgress,
   formatSyncCounts,
   isLinearConfigured,
   linearKeySourceNote,
-  NO_LINEAR_STATE,
   pushToLinearError,
   resolveLinearLink,
-  resolveMappedStateId,
-  statusMapCompleteness,
+  STATUS_ROLE_ROWS,
 } from './linearSettings';
 
 // Builds a minimal LinearStatus, only the fields a given test varies.
@@ -53,12 +53,6 @@ function summary(overrides: Partial<LinearSyncSummary>): LinearSyncSummary {
   };
 }
 
-const states: LinearWorkflowState[] = [
-  { id: 's-backlog', name: 'Backlog', type: 'backlog' },
-  { id: 's-todo', name: 'Todo', type: 'unstarted' },
-  { id: 's-done', name: 'Done', type: 'completed' },
-];
-
 describe('isLinearConfigured', () => {
   test('null status is not configured', () => {
     expect(isLinearConfigured(null)).toBe(false);
@@ -89,48 +83,6 @@ describe('isLinearConfigured', () => {
   });
 });
 
-describe('resolveMappedStateId', () => {
-  test('undefined resolves to the unmapped sentinel', () => {
-    expect(resolveMappedStateId(undefined, states)).toBe(NO_LINEAR_STATE);
-  });
-
-  test('an empty/whitespace name resolves to the unmapped sentinel', () => {
-    expect(resolveMappedStateId('  ', states)).toBe(NO_LINEAR_STATE);
-  });
-
-  test('matches a state name case-insensitively', () => {
-    expect(resolveMappedStateId('done', states)).toBe('s-done');
-  });
-
-  test('a name from a different team (no longer a real state) resolves to unmapped', () => {
-    expect(resolveMappedStateId('In Review', states)).toBe(NO_LINEAR_STATE);
-  });
-});
-
-describe('statusMapCompleteness', () => {
-  test('counts mapped vs unmapped statuses', () => {
-    const result = statusMapCompleteness(
-      ['backlog', 'todo', 'done', 'cancelled'],
-      { backlog: 'Backlog', todo: 'Todo', done: 'Stale Name' },
-      states
-    );
-    expect(result).toEqual({
-      mapped: 2,
-      total: 4,
-      unmapped: ['done', 'cancelled'],
-    });
-  });
-
-  test('every status mapped', () => {
-    const result = statusMapCompleteness(
-      ['backlog', 'todo'],
-      { backlog: 'Backlog', todo: 'Todo' },
-      states
-    );
-    expect(result).toEqual({ mapped: 2, total: 2, unmapped: [] });
-  });
-});
-
 describe('formatSyncCounts', () => {
   test('an all-zero summary reads as nothing changed', () => {
     expect(formatSyncCounts(summary({}))).toBe('Nothing changed');
@@ -139,7 +91,7 @@ describe('formatSyncCounts', () => {
   test('omits zero-valued counts and joins the rest', () => {
     expect(
       formatSyncCounts(summary({ pulled: 3, pushed: 1, conflicts: 2 }))
-    ).toBe('3 pulled · 1 pushed · 2 conflict(s) kept local');
+    ).toBe('3 pulled · 1 pushed · 2 conflict(s) resolved');
   });
 
   test('reports every count when all are non-zero', () => {
@@ -154,7 +106,7 @@ describe('formatSyncCounts', () => {
         })
       )
     ).toBe(
-      '1 pulled · 2 pushed · 3 created locally · 4 created in Linear · 5 conflict(s) kept local'
+      '1 pulled · 2 pushed · 3 created locally · 4 created in Linear · 5 conflict(s) resolved'
     );
   });
 });
@@ -266,6 +218,85 @@ describe('describeFetchFailure', () => {
   it('passes an unnamed status through with its message', () => {
     expect(describeFetchFailure(new ApiError('upstream boom', 502))).toContain(
       'upstream boom'
+    );
+  });
+});
+
+describe('describeLinearDelivery', () => {
+  function hook(overrides: Partial<LinearWebhookStatus>): LinearStatus {
+    return status({
+      webhook: {
+        state: 'polling',
+        url: null,
+        lastDeliveryAt: null,
+        error: null,
+        pollSec: 30,
+        ...overrides,
+      },
+    });
+  }
+
+  test('says changes are live when a webhook delivers them', () => {
+    expect(
+      describeLinearDelivery(hook({ state: 'active', pollSec: 300 }))
+    ).toBe(
+      'Live: Linear delivers changes as they happen. Polling every 300s as a safety net.'
+    );
+  });
+
+  test('points at the missing public origin when it can only poll', () => {
+    expect(describeLinearDelivery(hook({}))).toContain('--public-origin');
+  });
+
+  test('names a failed registration', () => {
+    expect(
+      describeLinearDelivery(
+        hook({ state: 'error', url: 'https://x', error: 'admin required' })
+      )
+    ).toBe('Polling every 30s: registering a webhook failed (admin required).');
+  });
+
+  test('falls back to the interval for a daemon that reports no webhook', () => {
+    expect(describeLinearDelivery(status({ intervalSec: 60 }))).toBe(
+      'Polling every 60s.'
+    );
+  });
+});
+
+describe('formatLinearProgress', () => {
+  test('counts up while the total is unknown, and against it once known', () => {
+    expect(
+      formatLinearProgress({ phase: 'issues', done: 1200, total: null })
+    ).toBe('Fetching issues… 1,200');
+    expect(
+      formatLinearProgress({ phase: 'applying', done: 250, total: 2000 })
+    ).toBe('Writing tasks… 250 of 2,000');
+  });
+});
+
+describe('STATUS_ROLE_ROWS', () => {
+  test('lists every lifecycle role once', () => {
+    expect(STATUS_ROLE_ROWS.map((r) => r.key).sort()).toEqual([
+      'dispatched',
+      'dropped',
+      'landed',
+      'landing',
+      'ready',
+      'review',
+    ]);
+  });
+});
+
+describe('resolveLinearLink for containers', () => {
+  test('resolves a linked project the same way as an issue', () => {
+    const links: Record<string, LinearIssueLink> = {
+      'proj-1': {
+        identifier: 'Checkout',
+        url: 'https://linear.app/x/project/p',
+      },
+    };
+    expect(resolveLinearLink('linear-project:proj-1', links)).toEqual(
+      links['proj-1']
     );
   });
 });

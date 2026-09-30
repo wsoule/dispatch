@@ -1,28 +1,21 @@
 import { AgentCard, canonicalizeAgentCard } from '@a2a-js/sdk';
-import { canonicalStatus } from '@dispatch/core';
 import type { A2ASkill } from '@dispatch/core';
 import type { JsonValue } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
 
 import type { CardInputs } from './port.js';
+import { handoffSupported } from './statuses.js';
+import type { HandoffStatuses } from './statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from './uris.js';
 
-export const BUILT_SKILLS: readonly A2ASkill[] = ['ask'];
+export const BUILT_SKILLS: readonly A2ASkill[] = ['ask', 'handoff', 'status'];
 export const DEFAULT_CARD_DESCRIPTION =
   'A Dispatch project. Ask its owner a question, hand off a piece of software work (the owner approves it before anything runs), or check the status of your handoffs.';
-const HANDOFF_STATUSES = ['draft', 'ready', 'dropped', 'landed'];
-
-// A handoff needs the statuses its draft moves through; legacy names count.
-export function handoffSupported(statuses: readonly string[]): boolean {
-  const have = new Set(statuses.map(canonicalStatus));
-  return HANDOFF_STATUSES.every((s) => have.has(s));
-}
-
 // The skills the card lists: configured (or every built one) and built, with
 // handoff only when the project's statuses support it.
 export function offeredSkills(
   configured: readonly A2ASkill[] | null,
-  statuses: readonly string[],
+  statuses: HandoffStatuses,
   built: readonly A2ASkill[] = BUILT_SKILLS
 ): A2ASkill[] {
   const wanted = configured ?? built;

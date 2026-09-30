@@ -3,23 +3,21 @@ import { describe, expect, it } from 'bun:test';
 import {
   DEFAULT_STATUS_MAP,
   externalId,
-  issueFromTask,
+  linearExternal,
   parseExternal,
+  parseLinearExternal,
   priorityFromLinear,
   priorityToLinear,
   resolveConflict,
   resolveWorkflowState,
-  statusFromState,
-  taskCreateFromIssue,
-  taskPatchFromIssue,
 } from '../src/linearMap.js';
 import type {
   LinearIssue,
   LinearLabel,
   LinearWorkflowState,
 } from '../src/linearMap.js';
-import type { Priority, TaskDoc } from '../src/types.js';
-import { PRIORITIES, STATUSES } from '../src/types.js';
+import type { Priority } from '../src/types.js';
+import { PRIORITIES } from '../src/types.js';
 
 const STATES: LinearWorkflowState[] = [
   { id: 's-backlog', name: 'Backlog', type: 'draft' },
@@ -49,34 +47,19 @@ function issue(overrides: Partial<LinearIssue> = {}): LinearIssue {
     state: STATES[2],
     labels: [LABELS[1]],
     team: { id: 'team-1', key: 'HYD' },
+    estimate: null,
+    dueDate: null,
+    assigneeId: null,
+    creatorId: null,
+    cycle: null,
+    projectId: null,
+    projectMilestoneId: null,
+    parentId: null,
+    childIds: [],
+    relations: [],
+    attachments: [],
+    truncated: [],
     ...overrides,
-  };
-}
-
-function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
-  return {
-    meta: {
-      id: 't-abc123',
-      title: 'Speed up initial page load',
-      status: 'working',
-      kind: 'task',
-      parent: null,
-      milestone: null,
-      blockedBy: [],
-      labels: ['web'],
-      priority: 'high',
-      assignee: 'none',
-      created: '2026-07-01T00:00:00.000Z',
-      updated: '2026-07-03T00:00:00.000Z',
-      external: null,
-      selfReview: true,
-      writes: [],
-      risk: 'routine',
-      model: null,
-      exercised: false,
-      ...overrides,
-    },
-    body: '\n## Description\n\nThe PR review page blocks on a serial fetch.\n\n## Activity\n',
   };
 }
 
@@ -95,6 +78,27 @@ describe('externalId / parseExternal', () => {
     expect(parseExternal('jira:ENG-1')).toBeNull();
     expect(parseExternal('linear:')).toBeNull();
     expect(parseExternal(null)).toBeNull();
+  });
+});
+
+describe('linearExternal / parseLinearExternal', () => {
+  it('names the record kind, so a push knows which API to call', () => {
+    for (const entity of [
+      'issue',
+      'project',
+      'milestone',
+      'initiative',
+    ] as const) {
+      const value = linearExternal({ entity, id: 'abc' });
+      expect(parseLinearExternal(value)).toEqual({ entity, id: 'abc' });
+    }
+    expect(linearExternal({ entity: 'issue', id: 'abc' })).toBe('linear:abc');
+  });
+
+  it('keeps container links out of the issue-only parser', () => {
+    expect(parseExternal('linear-project:abc')).toBeNull();
+    expect(parseLinearExternal('github-pr:41')).toBeNull();
+    expect(parseLinearExternal('linear-project:')).toBeNull();
   });
 });
 
@@ -140,126 +144,6 @@ describe('resolveWorkflowState', () => {
     expect(
       resolveWorkflowState('triaged', DEFAULT_STATUS_MAP, STATES)
     ).toBeNull();
-  });
-});
-
-describe('statusFromState', () => {
-  it('inverts the configured map', () => {
-    expect(
-      statusFromState(STATES[4], DEFAULT_STATUS_MAP, STATUSES, 'ready')
-    ).toBe('landed');
-  });
-
-  it('falls back to the state type when the name is unmapped', () => {
-    const renamed = { id: 's-x', name: 'Shipped', type: 'completed' };
-    expect(statusFromState(renamed, {}, STATUSES, 'ready')).toBe('landed');
-  });
-
-  it('falls back to the caller’s status when the type is unknown too', () => {
-    const weird = { id: 's-x', name: 'Parked', type: 'hibernating' };
-    expect(statusFromState(weird, {}, STATUSES, 'draft')).toBe('draft');
-  });
-
-  it('never writes a status the project does not define', () => {
-    const custom = ['open', 'shut'];
-    expect(statusFromState(STATES[4], DEFAULT_STATUS_MAP, custom, 'open')).toBe(
-      'open'
-    );
-  });
-
-  it('falls back when the issue has no state at all', () => {
-    expect(statusFromState(null, DEFAULT_STATUS_MAP, STATUSES, 'ready')).toBe(
-      'ready'
-    );
-  });
-});
-
-describe('taskCreateFromIssue', () => {
-  it('maps title, status, description, labels and priority', () => {
-    expect(
-      taskCreateFromIssue(issue(), {
-        statusMap: DEFAULT_STATUS_MAP,
-        statuses: STATUSES,
-        fallbackStatus: 'ready',
-      })
-    ).toEqual({
-      title: 'Speed up initial page load',
-      status: 'working',
-      description: 'The PR review page blocks on a serial fetch.',
-      labels: ['web'],
-      priority: 'high',
-    });
-  });
-
-  it('treats a null description as empty', () => {
-    const created = taskCreateFromIssue(issue({ description: null }), {
-      statusMap: DEFAULT_STATUS_MAP,
-      statuses: STATUSES,
-      fallbackStatus: 'ready',
-    });
-    expect(created.description).toBe('');
-  });
-});
-
-describe('taskPatchFromIssue', () => {
-  it('produces the same field set as a patch over an existing task', () => {
-    expect(
-      taskPatchFromIssue(issue({ priority: 1, state: STATES[5] }), {
-        statusMap: DEFAULT_STATUS_MAP,
-        statuses: STATUSES,
-        fallbackStatus: 'ready',
-      })
-    ).toEqual({
-      title: 'Speed up initial page load',
-      status: 'dropped',
-      description: 'The PR review page blocks on a serial fetch.',
-      labels: ['web'],
-      priority: 'urgent',
-    });
-  });
-});
-
-describe('issueFromTask', () => {
-  it('maps title, description, priority, state and known labels', () => {
-    expect(
-      issueFromTask(task(), {
-        teamId: 'team-1',
-        statusMap: DEFAULT_STATUS_MAP,
-        states: STATES,
-        labels: LABELS,
-        description: 'The PR review page blocks on a serial fetch.',
-      })
-    ).toEqual({
-      teamId: 'team-1',
-      title: 'Speed up initial page load',
-      description: 'The PR review page blocks on a serial fetch.',
-      priority: 2,
-      stateId: 's-progress',
-      labelIds: ['l-web'],
-    });
-  });
-
-  it('drops labels the workspace does not define rather than creating them', () => {
-    const input = issueFromTask(task({ labels: ['web', 'nonexistent'] }), {
-      teamId: 'team-1',
-      statusMap: DEFAULT_STATUS_MAP,
-      states: STATES,
-      labels: LABELS,
-      description: '',
-    });
-    expect(input.labelIds).toEqual(['l-web']);
-  });
-
-  it('omits stateId when the status maps to nothing, leaving the issue alone', () => {
-    const input = issueFromTask(task({ status: 'triaged' }), {
-      teamId: 'team-1',
-      statusMap: DEFAULT_STATUS_MAP,
-      states: STATES,
-      labels: LABELS,
-      description: '',
-    });
-    expect(input.stateId).toBeUndefined();
-    expect(input.title).toBe('Speed up initial page load');
   });
 });
 

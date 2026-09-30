@@ -66,6 +66,7 @@ describe('TokenRegistry', () => {
       handle: 'wyat',
       ref: 'human:wyat',
       tier: 'request',
+      agentToken: true,
     });
   });
 

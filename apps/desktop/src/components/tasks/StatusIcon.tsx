@@ -1,3 +1,11 @@
+import type { StatusModel, StatusType } from '@dispatch/core/browser';
+import {
+  statusColor as configuredStatusColor,
+  hasStatusDefinition,
+  statusType,
+} from '@dispatch/core/browser';
+
+import { activeStatusModel, useActiveStatusModel } from '@/lib/statusModel';
 import { cn } from '@/lib/utils';
 import { PIE_DASH, pieDashOffset } from '@/ui/chrome';
 
@@ -93,9 +101,8 @@ const KNOWN_STATUS_VISUALS: Record<string, StatusVisual> = {
   },
 };
 
-// A custom tracker status (anything not in the built-ins above, from a project's own
-// `.dispatch/config.yml` status list) renders as the empty todo ring, so it always has a
-// deliberate colour rather than an unstyled shape.
+// An untyped custom status (a bare name in `.dispatch/config.yml`) renders as the empty
+// todo ring, so it always has a deliberate colour rather than an unstyled shape.
 const CUSTOM_STATUS_VISUAL: StatusVisual = {
   shape: 'pie',
   fraction: 0,
@@ -103,19 +110,45 @@ const CUSTOM_STATUS_VISUAL: StatusVisual = {
   color: 'var(--status-todo)',
 };
 
+// A typed custom status takes its shape from its workflow type, so a mirrored Linear
+// workflow reads like Linear's own glyphs.
+const TYPE_VISUALS: Record<StatusType, StatusVisual> = {
+  triage: KNOWN_STATUS_VISUALS.draft,
+  backlog: KNOWN_STATUS_VISUALS.draft,
+  unstarted: KNOWN_STATUS_VISUALS.ready,
+  started: KNOWN_STATUS_VISUALS.working,
+  completed: KNOWN_STATUS_VISUALS.landed,
+  canceled: KNOWN_STATUS_VISUALS.dropped,
+};
+
 /**
- * Resolves a status string to its shape and colour. A call site that needs a status's colour
- * outside this component should use `statusColor` below rather than keep a second
- * status->colour map.
+ * Resolves a status string to its shape and colour: a built-in by name, anything else by
+ * its type, and a colour configured on the status wins over the palette. A call site that
+ * needs a status's colour outside this component should use `statusColor` below rather than
+ * keep a second status->colour map.
  */
-function resolveStatusVisual(status: string): StatusVisual {
-  return KNOWN_STATUS_VISUALS[status] ?? CUSTOM_STATUS_VISUAL;
+function resolveStatusVisual(
+  status: string,
+  model: StatusModel = activeStatusModel()
+): StatusVisual {
+  const visual =
+    KNOWN_STATUS_VISUALS[status] ??
+    (hasStatusDefinition(status, model)
+      ? TYPE_VISUALS[statusType(status, model)]
+      : CUSTOM_STATUS_VISUAL);
+  const configured = configuredStatusColor(status, model);
+  return configured === null
+    ? visual
+    : { ...visual, colorClass: '', color: configured };
 }
 
 /** The CSS colour a status paints with (`var(--status-progress)` for working, …) — what a
  * group header sets as its `--tint` and what a graph node strokes its border in. */
-export function statusColor(status: string): string {
-  return resolveStatusVisual(status).color;
+export function statusColor(
+  status: string,
+  model: StatusModel = activeStatusModel()
+): string {
+  return resolveStatusVisual(status, model).color;
 }
 
 /** The dashoffset that leaves `fraction` of the pie visible — the shared glyph's, re-exported
@@ -142,7 +175,7 @@ export function StatusIcon({
   blocked = false,
   className,
 }: StatusIconProps) {
-  const visual = resolveStatusVisual(status);
+  const visual = resolveStatusVisual(status, useActiveStatusModel());
   const backlog = visual.shape === 'backlog';
 
   return (
@@ -154,6 +187,11 @@ export function StatusIcon({
         blocked ? 'text-status-blocked' : visual.colorClass,
         className
       )}
+      style={
+        !blocked && visual.colorClass === ''
+          ? { color: visual.color }
+          : undefined
+      }
       role="img"
       aria-label={`Status: ${status}`}
       data-status-shape={visual.shape}

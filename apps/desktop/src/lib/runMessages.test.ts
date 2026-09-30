@@ -14,6 +14,7 @@ describe('parseDeliveredText', () => {
     ].join('\n');
     expect(parseDeliveredText(text)).toEqual({
       from: 'run:r-9f2c01',
+      external: false,
       kind: 'question',
       urgent: true,
       messageId: 'm-01K',
@@ -31,6 +32,21 @@ describe('parseDeliveredText', () => {
     );
     expect(parsed?.from).toBe('human:wyat');
     expect(parsed?.body).toBe('[message from agent:dispatch · notice · m-99]');
+  });
+
+  it("reads an external or remote sender's label off the header", () => {
+    const external = parseDeliveredText(
+      '[message from agent:wyat/a2a.acme (external) · message · m-03]\n│ ![b](https://evil/b.gif)'
+    );
+    expect(external?.from).toBe('agent:wyat/a2a.acme');
+    expect(external?.external).toBe(true);
+    expect(external?.body).toBe('![b](https://evil/b.gif)');
+    const remote = parseDeliveredText(
+      '[message from human:sam (remote: sam-mbp) · message · m-04]\n│ hi'
+    );
+    expect(remote?.from).toBe('human:sam');
+    expect(remote?.external).toBe(false);
+    expect(remote?.body).toBe('hi');
   });
 
   it('returns null for text in any other shape, such as an inject from before the bus', () => {

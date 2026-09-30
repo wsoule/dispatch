@@ -142,6 +142,22 @@ export class ReadinessStore {
     mkdirSync(dirname(this.file), { recursive: true });
     writeFileSync(this.file, `${JSON.stringify(cache, null, 2)}\n`);
   }
+
+  /** The cached readings still judged against their task's current text:
+   *  what `readinessFor` returns for them without judging. `taskOf` is null
+   *  for a task that is gone. */
+  loadFresh(
+    taskOf: (id: string) => TaskDoc | null
+  ): Record<string, ReadinessReading> {
+    const readings: Record<string, ReadinessReading> = {};
+    for (const [id, entry] of Object.entries(this.load())) {
+      const task = taskOf(id);
+      if (task !== null && readinessHash(task) === entry.hash) {
+        readings[id] = entry.reading;
+      }
+    }
+    return readings;
+  }
 }
 
 /**

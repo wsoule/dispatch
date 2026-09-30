@@ -126,6 +126,7 @@ function providersWith(log: Log, entries: InboxEntry[] = []) {
     openShortcuts: noop,
     copyTaskId: noop,
   } as unknown as ShellActions;
+  // The task spec pane fetches its body through react-query; no retries in a stub.
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });

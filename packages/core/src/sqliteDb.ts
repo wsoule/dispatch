@@ -141,12 +141,13 @@ function driverUnavailableMessage(driver: SqliteDriver, err: Error): string {
  * Wraps a raw driver handle in the branded SqliteDatabase surface. Both
  * drivers go through here, so there is one adapter rather than one per module.
  *
- * It does exactly two things. It records which module the handle came from
- * (see SqliteDatabase.driver). And it normalizes `Statement.get()`, which is
- * the one behavioural difference that reaches callers: bun:sqlite answers a
- * miss with null where node:sqlite answers undefined, and `queryOne` is typed
- * `Row | undefined`. Left raw, a caller testing `row === undefined` would read
- * a missing task as a present one whose every column is null.
+ * It does two things for correctness, plus a statement cache for speed. It
+ * records which module the handle came from (see SqliteDatabase.driver). And
+ * it normalizes `Statement.get()`, which is the one behavioural difference
+ * that reaches callers: bun:sqlite answers a miss with null where node:sqlite
+ * answers undefined, and `queryOne` is typed `Row | undefined`. Left raw, a
+ * caller testing `row === undefined` would read a missing task as a present
+ * one whose every column is null.
  *
  * What the two drivers were checked to agree on, and therefore what is
  * forwarded untouched: multi-statement `exec` (the DDL below is one script),
@@ -164,6 +165,8 @@ function driverUnavailableMessage(driver: SqliteDriver, err: Error): string {
  * revisit it: both drivers read the same file, so it is a hard error on the
  * Node-run CLI and a silently wrong number on the Bun-run desktop.
  */
+const STATEMENT_CACHE_LIMIT = 256;
+
 function adaptDriver(
   driver: SqliteDriver,
   Raw: RawSqliteDatabaseCtor
@@ -171,18 +174,33 @@ function adaptDriver(
   return class AdaptedSqliteDatabase implements SqliteDatabase {
     readonly driver: SqliteDriver = driver;
     private readonly db: RawSqliteDatabase;
+    // Statements by SQL text, reused rather than re-prepared: preparing parses
+    // and plans the SQL, which the per-row reads of an export or an import paid
+    // thousands of times over. Every call site passes fixed text, so this stays
+    // small; the cap covers any that ever builds SQL per call.
+    private readonly statements = new Map<
+      string,
+      { raw: SqliteStatement; adapted: SqliteStatement }
+    >();
 
     constructor(path: string) {
       this.db = new Raw(path);
     }
 
     prepare(sql: string): SqliteStatement {
+      const cached = this.statements.get(sql);
+      if (cached !== undefined) return cached.adapted;
       const statement = this.db.prepare(sql);
-      return {
+      const adapted: SqliteStatement = {
         all: (...params) => statement.all(...params),
         get: (...params) => statement.get(...params) ?? undefined,
         run: (...params) => statement.run(...params),
       };
+      // Dropped, not finalized: a caller may still hold one it got earlier.
+      if (this.statements.size >= STATEMENT_CACHE_LIMIT)
+        this.statements.clear();
+      this.statements.set(sql, { raw: statement, adapted });
+      return adapted;
     }
 
     exec(sql: string): void {
@@ -190,7 +208,17 @@ function adaptDriver(
     }
 
     close(): void {
+      this.finalizeAll();
       this.db.close();
+    }
+
+    // bun:sqlite statements hold the file open until finalized; node:sqlite's
+    // have no finalize and are released by close().
+    private finalizeAll(): void {
+      for (const { raw } of this.statements.values()) {
+        (raw as { finalize?: () => void }).finalize?.();
+      }
+      this.statements.clear();
     }
   };
 }
@@ -210,7 +238,7 @@ function adaptDriver(
  * be migrated through. Stored in SQLite's own `user_version` pragma, so the
  * schema carries its version without a table of its own.
  */
-export const DISPATCH_DB_VERSION = 2;
+export const DISPATCH_DB_VERSION = 4;
 
 /**
  * Where a project's database lives by default.
@@ -235,6 +263,21 @@ export function dispatchDbPath(rootDir: string): string {
 // rather than nullable, so NULL here means "no key" and 0 means "explicitly
 // off". `self_review` and `exercised` are always present, so they are plain
 // 0/1.
+// The Linear-parity columns schema v3 added, all nullable: NULL reads back as
+// each field's default, so older rows need no backfill.
+const V3_TASK_COLUMNS = [
+  'estimate REAL',
+  'due_date TEXT',
+  'start_date TEXT',
+  'cycle TEXT',
+  'related_to TEXT',
+  'duplicate_of TEXT',
+  'initiatives TEXT',
+  'creator TEXT',
+  'color TEXT',
+  'icon TEXT',
+];
+
 const DDL = `
 CREATE TABLE IF NOT EXISTS tasks (
   id           TEXT PRIMARY KEY,
@@ -259,6 +302,17 @@ CREATE TABLE IF NOT EXISTS tasks (
   exercised    INTEGER NOT NULL,
   derived_from TEXT,
   attachments  TEXT,
+  estimate     REAL,
+  due_date     TEXT,
+  start_date   TEXT,
+  cycle        TEXT,
+  related_to   TEXT,
+  duplicate_of TEXT,
+  initiatives  TEXT,
+  creator      TEXT,
+  color        TEXT,
+  icon         TEXT,
+  sort_order   REAL,
   slug         TEXT NOT NULL,
   body         TEXT NOT NULL
 );
@@ -300,6 +354,20 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
   authored_by    TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS ledger_epic_idx ON ledger_entries (epic_id);
+
+-- Task comments (comments.ts). A new table needs no version bump: the DDL
+-- creates it on any database that lacks it.
+CREATE TABLE IF NOT EXISTS comments (
+  id        TEXT PRIMARY KEY,
+  task_id   TEXT NOT NULL,
+  author    TEXT NOT NULL,
+  body      TEXT NOT NULL,
+  created   TEXT NOT NULL,
+  updated   TEXT NOT NULL,
+  parent_id TEXT,
+  external  TEXT
+);
+CREATE INDEX IF NOT EXISTS comments_task_idx ON comments (task_id, created);
 
 CREATE TABLE IF NOT EXISTS evidence (
   run_id      TEXT NOT NULL,
@@ -382,6 +450,15 @@ export function openDispatchDb(dbPath: string): SqliteDatabase {
   // every column from the DDL; a file an older build stamped takes the ALTERs
   // its version is missing, one per bump, before the DDL adds any new tables.
   if (existing === 1) db.exec('ALTER TABLE tasks ADD COLUMN attachments TEXT');
+  if (existing >= 1 && existing < 3) {
+    for (const column of V3_TASK_COLUMNS) {
+      db.exec(`ALTER TABLE tasks ADD COLUMN ${column}`);
+    }
+  }
+  // v4: a sibling order (Linear's milestone sortOrder); NULL is unordered.
+  if (existing >= 1 && existing < 4) {
+    db.exec('ALTER TABLE tasks ADD COLUMN sort_order REAL');
+  }
   db.exec(DDL);
   db.exec(`PRAGMA user_version = ${DISPATCH_DB_VERSION}`);
   return db;

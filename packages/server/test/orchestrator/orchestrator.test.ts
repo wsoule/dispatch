@@ -1,5 +1,5 @@
 import { ActorContext, TaskStore } from '@dispatch/core';
-import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import {
   appendFileSync,
   existsSync,
@@ -39,6 +39,7 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from '../../src/orchestrator/types.js';
+import { WorktreeManager } from '../../src/orchestrator/worktree.js';
 import { initGitRepo, runGitSync } from './helpers.js';
 
 let fakeHome: string;
@@ -1432,10 +1433,12 @@ describe('Orchestrator PR guards', () => {
     const meta = await dispatchToFinished(orchestrator, store);
     orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
 
-    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(
+    await expect(orchestrator.deleteBranch(meta.branch)).rejects.toThrow(
       OrchestratorConflictError
     );
-    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(/open PR/);
+    await expect(orchestrator.deleteBranch(meta.branch)).rejects.toThrow(
+      /open PR/
+    );
   });
 
   it('409s freeWorktreeDisk once a run has an open PR', async () => {
@@ -1443,10 +1446,12 @@ describe('Orchestrator PR guards', () => {
     const meta = await dispatchToFinished(orchestrator, store);
     orchestrator.setRunPrUrl(meta.id, 'https://github.com/example/repo/pull/1');
 
-    expect(() => orchestrator.freeWorktreeDisk(meta.branch)).toThrow(
+    await expect(orchestrator.freeWorktreeDisk(meta.branch)).rejects.toThrow(
       OrchestratorConflictError
     );
-    expect(() => orchestrator.freeWorktreeDisk(meta.branch)).toThrow(/open PR/);
+    await expect(orchestrator.freeWorktreeDisk(meta.branch)).rejects.toThrow(
+      /open PR/
+    );
   });
 });
 
@@ -2480,10 +2485,26 @@ async function dispatchFinishedRun(
 // The Branches surface (spec §§1-4): listBranches() joins git's refs with the
 // run registry, and the two destructive actions refuse anything still in use.
 describe('Orchestrator.listBranches', () => {
+  it('lets other work run while it asks git about each branch', async () => {
+    const { orchestrator } = await dispatchFinishedRun(repo);
+    runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
+    const order: string[] = [];
+    setTimeout(() => order.push('timer'), 0);
+
+    const entries = await orchestrator.listBranches();
+    order.push('listing');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    expect(entries).toHaveLength(2);
+    // A listing that blocks the event loop finishes before any timer runs,
+    // and so before any other request the daemon is holding.
+    expect(order).toEqual(['timer', 'listing']);
+  });
+
   it('reports a finished, un-reviewed run as reviewable with its run and task attached', async () => {
     const { orchestrator, meta } = await dispatchFinishedRun(repo);
 
-    const entries = orchestrator.listBranches();
+    const entries = await orchestrator.listBranches();
 
     expect(entries).toHaveLength(1);
     const entry = entries[0];
@@ -2499,13 +2520,13 @@ describe('Orchestrator.listBranches', () => {
     expect(entry.reviewedAt).toBeUndefined();
   });
 
-  it('reports a branch with no run in the registry as an orphan', () => {
+  it('reports a branch with no run in the registry as an orphan', async () => {
     const { orchestrator } = makeOrchestrator(repo);
     // A ref nothing ever recorded a transcript for — exactly what a crash
     // between `worktree add` and the transcript header leaves behind.
     runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
 
-    const entries = orchestrator.listBranches();
+    const entries = await orchestrator.listBranches();
 
     expect(entries).toHaveLength(1);
     expect(entries[0].branch).toBe('dispatch/t-ghost-r000000');
@@ -2516,23 +2537,23 @@ describe('Orchestrator.listBranches', () => {
     expect(entries[0].ahead).toBe(0);
   });
 
-  it('ignores non-dispatch branches entirely', () => {
+  it('ignores non-dispatch branches entirely', async () => {
     const { orchestrator } = makeOrchestrator(repo);
     runGitSync(repo, ['branch', 'feature/mine', 'main']);
     runGitSync(repo, ['branch', 'wip', 'main']);
 
-    expect(orchestrator.listBranches()).toEqual([]);
+    expect(await orchestrator.listBranches()).toEqual([]);
   });
 
   it('stops listing a branch once a review has cleaned it up', async () => {
     const { orchestrator, meta } = await dispatchFinishedRun(repo);
-    expect(orchestrator.listBranches()).toHaveLength(1);
+    expect(await orchestrator.listBranches()).toHaveLength(1);
 
     orchestrator.review(meta.id, 'discard');
 
     // The ref is gone, so there is nothing left to clean up and nothing to
     // show — a reviewed run must not linger on this surface forever.
-    expect(orchestrator.listBranches()).toEqual([]);
+    expect(await orchestrator.listBranches()).toEqual([]);
   });
 
   it('reports a reviewed run whose ref survived as a leftover', async () => {
@@ -2543,7 +2564,7 @@ describe('Orchestrator.listBranches', () => {
     // swallows git errors by design, so a failed `branch -D` is silent).
     runGitSync(repo, ['branch', meta.branch, 'main']);
 
-    const entries = orchestrator.listBranches();
+    const entries = await orchestrator.listBranches();
 
     expect(entries).toHaveLength(1);
     expect(entries[0].status).toBe('leftover');
@@ -2554,14 +2575,14 @@ describe('Orchestrator.listBranches', () => {
     const { orchestrator, meta } = await dispatchFinishedRun(repo);
     writeFileSync(join(meta.worktreePath, 'scratch.txt'), 'stray\n');
 
-    expect(orchestrator.listBranches()[0].dirty).toBe(true);
+    expect((await orchestrator.listBranches())[0].dirty).toBe(true);
   });
 
   it('sorts leftovers and orphans ahead of reviewable and active rows', async () => {
     const { orchestrator } = await dispatchFinishedRun(repo);
     runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
 
-    const statuses = orchestrator.listBranches().map((e) => e.status);
+    const statuses = (await orchestrator.listBranches()).map((e) => e.status);
 
     expect(statuses).toEqual(['orphan', 'reviewable']);
   });
@@ -2577,12 +2598,12 @@ describe('Orchestrator.listBranches', () => {
     // leftover case, same as the existing leftover test above.
     runGitSync(repo, ['branch', meta.branch, 'main']);
 
-    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(false);
+    expect((await orchestrator.listBranches())[0].pushedToOrigin).toBe(false);
 
     runGitSync(repo, ['push', 'origin', 'main']);
     runGitSync(repo, ['fetch', 'origin', 'main']);
 
-    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(true);
+    expect((await orchestrator.listBranches())[0].pushedToOrigin).toBe(true);
   });
 
   it('measures how far an unmerged branch fell behind its base, and omits the count once merged', async () => {
@@ -2593,7 +2614,7 @@ describe('Orchestrator.listBranches', () => {
     runGitSync(repo, ['add', '-A']);
     runGitSync(repo, ['commit', '-m', 'base moves on']);
 
-    const entry = orchestrator.listBranches()[0];
+    const entry = (await orchestrator.listBranches())[0];
     expect(entry.mergedIntoBase).toBe(false);
     expect(entry.behindBase).toBe(1);
 
@@ -2602,7 +2623,7 @@ describe('Orchestrator.listBranches', () => {
     // landed state, so "behind" stops being a meaningful number for it.
     runGitSync(repo, ['branch', meta.branch, 'main']);
 
-    const merged = orchestrator.listBranches()[0];
+    const merged = (await orchestrator.listBranches())[0];
     expect(merged.mergedIntoBase).toBe(true);
     expect(merged.behindBase).toBeUndefined();
   });
@@ -2618,12 +2639,12 @@ describe('Orchestrator.listBranches', () => {
     runGitSync(repo, ['push', 'origin', `${meta.branch}:main`]);
     runGitSync(repo, ['fetch', 'origin', 'main']);
 
-    const entry = orchestrator.listBranches()[0];
+    const entry = (await orchestrator.listBranches())[0];
     expect(entry.mergedIntoBase).toBe(false);
     expect(entry.pushedToOrigin).toBe(false);
   });
 
-  it('reports a hand-merged ref no run claims as pushed once its tip reaches origin base', () => {
+  it('reports a hand-merged ref no run claims as pushed once its tip reaches origin base', async () => {
     const origin = initBareGitRepo();
     runGitSync(repo, ['remote', 'add', 'origin', origin]);
     const { orchestrator } = makeOrchestrator(repo);
@@ -2632,12 +2653,12 @@ describe('Orchestrator.listBranches', () => {
     // branch tip itself has to be the evidence.
     runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
 
-    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(false);
+    expect((await orchestrator.listBranches())[0].pushedToOrigin).toBe(false);
 
     runGitSync(repo, ['push', 'origin', 'main']);
     runGitSync(repo, ['fetch', 'origin', 'main']);
 
-    expect(orchestrator.listBranches()[0].pushedToOrigin).toBe(true);
+    expect((await orchestrator.listBranches())[0].pushedToOrigin).toBe(true);
   });
 });
 
@@ -2743,6 +2764,77 @@ describe('Orchestrator.decorateRunsWithPushed', () => {
       orchestrator.decorateRunsWithPushed([reviewed])[0].pushedToOrigin
     ).toBe(true);
   });
+
+  it('tells pushed merges from unpushed ones across many runs at once', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    const commitFile = (name: string): string => {
+      writeFileSync(join(repo, name), `${name}\n`);
+      runGitSync(repo, ['add', name]);
+      runGitSync(repo, ['commit', '-m', name]);
+      return runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    };
+    const pushed = commitFile('pushed.txt');
+    runGitSync(repo, ['push', 'origin', 'main']);
+    const local = commitFile('local.txt');
+    const merged = (mergeCommit: string): RunMeta => ({
+      ...meta,
+      reviewAction: 'merge',
+      mergeCommit,
+    });
+
+    const decorate = () =>
+      orchestrator
+        .decorateRunsWithPushed([
+          merged(pushed),
+          merged(local),
+          // An abbreviated SHA is checked on its own rather than by listing.
+          merged(pushed.slice(0, 12)),
+        ])
+        .map((run) => run.pushedToOrigin);
+
+    expect(decorate()).toEqual([true, false, true]);
+    // Remembered against origin's tip, and asked again once it moves.
+    expect(decorate()).toEqual([true, false, true]);
+    runGitSync(repo, ['push', 'origin', 'main']);
+    expect(decorate()).toEqual([true, true, true]);
+  });
+
+  it('still answers from one listing when git no longer has a merge commit', async () => {
+    const origin = initBareGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const { orchestrator, meta } = await dispatchFinishedRun(repo);
+    const commitFile = (name: string): string => {
+      writeFileSync(join(repo, name), `${name}\n`);
+      runGitSync(repo, ['add', name]);
+      runGitSync(repo, ['commit', '-m', name]);
+      return runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    };
+    const pushed = commitFile('pushed.txt');
+    runGitSync(repo, ['push', 'origin', 'main']);
+    const local = commitFile('local.txt');
+    // A merge commit gc'd or rewritten away since the run recorded it.
+    const gone = 'deadbeef'.repeat(5);
+    const merged = (mergeCommit: string): RunMeta => ({
+      ...meta,
+      reviewAction: 'merge',
+      mergeCommit,
+    });
+    // The one-git-per-commit fallback is what made one lost commit stall
+    // every request for seconds on a board with hundreds of merged runs.
+    const perCommit = spyOn(WorktreeManager.prototype, 'isMergedInto');
+    try {
+      expect(
+        orchestrator
+          .decorateRunsWithPushed([merged(pushed), merged(local), merged(gone)])
+          .map((run) => run.pushedToOrigin)
+      ).toEqual([true, false, false]);
+      expect(perCommit).not.toHaveBeenCalled();
+    } finally {
+      perCommit.mockRestore();
+    }
+  });
 });
 
 describe('Orchestrator.freeWorktreeDisk', () => {
@@ -2768,7 +2860,7 @@ describe('Orchestrator.freeWorktreeDisk', () => {
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
 
-    const entry = orchestrator.freeWorktreeDisk(meta.branch);
+    const entry = await orchestrator.freeWorktreeDisk(meta.branch);
 
     expect(existsSync(meta.worktreePath)).toBe(false);
     // The ref surviving is what makes this reversible.
@@ -2801,7 +2893,7 @@ describe('Orchestrator.freeWorktreeDisk', () => {
     );
     const before = orchestrator.diff(meta.id);
 
-    orchestrator.freeWorktreeDisk(meta.branch);
+    await orchestrator.freeWorktreeDisk(meta.branch);
 
     // This is the load-bearing assertion for the whole action: diff() already
     // falls back to the snapshot persisted just before removal, so freeing
@@ -2812,13 +2904,13 @@ describe('Orchestrator.freeWorktreeDisk', () => {
 });
 
 describe('Orchestrator.deleteBranch guards', () => {
-  it('deletes a merged orphan ref outright', () => {
+  it('deletes a merged orphan ref outright', async () => {
     const { orchestrator } = makeOrchestrator(repo);
     runGitSync(repo, ['branch', 'dispatch/t-ghost-r000000', 'main']);
 
-    orchestrator.deleteBranch('dispatch/t-ghost-r000000');
+    await orchestrator.deleteBranch('dispatch/t-ghost-r000000');
 
-    expect(orchestrator.listBranches()).toEqual([]);
+    expect(await orchestrator.listBranches()).toEqual([]);
   });
 
   it('refuses an unmerged branch without force, and deletes it with force', async () => {
@@ -2843,14 +2935,14 @@ describe('Orchestrator.deleteBranch guards', () => {
       () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
     );
 
-    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(
+    await expect(orchestrator.deleteBranch(meta.branch)).rejects.toThrow(
       OrchestratorConflictError
     );
-    expect(orchestrator.listBranches()).toHaveLength(1);
+    expect(await orchestrator.listBranches()).toHaveLength(1);
 
-    orchestrator.deleteBranch(meta.branch, { force: true });
+    await orchestrator.deleteBranch(meta.branch, { force: true });
 
-    expect(orchestrator.listBranches()).toEqual([]);
+    expect(await orchestrator.listBranches()).toEqual([]);
   });
 
   it('refuses a branch whose run is still live', async () => {
@@ -2878,22 +2970,109 @@ describe('Orchestrator.deleteBranch guards', () => {
       () => orchestrator.getRun(meta.id)?.meta.state === 'awaiting-approval'
     );
 
-    expect(orchestrator.listBranches()[0].status).toBe('active');
-    expect(() => orchestrator.deleteBranch(meta.branch)).toThrow(
+    expect((await orchestrator.listBranches())[0].status).toBe('active');
+    await expect(orchestrator.deleteBranch(meta.branch)).rejects.toThrow(
       /has a live run/
     );
-    expect(() => orchestrator.freeWorktreeDisk(meta.branch)).toThrow(
+    await expect(orchestrator.freeWorktreeDisk(meta.branch)).rejects.toThrow(
       /has a live run/
     );
   });
 
-  it('refuses the branch currently checked out in the main repo', () => {
+  it('refuses a branch whose run resumes while the listing is out', async () => {
+    const { orchestrator, store } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished', sessionId: 's-1' } })
+    );
+    const task = store.create({ title: 'Add feature' });
+    const meta = await orchestrator.dispatch(task.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(meta.id)?.meta.state === 'finished'
+    );
+    // The resumed run parks on an approval gate, so it stays live.
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({
+        steps: [
+          {
+            approval: {
+              requestId: 'req-1',
+              toolName: 'edit_file',
+              input: { path: 'x' },
+            },
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+
+    const deleting = orchestrator.deleteBranch(meta.branch, { force: true });
+    const resumed = orchestrator.sendMessage(meta.id, 'one more thing', {
+      resume: true,
+    });
+
+    await expect(deleting).rejects.toThrow(
+      new RegExp(`has a live run: .*run ${resumed.id}`)
+    );
+    expect(existsSync(meta.worktreePath)).toBe(true);
+  });
+
+  it('refuses a branch a run is stacked on while the listing is out', async () => {
+    const { orchestrator, store, cache } = makeOrchestrator(repo);
+    orchestrator.registerExecutor(
+      'fake',
+      new FakeExecutor({ finish: { state: 'finished' } })
+    );
+    const blocker = store.create({ title: 'Blocker' });
+    const blockerRun = await orchestrator.dispatch(blocker.meta.id, 'fake');
+    await waitFor(
+      () => orchestrator.getRun(blockerRun.id)?.meta.state === 'finished'
+    );
+    store.update(
+      blocker.meta.id,
+      { status: 'review' },
+      new Date().toISOString()
+    );
+    const dependent = store.create({
+      title: 'Dependent',
+      blockedBy: [blocker.meta.id],
+    });
+    cache.rebuild(store);
+    orchestrator.registerExecutor(
+      'gated',
+      new FakeExecutor({
+        steps: [
+          {
+            approval: {
+              requestId: 'req-1',
+              toolName: 'edit_file',
+              input: { path: 'x' },
+            },
+          },
+        ],
+        finish: { state: 'finished' },
+      })
+    );
+
+    const deleting = orchestrator.deleteBranch(blockerRun.branch, {
+      force: true,
+    });
+    const stacked = await orchestrator.dispatch(dependent.meta.id, 'gated');
+
+    expect(stacked.baseBranch).toBe(blockerRun.branch);
+    await expect(deleting).rejects.toThrow(
+      new RegExp(`is the base of ${stacked.branch}`)
+    );
+  });
+
+  it('refuses the branch currently checked out in the main repo', async () => {
     const { orchestrator } = makeOrchestrator(repo);
     runGitSync(repo, ['checkout', '-b', 'dispatch/t-here-r000000']);
 
-    expect(() => orchestrator.deleteBranch('dispatch/t-here-r000000')).toThrow(
-      /checked out in the main repo/
-    );
+    await expect(
+      orchestrator.deleteBranch('dispatch/t-here-r000000')
+    ).rejects.toThrow(/checked out in the main repo/);
   });
 
   it('refuses a branch that another branch is stacked on', async () => {
@@ -2924,15 +3103,15 @@ describe('Orchestrator.deleteBranch guards', () => {
     });
     orchestrator.reconcileOnBoot();
 
-    expect(() =>
+    await expect(
       orchestrator.deleteBranch(blocker.branch, { force: true })
-    ).toThrow(new RegExp(`is the base of ${dependent}`));
+    ).rejects.toThrow(new RegExp(`is the base of ${dependent}`));
   });
 
-  it('404s an unknown branch', () => {
+  it('404s an unknown branch', async () => {
     const { orchestrator } = makeOrchestrator(repo);
 
-    expect(() => orchestrator.deleteBranch('dispatch/nope')).toThrow(
+    await expect(orchestrator.deleteBranch('dispatch/nope')).rejects.toThrow(
       OrchestratorNotFoundError
     );
   });

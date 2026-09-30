@@ -3,6 +3,7 @@
 // `label`, `sublabel?`, `kind`, `run`); the extra `section`/`icon`/`shortcut` fields are for
 // the grouped Linear-style menu that replaces the flat list.
 
+import type { DocHit } from '@dispatch/client';
 import type { ReactNode } from 'react';
 
 import type { GlobalView, ProjectView } from './appNav';
@@ -10,6 +11,7 @@ import type { PaletteItem } from './paletteMatch';
 
 export type PaletteSection =
   | 'tasks'
+  | 'docs'
   | 'navigation'
   | 'actions'
   | 'inbox'
@@ -214,4 +216,20 @@ export function buildPaletteEntries(
   }
 
   return entries;
+}
+
+/** One Docs row per search hit, in the daemon's rank order: a section hit opens
+ * the doc scrolled to it, a hit before the first heading opens the doc's top. */
+export function docHitEntries(
+  hits: readonly DocHit[],
+  openDoc: (docId: string, anchor: string | null) => void
+): PaletteEntry[] {
+  return hits.map((hit) => ({
+    id: `doc:${hit.doc}#${hit.anchor}`,
+    label: hit.heading === '' ? hit.title : `${hit.title} › ${hit.heading}`,
+    sublabel: hit.handle,
+    kind: 'doc',
+    section: 'docs',
+    run: () => openDoc(hit.doc, hit.anchor === '' ? null : hit.anchor),
+  }));
 }

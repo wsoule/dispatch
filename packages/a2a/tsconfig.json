@@ -1,9 +1,10 @@
 {
   "extends": "../../tsconfig.options.json",
   "compilerOptions": { "rootDir": ".", "outDir": "dist", "types": ["bun"] },
-  "include": ["src/**/*.ts", "test/**/*.ts"],
+  "include": ["src/**/*.ts", "test/**/*.ts", "package.json"],
   "references": [
     { "path": "../core/tsconfig.json" },
-    { "path": "../protocol/tsconfig.json" }
+    { "path": "../protocol/tsconfig.json" },
+    { "path": "../protocol-spec/tsconfig.json" }
   ]
 }

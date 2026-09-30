@@ -1,21 +1,35 @@
-import type { A2AStore, TaskRow } from '@dispatch/a2a';
+import type { A2AStore, HandoffStatuses, TaskRow } from '@dispatch/a2a';
 import {
+  DEFAULT_HANDOFF_STATUSES,
+  handoffStatuses,
   isClientAddress,
   openA2ADb,
   SqliteA2AStore,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
-import type { A2AConfig, TaskStorePort } from '@dispatch/core';
-import { CANONICAL_STATUSES, DEFAULT_A2A, loadConfig } from '@dispatch/core';
+import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
+import { DEFAULT_A2A, loadConfig, statusModelOf } from '@dispatch/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
 import { closeGate } from '../messaging/gates.js';
 import type { Messaging } from '../messaging/service.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
-import { runsDir } from '../orchestrator/paths.js';
+import { runsDir, transcriptPath } from '../orchestrator/paths.js';
+import { replayTranscript } from '../orchestrator/transcript.js';
+import type { AuthTier } from '../tiers.js';
+import { RunResultsMemo } from './artifacts.js';
 import { bridgeExternalPolicy } from './external.js';
-import { A2AListener } from './listener.js';
+import type { GuardDeps, PatchGuard } from './guards.js';
+import {
+  dispatchRefusal,
+  guardTaskPatch,
+  isA2ATask,
+  openProposalFor,
+  ProposalGuard,
+} from './guards.js';
+import { handleProposal } from './handoff.js';
+import { A2AListener, freeLoopbackPort } from './listener.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
 import { reconcileA2A } from './reconcile.js';
@@ -37,6 +51,12 @@ interface ListenerStatus {
   warnings: string[];
   // Approved a2a.* agents with no clients row, registered before the bridge.
   legacyClients: string[];
+  // What the listener opens from: the file plus any one-boot flags.
+  settings: ListenerSettings;
+  // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
+  teamTls: { certPath: string; keyPath: string } | null;
+  // A free port for a listener whose settings name none; null once they do.
+  suggestedPort: number | null;
 }
 
 export interface A2ABridge {
@@ -59,6 +79,18 @@ export interface A2ABridge {
   // Closes a revoked client's unanswered asks as the system ("client
   // revoked"); its handoff gates stay open for the owner.
   clientRevoked(address: string): void;
+  // The proposal guards; each works with a2a.db down.
+  guardTaskPatch(
+    taskId: string,
+    patch: UpdatePatch,
+    caller: { tier: AuthTier; ref: string }
+  ): Promise<PatchGuard>;
+  proposalOpen(taskId: string): boolean;
+  // 'a2a' when a client handed the task off: its runs act for no one and
+  // read team memory only.
+  taskOrigin(taskId: string): 'a2a' | null;
+  // Puts every gated draft something moved back in Draft; returns how many.
+  recheckProposals(): number;
   close(): Promise<void>;
 }
 
@@ -66,6 +98,12 @@ interface OpenBridgeDeps {
   rootDir: string;
   messaging: Messaging;
   tasks: TaskStorePort;
+  // The daemon's checked task writes (cache rebuild and task.changed included).
+  validateTask: BridgeDeps['validateTask'];
+  createTask: BridgeDeps['createTask'];
+  updateTask: BridgeDeps['updateTask'];
+  // Whether the PR poll lists a URL as open; false until its first poll.
+  prOpen: BridgeDeps['prOpen'];
   orchestrator: Orchestrator;
   events: EventBus;
   ownerRef: string;
@@ -73,29 +111,31 @@ interface OpenBridgeDeps {
   // The daemon's own ports, read when the listener opens; it never shares one.
   daemonPorts: () => number[];
   overrides?: ListenerOverrides;
+  teamTls?: { certPath: string; keyPath: string };
   mark?: (label: string) => void;
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
 
-// The a2a: block and its warnings; a config.yml that does not parse leaves
-// the defaults rather than failing an A2A request.
-function a2aConfig(rootDir: string): {
+// The a2a: block, its warnings and the handoff statuses, read from the
+// project's typed status model; an unparseable config.yml falls back to the
+// defaults instead of failing a request.
+export function a2aConfig(rootDir: string): {
   policy: A2AConfig;
   warnings: string[];
-  statuses: string[];
+  statuses: HandoffStatuses;
 } {
   try {
     const config = loadConfig(rootDir);
     return {
       policy: config.a2a ?? DEFAULT_A2A,
       warnings: config.a2aWarnings ?? [],
-      statuses: config.statuses,
+      statuses: handoffStatuses(statusModelOf(config)),
     };
   } catch (err) {
     return {
       policy: DEFAULT_A2A,
       warnings: [`${(err as Error).message}; the a2a: defaults apply`],
-      statuses: [...CANONICAL_STATUSES],
+      statuses: DEFAULT_HANDOFF_STATUSES,
     };
   }
 }
@@ -112,6 +152,22 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     dbError = `the A2A bridge is down: ${(err as Error).message}`;
     console.error(`dispatchd: ${dbError}`);
   }
+
+  // Installed before the a2a.db branch: a gated draft stays held either way.
+  const guardDeps: GuardDeps = {
+    engine: messaging.engine,
+    messages: messaging.store,
+    tasks: deps.tasks,
+    ownerRef: deps.ownerRef,
+    updateTask: deps.updateTask,
+    statuses: () => a2aConfig(rootDir).statuses,
+    store,
+  };
+  deps.orchestrator.setDispatchGuard((task) =>
+    dispatchRefusal(guardDeps, task)
+  );
+  const proposals = new ProposalGuard(guardDeps, deps.events);
+  const stopProposals = proposals.start();
 
   let port: DaemonBridgePort | null = null;
   let watch: BridgeWatch | null = null;
@@ -134,15 +190,36 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         publicUrl: listener?.url() ?? 'http://127.0.0.1',
         version: deps.version,
       }),
+      validateTask: deps.validateTask,
+      createTask: deps.createTask,
+      updateTask: deps.updateTask,
+      // Straight from the transcript: getRun would also recheck a failed run
+      // as though someone had opened it.
+      runEvidence: (id) =>
+        replayTranscript(transcriptPath(rootDir, id))?.evidence ?? [],
+      // A run whose worktree and diff snapshot are both gone has no patch.
+      runPatch: (id) => {
+        try {
+          return deps.orchestrator.diff(id).patch;
+        } catch {
+          return null;
+        }
+      },
+      prOpen: deps.prOpen,
+      runResults: new RunResultsMemo(),
     };
-    watch = new BridgeWatch({
+    const hub = new BridgeWatch({
       ...bridgeDeps,
       events: deps.events,
       onChanged: () => deps.events.broadcast({ type: 'a2a.changed' }),
     });
-    stopWatch = watch.start();
+    watch = hub;
+    stopWatch = hub.start();
     messaging.setExternalPolicy(bridgeExternalPolicy(bridgeDeps));
-    port = new DaemonBridgePort(bridgeDeps, watch);
+    messaging.gates.register('task-proposal', (question, answer) =>
+      handleProposal(bridgeDeps, hub, question, answer)
+    );
+    port = new DaemonBridgePort(bridgeDeps, hub);
     listener = new A2AListener({
       port,
       policy: () => a2aConfig(rootDir).policy,
@@ -150,10 +227,16 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       ...(deps.track === undefined ? {} : { track: deps.track }),
     });
     try {
-      reconcileA2A(bridgeDeps, watch);
+      // Its gate sends finish in the background and log their own failures.
+      reconcileA2A(bridgeDeps, hub);
     } catch (err) {
       console.error('dispatchd: A2A boot reconciliation failed', err);
     }
+  }
+  try {
+    proposals.recheck();
+  } catch (err) {
+    console.error('dispatchd: A2A proposal recheck failed', err);
   }
 
   let settings: ListenerSettings = readListenerSettings(rootDir).settings;
@@ -185,6 +268,14 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     return next;
   }
 
+  // Probed once, so the form's proposal holds still between polls.
+  let suggested: number | null = null;
+  function suggestedPort(): number | null {
+    if (settings.port !== null) return null;
+    suggested ??= freeLoopbackPort();
+    return suggested;
+  }
+
   function status(): ListenerStatus {
     let legacyClients: string[] = [];
     try {
@@ -207,6 +298,9 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       error: dbError ?? settingsError ?? openError,
       warnings: a2aConfig(rootDir).warnings,
       legacyClients,
+      settings,
+      teamTls: deps.teamTls ?? null,
+      suggestedPort: suggestedPort(),
     };
   }
 
@@ -285,12 +379,21 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       }
       deps.events.broadcast({ type: 'a2a.changed' });
     },
+    guardTaskPatch: (taskId, patch, caller) =>
+      guardTaskPatch(guardDeps, taskId, patch, caller),
+    proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
+    // The guards' evidence: a2a.db's row, else a handoff messages.db ties to the task.
+    taskOrigin: (taskId) => (isA2ATask(guardDeps, taskId) ? 'a2a' : null),
+    recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
+        deps.orchestrator.setDispatchGuard(null);
+        stopProposals();
         stopWatch?.();
         stopWatch = null;
         await listener?.close();
         messaging.setExternalPolicy(null);
+        guardDeps.store = null;
         store?.close();
       }),
   };

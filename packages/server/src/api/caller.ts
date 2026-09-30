@@ -17,7 +17,9 @@ import { tierAllows } from '../tiers.js';
  * the route modules under api/ can call it without a value-level import cycle
  * back into api.ts.
  */
-export function humanActor(ctx: ApiContext): string {
+export function humanActor(
+  ctx: Pick<ApiContext, 'caller' | 'actorContext'>
+): string {
   return ctx.caller?.ref ?? ctx.actorContext.humanRef;
 }
 

@@ -23,8 +23,8 @@ beforeEach(() => {
   window.localStorage.removeItem(CREATE_TASK_DESCRIPTION_KEY);
 });
 
-function epic(id: string, title: string): TaskDoc {
-  return { meta: { id, title, kind: 'epic' }, body: '' } as unknown as TaskDoc;
+function epic(id: string, title: string, kind = 'milestone'): TaskDoc {
+  return { meta: { id, title, kind }, body: '' } as unknown as TaskDoc;
 }
 
 // What a successful `handleCreate` resolves with: enough of a doc for the dialog to
@@ -80,7 +80,11 @@ function mount({
       <ShellActionsProvider value={shellActions(preset)}>
         <CreateTaskModal
           statuses={STATUSES}
-          epics={[epic('e-1', 'Search index')]}
+          epics={[
+            epic('e-1', 'Search index'),
+            epic('p-1', 'Platform', 'project'),
+            epic('t-9', 'Parent issue', 'task'),
+          ]}
           projectName={projectName}
           labels={labels}
           onCreate={(input) => {
@@ -145,13 +149,12 @@ test('renders the crumb header, borderless fields and property chips', () => {
   expect(screen.getByText('Create more')).toBeTruthy();
 });
 
-test('reads status, epic and milestone from the shell createPreset', async () => {
-  const { created } = mount({
-    preset: { status: 'review', epic: 'e-1', milestone: 'September' },
-  });
+test('reads the status and the parent container from the shell createPreset', async () => {
+  const { created } = mount({ preset: { status: 'review', epic: 'e-1' } });
   expect(screen.getByLabelText('Status').textContent).toBe('Review');
-  expect(screen.getByLabelText('Epic').textContent).toBe('Search index');
-  expect(screen.getByLabelText('Milestone').textContent).toBe('September');
+  expect(screen.getByLabelText('Parent').textContent).toBe('Search index');
+  // The free-text milestone is gone: a task's container is its parent.
+  expect(screen.queryByLabelText('Milestone')).toBeNull();
 
   fireEvent.change(titleField(), { target: { value: 'Ship it' } });
   fireEvent.click(createButton());
@@ -162,8 +165,43 @@ test('reads status, epic and milestone from the shell createPreset', async () =>
     title: 'Ship it',
     status: 'review',
     parent: 'e-1',
-    milestone: 'September',
   });
+  expect(created[0]).not.toHaveProperty('milestone');
+});
+
+test('the Parent picker lists where this kind can live, and clears to no parent', async () => {
+  const { created } = mount({ preset: { epic: 'e-1' } });
+  fireEvent.click(screen.getByLabelText('Parent'));
+  const options = screen.getAllByRole('option').map((o) => o.textContent ?? '');
+  expect(options).toEqual([
+    'No parent',
+    'Search indexMilestone',
+    'PlatformProject',
+    'Parent issueTask',
+  ]);
+  fireEvent.click(screen.getByRole('option', { name: /No parent/ }));
+  expect(screen.getByLabelText('Parent').textContent).toBe('Parent');
+
+  fireEvent.change(titleField(), { target: { value: 'Loose' } });
+  fireEvent.click(createButton());
+  await settle();
+  expect(created[0]).toMatchObject({ parent: null });
+});
+
+test('a kind preset starts the Kind chip there and creates that kind', async () => {
+  const { created } = mount({ preset: { kind: 'project' } });
+  expect(screen.getByLabelText('Kind').textContent).toBe('Project');
+  fireEvent.change(titleField(), { target: { value: 'Payments' } });
+  fireEvent.click(createButton());
+  await settle();
+  expect(created[0]).toMatchObject({ title: 'Payments', kind: 'project' });
+});
+
+test('switching to a broader kind drops a parent that cannot hold it', () => {
+  mount({ preset: { epic: 'e-1' } });
+  fireEvent.click(screen.getByLabelText('Kind'));
+  fireEvent.click(screen.getByRole('menuitem', { name: /Project/ }));
+  expect(screen.getByLabelText('Parent').textContent).toBe('Parent');
 });
 
 test('Create task is disabled until a title exists and closes on success', async () => {

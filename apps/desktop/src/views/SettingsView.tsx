@@ -11,6 +11,7 @@ import {
   KeyRound,
   LockIcon,
   MonitorPlay,
+  Network,
   Plug,
   RefreshCw,
   SearchIcon,
@@ -29,6 +30,7 @@ import {
   useState,
 } from 'react';
 
+import { A2ASection } from '../components/settings/A2ASection';
 import {
   accessFor,
   SettingsAccessProvider,
@@ -311,6 +313,14 @@ const SETTINGS_GROUPS: { label: string; pages: PageSpec[] }[] = [
             }}
           />
         ),
+      },
+      {
+        id: 'a2a',
+        label: 'A2A',
+        icon: Network,
+        intro: 'Let other agents ask this project questions over A2A.',
+        savesConfig: false,
+        render: (ctx) => <A2ASection data={ctx.data} />,
       },
       {
         id: 'license',

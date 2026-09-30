@@ -1,4 +1,5 @@
 import {
+  FileCommentStore,
   getSection,
   normalizeProjectPath,
   readCredentials,
@@ -6,12 +7,7 @@ import {
   writeCredential,
   writeProjectCredential,
 } from '@dispatch/core';
-import type {
-  LinearIssue,
-  LinearIssueInput,
-  LinearLabel,
-  LinearWorkflowState,
-} from '@dispatch/core';
+import type { LinearWorkflowState } from '@dispatch/core';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
   mkdtempSync,
@@ -26,15 +22,6 @@ import { join } from 'node:path';
 import { TaskCache } from '../src/cache.js';
 import { EventBus } from '../src/events.js';
 import type { ServerEvent } from '../src/events.js';
-import type {
-  LinearClient,
-  LinearFailure,
-  LinearIssuePage,
-  LinearIssueRef,
-  LinearResult,
-  LinearTeam,
-  LinearViewer,
-} from '../src/linear/client.js';
 import type { LinearSyncState } from '../src/linear/state.js';
 import {
   emptyLinearState,
@@ -42,17 +29,7 @@ import {
   writeLinearState,
 } from '../src/linear/state.js';
 import { LinearSync } from '../src/linear/sync.js';
-
-const STATES: LinearWorkflowState[] = [
-  { id: 's-backlog', name: 'Backlog', type: 'draft' },
-  { id: 's-todo', name: 'Todo', type: 'unstarted' },
-  { id: 's-progress', name: 'In Progress', type: 'started' },
-  { id: 's-review', name: 'In Review', type: 'started' },
-  { id: 's-done', name: 'Done', type: 'completed' },
-  { id: 's-cancelled', name: 'Canceled', type: 'canceled' },
-];
-
-const LABELS: LinearLabel[] = [{ id: 'l-web', name: 'web' }];
+import { FakeLinearClient } from './linearFake.js';
 
 // A custom state with no entry in the status map. It maps down to in-progress via
 // its `type`, and would map back up to "In Progress" — losing the real state.
@@ -61,168 +38,6 @@ const BLOCKED_STATE: LinearWorkflowState = {
   name: 'Blocked',
   type: 'started',
 };
-
-// Stands in for the real GraphQL client: it records every call and serves issues
-// from an in-memory list, so no test here opens a socket.
-class FakeLinearClient implements LinearClient {
-  issues: LinearIssue[] = [];
-  created: LinearIssueInput[] = [];
-  updated: { id: string; input: LinearIssueInput }[] = [];
-  issuesFailure: LinearFailure | null = null;
-  createFailure: LinearFailure | null = null;
-  linkFailure: LinearFailure | null = null;
-  /** Runs inside createIssue, standing in for a local edit landing mid-round-trip. */
-  onCreate: (() => void) | null = null;
-  truncated = false;
-  sinceSeen: (string | null)[] = [];
-  linkQueries = 0;
-  private seq = 0;
-  private tick = 0;
-
-  // A written issue comes back stamped ahead of the local clock, which is what makes echo
-  // suppression load-bearing: on the next pull our own write looks newer than the local file.
-  private stamp(): string {
-    return new Date(Date.now() + 5_000 + ++this.tick).toISOString();
-  }
-
-  viewer(): Promise<LinearResult<LinearViewer>> {
-    return Promise.resolve({
-      ok: true,
-      data: { id: 'u-1', name: 'Test', email: 'test@example.com' },
-    });
-  }
-
-  teams(): Promise<LinearResult<LinearTeam[]>> {
-    return Promise.resolve({
-      ok: true,
-      data: [{ id: 'team-1', key: 'HYD', name: 'Hydrogen' }],
-    });
-  }
-
-  workflowStates(): Promise<LinearResult<LinearWorkflowState[]>> {
-    return Promise.resolve({ ok: true, data: STATES });
-  }
-
-  labels(): Promise<LinearResult<LinearLabel[]>> {
-    return Promise.resolve({ ok: true, data: LABELS });
-  }
-
-  issuesUpdatedSince(
-    _teamId: string,
-    since: string | null
-  ): Promise<LinearResult<LinearIssuePage>> {
-    if (this.issuesFailure !== null) return Promise.resolve(this.issuesFailure);
-    this.sinceSeen.push(since);
-    const nodes =
-      since === null
-        ? this.issues
-        : this.issues.filter((i) => i.updatedAt > since);
-    return Promise.resolve({
-      ok: true,
-      data: {
-        issues: nodes.map((i) => ({ ...i })),
-        truncated: this.truncated,
-      },
-    });
-  }
-
-  issueLinks(): Promise<LinearResult<LinearIssueRef[]>> {
-    if (this.linkFailure !== null) return Promise.resolve(this.linkFailure);
-    this.linkQueries++;
-    return Promise.resolve({
-      ok: true,
-      data: this.issues.map((i) => ({
-        id: i.id,
-        identifier: i.identifier,
-        url: i.url,
-        updatedAt: i.updatedAt,
-      })),
-    });
-  }
-
-  createIssue(input: LinearIssueInput): Promise<LinearResult<LinearIssue>> {
-    if (this.createFailure !== null) return Promise.resolve(this.createFailure);
-    this.onCreate?.();
-    this.created.push(input);
-    const issue = this.materialize(
-      `issue-${++this.seq}`,
-      `HYD-${this.seq}`,
-      input
-    );
-    this.issues.push(issue);
-    return Promise.resolve({ ok: true, data: { ...issue } });
-  }
-
-  updateIssue(
-    id: string,
-    input: LinearIssueInput
-  ): Promise<LinearResult<LinearIssue>> {
-    this.updated.push({ id, input });
-    const index = this.issues.findIndex((i) => i.id === id);
-    if (index < 0) {
-      return Promise.resolve({
-        ok: false,
-        kind: 'graphql',
-        error: `unknown issue: ${id}`,
-      });
-    }
-    const issue = this.materialize(
-      id,
-      this.issues[index].identifier,
-      input,
-      this.issues[index]
-    );
-    this.issues[index] = issue;
-    return Promise.resolve({ ok: true, data: { ...issue } });
-  }
-
-  // Applies a mutation input to an issue the way Linear would, so a pull after a
-  // push sees the values (and the new updatedAt) the push actually produced.
-  private materialize(
-    id: string,
-    identifier: string,
-    input: LinearIssueInput,
-    base?: LinearIssue
-  ): LinearIssue {
-    const stateId = input.stateId ?? base?.state?.id;
-    return {
-      id,
-      identifier,
-      title: input.title ?? base?.title ?? '',
-      description: input.description ?? base?.description ?? null,
-      priority: input.priority ?? base?.priority ?? 0,
-      url: `https://linear.app/acme/issue/${identifier}`,
-      createdAt: base?.createdAt ?? this.stamp(),
-      updatedAt: this.stamp(),
-      archivedAt: base?.archivedAt ?? null,
-      state: STATES.find((s) => s.id === stateId) ?? base?.state ?? null,
-      labels:
-        input.labelIds === undefined
-          ? (base?.labels ?? [])
-          : LABELS.filter((l) => (input.labelIds ?? []).includes(l.id)),
-      team: { id: 'team-1', key: 'HYD' },
-    };
-  }
-
-  issue(overrides: Partial<LinearIssue> = {}): LinearIssue {
-    const n = ++this.seq;
-    return {
-      id: `issue-${n}`,
-      identifier: `HYD-${n}`,
-      title: `Issue ${n}`,
-      description: 'from linear',
-      priority: 2,
-      url: `https://linear.app/acme/issue/HYD-${n}`,
-      createdAt: '2026-07-01T00:00:00.000Z',
-      updatedAt: '2026-07-05T00:00:00.000Z',
-      archivedAt: null,
-      state: STATES[2],
-      labels: [LABELS[0]],
-      team: { id: 'team-1', key: 'HYD' },
-      ...overrides,
-    };
-  }
-}
 
 let root: string;
 let fakeHome: string;
@@ -293,7 +108,8 @@ describe('LinearSync.pull', () => {
     const docs = store.list();
     expect(docs).toHaveLength(1);
     expect(docs[0].meta.title).toBe('Ship the thing');
-    expect(docs[0].meta.status).toBe('working');
+    // Statuses are the team's workflow states once linked.
+    expect(docs[0].meta.status).toBe('In Progress');
     expect(docs[0].meta.priority).toBe('high');
     expect(docs[0].meta.labels).toEqual(['web']);
     expect(docs[0].meta.external).toBe(`linear:${fake.issues[0].id}`);
@@ -325,7 +141,7 @@ describe('LinearSync.pull', () => {
     expect(store.get(doc.meta.id)?.meta.title).toBe('Renamed in Linear');
   });
 
-  it('leaves a locally-newer task alone and counts it as a conflict', async () => {
+  it('keeps a locally-newer edit on first contact and records each conflict', async () => {
     const remote = fake.issue({
       title: 'Renamed in Linear',
       updatedAt: '2026-07-05T00:00:00.000Z',
@@ -337,11 +153,18 @@ describe('LinearSync.pull', () => {
 
     const summary = await makeSync().syncOnce();
 
-    expect(summary.conflicts).toBe(1);
-    expect(summary.pulled).toBe(0);
-    expect(store.get(doc.meta.id)?.meta.title).toBe('Newer locally');
-    // The local side won, so the same pass pushes it up rather than dropping it.
+    // Title, description, state and priority all differ with no base to say
+    // who moved, so each is a conflict the newer (local) edit wins.
+    expect(summary.conflicts).toBe(4);
+    const after = store.get(doc.meta.id);
+    expect(after?.meta.title).toBe('Newer locally');
+    expect(getSection(after?.body ?? '', 'Activity')).toContain(
+      'Linear sync conflict'
+    );
+    // Fields the old sync never pushed take Linear's value.
+    expect(after?.meta.labels).toEqual(['web']);
     expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Newer locally');
   });
 
   it('does not create a task for an issue that is already archived', async () => {
@@ -844,6 +667,28 @@ describe('LinearSync fresh state with existing links', () => {
 });
 
 describe('LinearSync first pass baseline', () => {
+  // Found against a real, empty Linear team: with no cursor, every later
+  // poll skipped the cheap probe and re-read the whole team.
+  it('takes a cursor from an import that finds nothing', async () => {
+    fake.issues = [];
+    const sync = new LinearSync({
+      rootDir: root,
+      store,
+      cache,
+      events,
+      client: fake,
+      comments: new FileCommentStore(root),
+    });
+
+    await sync.importIssues();
+    expect(readLinearState(root).cursor).not.toBeNull();
+    expect(readLinearState(root).commentCursor).not.toBeNull();
+
+    fake.sinceSeen.length = 0;
+    await sync.syncOnce();
+    expect(fake.sinceSeen).not.toContain(null);
+  });
+
   it('takes a cursor without scanning a team it has no use for', async () => {
     fake.issues = [fake.issue(), fake.issue()];
 
@@ -871,6 +716,8 @@ describe('LinearSync first pass baseline', () => {
     // so local edits still push and the integration keeps working.
     await new Promise((resolve) => setTimeout(resolve, 5));
     store.create({ title: 'Local work' });
+    // Something changed after the cursor, so the probe sends the pass to page.
+    fake.issues[0].updatedAt = new Date(Date.now() + 60_000).toISOString();
     const second = await sync.syncOnce();
     expect(second.errors.some((e) => e.includes('page through'))).toBe(true);
     expect(second.createdIssues).toBe(1);
@@ -1065,8 +912,8 @@ describe('LinearSync branch switches', () => {
 });
 
 describe('LinearSync unrecorded links', () => {
-  // A linked task the engine holds no recorded version for: it cannot know whether the
-  // local file is ahead of the issue, so it must ask before writing.
+  // A linked task the engine holds no merge base for: it cannot know which side
+  // moved, so it fetches the issue and lets the newer copy win.
   function seedUnrecordedLink(remoteUpdatedAt: string): { id: string } {
     const remote = fake.issue({
       title: 'Owned by Linear',
@@ -1083,15 +930,16 @@ describe('LinearSync unrecorded links', () => {
     return { id: doc.meta.id };
   }
 
-  it('checks Linear before writing to a link it has no recorded version for', async () => {
-    seedUnrecordedLink('2027-01-01T00:00:00.000Z');
+  it('takes Linear’s newer copy of a link it has no base for, writing nothing back', async () => {
+    const { id } = seedUnrecordedLink('2027-01-01T00:00:00.000Z');
 
     const summary = await makeSync().syncOnce();
 
     expect(fake.updated).toHaveLength(0);
     expect(fake.issues[0].title).toBe('Owned by Linear');
     expect(fake.issues[0].state?.name).toBe('Blocked');
-    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(store.get(id)?.meta.title).toBe('Owned by Linear');
+    expect(summary.errors).toEqual([]);
   });
 
   it('sends it once the check shows the local copy is newer', async () => {
@@ -1105,18 +953,20 @@ describe('LinearSync unrecorded links', () => {
 
   it('leaves it outstanding when the check could not be made', async () => {
     seedUnrecordedLink('2026-01-01T00:00:00.000Z');
-    fake.linkFailure = {
+    fake.failures.issuesByIds = {
       ok: false,
       kind: 'graphql',
-      error: 'link query blew up',
+      error: 'issue query blew up',
     };
 
     const sync = makeSync();
     const first = await sync.syncOnce();
     expect(fake.updated).toHaveLength(0);
-    expect(first.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(first.errors.some((e) => e.includes('could not be fetched'))).toBe(
+      true
+    );
 
-    fake.linkFailure = null;
+    delete fake.failures.issuesByIds;
     await sync.syncOnce();
 
     expect(fake.updated).toHaveLength(1);
@@ -1134,7 +984,7 @@ describe('LinearSync unrecorded links', () => {
 });
 
 describe('LinearSync explicit push conflict check', () => {
-  it('withholds an explicit update when Linear holds a newer copy', async () => {
+  it('lets Linear’s newer copy win an explicit push, and records the conflict', async () => {
     const { id } = seedClonedRepo();
 
     const summary = await makeSync().syncOnce([id]);
@@ -1142,7 +992,8 @@ describe('LinearSync explicit push conflict check', () => {
     expect(fake.updated).toHaveLength(0);
     expect(fake.issues[0].title).toBe('Owned by Linear');
     expect(fake.issues[0].state?.name).toBe('Blocked');
-    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(store.get(id)?.meta.title).toBe('Owned by Linear');
+    expect(summary.conflicts).toBeGreaterThan(0);
   });
 
   it('sends an explicit update when the local copy is the newer one', async () => {
@@ -1170,18 +1021,20 @@ describe('LinearSync explicit push conflict check', () => {
     expect(fake.updated[0].input.title).toBe('Second');
   });
 
-  it('withholds an explicit update when the check itself failed', async () => {
+  it('withholds an explicit update when the fresh copy could not be fetched', async () => {
     const { id } = seedClonedRepo('2026-01-01T00:00:00.000Z');
-    fake.linkFailure = {
+    fake.failures.issuesByIds = {
       ok: false,
       kind: 'graphql',
-      error: 'link query blew up',
+      error: 'issue query blew up',
     };
 
     const summary = await makeSync().syncOnce([id]);
 
     expect(fake.updated).toHaveLength(0);
-    expect(summary.errors.some((e) => e.includes('withheld'))).toBe(true);
+    expect(summary.errors.some((e) => e.includes('could not be fetched'))).toBe(
+      true
+    );
   });
 
   it('does not pay for a check when the named task is not linked yet', async () => {
@@ -1229,7 +1082,7 @@ describe('LinearSync link query failures', () => {
 });
 
 describe('LinearSync degraded pull', () => {
-  it('will not overwrite a linked issue when the pull failed', async () => {
+  it('still merges a linked task against a fresh copy when the pull failed', async () => {
     const remote = fake.issue({ updatedAt: '2026-07-01T00:00:00.000Z' });
     fake.issues = [remote];
     const linked = store.create({ title: 'Linked and edited' });
@@ -1244,12 +1097,11 @@ describe('LinearSync degraded pull', () => {
 
     const summary = await makeSync().syncOnce();
 
-    // No conflict information was available, so the update is withheld and said so.
-    expect(fake.updated).toHaveLength(0);
-    expect(summary.errors.some((e) => e.includes('no conflict check'))).toBe(
-      true
-    );
-    // Creating a genuinely new issue is still safe and still happens.
+    // The failure is reported, but the push merges against its own fresh
+    // copy of the issue, so the local edit still goes out safely.
+    expect(summary.errors).toContain('issues query blew up');
+    expect(fake.updated).toHaveLength(1);
+    expect(fake.updated[0].input.title).toBe('Linked and edited');
     expect(summary.createdIssues).toBe(1);
   });
 
@@ -1430,13 +1282,13 @@ describe('LinearSync credential scope', () => {
     );
   });
 
-  it('disconnect clears only this project and falls back to the global key', () => {
+  it('disconnect clears only this project and falls back to the global key', async () => {
     writeCredential('linear', { apiKey: 'lin_api_global_key' });
     const sync = makeSync();
     sync.connect('lin_api_project_key');
     expect(sync.status().keySource).toBe('project');
 
-    sync.disconnect();
+    await sync.disconnect();
 
     expect(
       readCredentials().projects?.[normalizeProjectPath(root)]

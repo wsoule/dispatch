@@ -159,6 +159,35 @@ describe('MemoryEngine reads', () => {
     expect(listed).not.toContain(local.id);
   });
 
+  it('treats a review run of an A2A task as an A2A run too', () => {
+    const t = setup();
+    const REVIEW = { ...RUN, address: 'run:r-4e5f60' };
+    t.host.auxRunTasks.set('r-4e5f60', 't-1a2b3c');
+    t.host.operators.set(REVIEW.address, {
+      human: 'human:wyat',
+      identity: 'self',
+    });
+    t.host.tasks.set('t-1a2b3c', {
+      ...t.host.tasks.get('t-1a2b3c')!,
+      a2a: true,
+    });
+    const local = put(t.shared, { scope: 'project', title: 'local only' });
+    const team = put(t.shared);
+    const mine = put(t.stores.personal('self'), {
+      scope: 'personal',
+      kind: 'preference',
+      title: 'terse comments',
+    });
+    expect(t.engine.viewer(REVIEW)).toMatchObject({
+      operator: null,
+      a2aRun: true,
+    });
+    const listed = t.engine.list(REVIEW).map((e) => e.id);
+    expect(listed).toContain(team.id);
+    expect(listed).not.toContain(local.id);
+    expect(listed).not.toContain(mine.id);
+  });
+
   it('searches with includeStale on by default and includeRetired off, recording search recalls', () => {
     const t = setup();
     const stale = put(t.shared, { decay: 'stale' });

@@ -226,21 +226,32 @@ function runCredential(): MessagingCredential | { error: string } | null {
   };
 }
 
+// A credential this process already holds (a run's token file, or a cached
+// agent registration), without registering; null when there is none.
+export function existingMessagingCredential(
+  rootDir: string,
+  clientName: string | undefined
+): MessagingCredential | { error: string } | null {
+  const run = runCredential();
+  if (run !== null) return run;
+  const cached = readStoredToken(
+    agentTokenFilePath(rootDir, agentName(process.env, clientName, hostname()))
+  );
+  return cached === null
+    ? null
+    : { token: cached.token, address: cached.address, kind: 'agent' };
+}
+
 /** A run's own token, else this project's self-registered agent identity.
  *  `rootDir` must already be the project root (toolKit.ts's `projectRoot`). */
 export async function messagingCredential(
   rootDir: string,
   clientName: string | undefined
 ): Promise<MessagingCredential | { error: string }> {
-  const run = runCredential();
-  if (run !== null) return run;
+  const existing = existingMessagingCredential(rootDir, clientName);
+  if (existing !== null) return existing;
 
   const name = agentName(process.env, clientName, hostname());
-  const cached = readStoredToken(agentTokenFilePath(rootDir, name));
-  if (cached !== null) {
-    return { token: cached.token, address: cached.address, kind: 'agent' };
-  }
-
   const daemon = readDaemonFile(rootDir);
   if (daemon === null || !(await isDaemonHealthy(daemon.port))) {
     return {

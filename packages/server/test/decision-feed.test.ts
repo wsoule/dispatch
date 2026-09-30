@@ -342,6 +342,36 @@ describe('DecisionFeed aggregation', () => {
     expect(item.paths).toEqual(paths);
   });
 
+  it('lists a doc gate with its task and run, and no doc content', () => {
+    h.runs.push(
+      runMeta('r-000009', { taskId: 't-000009', taskTitle: 'Auth work' })
+    );
+    h.gates.push(
+      gate('m-doc', {
+        body: 'run:r-000009 proposes an edit to an accepted doc. Review it in Needs you.',
+        choices: ['approve', 'reject'],
+        data: {
+          type: 'doc',
+          doc: 'doc-01K',
+          proposal: 'rev-01K',
+          taskId: 't-000009',
+          runId: 'r-000009',
+        },
+      })
+    );
+    const [item] = byKind(h.feed.list(), 'doc');
+    expect(item).toMatchObject({
+      kind: 'doc',
+      taskId: 't-000009',
+      runId: 'r-000009',
+      taskTitle: 'Auth work',
+      state: 'open',
+    });
+    expect(item.summary).toBe(
+      'Auth work: an agent proposes an edit to an accepted doc'
+    );
+  });
+
   it('leaves out blocking messages that ask no human question', () => {
     h.runs.push(runMeta('r-1'));
     h.gates.push(

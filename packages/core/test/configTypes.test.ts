@@ -45,9 +45,26 @@ describe('notificationKindForMessage', () => {
       'approval',
       'scope-request',
       'memory',
+      'doc',
       'fix-loop-capped',
       'run-stalled',
     ]);
+  });
+
+  it('notifies doc gates under their own kind, on by default', () => {
+    expect(
+      notificationKindForMessage(
+        q({ type: 'doc', doc: 'doc-1', proposal: 'rev-1' })
+      )
+    ).toBe('doc');
+    expect(NOTIFICATION_KINDS).toContain('doc');
+    expect(DEFAULT_NOTIFICATIONS.kinds.doc).toBe(true);
+  });
+
+  it('notifies a task proposal under approval', () => {
+    expect(notificationKindForMessage(q({ type: 'task-proposal' }))).toBe(
+      'approval'
+    );
   });
 
   it('is null for anything that is not a blocking question', () => {

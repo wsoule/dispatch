@@ -128,6 +128,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Connected agents',
     'Board sync',
     'Linear',
+    'A2A',
     'License',
     'Remotes',
     'Background',
@@ -441,7 +442,7 @@ function tierData(
     keySource: 'project',
     config: {
       ...testConfig,
-      linear: { ...testConfig.linear, teamId: 'team-1' },
+      linear: { ...testConfig.linear, teamId: 'team-1', teamIds: ['team-1'] },
     },
     linearStatus: {
       ...connected.linearStatus,
@@ -569,14 +570,17 @@ const CONFIG_PAGES: PageLocks[] = [
   },
   {
     page: 'integrations',
-    locked: ['Sync settings', 'Status mapping'],
+    locked: ['Sync settings', 'Teams', 'Status roles'],
     open: ['Connection', 'Sync'],
     controls: () => [
       screen.getByRole('switch', { name: 'Sync this project with Linear' }),
-      screen.getByRole('combobox', { name: 'Team' }),
       screen.getByRole('combobox', { name: 'Direction' }),
       screen.getByLabelText('Poll interval'),
-      screen.getByRole('combobox', { name: 'backlog maps to' }),
+      screen.getByRole('switch', {
+        name: 'Send Acceptance Criteria to Linear',
+      }),
+      screen.getByRole('checkbox', { name: 'Link Unknown team' }),
+      screen.getByRole('combobox', { name: 'Run finishes status' }),
     ],
   },
   {

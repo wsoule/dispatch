@@ -9,7 +9,7 @@ import type {
   SDKResultMessage,
   SDKUserMessage,
 } from '@anthropic-ai/claude-agent-sdk';
-import { DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
+import { DISPATCH_MCP_TOOLS, DISPATCH_MESSAGING_TOOLS } from '@dispatch/core';
 import type { CartoBinary } from '@dispatch/core/carto';
 import { basename, isAbsolute, relative, resolve, sep } from 'node:path';
 
@@ -104,6 +104,14 @@ const AUTO_ALLOWED_EDIT_TOOLS = new Set([
 // the user approve a question before seeing it.
 const MESSAGING_TOOLS: ReadonlySet<string> = new Set(
   DISPATCH_MESSAGING_TOOLS.map((tool) => `mcp__dispatch__${tool}`)
+);
+
+// The doc tools, auto-allowed like messaging: reads are the ## Docs index's
+// whole point, and writes are drafts the service already governs.
+const DOC_TOOLS: ReadonlySet<string> = new Set(
+  DISPATCH_MCP_TOOLS.filter((tool) => tool.startsWith('doc_')).map(
+    (tool) => `mcp__dispatch__${tool}`
+  )
 );
 
 // Memory tools: a shared write already waits on the memory gate and a personal
@@ -985,7 +993,8 @@ export class ClaudeExecutor implements Executor {
           opts.permissionMode === 'acceptEdits' &&
           (AUTO_ALLOWED_EDIT_TOOLS.has(toolName) ||
             MESSAGING_TOOLS.has(toolName) ||
-            MEMORY_TOOLS.has(toolName))
+            MEMORY_TOOLS.has(toolName) ||
+            DOC_TOOLS.has(toolName))
         ) {
           return { behavior: 'allow', updatedInput: input };
         }

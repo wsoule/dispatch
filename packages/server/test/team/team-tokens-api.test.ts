@@ -202,6 +202,37 @@ describe('team tokens', () => {
     expect(res.status).toBe(404);
   });
 
+  it('refuses to add anyone while team.yml has a skipped entry, and leaves it as it was', async () => {
+    const file = join(root, '.dispatch', 'team.yml');
+    const yaml = `members:\n  - handle: ${'a'.repeat(64)}2\n    email: long@x.com\n  - handle: ok\n    email: ok@x.com\n`;
+    writeFileSync(file, yaml);
+
+    const res = await invite({ email: 'ada@example.com' });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      '"long@x.com"'
+    );
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+    // Someone already on the roster needs no write, so they can still be issued a token.
+    expect((await invite({ handle: 'ok' })).status).toBe(201);
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+  });
+
+  it('refuses a re-invite that would rewrite the roster, saying so rather than that it adds anyone', async () => {
+    const file = join(root, '.dispatch', 'team.yml');
+    const yaml = `members:\n  - handle: ${'a'.repeat(64)}2\n    email: long@x.com\n  - handle: ok\n    email: ok@x.com\n`;
+    writeFileSync(file, yaml);
+
+    // A new display name changes ok's entry without adding anyone.
+    const res = await invite({ email: 'ok@x.com', displayName: 'Okay' });
+    expect(res.status).toBe(409);
+    const { error } = (await res.json()) as { error: string };
+    expect(error).toContain('"long@x.com"');
+    expect(error).toContain('this invite would rewrite team.yml');
+    expect(error).not.toContain('adding anyone');
+    expect(readFileSync(file, 'utf8')).toBe(yaml);
+  });
+
   it('rejects an unknown tier', async () => {
     const res = await invite({ email: 'ada@example.com', tier: 'admin' });
     expect(res.status).toBe(400);

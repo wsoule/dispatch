@@ -28,8 +28,10 @@ export interface MemoryHost {
   projectKey(): string;
   // A task's title, body, writes, epic and A2A provenance, or null when unknown.
   taskContext(taskId: string): IndexContext | null;
-  // The task a run principal works on; null for humans and agents.
+  // The task an execute run works on, which its proposals carry; null otherwise.
   taskOfPrincipal(principal: Principal): string | null;
+  // The task of any run, review and verify included; null for humans and agents.
+  runTaskOf(principal: Principal): string | null;
   // Told after every committed change, so the host can notify listeners.
   changed(change: MemoryChange): void;
   // The clock every recall and write is stamped with.

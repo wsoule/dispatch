@@ -3,22 +3,48 @@ import type {
   ConfigPatch,
   CreateInput,
   DispatchConfig,
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocProposal,
+  DocProposalView,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocScope,
+  DocsHealth,
+  DocStatus,
+  DocSummary,
   EffortLevel,
   Finding,
   FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
+  LabelDefinition,
   LedgerEntry,
+  LinkRel,
   ModelConfig,
   MutationEvidence,
+  Person,
   Priority,
+  ProposalState,
+  RunStep,
+  TaskComment,
   TaskDoc,
+  TaskListItem,
   TaskRisk,
   UpdatePatch,
 } from '@dispatch/core';
 // Re-exported (not just imported) so a consumer of this package can name
 // these types directly, the same way it already can with `ApiClient`.
 export type {
+  CommentPatch,
+  LabelDefinition,
+  Person,
+  TaskComment,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -156,13 +182,19 @@ export interface RunMeta {
   model?: string;
   /** The reasoning effort this run started at; absent is the model default. */
   effort?: EffortLevel;
-  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  /** ActorRef of the human the run is for (who dispatched it, or started its
+   *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
   // How many sub-agents this run's agent has fanned out into and where they
   // stand, kept live by the daemon from the run's `agent` entries and rebuilt
   // from them on replay. Absent until the first sub-agent is spawned. Mirrors
   // RunMeta.subagents / SubagentSummary in @dispatch/core.
   subagents?: SubagentSummary;
+  // What a live run's agent is doing, in words ("Editing src/a.ts"), and when
+  // it said so — the step a list shows before any `run.log` event arrives.
+  // Absent before the first step and once the run is terminal. Mirrors
+  // RunMeta.lastStep; label new entries with core's runStepFromEntry.
+  lastStep?: RunStep;
   // Phase 5 P1: set once a run has been reviewed (merge/discard/pr) or its PR
   // has merged — mirrors RunMeta's own one-way markers in
   // packages/server/src/orchestrator/types.ts.
@@ -615,6 +647,30 @@ export interface StartReviewInput {
   runId?: string;
 }
 
+// Mirrors GET /api/people: everyone pickers offer, and the caller's own ref
+// (what the legacy bare `human` assignee means).
+export interface PeopleSnapshot {
+  me: string;
+  /** The daemon's own human, whom a fan-out takes a bare `human` assignee to
+   *  mean (core's fanoutHolder). Absent from an older daemon. */
+  local?: string;
+  people: Person[];
+}
+
+// Mirrors GET /api/labels (and PUT's answer): the label registry, whose
+// colors every label chip draws.
+export interface LabelsSnapshot {
+  labels: LabelDefinition[];
+}
+
+// Mirrors POST /api/tasks/:id/comments's body. The server credits the
+// caller and stamps the time; `runId` lets an agent name its run.
+export interface NewCommentInput {
+  body: string;
+  parentId?: string | null;
+  runId?: string;
+}
+
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
 // what changes and why, recorded in the task's `## Amendments` section.
 export interface AmendTaskInput {
@@ -649,12 +705,15 @@ export type StartVerificationResult =
   | RunMeta
   | { skipped: true; reason: string };
 
-// A task, run, file, commit or message a message points at; mirrors
-// @dispatch/protocol's Ref.
+// The ref types @dispatch/protocol registers; mirrors its RefType.
+export type RefType = 'task' | 'run' | 'file' | 'commit' | 'message' | 'doc';
+
+// What a message points at; mirrors @dispatch/protocol's Ref. A message
+// received from a peer may carry any other identifier as its type.
 export interface Ref {
-  type: string;
+  type: RefType | (string & {});
   id: string;
-  /** Commit sha for `file` refs. */
+  /** A commit sha for `file` refs; a section anchor for `doc` refs. */
   at?: string;
 }
 
@@ -771,6 +830,21 @@ export type GateData =
       action: 'add' | 'supersede' | 'retire';
       scope: 'project' | 'team';
       kind: MemoryKind;
+    }
+  | {
+      type: 'task-proposal';
+      // The draft an A2A client handed off, and who proposed it (system-only gate).
+      task: string;
+      proposedBy: string;
+      message: string;
+    }
+  | {
+      type: 'doc';
+      // A proposed edit to an accepted doc; the text stays in docs.db (system-only gate).
+      doc: string; // doc-<ulid>
+      proposal: string; // rev-<ulid>
+      taskId?: string;
+      runId?: string;
     };
 
 // Structural mirrors of @dispatch/memory's views and the memory routes'
@@ -1023,8 +1097,54 @@ export interface MailboxItem {
   message: Message;
 }
 
+// Docs: @dispatch/core defines the wire types packages/server/src/docs/routes.ts
+// serves; these three are the client's own framing of its answers.
+export type {
+  DocConflict,
+  DocHit,
+  DocLink,
+  DocLinking,
+  DocOp,
+  DocRead,
+  DocRecord,
+  DocRevisionInfo,
+  DocSaveResult,
+  DocSummary,
+  DocsHealth,
+} from '@dispatch/core';
+
+/** A whole-body save: the new head, or the 409's merge conflict as a value. */
+export type DocSaveOutcome =
+  | { ok: true; result: DocSaveResult }
+  | { ok: false; conflict: DocConflict };
+
+/** GET /api/docs/:ref/diff; `spent` when the line diff ran out of budget. */
+export interface DocDiff {
+  from: DocRevisionInfo;
+  to: DocRevisionInfo;
+  chunks: { equal: boolean; a: string[]; b: string[] }[];
+  spent: boolean;
+}
+
+/** GET /api/docs's filters; `q` matches within titles. */
+export interface DocListParams {
+  taskId?: string;
+  scope?: DocScope;
+  status?: DocStatus;
+  unreviewed?: boolean;
+  conflicted?: boolean;
+  q?: string;
+  includeArchived?: boolean;
+  limit?: number;
+  offset?: number;
+}
+
 export type ServerEvent =
-  | { type: 'task.changed' }
+  // `ids`, when set, names every task the change touched; absent means
+  // "anything may have changed" — refetch the list.
+  | { type: 'task.changed'; ids?: string[] }
+  // A task's comments changed; patch that thread, never the board.
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -1058,6 +1178,8 @@ export type ServerEvent =
   // A Linear sync pass finished, carrying its own summary. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // A long Linear pass (an import) moved on. Mirrors the server's event.
+  | { type: 'linear.progress'; progress: LinearProgress }
   // The brain-dump inbox changed — captured, retyped, dismissed or converted.
   | { type: 'inbox.changed' }
   // A overseer conversation's record changed (turn settled, action queued or
@@ -1142,8 +1264,67 @@ export type ServerEvent =
   // A delivery changed state (pushed, read, answered…) — refetch the thread.
   // Mirrors packages/server/src/events.ts exactly.
   | { type: 'delivery.changed'; deliveryId: string; messageId: string }
+  // A doc changed; a bare refetch signal, never an id for personal docs.
+  // Mirrors packages/server/src/events.ts exactly.
+  | { type: 'doc.changed'; scope: 'team' | 'personal'; id?: string }
   // The A2A bridge's clients, tasks or listener changed; go refetch.
   | { type: 'a2a.changed' };
+
+// The A2A listener's machine-local settings, the body of PUT /api/a2a/listener.
+// Mirrors ListenerSettings in packages/server/src/a2a/settings.ts.
+export interface A2AListenerSettings {
+  enabled: boolean;
+  host: string;
+  port: number | null;
+  publicUrl: string | null;
+  tls: { certPath: string; keyPath: string } | null;
+  trustForwardedFor: boolean;
+  standalone: boolean;
+}
+
+// GET /api/a2a/listener's body. Mirrors ListenerStatus in
+// packages/server/src/a2a/bridge.ts.
+export interface A2AListenerStatus {
+  enabled: boolean;
+  listening: boolean;
+  url: string | null;
+  error: string | null;
+  // config.yml `a2a:` keys that fell back to their defaults.
+  warnings: string[];
+  // Approved a2a.* agents with no clients row, registered before the bridge.
+  legacyClients: string[];
+  // What the listener opens from: the file plus any one-boot flags.
+  settings: A2AListenerSettings;
+  // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
+  teamTls: { certPath: string; keyPath: string } | null;
+  // A free port for a listener whose settings name none; null once they do.
+  suggestedPort: number | null;
+}
+
+// One row of GET /api/a2a/clients: the clients row plus its agent's status.
+export interface A2AClientSummary {
+  address: string;
+  name: string;
+  recipients: string[];
+  createdBy: string;
+  createdAt: string;
+  status: AgentStatus;
+}
+
+// One row of GET /api/a2a/tasks. Mirrors TaskRow in @dispatch/a2a's store.
+export interface A2ATaskSummary {
+  id: string;
+  client: string;
+  contextId: string;
+  skill: 'ask' | 'handoff';
+  dispatchTask: string | null;
+  gate: string | null;
+  state: string;
+  statusAt: string;
+  canceledAt: string | null;
+  declinedAt: string | null;
+  createdAt: string;
+}
 
 // The body of `GET /api/runs/claims` — one entry per live run.
 export interface RunClaim {
@@ -1301,6 +1482,8 @@ export interface DraftRecord {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** The container the draft was started in; the saved task's parent. */
+  parent?: string;
 }
 
 // Mirrors OverseerState in packages/server/src/orchestrator/overseer.ts:
@@ -1463,10 +1646,18 @@ export interface EpicSession {
   /** `null` = no run ceiling. */
   maxRuns: number | null;
   startedAt: string;
+  /** The `human:` ref that started it; its fan-out never starts a teammate's
+   *  task. Null: the local human. Readers still default it for older daemons. */
+  startedBy: string | null;
+  /** What it covers: the container's whole Flight Plan, or only its direct
+   *  children (a session from before plan-wide fan-outs). Readers still
+   *  default an older daemon's missing one to `plan`. */
+  scope: 'plan' | 'direct';
   updatedAt: string;
   completedAt?: string;
-  /** The human who started the session; its auto-fill runs act for them. */
-  startedBy?: string;
+  /** The human its auto-fill runs act for; absent when the shared agentToken
+   *  started it. */
+  operator?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -1708,6 +1899,13 @@ export interface ReadinessReading {
   confidence: number;
   /** Probability the task bundles two or more independently doable changes. */
   splitProbability: number;
+}
+
+/** One ready task as `GET /api/tasks/ready?fields=id` sends it: the id, plus
+ * its readiness reading when the daemon has judged it. */
+export interface ReadyTaskRef {
+  id: string;
+  readiness?: ReadinessReading;
 }
 
 /** What the triage judged one capture to be — mirrors InboxTriage in
@@ -2102,7 +2300,10 @@ export interface LinearStatus {
   enabled: boolean;
   connected: boolean;
   keySource: 'project' | 'env' | 'global' | null;
+  /** The primary linked team. */
   teamId: string | null;
+  /** Every linked team, primary first. Absent from older daemons. */
+  teamIds?: string[];
   direction: 'both' | 'pull' | 'push';
   intervalSec: number;
   statusMap: Record<string, string>;
@@ -2112,6 +2313,36 @@ export interface LinearStatus {
   lastError: string | null;
   lastSummary: LinearSyncSummary | null;
   syncing: boolean;
+  /** Field conflicts resolved since the link. Absent from older daemons. */
+  conflicts?: { total: number; recent: LinearConflict[] };
+  /** Set while an import is running. */
+  progress?: LinearProgress | null;
+  /** How changes arrive: a webhook, or polling. */
+  webhook?: LinearWebhookStatus;
+}
+
+/** One field both sides changed, and whose edit was kept. */
+export interface LinearConflict {
+  taskId: string;
+  field: string;
+  kept: 'local' | 'remote';
+  at: string;
+}
+
+/** Where a long pass has got to; `total` is null while unknown. */
+export interface LinearProgress {
+  phase: 'containers' | 'issues' | 'applying';
+  done: number;
+  total: number | null;
+}
+
+// Mirrors LinearWebhookStatus in packages/server/src/linear/sync.ts.
+export interface LinearWebhookStatus {
+  state: 'active' | 'polling' | 'error' | 'off';
+  url: string | null;
+  lastDeliveryAt: string | null;
+  error: string | null;
+  pollSec: number;
 }
 
 export interface LinearTeam {
@@ -2249,11 +2480,12 @@ async function request<T>(
 // request, body or not, so the gate can be a blanket rule rather than one the
 // body-less POSTs (cancelRun, gitPull, clusterInbox, …) have to be exempt from.
 // A FormData body is left without one so fetch writes the multipart boundary
-// itself.
+// itself. Statuses in `allowed` come back as responses instead of throwing.
 async function send(
   target: ApiTarget,
   path: string,
-  init?: RequestInit
+  init?: RequestInit,
+  allowed: readonly number[] = []
 ): Promise<Response> {
   const headers = new Headers(init?.headers);
   if (
@@ -2267,20 +2499,28 @@ async function send(
     headers.set('authorization', `Bearer ${target.token}`);
   }
   const res = await fetch(`${target.baseUrl}${path}`, { ...init, headers });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as {
-      error?: string;
-      code?: string;
-      field?: string;
-    };
-    throw new ApiError(
-      body.error ?? `request failed: ${res.status}`,
-      res.status,
-      body.code,
-      body.field
-    );
+  if (!res.ok && !allowed.includes(res.status)) {
+    throw apiError(res.status, await res.json().catch(() => null));
   }
   return res;
+}
+
+// The ApiError for a failed response's `{ error, code, field }` body.
+function apiError(status: number, body: unknown): ApiError {
+  const b = body as { error?: string; code?: string; field?: string } | null;
+  return new ApiError(
+    b?.error ?? `request failed: ${status}`,
+    status,
+    b?.code,
+    b?.field
+  );
+}
+
+// Only a whole-body save's merge conflict carries these reasons; other 409s,
+// such as an archived doc's, are a plain error body.
+function isDocConflict(body: unknown): body is DocConflict {
+  const reason = (body as { reason?: unknown } | null)?.reason;
+  return reason === 'merge-conflict' || reason === 'base-changed';
 }
 
 // request() for a binary body: same auth and error handling, the response
@@ -2299,6 +2539,24 @@ function jsonBody(value: unknown): RequestInit {
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(value),
   };
+}
+
+// A doc's route: ids and team handles as they are, a personal handle keeps its '~'.
+function docPath(ref: string): string {
+  return `/api/docs/${encodeURIComponent(ref).replace(/^%7E/, '~')}`;
+}
+
+// A daemon older than `?fields=id` ignores it and sends whole docs, which
+// carry the id under `meta`; read it from either shape.
+type ReadyIdReply =
+  | ReadyTaskRef
+  | (TaskListItem & { readiness?: ReadinessReading });
+
+function toReadyTaskRef(item: ReadyIdReply): ReadyTaskRef {
+  if ('id' in item) return item;
+  return item.readiness === undefined
+    ? { id: item.meta.id }
+    : { id: item.meta.id, readiness: item.readiness };
 }
 
 // The base path a ReviewTarget's comment routes hang off — /api/runs/:id
@@ -2339,12 +2597,17 @@ function workspaceQuery(path: string, scope: WorkspaceScope): string {
   return params.toString();
 }
 
-export function taskQueryString(filter: TaskFilter = {}): string {
+// `metaOnly` appends `fields=meta`, the body-less projection.
+export function taskQueryString(
+  filter: TaskFilter = {},
+  metaOnly = false
+): string {
   const params = new URLSearchParams();
   if (filter.status !== undefined) params.set('status', filter.status);
   if (filter.kind !== undefined) params.set('kind', filter.kind);
   if (filter.parent !== undefined) params.set('parent', filter.parent);
   if (filter.archived === true) params.set('archived', '1');
+  if (metaOnly) params.set('fields', 'meta');
   return params.size > 0 ? `?${params.toString()}` : '';
 }
 
@@ -2610,12 +2873,25 @@ export interface ApiClient {
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source. */
   fetchSyncStatus(): Promise<SyncStatus>;
   fetchTasks(filter?: TaskFilter): Promise<TaskDoc[]>;
+  /** `fetchTasks` without bodies (`fields=meta`) — for list views, which
+   * fetch one task's body through `fetchTask` only when they show it. */
+  fetchTaskList(filter?: TaskFilter): Promise<TaskListItem[]>;
   /** Each doc carries `readiness` when the daemon has a judgment client. */
   fetchReadyTasks(): Promise<(TaskDoc & { readiness?: ReadinessReading })[]>;
+  /** `fetchReadyTasks` without bodies (`fields=meta`). */
+  fetchReadyTaskList(): Promise<
+    (TaskListItem & { readiness?: ReadinessReading })[]
+  >;
+  /** The ready queue as ids and readings only (`fields=id`), for a client
+   * that already holds the task list. Judges stale tasks like the others. */
+  fetchReadyTaskIds(): Promise<ReadyTaskRef[]>;
   /** The cached readiness readings by task id, for the board — no judging
-   * happens here; `fetchReadyTasks` is what refreshes stale ones. */
+   * happens here; the ready-queue fetches are what refresh stale ones. */
   fetchReadiness(): Promise<Record<string, ReadinessReading>>;
   fetchTask(id: string): Promise<TaskDoc>;
+  /** File a task under a container with `parent`. A legacy `milestone` still
+   * works — the daemon resolves the project/milestone it names to `parent`
+   * (400 when none matches) — but is never stored. */
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   amendTask(id: string, input: AmendTaskInput): Promise<TaskDoc>;
@@ -2628,11 +2904,35 @@ export interface ApiClient {
   /** Whether this daemon's machine has the blob (a HEAD), so Tauri can ask
    * before handing the path to the OS. */
   hasTaskAttachment(id: string, name: string): Promise<boolean>;
+  /** The people registry (team roster + config `people`) and who "me" is. */
+  fetchPeople(): Promise<PeopleSnapshot>;
+  /** The label registry: each label's color and external link. */
+  fetchLabels(): Promise<LabelsSnapshot>;
+  /** Sets one label's color (`null` clears it); answers the new registry. */
+  setLabelColor(name: string, color: string | null): Promise<LabelsSnapshot>;
+  /** A task's comment thread, oldest first. */
+  fetchTaskComments(id: string): Promise<TaskComment[]>;
+  addTaskComment(id: string, input: NewCommentInput): Promise<TaskComment>;
+  /** Author only (403 otherwise). */
+  updateTaskComment(
+    id: string,
+    commentId: string,
+    patch: { body: string }
+  ): Promise<TaskComment>;
+  /** Author only; removes its replies too, and 409s while others replied. */
+  deleteTaskComment(
+    id: string,
+    commentId: string
+  ): Promise<{ removed: string[] }>;
   /** Turns a sentence into filter clauses the Tasks page applies as chips. */
   aiFilterTasks(sentence: string): Promise<AiTaskFilterResult>;
   // Starts a background planner turn and returns immediately with a `running`
   // `DraftRecord`; watch it settle via `fetchDrafts` or `draft.changed`.
-  draftTask(prompt: string): Promise<DraftRecord>;
+  // `parent` is the container the saved task goes under.
+  draftTask(
+    prompt: string,
+    options?: { parent?: string | null }
+  ): Promise<DraftRecord>;
   // Every draft currently held in memory (running, ready, or failed — until
   // dismissed), newest first.
   fetchDrafts(): Promise<DraftRecord[]>;
@@ -3279,6 +3579,105 @@ export interface ApiClient {
   /** Saves a skipped file's kept content to the caller's memory with agent trust. */
   acceptIngestProblem(id: string): Promise<MemorySaveResult>;
 
+  // Docs; the server's docs/routes.ts defines these routes. `ref` is a doc id,
+  // a team handle or a personal `~handle`; `rev` a revision number or rev- id.
+  listDocs(
+    params?: DocListParams
+  ): Promise<{ docs: DocSummary[]; total: number }>;
+  /** `section` reads one heading's section; `page` pages from `offset`. */
+  getDoc(
+    ref: string,
+    opts?: {
+      rev?: string | number;
+      section?: string;
+      offset?: number;
+      page?: boolean;
+    }
+  ): Promise<DocRead>;
+  createDoc(input: {
+    title: string;
+    body: string;
+    slug?: string;
+    scope?: DocScope;
+    links?: { target: string; rel: LinkRel }[];
+  }): Promise<DocSaveResult>;
+  /** A merge conflict comes back as `{ ok: false, conflict }`; other
+   *  failures throw, including a 409 such as an archived doc's. */
+  saveDocBody(
+    ref: string,
+    input: {
+      baseRev: string | number;
+      baseHash?: string;
+      body: string;
+      title?: string;
+    }
+  ): Promise<DocSaveOutcome>;
+  editDoc(
+    ref: string,
+    input: { ops: DocOp[]; baseRev?: string | number }
+  ): Promise<DocSaveResult>;
+  renameDoc(ref: string, slug: string): Promise<DocRecord>;
+  setDocStatus(ref: string, status: DocStatus): Promise<DocRecord>;
+  markDocReviewed(ref: string): Promise<DocRecord>;
+  sealDoc(ref: string): Promise<DocRecord>;
+  revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
+  /** Copies a personal doc's head into a new team draft (its owner only). */
+  promoteDoc(ref: string): Promise<DocSaveResult>;
+  deleteDoc(ref: string): Promise<void>;
+  listDocRevisions(
+    ref: string,
+    page?: { before?: number; limit?: number }
+  ): Promise<{ revisions: DocRevisionInfo[] }>;
+  getDocRevision(
+    ref: string,
+    rev: string | number
+  ): Promise<DocRevisionInfo & { body: string }>;
+  diffDoc(
+    ref: string,
+    from: string | number,
+    to: string | number
+  ): Promise<DocDiff>;
+  /** `target` is `type:id` (`task:t-1`); `replace` takes the spec link over
+   *  from the task's current spec instead of answering 409. */
+  linkDoc(
+    ref: string,
+    input: { target: string; rel: LinkRel; replace?: boolean }
+  ): Promise<{ links: DocLink[] }>;
+  unlinkDoc(ref: string, target: string): Promise<{ links: DocLink[] }>;
+  /** The docs linked to `target`, a `type:id` string. */
+  docsLinking(target: string): Promise<{ docs: DocLinking[] }>;
+  searchDocs(
+    q: string,
+    opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
+  ): Promise<{ hits: DocHit[] }>;
+  docsHealth(): Promise<DocsHealth>;
+  /** Proposals to accepted docs the caller may see; `doc` narrows to one doc. */
+  listDocProposals(params?: {
+    doc?: string;
+    state?: ProposalState[];
+  }): Promise<{ proposals: DocProposal[] }>;
+  /** A proposal's text, its diff against its base, and whether it merges onto the head. */
+  getDocProposal(rev: string): Promise<DocProposalView>;
+  a2aListener(): Promise<A2AListenerStatus>;
+  /** Writes the listener settings and (re)opens it (operator tier). */
+  setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
+  /** Closes the listener, keeping its other settings (operator tier). */
+  disableA2AListener(): Promise<A2AListenerStatus>;
+  /** The agent card exactly as the listener serves it. */
+  a2aCard(): Promise<Record<string, unknown>>;
+  a2aClients(): Promise<{ clients: A2AClientSummary[] }>;
+  /** `approve` needs the decide tier; the token is returned only here. */
+  addA2AClient(input: {
+    name: string;
+    to?: string[];
+    approve?: boolean;
+  }): Promise<{ address: string; token: string; status: string }>;
+  /** `name` is the client's address, `a2a.` name, or name as typed. */
+  rotateA2AClient(name: string): Promise<{ token: string }>;
+  a2aTasks(client?: string): Promise<{ tasks: A2ATaskSummary[] }>;
+  /** Closes an unanswered ask; the client sees REJECTED with the reason. */
+  declineA2ATask(id: string, reason?: string): Promise<unknown>;
+
   /** The `/ws` URL, token included — it is a credential, so never render or log it. */
   /** One directory's children, for a lazily expanded tree. */
   fetchWorkspaceTree(
@@ -3358,7 +3757,14 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchSyncStatus: () => request(target, '/api/sync'),
     fetchTasks: (filter = {}) =>
       request(target, `/api/tasks${taskQueryString(filter)}`),
+    fetchTaskList: (filter = {}) =>
+      request(target, `/api/tasks${taskQueryString(filter, true)}`),
     fetchReadyTasks: () => request(target, '/api/tasks/ready'),
+    fetchReadyTaskList: () => request(target, '/api/tasks/ready?fields=meta'),
+    fetchReadyTaskIds: async () =>
+      (await request<ReadyIdReply[]>(target, '/api/tasks/ready?fields=id')).map(
+        toReadyTaskRef
+      ),
     fetchReadiness: () => request(target, '/api/tasks/readiness'),
     fetchTask: (id) => request(target, `/api/tasks/${id}`),
     createTask: (input) =>
@@ -3373,6 +3779,32 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(input),
       }),
+    fetchPeople: () => request(target, '/api/people'),
+    fetchLabels: () => request(target, '/api/labels'),
+    setLabelColor: (name, color) =>
+      request(target, '/api/labels', {
+        method: 'PUT',
+        ...jsonBody({ name, color }),
+      }),
+    fetchTaskComments: (id) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
+    addTaskComment: (id, input) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    updateTaskComment: (id, commentId, patch) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'PATCH', ...jsonBody(patch) }
+      ),
+    deleteTaskComment: (id, commentId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'DELETE' }
+      ),
     uploadTaskAttachments: (id, files) => {
       const form = new FormData();
       for (const file of files) form.append('files', file, file.name);
@@ -3411,10 +3843,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ sentence }),
       }),
-    draftTask: (prompt) =>
+    draftTask: (prompt, { parent = null } = {}) =>
       request(target, '/api/tasks/draft', {
         method: 'POST',
-        ...jsonBody({ prompt }),
+        ...jsonBody(parent === null ? { prompt } : { prompt, parent }),
       }),
     fetchDrafts: () => request(target, '/api/tasks/drafts'),
     fetchDraft: (id) => request(target, `/api/tasks/drafts/${id}`),
@@ -4110,6 +4542,162 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         `/api/memory/ingest-problems/${encodeURIComponent(id)}/accept`,
         { method: 'POST' }
       ),
+    // Docs — packages/server/src/docs/routes.ts. Flags go as `1` only when
+    // true, since the routes read anything else as false.
+    listDocs: (params = {}) => {
+      const q = new URLSearchParams();
+      if (params.taskId !== undefined) q.set('taskId', params.taskId);
+      if (params.scope !== undefined) q.set('scope', params.scope);
+      if (params.status !== undefined) q.set('status', params.status);
+      if (params.unreviewed === true) q.set('unreviewed', '1');
+      if (params.conflicted === true) q.set('conflicted', '1');
+      if (params.q !== undefined && params.q !== '') q.set('q', params.q);
+      if (params.includeArchived === true) q.set('includeArchived', '1');
+      if (params.limit !== undefined) q.set('limit', String(params.limit));
+      if (params.offset !== undefined) q.set('offset', String(params.offset));
+      const qs = q.toString();
+      return request(target, `/api/docs${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDoc: (ref, opts = {}) => {
+      const q = new URLSearchParams();
+      if (opts.rev !== undefined) q.set('rev', String(opts.rev));
+      if (opts.section !== undefined) q.set('section', opts.section);
+      if (opts.offset !== undefined) q.set('offset', String(opts.offset));
+      if (opts.page === true) q.set('page', '1');
+      const qs = q.toString();
+      return request(target, `${docPath(ref)}${qs === '' ? '' : `?${qs}`}`);
+    },
+    createDoc: (input) =>
+      request(target, '/api/docs', { method: 'POST', ...jsonBody(input) }),
+    saveDocBody: async (ref, input) => {
+      const res = await send(
+        target,
+        `${docPath(ref)}/body`,
+        { method: 'PUT', ...jsonBody(input) },
+        [409]
+      );
+      if (res.status !== 409) {
+        return { ok: true, result: (await res.json()) as DocSaveResult };
+      }
+      const body: unknown = await res.json().catch(() => null);
+      if (isDocConflict(body)) return { ok: false, conflict: body };
+      throw apiError(409, body);
+    },
+    editDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/edit`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    renameDoc: (ref, slug) =>
+      request(target, docPath(ref), { method: 'PATCH', ...jsonBody({ slug }) }),
+    setDocStatus: (ref, status) =>
+      request(target, `${docPath(ref)}/status`, {
+        method: 'POST',
+        ...jsonBody({ status }),
+      }),
+    markDocReviewed: (ref) =>
+      request(target, `${docPath(ref)}/reviewed`, { method: 'POST' }),
+    sealDoc: (ref) =>
+      request(target, `${docPath(ref)}/seal`, { method: 'POST' }),
+    revertDoc: (ref, rev) =>
+      request(target, `${docPath(ref)}/revert`, {
+        method: 'POST',
+        ...jsonBody({ rev }),
+      }),
+    promoteDoc: (ref) =>
+      request(target, `${docPath(ref)}/promote`, { method: 'POST' }),
+    // send(), not request(): the server answers 204 with no body.
+    deleteDoc: async (ref) => {
+      await send(target, docPath(ref), { method: 'DELETE' });
+    },
+    listDocRevisions: (ref, page = {}) => {
+      const q = new URLSearchParams();
+      if (page.before !== undefined) q.set('before', String(page.before));
+      if (page.limit !== undefined) q.set('limit', String(page.limit));
+      const qs = q.toString();
+      return request(
+        target,
+        `${docPath(ref)}/revisions${qs === '' ? '' : `?${qs}`}`
+      );
+    },
+    getDocRevision: (ref, rev) =>
+      request(
+        target,
+        `${docPath(ref)}/revisions/${encodeURIComponent(String(rev))}`
+      ),
+    diffDoc: (ref, from, to) =>
+      request(
+        target,
+        `${docPath(ref)}/diff?from=${encodeURIComponent(String(from))}&to=${encodeURIComponent(String(to))}`
+      ),
+    linkDoc: (ref, input) =>
+      request(target, `${docPath(ref)}/links`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    // The route takes the target's type and id as two path segments.
+    unlinkDoc: (ref, link) => {
+      const colon = link.indexOf(':');
+      return request(
+        target,
+        `${docPath(ref)}/links/${encodeURIComponent(link.slice(0, colon))}/${encodeURIComponent(link.slice(colon + 1))}`,
+        { method: 'DELETE' }
+      );
+    },
+    docsLinking: (link) =>
+      request(
+        target,
+        `/api/docs/links?${new URLSearchParams({ target: link }).toString()}`
+      ),
+    searchDocs: (q, opts = {}) => {
+      const params = new URLSearchParams({ q });
+      if (opts.scope !== undefined) params.set('scope', opts.scope);
+      if (opts.includeArchived === true) params.set('includeArchived', '1');
+      if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+      return request(target, `/api/docs/search?${params.toString()}`);
+    },
+    docsHealth: () => request(target, '/api/docs/health'),
+    listDocProposals: (params = {}) => {
+      const query = new URLSearchParams();
+      if (params.doc !== undefined) query.set('doc', params.doc);
+      if (params.state !== undefined)
+        query.set('state', params.state.join(','));
+      const qs = query.toString();
+      return request(target, `/api/docs/proposals${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDocProposal: (rev) =>
+      request(target, `/api/docs/proposals/${encodeURIComponent(rev)}`),
+    a2aListener: () => request(target, '/api/a2a/listener'),
+    setA2AListener: (settings) =>
+      request(target, '/api/a2a/listener', {
+        method: 'PUT',
+        ...jsonBody(settings),
+      }),
+    disableA2AListener: () =>
+      request(target, '/api/a2a/listener', { method: 'DELETE' }),
+    a2aCard: () => request(target, '/api/a2a/card'),
+    a2aClients: () => request(target, '/api/a2a/clients'),
+    addA2AClient: (input) =>
+      request(target, '/api/a2a/clients', {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    rotateA2AClient: (name) =>
+      request(target, `/api/a2a/clients/${encodeURIComponent(name)}/rotate`, {
+        method: 'POST',
+      }),
+    a2aTasks: (client) =>
+      request(
+        target,
+        client === undefined
+          ? '/api/a2a/tasks'
+          : `/api/a2a/tasks?${new URLSearchParams({ client }).toString()}`
+      ),
+    declineA2ATask: (id, reason) =>
+      request(target, `/api/a2a/tasks/${encodeURIComponent(id)}/decline`, {
+        method: 'POST',
+        ...jsonBody(reason === undefined ? {} : { reason }),
+      }),
     fetchWorkspaceTree: (path, scope = {}) =>
       request(target, `/api/files/tree?${workspaceQuery(path, scope)}`),
     fetchWorkspaceFile: (path, scope = {}) =>

@@ -1,5 +1,4 @@
-import { CANONICAL_STATUSES } from '@dispatch/core';
-import { gateOf, isSystemMarker } from '@dispatch/protocol';
+import { isSystemMarker } from '@dispatch/protocol';
 import type { Address, JsonValue, Message } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
 
@@ -7,6 +6,7 @@ import { answerArtifact, workArtifacts } from './artifacts.js';
 import { encodeMessage } from './codec.js';
 import type { MessageView, TextMediaType } from './codec.js';
 import type { GateStateV1, GateTypeName, WorkStateV1 } from './ext.js';
+import { isGateTraffic } from './policy.js';
 import type { TaskFacts } from './port.js';
 import { wireState } from './states.js';
 import type { TaskStateName } from './states.js';
@@ -44,19 +44,29 @@ export const GATE_SENTENCES: Record<GateTypeName, string> = {
   wake: 'Waiting for the project owner to approve waking the task.',
 };
 const DEFAULT_HISTORY = 50;
-const WORKING_STATUSES = new Set(['working', 'review', 'landing']);
-const CANONICAL = new Set<string>(CANONICAL_STATUSES);
 
 type LinkedTask = Exclude<TaskFacts['task'], 'deleted' | null>;
 function linked(f: TaskFacts): LinkedTask | null {
   return f.task !== null && f.task !== 'deleted' ? f.task : null;
 }
 
-// Never a gate: its body quotes tool input, and a port bug must not put it on the wire.
-function latestFromOthers(f: TaskFacts): Message | null {
+// Resolves a replyTo among the messages these facts carry, for the gate checks.
+function lookupIn(f: TaskFacts): (id: string) => Message | null {
+  const byId = new Map<string, Message>();
+  for (const m of [f.root, ...f.scope, ...f.openQuestions]) byId.set(m.id, m);
+  if (f.answer !== null) byId.set(f.answer.id, f.answer);
+  return (id) => byId.get(id) ?? null;
+}
+
+// Never gate traffic: a gate's body quotes tool input, and a port bug must not
+// put it or its answer on the wire.
+function latestFromOthers(
+  f: TaskFacts,
+  get: (id: string) => Message | null
+): Message | null {
   for (let i = f.scope.length - 1; i >= 0; i--) {
     const m = f.scope[i];
-    if (m.from !== f.client && gateOf(m) === null) return m;
+    if (m.from !== f.client && !isGateTraffic(m, get)) return m;
   }
   return null;
 }
@@ -96,22 +106,21 @@ export function decideState(f: TaskFacts): Decision {
     f.declinedAt !== null ||
     (handoff && (f.answer?.choice === 'decline' || f.dropped === 'other'))
   ) {
+    // An acceptance answered the root before a later drop; it is not the reason.
     return said(
       2,
       'REJECTED',
-      f.answer,
+      f.answer?.choice === 'accept' ? null : f.answer,
       'The project owner dropped this task.'
     );
   }
-  if (
-    !handoff &&
-    ((f.answer !== null && isSystemMarker(f.answer, 'x-closed')) ||
-      f.recipientTaskDropped)
-  ) {
+  const closed = f.answer !== null && isSystemMarker(f.answer, 'x-closed');
+  if (!handoff && (closed || f.recipientTaskDropped)) {
+    // A late answer to a dropped task's ask is not the reason it failed.
     return said(
       3,
       'FAILED',
-      f.answer,
+      closed ? f.answer : null,
       'The task this was asked of was dropped.'
     );
   }
@@ -119,8 +128,9 @@ export function decideState(f: TaskFacts): Decision {
     return fixed(4, 'FAILED', 'The task was deleted.');
   if (!handoff && f.answer !== null)
     return said(5, 'COMPLETED', f.answer, 'Answered.');
-  if (task?.status === 'landed') return fixed(6, 'COMPLETED', 'Landed.');
-  const question = f.openQuestions.find((q) => gateOf(q) === null);
+  if (task?.phase === 'landed') return fixed(6, 'COMPLETED', 'Landed.');
+  const get = lookupIn(f);
+  const question = f.openQuestions.find((q) => !isGateTraffic(q, get));
   if (question !== undefined)
     return said(7, 'INPUT_REQUIRED', question, 'Input required.');
   const gate = [...f.openGates].sort((a, b) =>
@@ -138,14 +148,12 @@ export function decideState(f: TaskFacts): Decision {
     };
   }
   if (task !== null) {
-    if (WORKING_STATUSES.has(task.status) || !CANONICAL.has(task.status)) {
-      const stage =
-        task.status === 'review' || task.status === 'landing'
-          ? task.status
-          : undefined;
-      return said(9, 'WORKING', latestFromOthers(f), 'Working.', stage);
+    const { phase } = task;
+    if (phase === 'working' || phase === 'review' || phase === 'landing') {
+      const stage = phase === 'working' ? undefined : phase;
+      return said(9, 'WORKING', latestFromOthers(f, get), 'Working.', stage);
     }
-    if ((task.status === 'draft' || task.status === 'ready') && task.approved) {
+    if ((phase === 'draft' || phase === 'queued') && task.approved) {
       return fixed(10, 'SUBMITTED', 'Approved; waiting to be scheduled.');
     }
   }
@@ -160,7 +168,7 @@ export function decideState(f: TaskFacts): Decision {
       `Delivered to ${f.root.to.join(', ')}'s mailbox.`
     );
   }
-  return said(12, 'WORKING', latestFromOthers(f), 'Working.');
+  return said(12, 'WORKING', latestFromOthers(f, get), 'Working.');
 }
 
 // When the decided status took effect: its message's time, else the cancel,
@@ -197,11 +205,13 @@ function withExtension(
 // gate and work extensions it activated, capped history and any artifacts.
 export function project(f: TaskFacts, view: ProjectionView): TaskJson {
   const decision = decideState(f);
+  const lookup = lookupIn(f);
   const messageView: MessageView = {
     client: view.client,
     textMediaType: view.textMediaType,
     extensions: view.extensions,
     clientIds: f.clientIds,
+    lookup,
     taskId: f.id,
   };
   const status: MessageJson =
@@ -248,7 +258,7 @@ export function project(f: TaskFacts, view: ProjectionView): TaskJson {
     limit <= 0
       ? []
       : f.scope
-          .filter((m) => gateOf(m) === null)
+          .filter((m) => !isGateTraffic(m, lookup))
           .slice(-limit)
           .map((m) => encodeMessage(m, messageView));
   const task = linked(f);

@@ -211,6 +211,12 @@ describe('checks in order', () => {
     expect(port.calls.some((c) => c.method === 'authenticate')).toBe(false);
   });
 
+  it('refuses a query token in any letter case', async () => {
+    const res = await call('/a2a/v1/tasks?Access_Token=good');
+    expect(res.status).toBe(400);
+    expect(JSON.stringify(await res.json())).toContain('"field":"query"');
+  });
+
   it('answers 429 with Retry-After when the port refuses the request', async () => {
     port.requestAdmission = { ok: false, retryAfterSec: 7 };
     const res = await call('/a2a/v1/tasks');
@@ -334,6 +340,27 @@ describe('errors', () => {
       'Answer with one of: us | eu'
     );
   });
+
+  it('frees the stream slot when the stream cannot start', async () => {
+    port.watchError = new Error('a2a.db is locked');
+    const subscribed = await call('/a2a/v1/tasks/m-root:subscribe');
+    const streamed = await call('/a2a/v1/message:stream', {
+      body: { message: ask().message },
+    });
+    expect([subscribed.status, streamed.status]).toEqual([500, 500]);
+    expect(port.openStreams).toBe(0);
+  });
+
+  it('answers a blocking send whose watch throws with a 500', async () => {
+    port.watchError = new Error('a2a.db is locked');
+    const res = await call('/a2a/v1/message:send', {
+      body: { message: ask().message },
+    });
+    expect(res.status).toBe(500);
+    expect(
+      ((await res.json()) as { error: { status: string } }).error.status
+    ).toBe('INTERNAL');
+  });
 });
 
 describe('ListTasks', () => {
@@ -344,6 +371,13 @@ describe('ListTasks', () => {
     expect(port.calls.find((c) => c.method === 'list')?.args[0]).toMatchObject({
       after: '2026-09-25T10:00:00.000Z',
       pageSize: 100,
+    });
+  });
+
+  it('reads pageSize=0 as the default 50', async () => {
+    await call('/a2a/v1/tasks?pageSize=0');
+    expect(port.calls.find((c) => c.method === 'list')?.args[0]).toMatchObject({
+      pageSize: 50,
     });
   });
 

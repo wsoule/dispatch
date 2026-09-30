@@ -1,6 +1,14 @@
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
+import { isContainerKind } from '@dispatch/core/browser';
 import { Ellipsis, Layers, Star } from 'lucide-react';
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
 
 import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useSavedViewsContext } from '../components/shell/SavedViewsContext';
@@ -15,6 +23,7 @@ import { isTypingTarget } from '../hooks/useGlobalKeyboard';
 import type { TaskTab } from '../lib/appNav';
 import {
   type BoardLane,
+  columnSuccessor,
   groupTasksByLane,
   visibleBoardColumns,
   visibleLaneTaskIds,
@@ -27,9 +36,11 @@ import {
 } from '../lib/collapsedEpics';
 import type { WorkEpicOptions } from '../lib/epicSession';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { landingStateByTaskId } from '../lib/landingBadge';
 import { sortTasks } from '../lib/listGrouping';
 import { countMergeReady } from '../lib/mergeReady';
 import { viewMatches } from '../lib/savedViews';
+import { useStatusModelOf } from '../lib/statusModel';
 import {
   applyTaskFilters,
   EMPTY_TASK_FILTER_SET,
@@ -346,6 +357,8 @@ export function BoardView({
       subGrouping: prev.subGrouping === 'epic' ? 'none' : 'epic',
     }));
 
+  // The project's statuses in the render its config lands: done sinks and lanes roll up by it.
+  const model = useStatusModelOf(data.config);
   // With Display › Show archived on, archived tasks join the board so their (typically done)
   // column shows them dimmed — `data.tasks` stays untouched so every other consumer keeps its
   // archived-excluded meaning.
@@ -357,6 +370,10 @@ export function BoardView({
   const archivedTaskIds = useMemo(
     () => new Set(data.archivedTasks.map((t) => t.meta.id)),
     [data.archivedTasks]
+  );
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
   );
   const epicIds = useMemo(
     () => new Set(data.epics.map((e) => e.meta.id)),
@@ -379,7 +396,8 @@ export function BoardView({
   const taskFilterFn = useMemo(
     () =>
       filtersActive
-        ? (doc: TaskDoc) => matchesTaskFilterSet(doc, filters, filterContext)
+        ? (doc: TaskListItem) =>
+            matchesTaskFilterSet(doc, filters, filterContext)
         : undefined,
     [filtersActive, filters, filterContext]
   );
@@ -396,20 +414,22 @@ export function BoardView({
   // The cards in the order a column shows them (Display › Ordering, done sinking when asked).
   // Sorted here, once, so the j/k cursor below and `TaskBoard` walk the same sequence.
   const orderedBoardTasks = useMemo(
-    () => sortTasks(filteredBoardTasks, prefs),
-    [filteredBoardTasks, prefs]
+    () => sortTasks(filteredBoardTasks, prefs, model),
+    [filteredBoardTasks, prefs, model]
   );
   // Card counts per status from the *unfiltered* board set — empty-column visibility is
   // decided from these, so a filter narrows cards without making columns vanish.
   const countByStatus = useMemo(() => {
     const map = new Map<string, number>();
     for (const doc of boardTasks) {
-      if (doc.meta.kind === 'epic') continue;
+      if (isContainerKind(doc.meta.kind)) continue;
       map.set(doc.meta.status, (map.get(doc.meta.status) ?? 0) + 1);
     }
     return map;
   }, [boardTasks]);
-  const visibleStatuses = useMemo(
+  // Keyed on its contents: every card takes this array, so a dispatch that moves a count
+  // but no column must hand them the same one or they all redraw.
+  const visibleStatusKey = useMemo(
     () =>
       data.config !== null
         ? visibleBoardColumns(
@@ -417,9 +437,13 @@ export function BoardView({
             countByStatus,
             prefs.showEmptyGroups,
             hiddenColumns
-          )
-        : [],
+          ).join('\0')
+        : '',
     [data.config, countByStatus, prefs.showEmptyGroups, hiddenColumns]
+  );
+  const visibleStatuses = useMemo(
+    () => (visibleStatusKey === '' ? [] : visibleStatusKey.split('\0')),
+    [visibleStatusKey]
   );
   // The same lanes `TaskBoard` renders, from the same pure functions over the same sorted
   // input — this copy exists only to give the j/k cursor an order that matches the screen.
@@ -469,8 +493,14 @@ export function BoardView({
     [data.mergeQueue]
   );
   const mergeReadyCount = useMemo(
-    () => countMergeReady(data.runs, data.tasksIncludingArchived, queuedRunIds),
-    [data.runs, data.tasksIncludingArchived, queuedRunIds]
+    () =>
+      countMergeReady(
+        data.runs,
+        data.tasksIncludingArchived,
+        queuedRunIds,
+        model
+      ),
+    [data.runs, data.tasksIncludingArchived, queuedRunIds, model]
   );
   const handleMergeAll = async () => {
     setMergeAllPending(true);
@@ -492,6 +522,35 @@ export function BoardView({
             taskFilterSetFromValue(await client.aiFilterTasks(sentence)) ??
             EMPTY_TASK_FILTER_SET,
     [client]
+  );
+
+  // A card's Dispatch, `Dispatch all ready` and `d`: in place and optimistic, like the
+  // Cockpit's — the card moves to the dispatched column at once.
+  const handleDispatch = data.handleDispatch;
+  const readyIds = data.readyIds;
+  const dispatchInPlace = useCallback(
+    (taskId: string) =>
+      handleDispatch(taskId, undefined, undefined, { optimistic: true }),
+    [handleDispatch]
+  );
+  // What a dispatch reads when it runs, so the card's Dispatch keeps one identity.
+  const shown = useRef({ lanes, cursor: focusedTaskId });
+  useLayoutEffect(() => {
+    shown.current = { lanes, cursor: focusedTaskId };
+  });
+  // `d` and a card's Dispatch (clicking it focuses the card first): the card moves to
+  // another column, and the cursor stays where it was, on the card that slides into its
+  // place — in the same render, or the cursor follows the card and the board scrolls to it.
+  const dispatchCard = useCallback(
+    (taskId: string) => {
+      const { lanes: onScreen, cursor } = shown.current;
+      if (taskId === cursor) {
+        const next = columnSuccessor(onScreen, taskId);
+        if (next !== undefined) setFocusedTaskId(next);
+      }
+      return dispatchInPlace(taskId);
+    },
+    [dispatchInPlace]
   );
 
   function handleBoardKeyDown(e: React.KeyboardEvent) {
@@ -526,6 +585,12 @@ export function BoardView({
       if (onControl) return;
       e.preventDefault();
       if (focusedTaskId !== null) onSelectTask(focusedTaskId);
+      return;
+    }
+    if (command === 'list-dispatch') {
+      if (focusedTaskId === null || !readyIds.has(focusedTaskId)) return;
+      e.preventDefault();
+      void dispatchCard(focusedTaskId);
       return;
     }
     if (command !== 'list-down' && command !== 'list-up') return;
@@ -791,6 +856,7 @@ export function BoardView({
             }
             tasks={orderedBoardTasks}
             archivedTaskIds={archivedTaskIds}
+            statusModel={model}
             statuses={visibleStatuses}
             display={prefs}
             readyIds={data.readyIds}
@@ -799,13 +865,14 @@ export function BoardView({
             latestRunByTaskId={data.latestRunByTaskId}
             readinessById={data.readinessById}
             attentionByTaskId={data.attentionByTaskId}
+            landingByTaskId={landingByTaskId}
             epicProgressById={data.epicProgressById}
             epicConcurrencyDefault={
               data.config?.orchestrator.epicConcurrency ?? 3
             }
             epics={data.epics}
             onSelect={onSelectTask}
-            onDispatch={data.handleDispatch}
+            onDispatch={dispatchCard}
             onWorkEpic={data.handleWorkEpic}
             onPauseEpic={data.handlePauseEpic}
             onResumeEpic={data.handleResumeEpic}

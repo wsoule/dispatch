@@ -1,5 +1,5 @@
 // Groups the command menu's ranked rows into Linear's sectioned layout: a fixed section
-// order (Inbox, Tasks, Views, Navigation, Actions) while browsing, a cap on how many rows
+// order (Inbox, Tasks, Docs, Views, Navigation, Actions) while browsing, a cap on how many rows
 // each section shows, and recently-run rows floated to the top of their section while the
 // query is empty. While searching, the section holding the best fuzzy hit moves first: cmdk
 // re-selects the first rendered row on every search change (also under a controlled
@@ -17,6 +17,7 @@ export interface PaletteSectionSlice<T extends PaletteEntry = PaletteEntry> {
 const PALETTE_SECTION_ORDER: readonly PaletteSection[] = [
   'inbox',
   'tasks',
+  'docs',
   'views',
   'navigation',
   'actions',
@@ -25,6 +26,7 @@ const PALETTE_SECTION_ORDER: readonly PaletteSection[] = [
 const PALETTE_SECTION_HEADINGS: Record<PaletteSection, string> = {
   inbox: 'Inbox',
   tasks: 'Tasks',
+  docs: 'Docs',
   views: 'Views',
   navigation: 'Navigation',
   actions: 'Actions',
@@ -34,6 +36,7 @@ const PALETTE_SECTION_HEADINGS: Record<PaletteSection, string> = {
 export const PALETTE_SECTION_CAPS: Record<PaletteSection, number> = {
   inbox: 3,
   tasks: 8,
+  docs: 6,
   views: 4,
   navigation: Number.POSITIVE_INFINITY,
   actions: Number.POSITIVE_INFINITY,

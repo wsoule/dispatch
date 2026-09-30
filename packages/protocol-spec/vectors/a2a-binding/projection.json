@@ -1,0 +1,500 @@
+{
+  "kit": "1.0.0-draft.1",
+  "class": "a2a-binding",
+  "area": "projection",
+  "vectors": [
+    {
+      "id": "a2a.projection.row-1-a-canceled-task",
+      "title": "Row 1: a task the client canceled is CANCELED, even when its root was answered",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "canceledAt": "2026-09-23T11:00:00.000Z",
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "human:wyat",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Yes, final.",
+              "blocking": false
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "CANCELED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-2-an-ask-the-owner-declined",
+      "title": "Row 2: an ask the owner declined is REJECTED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "declinedAt": "2026-09-23T11:00:00.000Z"
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "REJECTED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-3-a-system-close-fails-an-ask",
+      "title": "Row 3: an ask whose root the system address closed is FAILED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "$system",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Closed: the client was revoked.",
+              "blocking": false,
+              "data": {
+                "type": "x-closed",
+                "reason": "client revoked"
+              }
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "FAILED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-3-a-close-from-anyone-else-is-an-answer",
+      "title": "Row 3 reads x-closed only from the system address: the same answer from a human completes the ask",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7", "13.14"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "human:wyat",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Closed: the client was revoked.",
+              "blocking": false,
+              "data": {
+                "type": "x-closed",
+                "reason": "client revoked"
+              }
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "COMPLETED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-3-a-dropped-recipient-fails-an-ask",
+      "title": "Row 3: an ask whose recipient work item was dropped is FAILED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "recipientTaskDropped": true
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "FAILED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-5-an-answered-ask-completes",
+      "title": "Row 5: an ask whose root has an answer is COMPLETED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "answer": {
+              "id": "m-ans",
+              "thread": "m-root",
+              "replyTo": "m-root",
+              "from": "human:wyat",
+              "to": ["agent:wyat/a2a.acme"],
+              "kind": "answer",
+              "body": "Yes, final.",
+              "blocking": false
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "COMPLETED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-7-an-open-question-needs-input",
+      "title": "Row 7: an open blocking question to the client, in scope, is INPUT_REQUIRED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "openQuestions": [
+              {
+                "id": "m-q",
+                "thread": "m-root",
+                "replyTo": "m-root",
+                "from": "human:wyat",
+                "to": ["agent:wyat/a2a.acme"],
+                "kind": "question",
+                "body": "Which region first?",
+                "blocking": true
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "INPUT_REQUIRED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-7-never-a-question-with-gate-data",
+      "title": "Row 7 skips a question that has gate data, so a gate never strands the client in INPUT_REQUIRED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7", "5.8"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "openQuestions": [
+              {
+                "id": "m-q",
+                "thread": "m-root",
+                "replyTo": "m-root",
+                "from": "$system",
+                "to": ["agent:wyat/a2a.acme"],
+                "kind": "question",
+                "body": "wake task:t-4a8cce?",
+                "blocking": true,
+                "choices": ["approve", "deny"],
+                "data": {
+                  "type": "wake",
+                  "target": "task:t-4a8cce",
+                  "message": "m-root"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "WORKING"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-8-an-open-gate-needs-authorization",
+      "title": "Row 8: an open gate in scope is AUTH_REQUIRED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7", "8.5"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "openGates": [
+              {
+                "id": "m-gate",
+                "type": "wake",
+                "openedAt": "2026-09-23T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "AUTH_REQUIRED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-8-gate-v1-lists-id-type-and-time",
+      "title": "Row 8's gate/v1 metadata names each open gate by its id, type and opening time, waiting on the owner, and carries nothing else",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.5", "8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "openGates": [
+              {
+                "id": "m-gate",
+                "type": "wake",
+                "openedAt": "2026-09-23T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "AUTH_REQUIRED",
+              "gates": [
+                {
+                  "id": "m-gate",
+                  "type": "wake",
+                  "openedAt": "2026-09-23T11:00:00.000Z",
+                  "waitingOn": "owner"
+                }
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-8-an-open-question-comes-first",
+      "title": "Rows are taken in order: an open question to the client (row 7) comes before an open gate (row 8)",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "openQuestions": [
+              {
+                "id": "m-q",
+                "thread": "m-root",
+                "replyTo": "m-root",
+                "from": "human:wyat",
+                "to": ["agent:wyat/a2a.acme"],
+                "kind": "question",
+                "body": "Which region first?",
+                "blocking": true
+              }
+            ],
+            "openGates": [
+              {
+                "id": "m-gate",
+                "type": "wake",
+                "openedAt": "2026-09-23T11:00:00.000Z"
+              }
+            ]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "INPUT_REQUIRED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-11-an-ask-held-in-a-mailbox",
+      "title": "Row 11: an ask whose root deliveries are all held is SUBMITTED",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "root": {
+              "to": ["task:t-4a8cce"]
+            },
+            "rootDeliveries": ["held"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "SUBMITTED"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-11-needs-every-root-delivery-held",
+      "title": "Row 11 needs every root delivery held: one notified delivery leaves the ask WORKING",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {
+            "root": {
+              "to": ["task:t-4a8cce", "human:wyat"]
+            },
+            "rootDeliveries": ["held", "notified"]
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "WORKING"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "a2a.projection.row-12-otherwise-working",
+      "title": "Row 12: an ask that matches no other row is WORKING",
+      "class": "a2a-binding",
+      "level": "MUST",
+      "profile": "core",
+      "sections": ["8.7"],
+      "given": {},
+      "when": [
+        {
+          "op": "a2a.project",
+          "facts": {}
+        }
+      ],
+      "then": {
+        "steps": [
+          {
+            "ok": true,
+            "result": {
+              "state": "WORKING"
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

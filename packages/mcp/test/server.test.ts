@@ -1,6 +1,7 @@
 import {
   DISPATCH_MCP_TOOLS,
   DISPATCH_MESSAGING_TOOLS,
+  FileCommentStore,
   TaskStore,
 } from '@dispatch/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
@@ -61,6 +62,11 @@ describe('server identity', () => {
       'channel_leave',
       'channel_list',
       'dispatch_note',
+      'doc_link',
+      'doc_list',
+      'doc_read',
+      'doc_save',
+      'doc_search',
       'inbox_read',
       'memory_forget',
       'memory_read',
@@ -72,6 +78,7 @@ describe('server identity', () => {
       'record_mutation',
       'run_list',
       'task_comment',
+      'task_comments',
       'task_get',
       'task_list',
       'task_next',
@@ -161,6 +168,48 @@ describe('task_save', () => {
     })) as ToolCallResult;
     const updatedMeta = updated.structuredContent?.meta as { writes: string[] };
     expect(updatedMeta.writes).toEqual(['c.ts']);
+  });
+
+  it('files a task under the milestone its title names, by setting parent', async () => {
+    const store = new TaskStore(root);
+    const project = store.create({ title: 'Payments', kind: 'project' });
+    const beta = store.create({
+      title: 'Beta',
+      kind: 'milestone',
+      parent: project.meta.id,
+    });
+    const created = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Refunds', milestone: 'beta' },
+    })) as ToolCallResult;
+    expect(created.isError).toBeUndefined();
+    const meta = created.structuredContent?.meta as {
+      id: string;
+      parent: string | null;
+      milestone: string | null;
+    };
+    expect(meta.parent).toBe(beta.meta.id);
+    expect(meta.milestone).toBeNull();
+
+    const moved = (await client.callTool({
+      name: 'task_save',
+      arguments: { id: meta.id, milestone: 'Payments' },
+    })) as ToolCallResult;
+    const movedMeta = moved.structuredContent?.meta as
+      | { parent: string | null }
+      | undefined;
+    expect(movedMeta?.parent).toBe(project.meta.id);
+  });
+
+  it('reports a milestone no container is titled', async () => {
+    const result = (await client.callTool({
+      name: 'task_save',
+      arguments: { title: 'Refunds', milestone: 'Gamma' },
+    })) as ToolCallResult;
+    expect(result.isError).toBe(true);
+    expect(callToolText(result)).toBe(
+      'invalid milestone: no project or milestone is titled "Gamma" — create it first, or send parent'
+    );
   });
 
   it('rejects an empty title on create', async () => {
@@ -372,7 +421,7 @@ describe('task_list', () => {
     })) as ToolCallResult;
     expect(result.isError).toBe(true);
     expect(callToolText(result)).toBe(
-      'invalid kind: story (expected task|epic)'
+      'invalid kind: story (expected task|initiative|project|milestone|epic)'
     );
   });
 
@@ -427,7 +476,7 @@ describe('task_comment', () => {
     TaskStore.init(root);
   });
 
-  it('appends a timestamped activity line', async () => {
+  it('adds a comment to the thread task_comments reads back', async () => {
     const store = new TaskStore(root);
     const doc = store.create({ title: 'Track me' });
 
@@ -436,12 +485,24 @@ describe('task_comment', () => {
       arguments: { id: doc.meta.id, text: 'made progress' },
     })) as ToolCallResult;
     expect(result.isError).toBeUndefined();
-    expect((result.structuredContent!.meta as { id: string }).id).toBe(
-      doc.meta.id
-    );
+    const comment = result.structuredContent!.comment as {
+      id: string;
+      taskId: string;
+      body: string;
+    };
+    expect(comment).toMatchObject({
+      taskId: doc.meta.id,
+      body: 'made progress',
+    });
 
-    const onDisk = store.get(doc.meta.id);
-    expect(onDisk?.body).toMatch(/- \d{4}-\d{2}-\d{2}T.*made progress/);
+    const read = (await client.callTool({
+      name: 'task_comments',
+      arguments: { id: doc.meta.id },
+    })) as ToolCallResult;
+    const thread = read.structuredContent!.comments as { id: string }[];
+    expect(thread.map((c) => c.id)).toEqual([comment.id]);
+    // Nothing lands in the Activity log any more.
+    expect(store.get(doc.meta.id)?.body).not.toContain('made progress');
   });
 
   it('reports task not found for an unknown id', async () => {
@@ -514,5 +575,40 @@ describe('onboarding resource', () => {
     const content = contents[0] as { mimeType?: string; text?: string };
     expect(content.mimeType).toBe('text/markdown');
     expect(content.text).toBe(ONBOARDING_MARKDOWN);
+  });
+});
+
+describe('task_comments', () => {
+  beforeEach(() => {
+    TaskStore.init(root);
+  });
+
+  it('lists a task thread from the file store, oldest first', async () => {
+    const doc = new TaskStore(root).create({ title: 'Discuss me' });
+    const comments = new FileCommentStore(root);
+    const first = comments.add(
+      { taskId: doc.meta.id, author: 'human:wyat', body: 'first' },
+      '2026-01-01T00:00:00.000Z'
+    );
+    comments.add(
+      {
+        taskId: doc.meta.id,
+        author: 'human:ada',
+        body: 'reply',
+        parentId: first.id,
+      },
+      '2026-01-02T00:00:00.000Z'
+    );
+    const result = (await client.callTool({
+      name: 'task_comments',
+      arguments: { id: doc.meta.id },
+    })) as ToolCallResult;
+    expect(result.isError).toBeUndefined();
+    const listed = result.structuredContent!.comments as {
+      body: string;
+      parentId: string | null;
+    }[];
+    expect(listed.map((c) => c.body)).toEqual(['first', 'reply']);
+    expect(listed[1].parentId).toBe(first.id);
   });
 });

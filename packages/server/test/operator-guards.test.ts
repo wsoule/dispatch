@@ -183,8 +183,8 @@ describe('epic resume re-keys the session to whoever resumed it', () => {
         {}
       );
       expect(resumed.status).toBe(200);
-      const session = await json<{ startedBy?: string }>(resumed);
-      expect(session.startedBy).toBe(
+      const session = await json<{ operator?: string }>(resumed);
+      expect(session.operator).toBe(
         who === 'teammate' ? 'human:ada' : undefined
       );
       await waitFor(() => runOf(next) !== undefined);
@@ -199,7 +199,7 @@ describe('epic resume re-keys the session to whoever resumed it', () => {
     const { epic, next } = await pausedOwnerEpic(app);
     const resumed = await call('POST', `/api/epics/${epic}/resume`, app, {});
     expect(resumed.status).toBe(200);
-    expect((await json<{ startedBy?: string }>(resumed)).startedBy).toBe(
+    expect((await json<{ operator?: string }>(resumed)).operator).toBe(
       'human:test'
     );
     await waitFor(() => runOf(next) !== undefined);

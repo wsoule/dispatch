@@ -1,5 +1,7 @@
+import { isContainerKind, isDoneStatus } from '@dispatch/core';
 import type {
   PolicyRuling as CorePolicyRuling,
+  StatusModel,
   TaskDoc,
   TaskStorePort,
 } from '@dispatch/core';
@@ -19,6 +21,7 @@ import type {
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import { actingOperator } from '../orchestrator/types.js';
 import { consultProjectPolicy } from '../policyEngine.js';
+import { statusModelFor } from '../statuses.js';
 import type { GateHandlers } from './gates.js';
 import { answeredWithOwnerCredential } from './gates.js';
 
@@ -73,12 +76,11 @@ export function settle<T>(call: () => T): Promise<T> {
   }
 }
 
-// Why `task` can never be woken ('an epic', 'landed', 'dropped'), or null when
-// a wake may dispatch it. Checked when a wake gate is raised and again when it runs.
-export function wakeRefusal(task: TaskDoc): string | null {
-  if (task.meta.kind === 'epic') return 'an epic';
-  if (task.meta.status === 'landed' || task.meta.status === 'dropped')
-    return task.meta.status;
+// Why `task` can never be woken ('an epic', or its done status's name under the
+// project's `model`), or null. Checked when a wake gate is raised and when it runs.
+export function wakeRefusal(task: TaskDoc, model: StatusModel): string | null {
+  if (isContainerKind(task.meta.kind)) return 'an epic';
+  if (isDoneStatus(task.meta.status, model)) return task.meta.status;
   return null;
 }
 
@@ -153,8 +155,8 @@ export class DaemonMessagingHost implements MessagingHost {
     this.deps.onHumanMessage(actor, message);
   }
 
-  // Wakes a task as its human sender (who may continue a finished run) or as the
-  // system, or continues the one run a human names; a throw becomes a failure.
+  // Wakes a task as its local human sender (who may continue a finished run) or
+  // as the system, or continues the one run a local human names; a throw fails.
   // The run acts for `acting` (by default the sender, on this request's token).
   async wake(
     target: Address,
@@ -164,12 +166,18 @@ export class DaemonMessagingHost implements MessagingHost {
       ownerCredential: answeredWithOwnerCredential(),
     }
   ): Promise<WakeResult> {
-    const human = message.from.startsWith('human:');
-    const operator = actingOperator(
-      acting.actor,
-      acting.ownerCredential,
-      this.deps.ownerRef
-    );
+    // A remote sender's wake runs as the system and continues nothing.
+    const human =
+      message.origin === undefined && message.from.startsWith('human:');
+    // A remote sender's own wake acts for no one; a local approver's for them.
+    const operator =
+      message.origin !== undefined && acting.actor === message.from
+        ? null
+        : actingOperator(
+            acting.actor,
+            acting.ownerCredential,
+            this.deps.ownerRef
+          );
     if (target.startsWith('run:') && human) {
       try {
         const meta = this.deps.orchestrator.wakeRun(
@@ -203,16 +211,21 @@ export class DaemonMessagingHost implements MessagingHost {
     }
   }
 
-  // Allows a human's wake of a dispatchable task or of a run; an agent's task
-  // wake follows the project's 'wake' policy, capped by the task's risk.
+  // Allows a local human's wake of a dispatchable task or of a run; any other
+  // task wake follows the project's 'wake' policy, capped by the task's risk.
   decide(request: PolicyRequest): PolicyRuling {
     const target = request.target;
-    const human = request.message.from.startsWith('human:');
+    const human =
+      request.origin === undefined && request.message.from.startsWith('human:');
     if (target.startsWith('run:')) return human ? 'allow' : 'deny';
     if (!target.startsWith('task:')) return 'deny';
     const task = this.deps.store.get(target.slice('task:'.length));
-    if (task === null || wakeRefusal(task) !== null) return 'deny';
-    // A human's wake is their own call, so policy never gates it.
+    if (
+      task === null ||
+      wakeRefusal(task, statusModelFor(this.deps.rootDir)) !== null
+    )
+      return 'deny';
+    // A local human's wake is their own call, so policy never gates it.
     if (human) return 'allow';
     const ruling: CorePolicyRuling = consultProjectPolicy(
       this.deps.rootDir,
