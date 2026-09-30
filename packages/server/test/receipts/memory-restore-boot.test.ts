@@ -77,12 +77,10 @@ it('a receipt log restores team memory on a clean machine as agent proposals', a
       origin: `receipts:${entry.id}`,
       content: { kind: 'hazard', title: entry.title, body: entry.body },
     });
-    // Nothing restored ever stands as a human's entry.
-    expect(
-      shared
-        ?.listEntries({ scopes: ['team'] })
-        .filter((e) => e.trust !== 'agent')
-    ).toEqual([]);
+    // Nothing restored goes live without a human: no entry, and a gate raised.
+    expect(shared?.countEntries()).toBe(0);
+    expect(proposals[0].state).toBe('open');
+    expect(proposals[0].gate).not.toBeNull();
     expect(existsSync(staging)).toBe(false);
   } finally {
     await handle.stop();

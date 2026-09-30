@@ -218,7 +218,7 @@ describe('a staged memory restore', () => {
     ).toBeNull();
   });
 
-  it('is approved by policy only as unreviewed agent entries', async () => {
+  it('always waits for a human, whatever the auto policy', async () => {
     const t = gatedEngine();
     t.host.ruling = {
       mode: 'auto',
@@ -226,10 +226,11 @@ describe('a staged memory restore', () => {
       rung: 4,
       authorizedBy: 'rung',
     };
-    stage(lostEntry('auto approved'));
+    stage(lostEntry('not auto approved'));
     await applyStagedMemoryRestore(t.engine, t.shared, restoreDir);
-    const [entry] = t.shared.listEntries({ scopes: ['team'] });
-    expect(entry.trust).toBe('agent');
+    expect(t.shared.countEntries()).toBe(0);
+    const [p] = t.shared.listProposals({ states: ['open'] });
+    expect(p.gate).toBe('m-gate');
   });
 
   it('skips an entry this store holds, or a restore it already made', async () => {

@@ -5,6 +5,7 @@ import type {
   MemoryProposal,
   MemoryStore,
 } from '@dispatch/memory';
+import { isRestoredOrigin } from '@dispatch/memory';
 import { gateOf, isSystemMarker } from '@dispatch/protocol';
 import type { DeliveryEngine, Message, Ref } from '@dispatch/protocol';
 
@@ -44,6 +45,9 @@ export async function raiseMemoryGate(
   const open = openGateFor(engine, p.id);
   if (open !== undefined) return open.id;
   const verb = p.action === 'retire' ? 'proposes retiring' : 'proposes';
+  const source = isRestoredOrigin(p.origin)
+    ? ' restored from the receipt log; check it before approving'
+    : '';
   const refs: Ref[] = [
     ...(p.taskId === null ? [] : [{ type: 'task' as const, id: p.taskId }]),
     ...(p.runId === null ? [] : [{ type: 'run' as const, id: p.runId }]),
@@ -54,7 +58,7 @@ export async function raiseMemoryGate(
       kind: 'question',
       blocking: true,
       choices: ['approve', 'reject'],
-      body: `${p.author} ${verb} a ${p.scope} memory (${kind}). Review it in Needs you.`,
+      body: `${p.author} ${verb} a ${p.scope} memory (${kind})${source}. Review it in Needs you.`,
       refs,
       data: {
         type: 'memory',

@@ -184,6 +184,22 @@ describe('proposals', () => {
     expect(t.shared.countEntries()).toBe(0);
   });
 
+  it('never auto-approves a lesson restored from the receipt log', async () => {
+    const t = setup();
+    t.host.ruling = AUTO;
+    const out = (await t.engine.submitProposal(
+      { address: 'agent:dispatch', canDecide: false, kind: 'agent' },
+      {
+        action: 'add',
+        scope: 'team',
+        content: valid('restored'),
+        origin: 'receipts:mem-1',
+      }
+    )) as Gated;
+    expect(out.gate).toBe('m-gate-1');
+    expect(t.shared.countEntries()).toBe(0);
+  });
+
   it('sends a proposal to a human when the policy ruling throws', async () => {
     const t = setup();
     t.host.failing.add('rule');
