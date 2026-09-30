@@ -2,7 +2,7 @@ import type { ApiClient, Message } from '@dispatch/client';
 import { memo, useState } from 'react';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
-import { approvalReply, isSystemMarker } from '../../lib/gates';
+import { approvalReply, isSystemMarker, taskProposalOf } from '../../lib/gates';
 import { formatShortDate } from '../../lib/taskDates';
 import type {
   ParkedCall,
@@ -127,7 +127,17 @@ export const MessageRow = memo(function MessageRow({
               {formatShortDate(message.createdAt)}
             </time>
           </header>
-          <Markdown content={message.body} className="font-book text-[13px]" />
+          {/* A task proposal quotes the client's title, so it never renders as markdown. */}
+          {taskProposalOf(message) === null ? (
+            <Markdown
+              content={message.body}
+              className="font-book text-[13px]"
+            />
+          ) : (
+            <p className="font-book text-[13px] break-words whitespace-pre-wrap">
+              {message.body}
+            </p>
+          )}
           {message.choice !== undefined && (
             <p className="text-muted-foreground text-[12px]">
               Chose {message.choice}

@@ -85,6 +85,15 @@ describe('a handoff', () => {
     expect(await state(id)).toBe('AUTH_REQUIRED');
   });
 
+  it('escapes markdown in the client’s title where the gate body quotes it', async () => {
+    const { row } = await open({
+      work: { skill: 'handoff', title: '![x](https://host/beacon)' },
+    });
+    const body = gateQuestion(row).body;
+    expect(body).toContain('"\\!\\[x\\]\\(https://host/beacon\\)"');
+    expect(body).not.toContain('![x]');
+  });
+
   // The effective rung each gate uses for an A2A task is 1, in a project that
   // would otherwise auto-decide everything.
   it('runs every gate of an A2A draft at rung 1, even in a rung-4 project with approval pinned auto', async () => {

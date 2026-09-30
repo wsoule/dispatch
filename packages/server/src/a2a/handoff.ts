@@ -101,6 +101,11 @@ export async function openHandoff(
   return { kind: 'task', taskId: root.id };
 }
 
+// Backslash-escapes markdown syntax so a client's title quotes as text.
+function escapeMarkdown(text: string): string {
+  return text.replace(/[\\`*_~[\]()!<>|#]/g, '\\$&');
+}
+
 // Asks the owner to approve the row's draft, as the system, and records the gate.
 export async function sendProposalGate(
   deps: BridgeDeps,
@@ -117,7 +122,7 @@ export async function sendProposalGate(
       choices: ['approve', 'decline'],
       replyTo: row.id,
       idempotencyKey: proposalKey(row.id),
-      body: `${row.client} proposes a task over A2A: "${title}" (${task}). Approve to move it to Ready; nothing runs until you do.`,
+      body: `${row.client} proposes a task over A2A: "${escapeMarkdown(title)}" (${task}). Approve to move it to Ready; nothing runs until you do.`,
       data: {
         type: 'task-proposal',
         task,

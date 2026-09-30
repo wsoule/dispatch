@@ -420,6 +420,14 @@ test('shows a decider the proposed draft from the board, and answers its gate wi
   );
 });
 
+test('renders a task-proposal gate’s body as plain text, so a client title cannot load an image', () => {
+  const body =
+    'agent:wyat/a2a.acme proposes a task over A2A: "![](https://host/beacon)" (t-a1b2c3).';
+  renderRow({ ...taskProposal, body });
+  expect(document.querySelector('img')).toBeNull();
+  expect(screen.getByText(body)).toBeTruthy();
+});
+
 test('shows a viewer below the decide tier the proposed draft, with its answers disabled', () => {
   renderRow(taskProposal, { access: TEAMMATE });
   expect(
