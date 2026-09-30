@@ -160,8 +160,13 @@ export class DaemonBridgePort implements BridgePort {
     const visible = new Set<string>(this.approvedTasks(caller));
     for (const row of this.deps.store.tasksOf(caller.address)) {
       visible.add(row.id);
-      for (const m of gatherFacts(this.deps, row, { work: false }).scope)
-        visible.add(m.id);
+      // One unreadable task hides only its own scope.
+      try {
+        for (const m of gatherFacts(this.deps, row, { work: false }).scope)
+          visible.add(m.id);
+      } catch (err) {
+        console.error(`a2a: could not read task ${row.id}`, err);
+      }
     }
     refs.forEach((ref, i) => {
       if (!visible.has(ref.id))

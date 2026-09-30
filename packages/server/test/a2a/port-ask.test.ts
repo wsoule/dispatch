@@ -278,6 +278,25 @@ describe('watch', () => {
       logged.mockRestore();
     }
   });
+
+  it('checks refs past a task that cannot be read', async () => {
+    const id = await open();
+    const row = f.store.getTask(id);
+    if (row === null) throw new Error('expected a row');
+    f.store.insertTask({ ...row, id: 'm-00000000000000000000000000' });
+    const logged = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      await f.port.continue(f.caller, {
+        taskId: id,
+        contextId: null,
+        clientMessageId: 'c-refs',
+        body: 'See the question.',
+        refs: [{ type: 'message', id }],
+      });
+    } finally {
+      logged.mockRestore();
+    }
+  });
 });
 
 describe('plain messages', () => {
