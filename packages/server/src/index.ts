@@ -65,8 +65,10 @@ import {
   depMapSourceDirs,
   isSkippedPath,
 } from './depmap.js';
-import { DaemonDocsHost } from './docs/host.js';
-import { openDocs } from './docs/open.js';
+import { docGateHandler, docGatePort } from './docs/gate.js';
+import { DaemonDocsHost, docsMemoryPort } from './docs/host.js';
+import { docsRestoreDir, openDocs } from './docs/open.js';
+import { docsReceiptsStep } from './docs/receipts.js';
 import { EventBus } from './events.js';
 import type { SocketAudience } from './events.js';
 import { FindingStore } from './findings.js';
@@ -1111,7 +1113,14 @@ async function bootServer(
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
+          steps: [docsReceiptsStep(docs.service, docsRestoreDir(rootDir))],
         });
+  // Team doc changes that reach a sealed head (seals, reviews, status, links,
+  // renames, deletes) export; open-revision amends and new heads wait for the seal.
+  docsHost.onChange((c) => {
+    if (c.scope === 'team' && c.kind !== 'amended' && c.kind !== 'revised')
+      receiptsScheduler?.notifyChanged();
+  });
   // One full export as the daemon comes up: it creates the log on a project
   // turning receipts on for the first time, and reconciles one left dirty by a
   // daemon that died mid-burst. In the background, in slices, so the server
@@ -1349,6 +1358,22 @@ async function bootServer(
   });
   docsHost.bindRuns(orchestrator);
   docsHost.bindMessaging(messaging.store);
+  docsHost.bindMemory(docsMemoryPort(memory));
+  // The doc gate's handler registers before messaging.recover(), even with
+  // docs.db closed: an answer replayed with no handler would be lost.
+  docsHost.bindGates(
+    docGatePort({
+      rootDir,
+      engine: messaging.engine,
+      ownerRef: actorContext.humanRef,
+      issuedTier: (handle) => team.teammates.issuedTier(handle),
+      ledgerStore,
+      events,
+      appendPolicyActivity,
+      epicOf: (taskId) => store.get(taskId)?.meta.parent ?? null,
+    })
+  );
+  messaging.gates.register('doc', docGateHandler(docs.service, docsHost));
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
@@ -1381,6 +1406,12 @@ async function bootServer(
   await messaging.recover();
   // Runs force-failed above left their gates open; nobody can act on them now.
   closeOrphanedGates(messaging.engine, orchestrator);
+  // Open proposals a crash left without a gate get one; stray doc gates close.
+  try {
+    await docs.service.reconcileGates();
+  } catch (err) {
+    console.error('dispatchd: doc gate reconcile failed', err);
+  }
   // Before HTTP serves: the boot import carries every ledger lesson in before
   // the first dispatch, then proposals a crash left without a gate get one.
   try {

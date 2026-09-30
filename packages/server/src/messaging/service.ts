@@ -60,6 +60,7 @@ const DISPATCH_GATE_TYPES = [
   'overseer-action',
   'memory',
   'task-proposal',
+  'doc',
 ] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.

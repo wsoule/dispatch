@@ -116,10 +116,10 @@ describe('create', () => {
     ).toBe('saved');
   });
 
-  it('refuses personal docs until memory v1, review runs, the overseer and a2a. agents', () => {
+  it('refuses personal docs to a caller that acts for no human, review runs, the overseer and a2a. agents', () => {
     expect(() =>
       service.create(as(OWNER), { title: 'Mine', body: 'x', scope: 'personal' })
-    ).toThrow('personal docs need memory v1');
+    ).toThrow('acts for no human');
     expect(
       code(() => service.create(as(REVIEW_RUN), { title: 'x', body: 'x' }))
     ).toBe('forbidden');
@@ -557,8 +557,8 @@ describe('review state, revert and lifecycle', () => {
     expect(service.list(as(OWNER), {}).total).toBe(0);
     expect(service.list(as(OWNER), { includeArchived: true }).total).toBe(1);
     expect(service.setStatus(as(OWNER), 'a', 'draft').status).toBe('draft');
-    expect(code(() => service.setStatus(as(OWNER), 'a', 'accepted'))).toBe(
-      'invalid'
+    expect(service.setStatus(as(OWNER), 'a', 'accepted').status).toBe(
+      'accepted'
     );
   });
 

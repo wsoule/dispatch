@@ -8,6 +8,8 @@ import type {
   DocLink,
   DocLinking,
   DocOp,
+  DocProposal,
+  DocProposalView,
   DocRead,
   DocRecord,
   DocRevisionInfo,
@@ -28,6 +30,7 @@ import type {
   MutationEvidence,
   Person,
   Priority,
+  ProposalState,
   RunStep,
   TaskComment,
   TaskDoc,
@@ -834,6 +837,14 @@ export type GateData =
       task: string;
       proposedBy: string;
       message: string;
+    }
+  | {
+      type: 'doc';
+      // A proposed edit to an accepted doc; the text stays in docs.db (system-only gate).
+      doc: string; // doc-<ulid>
+      proposal: string; // rev-<ulid>
+      taskId?: string;
+      runId?: string;
     };
 
 // Structural mirrors of @dispatch/memory's views and the memory routes'
@@ -3573,6 +3584,8 @@ export interface ApiClient {
   markDocReviewed(ref: string): Promise<DocRecord>;
   sealDoc(ref: string): Promise<DocRecord>;
   revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
+  /** Copies a personal doc's head into a new team draft (its owner only). */
+  promoteDoc(ref: string): Promise<DocSaveResult>;
   deleteDoc(ref: string): Promise<void>;
   listDocRevisions(
     ref: string,
@@ -3601,6 +3614,13 @@ export interface ApiClient {
     opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
   ): Promise<{ hits: DocHit[] }>;
   docsHealth(): Promise<DocsHealth>;
+  /** Proposals to accepted docs the caller may see; `doc` narrows to one doc. */
+  listDocProposals(params?: {
+    doc?: string;
+    state?: ProposalState[];
+  }): Promise<{ proposals: DocProposal[] }>;
+  /** A proposal's text, its diff against its base, and whether it merges onto the head. */
+  getDocProposal(rev: string): Promise<DocProposalView>;
   a2aListener(): Promise<A2AListenerStatus>;
   /** Writes the listener settings and (re)opens it (operator tier). */
   setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
@@ -4537,6 +4557,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ rev }),
       }),
+    promoteDoc: (ref) =>
+      request(target, `${docPath(ref)}/promote`, { method: 'POST' }),
     // send(), not request(): the server answers 204 with no body.
     deleteDoc: async (ref) => {
       await send(target, docPath(ref), { method: 'DELETE' });
@@ -4588,6 +4610,16 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       return request(target, `/api/docs/search?${params.toString()}`);
     },
     docsHealth: () => request(target, '/api/docs/health'),
+    listDocProposals: (params = {}) => {
+      const query = new URLSearchParams();
+      if (params.doc !== undefined) query.set('doc', params.doc);
+      if (params.state !== undefined)
+        query.set('state', params.state.join(','));
+      const qs = query.toString();
+      return request(target, `/api/docs/proposals${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDocProposal: (rev) =>
+      request(target, `/api/docs/proposals/${encodeURIComponent(rev)}`),
     a2aListener: () => request(target, '/api/a2a/listener'),
     setA2AListener: (settings) =>
       request(target, '/api/a2a/listener', {

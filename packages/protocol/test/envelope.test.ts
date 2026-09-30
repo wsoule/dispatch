@@ -92,6 +92,74 @@ describe('doc refs', () => {
   });
 });
 
+describe('doc gates', () => {
+  const docGate = (over: Partial<SendInput> = {}): SendInput => ({
+    to: ['human:wyat'],
+    kind: 'question',
+    body: 'run:r-1 proposes an edit to an accepted doc. Review it in Needs you.',
+    blocking: true,
+    choices: ['approve', 'reject'],
+    data: {
+      type: 'doc',
+      doc: 'doc-01K',
+      proposal: 'rev-01K',
+      taskId: 't-1',
+      runId: 'r-1',
+    },
+    refs: [{ type: 'doc', id: 'doc-01K' }],
+    ...over,
+  });
+
+  it('accepts the exact shape from the system and reads back through gateOf', () => {
+    expect(() =>
+      validateSendInput(docGate(), 'agent:dispatch', true, null)
+    ).not.toThrow();
+    expect(gateOf({ data: docGate().data })).toEqual({
+      type: 'doc',
+      doc: 'doc-01K',
+      proposal: 'rev-01K',
+      taskId: 't-1',
+      runId: 'r-1',
+    });
+  });
+
+  it('refuses any other shape, naming the right one', () => {
+    expect(() =>
+      validateSendInput(
+        docGate({ choices: ['yes', 'no'] }),
+        'agent:dispatch',
+        true,
+        null
+      )
+    ).toThrow('choices: ["approve", "reject"]');
+    expect(() =>
+      validateSendInput(
+        docGate({ data: { type: 'doc', doc: 'x', proposal: 'rev-1' } }),
+        'agent:dispatch',
+        true,
+        null
+      )
+    ).toThrow('data.doc');
+    expect(() =>
+      validateSendInput(
+        docGate({ data: { type: 'doc', doc: 'doc-1', proposal: 'x' } }),
+        'agent:dispatch',
+        true,
+        null
+      )
+    ).toThrow('data.proposal');
+  });
+
+  it('is system-only: a run and a deciding human may not raise one', () => {
+    expect(() => validateSendInput(docGate(), 'run:r-1', false, null)).toThrow(
+      expect.objectContaining({ code: 'forbidden' })
+    );
+    expect(() =>
+      validateSendInput(docGate(), 'human:wyat', true, null)
+    ).toThrow();
+  });
+});
+
 describe('Ref', () => {
   it('types a received ref of a type this package does not know', () => {
     // A message received through a binding keeps such a ref (§4.4).

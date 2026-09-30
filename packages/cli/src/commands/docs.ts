@@ -1,6 +1,7 @@
 import type {
   DocFileMeta,
   DocRevisionInfo,
+  DocScope,
   DocStatus,
   LinkRel,
 } from '@dispatch/core';
@@ -29,6 +30,10 @@ import { attachToRunningDaemon, resolveAppToken } from './appToken.js';
 // or a teammate token, never with a token an agent could read (appToken.ts).
 
 const HEADER = /^<!-- dispatch: resolve the marked blocks[^\n]*-->\n/;
+
+// A doc's handle as the caller types it back: ~slug for a personal doc.
+const writtenHandle = (d: { scope: DocScope; handle: string }): string =>
+  d.scope === 'personal' ? `~${d.handle}` : d.handle;
 
 async function docsClient(
   ctx: CliContext,
@@ -90,7 +95,7 @@ export async function editLoop(
         return 'saved';
       }
       if (r.status !== 'unchanged') await api.seal(ref);
-      deps.log(`${r.status} ${r.handle} rev ${r.rev.n ?? '-'}`);
+      deps.log(`${r.status} ${writtenHandle(r.doc)} rev ${r.rev.n ?? '-'}`);
       return r.status === 'unchanged' ? 'unchanged' : 'saved';
     }
     const c = out.conflict;
@@ -214,6 +219,23 @@ function printReport(ctx: CliContext, r: ImportReportInfo): void {
   );
 }
 
+const LIST_PAGE = 200;
+
+// Accepts every doc a receipts restore brought back as a former accepted doc,
+// answering their ids; a restored doc is trusted as accepted only once a human says so.
+export async function acceptRestored(api: DocsApi): Promise<string[]> {
+  const restored: string[] = [];
+  for (let offset = 0; ; ) {
+    const page = await api.list({ limit: LIST_PAGE, offset });
+    for (const d of page.docs)
+      if (d.restored?.status === 'accepted') restored.push(d.id);
+    offset += page.docs.length;
+    if (page.docs.length === 0 || offset >= page.total) break;
+  }
+  for (const id of restored) await api.setStatus(id, 'accepted');
+  return restored;
+}
+
 // "task:t-1:spec" is a target and its rel; a target with no rel links as context.
 function parseLinkOption(text: string): { target: string; rel: LinkRel } {
   const at = text.lastIndexOf(':');
@@ -276,8 +298,8 @@ function ancestryAuthors(
   return [...authors].slice(0, 20);
 }
 
-// Writes every doc the caller can see to `dir` in the receipt file format, and
-// with `revHistory` each sealed revision's body under `.history/<handle>/`.
+// Writes every doc the caller can see to `dir` (personal ones under `personal/`)
+// in the receipt file format; `revHistory` adds sealed revisions in `.history/<handle>/`.
 export async function exportDocs(
   api: DocsApi,
   dir: string,
@@ -313,7 +335,7 @@ export async function exportDocs(
       mkdirSync(sub, { recursive: true });
       writeFileSync(join(sub, `${d.handle}.md`), renderDocFile(meta, r.text));
       if (revHistory) {
-        const historyDir = join(dir, '.history', d.handle);
+        const historyDir = join(sub, '.history', d.handle);
         mkdirSync(historyDir, { recursive: true });
         for (const h of history) {
           if (!h.sealed || h.n === null) continue;
@@ -367,7 +389,7 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
         for (const d of rows) {
           const flag = d.unreviewed ? ' unreviewed' : '';
           ctx.log(
-            `${d.handle}\t${d.status}${flag}\trev ${d.head.n}\t${d.title}`
+            `${writtenHandle(d)}\t${d.status}${flag}\trev ${d.head.n}\t${d.title}`
           );
         }
       }
@@ -388,7 +410,7 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
           await docsClient(ctx, o.token)
         ).get(ref, { rev: o.rev, section: o.section });
         ctx.log(
-          `${r.doc.handle} · ${r.doc.status} · rev ${r.rev.n ?? '-'} by ${r.rev.author} · ${r.doc.title}`
+          `${writtenHandle(r.doc)} · ${r.doc.status} · rev ${r.rev.n ?? '-'} by ${r.rev.author} · ${r.doc.title}`
         );
         for (const s of r.outline)
           ctx.log(`${'  '.repeat(s.level - 1)}${s.heading} (#${s.anchor})`);
@@ -436,7 +458,7 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
         const r = await (
           await docsClient(ctx, o.token)
         ).create({ title, body, slug: o.slug, scope: o.scope, links });
-        ctx.log(`created ${r.handle} rev ${r.rev.n ?? '-'}`);
+        ctx.log(`created ${writtenHandle(r.doc)} rev ${r.rev.n ?? '-'}`);
       }
     );
 
@@ -523,10 +545,55 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
     .option(...tokenOpt)
     .action(async (ref: string, rev: string, o: { token?: string }) => {
       const r = await (await docsClient(ctx, o.token)).revert(ref, rev);
-      ctx.log(`${r.status} ${r.handle} rev ${r.rev.n ?? '-'}`);
+      ctx.log(`${r.status} ${writtenHandle(r.doc)} rev ${r.rev.n ?? '-'}`);
+    });
+
+  docs
+    .command('accept [ref]')
+    .description(
+      'Accept a doc: agents then propose edits instead of writing it (decide tier)'
+    )
+    .option('--restored', 'accept every doc restored as a former accepted doc')
+    .option(...tokenOpt)
+    .action(
+      async (
+        ref: string | undefined,
+        o: { restored?: boolean; token?: string }
+      ) => {
+        const api = await docsClient(ctx, o.token);
+        if (o.restored === true) {
+          const ids = await acceptRestored(api);
+          ctx.log(`accepted ${ids.length} restored docs`);
+          return;
+        }
+        if (ref === undefined)
+          throw new CliError('name a doc to accept, or pass --restored');
+        const r = await api.setStatus(ref, 'accepted');
+        ctx.log(`${ref}: ${r.status}`);
+      }
+    );
+
+  docs
+    .command('proposals')
+    .description('List proposed edits to accepted docs you may see')
+    .option('--doc <ref>', "one doc's proposals")
+    .option(...tokenOpt)
+    .action(async (o: { doc?: string; token?: string }) => {
+      const { proposals } = await (
+        await docsClient(ctx, o.token)
+      ).proposals({ doc: o.doc });
+      for (const p of proposals)
+        ctx.log(
+          `${p.rev}\t${p.state}\t${p.doc}\t${p.author}\tgate ${p.gate ?? '-'}\t${p.createdAt}`
+        );
     });
 
   for (const [name, status, what] of [
+    [
+      'reopen',
+      'draft',
+      'Reopen an accepted doc as a draft, withdrawing open proposals',
+    ],
     ['archive', 'archived', 'Archive a doc (read-only until restored)'],
     ['restore', 'draft', 'Restore an archived doc'],
   ] as const) {
@@ -539,6 +606,15 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
         ctx.log(`${ref}: ${r.status}`);
       });
   }
+
+  docs
+    .command('promote <ref>')
+    .description('Copy a personal doc into a new team draft (its owner only)')
+    .option(...tokenOpt)
+    .action(async (ref: string, o: { token?: string }) => {
+      const r = await (await docsClient(ctx, o.token)).promote(ref);
+      ctx.log(`promoted to ${r.handle}`);
+    });
 
   docs
     .command('reviewed <ref>')

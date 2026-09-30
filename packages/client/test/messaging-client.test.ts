@@ -454,4 +454,16 @@ describe('openDecisions', () => {
       stub.restore();
     }
   });
+
+  it('types a doc gate’s doc and proposal', async () => {
+    const gate: GateData = { type: 'doc', doc: 'doc-1', proposal: 'rev-1' };
+    const stub = stubFetch({ items: [{ id: 'm-1', data: gate }] });
+    try {
+      const { items } = await createApiClient(BASE).openDecisions();
+      const data = items[0]?.data as GateData;
+      expect(data.type === 'doc' ? data.proposal : null).toBe('rev-1');
+    } finally {
+      stub.restore();
+    }
+  });
 });

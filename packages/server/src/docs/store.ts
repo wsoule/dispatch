@@ -1,8 +1,10 @@
 import type {
+  DocProposal,
   DocScope,
   DocStatus,
   LinkRel,
   LinkTargetType,
+  ProposalState,
   RevisionCause,
   SqliteDatabase,
   SqlValue,
@@ -362,6 +364,51 @@ function toLink(r: RawLink): LinkRow {
     source: r.source as LinkRow['source'],
     createdBy: r.created_by,
     createdAt: r.created_at,
+  };
+}
+
+interface RawProposal {
+  rev_id: string;
+  doc_id: string;
+  base_rev: string;
+  author: string;
+  operator: string | null;
+  run_id: string | null;
+  task_id: string | null;
+  origin: string;
+  gate: string | null;
+  state: string;
+  decided_by: string | null;
+  decided_by_policy_json: string | null;
+  reason: string | null;
+  result_rev: string | null;
+  created_at: string;
+  decided_at: string | null;
+}
+
+function toProposal(r: RawProposal): DocProposal {
+  return {
+    rev: r.rev_id,
+    doc: r.doc_id,
+    base: r.base_rev,
+    author: r.author,
+    operator: r.operator,
+    runId: r.run_id,
+    taskId: r.task_id,
+    origin: r.origin,
+    gate: r.gate,
+    state: r.state as ProposalState,
+    decidedBy: r.decided_by,
+    decidedByPolicy:
+      r.decided_by_policy_json === null
+        ? null
+        : (JSON.parse(
+            r.decided_by_policy_json
+          ) as DocProposal['decidedByPolicy']),
+    reason: r.reason,
+    result: r.result_rev,
+    createdAt: r.created_at,
+    decidedAt: r.decided_at,
   };
 }
 
@@ -862,6 +909,73 @@ export class SqliteDocStore {
       this.one<{ c: number }>(
         'SELECT COUNT(*) AS c FROM docs WHERE created_by = ? AND created_at > ?',
         [by, sinceIso]
+      )?.c ?? 0
+    );
+  }
+
+  putProposal(p: DocProposal): void {
+    this.run(
+      `INSERT OR REPLACE INTO proposals (rev_id, doc_id, base_rev, author, operator, run_id, task_id, origin, gate, state,
+        decided_by, decided_by_policy_json, reason, result_rev, created_at, decided_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        p.rev,
+        p.doc,
+        p.base,
+        p.author,
+        p.operator,
+        p.runId,
+        p.taskId,
+        p.origin,
+        p.gate,
+        p.state,
+        p.decidedBy,
+        p.decidedByPolicy === null ? null : JSON.stringify(p.decidedByPolicy),
+        p.reason,
+        p.result,
+        p.createdAt,
+        p.decidedAt,
+      ]
+    );
+  }
+
+  // Proposal rows matching every given filter, oldest first.
+  proposalRows(filter: {
+    rev?: string;
+    doc?: string;
+    states?: readonly ProposalState[];
+    author?: string;
+  }): DocProposal[] {
+    const where: string[] = [];
+    const params: SqlValue[] = [];
+    if (filter.rev !== undefined) {
+      where.push('rev_id = ?');
+      params.push(filter.rev);
+    }
+    if (filter.doc !== undefined) {
+      where.push('doc_id = ?');
+      params.push(filter.doc);
+    }
+    if (filter.author !== undefined) {
+      where.push('author = ?');
+      params.push(filter.author);
+    }
+    if (filter.states !== undefined) {
+      where.push(`state IN (${filter.states.map(() => '?').join(', ')})`);
+      params.push(...filter.states);
+    }
+    const clause = where.length === 0 ? '' : ` WHERE ${where.join(' AND ')}`;
+    return this.all<RawProposal>(
+      `SELECT * FROM proposals${clause} ORDER BY created_at, rev_id`,
+      params
+    ).map(toProposal);
+  }
+
+  // Local proposals an author made since `sinceIso`, for the hourly limit.
+  countProposalsSince(author: string, sinceIso: string): number {
+    return (
+      this.one<{ c: number }>(
+        "SELECT COUNT(*) AS c FROM proposals WHERE author = ? AND created_at > ? AND origin = 'local'",
+        [author, sinceIso]
       )?.c ?? 0
     );
   }

@@ -129,6 +129,14 @@ export type GateData =
       task: string;
       proposedBy: Address;
       message: string;
+    }
+  | {
+      type: 'doc';
+      // A proposed edit to an accepted doc; the text stays in docs.db (system-only gate).
+      doc: string; // doc-<ulid>
+      proposal: string; // rev-<ulid>
+      taskId?: string;
+      runId?: string;
     };
 
 /** How validateSendInput judges gates, refs and a missing reply target. */
@@ -247,6 +255,7 @@ function validateGate(
       `unregistered or unimplemented gate type ${type}; private payloads use an x- type`
     );
   if (type === 'memory') validateMemoryShape(input);
+  if (type === 'doc') validateDocShape(input);
   const raiser = raiserOf(type);
   if (raiser === 'session' && !sender.startsWith('run:')) {
     throw new MessagingError(
@@ -320,6 +329,26 @@ function validateMemoryShape(input: SendInput): void {
     invalid(
       'data',
       'a memory gate is { kind: "question", blocking: true, choices: ["approve", "reject"], data: { type: "memory", proposalId, action, scope, kind } }'
+    );
+  }
+}
+
+// A doc gate names the doc and its proposed revision, never the text, and has
+// one fixed question shape.
+function validateDocShape(input: SendInput): void {
+  const gate = input.data as unknown as Extract<GateData, { type: 'doc' }>;
+  if (typeof gate.doc !== 'string' || !gate.doc.startsWith('doc-'))
+    invalid('data.doc', 'expected a doc- id');
+  if (typeof gate.proposal !== 'string' || !gate.proposal.startsWith('rev-'))
+    invalid('data.proposal', 'expected a rev- id');
+  if (
+    input.kind !== 'question' ||
+    input.blocking !== true ||
+    JSON.stringify(input.choices) !== '["approve","reject"]'
+  ) {
+    invalid(
+      'data',
+      'a doc gate is { kind: "question", blocking: true, choices: ["approve", "reject"], data: { type: "doc", doc, proposal } }'
     );
   }
 }

@@ -218,6 +218,37 @@ describe('ReceiptsExporter slicing', () => {
   });
 });
 
+describe('ReceiptsExporter steps', () => {
+  it('runs extra steps before staging, adds their counts, and survives one that throws', async () => {
+    const s = stores();
+    s.tasks.create({ kind: 'task', title: 'First task' });
+    const dir = logDir();
+    const exporter = new ReceiptsExporter(
+      s,
+      ActorContext.resolve(root, gitReaderFor(root)),
+      runAsync,
+      [
+        (d) => {
+          mkdirSync(join(d, '.dispatch', 'docs'), { recursive: true });
+          writeFileSync(join(d, '.dispatch', 'docs', 'a.md'), 'doc\n');
+          return { changed: 1, removed: 0, problems: ['one problem'] };
+        },
+        () => {
+          throw new Error('boom');
+        },
+      ]
+    );
+
+    const result = await exporter.exportOnce(dir);
+
+    expect(result.state).toBe('committed');
+    expect(result.problems).toBe(2);
+    expect(
+      run(dir, ['ls-files', '.dispatch/docs']).stdout.trim().split('\n')
+    ).toEqual(['.dispatch/docs/a.md']);
+  });
+});
+
 describe('ReceiptsExporter ownership', () => {
   it('refuses to adopt a directory it did not create', async () => {
     const s = stores();

@@ -54,6 +54,16 @@ export function filterDocs(
   );
 }
 
+// A revision's author for display: a restored one came from a git-pulled
+// receipt file, so it is labelled as recorded there rather than verified.
+export function revisionAuthor(
+  r: Pick<DocRevisionInfo, 'author' | 'cause'>
+): string {
+  return r.cause === 'restore'
+    ? `${r.author} · as recorded in the receipt log`
+    : r.author;
+}
+
 // What "Mark reviewed" covers: the listed revisions (newest first) after the
 // last reviewed one; a review older than the page leaves all of them.
 export function revisionsSinceReview(

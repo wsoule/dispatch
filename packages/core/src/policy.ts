@@ -16,7 +16,8 @@ export type PolicyGate =
   | 'verify-retry'
   | 'merge'
   | 'wake'
-  | 'memory';
+  | 'memory'
+  | 'doc';
 
 /** Runtime counterpart of PolicyGate — see the note on FINDING_SEVERITIES. */
 export const POLICY_GATES: readonly PolicyGate[] = [
@@ -26,6 +27,7 @@ export const POLICY_GATES: readonly PolicyGate[] = [
   'merge',
   'wake',
   'memory',
+  'doc',
 ];
 
 /**
@@ -52,7 +54,7 @@ export const POLICY_RUNGS: readonly PolicyRungDef[] = [
   {
     rung: 4,
     name: 'auto-merge',
-    label: "Auto-merge on green and accept agents' team memory",
+    label: "Auto-merge on green and accept agents' team memory and doc edits",
   },
 ];
 
@@ -70,6 +72,8 @@ export const MAX_POLICY_RUNG = 4;
  * - merge: handing a green run to the merge queue.
  * - wake: rousing a sleeping agent to deliver it a message.
  * - memory: an agent's lesson joining project or team memory.
+ * - doc: an agent's edit to an accepted team doc (every run that links the doc
+ *   reads it).
  */
 export const GATE_RUNGS: Record<PolicyGate, number> = {
   scope: 2,
@@ -78,6 +82,7 @@ export const GATE_RUNGS: Record<PolicyGate, number> = {
   wake: 3,
   merge: 4,
   memory: 4,
+  doc: 4,
 };
 
 /**

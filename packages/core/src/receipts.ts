@@ -248,6 +248,7 @@ directory is enough to rebuild it.
     .dispatch/findings.jsonl         review findings, one JSON object per line
     .dispatch/ledger.jsonl           decisions and hazards
     .dispatch/evidence/<runId>.jsonl commands run and guards mutation-tested
+    .dispatch/docs/<handle>.md       team documents, their head revision
 
 That is deliberately the same layout a file-backed Dispatch project uses, so
 restoring needs no special tooling.
@@ -262,6 +263,9 @@ Point Dispatch at that repository and it will import what it finds. Evidence
 under \`.dispatch/evidence/\` is read by the restore path specifically and has
 no file-backed equivalent, so it survives that route only through Dispatch's
 own restore rather than through the copy above.
+
+Team docs under \`.dispatch/docs/\` come back through
+\`dispatch receipts restore\`, which stages them for the daemon.
 
 ## What is NOT here
 

@@ -212,6 +212,24 @@ describe('materializeReceipts', () => {
     ).toBe(true);
   });
 
+  it('leaves .dispatch/docs alone, so an older build never prunes team docs', () => {
+    const stores = projectStores('project');
+    seed(stores);
+    const dir = receiptsDir();
+    mkdirSync(join(dir, '.dispatch', 'docs'), { recursive: true });
+    writeFileSync(join(dir, '.dispatch', 'docs', 'x.md'), 'a doc\n');
+
+    const report = materializeReceipts(stores, dir);
+
+    expect(readFileSync(join(dir, '.dispatch', 'docs', 'x.md'), 'utf8')).toBe(
+      'a doc\n'
+    );
+    expect(report.removed).toEqual([]);
+    expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain(
+      '.dispatch/docs/<handle>.md'
+    );
+  });
+
   it('names a row it cannot read instead of failing the whole export', () => {
     const stores = projectStores('project');
     seed(stores);
