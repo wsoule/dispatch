@@ -39,8 +39,8 @@ const KIND_INFO: Record<NotificationKind, { label: string; hint: string }> = {
     hint: 'No run reads it until you approve it.',
   },
   doc: {
-    label: 'Edits to accepted docs',
-    hint: 'An agent proposes an edit to an accepted doc. No run reads it until you approve it.',
+    label: 'An agent proposes an edit to an accepted doc',
+    hint: 'No run reads the edit until you approve it.',
   },
   'fix-loop-capped': {
     label: 'A fix loop gives up',
