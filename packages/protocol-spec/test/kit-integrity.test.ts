@@ -100,6 +100,15 @@ describe('the kit', () => {
     );
   });
 
+  // §12.3: the literal system address makes a vector dispatch; core ones write $system.
+  it('writes no core vector with the literal agent:dispatch', () => {
+    const literal = vectors
+      .filter((v) => v.profile === 'core')
+      .filter((v) => JSON.stringify(v).includes('agent:dispatch'))
+      .map((v) => v.id);
+    expect(literal).toEqual([]);
+  });
+
   // Raw, these three are invisible in a diff and some editors strip them.
   it('writes NEL, U+2028 and U+2029 in vector files as JSON escapes', () => {
     const files = readdirSync(VECTORS_DIR, {
