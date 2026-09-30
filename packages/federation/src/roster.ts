@@ -1015,10 +1015,10 @@ interface Shared extends Omit<Context, 'items' | 'granting' | 'reach'> {
 
 function sharedOf(input: FoldInput, all: readonly Item[]): Shared {
   const found = foundingOf(input, all);
-  // Only Known(1) ops count toward a replica's first roster op, so neither an
-  // unreadable op nor its dismissal ever moves it.
+  // Only Known(1) ops from the founding on count toward a replica's first
+  // roster op, so no inert op, dismissed or dropped, ever moves it.
   const firstSeq = new Map<string, number>();
-  for (const { op, kind } of all)
+  for (const { op, kind } of all.slice(all.indexOf(found.item)))
     if (kind === 'known')
       firstSeq.set(
         op.replica,

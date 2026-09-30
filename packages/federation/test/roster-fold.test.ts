@@ -307,6 +307,25 @@ describe('foldRoster', () => {
     });
   });
 
+  it("never counts an op before the founding as a replica's first roster op", () => {
+    const early = op(C, 2, -100, {
+      action: 'invite',
+      id: 'i-cy',
+      pub: 'P',
+      handle: 'cy',
+      expires: '2026-10-03T00:00:00.000Z',
+    });
+    const v = fold([
+      early,
+      op(C, 3, 200, { action: 'recover', proof: recoveryProof(C) }),
+    ]);
+    expect(v.members.get(C)).toMatchObject({ role: 'admin', recovered: true });
+    expect(v.problems).toContainEqual({
+      subject: `op:${C}:2`,
+      message: `${C}'s roster op at seq 2 precedes the founding; ignored`,
+    });
+  });
+
   it('ignores a recover above a revocation of its replica, wherever it is positioned', () => {
     const cut = revoke(A, 2, 200, C, 1);
     const byD = op(D, 2, 300, { action: 'recover', proof: recoveryProof(D) });
