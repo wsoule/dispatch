@@ -404,6 +404,9 @@ export interface ApiContext {
   /** True when the request presented the shared agentToken: `caller` names
    *  the owner, but no human is behind it. Set per request by handleApi. */
   viaAgentToken?: boolean;
+  /** True when the request presented the owner's app token. Set per request
+   *  by handleApi. */
+  ownerCredential?: boolean;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -4631,8 +4634,11 @@ export async function handleApi(
   const viaAgentToken =
     presented !== null &&
     timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
+  const ownerCredential =
+    presented !== null &&
+    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
   let ctx: ApiContext = daemonCtx;
-  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken };
+  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
   if (principal !== undefined) ctx = { ...ctx, principal };
 
   try {

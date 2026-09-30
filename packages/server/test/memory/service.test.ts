@@ -32,7 +32,7 @@ function noOpenGates(): OpenMemoryDeps['messaging'] {
       },
     }
   ) as DeliveryEngine;
-  return { engine, gates: new GateHandlers() };
+  return { engine, gates: new GateHandlers(), store: { getAgent: () => null } };
 }
 
 function setup(over: Partial<OpenMemoryDeps> = {}) {

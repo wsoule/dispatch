@@ -38,6 +38,11 @@ CREATE TABLE IF NOT EXISTS link_codes (
   code_sha256 TEXT PRIMARY KEY, identity_id TEXT NOT NULL, expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS owner_agents (
+  project_key TEXT NOT NULL, agent TEXT NOT NULL, token_hash TEXT NOT NULL,
+  approved_by TEXT NOT NULL, credential TEXT NOT NULL, approved_at TEXT NOT NULL,
+  PRIMARY KEY (project_key, agent)
+);
 `;
 
 interface AliasRow {
@@ -260,6 +265,43 @@ export class MemoryIdentities {
       );
       return identity;
     });
+  }
+
+  // Records that the owner approved `agent` (at this token) with the app token.
+  recordOwnerApproval(input: {
+    projectKey: string;
+    agent: string;
+    tokenHash: string;
+    approvedBy: string;
+  }): void {
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO owner_agents (project_key, agent, token_hash, approved_by, credential, approved_at) VALUES (?, ?, ?, ?, 'app-token', ?)"
+      )
+      .run(
+        input.projectKey,
+        input.agent,
+        input.tokenHash,
+        input.approvedBy,
+        this.now().toISOString()
+      );
+  }
+
+  // Forgets an owner approval, as any other decision on the agent does.
+  dropOwnerApproval(projectKey: string, agent: string): void {
+    this.db
+      .prepare('DELETE FROM owner_agents WHERE project_key = ? AND agent = ?')
+      .run(projectKey, agent);
+  }
+
+  // Whether the owner approved `agent`, holding this very token, with the app token.
+  ownerApproved(projectKey: string, agent: string, tokenHash: string): boolean {
+    const row = queryOne<{ token_hash: string }>(
+      this.db,
+      'SELECT token_hash FROM owner_agents WHERE project_key = ? AND agent = ?',
+      [projectKey, agent]
+    );
+    return row?.token_hash === tokenHash;
   }
 
   identities(): string[] {

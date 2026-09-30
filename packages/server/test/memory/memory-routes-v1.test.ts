@@ -425,6 +425,148 @@ describe('personal privacy', () => {
   });
 });
 
+describe('owner-attributed agents', () => {
+  // The owner's personal secret, and an agent the shared agentToken registered
+  // (so agent:test/<name>, attributed to the owner) still awaiting approval.
+  async function setup(
+    name: string
+  ): Promise<{ secret: string; address: string; token: string }> {
+    const saved = await json<{ id: string }>(
+      await fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'personal',
+          kind: 'fact',
+          title: 'OWNER-SECRET',
+          body: 'b',
+        }),
+      })
+    );
+    const reg = await rawFetch(`${base}/api/agents/register`, {
+      method: 'POST',
+      headers: authHeaders(handle.tokens.agentToken),
+      body: JSON.stringify({ name, client: 'curl' }),
+    });
+    expect(reg.status).toBe(201);
+    const body = await json<{ address: string; token: string }>(reg);
+    expect(body.address).toBe(`agent:test/${name}`);
+    return { secret: saved.id, address: body.address, token: body.token };
+  }
+
+  function approveAs(address: string, token: string): Promise<Response> {
+    return rawFetch(
+      `${base}/api/agents/${encodeURIComponent(address)}/approve`,
+      { method: 'POST', headers: authHeaders(token) }
+    );
+  }
+
+  function registrationGate(address: string): string {
+    const gate = handle.messaging.engine.openBlocking().find((m) => {
+      const data = gateOf(m);
+      return data?.type === 'agent-registration' && data.agent === address;
+    });
+    if (gate === undefined) throw new Error(`no gate for ${address}`);
+    return gate.id;
+  }
+
+  // The ids the agent's own token lists in personal scope, or the status
+  // that refused it.
+  async function personalIds(token: string): Promise<string[] | number> {
+    const res = await rawFetch(`${base}/api/memory?scope=personal`, {
+      headers: authHeaders(token),
+    });
+    if (res.status !== 200) return res.status;
+    return (await json<{ entries: { id: string }[] }>(res)).entries.map(
+      (e) => e.id
+    );
+  }
+
+  it("a teammate's approval opens none of the owner's personal memory", async () => {
+    const { secret, address, token } = await setup('evil');
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    expect((await approveAs(address, ada)).status).toBe(200);
+    expect(await personalIds(token)).toEqual([]);
+    const del = await rawFetch(`${base}/api/memory/${secret}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    });
+    expect(del.status).not.toBe(200);
+    const read = await rawFetch(`${base}/api/memory/${secret}`, {
+      headers: authHeaders(token),
+    });
+    expect(read.status).not.toBe(200);
+    expect(
+      handle.memory.host.operatorOf({
+        address,
+        canDecide: false,
+        kind: 'agent',
+      })?.identity
+    ).toBe('!not-owner');
+    const owner = await json<{ entries: { id: string }[] }>(
+      await fetch(`${base}/api/memory?scope=personal`)
+    );
+    expect(owner.entries.map((e) => e.id)).toContain(secret);
+  });
+
+  it('a teammate answering the registration gate opens none of it', async () => {
+    const { address, token } = await setup('evil2');
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const reply = await rawFetch(
+      `${base}/api/messages/${registrationGate(address)}/reply`,
+      {
+        method: 'POST',
+        headers: authHeaders(ada),
+        body: JSON.stringify({ body: '', choice: 'approve' }),
+      }
+    );
+    expect(reply.status).toBe(201);
+    expect(handle.messaging.store.getAgent(address)?.status).toBe('approved');
+    expect(await personalIds(token)).toEqual([]);
+  });
+
+  it('the owner approving with the app token opens it', async () => {
+    const { secret, address, token } = await setup('mine');
+    expect((await approveAs(address, handle.tokens.appToken)).status).toBe(200);
+    expect(await personalIds(token)).toContain(secret);
+  });
+
+  it('the owner answering the registration gate with the app token opens it', async () => {
+    const { secret, address, token } = await setup('mine2');
+    const reply = await fetch(
+      `${base}/api/messages/${registrationGate(address)}/reply`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: '', choice: 'approve' }),
+      }
+    );
+    expect(reply.status).toBe(201);
+    expect(await personalIds(token)).toContain(secret);
+  });
+
+  it("a teammate's re-approval after a revoke drops the owner's approval", async () => {
+    const { secret, address, token } = await setup('again');
+    await approveAs(address, handle.tokens.appToken);
+    expect(await personalIds(token)).toContain(secret);
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const revoked = await rawFetch(
+      `${base}/api/agents/${encodeURIComponent(address)}/revoke`,
+      { method: 'POST', headers: authHeaders(ada) }
+    );
+    expect(revoked.status).toBe(200);
+    expect((await approveAs(address, ada)).status).toBe(200);
+    expect(await personalIds(token)).toEqual([]);
+  });
+
+  it("the owner's approval survives a restart", async () => {
+    const { secret, address, token } = await setup('kept');
+    await approveAs(address, handle.tokens.appToken);
+    await restart();
+    expect(await personalIds(token)).toContain(secret);
+  });
+});
+
 describe('the memory gate', () => {
   it('a run’s team proposal raises a content-free gate; the feed and webhook never carry its title', async () => {
     const hook = await webhook();
@@ -890,6 +1032,7 @@ describe('Settings → Memory routes', () => {
     address: 'agent:test/claude-code',
     canDecide: false,
     kind: 'agent',
+    ownerCredential: true,
   } as const;
 
   function post(path: string, token?: string): Promise<Response> {

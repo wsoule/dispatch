@@ -103,7 +103,8 @@ export interface Principal {
   address: Address;
   canDecide: boolean;
   kind: 'human' | 'run' | 'agent';
-  // True only for a human who presented the daemon owner's own credential.
+  // True only for a human who presented the daemon owner's own credential, or
+  // an agent principal the daemon builds for that human's request.
   ownerCredential?: boolean;
 }
 

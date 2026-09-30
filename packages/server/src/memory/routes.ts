@@ -700,6 +700,9 @@ export async function acceptIngestProblemRoute(
         address: `agent:${handle}/claude-code`,
         canDecide: false,
         kind: 'agent',
+        ...(principal.ownerCredential === true
+          ? { ownerCredential: true }
+          : {}),
       },
       {
         scope: 'personal',

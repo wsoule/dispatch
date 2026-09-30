@@ -139,7 +139,9 @@ export interface OpenMemoryDeps {
   orchestrator: DaemonMemoryHostDeps['orchestrator'];
   events: EventBus;
   ledgerStore: LedgerStorePort;
-  messaging: Pick<Messaging, 'engine' | 'gates'>;
+  messaging: Pick<Messaging, 'engine' | 'gates'> & {
+    store: Pick<Messaging['store'], 'getAgent'>;
+  };
   /** The human memory gates go to, and policy receipts are credited to. */
   ownerRef: string;
   /** The task Activity line a policy approval writes. */

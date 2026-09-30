@@ -408,4 +408,20 @@ describe('MemoryIdentities', () => {
     expect(identityOf(again, P1, 'ada', 'ada@x.com')).toBe(ada);
     again.close();
   });
+
+  it("keeps an owner approval per project, at the agent's own token", () => {
+    const ids = open();
+    ids.recordOwnerApproval({
+      projectKey: P1,
+      agent: 'agent:test/a',
+      tokenHash: 'h1',
+      approvedBy: 'human:test',
+    });
+    expect(ids.ownerApproved(P1, 'agent:test/a', 'h1')).toBe(true);
+    expect(ids.ownerApproved(P1, 'agent:test/a', 'h2')).toBe(false);
+    expect(ids.ownerApproved(P2, 'agent:test/a', 'h1')).toBe(false);
+    ids.dropOwnerApproval(P1, 'agent:test/a');
+    expect(ids.ownerApproved(P1, 'agent:test/a', 'h1')).toBe(false);
+    ids.close();
+  });
 });

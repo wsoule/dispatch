@@ -362,10 +362,17 @@ export async function replyToMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseReplyInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
+  const target = ctx.messaging.engine.getMessage(id);
   const result = await ctx.messaging.engine.reply(id, parsedInput.value, {
     address: principal.address,
     canDecide: principal.canDecide,
   });
+  const gate = target === null ? null : gateOf(target);
+  if (gate?.type === 'agent-registration')
+    ctx.memory.host.agentDecided(
+      gate.agent,
+      principal.ownerCredential === true
+    );
   return jsonResponse(result, 201);
 }
 
@@ -914,6 +921,7 @@ async function decideAgent(
       approvedBy: directStatus === 'approved' ? humanActor(ctx) : null,
     });
   }
+  ctx.memory.host.agentDecided(address, ctx.ownerCredential === true);
   const updated = ctx.messaging.store.getAgent(address) ?? agent;
   return jsonResponse(stripTokenHash(updated));
 }

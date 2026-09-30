@@ -64,7 +64,11 @@ export function quietDaemon(
       isA2ATask: () => false,
       ...orchestrator,
     },
-    messaging: { engine: noGates, gates: new GateHandlers() },
+    messaging: {
+      engine: noGates,
+      gates: new GateHandlers(),
+      store: { getAgent: () => null },
+    },
     ownerRef: 'human:wyat',
     appendPolicyActivity: () => {},
     personalDir: join(root, 'personal'),

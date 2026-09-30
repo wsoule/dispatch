@@ -49,7 +49,9 @@ export interface DaemonMemoryHostDeps {
     'taskIdOfRun' | 'list' | 'notifyRun' | 'isRunLive' | 'isA2ATask'
   >;
   events: Pick<EventBus, 'broadcast'>;
-  messaging: Pick<Messaging, 'engine'>;
+  messaging: Pick<Messaging, 'engine'> & {
+    store: Pick<Messaging['store'], 'getAgent'>;
+  };
   ledgerStore: Pick<LedgerStorePort, 'add'>;
   appendPolicyActivity: (taskId: string, text: string) => void;
   /** Null while identities.db will not open. */
@@ -74,6 +76,12 @@ export function rosterEmailOf(rootDir: string, handle: string): string | null {
   }
 }
 
+// The human an agent:<handle>/<name> address is attributed to, or null.
+function agentHuman(address: string): string | null {
+  const match = /^agent:([^/]+)\//.exec(address);
+  return match === null ? null : `human:${match[1]}`;
+}
+
 // A corrupt task file reads as "no task", never as a failed memory call.
 function safeTask(store: TaskStorePort, taskId: string): TaskDoc | null {
   try {
@@ -89,7 +97,8 @@ export class DaemonMemoryHost implements MemoryHost {
   constructor(private readonly deps: DaemonMemoryHostDeps) {}
 
   // A human acts for itself; a run for its RunMeta.operator; an
-  // agent:<op>/<name> for human:<op>; agent:dispatch and A2A clients for no one.
+  // agent:<op>/<name> for human:<op>, the owner only on the owner's credential
+  // or the owner's app-token approval; agent:dispatch and A2A clients for no one.
   operatorOf(principal: Principal): Operator | null {
     if (isA2AAgent(principal.address)) return null;
     if (principal.kind === 'human')
@@ -100,8 +109,39 @@ export class DaemonMemoryHost implements MemoryHost {
       const op = run === undefined ? null : runOperator(run);
       return op === null ? null : this.bind(op, true);
     }
-    const match = /^agent:([^/]+)\//.exec(principal.address);
-    return match === null ? null : this.bind(`human:${match[1]}`, true);
+    const human = agentHuman(principal.address);
+    if (human === null) return null;
+    return this.bind(
+      human,
+      human !== this.deps.ownerRef ||
+        principal.ownerCredential === true ||
+        this.ownerApproved(principal.address)
+    );
+  }
+
+  // Called after any approve or revoke of `address`: an owner-attributed agent
+  // keeps an owner approval only while the owner approved it with the app token.
+  agentDecided(address: string, ownerCredential: boolean): void {
+    const identities = this.deps.identities;
+    if (identities === null || agentHuman(address) !== this.deps.ownerRef)
+      return;
+    const agent = this.deps.messaging.store.getAgent(address);
+    try {
+      if (
+        ownerCredential &&
+        agent?.status === 'approved' &&
+        agent.approvedBy === this.deps.ownerRef
+      )
+        identities.recordOwnerApproval({
+          projectKey: this.deps.projectKey,
+          agent: address,
+          tokenHash: agent.tokenHash,
+          approvedBy: agent.approvedBy,
+        });
+      else identities.dropOwnerApproval(this.deps.projectKey, address);
+    } catch (err) {
+      console.error(`memory: could not record who approved ${address}`, err);
+    }
   }
 
   projectKey(): string {
@@ -224,6 +264,29 @@ export class DaemonMemoryHost implements MemoryHost {
         `memory: could not tell run ${p.runId} its proposal was rejected`,
         err
       );
+    }
+  }
+
+  // Whether the owner approved this owner-attributed agent, at its current
+  // token, with the app token; false whenever that cannot be read.
+  private ownerApproved(address: string): boolean {
+    const identities = this.deps.identities;
+    const agent = this.deps.messaging.store.getAgent(address);
+    if (
+      identities === null ||
+      agent?.status !== 'approved' ||
+      agent.approvedBy !== this.deps.ownerRef
+    )
+      return false;
+    try {
+      return identities.ownerApproved(
+        this.deps.projectKey,
+        address,
+        agent.tokenHash
+      );
+    } catch (err) {
+      console.error(`memory: could not read who approved ${address}`, err);
+      return false;
     }
   }
 

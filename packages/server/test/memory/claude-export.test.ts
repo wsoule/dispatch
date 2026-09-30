@@ -754,7 +754,7 @@ function noOpenGates() {
       },
     }
   ) as DeliveryEngine;
-  return { engine, gates: new GateHandlers() };
+  return { engine, gates: new GateHandlers(), store: { getAgent: () => null } };
 }
 
 describe('openMemory and Claude export directories', () => {
