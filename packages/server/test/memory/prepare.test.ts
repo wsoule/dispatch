@@ -14,6 +14,7 @@ import {
   readFileSync,
   realpathSync,
   rmSync,
+  symlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -227,6 +228,29 @@ describe('MemoryService.prepare', () => {
         .some((x) => x.title === 'the lockfile pins pnpm 11')
     );
     expect(existsSync(dir)).toBe(true);
+  });
+
+  // A teammate's skipped files are hers: never the owner's Inbox or store.
+  it('reports a teammate run’s skipped Claude files to her own store', async () => {
+    shared.setMeta('claude-probe-passed', '2.1.207');
+    const meta = run('human:ada');
+    prepare(meta);
+    const dir = claudeMemoryDir(root, meta.id);
+    writeFileSync(join(dir, 'huge.md'), 'x'.repeat(70 * 1024));
+    symlinkSync(join(root, 'README.md'), join(dir, 'linked.md'));
+    memory.runEnded({ ...meta, state: 'finished' });
+    const ada = memory.host.operatorOf({
+      address: 'human:ada',
+      canDecide: true,
+      kind: 'human',
+    });
+    if (ada === null) throw new Error('ada has no identity');
+    const hers = memory.personal.personal(ada.identity);
+    await waitFor(() => hers.ingestProblems(10).length === 2);
+    expect(
+      hers.hasActivitySince('ingest-problem', '1970-01-01T00:00:00Z')
+    ).toBe(true);
+    expect(memory.personal.personal('self').ingestProblems(10)).toEqual([]);
   });
 
   it('drops to prompt when the operator’s personal store will not open', () => {
