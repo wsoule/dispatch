@@ -108,6 +108,7 @@ export type {
   OpenResult,
   TaskFacts,
 } from './port.js';
+export * from './peer/index.js';
 export {
   decideState,
   GATE_SENTENCES,
