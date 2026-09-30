@@ -18,6 +18,7 @@ import { spawnGitSync } from '../blockingGit.js';
 import type { DepMap } from '../depmap.js';
 import type { EventBus } from '../events.js';
 import type { FindingStorePort } from '../findings.js';
+import { undeclaredWritesTitle } from '../ledger.js';
 import type { LedgerStorePort } from '../ledger.js';
 import type { ReviewCommentStore } from '../reviewComments.js';
 import type { ReviewTarget } from '../reviewTarget.js';
@@ -216,10 +217,6 @@ export function undeclaredWrites(
 // so the title stays stable however many files the batch covers.
 export function undeclaredWriteBatchTitle(count: number): string {
   return `${count} file${count === 1 ? '' : 's'} changed outside declared writes`;
-}
-
-function undeclaredWriteBatchLedgerTitle(count: number): string {
-  return `changed ${count} file${count === 1 ? '' : 's'} outside its declared writes`;
 }
 
 export function undeclaredWriteBatchDetail(
@@ -922,7 +919,7 @@ export class ReviewRunner {
     this.ctx.ledgerStore.add({
       sourceTaskId: task.meta.id,
       kind: 'hazard',
-      title: undeclaredWriteBatchLedgerTitle(batch.length),
+      title: undeclaredWritesTitle(batch.length),
       detail: `${detail} ${batch.join(', ')}`,
       appliesTo: [task.meta.id],
       // Mechanically detected by the review harness, not raised by anyone.

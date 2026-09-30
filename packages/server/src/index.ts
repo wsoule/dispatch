@@ -77,7 +77,7 @@ import {
   triageInbox,
 } from './judgments/inboxTriage.js';
 import { computeChecklist } from './judgments/landingChecklist.js';
-import { LedgerStore } from './ledger.js';
+import { DEP_MAP_DEGRADED_TITLE, LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
@@ -1193,7 +1193,7 @@ async function bootServer(
     onDegrade: ({ detail }) => {
       ledgerStore.add({
         kind: 'hazard',
-        title: 'dependency map degraded',
+        title: DEP_MAP_DEGRADED_TITLE,
         detail: `carto unavailable, using the built-in scanner: ${detail}`,
         // Detected by the dep-map cache itself, not raised by a teammate.
         authoredBy: 'none',

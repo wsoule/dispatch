@@ -9,6 +9,11 @@ import type { MemoryStore } from '@dispatch/memory';
 import { describe, expect, it } from 'bun:test';
 
 import {
+  DEP_MAP_DEGRADED_TITLE,
+  scopeExtensionTitle,
+  undeclaredWritesTitle,
+} from '../../src/ledger.js';
+import {
   classifyLedgerEntry,
   importLedger,
   ledgerOrigin,
@@ -92,15 +97,12 @@ describe('classifyLedgerEntry', () => {
     });
     expect(
       classifyLedgerEntry(
-        row({ kind: 'decision', title: 'Scope extended for run r-9f2c01' })
+        row({ kind: 'decision', title: scopeExtensionTitle('r-9f2c01') })
       )
     ).toEqual({ to: 'audit', reason: 'scope' });
     expect(
       classifyLedgerEntry(
-        row({
-          authoredBy: 'none',
-          title: 'changed 3 files outside its declared writes',
-        })
+        row({ authoredBy: 'none', title: undeclaredWritesTitle(3) })
       )
     ).toEqual({ to: 'audit', reason: 'undeclared-writes' });
     expect(
@@ -113,7 +115,7 @@ describe('classifyLedgerEntry', () => {
     ).toEqual({ to: 'audit', reason: 'undeclared-writes' });
     expect(
       classifyLedgerEntry(
-        row({ authoredBy: 'none', title: 'dependency map degraded' })
+        row({ authoredBy: 'none', title: DEP_MAP_DEGRADED_TITLE })
       )
     ).toEqual({ to: 'audit', reason: 'dep-map' });
   });

@@ -11,6 +11,12 @@ import {
 import type { MemoryIds, MemoryStore } from '@dispatch/memory';
 import { LINE_BREAK, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
+import {
+  DEP_MAP_DEGRADED_TITLE,
+  scopeExtensionTitle,
+  UNDECLARED_WRITES_TITLE,
+} from '../ledger.js';
+
 type AuditReason =
   | 'handoff'
   | 'policy'
@@ -22,7 +28,6 @@ export type LedgerClass =
   | { to: 'memory' }
   | { to: 'audit'; reason: AuditReason };
 
-const UNDECLARED_WRITES = /^changed .+ outside its declared writes$/;
 const ACTOR_REF = /^(human|agent):/;
 const AUDIT_REASONS: readonly AuditReason[] = [
   'policy',
@@ -47,10 +52,10 @@ export function classifyLedgerEntry(entry: LedgerEntry): LedgerClass {
   if (entry.detail.includes('auto-decided by ')) return audit('policy');
   if (entry.detail.includes('held by the irreversibility floor ('))
     return audit('floor');
-  if (entry.title.startsWith('Scope extended for run ')) return audit('scope');
-  if (entry.authoredBy === 'none' && UNDECLARED_WRITES.test(entry.title))
+  if (entry.title.startsWith(scopeExtensionTitle(''))) return audit('scope');
+  if (entry.authoredBy === 'none' && UNDECLARED_WRITES_TITLE.test(entry.title))
     return audit('undeclared-writes');
-  if (entry.authoredBy === 'none' && entry.title === 'dependency map degraded')
+  if (entry.authoredBy === 'none' && entry.title === DEP_MAP_DEGRADED_TITLE)
     return audit('dep-map');
   return { to: 'memory' };
 }
