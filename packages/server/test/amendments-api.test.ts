@@ -43,6 +43,7 @@ function amend(
 
 interface MemoryEntryBody {
   kind: string;
+  title: string;
   trust: string;
   body: string;
   epic: string | null;
@@ -169,7 +170,9 @@ describe('POST /api/tasks/:id/amend', () => {
       appliesTo: [dependent],
       epic: null,
     });
-    expect(entry.body).toContain('join on the issue UUID');
+    // The index shows titles only, so the title carries the override itself.
+    expect(entry.title).toBe(`Amended ${taskId}: join on the issue UUID`);
+    expect(entry.body).toContain('display keys are not stable');
     expect(entry.origin).toMatch(new RegExp(`^amendment:${taskId}@`));
     expect(await json<unknown[]>(await fetch(`${baseUrl}/api/ledger`))).toEqual(
       []
