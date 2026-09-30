@@ -1,4 +1,5 @@
 import type { AgentSummary, Message } from '@dispatch/client';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   cleanup,
   fireEvent,
@@ -68,20 +69,25 @@ function renderRow(message: Message, over: Partial<MessageRowProps> = {}) {
   const onAnswer = mock((_m: Message, _r: { body: string; choice?: string }) =>
     Promise.resolve()
   );
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MessageRow
-      message={message}
-      me="human:wyat"
-      open
-      access={DECIDER}
-      lookups={lookups}
-      availability={CAN_DECIDE}
-      onRestartDaemon={() => Promise.resolve()}
-      onAnswer={onAnswer}
-      onOpen={() => {}}
-      loadApprovalInput={() => Promise.resolve(undefined)}
-      {...over}
-    />
+    <QueryClientProvider client={queryClient}>
+      <MessageRow
+        message={message}
+        me="human:wyat"
+        open
+        access={DECIDER}
+        lookups={lookups}
+        availability={CAN_DECIDE}
+        onRestartDaemon={() => Promise.resolve()}
+        onAnswer={onAnswer}
+        onOpen={() => {}}
+        loadApprovalInput={() => Promise.resolve(undefined)}
+        {...over}
+      />
+    </QueryClientProvider>
   );
   return onAnswer;
 }

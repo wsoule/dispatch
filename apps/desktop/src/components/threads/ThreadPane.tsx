@@ -44,6 +44,7 @@ export interface ThreadPaneProps {
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
   /** Reads a memory gate's proposal; without it there is no proposal to show. */
   client?: MessageRowProps['client'];
+  port?: number;
   route: ReplyRoute;
   /** Sends under the reply draft's idempotency key, kept until a send or an edit. */
   onReply: (
@@ -117,6 +118,7 @@ export function ThreadPane(props: ThreadPaneProps) {
               onOpen={props.onOpen}
               loadApprovalInput={props.loadApprovalInput}
               client={props.client}
+              port={props.port}
             />
           ))}
         </div>

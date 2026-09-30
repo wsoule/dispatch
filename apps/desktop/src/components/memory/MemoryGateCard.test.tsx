@@ -1,8 +1,16 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it, mock } from 'bun:test';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { ProposalRead } from '../../lib/memory';
+import { memoryQueryRootKey } from '../../lib/memory';
 import {
   content,
   entry,
@@ -27,16 +35,22 @@ function renderCard(
 ) {
   const onDecide = mock((_choice: 'approve' | 'reject') => Promise.resolve());
   const onRestartDaemon = mock(() => Promise.resolve());
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MemoryGateCard
-      proposalId="mp-000001"
-      client={{ getMemoryProposal: load }}
-      availability={availability}
-      onRestartDaemon={onRestartDaemon}
-      onDecide={onDecide}
-    />
+    <QueryClientProvider client={queryClient}>
+      <MemoryGateCard
+        proposalId="mp-000001"
+        client={{ getMemoryProposal: load }}
+        port={4321}
+        availability={availability}
+        onRestartDaemon={onRestartDaemon}
+        onDecide={onDecide}
+      />
+    </QueryClientProvider>
   );
-  return { onDecide, onRestartDaemon };
+  return { onDecide, onRestartDaemon, queryClient };
 }
 
 describe('MemoryGateCard', () => {
@@ -166,6 +180,38 @@ describe('MemoryGateCard', () => {
       screen.getByText(/retired after this was proposed/).textContent
     ).toContain('as a new entry');
     expect(screen.queryByText(/replaces the version it has now/)).toBeNull();
+  });
+
+  // memory.changed invalidates every memory query, so an open card catches
+  // a retire decided elsewhere.
+  it('refreshes when memory changes while it is open', async () => {
+    const supersede = {
+      proposal: proposalView({
+        action: 'supersede',
+        target: 'mem-000001',
+        baseRev: 1,
+        content: content({ body: 'the agent version' }),
+      }),
+      base: entry({ rev: 1, body: 'the old advice' }),
+    };
+    let current = entry({ rev: 1, body: 'the old advice' });
+    const { queryClient } = renderCard(() =>
+      Promise.resolve(read({ ...supersede, current }))
+    );
+    await screen.findByText('the agent version');
+    expect(screen.queryByText(/retired after this was proposed/)).toBeNull();
+    current = entry({
+      rev: 2,
+      body: 'the old advice',
+      status: 'retired',
+      state: 'retired',
+    });
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: memoryQueryRootKey(4321) })
+    );
+    expect(
+      await screen.findByText(/retired after this was proposed/)
+    ).toBeTruthy();
   });
 
   it('says a personal match exists, and why a retire was asked for', async () => {
