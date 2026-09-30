@@ -745,6 +745,7 @@ function App() {
       else if (command === 'goto-overseer') setGlobalView('overseer');
       else if (command === 'goto-home') selectProjectView('cockpit');
       else if (command === 'goto-inbox') selectProjectView('inbox');
+      else if (command === 'goto-threads') selectProjectView('threads');
       else if (command === 'goto-tasks') selectProjectView('board');
       else if (command === 'goto-projects') selectProjectView('projects');
       else if (command === 'goto-live') selectProjectView('live');
