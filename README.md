@@ -441,24 +441,29 @@ budgeted index of the entries that reach the task (1,000 tokens by default,
 `memory.indexTokens`), best-ranked first, and the agent reads a body only when
 it needs one. The four `memory_*` tools below are how a run reaches it:
 `memory_search` and `memory_read` look things up, `memory_save` adds an entry,
-and `memory_forget` retires one. `dispatch memory` and **Settings → Memory** do
-the same for a person.
+and `memory_forget` retires one. `dispatch memory` does the same for a person;
+**Settings → Memory** shows memory's health, the ledger import and your
+identity.
 
 An entry has one of three scopes:
 
 - **Personal** belongs to one human and follows them across projects unless it
   is saved for one project only. A run writes its operator's personal memory
   directly, and the Inbox can undo it. Nobody else sees it.
-- **Project** holds this project's lessons: its constraints, hazards and
-  decisions. What the ledger used to carry lives here now; the ledger keeps the
-  audit receipts.
-- **Team** reaches every teammate's runs.
+- **Team** is the default for a code lesson: the constraints, hazards and
+  decisions every run of this project should know. The ledger's old lessons were
+  imported here; the ledger keeps the audit receipts. Replicating team memory to
+  teammates' daemons comes later (see `docs/TEAM-SERVER.md`).
+- **Project** is for facts true only on this machine ("proto shims were missing
+  here"). It never leaves the machine.
 
 An agent's write to project or team memory is a proposal, never an entry, until
 someone decides on it. It raises the `memory` gate: a card in **Threads → Needs
 you** with the proposed entry, where it would reach and who asked, to approve or
-reject. At autonomy rung 4 (`policy.rung: 4`) policy approves it instead and
-records a receipt.
+reject. At autonomy rung 4 (`policy.rung: 4`) policy approves a routine task's
+proposal instead and records a receipt. A proposal with no task, one from an
+elevated or critical task, and one that repeats a personal entry of the author's
+operator still wait for a human.
 
 For Claude runs, `memory.claudeAutoMemory: export` (the default) points Claude
 Code's own auto memory at a directory Dispatch writes for the run, with the
@@ -488,8 +493,8 @@ binary from `@dispatch/mcp`.
 On the file backend the five `task_*` tools operate directly on
 `.dispatch/tasks/*.md` and need no daemon (a running `dispatchd` picks up their
 file changes through its watcher like any other edit); on the database backend
-they go through the daemon like everything else. The other twelve always talk to
-`dispatchd` over its local HTTP API, and return a clear error when it isn't
+they go through the daemon like everything else. The other fifteen always talk
+to `dispatchd` over its local HTTP API, and return a clear error when it isn't
 running.
 
 Tools (server name `dispatch`):

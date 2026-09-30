@@ -446,11 +446,11 @@ a store cannot be opened.
 Scope says who reads an entry and where it may travel. `epic` and `appliesTo`
 only narrow which tasks it is relevant to.
 
-| Scope    | Who reads it                                                                                                     | Who writes it directly                                               | Leaves the machine           |
-| -------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------- |
-| personal | its human; runs whose operator is that human; agents registered under them (never `a2a.` agents)                | its human; runs and agents acting for them (undoable)                | never                        |
-| project  | every principal of this project on this daemon, except `a2a.` agents and A2A-provenance runs                     | decide-tier humans; everyone else proposes through the `memory` gate | never                        |
-| team     | as project, plus teammates' daemons once replicated (v2), minus `a2a.` agents                                    | as project                                                           | board sync and receipts (v2) |
+| Scope    | Who reads it                                                                                     | Who writes it directly                                               | Leaves the machine           |
+| -------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | ---------------------------- |
+| personal | its human; runs whose operator is that human; agents registered under them (never `a2a.` agents) | its human; runs and agents acting for them (undoable)                | never                        |
+| project  | every principal of this project on this daemon, except `a2a.` agents and A2A-provenance runs     | decide-tier humans; everyone else proposes through the `memory` gate | never                        |
+| team     | as project, plus teammates' daemons once replicated (v2), minus `a2a.` agents                    | as project                                                           | board sync and receipts (v2) |
 
 - **Project vs team.** Project scope exists because some shared facts are true
   only on one machine: "proto shims were missing here", "Homebrew pnpm shadows
@@ -1076,12 +1076,12 @@ writers (v1) records `meta.ledger-cutover-at`.
 - Rows the first import after it finds, created before it, import as `active`
   entries: parity with what prompts already carried. That import records
   `meta.ledger-cutover-swept-at`.
-- Every other row can only come from elsewhere: a teammate's older build
-  through a `git pull`, or a hand edit. That covers a row created after the
-  cutover, one with no parseable `createdAt`, and any row the first import did
-  not see, whatever `createdAt` it claims. They import as open `add` proposals,
-  authored `agent:dispatch`, showing the row's `authoredBy` as a claim. With no
-  task, they read as `elevated` and wait for a human.
+- Every other row can only come from elsewhere: a teammate's older build through
+  a `git pull`, or a hand edit. That covers a row created after the cutover, one
+  with no parseable `createdAt`, and any row the first import did not see,
+  whatever `createdAt` it claims. They import as open `add` proposals, authored
+  `agent:dispatch`, showing the row's `authoredBy` as a claim. With no task,
+  they read as `elevated` and wait for a human.
 - In v0 there is no cutover and no gate, and every row imports as `active` with
   `agent` trust. That is today's exposure (every lesson row already reaches
   every prompt), now marked `unreviewed`.
@@ -1290,13 +1290,14 @@ of the `## Memory` section:
 
 ### Other Claude sessions
 
-Every Claude SDK session Dispatch starts that is not a run, the overseer included, gets
-`autoMemoryEnabled: false` and `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'`
-through one helper in `orchestrator/claudeCli.ts`. That covers the planner, the
-repo digest, the AI task filter, the inbox clusterer and commit-message
-generation (Why). Folding the setting into `floorGuard` would miss the last
-three, which do not call it. None of these sessions needs personal notes, and a
-teammate's plan session on a shared host must not load the owner's.
+Every Claude SDK session Dispatch starts that is not a run, the overseer
+included, gets `autoMemoryEnabled: false` and
+`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'` through one helper in
+`orchestrator/claudeCli.ts`. That covers the planner, the repo digest, the AI
+task filter, the inbox clusterer and commit-message generation (Why). Folding
+the setting into `floorGuard` would miss the last three, which do not call it.
+None of these sessions needs personal notes, and a teammate's plan session on a
+shared host must not load the owner's.
 
 ### Export
 
@@ -1548,8 +1549,8 @@ as personal memory, because repointing would otherwise hide them from runs.
 ### Overseer
 
 Every request-tier caller can start an overseer conversation and read its
-transcript, so the overseer is not a personal reader until its conversations
-are private to the owner.
+transcript, so the overseer is not a personal reader until its conversations are
+private to the owner.
 
 - Its `memory_search` and `memory_read` read as `agent:dispatch`: project and
   team scope only, never the owner's personal entries (`overseerTools.ts`).
