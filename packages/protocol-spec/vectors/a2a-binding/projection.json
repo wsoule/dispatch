@@ -525,7 +525,7 @@
               "title": "Add rate limiting",
               "status": "dropped",
               "phase": "dropped",
-              "approved": true
+              "approved": false
             }
           }
         }
@@ -552,7 +552,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
@@ -605,7 +605,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
@@ -690,7 +690,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
@@ -726,7 +726,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
@@ -750,7 +750,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
@@ -791,7 +791,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
@@ -827,7 +827,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
@@ -851,7 +851,7 @@
               "from": "$system",
               "to": ["agent:wyat/a2a.acme"],
               "kind": "answer",
-              "body": "Declined by the project owner.",
+              "body": "Accepted.",
               "choice": "accept",
               "blocking": false
             },
