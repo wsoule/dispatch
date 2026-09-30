@@ -377,7 +377,7 @@ pub trait DaemonSpawner: Send + Sync {
 /// `gh` is invisible, so a packaged app loses PR features that work fine from
 /// a terminal launch. Appending (not prepending) keeps an explicitly
 /// configured PATH's own ordering authoritative.
-fn enriched_child_path() -> std::ffi::OsString {
+pub(crate) fn enriched_child_path() -> std::ffi::OsString {
     let current = std::env::var("PATH").unwrap_or_default();
     let home = std::env::var("HOME").ok();
     std::ffi::OsString::from(enrich_path(&current, home.as_deref()))
