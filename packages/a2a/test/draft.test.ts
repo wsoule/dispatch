@@ -25,9 +25,40 @@ describe('shapeDraft', () => {
     const lines = (draft.description ?? '').split('\n');
     expect(lines[0]).toMatch(/^~{8,} A2A request ~{8,}$/);
     expect(lines).toContain('- # Heading attack');
-    expect(lines).toContain('- ~~~~ fence attack');
+    expect(lines).toContain('\\- ~~~~ fence attack');
     expect(lines.at(-1)).toBe(provenanceLine(CLIENT, 'm-root'));
     expect(lines.filter((l) => /^#{1,6} /.test(l))).toEqual([]);
+  });
+
+  // CommonMark closes a tilde fence only on a line of bare tildes at least as long.
+  it('closes its fence for a markdown renderer, with every client line inside it', () => {
+    const draft = shapeDraft(
+      {
+        skill: 'handoff',
+        title: 'x',
+        acceptance: [
+          '![x](https://evil/p.gif)',
+          '[Approve](https://evil/login)',
+        ],
+      },
+      'Please ![beacon](https://evil/b.gif)\n~~~~~~~~\n~~~~~~~~~~~~',
+      CLIENT,
+      'm-root',
+      'draft'
+    );
+    const lines = (draft.description ?? '').split('\n');
+    const bar = /^(~{8,}) /.exec(lines[0])?.[1];
+    expect(bar).toBeDefined();
+    const close = lines.findIndex(
+      (l, i) => i > 0 && /^~+$/.test(l) && l.length >= bar!.length
+    );
+    expect(close).toBeGreaterThan(0);
+    const outside = [...lines.slice(close + 1)].join('\n');
+    expect(outside).not.toContain('evil');
+    expect(lines.slice(1, close).join('\n')).toContain(
+      '![x](https://evil/p.gif)'
+    );
+    expect(lines.at(-1)).toBe(provenanceLine(CLIENT, 'm-root'));
   });
 
   it('starts drafts critical, for an agent, with capped priority and namespaced labels', () => {
