@@ -982,18 +982,26 @@ const decided = (v: RosterView, ops: readonly RosterOpRef[]) =>
     return d === undefined ? [] : [[o.hash, d]];
   });
 
-// A recover signed with a code no admin ever set.
-const wrongRecover = (by: string): Record<string, unknown> => ({
+// A recover signed with the code `key` sets.
+const recoverWith = (
+  key: { signPriv: string },
+  by: string
+): Record<string, unknown> => ({
   action: 'recover',
   proof: signText(
-    WRONG.signPriv,
+    key.signPriv,
     `${TAG.recovery}\n${u.found.hash.slice(0, 32)}\n${by}\nsign-${by}`
   ),
 });
 
+// A recover signed with a code no admin ever set.
+const wrongRecover = (by: string): Record<string, unknown> =>
+  recoverWith(WRONG, by);
+
 // A hinge fight with key rotations, and ops no right backs in any fold: a
 // stranger's, an observer's, a plain member's, a revoked admin's, early ones,
-// and grants each makes to itself or a stranger.
+// grants each makes to itself or a stranger, recovers with a code rotated out
+// or spent, and the founder's second admits of the observer and the member.
 function rightlessOps(rand: () => number): {
   ops: RosterOpRef[];
   rightless: RosterOpRef[];
@@ -1024,7 +1032,10 @@ function rightlessOps(rand: () => number): {
     fingerprint: `FP-${r}`,
     ...extra,
   });
-  // The founder's first ops, below any cut a fight names.
+  // The founder's first ops, below any cut a fight names. The founder rotates
+  // the code out at once, M's recover with the new one is ignored as M is
+  // admitted, and M2's spends it.
+  mk(A, { action: 'recovery-key', pub: OTHER.signPub });
   mk(A, admitOf(X, 'admin'));
   mk(A, {
     action: 'revoke',
@@ -1035,6 +1046,20 @@ function rightlessOps(rand: () => number): {
   });
   mk(A, admitOf(O, 'member', { observer: true }));
   mk(A, admitOf(M, 'member'));
+  mk(M, recoverWith(OTHER, M));
+  mk(M2, recoverWith(OTHER, M2));
+  // Second admits the fold ignores: an admin admit of the observer, and one of
+  // the member as an admin or under another's handle.
+  mk(A, admitOf(O, 'admin'));
+  const shared = pick([A, ...MEMBERS, P]);
+  mk(
+    A,
+    rand() < 0.5
+      ? admitOf(M, 'admin')
+      : admitOf(M, 'member', { handle: handleOf(shared) })
+  );
+  // A cut of the founder names a seq at most one below its latest op.
+  mk(A, { action: 'transport', kind: 'git' });
   const joined: string[] = [A];
   for (const r of shuffled(rand, [...MEMBERS, P])) {
     const by = pick(joined);
@@ -1065,6 +1090,14 @@ function rightlessOps(rand: () => number): {
       ? { action: 'revoke', reason: 'r', ...cut }
       : { action: 'role', role: 'member', ...cut };
   };
+  // A recover no fold admits with: a code no admin set, the one the founder
+  // rotated out, or the one M2 spent.
+  const codeRecover = (by: string): Record<string, unknown> => {
+    const x = rand();
+    if (x < 0.34) return wrongRecover(by);
+    if (x < 0.67) return { ...u.recover(by, 2, 0).body };
+    return recoverWith(OTHER, by);
+  };
   // Any roster op aimed at another handle, or a grant to the publisher itself
   // or to a pinned stranger, which no right backs. X never cuts the founder
   // below its revocation of X, which would be a fight, and never admits a
@@ -1087,7 +1120,7 @@ function rightlessOps(rand: () => number): {
     if (x < 0.62) return { action: 'role', replica: by, role: 'admin' };
     if (x < 0.69) return admitOf(by, 'admin');
     if (x < 0.75) return admitOf(stranger, pick(['member', 'admin']));
-    if (x < 0.8) return wrongRecover(by);
+    if (x < 0.8) return codeRecover(by);
     if (x < 0.84) return { action: 'recovery-key', pub: OTHER.signPub };
     if (x < 0.9) return { action: 'transport', kind: 'relay', url: `u-${k}` };
     if (x < 0.95)
@@ -1106,7 +1139,7 @@ function rightlessOps(rand: () => number): {
     const x = rand();
     if (x < 0.3) return [by, admitOf(by, 'admin')];
     if (x < 0.55) return [by, { action: 'role', replica: by, role: 'admin' }];
-    if (x < 0.75) return [by, wrongRecover(by)];
+    if (x < 0.75) return [by, codeRecover(by)];
     return [pick([Z, Q, O, M].filter((r) => r !== by)), admitOf(by, 'admin')];
   };
   const n = 6 + Math.floor(rand() * 10);
@@ -1367,6 +1400,20 @@ describe('a removal whose publisher holds no right at it', () => {
     op(by, seq, ms, { action: 'role', replica: by, role: 'admin' });
   const wrongCode = (by: string, seq: number, ms: number) =>
     op(by, seq, ms, wrongRecover(by));
+  // A fight a stray revoke of the founder decides were it counted; the
+  // founder's ops start at seq 2 + s.
+  const founderFight = (s: number): RosterOpRef[] => [
+    admit(A, 2 + s, 10, P, 'admin'),
+    admit(P, 2, 16, D, 'member'),
+    admit(A, 3 + s, 20, D, 'admin'),
+    admit(D, 2, 24, B, 'admin'),
+    admit(B, 2, 28, C, 'member'),
+    admit(A, 5 + s, 30, C, 'admin'),
+    demote(B, 3, 32, P, 1),
+    revoke(C, 2, 42, A, 6 + s),
+    revoke(A, 7 + s, 43, D, 1),
+    revoke(C, 3, 56, P, 1),
+  ];
   // Each kept set, and a grant no right backs with a removal it would enable.
   const GRANTS: [string, RosterOpRef[], RosterOpRef[]][] = [
     [
@@ -1546,6 +1593,47 @@ describe('a removal whose publisher holds no right at it', () => {
         revoke(B, 3, 73, C, 4),
       ],
       [admit(P, 3, -6005, P, 'admin'), revoke(P, 4, -5005, D, 1)],
+    ],
+    [
+      'a recover with the code the founder rotated out',
+      [
+        op(A, 2, 2, { action: 'recovery-key', pub: OTHER.signPub }),
+        ...founderFight(1),
+      ],
+      [u.recover(Z, 2, 4), revoke(Z, 3, 44, A, 0)],
+    ],
+    [
+      'a recover with a code another recover spent',
+      [u.recover(Q, 2, 3), ...founderFight(1)],
+      [u.recover(Z, 2, 4), revoke(Z, 3, 44, A, 0)],
+    ],
+    [
+      "the founder's admin admit of a replica it admitted as an observer",
+      [
+        admit(A, 2, 3, Z, 'member', { observer: true }),
+        admit(A, 3, 4, Z, 'admin'),
+        ...founderFight(2),
+      ],
+      [revoke(Z, 2, 44, A, 0)],
+    ],
+    [
+      "the founder's admin admit of a replica it admitted as a member",
+      [admit(A, 2, 3, Z), admit(A, 3, 4, Z, 'admin'), ...founderFight(2)],
+      [revoke(Z, 2, 44, A, 0)],
+    ],
+    [
+      "the founder's second admit of a member, under the founder's handle",
+      [
+        admit(A, 2, 3, Z),
+        admit(A, 3, 4, Z, 'member', { handle: handleOf(A) }),
+        ...founderFight(2),
+      ],
+      [revoke(Z, 2, 44, A, 0)],
+    ],
+    [
+      "an admitted member's recover with an unspent code",
+      [admit(A, 2, 3, Z), u.recover(Z, 2, 5), ...founderFight(1)],
+      [revoke(Z, 3, 44, A, 0)],
     ],
   ];
 

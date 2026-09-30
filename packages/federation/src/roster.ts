@@ -226,13 +226,11 @@ interface Evaluation {
 // What reading a replica's rights needs: its grants, the cuts on it, the order.
 type Granted = Pick<Evaluation, 'cutsOn' | 'order' | 'grants'>;
 
-// The rights some fold accepting at least a given set of cuts could give:
-// every grant whose publisher could hold its right, shadowed or not.
-interface Reachable extends Granted {
-  /** Every handle each replica could hold. */
-  handles: Map<string, Set<string>>;
-  /** Each replica's earliest op that could admit it, an observer's admit included. */
-  first: Map<string, RosterOpRef>;
+// Folds some outcome of the resolution can reach, and the removals whose
+// publisher holds its right in one of them.
+interface Outcomes {
+  could: ReadonlySet<Removal>;
+  folds: readonly Evaluation[];
 }
 
 // One fold of every op but `without`, its removals resolved.
@@ -381,7 +379,7 @@ function decide(
   // Fight winners and removals accepted before any fight: their cuts hold in
   // every outcome.
   const settled = new Set<Removal>();
-  const uncut = reachable(ctx, []);
+  const firstOps = firstAdmissions(ctx, removals);
 
   for (;;) {
     // One accepted on a worst case that failed can lose its right: it waits
@@ -399,19 +397,24 @@ function decide(
     }
     const accepted = having('accepted');
     const ev = evaluate(ctx, accepted);
-    const could = reachable(ctx, [...settled]);
+    const { could } = outcomesOf(
+      ctx,
+      [...settled],
+      having('accepted', 'open', 'waiting').filter((u) => !settled.has(u)),
+      ev
+    );
     // A removal whose publisher lacks the right waits while some outcome could
     // give it, as a cut first admit lets a later admit stand; else it is void.
     for (const r of having('open', 'waiting')) {
       if (hadRight(ctx, ev, r)) status.set(r, 'open');
-      else status.set(r, couldHold(ctx, could, r) ? 'waiting' : 'void');
+      else status.set(r, could.has(r) ? 'waiting' : 'void');
     }
     const open = having('open');
     if (open.length === 0) break;
     // One whose publisher holds its right however the undecided ones fall is
     // accepted first, so a removal its cut leaves no right never counts.
     const threats = having('accepted', 'open', 'waiting');
-    const sure = robustRights(ctx, uncut, threats);
+    const sure = robustRights(ctx, firstOps, threats);
     const first = open.filter(
       (r) => rightsAt(sure, r.op.replica, r.op.seq, r.op).admin
     );
@@ -1337,102 +1340,66 @@ function cutBelow(accepted: readonly Removal[], r: Removal): boolean {
   );
 }
 
-// Every grant valid in some fold whose accepted removals include `cuts`: one
-// whose publisher could hold its right there, never an observer's, and a
-// recover whose proof verifies against a recovery key an admin could have set.
-function reachable(ctx: Context, cuts: readonly Removal[]): Reachable {
-  const p: Reachable = {
-    cutsOn: byTarget(cuts),
-    order: ctx.order,
-    grants: new Map(),
-    handles: new Map(),
-    first: new Map(),
+// The real folds some outcome of the resolution can reach: the one under the
+// `base` cuts, and each adding one of `more` whose publisher could hold its
+// right. Rights only shrink as cuts are accepted, except that a cut can void
+// an earlier admit, recover or recovery key and so let a later one stand. A
+// removal could hold its right when it does in `current` or under `base`, or
+// in the fold adding another removal that could; never by its own cut.
+function outcomesOf(
+  ctx: Context,
+  base: readonly Removal[],
+  more: readonly Removal[],
+  current?: Evaluation
+): Outcomes {
+  const bare = evaluate(ctx, base);
+  const now = current ?? bare;
+  const folds = new Map<Removal, Evaluation>();
+  const at = (c: Removal): Evaluation => {
+    const known = folds.get(c);
+    if (known !== undefined) return known;
+    const ev = evaluate(ctx, [...base, c]);
+    folds.set(c, ev);
+    return ev;
   };
-  // An admission: an observer's sets who holds its replica but grants nothing.
-  const admits = (
-    replica: string,
-    op: RosterOpRef,
-    g: Grant | null,
-    handle: string
-  ): void => {
-    if (!p.first.has(replica)) p.first.set(replica, op);
-    if (g === null) return;
-    grant(p, replica, g);
-    const set = p.handles.get(replica);
-    if (set === undefined) p.handles.set(replica, new Set([handle]));
-    else set.add(handle);
-  };
-  const found = ctx.found.op;
-  const admin = (pos: RosterOpRef, source: Grant['source']): Grant => ({
-    pos,
-    admin: true,
-    source,
-  });
-  admits(
-    found.replica,
-    found,
-    admin(found, 'found'),
-    handleOf(ctx, found.replica)
+  const could = new Set(
+    more.filter((u) => hadRight(ctx, now, u) || hadRight(ctx, bare, u))
   );
-  const pubs = new Set([ctx.found.body.recoveryPub]);
-  for (const { op, body } of ctx.items) {
-    if (typeof body !== 'object' || ctx.order(op, found) <= 0) continue;
-    const rights = rightsAt(p, op.replica, op.seq, op);
-    if (isAction(body, 'admit')) {
-      const key = ctx.input.keys.get(body.replica);
-      if (key === undefined || key.fingerprint !== body.fingerprint) continue;
-      if (revokedBefore(p, body.replica, op)) continue;
-      const observer = body.observer === true;
-      if (observer && body.role === 'admin') continue;
-      const ownDevice =
-        rights.member &&
-        body.role === 'member' &&
-        (body.hosts ?? []).length === 0 &&
-        !observer &&
-        body.handle === key.handle &&
-        p.handles.get(op.replica)?.has(key.handle) === true;
-      if (!rights.admin && !ownDevice) continue;
-      const g: Grant = {
-        pos: op,
-        admin: body.role === 'admin',
-        source: 'grant',
-      };
-      admits(body.replica, op, observer ? null : g, body.handle);
-    } else if (isAction(body, 'role')) {
-      const admitted =
-        p.grants.has(body.replica) && !revokedBefore(p, body.replica, op);
-      if (body.role === 'admin' && rights.admin && admitted)
-        grant(p, body.replica, admin(op, 'grant'));
-    } else if (isAction(body, 'recovery-key')) {
-      if (rights.admin) pubs.add(body.pub);
-    } else if (isAction(body, 'recover')) {
-      const key = ctx.input.keys.get(op.replica);
-      if (key === undefined || ctx.firstSeq.get(op.replica) !== op.seq)
-        continue;
-      if (revokedBefore(p, op.replica, op) || cutBySeq(p, op)) continue;
-      if ([...pubs].some((pub) => ctx.proves(op, body.proof, pub)))
-        admits(op.replica, op, admin(op, 'recover'), key.handle);
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const u of more) {
+      if (could.has(u)) continue;
+      if (![...could].some((c) => c !== u && hadRight(ctx, at(c), u))) continue;
+      could.add(u);
+      grew = true;
     }
   }
-  return p;
+  return { could, folds: [bare, ...[...could].map(at)] };
 }
 
-// Whether some fold `p` covers gives r's publisher the right r needs at r.
-function couldHold(ctx: Context, p: Reachable, r: Removal): boolean {
-  const rights = rightsAt(p, r.op.replica, r.op.seq, r.op);
-  if (rights.admin) return true;
-  if (!rights.member || r.kind !== 'all') return false;
-  const target = new Set(p.handles.get(r.target));
-  target.add(handleOf(ctx, r.target));
-  return [...(p.handles.get(r.op.replica) ?? [])].some((h) => target.has(h));
+// Each replica's earliest admission, an observer's included, across the
+// grants-only fold and the folds outcomesOf adds to it: no fold the
+// resolution reaches admits it at an earlier op.
+function firstAdmissions(
+  ctx: Context,
+  removals: readonly Removal[]
+): ReadonlyMap<string, Position> {
+  const first = new Map<string, Position>();
+  for (const ev of outcomesOf(ctx, [], removals).folds)
+    for (const [replica, { since }] of ev.holders) {
+      const seen = first.get(replica);
+      if (seen === undefined || ctx.order(since, seen) < 0)
+        first.set(replica, since);
+    }
+  return first;
 }
 
 // The admin grants valid in every fold that accepts any of `cuts`, none resting
-// on a cut: the founding, an admin's admit that is the first op any fold could
-// admit its replica with, and an admin's promotion of a replica so admitted.
+// on a cut: the founding, an admin's admit at the replica's `first` admission,
+// and an admin's promotion of a replica so admitted.
 function robustRights(
   ctx: Context,
-  uncut: Reachable,
+  first: ReadonlyMap<string, Position>,
   cuts: readonly Removal[]
 ): Granted {
   const s: Granted = {
@@ -1445,8 +1412,9 @@ function robustRights(
   for (const { op, body } of ctx.items) {
     let target: string;
     if (isAction(body, 'admit')) {
-      if (uncut.first.get(body.replica) !== op || body.observer === true)
-        continue;
+      const since = first.get(body.replica);
+      if (since === undefined || body.observer === true) continue;
+      if (comparePositions(since, op) !== 0) continue;
       target = body.replica;
     } else if (isAction(body, 'role') && body.role === 'admin') {
       if (!s.grants.has(body.replica)) continue;
