@@ -2,16 +2,14 @@ import type { APIRequestContext } from '@playwright/test';
 import { expect, test } from '@playwright/test';
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { APP_TOKEN, DAEMON_PORT, HOME, REPO, ROOT } from './paths';
+import { type IsolatedDaemon, startIsolatedDaemon } from './isolatedDaemon';
+import { APP_TOKEN, REPO } from './paths';
 
 // The docs v0 flow: an agent writes a spec over the MCP tools and reads it back, the human
 // links it and edits it in Docs, and an ops save landing during the human's autosave merges.
 
-const API = `http://localhost:${DAEMON_PORT}/api`;
 // Docs refuse the shared agent token, so the daemon is driven with the app token.
 const APP = { authorization: `Bearer ${APP_TOKEN}` };
 const AGENT_NAME = 'docs-e2e';
@@ -85,22 +83,13 @@ class StdioMcp {
   }
 }
 
-// Duplicated from messaging.spec.ts, following the convention edit-diff.spec.ts documents.
-function authedUrl(baseURL: string | undefined): string {
-  const token = process.env.DISPATCH_E2E_TOKEN;
-  if (baseURL === undefined || token === undefined || token === '') {
-    throw new Error('baseURL or DISPATCH_E2E_TOKEN is unset');
-  }
-  return `${baseURL}&token=${token}&appToken=${APP_TOKEN}`;
-}
+// This spec's own daemon on a copy of the fixture, so the doc, task and agent
+// it creates never reach the shared fixture views.spec.ts screenshots.
+let daemon: IsolatedDaemon | null = null;
 
-// Where the MCP server caches this agent's registration (packages/mcp/src/identity.ts).
-function agentTokenFile(): string {
-  const key = createHash('sha256')
-    .update(realpathSync(ROOT))
-    .digest('hex')
-    .slice(0, 12);
-  return join(HOME, '.dispatch', 'agents', key, `${AGENT_NAME}.json`);
+function requireDaemon(): IsolatedDaemon {
+  if (daemon === null) throw new Error('the isolated daemon is not running');
+  return daemon;
 }
 
 async function api<T>(
@@ -109,7 +98,7 @@ async function api<T>(
   path: string,
   data?: unknown
 ): Promise<T> {
-  const res = await request.fetch(`${API}${path}`, {
+  const res = await request.fetch(`${requireDaemon().origin}/api${path}`, {
     method,
     headers: APP,
     data,
@@ -122,57 +111,23 @@ async function api<T>(
 }
 
 let mcp: StdioMcp | null = null;
-let taskId: string | null = null;
 
-// Removes the doc, the task, the agent and its cached token, so the fixture's
-// counts hold and a rerun starts from an unregistered agent.
-async function cleanUp(request: APIRequestContext): Promise<void> {
+// The copy goes with its daemon, so the doc, task and agent need no undoing.
+test.afterEach(async () => {
   mcp?.close();
   mcp = null;
-  const doc = await request.get(`${API}/docs/${SLUG}`, { headers: APP });
-  if (doc.ok()) {
-    const { id } = ((await doc.json()) as { doc: { id: string } }).doc;
-    await api(request, 'DELETE', `/docs/${id}`);
-  }
-  if (taskId !== null) {
-    await api(request, 'PATCH', `/tasks/${taskId}`, {
-      status: 'dropped',
-      archivedAt: new Date().toISOString(),
-    });
-    taskId = null;
-  }
-  const { agents } = await api<{
-    agents: { address: string; status: string }[];
-  }>(request, 'GET', '/agents/roster');
-  for (const agent of agents) {
-    if (
-      agent.address.endsWith(`/${AGENT_NAME}`) &&
-      agent.status !== 'revoked'
-    ) {
-      await api(
-        request,
-        'POST',
-        `/agents/${encodeURIComponent(agent.address)}/revoke`,
-        {}
-      );
-    }
-  }
-  rmSync(agentTokenFile(), { force: true });
-}
-
-test.afterEach(async ({ request }) => {
-  await cleanUp(request);
+  await daemon?.stop();
+  daemon = null;
 });
 
 test('an agent writes a spec, the human edits it in Docs, and a concurrent ops save merges', async ({
   page,
   request,
-  baseURL,
 }, testInfo) => {
   test.skip(testInfo.project.name !== 'dark', 'theme-independent flow');
   test.setTimeout(90_000);
-  await cleanUp(request);
-  taskId = (
+  daemon = await startIsolatedDaemon('docs');
+  const taskId = (
     await api<{ meta: { id: string } }>(request, 'POST', '/tasks', {
       title: 'Docs e2e task',
     })
@@ -181,13 +136,16 @@ test('an agent writes a spec, the human edits it in Docs, and a concurrent ops s
   // No run token file: the caller is a registered external agent, which adds context links only.
   const env: NodeJS.ProcessEnv = {
     ...process.env,
-    DISPATCH_HOME: HOME,
+    DISPATCH_HOME: daemon.home,
     DISPATCH_AGENT_NAME: AGENT_NAME,
   };
   delete env.DISPATCH_RUN_TOKEN_FILE;
   delete env.DISPATCH_RUN_ID;
   mcp = new StdioMcp(
-    spawn('bun', [join(REPO, 'packages/mcp/src/bin.ts')], { cwd: ROOT, env })
+    spawn('bun', [join(REPO, 'packages/mcp/src/bin.ts')], {
+      cwd: daemon.root,
+      env,
+    })
   );
   const agent = mcp;
   await agent.request('initialize', {
@@ -248,7 +206,7 @@ test('an agent writes a spec, the human edits it in Docs, and a concurrent ops s
     await route.continue();
   });
 
-  await page.goto(authedUrl(baseURL));
+  await page.goto(daemon.appUrl);
   await page.locator('#dispatch-sidebar [data-nav-item="docs"]').click();
   await page.getByRole('button', { name: 'E2E spec', exact: true }).click();
   const editor = page.getByLabel(`Editing ${SLUG}`);

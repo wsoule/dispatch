@@ -22,7 +22,7 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
 } from '../../src/orchestrator/types.js';
-import { initGitRepo, withBrokenRepo } from './helpers.js';
+import { initGitRepo, WatchedTaskStore, withBrokenRepo } from './helpers.js';
 
 let fakeHome: string;
 let repo: string;
@@ -109,7 +109,9 @@ function makeHarness(opts: HarnessOptions = {}): Harness {
     eventDebounceMs: opts.eventDebounceMs ?? 0,
   });
   engines.push(epics);
-  return { orchestrator, epics, store, cache, events, received };
+  // The test's own writes, seen the way a hand edit is: through a refresh.
+  const watched = new WatchedTaskStore(repo, cache);
+  return { orchestrator, epics, store: watched, cache, events, received };
 }
 
 function createEpicWithChildren(
@@ -460,6 +462,7 @@ describe('EpicEngine session transitions', () => {
     h.orchestrator.approve(runA.id, 'go', true);
     await waitFor(() => h.store.get(aId)?.meta.status === 'review');
     const review = await h.orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: aId,
       kind: 'review',
       head: 'HEAD',
@@ -758,6 +761,7 @@ describe('EpicEngine progress phases', () => {
     });
     const workingRun = await h.orchestrator.dispatch(working, 'fake');
     const reviewRun = await h.orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: reviewing,
       kind: 'review',
       head: 'HEAD',

@@ -187,6 +187,15 @@ export async function issueTeamToken(
     return errorResponse(400, 'expected { handle } or { email }');
   }
 
+  // The operator speaks only through the daemon's own tokens; a teammate
+  // token for their handle would let its holder act as them.
+  if (handle === ctx.actorContext.member.handle) {
+    return errorResponse(
+      400,
+      `${handle} runs this daemon and uses its own token; a teammate token cannot be issued for them`
+    );
+  }
+
   // Issuing replaces what they held, so replacing an operator token is as
   // privileged as revoking one.
   const current = ctx.team.teammates.issuedTier(handle);

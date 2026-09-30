@@ -4,6 +4,8 @@ import { ScrollArea as ScrollAreaPrimitive } from '@base-ui/react/scroll-area';
 
 import { cn } from './lib/utils';
 
+// The viewport inherits the root's max height: a `max-h-*` root has no definite height, so
+// `size-full` alone lets the viewport grow past it and nothing scrolls.
 function ScrollArea({
   className,
   children,
@@ -17,7 +19,7 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="focus-visible:ring-ring size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-2"
+        className="focus-visible:ring-ring size-full max-h-[inherit] rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-2"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

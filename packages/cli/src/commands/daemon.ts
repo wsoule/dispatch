@@ -48,7 +48,7 @@ interface DaemonFileInfo {
   agentToken?: string;
 }
 
-function daemonHome(): string {
+export function daemonHome(): string {
   const home = process.env.DISPATCH_HOME;
   return home !== undefined && home !== '' ? home : homedir();
 }

@@ -1,16 +1,15 @@
-import { untrustedFenced } from '@dispatch/core';
+import { memoryReadView } from '@dispatch/core';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 
-import type { DaemonFileInfo } from './daemon.js';
-import { daemonAuth, readDaemonFile, requestDeadline } from './daemon.js';
+import { requestDeadline } from './daemon.js';
 import {
   fetchFailed,
   messagingErrorText,
   messagingFetch,
 } from './messaging.js';
-import { callingRunId, projectRoot, toolError, toolResult } from './toolKit.js';
+import { toolError, toolResult } from './toolKit.js';
 import type { ToolOutcome } from './toolKit.js';
 
 // Memory tools proxy /api/memory* (packages/server/src/memory/routes.ts) on the
@@ -46,36 +45,6 @@ function memoryRef(id: string): string {
   return trimmed.startsWith('#') ? trimmed.toUpperCase() : trimmed;
 }
 
-// Looks up the calling run's task and that task's parent epic — best-effort,
-// since an unresolved one just makes a shared save project-wide instead.
-async function callingTaskAndEpic(
-  daemon: DaemonFileInfo,
-  runId: string
-): Promise<{ taskId: string | null; epicId: string | null }> {
-  const port = daemon.port;
-  const headers = daemonAuth(daemon);
-  try {
-    const runRes = await fetch(`http://127.0.0.1:${port}/api/runs/${runId}`, {
-      signal: requestDeadline(),
-      headers,
-    });
-    if (!runRes.ok) return { taskId: null, epicId: null };
-    const run = (await runRes.json()) as { taskId?: string };
-    if (typeof run.taskId !== 'string') return { taskId: null, epicId: null };
-    const taskRes = await fetch(
-      `http://127.0.0.1:${port}/api/tasks/${run.taskId}`,
-      { headers, signal: requestDeadline() }
-    );
-    if (!taskRes.ok) return { taskId: run.taskId, epicId: null };
-    const task = (await taskRes.json()) as {
-      meta?: { parent?: string | null };
-    };
-    return { taskId: run.taskId, epicId: task.meta?.parent ?? null };
-  } catch {
-    return { taskId: null, epicId: null };
-  }
-}
-
 const MEMORY_SCOPES = ['personal', 'project', 'team'] as const;
 const MEMORY_KINDS = [
   'preference',
@@ -99,20 +68,12 @@ interface MemorySaveArgs {
   projectOnly?: boolean;
 }
 
-// The POST /api/memory body. Personal memory has no epic; a shared save that
-// names none inside a run reaches the run's epic.
-async function saveBody(
-  rootDir: string,
-  args: MemorySaveArgs
-): Promise<Record<string, unknown>> {
+// The POST /api/memory body. Personal memory has no epic; the daemon gives a
+// run's shared save that names none its task's parent epic.
+function saveBody(args: MemorySaveArgs): Record<string, unknown> {
   const { epic, ...rest } = args;
-  if (args.scope === 'personal') return rest;
-  if (epic !== undefined) return { ...rest, epic };
-  const runId = callingRunId();
-  const daemon = readDaemonFile(projectRoot(rootDir));
-  if (runId === undefined || daemon === null) return rest;
-  const { epicId } = await callingTaskAndEpic(daemon, runId);
-  return { ...rest, epic: epicId };
+  if (args.scope === 'personal' || epic === undefined) return rest;
+  return { ...rest, epic };
 }
 
 // POSTs a memory write under one Idempotency-Key for both attempts: a dropped
@@ -150,19 +111,6 @@ const saveOutput = {
   proposal: z.string().optional(),
   gate: z.string().nullable().optional(),
 };
-
-// The GET /api/memory/:id fields memory_read reshapes; the rest pass through.
-interface ReadBody {
-  entry: Record<string, unknown> & {
-    body: string;
-    handle: string;
-    author: unknown;
-    trust: unknown;
-    decidedBy: unknown;
-    decidedByPolicy: unknown;
-  };
-  revisions: { rev: number; by: string; cause: string; at: string }[];
-}
 
 export function registerMemoryTools(server: McpServer, rootDir: string): void {
   server.registerTool(
@@ -222,31 +170,14 @@ export function registerMemoryTools(server: McpServer, rootDir: string): void {
       annotations: { readOnlyHint: true },
     },
     async ({ id }) => {
-      const out = await getJson<ReadBody>(
+      const out = await getJson<Parameters<typeof memoryReadView>[0]>(
         rootDir,
         server,
         `/api/memory/${encodeURIComponent(memoryRef(id))}`,
         'memory_read'
       );
       if (!out.ok) return out.result;
-      const { entry, revisions } = out.body;
-      const { body, ...rest } = entry;
-      return toolResult({
-        entry: rest,
-        body: untrustedFenced(`memory ${entry.handle}`, body),
-        provenance: {
-          author: entry.author,
-          trust: entry.trust,
-          decidedBy: entry.decidedBy,
-          decidedByPolicy: entry.decidedByPolicy,
-        },
-        revisions: revisions.map(({ rev, by, cause, at }) => ({
-          rev,
-          by,
-          cause,
-          at,
-        })),
-      });
+      return toolResult(memoryReadView(out.body));
     }
   );
 
@@ -283,13 +214,7 @@ export function registerMemoryTools(server: McpServer, rootDir: string): void {
       annotations: { readOnlyHint: false },
     },
     async (args) =>
-      postWrite(
-        rootDir,
-        server,
-        '/api/memory',
-        await saveBody(rootDir, args),
-        'memory_save'
-      )
+      postWrite(rootDir, server, '/api/memory', saveBody(args), 'memory_save')
   );
 
   server.registerTool(

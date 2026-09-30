@@ -6,6 +6,7 @@ import { join } from 'node:path';
 
 import type { ServerHandle } from '../src/index.js';
 import { startServer } from '../src/index.js';
+import { FakeExecutor } from '../src/orchestrator/executors/fake.js';
 import type { Executor, ExecutorRun } from '../src/orchestrator/types.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { rawFetch } from './testAuth.js';
@@ -65,6 +66,25 @@ async function newTask(token: string, title: string): Promise<string> {
   return ((await res.json()) as { meta: { id: string } }).meta.id;
 }
 
+// A run `token` dispatched that has already stopped, ready to be continued.
+async function stoppedRunBy(token: string): Promise<string> {
+  const taskId = await newTask(token, 'Widget');
+  const res = await post(`/api/tasks/${taskId}/runs`, token, {
+    executor: 'stops',
+  });
+  const runId = ((await res.json()) as { id: string }).id;
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const run = await rawFetch(`${baseUrl}/api/runs/${runId}`, {
+      headers: headers(token),
+    });
+    const { meta } = (await run.json()) as { meta: { state: string } };
+    if (meta.state === 'failed') return runId;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+  throw new Error(`run ${runId} never stopped`);
+}
+
 beforeEach(async () => {
   fakeHome = mkdtempSync(join(tmpdir(), 'dispatch-home-'));
   process.env.DISPATCH_HOME = fakeHome;
@@ -79,6 +99,14 @@ beforeEach(async () => {
     webDistDir: null,
     registerExecutors: (orchestrator) => {
       orchestrator.registerExecutor('claude', idle);
+      // Stops at once with a session to resume, as a cut-off run does.
+      orchestrator.registerExecutor(
+        'stops',
+        new FakeExecutor({
+          session: 'session-1',
+          finish: { state: 'failed', error: 'cut off', sessionId: 'session-1' },
+        })
+      );
     },
   });
   baseUrl = `http://127.0.0.1:${handle.port}`;
@@ -135,6 +163,46 @@ describe('attribution on a shared daemon', () => {
     expect(((await res.json()) as { dispatchedBy?: string }).dispatchedBy).toBe(
       'human:ada'
     );
+  });
+
+  it("a teammate's follow-up on her own run stays hers", async () => {
+    // Every way to send a stopped run back: the composer's message that wakes
+    // it, the review's send-back and a request-changes verdict.
+    const stopped = await stoppedRunBy(ada);
+    const message = await post('/api/messages', ada, {
+      to: [`run:${stopped}`],
+      kind: 'message',
+      body: 'try again',
+      wake: 'request',
+    });
+    expect(message.status).toBe(201);
+    const runs = (await (
+      await rawFetch(`${baseUrl}/api/runs`, { headers: headers(ada) })
+    ).json()) as { resumedFrom?: string; dispatchedBy?: string }[];
+    expect(runs.find((r) => r.resumedFrom === stopped)?.dispatchedBy).toBe(
+      'human:ada'
+    );
+
+    const sendBack = await post(
+      `/api/runs/${await stoppedRunBy(ada)}/send-back`,
+      ada,
+      { note: 'try again' }
+    );
+    expect(sendBack.status).toBe(200);
+    expect(
+      ((await sendBack.json()) as { dispatchedBy?: string }).dispatchedBy
+    ).toBe('human:ada');
+
+    const verdict = await post(
+      `/api/runs/${await stoppedRunBy(ada)}/review-submit`,
+      ada,
+      { verdict: 'request-changes', body: 'try again' }
+    );
+    expect(verdict.status).toBe(200);
+    expect(
+      ((await verdict.json()) as { run?: { dispatchedBy?: string } }).run
+        ?.dispatchedBy
+    ).toBe('human:ada');
   });
 
   it('the operator is still credited as themselves', async () => {

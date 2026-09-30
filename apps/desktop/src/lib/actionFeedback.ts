@@ -85,10 +85,17 @@ function taskIdOf(spec: SuccessSpec, args: unknown[]): string | undefined {
   return typeof value === 'string' ? value : undefined;
 }
 
+type Handler = (...args: unknown[]) => unknown;
+
+/** Wrapper cache for `withActionFeedback`: pass the same one while `onError`/`onSuccess`
+ * stay the same, and a handler that did not change keeps its wrapper's identity. */
+export type ActionFeedbackCache = WeakMap<Handler, Handler>;
+
 export function withActionFeedback<T extends object>(
   api: T,
   onError: (action: string, message: string) => void,
-  onSuccess?: (message: string, taskId?: string) => void
+  onSuccess?: (message: string, taskId?: string) => void,
+  cache?: ActionFeedbackCache
 ): T {
   // `object` rather than Record<string, unknown>: the Record constraint widens
   // every property of the wrapped type to unknown at the call site, which turns
@@ -96,8 +103,13 @@ export function withActionFeedback<T extends object>(
   const out: Record<string, unknown> = { ...(api as Record<string, unknown>) };
   for (const [key, value] of Object.entries(api) as [string, unknown][]) {
     if (!key.startsWith('handle') || typeof value !== 'function') continue;
-    const original = value as (...args: unknown[]) => unknown;
-    out[key] = (...args: unknown[]) => {
+    const original = value as Handler;
+    const cached = cache?.get(original);
+    if (cached !== undefined) {
+      out[key] = cached;
+      continue;
+    }
+    const wrapped = (...args: unknown[]) => {
       try {
         const success = SUCCESS_MESSAGES[key];
         const result = original(...args);
@@ -123,6 +135,8 @@ export function withActionFeedback<T extends object>(
         return undefined;
       }
     };
+    cache?.set(original, wrapped);
+    out[key] = wrapped;
   }
   return out as T;
 }

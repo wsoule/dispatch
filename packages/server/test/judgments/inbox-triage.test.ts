@@ -1,4 +1,5 @@
 import type { TaskDoc } from '@dispatch/core';
+import { defaultTaskFields } from '@dispatch/core';
 import { describe, expect, test } from 'bun:test';
 import { mkdtempSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -58,6 +59,7 @@ function task(
       writes: [],
       external: null,
       exercised: false,
+      ...defaultTaskFields(),
       created: '2026-09-01T00:00:00.000Z',
       updated: '2026-09-01T00:00:00.000Z',
       ...over,
@@ -114,8 +116,8 @@ describe('triageCandidates', () => {
 describe('triageEpics', () => {
   test('lists open epics with a one-line summary', () => {
     const epics = triageEpics([
-      task('e1', 'Landing', { kind: 'epic' }, 'First line.\n\nMore.'),
-      task('e2', 'Old', { kind: 'epic', status: 'landed' }),
+      task('e1', 'Landing', { kind: 'milestone' }, 'First line.\n\nMore.'),
+      task('e2', 'Old', { kind: 'milestone', status: 'landed' }),
       task('t1', 'Not an epic'),
     ]);
     expect(epics).toEqual([

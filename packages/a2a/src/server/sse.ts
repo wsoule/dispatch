@@ -86,9 +86,8 @@ function diff(last: Snapshot | null, next: Snapshot): StreamResponseJson[] {
   return out;
 }
 
-// One A2A task as an SSE stream: re-projected on watch signals, coalesced per
-// tick, closed on a terminal state (or INPUT_REQUIRED unless untilTerminal),
-// revocation, overflow or maxMs.
+// One A2A task as an SSE stream, re-projected per watch tick; it closes on a
+// final state, revocation, overflow or maxMs.
 export function taskEventStream(o: StreamOptions): Response {
   const tickMs = o.tickMs ?? 1000;
   const keepaliveMs = o.keepaliveMs ?? 15_000;

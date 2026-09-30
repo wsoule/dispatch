@@ -1,13 +1,28 @@
-import type { Assignee, Priority, TaskDoc } from '@dispatch/core/browser';
-import { Check, Milestone, Plus, Tag } from 'lucide-react';
-import { type ReactNode, useId } from 'react';
+import type {
+  Assignee,
+  Priority,
+  TaskCycle,
+  TaskListItem,
+} from '@dispatch/core/browser';
+import {
+  CalendarDays,
+  Check,
+  IterationCw,
+  Milestone,
+  Plus,
+  Tag,
+  Triangle,
+} from 'lucide-react';
+import { type ReactNode, useEffect, useId, useRef, useState } from 'react';
 
 import { colorForLabel } from '../../lib/labelColor';
+import { dayFromNow, dueDateInfo } from '../../lib/taskDates';
 import {
   assigneeLabel,
   priorityLabel,
   statusLabel,
 } from '../../lib/taskDisplay';
+import { usePeople } from '../people/PeopleContext';
 import { AssigneeAvatar } from './AssigneeAvatar';
 import { PickerPopover } from './detail/PickerPopover';
 import { railRowClass } from './detail/RailSection';
@@ -23,6 +38,7 @@ import {
   DropdownMenuTrigger,
 } from '@/ui/dropdown-menu';
 import { Kbd } from '@/ui/kbd';
+import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 
 // Shared inline editors for a task's properties, so status/priority/assignee/epic/labels edit
 // identically everywhere they appear — a bare 14px glyph you click on a board card or list
@@ -82,7 +98,7 @@ function PropertyDropdown({
   /** The menu's header, `Change status`. */
   menuTitle: string;
   /** The single key that opens this picker from a focused row, shown as a keycap. */
-  shortcut: string;
+  shortcut?: string;
   /** The value is the "nothing chosen" option — the row dims and reads `unsetLabel`. */
   unset?: boolean;
   unsetLabel?: string;
@@ -91,36 +107,80 @@ function PropertyDropdown({
   const rowLabel =
     unset && unsetLabel !== undefined ? unsetLabel : selected?.label;
   const valueId = useId();
+  // A Base UI menu costs more to mount than the whole row around it, and a scrolling list
+  // mounts rows every frame. So the picker starts as a look-alike button and swaps the real
+  // menu in on the first sign of intent: hover, focus, a click, or an `open` request.
+  const [live, setLive] = useState(false);
+  const [openOnMount, setOpenOnMount] = useState(false);
+  const refocus = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!live || !refocus.current) return;
+    refocus.current = false;
+    triggerRef.current?.focus();
+  }, [live]);
+  const triggerProps = {
+    'aria-label': ariaLabel,
+    'aria-describedby': valueId,
+    'data-slot': 'property-control',
+    'data-variant': variant,
+    'data-unset': unset || undefined,
+    className: cn(
+      'shrink-0 items-center rounded-control transition-colors duration-100 outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-surface-hover',
+      variant === 'inline'
+        ? 'inline-flex size-5 justify-center'
+        : 'flex h-8 w-full min-w-0 gap-2 px-2 text-[13px] font-medium text-(--text-secondary)',
+      variant === 'row' && unset && 'text-muted-foreground'
+    ),
+  };
+  const face = (
+    <>
+      {selected?.glyph}
+      <span id={valueId} className={variant === 'row' ? 'truncate' : 'sr-only'}>
+        {rowLabel}
+      </span>
+    </>
+  );
+  if (!live && open !== true) {
+    return (
+      <button
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={false}
+        {...triggerProps}
+        onPointerEnter={() => setLive(true)}
+        onFocus={() => {
+          refocus.current = true;
+          setLive(true);
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          // Controlled pickers open through their owner; the rest open as they mount.
+          if (onOpenChange !== undefined) onOpenChange(true);
+          else setOpenOnMount(true);
+          setLive(true);
+        }}
+      >
+        {face}
+      </button>
+    );
+  }
   return (
     <DropdownMenu
       open={open}
+      defaultOpen={openOnMount}
       onOpenChange={
         onOpenChange === undefined ? undefined : (next) => onOpenChange(next)
       }
     >
       <DropdownMenuTrigger
-        aria-label={ariaLabel}
-        aria-describedby={valueId}
-        data-slot="property-control"
-        data-variant={variant}
-        data-unset={unset || undefined}
+        ref={triggerRef}
+        {...triggerProps}
         onClick={(e) => e.stopPropagation()}
         onPointerDown={(e) => e.stopPropagation()}
-        className={cn(
-          'shrink-0 items-center rounded-control transition-colors duration-100 outline-none hover:bg-surface-hover focus-visible:ring-2 focus-visible:ring-ring data-popup-open:bg-surface-hover',
-          variant === 'inline'
-            ? 'inline-flex size-5 justify-center'
-            : 'flex h-8 w-full min-w-0 gap-2 px-2 text-[13px] font-medium text-(--text-secondary)',
-          variant === 'row' && unset && 'text-muted-foreground'
-        )}
       >
-        {selected?.glyph}
-        <span
-          id={valueId}
-          className={variant === 'row' ? 'truncate' : 'sr-only'}
-        >
-          {rowLabel}
-        </span>
+        {face}
       </DropdownMenuTrigger>
       <DropdownMenuContent
         align="start"
@@ -133,7 +193,9 @@ function PropertyDropdown({
         <DropdownMenuGroup>
           <DropdownMenuLabel className="flex items-center gap-2">
             {menuTitle}
-            <Kbd className="ml-auto">{shortcut}</Kbd>
+            {shortcut !== undefined && (
+              <Kbd className="ml-auto">{shortcut}</Kbd>
+            )}
           </DropdownMenuLabel>
           {options.map((o) => (
             <DropdownMenuItem
@@ -231,17 +293,34 @@ export function AssigneeControl({
   onChange: (assignee: Assignee) => void;
   variant?: ControlVariant;
 } & ControlledOpen) {
-  // A named ref (`human:wyat`) is not one of the three fixed choices, so it is listed as
-  // the current value on top rather than silently rendering as unassigned.
-  const values = ASSIGNEES.includes(value) ? ASSIGNEES : [value, ...ASSIGNEES];
+  const directory = usePeople();
+  // With a people registry the choices are everyone in it (you first), the agent pool and
+  // nobody; without one, the three fixed kinds. A value in neither list (a ref from before
+  // the roster had them) is listed on top rather than silently rendering as unassigned.
+  const choices =
+    directory.assignable.length === 0
+      ? ASSIGNEES
+      : [
+          ...directory.assignable
+            .map((p) => p.ref)
+            .sort((a, b) =>
+              a === directory.me ? -1 : b === directory.me ? 1 : 0
+            ),
+          'agent',
+          'none',
+        ];
+  const current =
+    directory.personFor(value)?.ref ??
+    (value === 'human' && directory.me !== null ? directory.me : value);
+  const values = choices.includes(current) ? choices : [current, ...choices];
   const options = values.map((a) => ({
     value: a,
-    label: assigneeLabel(a),
+    label: directory.personFor(a)?.name ?? assigneeLabel(a),
     glyph: <AssigneeAvatar assignee={a} size={16} />,
   }));
   return (
     <PropertyDropdown
-      value={value}
+      value={current}
       options={options}
       onChange={onChange}
       variant={variant}
@@ -265,7 +344,7 @@ export function EpicControl({
   onOpenChange,
 }: {
   value: string | null;
-  epics: TaskDoc[];
+  epics: TaskListItem[];
   onChange: (parent: string | null) => void;
   variant?: ControlVariant;
 } & ControlledOpen) {
@@ -295,6 +374,200 @@ export function EpicControl({
       open={open}
       onOpenChange={onOpenChange}
     />
+  );
+}
+
+// Linear's default estimate scale; a value outside it (synced from elsewhere) is listed too.
+const ESTIMATES = [1, 2, 3, 5, 8, 13];
+const NO_VALUE = '__none__';
+
+/** `3 points` — a task's estimate on a row, or `Estimate` when unset. */
+export function estimateLabel(estimate: number | null): string {
+  if (estimate === null) return 'Estimate';
+  return `${estimate} point${estimate === 1 ? '' : 's'}`;
+}
+
+export function EstimateControl({
+  value,
+  onChange,
+  variant = 'row',
+  open,
+  onOpenChange,
+}: {
+  value: number | null;
+  onChange: (estimate: number | null) => void;
+  variant?: ControlVariant;
+} & ControlledOpen) {
+  const values =
+    value !== null && !ESTIMATES.includes(value)
+      ? [value, ...ESTIMATES]
+      : ESTIMATES;
+  const glyph = <Triangle className="size-3.5" />;
+  const options: Option[] = [
+    { value: NO_VALUE, label: 'No estimate', glyph },
+    ...values.map((n) => ({
+      value: String(n),
+      label: estimateLabel(n),
+      glyph,
+    })),
+  ];
+  return (
+    <PropertyDropdown
+      value={value === null ? NO_VALUE : String(value)}
+      options={options}
+      onChange={(v) => onChange(v === NO_VALUE ? null : Number(v))}
+      variant={variant}
+      ariaLabel="Change estimate"
+      menuTitle="Estimate"
+      unset={value === null}
+      unsetLabel="Estimate"
+      open={open}
+      onOpenChange={onOpenChange}
+    />
+  );
+}
+
+/** `Cycle 42`, or the cycle's own name when it has one. */
+export function cycleLabel(cycle: TaskCycle): string {
+  return cycle.name ?? `Cycle ${cycle.number}`;
+}
+
+export function CycleControl({
+  value,
+  cycles,
+  onChange,
+  variant = 'row',
+  open,
+  onOpenChange,
+}: {
+  value: TaskCycle | null;
+  /** Every cycle the project's tasks name, oldest first. */
+  cycles: readonly TaskCycle[];
+  onChange: (cycle: TaskCycle | null) => void;
+  variant?: ControlVariant;
+} & ControlledOpen) {
+  const list =
+    value !== null && !cycles.some((c) => c.id === value.id)
+      ? [value, ...cycles]
+      : cycles;
+  const glyph = <IterationCw className="size-3.5" />;
+  const options: Option[] = [
+    { value: NO_VALUE, label: 'No cycle', glyph },
+    ...list.map((c) => ({ value: c.id, label: cycleLabel(c), glyph })),
+  ];
+  return (
+    <PropertyDropdown
+      value={value?.id ?? NO_VALUE}
+      options={options}
+      onChange={(v) =>
+        onChange(v === NO_VALUE ? null : (list.find((c) => c.id === v) ?? null))
+      }
+      variant={variant}
+      ariaLabel="Change cycle"
+      menuTitle="Cycle"
+      unset={value === null}
+      unsetLabel="Add to cycle"
+      open={open}
+      onOpenChange={onOpenChange}
+    />
+  );
+}
+
+// The due-date shortcuts Linear offers, as days from today.
+const DUE_PICKS: { label: string; days: number }[] = [
+  { label: 'Today', days: 0 },
+  { label: 'Tomorrow', days: 1 },
+  { label: 'In a week', days: 7 },
+  { label: 'In two weeks', days: 14 },
+];
+
+/** The due date: a calendar row reading `Sep 30 · in 5d` (red once overdue), opening a
+ * popover of quick picks, a date field and Clear. `done` tasks are never overdue. */
+export function DueDateControl({
+  value,
+  done = false,
+  onChange,
+  open,
+  onOpenChange,
+}: {
+  value: string | null;
+  done?: boolean;
+  onChange: (dueDate: string | null) => void;
+} & ControlledOpen) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const isOpen = open ?? localOpen;
+  function setOpen(next: boolean) {
+    setLocalOpen(next);
+    onOpenChange?.(next);
+  }
+  function pick(next: string | null) {
+    onChange(next);
+    setOpen(false);
+  }
+  const info = value === null ? null : dueDateInfo(value, new Date(), done);
+  return (
+    <Popover open={isOpen} onOpenChange={setOpen}>
+      <PopoverTrigger
+        aria-label="Change due date"
+        data-slot="property-control"
+        data-unset={value === null || undefined}
+        className={cn(
+          railRowClass({ unset: value === null }),
+          info?.overdue === true && 'text-red'
+        )}
+      >
+        <CalendarDays />
+        {info === null ? (
+          <span className="truncate">Set due date</span>
+        ) : (
+          <span className="flex min-w-0 items-center gap-1.5 truncate">
+            {info.date}
+            <span
+              className={cn(
+                'font-book',
+                info.overdue ? 'text-red' : 'text-muted-foreground'
+              )}
+            >
+              {info.relative}
+            </span>
+          </span>
+        )}
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        className="flex w-56 flex-col gap-0.5 p-1"
+        onKeyDown={(e) => e.stopPropagation()}
+      >
+        {DUE_PICKS.map((p) => (
+          <button
+            key={p.label}
+            type="button"
+            className={railRowClass()}
+            onClick={() => pick(dayFromNow(p.days))}
+          >
+            {p.label}
+          </button>
+        ))}
+        <input
+          type="date"
+          aria-label="Due date"
+          className="bg-field rounded-control shadow-inset-field mx-1 my-1 h-8 px-2 text-[13px] text-(--text-secondary) outline-none"
+          value={value ?? ''}
+          onChange={(e) => {
+            if (e.target.value !== '') pick(e.target.value);
+          }}
+        />
+        {value !== null && (
+          <button
+            type="button"
+            className={railRowClass({ unset: true })}
+            onClick={() => pick(null)}
+          >
+            Clear due date
+          </button>
+        )}
+      </PopoverContent>
+    </Popover>
   );
 }
 

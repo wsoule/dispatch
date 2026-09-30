@@ -1,7 +1,14 @@
+import { DEFAULT_STATUS_MODEL } from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
-import { branchLayout, type BranchLayout } from './branchLayout';
+import { type BranchLayout, branchLayout as layoutWith } from './branchLayout';
 import type { DagTask } from './dagLayout';
+
+// These cases use the built-in statuses; the mirrored-workflow case lives in
+// statusTypeSurfaces.test.tsx.
+function branchLayout(tasks: DagTask[]): BranchLayout {
+  return layoutWith(tasks, DEFAULT_STATUS_MODEL);
+}
 
 // The layout only reads DagTask's five fields, so the fixture is exactly those.
 function makeTask(

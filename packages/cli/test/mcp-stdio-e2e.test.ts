@@ -145,6 +145,7 @@ describe('dispatch mcp (CLI entrypoint) stdio e2e', () => {
         'record_mutation',
         'run_list',
         'task_comment',
+        'task_comments',
         'task_get',
         'task_list',
         'task_next',

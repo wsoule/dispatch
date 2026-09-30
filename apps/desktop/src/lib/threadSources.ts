@@ -8,9 +8,11 @@ import type {
   Message,
   Ref,
 } from '@dispatch/client';
+import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
+import { canonicalStatus } from '@dispatch/core/browser';
 
 import type { MessageAccess } from './daemonAuth';
-import { gateOf } from './gates';
+import { gateOf, taskProposalOf } from './gates';
 import type { KnownAddresses } from './threads';
 import { addressLabel } from './threads';
 
@@ -46,6 +48,9 @@ export function mergeThreadSources(
 /** What labels and refs need to know about the board, from data the view already has. */
 export interface ThreadLookups {
   taskTitle: (taskId: string) => string | null;
+  /** A board task's metadata, for the proposal card (which fetches the body).
+   *  The lookups re-key on a draft's edits only, since a proposal waits on a draft. */
+  task: (taskId: string) => TaskListItem | null;
   taskIdOfRun: (runId: string) => string | null;
   agentStatus: (address: string) => 'revoked' | 'muted' | null;
   /** Whether an address is the daemon's own overseer (the Assistant). */
@@ -53,11 +58,11 @@ export interface ThreadLookups {
 }
 
 export function threadLookups(
-  tasks: readonly { meta: { id: string; title: string } }[],
+  tasks: readonly TaskListItem[],
   runs: readonly { id: string; taskId: string }[],
   agents: readonly AgentSummary[]
 ): ThreadLookups {
-  const titles = new Map(tasks.map((t) => [t.meta.id, t.meta.title]));
+  const docs = new Map(tasks.map((t) => [t.meta.id, t]));
   const taskOfRun = new Map(runs.map((r) => [r.id, r.taskId]));
   const status = new Map<string, 'revoked' | 'muted'>();
   for (const agent of agents) {
@@ -69,7 +74,8 @@ export function threadLookups(
     (a) => a.approvedBy === SYSTEM && OVERSEER.test(a.address)
   )?.address;
   return {
-    taskTitle: (id) => titles.get(id) ?? null,
+    taskTitle: (id) => docs.get(id)?.meta.title ?? null,
+    task: (id) => docs.get(id) ?? null,
     taskIdOfRun: (id) => taskOfRun.get(id) ?? null,
     agentStatus: (address) => status.get(address) ?? null,
     // Until the roster loads, any overseer-named agent reads as the Assistant.
@@ -79,14 +85,20 @@ export function threadLookups(
 }
 
 /** Changes only when something `threadLookups` reads does: a task's title, a
- *  run's task, an agent's status, mute or approver. */
+ *  draft's edit, a run's task, an agent's status, mute or approver. */
 export function lookupsKey(
-  tasks: readonly { meta: { id: string; title: string } }[],
+  tasks: readonly {
+    meta: Pick<TaskMeta, 'id' | 'title' | 'status' | 'updated'>;
+  }[],
   runs: readonly { id: string; taskId: string }[],
   agents: readonly AgentSummary[]
 ): string {
+  const drafts = tasks.filter(
+    (t) => canonicalStatus(t.meta.status) === 'draft'
+  );
   return JSON.stringify([
     tasks.map((t) => [t.meta.id, t.meta.title]),
+    drafts.map((t) => [t.meta.id, t.meta.updated]),
     runs.map((r) => [r.id, r.taskId]),
     agents.map((a) => [a.address, a.status, a.muted, a.approvedBy]),
   ]);
@@ -168,6 +180,13 @@ export type RowControl =
   | { kind: 'scope'; paths: string[]; reason: string }
   /** A memory gate; its card reads the proposal, which the message never carries. */
   | { kind: 'memory'; proposalId: string }
+  /** An A2A client's handoff; its card shows the draft to every viewer. */
+  | {
+      kind: 'task-proposal';
+      task: string;
+      proposedBy: string;
+      canDecide: boolean;
+    }
   | { kind: 'choices'; choices: string[]; gate: boolean };
 
 // The run or Assistant conversation a tool-approval gate's call is parked on.
@@ -191,6 +210,16 @@ export function rowControl(
   if (!ctx.open) return { kind: 'none' };
   const gate = gateOf(message);
   if (gate !== null) {
+    // The draft is readable below the decide tier; only its answers are not.
+    const proposal = taskProposalOf(message);
+    if (proposal !== null) {
+      return {
+        kind: 'task-proposal',
+        task: proposal.task,
+        proposedBy: proposal.proposedBy,
+        canDecide: ctx.access.canDecide,
+      };
+    }
     if (!ctx.access.canDecide) {
       return {
         kind: 'read-only',
@@ -226,13 +255,15 @@ export function rowControl(
 /** A row control that draws something to answer with. */
 type AnswerControl = Extract<
   RowControl,
-  { kind: 'tool-approval' | 'scope' | 'memory' | 'choices' }
+  { kind: 'tool-approval' | 'scope' | 'memory' | 'task-proposal' | 'choices' }
 >;
 
-/** Whether a row's control draws a gate card or at least one choice button:
- *  the one rule `MessageRow` renders by and the reply box's footer reads. */
+/** Whether a row's control gives this viewer a gate card or at least one
+ *  choice button to answer with: the rule `MessageRow` renders answers by
+ *  and the reply box's footer reads. */
 export function offersAnswer(control: RowControl): control is AnswerControl {
   if (control.kind === 'choices') return control.choices.length > 0;
+  if (control.kind === 'task-proposal') return control.canDecide;
   return (
     control.kind === 'tool-approval' ||
     control.kind === 'scope' ||
@@ -416,7 +447,7 @@ export function refAction(
   }
 }
 
-/** Where a sender's name leads: a run to its chat, a task to its page, anyone else nowhere. */
+/** Where a sender's name leads: a run to its transcript, a task to its page, anyone else nowhere. */
 export function addressAction(
   address: string,
   lookups: Pick<ThreadLookups, 'taskIdOfRun'>
@@ -435,7 +466,7 @@ export function addressAction(
 
 /** The app's navigation verbs a ref needs. */
 export interface RefNavigation {
-  openTask: (taskId: string, tab: 'details' | 'chat', runId?: string) => void;
+  openTask: (taskId: string, tab: 'auto' | 'run', runId?: string) => void;
   openThread: (messageId: string) => void;
   openImpact: (subject: { kind: 'file'; id: string }) => void;
   /** The Docs view on one doc, scrolled to `anchor`'s section when set. */
@@ -444,9 +475,9 @@ export interface RefNavigation {
 
 export function openRefWith(nav: RefNavigation): (action: RefAction) => void {
   return (action) => {
-    if (action.kind === 'task') nav.openTask(action.taskId, 'details');
+    if (action.kind === 'task') nav.openTask(action.taskId, 'auto');
     else if (action.kind === 'run') {
-      nav.openTask(action.taskId, 'chat', action.runId);
+      nav.openTask(action.taskId, 'run', action.runId);
     } else if (action.kind === 'file') {
       nav.openImpact({ kind: 'file', id: action.path });
     } else if (action.kind === 'doc') {

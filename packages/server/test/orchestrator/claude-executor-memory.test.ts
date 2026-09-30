@@ -373,6 +373,8 @@ describe('ClaudeExecutor memory modes', () => {
   it('export: an auto-memory file of a type Dispatch does not know, or any other MEMORY.md, restarts in prompt mode', async () => {
     for (const odd of [
       { path: NATIVE, type: 'AutoMemory', tokens: 10 },
+      // 2.1.283's pinned auto-memory type.
+      { path: NATIVE, type: 'AutoMemPinned', tokens: 10 },
       { path: '/Users/x/.claude/team/notes.md', type: 'TeamMem', tokens: 10 },
       { path: '/repo/MEMORY.md', type: 'Project', tokens: 10 },
     ]) {

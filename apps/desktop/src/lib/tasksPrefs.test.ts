@@ -1,4 +1,5 @@
 import type { TaskDoc } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, it } from 'bun:test';
 
 import {
@@ -36,6 +37,7 @@ function makeTask(status: string, priority = 'none'): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '',
   };

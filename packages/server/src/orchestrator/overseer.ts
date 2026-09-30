@@ -480,7 +480,8 @@ export class OverseerManager {
   }
 
   /**
-   * Decides one queued action, as `actor` (the daemon itself when omitted).
+   * Decides one queued action, as `actor` (the daemon itself when omitted);
+   * `ownerCredential` says whether they answered with the owner's app token.
    *
    * `approve: true` calls the registry's `applyAction` — the only call to it
    * in this class — and folds its real outcome into the transcript: `applied`
@@ -496,7 +497,8 @@ export class OverseerManager {
     conversationId: string,
     actionId: string,
     approve: boolean,
-    actor: string = SYSTEM_ADDRESS
+    actor: string = SYSTEM_ADDRESS,
+    ownerCredential = false
   ): Promise<OverseerRecord> {
     const record = this.get(conversationId);
     // Membership check, not just "is this action pending anywhere": one
@@ -519,7 +521,12 @@ export class OverseerManager {
     // guard: two confirmations racing each other must not both reach apply.
     this.dropPendingAction(conversationId, actionId);
     try {
-      const applied = await this.ctx.registry.applyAction(actionId, { actor });
+      // Only a decide-tier human (or the system) can answer the action's gate.
+      const applied = await this.ctx.registry.applyAction(actionId, {
+        actor,
+        ownerCredential,
+        canDecide: true,
+      });
       this.settleAction(conversationId, applied, 'applied');
     } catch (err) {
       const message = (err as Error).message;

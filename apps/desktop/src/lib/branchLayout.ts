@@ -1,3 +1,4 @@
+import type { StatusModel } from '@dispatch/core/browser';
 import { isDoneStatus } from '@dispatch/core/browser';
 
 import type { DagTask } from './dagLayout';
@@ -301,16 +302,20 @@ function assignLanes(
  * Only real edges count — `blockedBy` ids inside the set, never the task itself — so a caller
  * that filtered a blocker out lays out without throwing. A cycle is tolerated: every task keeps
  * a row, and the path walk only follows downward edges. Identical input gives byte-identical
- * output; row order, the path and the lanes all break ties by `(created, id)`.
+ * output; row order, the path and the lanes all break ties by `(created, id)`. "Done" reads
+ * the project's status model by type, so a custom "Done" or "Canceled" finishes a task.
  */
-export function branchLayout(tasks: DagTask[]): BranchLayout {
+export function branchLayout(
+  tasks: DagTask[],
+  model: StatusModel
+): BranchLayout {
   if (tasks.length === 0) return emptyLayout();
 
   const graph = buildGraph(tasks);
   const ordered = orderRows(tasks, graph);
   const rowOf = new Map(ordered.map((t, row) => [t.id, row]));
 
-  const isDone = (t: DagTask) => isDoneStatus(t.status);
+  const isDone = (t: DagTask) => isDoneStatus(t.status, model);
   const path = longestChain(ordered, rowOf, graph, (t) => !isDone(t));
 
   // The done chain the path grew out of: the longest chain of finished tasks ending at one of

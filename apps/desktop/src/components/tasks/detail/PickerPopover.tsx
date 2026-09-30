@@ -1,6 +1,6 @@
 import { Check } from 'lucide-react';
 import type { ReactNode } from 'react';
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import {
   Command,
@@ -12,7 +12,7 @@ import {
 } from '@/ui/command';
 import { Popover, PopoverContent, PopoverTrigger } from '@/ui/popover';
 
-interface PickerItem {
+export interface PickerItem {
   value: string;
   label: string;
   /** Muted trailing text (a task id); also searched. */
@@ -20,6 +20,25 @@ interface PickerItem {
   glyph?: ReactNode;
   /** The current value — drawn with a trailing check. */
   selected?: boolean;
+}
+
+// The first `limit` items whose label or hint contains every word of `query`.
+function firstMatches(
+  items: PickerItem[],
+  query: string,
+  limit: number
+): PickerItem[] {
+  const words = query
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => w !== '');
+  const out: PickerItem[] = [];
+  for (const item of items) {
+    const hay = `${item.label} ${item.hint ?? ''}`.toLowerCase();
+    if (words.every((w) => hay.includes(w))) out.push(item);
+    if (out.length === limit) break;
+  }
+  return out;
 }
 
 // The searchable picker the rail's free-form properties open (milestone, labels, blockers):
@@ -36,7 +55,8 @@ export function PickerPopover({
   triggerClassName,
   children,
   placeholder,
-  items,
+  items: itemsProp,
+  limit,
   onSelect,
   onCreate,
   emptyLabel = 'No matches.',
@@ -50,7 +70,12 @@ export function PickerPopover({
   /** The trigger's face — a glyph and the current value, or the `Add …` action. */
   children: ReactNode;
   placeholder: string;
-  items: PickerItem[];
+  /** A function is only called once the picker opens — a task picker over a big project
+   * then builds its thousands of rows on intent, not on every render. */
+  items: PickerItem[] | (() => PickerItem[]);
+  /** Caps the rows drawn: the picker then filters itself and shows the first `limit`
+   * matches, so a 2000-task list opens as fast as a short one. */
+  limit?: number;
   onSelect: (value: string) => void;
   /** Offered as `Create "<query>"` when the typed text matches no item. */
   onCreate?: (query: string) => void;
@@ -63,6 +88,16 @@ export function PickerPopover({
   const [localOpen, setLocalOpen] = useState(false);
   const [query, setQuery] = useState('');
   const isOpen = open ?? localOpen;
+  // A Base UI popover costs more to mount than the card or row it sits in, so the picker
+  // starts as a plain trigger and swaps the popover in on hover, focus, click or `open`.
+  const [live, setLive] = useState(false);
+  const refocus = useRef(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!live || !refocus.current) return;
+    refocus.current = false;
+    triggerRef.current?.focus();
+  }, [live]);
   function setOpen(next: boolean) {
     if (!next) setQuery('');
     setLocalOpen(next);
@@ -74,16 +109,47 @@ export function PickerPopover({
     else setQuery('');
   }
   const trimmed = query.trim();
+  const items =
+    typeof itemsProp === 'function' ? (isOpen ? itemsProp() : []) : itemsProp;
+  const shown =
+    limit === undefined ? items : firstMatches(items, trimmed, limit);
   const canCreate =
     onCreate !== undefined &&
     trimmed !== '' &&
     !items.some((item) => item.label.toLowerCase() === trimmed.toLowerCase());
+
+  if (!live && !isOpen) {
+    return (
+      <button
+        type="button"
+        aria-label={triggerLabel}
+        aria-haspopup="dialog"
+        aria-expanded={false}
+        data-slot="picker-trigger"
+        className={triggerClassName}
+        onPointerEnter={() => setLive(true)}
+        onFocus={() => {
+          refocus.current = true;
+          setLive(true);
+        }}
+        onPointerDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          setLive(true);
+          setOpen(true);
+        }}
+      >
+        {children}
+      </button>
+    );
+  }
 
   return (
     <Popover open={isOpen} onOpenChange={setOpen}>
       <PopoverTrigger
         render={
           <button
+            ref={triggerRef}
             type="button"
             aria-label={triggerLabel}
             data-slot="picker-trigger"
@@ -100,7 +166,7 @@ export function PickerPopover({
         className="w-64 p-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <Command>
+        <Command shouldFilter={limit === undefined}>
           <CommandInput
             placeholder={placeholder}
             value={query}
@@ -109,7 +175,7 @@ export function PickerPopover({
           <CommandList className="max-h-64 p-1">
             {!canCreate && <CommandEmpty>{emptyLabel}</CommandEmpty>}
             <CommandGroup>
-              {items.map((item) => (
+              {shown.map((item) => (
                 <CommandItem
                   key={item.value}
                   value={`${item.label} ${item.hint ?? ''}`}

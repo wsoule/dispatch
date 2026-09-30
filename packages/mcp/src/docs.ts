@@ -40,8 +40,8 @@ interface SeenRev {
   hash: string;
 }
 
-// What this server last handed the agent per doc, so a whole-body save against
-// that revision carries its body hash (spec "Bases").
+// What this server last handed the agent per doc id and written handle, so a
+// whole-body save against that revision carries its body hash (spec "Bases").
 type Seen = Map<string, SeenRev>;
 
 type CallOutcome =
@@ -108,7 +108,7 @@ function renderDocRead(r: DocRead): string {
 // the writer's own text.
 function saveLine(r: DocSaveResult): string {
   const out = [
-    `${r.status} doc ${r.handle} rev ${r.rev.n ?? '-'} (${r.rev.id})`,
+    `${r.status} doc ${handleOf(r.doc)} rev ${r.rev.n ?? '-'} (${r.rev.id})`,
   ];
   for (const s of r.rebased?.since ?? [])
     out.push(
@@ -301,7 +301,7 @@ export function registerDocTools(server: McpServer, rootDir: string): void {
       if (!r.res.ok) return toolError(await messagingErrorText(r.res));
       const read = (await r.res.json()) as DocRead;
       if (args.rev === undefined)
-        remember(seen, [read.doc.id, read.doc.handle, handleOf(read.doc)], {
+        remember(seen, [read.doc.id, handleOf(read.doc)], {
           id: read.rev.id,
           n: read.rev.n,
           hash: read.rev.hash,
@@ -445,7 +445,7 @@ export function registerDocTools(server: McpServer, rootDir: string): void {
       const result = (await r.res.json()) as DocSaveResult;
       remember(
         seen,
-        [result.doc.id, result.handle, handleOf(result.doc)],
+        [result.doc.id, handleOf(result.doc)],
         result.mine ?? result.rev
       );
       return text(saveLine(result));

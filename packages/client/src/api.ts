@@ -8,6 +8,8 @@ import type {
   DocLink,
   DocLinking,
   DocOp,
+  DocProposal,
+  DocProposalView,
   DocRead,
   DocRecord,
   DocRevisionInfo,
@@ -21,18 +23,28 @@ import type {
   FindingRecommendation,
   FindingSeverity,
   FindingVerdict,
+  LabelDefinition,
   LedgerEntry,
   LinkRel,
   ModelConfig,
   MutationEvidence,
+  Person,
   Priority,
+  ProposalState,
+  RunStep,
+  TaskComment,
   TaskDoc,
+  TaskListItem,
   TaskRisk,
   UpdatePatch,
 } from '@dispatch/core';
 // Re-exported (not just imported) so a consumer of this package can name
 // these types directly, the same way it already can with `ApiClient`.
 export type {
+  CommentPatch,
+  LabelDefinition,
+  Person,
+  TaskComment,
   Finding,
   FindingRecommendation,
   FindingSeverity,
@@ -170,13 +182,19 @@ export interface RunMeta {
   model?: string;
   /** The reasoning effort this run started at; absent is the model default. */
   effort?: EffortLevel;
-  /** ActorRef of the human who dispatched this run — see the server's RunMeta. */
+  /** ActorRef of the human the run is for (who dispatched it, or started its
+   *  fan-out) — see the server's RunMeta. */
   dispatchedBy?: string;
   // How many sub-agents this run's agent has fanned out into and where they
   // stand, kept live by the daemon from the run's `agent` entries and rebuilt
   // from them on replay. Absent until the first sub-agent is spawned. Mirrors
   // RunMeta.subagents / SubagentSummary in @dispatch/core.
   subagents?: SubagentSummary;
+  // What a live run's agent is doing, in words ("Editing src/a.ts"), and when
+  // it said so — the step a list shows before any `run.log` event arrives.
+  // Absent before the first step and once the run is terminal. Mirrors
+  // RunMeta.lastStep; label new entries with core's runStepFromEntry.
+  lastStep?: RunStep;
   // Phase 5 P1: set once a run has been reviewed (merge/discard/pr) or its PR
   // has merged — mirrors RunMeta's own one-way markers in
   // packages/server/src/orchestrator/types.ts.
@@ -629,6 +647,30 @@ export interface StartReviewInput {
   runId?: string;
 }
 
+// Mirrors GET /api/people: everyone pickers offer, and the caller's own ref
+// (what the legacy bare `human` assignee means).
+export interface PeopleSnapshot {
+  me: string;
+  /** The daemon's own human, whom a fan-out takes a bare `human` assignee to
+   *  mean (core's fanoutHolder). Absent from an older daemon. */
+  local?: string;
+  people: Person[];
+}
+
+// Mirrors GET /api/labels (and PUT's answer): the label registry, whose
+// colors every label chip draws.
+export interface LabelsSnapshot {
+  labels: LabelDefinition[];
+}
+
+// Mirrors POST /api/tasks/:id/comments's body. The server credits the
+// caller and stamps the time; `runId` lets an agent name its run.
+export interface NewCommentInput {
+  body: string;
+  parentId?: string | null;
+  runId?: string;
+}
+
 // Mirrors POST /api/tasks/:id/amend's body — a correction to a task's spec,
 // what changes and why, recorded in the task's `## Amendments` section.
 export interface AmendTaskInput {
@@ -795,6 +837,14 @@ export type GateData =
       task: string;
       proposedBy: string;
       message: string;
+    }
+  | {
+      type: 'doc';
+      // A proposed edit to an accepted doc; the text stays in docs.db (system-only gate).
+      doc: string; // doc-<ulid>
+      proposal: string; // rev-<ulid>
+      taskId?: string;
+      runId?: string;
     };
 
 // Structural mirrors of @dispatch/memory's views and the memory routes'
@@ -895,6 +945,21 @@ export interface LedgerImportReport {
   at: string;
 }
 
+/** Mirrors ClaudeImportReport in packages/server/src/memory/claudeImport.ts. */
+export interface ClaudeImportReport {
+  state: 'complete' | 'failed' | 'unconfirmed';
+  /** The directory read, or null when nothing was. */
+  source: string | null;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  duplicates: number;
+  tombstoned: number;
+  problems: string[];
+  /** Where the notes may be, when none were found. */
+  candidates: string[];
+}
+
 export interface MemoryHealth {
   available: boolean;
   /** Why memory.db would not open, when it did not. */
@@ -903,12 +968,24 @@ export interface MemoryHealth {
   entries: number;
   openProposals: number;
   ledgerImport: LedgerImportReport | null;
+  /** The last import's parity block, as the CLI prints it. */
+  ledgerImportText: string | null;
   configWarnings: { key: string; message: string }[];
   lastDecayAt: string | null;
   /** The caller's own personal store; null when the caller acts for no one. */
   personal: { available: boolean; reason: string | null } | null;
   /** The caller's pinned entries alone exceed the index budget. */
   pinnedOverflow: boolean;
+  /** Why runs cannot use the Claude export (its preflight failed), or null. */
+  exportBlocked: string | null;
+  /** The owner's Claude-notes import; null for anyone but the daemon's own human. */
+  claudeImport: {
+    state: 'complete' | 'failed' | 'unconfirmed' | 'running' | null;
+    source: string | null;
+    candidates: string[];
+    /** Why the last import failed or skipped files. */
+    problems: string[];
+  } | null;
 }
 
 /** `proposed` waits on a decision; `active` or `retired` took effect. */
@@ -1063,7 +1140,11 @@ export interface DocListParams {
 }
 
 export type ServerEvent =
-  | { type: 'task.changed' }
+  // `ids`, when set, names every task the change touched; absent means
+  // "anything may have changed" — refetch the list.
+  | { type: 'task.changed'; ids?: string[] }
+  // A task's comments changed; patch that thread, never the board.
+  | { type: 'comment.changed'; taskId: string; commentIds: string[] }
   | { type: 'hello'; version: string }
   | { type: 'run.changed' }
   | { type: 'run.log'; runId: string; entry: NormalizedEntry }
@@ -1097,6 +1178,8 @@ export type ServerEvent =
   // A Linear sync pass finished, carrying its own summary. Mirrors
   // packages/server/src/events.ts exactly.
   | { type: 'linear.changed'; summary: LinearSyncSummary }
+  // A long Linear pass (an import) moved on. Mirrors the server's event.
+  | { type: 'linear.progress'; progress: LinearProgress }
   // The brain-dump inbox changed — captured, retyped, dismissed or converted.
   | { type: 'inbox.changed' }
   // A overseer conversation's record changed (turn settled, action queued or
@@ -1214,6 +1297,8 @@ export interface A2AListenerStatus {
   settings: A2AListenerSettings;
   // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
   teamTls: { certPath: string; keyPath: string } | null;
+  // A free port for a listener whose settings name none; null once they do.
+  suggestedPort: number | null;
 }
 
 // One row of GET /api/a2a/clients: the clients row plus its agent's status.
@@ -1397,6 +1482,8 @@ export interface DraftRecord {
   error: string | null;
   createdAt: string;
   updatedAt: string;
+  /** The container the draft was started in; the saved task's parent. */
+  parent?: string;
 }
 
 // Mirrors OverseerState in packages/server/src/orchestrator/overseer.ts:
@@ -1559,10 +1646,18 @@ export interface EpicSession {
   /** `null` = no run ceiling. */
   maxRuns: number | null;
   startedAt: string;
+  /** The `human:` ref that started it; its fan-out never starts a teammate's
+   *  task. Null: the local human. Readers still default it for older daemons. */
+  startedBy: string | null;
+  /** What it covers: the container's whole Flight Plan, or only its direct
+   *  children (a session from before plan-wide fan-outs). Readers still
+   *  default an older daemon's missing one to `plan`. */
+  scope: 'plan' | 'direct';
   updatedAt: string;
   completedAt?: string;
-  /** The human who started the session; its auto-fill runs act for them. */
-  startedBy?: string;
+  /** The human its auto-fill runs act for; absent when the shared agentToken
+   *  started it. */
+  operator?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -1806,6 +1901,13 @@ export interface ReadinessReading {
   splitProbability: number;
 }
 
+/** One ready task as `GET /api/tasks/ready?fields=id` sends it: the id, plus
+ * its readiness reading when the daemon has judged it. */
+export interface ReadyTaskRef {
+  id: string;
+  readiness?: ReadinessReading;
+}
+
 /** What the triage judged one capture to be — mirrors InboxTriage in
  * packages/server/src/judgments/inboxTriage.ts. */
 export interface InboxTriage {
@@ -1983,6 +2085,9 @@ export interface TeamTokenHolder {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  /** A token for the operator's handle, issued before that was refused; it
+   *  authenticates no one. Absent from older daemons. */
+  unusable?: boolean;
 }
 
 /** A just-issued teammate credential: the only response that carries one. */
@@ -2195,7 +2300,10 @@ export interface LinearStatus {
   enabled: boolean;
   connected: boolean;
   keySource: 'project' | 'env' | 'global' | null;
+  /** The primary linked team. */
   teamId: string | null;
+  /** Every linked team, primary first. Absent from older daemons. */
+  teamIds?: string[];
   direction: 'both' | 'pull' | 'push';
   intervalSec: number;
   statusMap: Record<string, string>;
@@ -2205,6 +2313,36 @@ export interface LinearStatus {
   lastError: string | null;
   lastSummary: LinearSyncSummary | null;
   syncing: boolean;
+  /** Field conflicts resolved since the link. Absent from older daemons. */
+  conflicts?: { total: number; recent: LinearConflict[] };
+  /** Set while an import is running. */
+  progress?: LinearProgress | null;
+  /** How changes arrive: a webhook, or polling. */
+  webhook?: LinearWebhookStatus;
+}
+
+/** One field both sides changed, and whose edit was kept. */
+export interface LinearConflict {
+  taskId: string;
+  field: string;
+  kept: 'local' | 'remote';
+  at: string;
+}
+
+/** Where a long pass has got to; `total` is null while unknown. */
+export interface LinearProgress {
+  phase: 'containers' | 'issues' | 'applying';
+  done: number;
+  total: number | null;
+}
+
+// Mirrors LinearWebhookStatus in packages/server/src/linear/sync.ts.
+export interface LinearWebhookStatus {
+  state: 'active' | 'polling' | 'error' | 'off';
+  url: string | null;
+  lastDeliveryAt: string | null;
+  error: string | null;
+  pollSec: number;
 }
 
 export interface LinearTeam {
@@ -2408,6 +2546,19 @@ function docPath(ref: string): string {
   return `/api/docs/${encodeURIComponent(ref).replace(/^%7E/, '~')}`;
 }
 
+// A daemon older than `?fields=id` ignores it and sends whole docs, which
+// carry the id under `meta`; read it from either shape.
+type ReadyIdReply =
+  | ReadyTaskRef
+  | (TaskListItem & { readiness?: ReadinessReading });
+
+function toReadyTaskRef(item: ReadyIdReply): ReadyTaskRef {
+  if ('id' in item) return item;
+  return item.readiness === undefined
+    ? { id: item.meta.id }
+    : { id: item.meta.id, readiness: item.readiness };
+}
+
 // The base path a ReviewTarget's comment routes hang off — /api/runs/:id
 // or /api/prs/:number, matching the server's own run- vs PR-keyed split.
 // Shared by every fetch/add/resolve/reply call below so a target's routing
@@ -2446,12 +2597,17 @@ function workspaceQuery(path: string, scope: WorkspaceScope): string {
   return params.toString();
 }
 
-export function taskQueryString(filter: TaskFilter = {}): string {
+// `metaOnly` appends `fields=meta`, the body-less projection.
+export function taskQueryString(
+  filter: TaskFilter = {},
+  metaOnly = false
+): string {
   const params = new URLSearchParams();
   if (filter.status !== undefined) params.set('status', filter.status);
   if (filter.kind !== undefined) params.set('kind', filter.kind);
   if (filter.parent !== undefined) params.set('parent', filter.parent);
   if (filter.archived === true) params.set('archived', '1');
+  if (metaOnly) params.set('fields', 'meta');
   return params.size > 0 ? `?${params.toString()}` : '';
 }
 
@@ -2717,12 +2873,25 @@ export interface ApiClient {
   /** The board syncer's last attempt plus live pending counts — the sync chip's data source. */
   fetchSyncStatus(): Promise<SyncStatus>;
   fetchTasks(filter?: TaskFilter): Promise<TaskDoc[]>;
+  /** `fetchTasks` without bodies (`fields=meta`) — for list views, which
+   * fetch one task's body through `fetchTask` only when they show it. */
+  fetchTaskList(filter?: TaskFilter): Promise<TaskListItem[]>;
   /** Each doc carries `readiness` when the daemon has a judgment client. */
   fetchReadyTasks(): Promise<(TaskDoc & { readiness?: ReadinessReading })[]>;
+  /** `fetchReadyTasks` without bodies (`fields=meta`). */
+  fetchReadyTaskList(): Promise<
+    (TaskListItem & { readiness?: ReadinessReading })[]
+  >;
+  /** The ready queue as ids and readings only (`fields=id`), for a client
+   * that already holds the task list. Judges stale tasks like the others. */
+  fetchReadyTaskIds(): Promise<ReadyTaskRef[]>;
   /** The cached readiness readings by task id, for the board — no judging
-   * happens here; `fetchReadyTasks` is what refreshes stale ones. */
+   * happens here; the ready-queue fetches are what refresh stale ones. */
   fetchReadiness(): Promise<Record<string, ReadinessReading>>;
   fetchTask(id: string): Promise<TaskDoc>;
+  /** File a task under a container with `parent`. A legacy `milestone` still
+   * works — the daemon resolves the project/milestone it names to `parent`
+   * (400 when none matches) — but is never stored. */
   createTask(input: CreateInput): Promise<TaskDoc>;
   updateTask(id: string, patch: UpdatePatch): Promise<TaskDoc>;
   amendTask(id: string, input: AmendTaskInput): Promise<TaskDoc>;
@@ -2735,11 +2904,35 @@ export interface ApiClient {
   /** Whether this daemon's machine has the blob (a HEAD), so Tauri can ask
    * before handing the path to the OS. */
   hasTaskAttachment(id: string, name: string): Promise<boolean>;
+  /** The people registry (team roster + config `people`) and who "me" is. */
+  fetchPeople(): Promise<PeopleSnapshot>;
+  /** The label registry: each label's color and external link. */
+  fetchLabels(): Promise<LabelsSnapshot>;
+  /** Sets one label's color (`null` clears it); answers the new registry. */
+  setLabelColor(name: string, color: string | null): Promise<LabelsSnapshot>;
+  /** A task's comment thread, oldest first. */
+  fetchTaskComments(id: string): Promise<TaskComment[]>;
+  addTaskComment(id: string, input: NewCommentInput): Promise<TaskComment>;
+  /** Author only (403 otherwise). */
+  updateTaskComment(
+    id: string,
+    commentId: string,
+    patch: { body: string }
+  ): Promise<TaskComment>;
+  /** Author only; removes its replies too, and 409s while others replied. */
+  deleteTaskComment(
+    id: string,
+    commentId: string
+  ): Promise<{ removed: string[] }>;
   /** Turns a sentence into filter clauses the Tasks page applies as chips. */
   aiFilterTasks(sentence: string): Promise<AiTaskFilterResult>;
   // Starts a background planner turn and returns immediately with a `running`
   // `DraftRecord`; watch it settle via `fetchDrafts` or `draft.changed`.
-  draftTask(prompt: string): Promise<DraftRecord>;
+  // `parent` is the container the saved task goes under.
+  draftTask(
+    prompt: string,
+    options?: { parent?: string | null }
+  ): Promise<DraftRecord>;
   // Every draft currently held in memory (running, ready, or failed — until
   // dismissed), newest first.
   fetchDrafts(): Promise<DraftRecord[]>;
@@ -3324,6 +3517,13 @@ export interface ApiClient {
   importLedger(opts?: {
     dryRun?: boolean;
   }): Promise<{ report: LedgerImportReport; text: string }>;
+  /** The daemon's own human only: re-runs the import of their Claude notes;
+   *  `from` (absolute) or `none` answers an unconfirmed one. */
+  importClaude(opts?: {
+    from?: string;
+    none?: boolean;
+    dryRun?: boolean;
+  }): Promise<{ report: ClaudeImportReport }>;
   /** A save to shared memory by anyone but a deciding human is a proposal.
    *  A retry with the same `opts.idempotencyKey` replays the first result. */
   saveMemory(
@@ -3363,7 +3563,7 @@ export interface ApiClient {
     base: MemoryEntryView | null;
     current: MemoryEntryView | null;
   }>;
-  /** The caller's own personal activity; the last day when `since` is absent. */
+  /** The caller's own personal activity, oldest first; the last day when `since` is absent. */
   memoryActivity(since?: string): Promise<{ activity: MemoryActivityRow[] }>;
   memoryIdentity(): Promise<{
     identity: string;
@@ -3421,6 +3621,8 @@ export interface ApiClient {
   markDocReviewed(ref: string): Promise<DocRecord>;
   sealDoc(ref: string): Promise<DocRecord>;
   revertDoc(ref: string, rev: string | number): Promise<DocSaveResult>;
+  /** Copies a personal doc's head into a new team draft (its owner only). */
+  promoteDoc(ref: string): Promise<DocSaveResult>;
   deleteDoc(ref: string): Promise<void>;
   listDocRevisions(
     ref: string,
@@ -3449,6 +3651,13 @@ export interface ApiClient {
     opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
   ): Promise<{ hits: DocHit[] }>;
   docsHealth(): Promise<DocsHealth>;
+  /** Proposals to accepted docs the caller may see; `doc` narrows to one doc. */
+  listDocProposals(params?: {
+    doc?: string;
+    state?: ProposalState[];
+  }): Promise<{ proposals: DocProposal[] }>;
+  /** A proposal's text, its diff against its base, and whether it merges onto the head. */
+  getDocProposal(rev: string): Promise<DocProposalView>;
   a2aListener(): Promise<A2AListenerStatus>;
   /** Writes the listener settings and (re)opens it (operator tier). */
   setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
@@ -3548,7 +3757,14 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
     fetchSyncStatus: () => request(target, '/api/sync'),
     fetchTasks: (filter = {}) =>
       request(target, `/api/tasks${taskQueryString(filter)}`),
+    fetchTaskList: (filter = {}) =>
+      request(target, `/api/tasks${taskQueryString(filter, true)}`),
     fetchReadyTasks: () => request(target, '/api/tasks/ready'),
+    fetchReadyTaskList: () => request(target, '/api/tasks/ready?fields=meta'),
+    fetchReadyTaskIds: async () =>
+      (await request<ReadyIdReply[]>(target, '/api/tasks/ready?fields=id')).map(
+        toReadyTaskRef
+      ),
     fetchReadiness: () => request(target, '/api/tasks/readiness'),
     fetchTask: (id) => request(target, `/api/tasks/${id}`),
     createTask: (input) =>
@@ -3563,6 +3779,32 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody(input),
       }),
+    fetchPeople: () => request(target, '/api/people'),
+    fetchLabels: () => request(target, '/api/labels'),
+    setLabelColor: (name, color) =>
+      request(target, '/api/labels', {
+        method: 'PUT',
+        ...jsonBody({ name, color }),
+      }),
+    fetchTaskComments: (id) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`),
+    addTaskComment: (id, input) =>
+      request(target, `/api/tasks/${encodeURIComponent(id)}/comments`, {
+        method: 'POST',
+        ...jsonBody(input),
+      }),
+    updateTaskComment: (id, commentId, patch) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'PATCH', ...jsonBody(patch) }
+      ),
+    deleteTaskComment: (id, commentId) =>
+      request(
+        target,
+        `/api/tasks/${encodeURIComponent(id)}/comments/${encodeURIComponent(commentId)}`,
+        { method: 'DELETE' }
+      ),
     uploadTaskAttachments: (id, files) => {
       const form = new FormData();
       for (const file of files) form.append('files', file, file.name);
@@ -3601,10 +3843,10 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ sentence }),
       }),
-    draftTask: (prompt) =>
+    draftTask: (prompt, { parent = null } = {}) =>
       request(target, '/api/tasks/draft', {
         method: 'POST',
-        ...jsonBody({ prompt }),
+        ...jsonBody(parent === null ? { prompt } : { prompt, parent }),
       }),
     fetchDrafts: () => request(target, '/api/tasks/drafts'),
     fetchDraft: (id) => request(target, `/api/tasks/drafts/${id}`),
@@ -4235,6 +4477,16 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         `/api/memory/import/ledger${opts.dryRun === true ? '?dryRun=1' : ''}`,
         { method: 'POST' }
       ),
+    importClaude: (opts = {}) =>
+      request(
+        target,
+        `/api/memory/import/claude${queryString({
+          from: opts.from,
+          none: opts.none === true ? true : undefined,
+          dryRun: opts.dryRun === true ? true : undefined,
+        })}`,
+        { method: 'POST' }
+      ),
     saveMemory: (input, opts) =>
       request(target, '/api/memory', {
         method: 'POST',
@@ -4352,6 +4604,8 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
         method: 'POST',
         ...jsonBody({ rev }),
       }),
+    promoteDoc: (ref) =>
+      request(target, `${docPath(ref)}/promote`, { method: 'POST' }),
     // send(), not request(): the server answers 204 with no body.
     deleteDoc: async (ref) => {
       await send(target, docPath(ref), { method: 'DELETE' });
@@ -4403,6 +4657,16 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       return request(target, `/api/docs/search?${params.toString()}`);
     },
     docsHealth: () => request(target, '/api/docs/health'),
+    listDocProposals: (params = {}) => {
+      const query = new URLSearchParams();
+      if (params.doc !== undefined) query.set('doc', params.doc);
+      if (params.state !== undefined)
+        query.set('state', params.state.join(','));
+      const qs = query.toString();
+      return request(target, `/api/docs/proposals${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDocProposal: (rev) =>
+      request(target, `/api/docs/proposals/${encodeURIComponent(rev)}`),
     a2aListener: () => request(target, '/api/a2a/listener'),
     setA2AListener: (settings) =>
       request(target, '/api/a2a/listener', {

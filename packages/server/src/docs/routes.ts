@@ -1,9 +1,11 @@
 import type {
+  DocSaveResult,
   DocScope,
   DocStatus,
   LinkRel,
   LinkTarget,
   LinkTargetType,
+  ProposalState,
 } from '@dispatch/core';
 import {
   DOC_STATUSES,
@@ -103,6 +105,41 @@ function status(value: unknown, field: string): DocStatus {
     throw invalid(field, 'expected draft, accepted or archived');
   }
   return text as DocStatus;
+}
+
+const PROPOSAL_STATES: readonly ProposalState[] = [
+  'open',
+  'approved',
+  'rejected',
+  'expired',
+  'withdrawn',
+  'failed',
+];
+
+// `?state=open,approved`: the proposal states to list, or all of them.
+function proposalStates(value: string | null): ProposalState[] | undefined {
+  if (value === null || value === '') return undefined;
+  return value.split(',').map((raw) => {
+    if (!PROPOSAL_STATES.includes(raw as ProposalState)) {
+      throw invalid('state', `expected one of ${PROPOSAL_STATES.join(', ')}`);
+    }
+    return raw as ProposalState;
+  });
+}
+
+// A proposed write answers with its gate, raised here if the proposal has none.
+async function withGate(
+  docs: DocsService,
+  result: DocSaveResult
+): Promise<DocSaveResult> {
+  if (
+    result.status !== 'proposed' ||
+    result.proposal === undefined ||
+    result.gate !== undefined
+  )
+    return result;
+  const gate = await docs.ensureGate(result.proposal);
+  return gate === null ? result : { ...result, gate };
 }
 
 function int(url: URL, name: string): number | undefined {
@@ -343,6 +380,13 @@ export async function handleDocsRoute(
         return jsonResponse({ docs: docs.linking(actor, target) });
       }
       if (head === 'health') return jsonResponse(docs.health(actor));
+      if (head === 'proposals') {
+        const proposals = docs.proposals(actor, {
+          doc: url.searchParams.get('doc') ?? undefined,
+          state: proposalStates(url.searchParams.get('state')),
+        });
+        return jsonResponse({ proposals });
+      }
       if (head === 'index') {
         const taskId = url.searchParams.get('taskId');
         if (taskId === null || taskId === '')
@@ -353,6 +397,9 @@ export async function handleDocsRoute(
       }
     }
 
+    if (head === 'proposals' && rest.length === 2 && method === 'GET') {
+      return jsonResponse(docs.proposal(actor, decode(rest[1], 'rev')));
+    }
     const ref = decode(head, 'doc');
     if (rest.length === 1) {
       if (method === 'GET') {
@@ -382,12 +429,15 @@ export async function handleDocsRoute(
       return await write(async () => {
         const b = await body();
         return jsonResponse(
-          docs.saveBody(actor, ref, {
-            baseRev: revRef(b.baseRev, 'baseRev'),
-            baseHash: optStr(b.baseHash, 'baseHash'),
-            body: str(b.body, 'body'),
-            title: optStr(b.title, 'title'),
-          })
+          await withGate(
+            docs,
+            docs.saveBody(actor, ref, {
+              baseRev: revRef(b.baseRev, 'baseRev'),
+              baseHash: optStr(b.baseHash, 'baseHash'),
+              body: str(b.body, 'body'),
+              title: optStr(b.title, 'title'),
+            })
+          )
         );
       });
     }
@@ -397,13 +447,16 @@ export async function handleDocsRoute(
           return await write(async () => {
             const b = await body();
             return jsonResponse(
-              docs.edit(actor, ref, {
-                ops: parseOps(b.ops),
-                baseRev:
-                  b.baseRev === undefined
-                    ? undefined
-                    : revRef(b.baseRev, 'baseRev'),
-              })
+              await withGate(
+                docs,
+                docs.edit(actor, ref, {
+                  ops: parseOps(b.ops),
+                  baseRev:
+                    b.baseRev === undefined
+                      ? undefined
+                      : revRef(b.baseRev, 'baseRev'),
+                })
+              )
             );
           });
         case 'status':
@@ -420,7 +473,9 @@ export async function handleDocsRoute(
         case 'revert':
           return await write(async () => {
             const rev = revRef((await body()).rev, 'rev');
-            return jsonResponse(docs.revert(actor, ref, rev));
+            return jsonResponse(
+              await withGate(docs, docs.revert(actor, ref, rev))
+            );
           });
         case 'links':
           return await write(async () => {
@@ -431,6 +486,11 @@ export async function handleDocsRoute(
               replace: b.replace === true,
             });
             return jsonResponse({ links: linked });
+          });
+        case 'promote':
+          return await write(async () => {
+            await body();
+            return jsonResponse(docs.promote(actor, ref), 201);
           });
         default:
           return null;

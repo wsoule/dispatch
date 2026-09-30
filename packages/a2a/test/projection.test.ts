@@ -1,7 +1,10 @@
 import { Task } from '@a2a-js/sdk';
+import { CANONICAL_STATUSES } from '@dispatch/core';
 import { describe, expect, it } from 'bun:test';
 
 import { decideState, project, projectionKey } from '../src/projection.js';
+import { handoffStatuses, namedStatusVocabulary } from '../src/statuses.js';
+import type { HandoffPhase } from '../src/statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from '../src/uris.js';
 import { CLIENT, facts, msg, ROOT } from './facts.js';
 
@@ -24,12 +27,30 @@ const close = (reason: string) =>
     body: `Closed: ${reason}`,
     data: { type: 'x-closed', reason },
   });
-const handoffTask = (status: string, approved = true) => ({
+// The built-in names plus one custom status, which counts as in progress.
+const PHASES = handoffStatuses(
+  namedStatusVocabulary([...CANONICAL_STATUSES, 'qa'])
+);
+const handoffTask = (
+  status: string,
+  approved = true,
+  phase: HandoffPhase = PHASES.phase(status)
+) => ({
   id: 't-a1b2c3',
   title: 'Rate-limit uploads',
   status,
+  phase,
   approved,
 });
+it('reports an ask whose task was dropped with the drop sentence, not a late answer', () => {
+  const decision = decideState(facts({ recipientTaskDropped: true, answer }));
+  expect(decision.state).toBe('FAILED');
+  expect(decision.status).toMatchObject({
+    kind: 'fixed',
+    text: 'The task this was asked of was dropped.',
+  });
+});
+
 const view = {
   client: CLIENT,
   extensions: new Set<never>(),
@@ -37,6 +58,29 @@ const view = {
   historyLength: null,
   includeArtifacts: true,
 };
+
+it('reports an approved handoff dropped later with the drop sentence, not its acceptance', () => {
+  const accepted = msg({
+    from: 'agent:dispatch',
+    kind: 'answer',
+    choice: 'accept',
+    body: 'Accepted as t-a1b2c3.',
+    replyTo: 'm-root',
+  });
+  const decision = decideState(
+    facts({
+      skill: 'handoff',
+      task: handoffTask('dropped'),
+      dropped: 'other',
+      answer: accepted,
+    })
+  );
+  expect(decision.state).toBe('REJECTED');
+  expect(decision.status).toMatchObject({
+    kind: 'fixed',
+    text: 'The project owner dropped this task.',
+  });
+});
 
 describe('decideState — one test per row of spec:400-413', () => {
   it.each([
@@ -146,6 +190,33 @@ describe('decideState — one test per row of spec:400-413', () => {
       facts({ skill: 'handoff', task: handoffTask('qa') }),
       9,
       'WORKING',
+    ],
+    [
+      '6 landed under a custom completed status',
+      facts({
+        skill: 'handoff',
+        task: handoffTask('Done', true, 'landed'),
+      }),
+      6,
+      'COMPLETED',
+    ],
+    [
+      '9 a custom started status',
+      facts({
+        skill: 'handoff',
+        task: handoffTask('In Progress', true, 'working'),
+      }),
+      9,
+      'WORKING',
+    ],
+    [
+      '10 approved into a custom unstarted status',
+      facts({
+        skill: 'handoff',
+        task: handoffTask('Todo', true, 'queued'),
+      }),
+      10,
+      'SUBMITTED',
     ],
     [
       '10 approved, not yet scheduled',

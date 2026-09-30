@@ -10,7 +10,11 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { materializeReceipts, restoreReceipts } from '../src/receipts.js';
+import {
+  materializeReceipts,
+  receiptSteps,
+  restoreReceipts,
+} from '../src/receipts.js';
 import { initProjectStores, openProjectStores } from '../src/storeBackend.js';
 import type { ProjectStores } from '../src/storeBackend.js';
 
@@ -208,6 +212,24 @@ describe('materializeReceipts', () => {
     ).toBe(true);
   });
 
+  it('leaves .dispatch/docs alone, so an older build never prunes team docs', () => {
+    const stores = projectStores('project');
+    seed(stores);
+    const dir = receiptsDir();
+    mkdirSync(join(dir, '.dispatch', 'docs'), { recursive: true });
+    writeFileSync(join(dir, '.dispatch', 'docs', 'x.md'), 'a doc\n');
+
+    const report = materializeReceipts(stores, dir);
+
+    expect(readFileSync(join(dir, '.dispatch', 'docs', 'x.md'), 'utf8')).toBe(
+      'a doc\n'
+    );
+    expect(report.removed).toEqual([]);
+    expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain(
+      '.dispatch/docs/<handle>.md'
+    );
+  });
+
   it('names a row it cannot read instead of failing the whole export', () => {
     const stores = projectStores('project');
     seed(stores);
@@ -359,6 +381,91 @@ describe('materializeReceipts', () => {
     expect(() => materializeReceipts(files, receiptsDir())).toThrow(
       /files backend/
     );
+  });
+});
+
+describe('a scoped pass', () => {
+  it('writes and prunes only the tasks it names, and no records', () => {
+    const stores = projectStores('project');
+    const ids = seed(stores);
+    const dir = receiptsDir();
+    materializeReceipts(stores, dir);
+    const epicFile = `.dispatch/tasks/${ids.epicId}-storage-spine.md`;
+    const taskFile = `.dispatch/tasks/${ids.taskId}-receipts-exporter.md`;
+    const records = stores.records;
+    if (records === null) throw new Error('expected a database');
+
+    stores.tasks.update(ids.epicId, { status: 'review' });
+    stores.tasks.remove(ids.taskId);
+    const added = stores.tasks.create({ kind: 'task', title: 'Named later' });
+    records.ledger.add({
+      kind: 'decision',
+      title: 'Not this pass',
+      detail: 'Records wait for a pass that asks for them.',
+      authoredBy: 'tester',
+    });
+
+    const report = materializeReceipts(stores, dir, {
+      taskIds: [ids.taskId, added.meta.id],
+      records: false,
+    });
+
+    // The epic changed too, but was not named.
+    expect(report.changed).toEqual([
+      `.dispatch/tasks/${added.meta.id}-named-later.md`,
+    ]);
+    expect(report.removed).toEqual([taskFile]);
+    expect(existsSync(join(dir, epicFile))).toBe(true);
+    expect(report.records).toBe(false);
+    expect(report.tally.tasks).toBe(2);
+    expect(
+      readFileSync(join(dir, '.dispatch', 'ledger.jsonl'), 'utf8')
+    ).not.toContain('Not this pass');
+
+    // A full pass then catches up everything the scoped one left alone.
+    const full = materializeReceipts(stores, dir);
+    expect(full.changed).toEqual(
+      expect.arrayContaining([epicFile, '.dispatch/ledger.jsonl'])
+    );
+  });
+
+  it('keeps the receipt of a named task it can no longer read', () => {
+    const stores = projectStores('project');
+    const ids = seed(stores);
+    const dir = receiptsDir();
+    materializeReceipts(stores, dir);
+    const records = stores.records;
+    if (records === null) throw new Error('expected a database');
+    records.db
+      .prepare('UPDATE tasks SET priority = ? WHERE id = ?')
+      .run('extremely-high', ids.taskId);
+
+    const report = materializeReceipts(stores, dir, {
+      taskIds: [ids.taskId],
+      records: false,
+    });
+
+    expect(report.removed).toEqual([]);
+    expect(report.problems.map((p) => p.detail)).toEqual([
+      expect.stringContaining(ids.taskId),
+    ]);
+  });
+});
+
+describe('receiptSteps', () => {
+  it('pauses after each task and ends with the same export', () => {
+    const stores = projectStores('project');
+    seed(stores);
+    const dir = receiptsDir();
+    const steps = receiptSteps(stores, dir);
+    let pauses = 0;
+    let step = steps.next();
+    for (; step.done !== true; step = steps.next()) pauses += 1;
+
+    // Two tasks and one run's evidence, one pause each.
+    expect(pauses).toBe(3);
+    expect(step.value.tally.tasks).toBe(2);
+    expect(materializeReceipts(stores, dir).changed).toEqual([]);
   });
 });
 

@@ -1,62 +1,36 @@
-import type { ApiClient, RunMeta } from '@dispatch/client';
-import type {
-  TaskAttachment,
-  TaskDoc,
-  UpdatePatch,
-} from '@dispatch/core/browser';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, fireEvent, render, screen } from '@testing-library/react';
-import { describe, expect, test } from 'bun:test';
+import type { ApiClient, LedgerEntry } from '@dispatch/client';
+import type { TaskComment } from '@dispatch/core/browser';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from '@testing-library/react';
+import { describe, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
-import type { SavedViewsApi } from '../../../hooks/useSavedViews';
-import type { FavoriteRef } from '../../../lib/savedViews';
-import { DeepLinkProvider } from '../../shell/DeepLinkContext';
-import { SavedViewsProvider } from '../../shell/SavedViewsContext';
+import type { TaskTab } from '../../../lib/appNav';
+import { entry as memoryEntry } from '../../../lib/memory.test-helper';
+import { linearWorkflowConfig } from '../../settings/fixtures.test-helper';
 import {
-  type ShellActions,
-  ShellActionsProvider,
-} from '../../shell/ShellActionsContext';
-import { ToastProvider } from '../../shell/Toasts';
-import type { TaskDetailPanelProps } from './TaskPage';
-import { TaskPage } from './TaskPage';
+  fakeHost,
+  newLog,
+  PageProviders,
+  run,
+  task,
+} from './pageHost.test-helper';
+import type { TaskPageHost } from './TaskPageHost';
 
-const STATUSES = ['draft', 'ready', 'working', 'review', 'landing', 'landed'];
+// The Review mode pulls in the Pierre diff, whose worker import only Vite resolves.
+void mock.module('@/components/runs/PierreWorkerPool', () => ({
+  PierreWorkerPool: ({ children }: { children: ReactNode }) => children,
+}));
 
-function task(
-  id: string,
-  title: string,
-  overrides: Partial<TaskDoc['meta']> = {},
-  body = ''
-): TaskDoc {
-  return {
-    meta: {
-      id,
-      title,
-      status: 'working',
-      kind: 'task',
-      priority: 'none',
-      parent: null,
-      milestone: null,
-      labels: [],
-      assignee: 'none',
-      blockedBy: [],
-      created: '2026-08-10T12:00:00.000Z',
-      updated: '2026-09-13T12:00:00.000Z',
-      external: null,
-      selfReview: true,
-      writes: [],
-      risk: 'routine',
-      model: null,
-      exercised: false,
-      ...overrides,
-    },
-    body,
-  };
-}
+const { TaskPage } = await import('./TaskPage');
 
-const BODY = `
-## Description
+const BODY = `## Description
 
 Apply the **Burgess** rule everywhere.
 
@@ -67,294 +41,503 @@ Apply the **Burgess** rule everywhere.
 
 ## Activity
 
-- 2026-09-13T10:00:00.000Z dispatched (claude, branch dispatch/t-8f2a)
-- 2026-09-13T11:00:00.000Z Looks fine so far. — agent:wyat/claude
+- 2026-09-13T10:00:00.000Z dispatched (claude, branch dispatch/t-1)
 `;
 
-/** Every call the page made through the caller's write handlers, in order. */
-interface Log {
-  updates: { id: string; patch: UpdatePatch }[];
-  moves: { id: string; status: string }[];
-  dispatches: string[];
-  copied: string[];
-  presets: unknown[];
-  /** Task ids handed to `DeepLinkProvider`'s `copyTaskLink`. */
-  links: string[];
-  /** Refs handed to `SavedViewsProvider`'s `toggleFavorite`. */
-  favorites: FavoriteRef[];
-}
-
-// A full `TaskDetailPanelProps` literal, so every key the interface declares is exercised
-// here; the contract with `App.tsx`'s `buildTaskPanelProps` is checked by App.tsx's own
-// typecheck against that interface.
-function panelProps(
-  doc: TaskDoc,
-  log: Log,
-  extra: Partial<TaskDetailPanelProps> = {}
-): TaskDetailPanelProps {
-  return {
-    doc,
-    defaultModel: 'claude-sonnet-4-5',
-    statuses: STATUSES,
-    ready: true,
-    run: undefined,
-    runs: [],
-    epics: [],
-    tasks: [doc],
-    latestRunByTaskId: new Map<string, RunMeta>(),
-    onUpdate: (id, patch) => {
-      log.updates.push({ id, patch });
-      return Promise.resolve();
-    },
-    onMoveStatus: (id, status) => {
-      log.moves.push({ id, status });
-      return Promise.resolve();
-    },
-    onDispatch: (id) => {
-      log.dispatches.push(id);
-      return Promise.resolve();
-    },
-    onEnrich: () => Promise.resolve(),
-    enrichPlan: undefined,
-    onDismissEnrich: () => {},
-    onAnswerEnrich: undefined,
-    onOpenSession: () => {},
-    onOpenTask: () => {},
-    linearLinks: {},
-    linearConfigured: false,
-    onPushToLinear: () =>
-      Promise.resolve({
-        at: '2026-09-20T10:00:00.000Z',
-        pulled: 0,
-        pushed: 0,
-        created: 0,
-        createdIssues: 0,
-        conflicts: 0,
-        errors: [],
-        rateLimited: false,
-      }),
-    client: null,
-    port: undefined,
-    fixLoopEscalation: [],
-    ...extra,
-  };
-}
-
-function shellWith(log: Log): ShellActions {
-  const noop = () => {};
-  return {
-    openTask: noop,
-    openThread: noop,
-    peekTask: noop,
-    openCreateTask: (preset) => log.presets.push(preset),
-    createPreset: null,
-    closeCreateTask: noop,
-    openPalette: noop,
-    toggleSidebar: noop,
-    sidebarHidden: false,
-    openOverseer: noop,
-    setProjectView: noop,
-    setGlobalView: noop,
-    openShortcuts: noop,
-    copyTaskId: (id) => log.copied.push(id),
-  };
-}
-
-// Only the two members the page reads; the rest throw so a test that reaches
-// them fails loudly rather than passing on a stub.
-function savedViewsWith(log: Log, favorite: boolean): SavedViewsApi {
-  const unused = () => {
-    throw new Error('not exercised by TaskPage');
-  };
-  return {
-    views: [],
-    favorites: [],
-    activeViewId: null,
-    activeView: null,
-    selectView: unused,
-    clearActiveView: unused,
-    saveView: unused,
-    updateView: unused,
-    renameView: unused,
-    deleteView: unused,
-    toggleFavorite: (ref) => log.favorites.push(ref),
-    isFavorite: () => favorite,
-  };
-}
-
-function Providers({
-  log,
-  children,
-  deepLinks = true,
-  savedViews = true,
-  favorite = false,
-}: {
-  log: Log;
-  children: ReactNode;
-  /** False leaves the page outside `DeepLinkProvider`, the pre-P7 and harness state. */
-  deepLinks?: boolean;
-  savedViews?: boolean;
-  favorite?: boolean;
-}) {
-  return (
-    <QueryClientProvider client={new QueryClient()}>
-      <ToastProvider>
-        <ShellActionsProvider value={shellWith(log)}>
-          <DeepLinkProvider
-            value={
-              deepLinks ? { copyTaskLink: (id) => log.links.push(id) } : null
-            }
-          >
-            <SavedViewsProvider
-              value={savedViews ? savedViewsWith(log, favorite) : null}
-            >
-              {children}
-            </SavedViewsProvider>
-          </DeepLinkProvider>
-        </ShellActionsProvider>
-      </ToastProvider>
-    </QueryClientProvider>
-  );
-}
-
-// A client that records attachment uploads and leaves every other fetch the
-// page makes (findings, verification, ledger, impact) pending, so those
-// sections render their loading state and nothing resolves against a stub.
-function clientRecordingUploads(
-  uploads: { id: string; names: string[] }[]
-): ApiClient {
-  const pending = () => new Promise<never>(() => {});
-  return new Proxy({} as ApiClient, {
-    get(_target, key) {
-      if (key === 'uploadTaskAttachments') {
-        return (id: string, files: File[]) => {
-          uploads.push({ id, names: files.map((f) => f.name) });
-          return Promise.resolve({} as never);
-        };
-      }
-      if (typeof key === 'symbol' || key === 'then') return undefined;
-      return pending;
-    },
-  });
-}
-
-// A client whose task links one spec doc, recording each docs-linking target.
-function clientLinkingASpec(asked: string[]): ApiClient {
-  const pending = () => new Promise<never>(() => {});
-  return new Proxy({} as ApiClient, {
-    get(_target, key) {
-      if (key === 'docsLinking') {
-        return (target: string) => {
-          asked.push(target);
-          return Promise.resolve({
-            docs: [
-              {
-                doc: { id: 'doc-1', title: 'Burgess spec', status: 'draft' },
-                rel: 'spec',
-                source: 'manual',
-                fromParent: false,
-              },
-            ],
-          });
-        };
-      }
-      if (typeof key === 'symbol' || key === 'then') return undefined;
-      return pending;
-    },
-  });
-}
-
-function newLog(): Log {
-  return {
-    updates: [],
-    moves: [],
-    dispatches: [],
-    copied: [],
-    presets: [],
-    links: [],
-    favorites: [],
-  };
-}
-
-function mountPage(
-  doc = task('t-8f2a', 'Apply to the Burgess', {}, BODY),
-  extra: Partial<TaskDetailPanelProps> = {},
-  log = newLog()
+function mount(
+  host: TaskPageHost,
+  props: Partial<Parameters<typeof TaskPage>[0]> = {}
 ) {
-  render(
-    <Providers log={log}>
-      <TaskPage
-        mode="page"
-        projectName="Dispatch"
-        {...panelProps(doc, log, extra)}
-      />
-    </Providers>
+  return render(
+    <PageProviders host={host}>
+      <TaskPage taskId="t-1" layout="peek" {...props} />
+    </PageProviders>
   );
-  return log;
 }
 
-// A menu positions itself a microtask after mount (floating-ui), so anything that opens
-// one is done inside an async `act` that lets that settle.
-async function settle(work: () => void) {
-  await act(async () => {
-    work();
-    await Promise.resolve();
+function modeOf(): string | null {
+  return (
+    document
+      .querySelector('[data-slot=task-page]')
+      ?.getAttribute('data-mode') ?? null
+  );
+}
+
+function comment(
+  id: string,
+  author: string,
+  body: string,
+  parentId: string | null = null
+): TaskComment {
+  return {
+    id,
+    taskId: 't-1',
+    author,
+    body,
+    created: '2026-09-23T10:00:00.000Z',
+    updated: '2026-09-23T10:00:00.000Z',
+    parentId,
+    external: null,
+  };
+}
+
+function press(key: string) {
+  act(() => {
+    document.body.dispatchEvent(
+      new KeyboardEvent('keydown', { key, bubbles: true })
+    );
   });
 }
 
-describe('TaskPage', () => {
-  test('the executor picker appears only when the daemon offers a choice, and hides the Claude model pill for another executor', async () => {
-    const dispatched: { executor?: string; model?: string }[] = [];
-    const executors = {
-      executors: [
-        {
-          name: 'claude',
-          reportsCost: true,
-          reportsTurns: true,
-          enforcesCaps: true,
-        },
-        {
-          name: 'codex',
-          reportsCost: false,
-          reportsTurns: true,
-          enforcesCaps: false,
-        },
-        {
-          name: 'fake',
-          reportsCost: true,
-          reportsTurns: true,
-          enforcesCaps: true,
-        },
+// Opens the header's More actions menu and lets its popup settle inside act.
+async function openMoreActions() {
+  await act(async () => {
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  });
+}
+
+describe('opening a task', () => {
+  test('metadata renders at once; the body streams in behind skeletons', () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    // Title and the lifecycle track straight from the cached list.
+    expect(screen.getByLabelText('Task title')).toHaveProperty(
+      'value',
+      'Title of t-1'
+    );
+    expect(screen.getByRole('tablist', { name: 'Task stages' })).not.toBeNull();
+    expect(modeOf()).toBe('spec');
+    // The body has not arrived: its sections hold skeletons, not a blank page.
+    expect(screen.getAllByLabelText('Loading').length).toBeGreaterThan(0);
+  });
+
+  test('the body fills the spec when it lands', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')], body: BODY }));
+    await waitFor(() => expect(screen.getByText('tests pass')).not.toBeNull());
+    expect(screen.getByText('docs updated')).not.toBeNull();
+    expect(screen.getByText('Burgess')).not.toBeNull();
+  });
+
+  test('a task that left the list reads as gone', () => {
+    mount(fakeHost(newLog(), { tasks: [] }));
+    expect(
+      screen.getByText('That task is no longer available.')
+    ).not.toBeNull();
+  });
+});
+
+describe('the mode follows the task', () => {
+  test('a live run opens on the run', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'working' })],
+        runs: [run()],
+      })
+    );
+    expect(modeOf()).toBe('run');
+    expect(document.querySelector('[data-slot=run-strip]')).not.toBeNull();
+  });
+
+  test('a finished run opens on its review', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'review' })],
+        runs: [run({ state: 'finished', costUsd: 0.42 })],
+      })
+    );
+    expect(modeOf()).toBe('review');
+    expect(screen.getByRole('button', { name: /^Land/ })).not.toBeNull();
+  });
+
+  test('a live run’s review offers no verdict until it finishes', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'working' })],
+        runs: [run()],
+      })
+    );
+    fireEvent.click(screen.getByRole('tab', { name: /Review/ }));
+    expect(modeOf()).toBe('review');
+    expect(screen.queryByRole('button', { name: /^Land/ })).toBeNull();
+    expect(
+      screen.queryByRole('button', { name: 'More ways to land' })
+    ).toBeNull();
+    expect(screen.getByText('Lands once it finishes')).not.toBeNull();
+  });
+
+  test('landed work opens on its summary', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'landed' })],
+        runs: [
+          run({
+            state: 'finished',
+            reviewedAt: '2026-09-23T11:00:00.000Z',
+            reviewAction: 'merge',
+            mergeCommit: 'abc1234def',
+          }),
+        ],
+      })
+    );
+    expect(modeOf()).toBe('summary');
+    expect(screen.getByText('Merged into main')).not.toBeNull();
+    expect(screen.getByText('abc1234')).not.toBeNull();
+  });
+
+  // Lessons live in memory now: the summary lists what reaches the task under
+  // Memory, and reads only the ledger's audit class for its Receipts.
+  test('the summary splits the ledger into the memory that reaches the task and its receipts', async () => {
+    const reads = { ledger: [] as unknown[], memory: [] as unknown[] };
+    const ledger: LedgerEntry[] = [
+      {
+        id: 'l-000001',
+        epicId: null,
+        sourceTaskId: 't-1',
+        kind: 'decision',
+        title: 'Scope extended for run r-x',
+        detail: 'src/x.ts — needed',
+        appliesTo: [],
+        authoredBy: 'human:x',
+        createdAt: '2026-09-01T00:00:00.000Z',
+      },
+    ];
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'landed' })],
+        runs: [run({ state: 'finished' })],
+        client: {
+          fetchLedger: (filter: unknown) => {
+            reads.ledger.push(filter);
+            return Promise.resolve(ledger);
+          },
+          listMemory: (q: unknown) => {
+            reads.memory.push(q);
+            return Promise.resolve({
+              entries: [memoryEntry({ title: 'pnpm builds' })],
+            });
+          },
+        } as Partial<ApiClient>,
+      })
+    );
+    expect(modeOf()).toBe('summary');
+    expect(await screen.findByText('pnpm builds')).not.toBeNull();
+    expect(
+      await screen.findByText('Scope extended for run r-x')
+    ).not.toBeNull();
+    expect(screen.getByText('Receipts')).not.toBeNull();
+    expect(screen.queryByText('Ledger')).toBeNull();
+    expect(reads.ledger).toEqual([{ epicId: null, class: 'audit' }]);
+    expect(reads.memory).toEqual([{ taskId: 't-1', limit: 200 }]);
+  });
+
+  test('a task reopened after it landed opens on its spec, with Dispatch', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'ready' })],
+        runs: [
+          run({
+            state: 'finished',
+            reviewedAt: '2026-09-23T11:00:00.000Z',
+            reviewAction: 'merge',
+            mergeCommit: 'abc1234def',
+          }),
+        ],
+      })
+    );
+    expect(modeOf()).toBe('spec');
+    expect(document.querySelector('[data-slot=dispatch-card]')).not.toBeNull();
+  });
+
+  test('a landed container’s summary rolls up its sub-issues’ work', () => {
+    const log = newLog();
+    mount(
+      fakeHost(log, {
+        tasks: [
+          task('t-1', { kind: 'milestone', status: 'landed' }),
+          task('t-2', { parent: 't-1', status: 'landed' }),
+          task('t-3', { parent: 't-1', status: 'dropped' }),
+        ],
+        runs: [
+          run({
+            id: 'r-2',
+            taskId: 't-2',
+            state: 'finished',
+            reviewedAt: '2026-09-23T11:00:00.000Z',
+            reviewAction: 'merge',
+            mergeCommit: 'bd7298eaaa',
+            costUsd: 0.25,
+          }),
+        ],
+      })
+    );
+    expect(modeOf()).toBe('summary');
+    const summary = document.querySelector('[data-slot=summary-mode]');
+    expect(summary?.textContent).toContain(
+      '1 of 2 sub-issues landed · 1 dropped'
+    );
+    expect(summary?.textContent).not.toContain('without an agent run');
+    expect(screen.getByText('bd7298e')).not.toBeNull();
+    expect(screen.getByText('$0.25')).not.toBeNull();
+    const outcomes = document.querySelector<HTMLElement>(
+      '[data-slot=sub-issue-outcomes]'
+    );
+    if (outcomes === null) throw new Error('no sub-issue outcomes');
+    fireEvent.click(within(outcomes).getByText('Title of t-3'));
+    expect(log.peeks).toEqual(['t-3']);
+  });
+
+  test('a mirrored workflow’s finished container reads config’s statuses before the open project’s model is set', () => {
+    const host = fakeHost(newLog(), {
+      tasks: [
+        task('t-1', { kind: 'milestone', status: 'Done' }),
+        task('t-2', { parent: 't-1', status: 'Done' }),
+        task('t-3', { parent: 't-1', status: 'Canceled' }),
       ],
-      default: 'claude',
-    };
-    mountPage(undefined, {
-      executors,
-      onDispatch: (_id, executor, model) => {
-        dispatched.push({ executor, model });
-        return Promise.resolve();
+    });
+    mount({
+      ...host,
+      project: { ...host.project, config: linearWorkflowConfig },
+    });
+    expect(modeOf()).toBe('summary');
+    expect(
+      document.querySelector('[data-slot=summary-mode]')?.textContent
+    ).toContain('1 of 2 sub-issues landed · 1 dropped');
+  });
+
+  test('a container opens on its plan, where the Flight Plan draws every sub-issue', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [
+          task('t-1', { kind: 'milestone', status: 'working' }),
+          task('t-2', { parent: 't-1' }),
+        ],
+      })
+    );
+    expect(modeOf()).toBe('plan');
+    expect(document.querySelector('[data-slot=plan-mode]')).not.toBeNull();
+    // The plan is the list, so the rail leaves its sub-issue excerpt out.
+    expect(screen.queryByText('Sub-issues')).toBeNull();
+  });
+
+  test('a container’s spec lists its sub-issues once, with a way to add one', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [
+          task('t-1', { kind: 'milestone', status: 'working' }),
+          task('t-2', { parent: 't-1' }),
+        ],
+      })
+    );
+    fireEvent.click(screen.getByRole('tab', { name: /Spec/ }));
+    expect(modeOf()).toBe('spec');
+    expect(screen.getAllByText('Sub-issues')).toHaveLength(1);
+    expect(screen.getByText('Title of t-2')).not.toBeNull();
+    expect(
+      screen.getByRole('button', { name: 'Add sub-task to Title of t-1' })
+    ).not.toBeNull();
+    // A container fans out from its plan, never as one run of its own.
+    expect(document.querySelector('[data-slot=dispatch-card]')).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Open plan' }));
+    expect(modeOf()).toBe('plan');
+  });
+
+  test('a stage picked by hand holds; picking the state’s own follows again', () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    fireEvent.click(screen.getByRole('tab', { name: /Summary/ }));
+    expect(modeOf()).toBe('summary');
+    fireEvent.click(screen.getByRole('tab', { name: /Spec/ }));
+    expect(modeOf()).toBe('spec');
+  });
+
+  test('the full page keeps its mode in the caller, as auto when it follows state', () => {
+    const changes: TaskTab[] = [];
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }), {
+      layout: 'full',
+      mode: 'auto',
+      onModeChange: (tab) => changes.push(tab),
+    });
+    fireEvent.click(screen.getByRole('tab', { name: /Review/ }));
+    fireEvent.click(screen.getByRole('tab', { name: /Spec/ }));
+    expect(changes).toEqual(['review', 'auto']);
+  });
+});
+
+describe('opening a run by id', () => {
+  // An execute run that finished, and the review agent that is checking it.
+  const runs = [
+    run({ id: 'r-exec', state: 'finished' }),
+    run({
+      id: 'r-review',
+      kind: 'review',
+      branch: 'dispatch/review-t-1-review',
+      baseBranch: 'dispatch/t-1',
+      createdAt: '2026-09-23T11:00:00.000Z',
+    }),
+  ];
+  function hostFetching(fetched: string[]) {
+    return fakeHost(newLog(), {
+      tasks: [task('t-1', { status: 'review' })],
+      runs,
+      client: {
+        fetchRun: (id: string) => {
+          fetched.push(id);
+          return new Promise(() => {});
+        },
       },
     });
-    expect(screen.getByRole('button', { name: 'Executor' }).textContent).toBe(
-      'claude'
-    );
-    expect(screen.getByRole('button', { name: 'Model' })).toBeTruthy();
+  }
 
-    await settle(() =>
-      fireEvent.click(screen.getByRole('button', { name: 'Executor' }))
-    );
-    await settle(() =>
-      fireEvent.click(screen.getByRole('menuitem', { name: 'codex' }))
-    );
-    expect(screen.getByRole('button', { name: 'Executor' }).textContent).toBe(
-      'codex'
-    );
-    expect(screen.queryByRole('button', { name: 'Model' })).toBeNull();
+  test('a review agent’s run shows its own transcript, named by kind', async () => {
+    const fetched: string[] = [];
+    mount(hostFetching(fetched), {
+      layout: 'full',
+      mode: 'run',
+      runId: 'r-review',
+    });
+    await waitFor(() => expect(fetched).toEqual(['r-review']));
+    const strip = document.querySelector('[data-slot=run-strip]');
+    expect(strip?.textContent).toContain('r-review');
+    expect(strip?.textContent).toContain('Review');
+  });
 
-    await settle(() =>
-      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
+  test('Review mode judges the work a picked review run checked', async () => {
+    const fetched: string[] = [];
+    mount(hostFetching(fetched), {
+      layout: 'full',
+      mode: 'review',
+      runId: 'r-review',
+    });
+    await waitFor(() => expect(fetched).toEqual(['r-exec']));
+    expect(
+      document.querySelector('[data-slot=run-strip]')?.textContent
+    ).toContain('r-exec');
+  });
+});
+
+describe('dispatching from the spec', () => {
+  test('Dispatch sends the task and keeps a split pane where it is', async () => {
+    const log = newLog();
+    mount(fakeHost(log, { tasks: [task('t-1', { writes: ['src/**'] })] }), {
+      layout: 'split',
+    });
+    fireEvent.click(screen.getByRole('button', { name: /^Dispatch/ }));
+    await waitFor(() =>
+      expect(log.dispatches).toEqual([{ taskId: 't-1', stayInPlace: true }])
     );
-    expect(dispatched).toEqual([{ executor: 'codex', model: undefined }]);
+    expect(screen.getByText('Starting an agent…')).not.toBeNull();
+  });
+
+  test('unmet blockers are named and the button asks to go anyway', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { blockedBy: ['t-2'] }), task('t-2')],
+      })
+    );
+    expect(
+      document.querySelector('[data-check=blockers]')?.textContent
+    ).toContain('Waits on 1 task');
+    expect(
+      screen.getByRole('button', { name: /Dispatch anyway/ })
+    ).not.toBeNull();
+  });
+
+  test('a blocker id naming no task does not hold the task back', () => {
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { blockedBy: ['t-gone'], writes: ['src/**'] })],
+        body: BODY,
+      })
+    );
+    expect(
+      document.querySelector('[data-check=blockers]')?.getAttribute('data-tone')
+    ).toBe('warn');
+    expect(screen.queryByText('Waiting on its blockers')).toBeNull();
+    expect(screen.getByRole('button', { name: /^Dispatch/ }).textContent).toBe(
+      'DispatchD'
+    );
+  });
+
+  test('a landed task says to reopen it, and nothing dispatches it', () => {
+    const log = newLog();
+    mount(fakeHost(log, { tasks: [task('t-1', { status: 'landed' })] }), {
+      layout: 'full',
+    });
+    fireEvent.click(screen.getByRole('tab', { name: /Spec/ }));
+    expect(screen.getByText('Closed: reopen it to dispatch')).not.toBeNull();
+    expect(screen.getByRole('button', { name: /^Dispatch/ })).toHaveProperty(
+      'disabled',
+      true
+    );
+    // A dispatch reaches the host synchronously, so none by now means none at all.
+    press('d');
+    expect(log.dispatches).toEqual([]);
+  });
+
+  test('a dropped task’s menu offers no dispatch', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1', { status: 'dropped' })] }));
+    await openMoreActions();
+    const item = screen.getByRole('menuitem', { name: /Dispatch/ });
+    expect(item.getAttribute('aria-disabled')).toBe('true');
+  });
+
+  test('d goes whenever the card offers D: a blocker in review is met', async () => {
+    const log = newLog();
+    mount(
+      fakeHost(log, {
+        tasks: [
+          task('t-1', { blockedBy: ['t-2'] }),
+          task('t-2', { status: 'review' }),
+        ],
+      }),
+      { layout: 'full' }
+    );
+    expect(
+      document.querySelector('[data-check=blockers]')?.textContent
+    ).toContain('Blockers done');
+    expect(screen.getByRole('button', { name: /^Dispatch/ }).textContent).toBe(
+      'DispatchD'
+    );
+    press('d');
+    await waitFor(() => expect(log.dispatches).toHaveLength(1));
+  });
+
+  test('d never goes ahead of blockers, and the card shows no D for it', async () => {
+    const log = newLog();
+    mount(
+      fakeHost(log, {
+        tasks: [task('t-1', { blockedBy: ['t-2'] }), task('t-2')],
+      }),
+      { layout: 'full' }
+    );
+    expect(screen.getByRole('button', { name: /^Dispatch/ }).textContent).toBe(
+      'Dispatch anyway'
+    );
+    press('d');
+    expect(log.dispatches).toEqual([]);
+    // The header menu offers the same deliberate go-ahead as the card.
+    await openMoreActions();
+    const item = screen.getByRole('menuitem', { name: /Dispatch anyway/ });
+    expect(item.getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test('the effort picker sends nothing by default and the level picked', async () => {
+    const log = newLog();
+    mount(fakeHost(log, { tasks: [task('t-1')] }), { layout: 'full' });
+    const picker = screen.getByRole('button', { name: 'Effort' });
+    expect(picker.textContent).toBe('Default');
+    fireEvent.click(picker);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Max' }));
+    fireEvent.click(screen.getByRole('button', { name: /^Dispatch/ }));
+    await waitFor(() => expect(log.dispatches).toHaveLength(1));
+    expect(log.dispatches[0]?.effort).toBe('max');
+  });
+
+  test('d dispatches a ready task from anywhere on the page', async () => {
+    const log = newLog();
+    mount(fakeHost(log, { tasks: [task('t-1')] }), { layout: 'full' });
+    press('d');
+    await waitFor(() => expect(log.dispatches).toHaveLength(1));
+    expect(log.dispatches[0]?.stayInPlace).toBe(false);
   });
 
   test('every test-only fake executor stays out of the picker', () => {
@@ -364,385 +547,240 @@ describe('TaskPage', () => {
       reportsTurns: true,
       enforcesCaps: true,
     });
-    mountPage(undefined, {
-      executors: {
-        executors: [executor('claude'), executor('fake'), executor('fake-ask')],
-        default: 'claude',
-      },
-    });
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1')],
+        project: {
+          executors: {
+            executors: [
+              executor('claude'),
+              executor('fake'),
+              executor('fake-ask'),
+            ],
+            default: 'claude',
+          },
+        },
+      }),
+      { layout: 'full' }
+    );
     // Read as text: a failed match on a DOM node never finishes printing it.
     expect(
       screen.queryByRole('button', { name: 'Executor' })?.textContent
     ).toBeUndefined();
   });
+});
 
-  test('a single real executor shows no picker and dispatches with the Claude model', async () => {
-    const dispatched: { executor?: string; model?: string }[] = [];
-    mountPage(undefined, {
-      executors: {
-        executors: [
-          {
-            name: 'claude',
-            reportsCost: true,
-            reportsTurns: true,
-            enforcesCaps: true,
-          },
-        ],
-        default: 'claude',
+describe('the docs a task links', () => {
+  // A client whose task links one spec doc, recording each docs-linking target.
+  function linkingASpec(asked: string[]) {
+    return {
+      docsLinking: (target: string) => {
+        asked.push(target);
+        return Promise.resolve({
+          docs: [
+            {
+              doc: { id: 'doc-1', title: 'Burgess spec', status: 'draft' },
+              rel: 'spec',
+              source: 'manual',
+              fromParent: false,
+            },
+          ],
+        });
       },
-      onDispatch: (_id, executor, model) => {
-        dispatched.push({ executor, model });
-        return Promise.resolve();
-      },
-    });
-    expect(screen.queryByRole('button', { name: 'Executor' })).toBeNull();
-    await settle(() =>
-      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
-    );
-    expect(dispatched).toEqual([
-      { executor: undefined, model: 'claude-sonnet-4-5' },
-    ]);
-  });
+    } as unknown as Partial<ApiClient>;
+  }
 
-  test('the effort picker defaults to sending none and sends the level picked', async () => {
-    const efforts: (string | undefined)[] = [];
-    mountPage(undefined, {
-      defaultEffort: 'xhigh',
-      onDispatch: (_id, _executor, _model, opts) => {
-        efforts.push(opts?.effort);
-        return Promise.resolve();
-      },
-    });
-    const picker = screen.getByRole('button', { name: 'Effort' });
-    expect(picker.textContent).toBe('Default (Extra high)');
-
-    await settle(() =>
-      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
-    );
-    await settle(() => fireEvent.click(picker));
-    await settle(() =>
-      fireEvent.click(screen.getByRole('menuitem', { name: 'Max' }))
-    );
-    await settle(() =>
-      fireEvent.click(screen.getByRole('button', { name: 'Dispatch' }))
-    );
-    expect(efforts).toEqual([undefined, 'max']);
-  });
-
-  test('the header crumb reads Project › Tasks › id Title with the three icons', () => {
-    mountPage();
-    const crumb = document.querySelector('[data-slot="page-header-crumb"]');
-    expect(crumb?.textContent).toBe(
-      'Dispatch›Tasks›t-8f2aApply to the Burgess'
-    );
-    const id = crumb?.querySelector('[data-slot="task-crumb"] > span');
-    expect(id?.className).toContain('font-book');
-    expect(id?.className).toContain('text-muted-foreground');
-    expect(screen.getByRole('button', { name: 'Copy task id' })).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'More actions' })).toBeTruthy();
-    expect(
-      screen.getByRole('button', { name: 'Toggle side panel' })
-    ).toBeTruthy();
-    // No second header row without tabs.
-    expect(
-      document.querySelectorAll('[data-slot="page-header-row"]')
-    ).toHaveLength(1);
-  });
-
-  test('copy id goes through the shell seam', () => {
-    const log = mountPage();
-    fireEvent.click(screen.getByRole('button', { name: 'Copy task id' }));
-    expect(log.copied).toEqual(['t-8f2a']);
-  });
-
-  test('Copy link follows Copy task id and goes through the deep-link provider', () => {
-    const log = mountPage();
-    const buttons = screen
-      .getAllByRole('button')
-      .map((b) => b.getAttribute('aria-label'));
-    expect(buttons.indexOf('Copy link')).toBe(
-      buttons.indexOf('Copy task id') + 1
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Copy link' }));
-    expect(log.links).toEqual(['t-8f2a']);
-  });
-
-  test('no Copy link and no star outside their providers', () => {
-    const log = newLog();
-    render(
-      <Providers log={log} deepLinks={false} savedViews={false}>
-        <TaskPage
-          mode="page"
-          projectName="Dispatch"
-          {...panelProps(task('t-8f2a', 'Apply', {}, BODY), log)}
-        />
-      </Providers>
-    );
-    expect(screen.queryByRole('button', { name: 'Copy link' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Favorite' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Unfavorite' })).toBeNull();
-  });
-
-  test('the star after the crumb toggles the task favorite and carries data-active', () => {
-    const log = newLog();
-    render(
-      <Providers log={log} favorite>
-        <TaskPage
-          mode="page"
-          projectName="Dispatch"
-          {...panelProps(task('t-8f2a', 'Apply', {}, BODY), log)}
-        />
-      </Providers>
-    );
-    const star = screen.getByRole('button', { name: 'Unfavorite' });
-    expect(star.getAttribute('data-active')).toBe('true');
-    expect(
-      document
-        .querySelector('[data-slot="page-header-crumb"]')
-        ?.compareDocumentPosition(star)
-    ).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
-    fireEvent.click(star);
-    expect(log.favorites).toEqual([{ kind: 'task', id: 't-8f2a' }]);
-  });
-
-  test("the attachments row under the description lists the doc's files", () => {
-    const attachments: TaskAttachment[] = [
-      {
-        name: 'spec.png',
-        path: '.dispatch/attachments/t-8f2a/spec.png',
-        size: 48 * 1024,
-        addedAt: '2026-09-20T10:00:00Z',
-      },
-    ];
-    mountPage(task('t-8f2a', 'Apply', { attachments }, BODY));
-    const row = document.querySelector('[data-slot="attachments-row"]');
-    expect(row?.textContent).toContain('spec.png · 48 KB');
-    // Right after the description (its Acceptance criteria section closes it).
-    const acceptance = Array.from(
-      document.querySelectorAll('[data-slot="main-section"]')
-    ).find((s) => s.textContent?.includes('Acceptance criteria'));
-    expect(acceptance?.nextElementSibling).toBe(row);
-  });
-
-  test('the Docs block follows the attachments row and opens a linked doc', async () => {
+  test('the spec lists them after its attachments and opens one', async () => {
     const opened: [string, string | null][] = [];
-    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
-      client: clientLinkingASpec([]),
-      port: 4100,
-      canLinkDocs: true,
-      onOpenDoc: (id, anchor) => opened.push([id, anchor]),
+    const host = fakeHost(newLog(), {
+      tasks: [task('t-1')],
+      body: BODY,
+      client: linkingASpec([]),
     });
+    mount({ ...host, openDoc: (id, anchor) => opened.push([id, anchor]) });
     fireEvent.click(
       await screen.findByRole('button', { name: /Burgess spec/ })
     );
     expect(opened).toEqual([['doc-1', null]]);
-    const row = document.querySelector('[data-slot="attachments-row"]');
-    expect(row?.nextElementSibling?.textContent).toContain('Docs');
+    const docs = screen.getByRole('heading', { name: 'Docs' });
+    const attachments = document.querySelector('[data-slot=attachments-row]');
+    expect(
+      attachments !== null &&
+        (attachments.compareDocumentPosition(docs) &
+          Node.DOCUMENT_POSITION_FOLLOWING) !==
+          0
+    ).toBe(true);
   });
 
   test('no Docs block, and no docs request, for a caller who cannot read docs', async () => {
     const asked: string[] = [];
-    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
-      client: clientLinkingASpec(asked),
-      port: 4100,
-      canLinkDocs: true,
-    });
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1')],
+        body: BODY,
+        client: linkingASpec(asked),
+      })
+    );
     await act(async () => {
       await Promise.resolve();
     });
     expect(asked).toEqual([]);
     expect(screen.queryByRole('heading', { name: 'Docs' })).toBeNull();
   });
+});
 
-  // The content column is the drop target, so a drop that bubbles up from any
-  // field on the page goes through the same upload as the row's picker.
-  test('dropping a file on the page uploads it through the client', async () => {
-    const uploads: { id: string; names: string[] }[] = [];
-    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
-      client: clientRecordingUploads(uploads),
-      port: 4100,
+// A thread view whose render throws, as a broken ThreadsView would.
+function Boom(): ReactNode {
+  throw new Error('thread boom');
+}
+
+describe('the task thread', () => {
+  // A host whose thread view names the task it was drawn for.
+  function hostWithThreads(): TaskPageHost {
+    return {
+      ...fakeHost(newLog(), { tasks: [task('t-1')] }),
+      threadView: (taskId) => <p>threads of {taskId}</p>,
+    };
+  }
+
+  test('the Thread toggle shows the task’s threads, and again returns to its state', () => {
+    mount(hostWithThreads());
+    const toggle = screen.getByRole('button', { name: 'Thread' });
+    fireEvent.click(toggle);
+    expect(modeOf()).toBe('thread');
+    expect(screen.getByText('threads of t-1')).not.toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
+    expect(modeOf()).toBe('spec');
+  });
+
+  test('the full page keeps the thread mode in the caller', () => {
+    const changes: TaskTab[] = [];
+    mount(hostWithThreads(), {
+      layout: 'full',
+      mode: 'auto',
+      onModeChange: (tab) => changes.push(tab),
     });
-    const png = new File(['png-bytes'], 'spec.png', { type: 'image/png' });
-    await settle(() => {
-      fireEvent.drop(screen.getByLabelText('Task title'), {
-        dataTransfer: { files: [png], items: [] },
+    fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
+    expect(changes).toEqual(['thread']);
+  });
+
+  test('a crashing thread view is contained to its tab', () => {
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      mount({
+        ...fakeHost(newLog(), { tasks: [task('t-1')] }),
+        threadView: () => <Boom />,
       });
-    });
-    expect(uploads).toEqual([{ id: 't-8f2a', names: ['spec.png'] }]);
-  });
-
-  // A text paste carries no files and must reach whichever field has focus
-  // untouched.
-  test('a text-only paste is left to the field and never reaches the client', () => {
-    const uploads: { id: string; names: string[] }[] = [];
-    mountPage(task('t-8f2a', 'Apply', {}, BODY), {
-      client: clientRecordingUploads(uploads),
-      port: 4100,
-    });
-    const title = screen.getByLabelText('Task title');
-    const event = new Event('paste', { bubbles: true, cancelable: true });
-    Object.defineProperty(event, 'clipboardData', {
-      value: { files: [], items: [], getData: () => 'plain text' },
-    });
-    title.dispatchEvent(event);
-    expect(event.defaultPrevented).toBe(false);
-    expect(uploads).toEqual([]);
-  });
-
-  test('the title is a 24px in-place textarea and the description is rendered prose', () => {
-    mountPage();
-    const title = screen.getByLabelText<HTMLTextAreaElement>('Task title');
-    expect(title.value).toBe('Apply to the Burgess');
-    expect(title.className).toContain('text-[24px]');
-    const prose = document.querySelector(
-      '[data-slot="markdown"][data-variant="prose"]'
-    );
-    expect(prose?.querySelector('strong')?.textContent).toBe('Burgess');
-    // Acceptance criteria render as a checklist.
-    expect(
-      document.querySelectorAll('input[type="checkbox"]').length
-    ).toBeGreaterThanOrEqual(2);
-    // No uppercase-tracked labels or mono ids in the header or the rail.
-    for (const slot of ['page-header', 'properties-rail', 'task-actions']) {
-      const el = document.querySelector(`[data-slot="${slot}"]`);
-      expect(el?.innerHTML).not.toContain('uppercase');
-      expect(el?.innerHTML).not.toContain('font-mono');
+      fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
+      expect(
+        screen.getByText('Something went wrong rendering this tab')
+      ).not.toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
+      expect(modeOf()).toBe('spec');
+      expect(screen.queryByText(/Something went wrong/)).toBeNull();
+    } finally {
+      console.error = quiet;
     }
   });
 
-  test('clicking the description swaps in a borderless editor that saves on blur', () => {
-    const log = mountPage();
-    const prose = document.querySelector(
-      '[data-slot="editable-body"][data-field="Description"]'
-    );
-    if (prose === null) throw new Error('description not rendered');
-    // Rendered prose is not a <button>: it is selectable and reads as itself.
-    expect(prose.tagName).toBe('DIV');
-    expect(prose.getAttribute('aria-label')).toBeNull();
-    fireEvent.click(prose);
-    const editor = screen.getByLabelText<HTMLTextAreaElement>('Description');
-    expect(editor.dataset['variant']).toBe('borderless');
-    fireEvent.change(editor, { target: { value: 'New body' } });
-    fireEvent.blur(editor);
-    expect(log.updates).toEqual([
-      { id: 't-8f2a', patch: { description: 'New body' } },
-    ]);
-  });
-
-  test('the rail is 280px with Properties rows whose unset copy reads as an action', () => {
-    mountPage();
-    const rail = document.querySelector('[data-slot="properties-rail"]');
-    expect(rail?.className).toContain('w-[280px]');
-    expect(rail?.className).not.toContain('border-l');
-    const heading = rail?.querySelector('[data-slot="rail-section"] > div');
-    expect(heading?.textContent).toBe('Properties');
-    expect(heading?.className).toContain('text-[13px]');
-    expect(
-      screen.getByRole('button', { name: 'Change status' }).textContent
-    ).toBe('Working');
-    expect(
-      screen.getByRole('button', { name: 'Change priority' }).textContent
-    ).toBe('Set priority');
-    expect(
-      screen.getByRole('button', { name: 'Change assignee' }).textContent
-    ).toBe('Assign');
-    expect(
-      screen.getByRole('button', { name: 'Change milestone' }).textContent
-    ).toBe('Add to milestone');
-    expect(
-      screen.getByRole('button', { name: 'Change epic' }).textContent
-    ).toBe('Add to epic');
-    expect(screen.getByRole('button', { name: 'Add label' })).toBeTruthy();
-    expect(screen.queryByText('No labels')).toBeNull();
-    expect(screen.queryByText('No blockers')).toBeNull();
-    // Every property row is a 32px ghost row.
-    for (const name of ['Change status', 'Change milestone', 'Add label']) {
-      expect(screen.getByRole('button', { name }).className).toContain('h-8');
-    }
-  });
-
-  test('the side-panel toggle hides the rail', () => {
-    mountPage();
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle side panel' }));
-    expect(document.querySelector('[data-slot="properties-rail"]')).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Toggle side panel' }));
-    expect(
-      document.querySelector('[data-slot="properties-rail"]')
-    ).not.toBeNull();
-  });
-
-  test('the activity feed classifies events and comments and ends in a composer', () => {
-    mountPage();
-    expect(
-      document.querySelectorAll('[data-slot="activity-event"]')
-    ).toHaveLength(1);
-    expect(
-      document.querySelectorAll('[data-slot="activity-comment"]')
-    ).toHaveLength(1);
-    expect(
-      document.querySelector('[data-slot="comment-composer"]')
-    ).not.toBeNull();
-  });
-
-  test('⌘⏎ in the composer appends a timestamped, human-credited note', () => {
-    const log = mountPage();
-    const field = screen.getByLabelText('Leave a comment');
-    fireEvent.change(field, { target: { value: 'ship it' } });
-    fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
-    expect(log.updates).toHaveLength(1);
-    const patch = log.updates[0]?.patch;
-    expect(patch?.activityActor).toBe('human');
-    expect(patch?.appendActivity).toMatch(/^\d{4}-\d{2}-\d{2}T.* ship it$/);
-  });
-
-  test('pressing s on the page opens the status picker in the rail', async () => {
-    mountPage();
-    await settle(() => {
-      fireEvent.keyDown(document.body, { key: 's' });
+  test('no Thread toggle, and a thread mode falls back to the state, without a thread view', () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }), {
+      layout: 'full',
+      mode: 'thread',
     });
-    expect(screen.getByRole('menu')).toBeTruthy();
-    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toContain(
-      'Landed'
-    );
+    expect(screen.queryByRole('button', { name: 'Thread' })).toBeNull();
+    expect(modeOf()).toBe('spec');
   });
+});
 
-  test('an epic shows its children as sub-task rows with a progress count and a + preset', () => {
-    const epic = task('e-1', 'Ship the pass', { kind: 'epic' });
-    const done = task('t-2', 'Tokens', { parent: 'e-1', status: 'landed' });
-    const open = task('t-3', 'Shell', { parent: 'e-1' });
-    const log = mountPage(epic, { tasks: [epic, done, open] });
-    const block = document.querySelector('[data-slot="subtasks-block"]');
-    expect(block?.textContent).toContain('Sub-tasks');
-    expect(block?.textContent).toContain('1/2');
-    expect(block?.querySelectorAll('[data-slot="list-row"]')).toHaveLength(2);
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Add sub-task to Ship the pass' })
-    );
-    expect(log.presets).toEqual([{ epic: 'e-1' }]);
-  });
-
-  test('a peek draws a 40px chrome row with expand and close instead of the page header', () => {
+describe('the rail', () => {
+  test('property edits go through the project’s update', async () => {
     const log = newLog();
-    const closed: string[] = [];
-    render(
-      <Providers log={log}>
-        <TaskPage
-          mode="peek"
-          projectName="Dispatch"
-          onExpand={() => closed.push('expand')}
-          onClose={() => closed.push('close')}
-          {...panelProps(task('t-8f2a', 'Apply', {}, BODY), log)}
-        />
-      </Providers>
+    mount(fakeHost(log, { tasks: [task('t-1')] }));
+    fireEvent.click(screen.getByRole('button', { name: 'Change estimate' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: '3 points' }));
+    expect(log.updates).toEqual([{ id: 't-1', patch: { estimate: 3 } }]);
+  });
+
+  test('a new comment shows at once, and only its author gets a comment’s menu', async () => {
+    const log = newLog();
+    mount(
+      fakeHost(log, {
+        tasks: [task('t-1')],
+        comments: [
+          comment('c-1', 'human:wyat', 'mine'),
+          comment('c-2', 'human:maya', 'theirs'),
+          comment('c-3', 'human:maya', 'a reply', 'c-1'),
+        ],
+      })
     );
-    expect(document.querySelector('[data-slot="page-header"]')).toBeNull();
-    const chrome = document.querySelector('[data-slot="task-peek-chrome"]');
-    expect(chrome?.className).toContain('h-10');
-    expect(chrome?.textContent).toContain('t-8f2a');
-    fireEvent.click(
-      screen.getByRole('button', { name: 'Expand to full view' })
-    );
-    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
-    expect(closed).toEqual(['expand', 'close']);
+    await waitFor(() => expect(screen.getByText('theirs')).not.toBeNull());
+    expect(
+      screen.getAllByRole('button', { name: 'Comment actions' })
+    ).toHaveLength(1);
+    fireEvent.change(screen.getByLabelText('Leave a comment'), {
+      target: { value: 'ship it' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Send comment' }));
+    await waitFor(() => expect(screen.getByText('ship it')).not.toBeNull());
+    expect(screen.getByText('Sending…')).not.toBeNull();
+    expect(log.comments).toEqual(['ship it']);
+  });
+
+  test('s opens the status picker', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }), { layout: 'full' });
+    press('s');
+    expect(await screen.findByRole('menu')).not.toBeNull();
+  });
+});
+
+describe('the narrow pane', () => {
+  test('its label chips are colored label pills, like the rail’s', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1', { labels: ['bug'] })] }), {
+      layout: 'split',
+    });
+    const chips = await waitFor(() => {
+      const found = document.querySelector('[data-slot=property-chips]');
+      if (!(found instanceof HTMLElement)) throw new Error('no chips yet');
+      return found;
+    });
+    // A label pill leads with a dot in colorForLabel's color; happy-dom drops
+    // that nested var() from the style, so the dot itself is what's checked.
+    const pill = within(chips)
+      .getByText('bug')
+      .closest('[data-slot=label-pill]');
+    expect(pill?.querySelector('span[aria-hidden]') ?? null).not.toBeNull();
+  });
+});
+
+describe('keyboard', () => {
+  const opened = () => document.querySelector('[data-popup-open]') !== null;
+
+  test('a property key opens its picker in the rail', async () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    const main = document.querySelector('[data-slot=task-main]');
+    if (main === null) throw new Error('no main pane');
+    fireEvent.keyDown(main, { key: 's' });
+    await waitFor(() => expect(opened()).toBe(true));
+  });
+
+  test('a key already handled, or meant for a page nested inside, is left alone', () => {
+    mount(fakeHost(newLog(), { tasks: [task('t-1')] }));
+    const main = document.querySelector('[data-slot=task-main]');
+    if (main === null) throw new Error('no main pane');
+    // The Flight Plan's canvas takes h/j/k/l and `d` itself.
+    const canvas = document.createElement('div');
+    canvas.addEventListener('keydown', (e) => e.preventDefault());
+    main.append(canvas);
+    fireEvent.keyDown(canvas, { key: 'l' });
+    // The Flight Plan's pane holds a task page of its own.
+    const nested = document.createElement('div');
+    nested.dataset.slot = 'task-page';
+    const inner = document.createElement('button');
+    nested.append(inner);
+    main.append(nested);
+    fireEvent.keyDown(inner, { key: 's' });
+    expect(opened()).toBe(false);
   });
 });

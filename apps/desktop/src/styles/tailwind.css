@@ -1,4 +1,9 @@
-@import 'tailwindcss';
+/* `@import 'tailwindcss'` spelled out, with ./preflight.css in place of Tailwind's own (see
+   there for the one difference). */
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import './preflight.css' layer(base);
+@import 'tailwindcss/utilities.css' layer(utilities);
 @import 'tw-animate-css';
 
 /* The component library (packages/ui) sits outside this app's auto-detected content roots,

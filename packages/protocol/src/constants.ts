@@ -43,6 +43,7 @@ export const GATE_TYPES = [
   'overseer-action',
   'memory',
   'task-proposal',
+  'doc',
 ] as const;
 
 export const DELIVERY_STATES = [

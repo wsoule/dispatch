@@ -2,8 +2,9 @@ import type {
   ActorContext,
   DispatchConfig,
   ReceiptsExport,
+  ReceiptsScope,
 } from '@dispatch/core';
-import { DEFAULT_RECEIPTS, materializeReceipts } from '@dispatch/core';
+import { DEFAULT_RECEIPTS, receiptSteps } from '@dispatch/core';
 import type { ProjectStores } from '@dispatch/core';
 import {
   existsSync,
@@ -15,7 +16,8 @@ import {
 import { isAbsolute, join, relative, resolve } from 'node:path';
 
 import { receiptsDir as defaultReceiptsDir } from '../orchestrator/paths.js';
-import type { GitRunner } from '../sync/worktree.js';
+import type { AsyncGitRunner } from '../sync/worktree.js';
+import { markBlockingSection } from '../watchdog.js';
 
 // The git half of the receipt log. `materializeReceipts` in @dispatch/core owns
 // the FORMAT — which files exist and what is in them; this owns the REPOSITORY
@@ -88,6 +90,28 @@ export function receiptsEnabled(config: DispatchConfig): boolean {
   return (config.receipts ?? DEFAULT_RECEIPTS).enabled;
 }
 
+// How long a pass writes files before handing the event loop back: a request
+// that arrives mid-export waits at most about this long.
+const SLICE_MS = 10;
+
+// Runs a step generator to its end, yielding to the event loop every SLICE_MS.
+// Returns null, abandoning the rest, when `stopped` turns true at a yield.
+async function runSliced<T>(
+  steps: Generator<void, T, void>,
+  stopped: () => boolean
+): Promise<T | null> {
+  let sliceStart = performance.now();
+  for (;;) {
+    const step = steps.next();
+    if (step.done === true) return step.value;
+    if (performance.now() - sliceStart < SLICE_MS) continue;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    if (stopped()) return null;
+    markBlockingSection('receipts export');
+    sliceStart = performance.now();
+  }
+}
+
 // True when `child` sits anywhere under `parent`, both already resolved.
 // Mirrors prWorktree.ts's helper of the same name and for the same reason:
 // dispatch-owned state nested inside the project it describes is a footgun.
@@ -96,15 +120,24 @@ function isPathInside(parent: string, child: string): boolean {
   return rel !== '' && !rel.startsWith('..') && !isAbsolute(rel);
 }
 
+/** A step that writes more of the log after the core records (docs), before staging. */
+export type ReceiptsStep = (dir: string) => {
+  changed: number;
+  removed: number;
+  problems: string[];
+};
+
 export class ReceiptsExporter {
   constructor(
     private readonly stores: ProjectStores,
     private readonly actor: ActorContext,
-    private readonly run: GitRunner
+    private readonly run: AsyncGitRunner,
+    private readonly steps: readonly ReceiptsStep[] = []
   ) {}
 
   /**
-   * Writes the database out to `dir` and commits whatever changed.
+   * Writes the database out to `dir` — all of it, or the part `scope` names —
+   * and commits whatever changed.
    *
    * Materialize-then-commit, in that order, with git asked for the truth about
    * dirtiness rather than trusting the materializer's own `changed` list. The
@@ -112,14 +145,23 @@ export class ReceiptsExporter {
    * died before committing leaves a dirty tree that this pass would otherwise
    * decide was clean and skip forever.
    *
-   * NEVER THROWS. Every caller is a timer callback or the boot path, and an
-   * escaping rejection there takes the whole daemon down — Bun.spawnSync
-   * throws outright when `git` is not on PATH, so even the git calls below are
+   * Never blocks the event loop for long: the files are written in slices
+   * with a yield between them, and git runs as a child process that is
+   * awaited. `stopped` is checked at each yield; once it is true the pass
+   * gives up without committing, and the next full pass picks up the rest.
+   *
+   * NEVER REJECTS. Every caller is a timer callback or the boot path, and an
+   * escaping rejection there takes the whole daemon down — spawning throws
+   * outright when `git` is not on PATH, so even the git calls below are
    * inside the guard, not just the filesystem work.
    */
-  exportOnce(dir: string): ReceiptsResult {
+  async exportOnce(
+    dir: string,
+    scope: ReceiptsScope = {},
+    stopped: () => boolean = () => false
+  ): Promise<ReceiptsResult> {
     try {
-      return this.exportGuarded(dir);
+      return await this.exportGuarded(dir, scope, stopped);
     } catch (err) {
       return {
         state: 'failed',
@@ -133,9 +175,29 @@ export class ReceiptsExporter {
     }
   }
 
-  private exportGuarded(dir: string): ReceiptsResult {
-    this.ensureRepo(dir);
-    const materialized = materializeReceipts(this.stores, dir);
+  private async exportGuarded(
+    dir: string,
+    scope: ReceiptsScope,
+    stopped: () => boolean
+  ): Promise<ReceiptsResult> {
+    markBlockingSection('receipts export');
+    // A log created just now holds nothing yet, so a scoped pass writes it all.
+    const created = await this.ensureRepo(dir);
+    const materialized = await runSliced(
+      receiptSteps(this.stores, dir, created ? {} : scope),
+      stopped
+    );
+    if (materialized === null || stopped()) {
+      return {
+        state: 'failed',
+        dir,
+        commit: null,
+        changed: 0,
+        removed: 0,
+        problems: 0,
+        detail: 'stopped before the export finished',
+      };
+    }
     const counts = {
       changed: materialized.changed.length,
       removed: materialized.removed.length,
@@ -143,6 +205,21 @@ export class ReceiptsExporter {
     };
     for (const problem of materialized.problems) {
       console.error(`receipts: ${problem.source} — ${problem.detail}`);
+    }
+    for (const step of this.steps) {
+      try {
+        const out = step(dir);
+        counts.changed += out.changed;
+        counts.removed += out.removed;
+        counts.problems += out.problems.length;
+        for (const problem of out.problems)
+          console.error(`receipts: ${problem}`);
+      } catch (err) {
+        counts.problems += 1;
+        console.error(
+          `receipts: a receipts step failed: ${(err as Error).message}`
+        );
+      }
     }
     const failed = (detail: string): ReceiptsResult => ({
       ...counts,
@@ -155,11 +232,11 @@ export class ReceiptsExporter {
     // `add -A` from the log root, so deletions are staged as deletions — a task
     // that left the database has to leave the log's HEAD too, or the log stops
     // being an accurate statement of what the project holds.
-    const staged = this.run(dir, ['add', '-A']);
+    const staged = await this.run(dir, ['add', '-A']);
     if (staged.status !== 0) {
       return failed(`git add failed: ${staged.stderr.trim()}`);
     }
-    const status = this.run(dir, ['status', '--porcelain']);
+    const status = await this.run(dir, ['status', '--porcelain']);
     if (status.status !== 0) {
       return failed(`git status failed: ${status.stderr.trim()}`);
     }
@@ -172,7 +249,7 @@ export class ReceiptsExporter {
         detail: 'no change since the last receipt',
       };
     }
-    const committed = this.run(dir, [
+    const committed = await this.run(dir, [
       ...this.commitOptions(),
       'commit',
       '--no-verify',
@@ -183,7 +260,7 @@ export class ReceiptsExporter {
     if (committed.status !== 0) {
       return failed(`git commit failed: ${committed.stderr.trim()}`);
     }
-    const head = this.run(dir, ['rev-parse', 'HEAD']);
+    const head = await this.run(dir, ['rev-parse', 'HEAD']);
     return {
       ...counts,
       state: 'committed',
@@ -223,7 +300,8 @@ export class ReceiptsExporter {
 
   /**
    * Makes sure `dir` is a receipt log this daemon owns, creating it if the
-   * directory is empty or absent, and refusing outright otherwise.
+   * directory is empty or absent, and refusing outright otherwise. True when
+   * it had to create the repository.
    *
    * The refusal is the point. `receipts.dir` is hand-edited in config.yml, and
    * the plausible mistakes — `.`, `..`, the project root, an existing notes
@@ -232,7 +310,7 @@ export class ReceiptsExporter {
    * change. So ownership is proven by a marker file this code wrote, never
    * inferred from the presence of `.git`.
    */
-  private ensureRepo(dir: string): void {
+  private async ensureRepo(dir: string): Promise<boolean> {
     const project = resolve(this.stores.tasks.rootDir);
     const resolved = resolve(dir);
     // Nested inside the project is refused before anything is created: the
@@ -250,8 +328,9 @@ export class ReceiptsExporter {
       this.verifyMarker(marker, resolved, project);
       // A log whose `.git` was deleted by hand is still ours to re-create;
       // the marker, not the repository, is what proves ownership.
-      if (!existsSync(join(dir, '.git'))) this.init(dir);
-      return;
+      if (existsSync(join(dir, '.git'))) return false;
+      await this.init(dir);
+      return true;
     }
     if (existsSync(dir) && readdirSync(dir).length > 0) {
       throw new Error(
@@ -261,7 +340,7 @@ export class ReceiptsExporter {
       );
     }
     mkdirSync(dir, { recursive: true });
-    this.init(dir);
+    await this.init(dir);
     writeFileSync(
       marker,
       `${JSON.stringify({ receiptLog: true, project } satisfies ReceiptLogMarker, null, 2)}\n`
@@ -270,6 +349,7 @@ export class ReceiptsExporter {
     // file would only ever hide a receipt. The one thing worth excluding is the
     // OS noise that would otherwise land in an audit commit.
     writeFileSync(join(dir, '.gitignore'), '.DS_Store\n');
+    return true;
   }
 
   // Refuses a log that belongs to a different project. Two projects sharing one
@@ -301,8 +381,8 @@ export class ReceiptsExporter {
     }
   }
 
-  private init(dir: string): void {
-    const created = this.run(dir, ['init']);
+  private async init(dir: string): Promise<void> {
+    const created = await this.run(dir, ['init']);
     if (created.status !== 0) {
       throw new Error(
         `could not create the receipt log at ${dir}: ${created.stderr.trim()}`
@@ -312,12 +392,14 @@ export class ReceiptsExporter {
 
   // Counts rather than names: a burst commit can touch a hundred task files,
   // and the log's own diff already says which. The subject stays scannable in
-  // `git log --oneline`, which is how this history is actually read.
+  // `git log --oneline`, which is how this history is actually read. A pass
+  // that left the records alone did not count them, so it names tasks only.
   private commitMessage(materialized: ReceiptsExport): string {
     const tally = materialized.tally;
-    const summary =
-      `${tally.tasks} task(s), ${tally.findings} finding(s), ` +
-      `${tally.ledger} ledger entr(ies)`;
+    const summary = materialized.records
+      ? `${tally.tasks} task(s), ${tally.findings} finding(s), ` +
+        `${tally.ledger} ledger entr(ies)`
+      : `${tally.tasks} task(s)`;
     return `receipts: ${summary}\n\n` + `Exported by ${this.actor.humanRef}.\n`;
   }
 }

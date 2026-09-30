@@ -72,7 +72,8 @@ export function DraftView({
         acceptanceCriteria: task?.acceptanceCriteria ?? [],
         priority: task?.priority ?? 'none',
       },
-      defaultStatus
+      defaultStatus,
+      draft.parent ?? null
     )
   );
   // Stable per-row identity for the acceptance-criteria inputs, so editing one row never
@@ -128,13 +129,14 @@ export function DraftView({
           acceptanceCriteria: task.acceptanceCriteria,
           priority: task.priority,
         },
-        defaultStatus
+        defaultStatus,
+        draft.parent ?? null
       )
     );
     setCriterionKeys(task.acceptanceCriteria.map((_, i) => `criterion-${i}`));
     nextCriterionKey.current = task.acceptanceCriteria.length;
     setHydrated(true);
-  }, [hydrated, task, defaultStatus]);
+  }, [hydrated, task, defaultStatus, draft.parent]);
 
   function editDraft(patch: Partial<EditableTaskDraft>) {
     setEditable((prev) => ({ ...prev, ...patch }));

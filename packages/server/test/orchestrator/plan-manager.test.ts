@@ -143,7 +143,7 @@ describe('PlanManager.confirm', () => {
     expect(result.taskIds).toHaveLength(2);
 
     const epic = store.get(result.epicId!);
-    expect(epic?.meta.kind).toBe('epic');
+    expect(epic?.meta.kind).toBe('milestone');
     expect(epic?.meta.status).toBe('ready');
     expect(epic?.meta.title).toBe('Ship the widget');
 

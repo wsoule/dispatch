@@ -167,6 +167,7 @@ describe('the form from the listener status', () => {
     legacyClients: [],
     settings: OFF,
     teamTls: null,
+    suggestedPort: 51234,
   };
   const withSettings = (
     settings: A2AListenerSettings,
@@ -181,11 +182,11 @@ describe('the form from the listener status', () => {
   const savedAsShown = (status: A2AListenerStatus) =>
     formToSettings({ ...formFromStatus(status), enabled: true });
 
-  it('proposes loopback on the default port, with no TLS even beside a team-local cert', () => {
+  it('proposes loopback on the daemon’s free port, with no TLS even beside a team-local cert', () => {
     expect(formFromStatus({ ...closed, teamTls: TEAM_TLS })).toEqual({
       enabled: false,
       host: '127.0.0.1',
-      port: '7450',
+      port: '51234',
       publicUrl: '',
       certPath: '',
       keyPath: '',

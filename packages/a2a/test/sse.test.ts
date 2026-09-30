@@ -113,7 +113,13 @@ describe('taskEventStream', () => {
       'm-root',
       facts({
         skill: 'handoff',
-        task: { id: 't-1', title: 'x', status: 'draft', approved: false },
+        task: {
+          id: 't-1',
+          title: 'x',
+          status: 'draft',
+          phase: 'draft',
+          approved: false,
+        },
         openGates: [
           {
             id: 'm-g',

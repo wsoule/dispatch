@@ -2,7 +2,13 @@
 // family (see findings.ts) never needs to redefine JSON body parsing.
 
 export function jsonResponse(body: unknown, status = 200): Response {
-  return new Response(JSON.stringify(body), {
+  return jsonTextResponse(JSON.stringify(body), status);
+}
+
+// jsonResponse for a body that is already JSON text, such as the cache's
+// pre-serialized task lists.
+export function jsonTextResponse(text: string, status = 200): Response {
+  return new Response(text, {
     status,
     headers: { 'content-type': 'application/json; charset=utf-8' },
   });

@@ -1,11 +1,16 @@
+import { gateOf } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import { mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
+import type { ApiContext } from '../../src/api.js';
 import type { ServerHandle } from '../../src/index.js';
 import { startServer } from '../../src/index.js';
+import { importClaudeRoute } from '../../src/memory/routes.js';
+import { SYSTEM_SENDER } from '../../src/messaging/gates.js';
 import { FakeOverseer } from '../../src/orchestrator/overseers/fake.js';
+import { approvedClient, useSeedBase } from '../a2a/seed.js';
 import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth, wsUrl } from '../testAuth.js';
 
@@ -104,8 +109,13 @@ async function liveRun(
       body: JSON.stringify({ title, ...taskFields }),
     })
   );
+  return { runId: await dispatchLive(task.meta.id), taskId: task.meta.id };
+}
+
+// Dispatches an existing task with the app token and waits until its run is `running`.
+async function dispatchLive(taskId: string): Promise<string> {
   const meta = await json<{ id: string }>(
-    await fetch(`${base}/api/tasks/${task.meta.id}/runs`, {
+    await fetch(`${base}/api/tasks/${taskId}/runs`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ executor: 'claude' }),
@@ -117,7 +127,31 @@ async function liveRun(
     );
     return r.meta.state === 'running';
   });
-  return { runId: meta.id, taskId: task.meta.id };
+  return meta.id;
+}
+
+// A client's handoff the owner approved: a task with a2a.db and messages.db evidence.
+async function handedOffTask(title: string): Promise<string> {
+  useSeedBase(base);
+  const { caller } = await approvedClient(`c${Date.now()}`);
+  const opened = await handle.a2a.port!.open(caller, {
+    clientMessageId: `m-${title}`,
+    contextId: null,
+    kind: 'handoff',
+    to: null,
+    replyTo: null,
+    body: 'Please do it.',
+    refs: [],
+    work: { skill: 'handoff', title },
+  });
+  if (opened.kind !== 'task') throw new Error('expected a task');
+  const row = handle.a2a.store!.getTask(opened.taskId)!;
+  await handle.messaging.engine.reply(
+    row.gate!,
+    { body: '', choice: 'approve' },
+    { address: handle.a2a.port!.deps.ownerRef, canDecide: true }
+  );
+  return row.dispatchTask!;
 }
 
 function runToken(): string {
@@ -333,6 +367,66 @@ describe('personal privacy', () => {
     }
   });
 
+  // Owner-ness belongs to the daemon's own app token, never to a handle.
+  it('only the owner’s own credential holds the owner’s personal memory and the Claude import', async () => {
+    const secret = await json<{ id: string }>(
+      await fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'personal',
+          kind: 'fact',
+          title: 'OWNER-SECRET',
+          body: 'b',
+        }),
+      })
+    );
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const minted = await rawFetch(`${base}/api/team/tokens`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+      body: JSON.stringify({ handle: 'test', tier: 'request' }),
+    });
+    expect(minted.status).toBe(400);
+    const own = await fetch(`${base}/api/team/tokens`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ handle: 'test', tier: 'request' }),
+    });
+    expect(own.status).toBe(400);
+    // A token minted for the owner's handle before this refusal speaks for no one.
+    const stolen = handle.team.teammates.issue('test', 'request');
+    const listed = await rawFetch(`${base}/api/memory?scope=personal`, {
+      headers: authHeaders(stolen),
+    });
+    expect(listed.status).toBe(401);
+    // Even named as the owner, a principal without the owner's credential gets nothing personal.
+    const impostor = {
+      address: 'human:test',
+      canDecide: true,
+      kind: 'human',
+    } as const;
+    expect(handle.memory.host.operatorOf(impostor)?.identity).not.toBe('self');
+    expect(
+      handle.memory
+        .engine!.list(impostor, { scope: 'personal' })
+        .map((e) => e.id)
+    ).not.toContain(secret.id);
+    expect(handle.memory.health(impostor).claudeImport).toBeNull();
+    const ctx = {
+      principal: impostor,
+      actorContext: { humanRef: 'human:test' },
+      memory: handle.memory,
+    } as unknown as ApiContext;
+    await expect(
+      importClaudeRoute(ctx, new URL(`${base}/api/memory/import/claude?none=1`))
+    ).rejects.toThrow("only the daemon's own human");
+    const mine = await json<{ entries: { id: string }[] }>(
+      await fetch(`${base}/api/memory?scope=personal`)
+    );
+    expect(mine.entries.map((e) => e.id)).toContain(secret.id);
+  });
+
   // origin and cause belong to the importer, amendments and ingest.
   it('refuses a client-supplied origin or cause, naming the field', async () => {
     for (const [field, value] of [
@@ -361,9 +455,10 @@ describe('personal privacy', () => {
   });
 });
 
-// The booted daemon decides A2A provenance the way docs does: the a2a label.
+// The booted daemon decides A2A provenance the way docs does: from handoff
+// evidence, never the a2a label alone.
 describe('A2A provenance', () => {
-  it('a run of an a2a-labelled task acts for no one and lists no project memory', async () => {
+  it('a run of a handed-off task acts for no one and lists no project memory', async () => {
     await fetch(`${base}/api/memory`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -391,14 +486,17 @@ describe('A2A provenance', () => {
     expect(await titlesFor(runToken())).toContain('PROJECT-ONLY convention');
     expect(await operatorOf(plain.runId)).toBe('human:test');
 
-    const asked = await liveRun('asked over A2A', { labels: ['a2a'] });
+    await liveRun('labelled only', { labels: ['a2a'] });
+    expect(await titlesFor(runToken())).toContain('PROJECT-ONLY convention');
+
+    const asked = await dispatchLive(await handedOffTask('asked over A2A'));
     expect(await titlesFor(runToken())).not.toContain(
       'PROJECT-ONLY convention'
     );
-    expect(await operatorOf(asked.runId)).toBeNull();
+    expect(await operatorOf(asked)).toBeNull();
   });
 
-  it('a review run of an a2a-labelled task lists no project memory either', async () => {
+  it('a review run of a handed-off task lists no project memory either', async () => {
     await fetch(`${base}/api/memory`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -410,20 +508,14 @@ describe('A2A provenance', () => {
       }),
     });
     // Starts a review run on a fresh task and lists memory with its token.
-    const reviewTitles = async (labels: string[]): Promise<string[]> => {
-      const task = await json<{ meta: { id: string } }>(
-        await fetch(`${base}/api/tasks`, {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ title: 'reviewed', labels }),
-        })
-      );
+    const reviewTitles = async (taskId: string): Promise<string[]> => {
       await handle.orchestrator.dispatchAuxRun({
-        taskId: task.meta.id,
+        taskId,
         kind: 'review',
         head: 'main',
         executor: 'claude',
         buildPrompt: () => 'review this',
+        operator: null,
       });
       return (
         await json<{ entries: { title: string }[] }>(
@@ -434,10 +526,188 @@ describe('A2A provenance', () => {
       ).entries.map((e) => e.title);
     };
 
-    expect(await reviewTitles([])).toContain('PROJECT-ONLY convention');
-    expect(await reviewTitles(['a2a'])).not.toContain(
+    const plain = await json<{ meta: { id: string } }>(
+      await fetch(`${base}/api/tasks`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title: 'reviewed' }),
+      })
+    );
+    expect(await reviewTitles(plain.meta.id)).toContain(
       'PROJECT-ONLY convention'
     );
+    expect(await reviewTitles(await handedOffTask('reviewed'))).not.toContain(
+      'PROJECT-ONLY convention'
+    );
+  });
+});
+
+describe('owner-attributed agents', () => {
+  // The owner's personal secret, and an agent the shared agentToken registered
+  // (so agent:test/<name>, attributed to the owner) still awaiting approval.
+  async function setup(
+    name: string
+  ): Promise<{ secret: string; address: string; token: string }> {
+    const saved = await json<{ id: string }>(
+      await fetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          scope: 'personal',
+          kind: 'fact',
+          title: 'OWNER-SECRET',
+          body: 'b',
+        }),
+      })
+    );
+    const reg = await rawFetch(`${base}/api/agents/register`, {
+      method: 'POST',
+      headers: authHeaders(handle.tokens.agentToken),
+      body: JSON.stringify({ name, client: 'curl' }),
+    });
+    expect(reg.status).toBe(201);
+    const body = await json<{ address: string; token: string }>(reg);
+    expect(body.address).toBe(`agent:test/${name}`);
+    return { secret: saved.id, address: body.address, token: body.token };
+  }
+
+  function approveAs(address: string, token: string): Promise<Response> {
+    return rawFetch(
+      `${base}/api/agents/${encodeURIComponent(address)}/approve`,
+      { method: 'POST', headers: authHeaders(token) }
+    );
+  }
+
+  function registrationGate(address: string): string {
+    const gate = handle.messaging.engine.openBlocking().find((m) => {
+      const data = gateOf(m);
+      return data?.type === 'agent-registration' && data.agent === address;
+    });
+    if (gate === undefined) throw new Error(`no gate for ${address}`);
+    return gate.id;
+  }
+
+  // The ids the agent's own token lists in personal scope, or the status
+  // that refused it.
+  async function personalIds(token: string): Promise<string[] | number> {
+    const res = await rawFetch(`${base}/api/memory?scope=personal`, {
+      headers: authHeaders(token),
+    });
+    if (res.status !== 200) return res.status;
+    return (await json<{ entries: { id: string }[] }>(res)).entries.map(
+      (e) => e.id
+    );
+  }
+
+  it("a teammate's approval opens none of the owner's personal memory", async () => {
+    const { secret, address, token } = await setup('evil');
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    expect((await approveAs(address, ada)).status).toBe(200);
+    expect(await personalIds(token)).toEqual([]);
+    const del = await rawFetch(`${base}/api/memory/${secret}`, {
+      method: 'DELETE',
+      headers: authHeaders(token),
+    });
+    expect(del.status).not.toBe(200);
+    const read = await rawFetch(`${base}/api/memory/${secret}`, {
+      headers: authHeaders(token),
+    });
+    expect(read.status).not.toBe(200);
+    expect(
+      handle.memory.host.operatorOf({
+        address,
+        canDecide: false,
+        kind: 'agent',
+      })?.identity
+    ).toBe('!not-owner');
+    const owner = await json<{ entries: { id: string }[] }>(
+      await fetch(`${base}/api/memory?scope=personal`)
+    );
+    expect(owner.entries.map((e) => e.id)).toContain(secret);
+  });
+
+  it('a teammate answering the registration gate opens none of it', async () => {
+    const { address, token } = await setup('evil2');
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const reply = await rawFetch(
+      `${base}/api/messages/${registrationGate(address)}/reply`,
+      {
+        method: 'POST',
+        headers: authHeaders(ada),
+        body: JSON.stringify({ body: '', choice: 'approve' }),
+      }
+    );
+    expect(reply.status).toBe(201);
+    expect(handle.messaging.store.getAgent(address)?.status).toBe('approved');
+    expect(await personalIds(token)).toEqual([]);
+  });
+
+  it('the owner approving with the app token opens it', async () => {
+    const { secret, address, token } = await setup('mine');
+    expect((await approveAs(address, handle.tokens.appToken)).status).toBe(200);
+    expect(await personalIds(token)).toContain(secret);
+  });
+
+  it('the owner answering the registration gate with the app token opens it', async () => {
+    const { secret, address, token } = await setup('mine2');
+    const reply = await fetch(
+      `${base}/api/messages/${registrationGate(address)}/reply`,
+      {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: '', choice: 'approve' }),
+      }
+    );
+    expect(reply.status).toBe(201);
+    expect(await personalIds(token)).toContain(secret);
+  });
+
+  it('only an approving answer to the registration gate records an owner approval', async () => {
+    const decided: [string, boolean][] = [];
+    const host = handle.memory.host;
+    const original = host.agentDecided.bind(host);
+    host.agentDecided = (address, ownerCredential) => {
+      decided.push([address, ownerCredential]);
+      original(address, ownerCredential);
+    };
+    const denied = await setup('denied');
+    const approved = await setup('approved');
+    for (const [agent, choice] of [
+      [denied, 'deny'],
+      [approved, 'approve'],
+    ] as const) {
+      const reply = await fetch(
+        `${base}/api/messages/${registrationGate(agent.address)}/reply`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ body: '', choice }),
+        }
+      );
+      expect(reply.status).toBe(201);
+    }
+    expect(decided).toEqual([[approved.address, true]]);
+  });
+
+  it("a teammate's re-approval after a revoke drops the owner's approval", async () => {
+    const { secret, address, token } = await setup('again');
+    await approveAs(address, handle.tokens.appToken);
+    expect(await personalIds(token)).toContain(secret);
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const revoked = await rawFetch(
+      `${base}/api/agents/${encodeURIComponent(address)}/revoke`,
+      { method: 'POST', headers: authHeaders(ada) }
+    );
+    expect(revoked.status).toBe(200);
+    expect((await approveAs(address, ada)).status).toBe(200);
+    expect(await personalIds(token)).toEqual([]);
+  });
+
+  it("the owner's approval survives a restart", async () => {
+    const { secret, address, token } = await setup('kept');
+    await approveAs(address, handle.tokens.appToken);
+    await restart();
+    expect(await personalIds(token)).toContain(secret);
   });
 });
 
@@ -544,7 +814,13 @@ describe('the memory gate', () => {
       'auto-decided by policy rung 4 (memory gate)'
     );
     expect(JSON.stringify(ledger)).not.toContain('SECRET-AUTO-title');
-    expect(run.taskId).toBeTruthy();
+    const task = await json<{ body: string }>(
+      await fetch(`${base}/api/tasks/${run.taskId}`)
+    );
+    expect(task.body).toContain(
+      `[policy] Memory approved: team hazard ${out.handle}`
+    );
+    expect(task.body).not.toContain('SECRET-AUTO-title');
   });
 
   it('a proposal with no task behind it always waits for a human, even at rung 4', async () => {
@@ -636,6 +912,90 @@ describe('the memory gate', () => {
   // A crash between an answer and its effect: messaging replays the answer at
   // the next boot, and only a handler registered before messaging.recover()
   // sees the replay.
+  // Approval tells every other live run the entry reaches; a rejection
+  // tells the author's run why.
+  it('tells live runs of an approved entry, and the author of a rejection', async () => {
+    await liveRun('listener');
+    await liveRun('author');
+    const propose = (title: string) =>
+      rawFetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: authHeaders(runToken()),
+        body: JSON.stringify({
+          scope: 'team',
+          kind: 'hazard',
+          title,
+          body: 'd',
+        }),
+      }).then((res) => json<{ proposal: string; gate: string }>(res));
+    const reply = (gate: string, choice: string, body: string) =>
+      fetch(`${base}/api/messages/${gate}/reply`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body, choice }),
+      });
+    const approved = await propose('watch the lockfile');
+    await reply(approved.gate, 'approve', '');
+    const entry = handle.memory
+      .shared!.listEntries()
+      .find((e) => e.title === 'watch the lockfile')!;
+    await waitFor(() =>
+      executor.notified.some((n) => n.includes(`(${entry.handle})`))
+    );
+    // The author's own run is skipped, so one of the two live runs hears it.
+    expect(
+      executor.notified.filter((n) => n.includes(`(${entry.handle})`))
+    ).toHaveLength(1);
+    const rejected = await propose('not this one');
+    await reply(rejected.gate, 'reject', 'wrong lockfile');
+    await waitFor(() =>
+      executor.notified.some((n) =>
+        n.includes(`proposal ${rejected.proposal} was rejected by`)
+      )
+    );
+    expect(executor.notified.at(-1)).toMatch(/: wrong lockfile$/);
+  });
+
+  it('closes a second open gate for one proposal at the next boot', async () => {
+    await liveRun('two gates');
+    const p = await json<{ proposal: string; gate: string }>(
+      await rawFetch(`${base}/api/memory`, {
+        method: 'POST',
+        headers: authHeaders(runToken()),
+        body: JSON.stringify({
+          scope: 'team',
+          kind: 'hazard',
+          title: 'one gate only',
+          body: 'd',
+        }),
+      })
+    );
+    const stray = await handle.messaging.engine.send(
+      {
+        to: ['human:test'],
+        kind: 'question',
+        blocking: true,
+        choices: ['approve', 'reject'],
+        body: 'a duplicate gate',
+        data: {
+          type: 'memory',
+          proposalId: p.proposal,
+          action: 'add',
+          scope: 'team',
+          kind: 'hazard',
+        },
+      },
+      SYSTEM_SENDER
+    );
+    await restart();
+    const open = handle.messaging.engine
+      .openBlocking()
+      .filter((m) => gateOf(m)?.type === 'memory')
+      .map((m) => m.id);
+    expect(open).toEqual([p.gate]);
+    expect(open).not.toContain(stray.message.id);
+  });
+
   it('decides a proposal whose answered gate had not taken effect before a restart', async () => {
     await liveRun('crash before the effect');
     const p = await json<{ proposal: string; gate: string }>(
@@ -748,6 +1108,61 @@ describe('identities over HTTP', () => {
     expect(fresh.status).toBe(200);
     expect((await personal('again')).status).toBe(201);
   });
+
+  // Ada's identity also serves another project, so linking this one away
+  // must leave its entries where that project still reads them.
+  it('moves entries on a link only off an identity no project uses', async () => {
+    const email = 'ada@x.com';
+    writeFileSync(
+      join(root, '.dispatch', 'team.yml'),
+      `members:\n  - handle: ada\n    email: ${email}\n    displayName: Ada\n    emails: []\n`
+    );
+    const ada = handle.team.teammates.issue('ada', 'request');
+    const saved = await rawFetch(`${base}/api/memory`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+      body: JSON.stringify({
+        scope: 'personal',
+        kind: 'fact',
+        title: 'mine',
+        body: '',
+      }),
+    });
+    expect(saved.status).toBe(201);
+    const identities = handle.memory.identities!;
+    const here = handle.memory.host.projectKey();
+    const alias = (projectKey: string) => ({
+      projectKey,
+      handle: 'ada',
+      rosterEmail: email,
+    });
+    const shared = identities.completeLink({
+      ...alias('bbbbbbbbbbbb'),
+      code: identities.startLink(alias(here)).code,
+    }).identity;
+    identities.resolve({ ...alias('cccccccccccc'), isOwner: false });
+    const { code } = identities.startLink(alias('cccccccccccc'));
+    const linked = await rawFetch(`${base}/api/memory/link/${code}`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+    });
+    expect(linked.status).toBe(200);
+    expect(
+      handle.memory.personal
+        .personal(shared)
+        .listEntries()
+        .map((e) => e.title)
+    ).toEqual(['mine']);
+  });
+
+  it('refuses a fresh start for the owner', async () => {
+    const fresh = await fetch(`${base}/api/memory/link`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ fresh: true }),
+    });
+    expect(fresh.status).toBe(400);
+  });
 });
 
 describe('Settings → Memory routes', () => {
@@ -755,11 +1170,13 @@ describe('Settings → Memory routes', () => {
     address: 'human:test',
     canDecide: true,
     kind: 'human',
+    ownerCredential: true,
   } as const;
   const CLAUDE_AGENT = {
     address: 'agent:test/claude-code',
     canDecide: false,
     kind: 'agent',
+    ownerCredential: true,
   } as const;
 
   function post(path: string, token?: string): Promise<Response> {

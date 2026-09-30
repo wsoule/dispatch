@@ -1,26 +1,42 @@
 import {
   claimConflictsWithWrites,
   dispatchableTasks,
+  fanoutCoverers,
+  fanoutHolder,
+  fanoutScope,
+  fanoutWaitingOn,
+  hasStatusRole,
+  isContainerKind,
+  isUnstartedStatus,
   loadConfig,
+  releasesFanoutDependents,
   schedulableBatch,
 } from '@dispatch/core';
-import type { ActorContext, TaskDoc, TaskStorePort } from '@dispatch/core';
+import type {
+  ActorContext,
+  FanoutBlocker,
+  StatusModel,
+  TaskDoc,
+  TaskListItem,
+  TaskStorePort,
+} from '@dispatch/core';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 import type { TaskCache } from '../cache.js';
 import type { EventBus } from '../events.js';
 import type { FindingStorePort } from '../findings.js';
+import { statusModelFor } from '../statuses.js';
 import {
   deriveChildPhase,
   deriveSpend,
   deriveWaves,
   summarizeWaves,
-  unsatisfiedBlockersOf,
 } from './epicPhase.js';
 import type { EpicProgressChild, EpicSpend, EpicWave } from './epicPhase.js';
 import type { FixLoopState } from './fixLoop.js';
 import type { Orchestrator } from './orchestrator.js';
 import { epicSessionsPath, runsDir } from './paths.js';
+import type { TaskAuthorship } from './taskAuthorship.js';
 import type { RunMeta } from './types.js';
 import {
   OrchestratorClientError,
@@ -31,6 +47,10 @@ import {
 
 type EpicSessionState = 'active' | 'paused' | 'stopped' | 'complete';
 export type EpicPauseReason = 'human' | 'budget' | 'runs' | 'fill-failed';
+/** What a session covers: its container's whole fan-out scope (core's
+ *  fanoutScope), or only its direct children — the rule a session persisted
+ *  before plan-wide fan-outs was started under, and keeps. */
+type EpicSessionScope = 'plan' | 'direct';
 
 // One epic's dispatch session. Persisted write-through to
 // `epicSessionsPath` (see persist()/hydrate()) so a dispatchd restart re-arms
@@ -52,10 +72,17 @@ interface EpicSessionRecord {
   maxRuns: number | null;
   /** Fixed for the session's life — pause/resume never reset it. */
   startedAt: string;
+  /** The `human:` ref that started it: the one person whose assigned tasks
+   *  it may pick up. Null on a session persisted before this was recorded,
+   *  which works for the daemon's local human. */
+  startedBy: string | null;
+  /** `direct` on a session persisted without it. */
+  scope: EpicSessionScope;
   updatedAt: string;
   completedAt?: string;
-  /** The human who started the session; its auto-fill runs act for them. */
-  startedBy?: string;
+  /** The human its auto-fill runs act for; absent when the shared agentToken
+   *  started it. */
+  operator?: string;
   /** Critical-risk children already noted as held on the epic's Activity,
    *  so each is announced once per session rather than on every fill. */
   heldCritical: Set<string>;
@@ -81,10 +108,16 @@ export interface EpicSession {
   maxSpendUsd: number | null;
   maxRuns: number | null;
   startedAt: string;
+  /** Who started it; teammates' tasks are never auto-dispatched for them. */
+  startedBy: string | null;
+  /** The whole plan, or (a session from before plan-wide fan-outs) its
+   *  container's direct children only. */
+  scope: EpicSessionScope;
   updatedAt: string;
   completedAt?: string;
-  /** The human who started the session; its auto-fill runs act for them. */
-  startedBy?: string;
+  /** The human its auto-fill runs act for; absent when the shared agentToken
+   *  started it. */
+  operator?: string;
   /** `state === 'active'` — kept for `formatEpicProgress` and `--watch`. */
   active: boolean;
 }
@@ -136,6 +169,8 @@ export interface EpicEngineContext {
   // field — appendEpicActivity() below falls back to an unattributed
   // Activity line when it's absent.
   actorContext?: ActorContext;
+  // Who wrote each task; absent, every auto-fill run acts for no one.
+  authorship?: TaskAuthorship;
 }
 
 // How long a fill that failed outright waits before retrying itself, and how
@@ -169,15 +204,90 @@ function describeSession(session: EpicSessionRecord): string {
   return `(${parts.join(', ')})`;
 }
 
+// Tasks by parent id, for walking fan-out scopes over one board read.
+function childrenIndex<T extends TaskListItem>(
+  tasks: readonly T[]
+): Map<string, T[]> {
+  const out = new Map<string, T[]>();
+  for (const task of tasks) {
+    const parent = task.meta.parent;
+    if (parent === null) continue;
+    const bucket = out.get(parent);
+    if (bucket === undefined) out.set(parent, [task]);
+    else bucket.push(task);
+  }
+  return out;
+}
+
+// Tasks whose work sits on a branch a dependent can stack on: a terminal,
+// unreviewed run (the rule Orchestrator.branchForTask picks a base by).
+function tasksWithRunBranch(runs: readonly RunMeta[]): Set<string> {
+  const out = new Set<string>();
+  for (const run of runs) {
+    if (TERMINAL_RUN_STATES.has(run.state) && run.reviewedAt === undefined) {
+      out.add(run.taskId);
+    }
+  }
+  return out;
+}
+
+// A blocker as a fan-out working for `holder`'s dispatcher sees it.
+function blockerView(
+  holder: (task: TaskListItem) => string | null,
+  withRunBranch: ReadonlySet<string>
+): (blocker: TaskListItem) => FanoutBlocker {
+  return (blocker) => ({
+    held: holder(blocker) !== null,
+    hasRunBranch: withRunBranch.has(blocker.meta.id),
+  });
+}
+
+// What a session's last fill left waiting (see EpicEngine.onTasksChanged).
+interface Watched {
+  /** Blockers its own unstarted work waits on. */
+  waiting: Set<string>;
+  /** Its unstarted tasks a teammate holds. */
+  held: Set<string>;
+}
+
+// Active or paused: a session that still claims its scope.
+function isLive(session: EpicSessionRecord): boolean {
+  return session.state === 'active' || session.state === 'paused';
+}
+
+// One child's reading, shared by every container whose scope holds it (a
+// milestone's and its project's): only the wave differs between them.
+type ChildReading = Omit<EpicProgressChild, 'wave'>;
+
+// The board as progress() reads it, shared by every epic in one request.
+interface ProgressBoard {
+  statuses: StatusModel;
+  byId: Map<string, TaskListItem>;
+  children: Map<string, TaskListItem[]>;
+  dispatchable: Set<string>;
+  runs: RunMeta[];
+  /** Each task's latest run and its live one; `runs` is newest first. */
+  latestRun: Map<string, RunMeta>;
+  liveRun: Map<string, RunMeta>;
+  /** See tasksWithRunBranch. */
+  withRunBranch: Set<string>;
+  /** Readings by `<dispatcher> <task id>`, filled as containers ask. */
+  readings: Map<string, ChildReading>;
+  runCostEstimateUsd: number;
+}
+
 /**
  * The epic-level parallel dispatch engine (spec §5 Dispatch step 6): starting
  * an epic dispatches its ready children up to a concurrency cap, and every
  * time a child run reaches a terminal state, newly-unblocked siblings
  * auto-dispatch to fill any freed slot — all driven by Orchestrator's
- * `onRunTerminal` push hook, never a poll. A session pauses itself at its
- * spend or run ceiling (or after a fill keeps failing) and waits for
- * `resume()`; `stop()` and a pause only halt *new* dispatches — runs already
- * live keep running to their own completion.
+ * `onRunTerminal` push hook (plus `task.changed` for a blocker satisfied
+ * outside any run), never a poll. A session covers its container's whole
+ * fan-out scope (a project's milestone issues too) and never starts a
+ * teammate's task: one assigned to a person other than whoever started it.
+ * A session pauses itself at its spend or run ceiling (or after a fill keeps
+ * failing) and waits for `resume()`; `stop()` and a pause only halt *new*
+ * dispatches — runs already live keep running to their own completion.
  *
  * The session record is persisted to `epicSessionsPath` (write-through, like
  * MergeQueue) so a restart re-arms it through resumeOnBoot(); the durable
@@ -212,6 +322,10 @@ export class EpicEngine {
   // Set by shutdown(): no fill starts and nothing persists after it.
   private closed = false;
   private fixLoop: EpicFixLoopPort | null = null;
+  // Per active session, what its unstarted work waited on at the last fill:
+  // blockers, and its own tasks a teammate held (see onTasksChanged). Memory
+  // only; the next fill rebuilds it.
+  private readonly watching = new Map<string, Watched>();
 
   constructor(private readonly ctx: EpicEngineContext) {
     this.fillRetryDelayMs = ctx.fillRetryDelayMs ?? DEFAULT_FILL_RETRY_DELAY_MS;
@@ -230,6 +344,9 @@ export class EpicEngine {
     // would (see I3 in onRunReviewed's own doc comment).
     ctx.orchestrator.onRunTerminal((meta) => this.onRunTerminal(meta));
     ctx.orchestrator.onRunReviewed((meta) => this.onRunReviewed(meta));
+    ctx.events.subscribe((event) => {
+      if (event.type === 'task.changed') this.onTasksChanged(event.ids);
+    });
   }
 
   // Whether any epic is still dispatching work. A paused, stopped or complete
@@ -257,7 +374,11 @@ export class EpicEngine {
   // throws (see the catch below), which a fire-and-forget `void` could not.
   async start(
     epicId: string,
-    opts: EpicSessionOptions & { executor?: string; startedBy?: string } = {}
+    opts: EpicSessionOptions & {
+      executor?: string;
+      startedBy?: string;
+      operator?: string;
+    } = {}
   ): Promise<EpicSession> {
     const epic = this.requireEpic(epicId);
     const existing = this.sessions.get(epicId);
@@ -289,6 +410,7 @@ export class EpicEngine {
     );
     const maxSpendUsd = validateMaxSpend(opts.maxSpendUsd ?? null);
     const maxRuns = validateMaxRuns(opts.maxRuns ?? null);
+    this.refuseOverlap(epicId);
     const now = new Date().toISOString();
     const session: EpicSessionRecord = {
       concurrency,
@@ -297,8 +419,10 @@ export class EpicEngine {
       maxSpendUsd,
       maxRuns,
       startedAt: now,
+      startedBy: opts.startedBy ?? this.ctx.actorContext?.humanRef ?? null,
+      scope: 'plan',
       updatedAt: now,
-      ...(opts.startedBy === undefined ? {} : { startedBy: opts.startedBy }),
+      ...(opts.operator === undefined ? {} : { operator: opts.operator }),
       heldCritical: new Set(),
     };
     this.sessions.set(epicId, session);
@@ -307,7 +431,8 @@ export class EpicEngine {
     try {
       this.appendEpicActivity(
         epicId,
-        `epic dispatch started ${describeSession(session)}`
+        `epic dispatch started ${describeSession(session)}`,
+        session.startedBy ?? undefined
       );
       // Chained like every other fill (see enqueueFill) — a run reaching a
       // terminal state *inside* this very dispatch fires the lifecycle hooks
@@ -356,10 +481,10 @@ export class EpicEngine {
   // POST /api/epics/:id/resume. The mid-session throttle and "raise the
   // ceiling" verb: overrides are validated like start()'s, then the session
   // fills again. `startedAt` is untouched, so spend keeps counting the runs
-  // already made.
+  // already made. A given `operator` re-keys who the fills act for (null: no one).
   async resume(
     epicId: string,
-    opts: EpicSessionOptions = {}
+    opts: EpicSessionOptions & { operator?: string | null } = {}
   ): Promise<EpicSession> {
     this.requireEpic(epicId);
     const session = this.sessions.get(epicId);
@@ -386,6 +511,8 @@ export class EpicEngine {
     session.concurrency = concurrency;
     session.maxSpendUsd = maxSpendUsd;
     session.maxRuns = maxRuns;
+    if (opts.operator === null) delete session.operator;
+    else if (opts.operator !== undefined) session.operator = opts.operator;
     session.state = 'active';
     delete session.pausedReason;
     delete session.pausedDetail;
@@ -428,6 +555,7 @@ export class EpicEngine {
     delete session.pausedDetail;
     session.updatedAt = new Date().toISOString();
     this.armed.delete(epicId);
+    this.watching.delete(epicId);
     this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
@@ -443,55 +571,88 @@ export class EpicEngine {
   // any child.
   progress(epicId: string): EpicProgress {
     this.requireEpic(epicId);
-    const children = this.childrenOf(epicId);
-    const childIds = new Set(children.map((c) => c.meta.id));
-    // Newest first, so the first run seen per task is its latest.
-    const childRuns = this.ctx.orchestrator
-      .list()
-      .filter((r) => childIds.has(r.taskId));
-    const liveRuns = childRuns.filter((r) => !TERMINAL_RUN_STATES.has(r.state));
-    const liveByTask = new Map<string, RunMeta>();
-    const latestByTask = new Map<string, RunMeta>();
-    for (const run of childRuns) {
-      if (!latestByTask.has(run.taskId)) latestByTask.set(run.taskId, run);
-      if (!liveByTask.has(run.taskId) && !TERMINAL_RUN_STATES.has(run.state)) {
-        liveByTask.set(run.taskId, run);
+    return this.progressOf(epicId, this.progressBoard());
+  }
+
+  // What every epic's progress reads alike, read once per request: on a
+  // 2000-task board the dispatchable set alone is a pass over every task,
+  // which progressAll() used to repeat per milestone.
+  private progressBoard(): ProgressBoard {
+    const statuses = statusModelFor(this.ctx.rootDir);
+    const tasks = this.ctx.cache.allItems();
+    const runs = this.ctx.orchestrator.list();
+    const latestRun = new Map<string, RunMeta>();
+    const liveRun = new Map<string, RunMeta>();
+    for (const run of runs) {
+      if (!latestRun.has(run.taskId)) latestRun.set(run.taskId, run);
+      if (!liveRun.has(run.taskId) && !TERMINAL_RUN_STATES.has(run.state)) {
+        liveRun.set(run.taskId, run);
       }
     }
-    const dispatchable = new Set(
-      dispatchableTasks(this.ctx.cache.query({ includeArchived: true })).map(
-        (t) => t.meta.id
-      )
-    );
+    return {
+      statuses,
+      byId: new Map(tasks.map((t) => [t.meta.id, t])),
+      children: childrenIndex(tasks),
+      dispatchable: new Set(
+        dispatchableTasks(tasks, statuses).map((t) => t.meta.id)
+      ),
+      runs,
+      latestRun,
+      liveRun,
+      withRunBranch: tasksWithRunBranch(runs),
+      readings: new Map(),
+      runCostEstimateUsd: loadConfig(this.ctx.rootDir).orchestrator
+        .runCostEstimateUsd,
+    };
+  }
+
+  private progressOf(epicId: string, board: ProgressBoard): EpicProgress {
+    const { statuses, dispatchable } = board;
+    const children = this.scopeOf(epicId, (id) => board.children.get(id) ?? []);
+    const childIds = new Set(children.map((c) => c.meta.id));
+    const childRuns = board.runs.filter((r) => childIds.has(r.taskId));
+    const liveRuns = childRuns.filter((r) => !TERMINAL_RUN_STATES.has(r.state));
     const waves = deriveWaves(children);
     const session = this.sessions.get(epicId);
+    const { dispatcher, holder } = this.holderFor(session);
+    const blocker = blockerView(holder, board.withRunBranch);
     const progressChildren: EpicProgressChild[] = children.map((task) => {
       const id = task.meta.id;
-      const latestRun = latestByTask.get(id) ?? null;
-      const derived = deriveChildPhase({
-        task,
-        liveRun: liveByTask.get(id) ?? null,
-        latestRun,
-        fixLoop: this.fixLoop?.get(id) ?? null,
-        blockedReason: this.ctx.orchestrator.blockedFindingReason(id),
-        unsatisfiedBlockers: unsatisfiedBlockersOf(task, (blockerId) =>
-          this.ctx.store.get(blockerId)
-        ),
-        dispatchable: dispatchable.has(id),
-      });
-      return {
-        id,
-        title: task.meta.title,
-        status: task.meta.status,
-        phase: derived.phase,
-        wave: waves.get(id) ?? 1,
-        ...(derived.reason !== undefined ? { reason: derived.reason } : {}),
-        ...(derived.runId !== undefined ? { runId: derived.runId } : {}),
-        ...(latestRun?.costUsd !== undefined
-          ? { costUsd: latestRun.costUsd }
-          : {}),
-        openFindings: this.ctx.findingStore?.openFor(id).length ?? 0,
-      };
+      const key = `${dispatcher} ${id}`;
+      let reading = board.readings.get(key);
+      if (reading === undefined) {
+        const latestRun = board.latestRun.get(id) ?? null;
+        const derived = deriveChildPhase({
+          task,
+          liveRun: board.liveRun.get(id) ?? null,
+          latestRun,
+          fixLoop: this.fixLoop?.get(id) ?? null,
+          blockedReason: this.ctx.orchestrator.blockedFindingReason(id),
+          unsatisfiedBlockers: fanoutWaitingOn(
+            task,
+            (blockerId) => board.byId.get(blockerId),
+            statuses,
+            blocker
+          ),
+          dispatchable: dispatchable.has(id),
+          heldBy: holder(task),
+          statuses,
+        });
+        reading = {
+          id,
+          title: task.meta.title,
+          status: task.meta.status,
+          phase: derived.phase,
+          ...(derived.reason !== undefined ? { reason: derived.reason } : {}),
+          ...(derived.runId !== undefined ? { runId: derived.runId } : {}),
+          ...(latestRun?.costUsd !== undefined
+            ? { costUsd: latestRun.costUsd }
+            : {}),
+          openFindings: this.ctx.findingStore?.openFor(id).length ?? 0,
+        };
+        board.readings.set(key, reading);
+      }
+      return { ...reading, wave: waves.get(id) ?? 1 };
     });
     return {
       epicId,
@@ -502,7 +663,7 @@ export class EpicEngine {
       spend: deriveSpend(
         childRuns,
         session?.startedAt ?? null,
-        loadConfig(this.ctx.rootDir).orchestrator.runCostEstimateUsd,
+        board.runCostEstimateUsd,
         {
           maxSpendUsd: session?.maxSpendUsd ?? null,
           maxRuns: session?.maxRuns ?? null,
@@ -518,11 +679,12 @@ export class EpicEngine {
   // desktop's `data.epics` set), in id order — one request for every surface
   // that shows a milestone.
   progressAll(): EpicProgress[] {
+    const board = this.progressBoard();
     return this.ctx.cache
-      .query({ kind: 'epic' })
+      .query({ containers: true })
       .map((epic) => epic.meta.id)
       .sort()
-      .map((epicId) => this.progress(epicId));
+      .map((epicId) => this.progressOf(epicId, board));
   }
 
   // Re-arms every session hydrated as `active`, each after `resumeDelayMs`
@@ -747,14 +909,16 @@ export class EpicEngine {
     });
   }
 
-  // The session's spend: every run on a child created since `startedAt`,
-  // charged at the current config estimate while live.
+  // The session's spend: every run on a task in its scope created since
+  // `startedAt`, charged at the current config estimate while live.
   private sessionSpend(
     epicId: string,
     session: EpicSessionRecord,
-    estimate = loadConfig(this.ctx.rootDir).orchestrator.runCostEstimateUsd
+    estimate = loadConfig(this.ctx.rootDir).orchestrator.runCostEstimateUsd,
+    childIds: ReadonlySet<string> = new Set(
+      this.scopeOf(epicId).map((c) => c.meta.id)
+    )
   ): EpicSpend {
-    const childIds = new Set(this.childrenOf(epicId).map((c) => c.meta.id));
     return deriveSpend(
       this.ctx.orchestrator.list().filter((r) => childIds.has(r.taskId)),
       session.startedAt,
@@ -763,34 +927,49 @@ export class EpicEngine {
     );
   }
 
-  // Dispatches ready children via schedulableBatch (conflicts.ts): concurrency
-  // cap, then the run and spend ceilings, no two overlapping `writes` in one
-  // batch. Readiness runs over the FULL task set first, since dispatchableTasks
-  // treats a blocker it wasn't given as satisfied — a blocker in another epic,
-  // or in none, must still count. The ceilings are only consulted once there
-  // is something to gate, so a session never pauses with nothing to dispatch.
+  // Dispatches ready work in the session's scope (the tasks the Flight Plan
+  // draws, see scopeOf) via schedulableBatch (conflicts.ts): concurrency cap,
+  // then the run and spend ceilings, no two overlapping `writes` in one batch.
+  // A teammate's task is never a candidate, and holds its dependents until it
+  // is done (core's releasesFanoutDependents). Readiness runs over the FULL
+  // task set first, since dispatchableTasks treats a blocker it wasn't given
+  // as satisfied — a blocker in another epic, or in none, must still count.
+  // The ceilings are only consulted once there is something to gate, so a
+  // session never pauses with nothing to dispatch.
   private async fillQueue(epicId: string): Promise<void> {
     const session = this.sessions.get(epicId);
     if (session?.state !== 'active' || !this.armed.has(epicId)) return;
 
-    const children = this.childrenOf(epicId);
-    const childIds = new Set(children.map((c) => c.meta.id));
-    const liveCount = this.ctx.orchestrator
-      .list()
-      .filter(
-        (r) => childIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
-      ).length;
+    const scope = this.scopeOf(epicId);
+    const work = this.ownWork(epicId, scope, this.cacheLookup());
+    const workIds = new Set(work.map((c) => c.meta.id));
+    const runs = this.ctx.orchestrator.list();
+    const liveCount = runs.filter(
+      (r) => workIds.has(r.taskId) && !TERMINAL_RUN_STATES.has(r.state)
+    ).length;
     let slots = session.concurrency - liveCount;
+    // A full session refills on its next terminal, which re-reads all this.
     if (slots <= 0) return;
 
-    // childIds now includes archived children (see childrenOf); dispatchability
-    // must exclude them explicitly rather than rely on childrenOf's filtering.
-    const ready = dispatchableTasks(
-      this.ctx.cache.query({ includeArchived: true })
-    ).filter(
+    const tasks = this.ctx.cache.query({ includeArchived: true });
+    const statuses = statusModelFor(this.ctx.rootDir);
+    const { dispatcher, holder } = this.holderFor(session);
+    const mine = new Set(
+      work.filter((t) => holder(t) === null).map((t) => t.meta.id)
+    );
+    const byId = new Map(tasks.map((t) => [t.meta.id, t]));
+    const blocker = blockerView(holder, tasksWithRunBranch(runs));
+    const waitingOn = (t: TaskDoc) =>
+      fanoutWaitingOn(t, (id) => byId.get(id), statuses, blocker);
+    this.noteWatched(epicId, work, mine, statuses, waitingOn);
+    // The scope includes archived children (see scopeOf); dispatchability
+    // must exclude them explicitly. dispatchableTasks releases a dependent at
+    // a blocker's review role; a fan-out also wants a branch to stack on.
+    const ready = dispatchableTasks(tasks, statuses).filter(
       (t) =>
-        childIds.has(t.meta.id) &&
+        mine.has(t.meta.id) &&
         t.meta.archivedAt === undefined &&
+        waitingOn(t).length === 0 &&
         !this.holdCritical(session, epicId, t)
     );
     // A live run's footprint can have grown past its task's declared writes
@@ -811,7 +990,12 @@ export class EpicEngine {
       // mid-session changes the next gate.
       const estimate = loadConfig(this.ctx.rootDir).orchestrator
         .runCostEstimateUsd;
-      const spend = this.sessionSpend(epicId, session, estimate);
+      const spend = this.sessionSpend(
+        epicId,
+        session,
+        estimate,
+        new Set(scope.map((c) => c.meta.id))
+      );
       if (session.maxRuns !== null) {
         slots = Math.min(slots, session.maxRuns - spend.runsStarted);
         // No future terminal can free a run, so this pause is final until
@@ -840,21 +1024,41 @@ export class EpicEngine {
       clearOfLiveRuns.map((t) => ({ id: t.meta.id, writes: t.meta.writes })),
       slots
     );
+    // The orchestrator re-asks this of the task as it stands right before its
+    // run registers: a Linear pull can hand it to a teammate mid-batch.
+    const guard = (task: TaskDoc): string | null => {
+      const heldBy = holder(task);
+      if (heldBy !== null) return `assigned to ${heldBy}`;
+      return isUnstartedStatus(task.meta.status, statuses)
+        ? null
+        : `status is now ${task.meta.status}`;
+    };
     for (const taskId of batch) {
+      const task = clearOfLiveRuns.find((t) => t.meta.id === taskId);
+      // MEM-R8(b): the run acts for the session's operator only on a task
+      // that operator created and last wrote.
+      const operator =
+        task === undefined || this.ctx.authorship === undefined
+          ? null
+          : this.ctx.authorship.actsFor(task, session.operator ?? null);
       try {
         // The epic scheduler's own auto-fill decided this task was next —
-        // no human pressed dispatch for it specifically. Through
+        // no human pressed dispatch for it specifically, but the run is the
+        // starter's work (a legacy session's, the local human's). Through
         // dispatchOrResume, not dispatch: a task whose last run a restart left
         // recoverable must be picked back up here too, since a fresh run would
         // strand that worktree and cancel the sweep still watching it.
         await this.ctx.orchestrator.dispatchOrResume(taskId, {
           executor: session.executor,
           actor: 'none',
-          operator: session.startedBy ?? null,
+          operator,
+          dispatchedBy: dispatcher,
+          guard,
         });
       } catch (err) {
-        // A task that already picked up a live run outside this session
-        // (raced between the readiness snapshot and here) just gets skipped.
+        // A task that already picked up a live run outside this session, or
+        // that the guard refused (raced between the readiness snapshot and
+        // here), just gets skipped.
         if (err instanceof OrchestratorConflictError) continue;
         throw err;
       }
@@ -896,13 +1100,20 @@ export class EpicEngine {
   // runnable. A session with only capped loops left stays active — those
   // wait on a ruling, which is the human's queue. An epic with zero children
   // never "completes" on its own (there is nothing to wait on, but also
-  // nothing accomplished).
+  // nothing accomplished). A teammate's task is theirs to finish: only the
+  // session's own work waiting on it keeps the session open.
   private isEpicComplete(epicId: string): boolean {
-    const children = this.childrenOf(epicId);
-    if (children.length === 0) return false;
+    const scope = this.scopeOf(epicId);
+    if (scope.length === 0) return false;
+    const children = this.ownWork(epicId, scope, this.cacheLookup());
+    const statuses = statusModelFor(this.ctx.rootDir);
+    const { holder } = this.holderFor(this.sessions.get(epicId));
     if (
       children.some(
-        (c) => c.meta.status === 'ready' || c.meta.status === 'working'
+        (c) =>
+          holder(c) === null &&
+          (isUnstartedStatus(c.meta.status, statuses) ||
+            hasStatusRole(c.meta.status, 'dispatched', statuses))
       )
     ) {
       return false;
@@ -931,6 +1142,7 @@ export class EpicEngine {
     session.completedAt = now;
     session.updatedAt = now;
     this.armed.delete(epicId);
+    this.watching.delete(epicId);
     this.clearFillRetry(epicId);
     this.appendEpicActivity(
       epicId,
@@ -941,12 +1153,169 @@ export class EpicEngine {
     this.emitChanged(epicId);
   }
 
-  // Includes archived children: progress/completeness are historical facts
-  // about the epic, and an archived child is done+pushed, not missing.
-  private childrenOf(epicId: string): TaskDoc[] {
-    return this.ctx.cache
-      .query({ parent: epicId, includeArchived: true })
-      .filter((t) => t.meta.kind === 'task');
+  // The tasks `epicId`'s fan-out covers (core's fanoutScope): exactly what
+  // its Flight Plan draws, a project's milestone issues included — unless a
+  // live session keeps the direct-children rule it was started under.
+  // Includes archived ones: progress/completeness are historical facts about
+  // the epic, and an archived child is done+pushed, not missing.
+  // Walks the cache unless given a board's `childrenOf` (progress reads
+  // body-less items).
+  private scopeOf(
+    epicId: string,
+    childrenOf?: undefined,
+    rule?: EpicSessionScope
+  ): TaskDoc[];
+  private scopeOf<T extends TaskListItem>(
+    epicId: string,
+    childrenOf: (id: string) => readonly T[],
+    rule?: EpicSessionScope
+  ): T[];
+  private scopeOf(
+    epicId: string,
+    childrenOf: (id: string) => readonly TaskListItem[] = (id) =>
+      this.ctx.cache.query({ parent: id, includeArchived: true }),
+    rule: EpicSessionScope = this.scopeRuleOf(epicId)
+  ): TaskListItem[] {
+    return rule === 'direct'
+      ? childrenOf(epicId).filter((t) => !isContainerKind(t.meta.kind))
+      : fanoutScope(epicId, childrenOf);
+  }
+
+  // A live session's scope rule; `plan` for any fan-out yet to start.
+  private scopeRuleOf(epicId: string): EpicSessionScope {
+    const session = this.sessions.get(epicId);
+    return session !== undefined && isLive(session) ? session.scope : 'plan';
+  }
+
+  // cache.get, memoized for one walk up the hierarchy.
+  private cacheLookup(): (id: string) => TaskDoc | null {
+    const memo = new Map<string, TaskDoc | null>();
+    return (id) => {
+      if (!memo.has(id)) memo.set(id, this.ctx.cache.get(id));
+      return memo.get(id) ?? null;
+    };
+  }
+
+  // A session's own work: its scope, less any task a nearer active or paused
+  // session covers. start() refuses overlapping sessions, so this only bites
+  // on sessions persisted before a scope reached past direct children.
+  private ownWork(
+    epicId: string,
+    scope: TaskDoc[],
+    lookup: (id: string) => TaskDoc | null | undefined
+  ): TaskDoc[] {
+    const liveSession = (id: string): boolean => {
+      const session = this.sessions.get(id);
+      return session !== undefined && isLive(session);
+    };
+    if (
+      ![...this.sessions.keys()].some((id) => id !== epicId && liveSession(id))
+    ) {
+      return scope;
+    }
+    return scope.filter(
+      (task) => fanoutCoverers(task, lookup).find(liveSession) === epicId
+    );
+  }
+
+  // One fan-out per task: refuses a start whose scope shares a task with
+  // another active or paused session, such as a project's and one of its
+  // milestones'.
+  private refuseOverlap(epicId: string): void {
+    let mine: ReadonlySet<string> | null = null;
+    for (const [otherId, other] of this.sessions) {
+      if (otherId === epicId || !isLive(other)) continue;
+      mine ??= new Set(
+        this.scopeOf(epicId, undefined, 'plan').map((t) => t.meta.id)
+      );
+      const scope = mine;
+      const shared = this.scopeOf(otherId).filter((t) =>
+        scope.has(t.meta.id)
+      ).length;
+      if (shared > 0) {
+        throw new OrchestratorConflictError(
+          `fan-out would overlap ${otherId}'s ${other.state} session on ${shared} task(s) — stop that one first: ${epicId}`
+        );
+      }
+    }
+  }
+
+  // Who holds a task against `session` (core's fanoutHolder): the teammate
+  // it belongs to, or null when the session may start it. Without a session,
+  // the local human's view.
+  private holderFor(session: EpicSessionRecord | undefined): {
+    dispatcher: string;
+    holder: (task: TaskListItem) => string | null;
+  } {
+    const local = this.ctx.actorContext?.humanRef;
+    const dispatcher = session?.startedBy ?? local ?? 'human';
+    const localRef = local ?? dispatcher;
+    return {
+      dispatcher,
+      holder: (task) => fanoutHolder(task.meta.assignee, dispatcher, localRef),
+    };
+  }
+
+  // Records, for onTasksChanged, the blockers the session's own unstarted
+  // work (`mine`) still waits on and the unstarted tasks a teammate holds.
+  private noteWatched(
+    epicId: string,
+    work: readonly TaskDoc[],
+    mine: ReadonlySet<string>,
+    statuses: StatusModel,
+    waitingOn: (task: TaskDoc) => string[]
+  ): void {
+    const watched: Watched = { waiting: new Set(), held: new Set() };
+    for (const task of work) {
+      if (task.meta.archivedAt !== undefined) continue;
+      if (!isUnstartedStatus(task.meta.status, statuses)) continue;
+      if (!mine.has(task.meta.id)) {
+        watched.held.add(task.meta.id);
+        continue;
+      }
+      for (const id of waitingOn(task)) watched.waiting.add(id);
+    }
+    this.watching.set(epicId, watched);
+  }
+
+  // Work can free up outside any run: a teammate's issue landing through
+  // Linear, a hand edit, or a teammate handing their task back. Runs fire
+  // onRunTerminal; this catches the rest, refilling a session only when a
+  // blocker it waited on now lets go or a task it held back is now its own.
+  private onTasksChanged(ids: readonly string[] | undefined): void {
+    let statuses: StatusModel | null = null;
+    let withRunBranch: Set<string> | null = null;
+    for (const [epicId, { waiting, held }] of this.watching) {
+      if (!this.armed.has(epicId)) continue;
+      const session = this.sessions.get(epicId);
+      if (session?.state !== 'active') continue;
+      const touched = (set: ReadonlySet<string>) =>
+        ids === undefined ? [...set] : ids.filter((id) => set.has(id));
+      const blockers = touched(waiting);
+      const holding = touched(held);
+      if (blockers.length === 0 && holding.length === 0) continue;
+      statuses ??= statusModelFor(this.ctx.rootDir);
+      withRunBranch ??= tasksWithRunBranch(this.ctx.orchestrator.list());
+      const model = statuses;
+      const { holder } = this.holderFor(session);
+      const view = blockerView(holder, withRunBranch);
+      const released = blockers.some((id) => {
+        const blocker = this.ctx.cache.get(id);
+        return (
+          blocker === null ||
+          releasesFanoutDependents(blocker.meta.status, model, view(blocker))
+        );
+      });
+      const handedBack = holding.some((id) => {
+        const task = this.ctx.cache.get(id);
+        return (
+          task !== null &&
+          holder(task) === null &&
+          isUnstartedStatus(task.meta.status, model)
+        );
+      });
+      if (released || handedBack) this.scheduleFill(epicId);
+    }
   }
 
   private requireEpic(epicId: string): TaskDoc {
@@ -954,8 +1323,11 @@ export class EpicEngine {
     if (epic === null) {
       throw new OrchestratorNotFoundError(`epic not found: ${epicId}`);
     }
-    if (epic.meta.kind !== 'epic') {
-      throw new OrchestratorClientError(`not an epic: ${epicId}`);
+    if (
+      !isContainerKind(epic.meta.kind) &&
+      !this.ctx.cache.isContainer(epicId)
+    ) {
+      throw new OrchestratorClientError(`not a container: ${epicId}`);
     }
     return epic;
   }
@@ -988,8 +1360,8 @@ export class EpicEngine {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.cache.refresh(this.ctx.store, [epicId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
   }
 
   // The `epic.changed` refetch signal, debounced per epic on a trailing
@@ -1090,6 +1462,9 @@ export class EpicEngine {
           typeof record.maxSpendUsd === 'number' ? record.maxSpendUsd : null,
         maxRuns: typeof record.maxRuns === 'number' ? record.maxRuns : null,
         startedAt: record.startedAt,
+        startedBy:
+          typeof record.startedBy === 'string' ? record.startedBy : null,
+        scope: record.scope === 'plan' ? 'plan' : 'direct',
         updatedAt:
           typeof record.updatedAt === 'string'
             ? record.updatedAt
@@ -1097,8 +1472,8 @@ export class EpicEngine {
         ...(record.completedAt !== undefined
           ? { completedAt: record.completedAt }
           : {}),
-        ...(typeof record.startedBy === 'string'
-          ? { startedBy: record.startedBy }
+        ...(typeof record.operator === 'string'
+          ? { operator: record.operator }
           : {}),
         heldCritical: new Set(
           Array.isArray(record.heldCritical)
@@ -1127,13 +1502,13 @@ export class EpicEngine {
       maxSpendUsd: session.maxSpendUsd,
       maxRuns: session.maxRuns,
       startedAt: session.startedAt,
+      startedBy: session.startedBy,
+      scope: session.scope,
       updatedAt: session.updatedAt,
       ...(session.completedAt !== undefined
         ? { completedAt: session.completedAt }
         : {}),
-      ...(session.startedBy !== undefined
-        ? { startedBy: session.startedBy }
-        : {}),
+      ...(session.operator !== undefined ? { operator: session.operator } : {}),
       active: session.state === 'active',
     };
   }

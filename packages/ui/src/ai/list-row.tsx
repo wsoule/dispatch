@@ -1,12 +1,72 @@
-import type {
-  ComponentPropsWithRef,
-  KeyboardEvent,
-  MouseEvent,
-  ReactNode,
+import {
+  type ComponentPropsWithRef,
+  type KeyboardEvent,
+  type MouseEvent,
+  type ReactNode,
+  useEffect,
+  useRef,
+  useState,
 } from 'react';
 
 import { Checkbox } from '../checkbox';
 import { cn } from '../lib/utils';
+
+// The unchecked box, drawn without Base UI: the same face as `Checkbox` at rest.
+const RESTING_BOX_CLASS =
+  'peer size-3.5 shrink-0 cursor-pointer appearance-none rounded-[4px] border-[0.5px] border-border-chip bg-surface-quaternary outline-none focus-visible:ring-2 focus-visible:ring-ring';
+
+/**
+ * The row's select box. A Base UI checkbox costs more to mount than the rest of a row, and
+ * a virtualized list mounts rows on every scroll frame, so an unticked, idle row draws a
+ * native checkbox instead — it still ticks on click and Space — and the real checkbox
+ * takes over once the row is selected, focused or the box is hovered.
+ */
+function SelectBox({
+  checked,
+  label,
+  onToggle,
+  live,
+}: {
+  checked: boolean;
+  label: string;
+  onToggle: (next: boolean) => void;
+  live: boolean;
+}) {
+  const [armed, setArmed] = useState(false);
+  const refocus = useRef(false);
+  const boxRef = useRef<HTMLElement>(null);
+  const real = live || armed || checked;
+  useEffect(() => {
+    if (!real || !refocus.current) return;
+    refocus.current = false;
+    boxRef.current?.focus();
+  }, [real]);
+  if (real) {
+    return (
+      <Checkbox
+        ref={boxRef}
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={(next) => onToggle(next)}
+      />
+    );
+  }
+  return (
+    <input
+      type="checkbox"
+      checked={false}
+      aria-label={label}
+      data-slot="checkbox"
+      className={RESTING_BOX_CLASS}
+      onPointerEnter={() => setArmed(true)}
+      onFocus={() => {
+        refocus.current = true;
+        setArmed(true);
+      }}
+      onChange={() => onToggle(true)}
+    />
+  );
+}
 
 export type ListRowProps = {
   /** Priority glyph, 14px. */
@@ -131,10 +191,11 @@ export function ListRow({
           onClick={(event) => event.stopPropagation()}
           onKeyDown={(event) => event.stopPropagation()}
         >
-          <Checkbox
-            aria-label={selectLabel}
+          <SelectBox
             checked={selected}
-            onCheckedChange={(next) => onSelectToggle(next)}
+            label={selectLabel}
+            onToggle={onSelectToggle}
+            live={focused}
           />
         </span>
       )}

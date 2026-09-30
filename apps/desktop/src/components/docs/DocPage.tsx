@@ -23,6 +23,7 @@ import {
   docBadges,
   docDiffPatch,
   docStatusLine,
+  revisionAuthor,
   revisionsSinceReview,
   sameRevisions,
 } from '../../lib/docs';
@@ -377,7 +378,7 @@ export function DocPage({
             {confirming.revisions.map((r) => (
               <li
                 key={r.id}
-              >{`rev ${r.n ?? '-'} · ${r.author} · ${r.summary}`}</li>
+              >{`rev ${r.n ?? '-'} · ${revisionAuthor(r)} · ${r.summary}`}</li>
             ))}
           </ul>
           {confirming.diffError !== null && (

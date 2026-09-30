@@ -1,39 +1,39 @@
 import { useEffect, useRef } from 'react';
 
-import { ErrorBoundary } from '../shell/ErrorBoundary';
-import type { TaskDetailPanelProps } from './detail';
-import { TaskPage } from './detail';
+import { TaskPage } from './page/TaskPage';
+import { useTaskPageHost } from './page/TaskPageHost';
 import { Dialog, DialogContent, DialogTitle } from '@/ui/dialog';
 
 /**
- * The task peek: `TaskPage` in peek mode inside a centred 12px-radius dialog, opened from
- * the board/list without leaving the current view. Adds only what a peek needs beyond the
- * page itself — the dialog shell, Escape-to-close, and the ⌘/Ctrl+Enter chord that hands
- * off to the full task view via `onExpand` (the page draws the expand button).
+ * The task peek: the task page in its peek layout inside a centred 12px-radius dialog,
+ * opened from a list without leaving it. Adds only what a peek needs beyond the page —
+ * the dialog, Escape to close, and ⌘/Ctrl+Enter to grow into the full page.
  */
 export function TaskPeekDialog({
+  taskId,
   onClose,
   onExpand,
-  projectName,
-  ...panelProps
-}: TaskDetailPanelProps & {
+}: {
+  taskId: string;
   onClose: () => void;
-  onExpand: () => void;
-  /** The active project's display name, the first crumb (`null` when none is active). */
-  projectName: string | null;
+  onExpand: (taskId: string) => void;
 }) {
+  const host = useTaskPageHost();
   const contentRef = useRef<HTMLDivElement>(null);
-  // Cmd/Ctrl+Enter grows the peek into the full task view.
   useEffect(() => {
     function handleKey(event: KeyboardEvent) {
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
-        onExpand();
+        onExpand(taskId);
       }
     }
     document.addEventListener('keydown', handleKey);
     return () => document.removeEventListener('keydown', handleKey);
-  }, [onExpand]);
+  }, [onExpand, taskId]);
+  if (host === null) return null;
+  const title =
+    host.project.tasksIncludingArchived.find((t) => t.meta.id === taskId)?.meta
+      .title ?? 'Task';
   return (
     <Dialog
       open
@@ -42,29 +42,21 @@ export function TaskPeekDialog({
       }}
     >
       <DialogContent
-        className="flex h-[85vh] w-[min(960px,94vw)] flex-col overflow-hidden sm:max-w-[960px]"
+        className="flex h-[85vh] w-[min(1080px,94vw)] flex-col overflow-hidden sm:max-w-[1080px]"
         aria-describedby={undefined}
         showCloseButton={false}
-        // The default open-autofocus lands on the first tabbable descendant — the
-        // (pre-filled) title field — and browsers select a text input's full value when
-        // it's focused this way. Left alone, opening this dialog and pressing any key would
-        // silently wipe the task's title. Focus the content root itself instead (the popup
-        // carries `tabIndex={-1}` for exactly this) — Tab still reaches the title normally.
+        // Focus the popup itself: the default lands on the title field, and a browser
+        // selects a focused text input's whole value, so the first key would wipe it.
         ref={contentRef}
         initialFocus={contentRef}
       >
-        <DialogTitle className="sr-only">
-          {panelProps.doc.meta.title || 'Task detail'}
-        </DialogTitle>
-        <ErrorBoundary label="this dialog">
-          <TaskPage
-            mode="peek"
-            projectName={projectName}
-            onExpand={onExpand}
-            onClose={onClose}
-            {...panelProps}
-          />
-        </ErrorBoundary>
+        <DialogTitle className="sr-only">{title}</DialogTitle>
+        <TaskPage
+          taskId={taskId}
+          layout="peek"
+          onClose={onClose}
+          onExpand={() => onExpand(taskId)}
+        />
       </DialogContent>
     </Dialog>
   );

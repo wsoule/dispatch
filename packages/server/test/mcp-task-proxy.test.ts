@@ -295,6 +295,27 @@ describe('task_save through a live daemon', () => {
     expect(meta.updated).toBe(before.meta.updated);
   });
 
+  it('lets the daemon turn a milestone name into the parent', async () => {
+    const beta = await createTaskViaApi('Beta', { kind: 'milestone' });
+    const result = await callTool('task_save', {
+      title: 'in beta',
+      milestone: 'Beta',
+    });
+    const meta = structured(result).meta as { id: string };
+    const fetched = await getTaskViaApi(meta.id);
+    expect(fetched.meta.parent).toBe(beta);
+    expect(fetched.meta.milestone).toBeNull();
+
+    const unknown = await callTool('task_save', {
+      title: 'nowhere',
+      milestone: 'Gamma',
+    });
+    expect(unknown.isError).toBe(true);
+    expect(resultText(unknown)).toContain(
+      'no project or milestone is titled "Gamma"'
+    );
+  });
+
   it('reports an unknown id rather than creating one', async () => {
     const result = await callTool('task_save', {
       id: 't-nope00',
@@ -467,7 +488,7 @@ describe('task_comment against a database-backed daemon', () => {
     rmSync(dbRoot, { recursive: true, force: true });
   });
 
-  it('appends through the daemon rather than falling back to a file', async () => {
+  it('comments through the daemon rather than falling back to a file', async () => {
     const created = (await json(
       await fetch(`http://127.0.0.1:${dbHandle.port}/api/tasks`, {
         method: 'POST',
@@ -490,14 +511,17 @@ describe('task_comment against a database-backed daemon', () => {
     );
     expect(result.isError).toBeUndefined();
 
-    const doc = (await json(
+    const thread = (await json(
       await fetch(
-        `http://127.0.0.1:${dbHandle.port}/api/tasks/${created.meta.id}`,
+        `http://127.0.0.1:${dbHandle.port}/api/tasks/${created.meta.id}/comments`,
         {
           headers: { authorization: `Bearer ${dbHandle.tokens.appToken}` },
         }
       )
-    )) as { body: string };
-    expect(doc.body).toContain('progress from the agent');
+    )) as { author: string; body: string }[];
+    // The agent token, with no live run behind the id: the bare agent.
+    expect(thread).toMatchObject([
+      { author: 'agent', body: 'progress from the agent' },
+    ]);
   });
 });

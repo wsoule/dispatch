@@ -14,6 +14,7 @@ import {
   questionsByRun,
   runIdOf,
   scopeRequestsByRun,
+  taskProposalOf,
   toRunQuestion,
   toScopeRequest,
 } from './gates';
@@ -75,6 +76,7 @@ const ALL_ON = {
   approval: true,
   'scope-request': true,
   memory: true,
+  doc: true,
   question: true,
   'fix-loop-capped': true,
   'run-stalled': true,
@@ -227,6 +229,25 @@ describe('gateNotification', () => {
       kind: 'question',
     });
   });
+  it('titles a memory gate as a proposal to review', () => {
+    const memory = msg('m-m', {
+      body: 'run:r-1 proposes a team memory (hazard). Review it in Needs you.',
+      refs: [{ type: 'run', id: 'r-1' }],
+      choices: ['approve', 'reject'],
+      data: {
+        type: 'memory',
+        proposalId: 'mp-1',
+        action: 'add',
+        scope: 'team',
+        kind: 'hazard',
+      },
+    });
+    expect(gateNotification(memory, () => 'Checkout')).toEqual({
+      title: 'Memory proposal to review',
+      body: 'run:r-1 proposes a team memory (hazard). Review it in Needs you.',
+      kind: 'memory',
+    });
+  });
   it('stays quiet for a gate no human is asked, and for an overseer tool approval', () => {
     expect(
       gateNotification({ ...approval, to: ['agent:wyat/codex'] }, () => 'x')
@@ -352,6 +373,51 @@ describe('gateOf', () => {
     };
     expect(gateOf(proposal)?.type).toBe('task-proposal');
     expect(toRunQuestion(proposal)).toBeNull();
+  });
+
+  it('reads a doc gate as a gate from any sender, never a plain run question', () => {
+    const docGate = {
+      ...question,
+      choices: ['approve', 'reject'],
+      data: { type: 'doc', doc: 'doc-1', proposal: 'rev-1', runId: 'r-1' },
+    };
+    const gate = gateOf(docGate);
+    expect(gate?.type === 'doc' ? gate.proposal : null).toBe('rev-1');
+    expect(toRunQuestion(docGate)).toBeNull();
+  });
+});
+
+describe('taskProposalOf', () => {
+  const proposal = msg('m-p', {
+    choices: ['approve', 'decline'],
+    data: {
+      type: 'task-proposal',
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      message: 'm-root',
+    },
+  });
+
+  it('reads the draft, its proposer and the root from the system gate', () => {
+    expect(taskProposalOf(proposal)).toEqual({
+      task: 't-a1b2c3',
+      proposedBy: 'agent:wyat/a2a.acme',
+      message: 'm-root',
+    });
+  });
+
+  it('is null for other gates, plain questions and a look-alike from anyone but the system', () => {
+    expect(taskProposalOf(approval)).toBeNull();
+    expect(taskProposalOf(question)).toBeNull();
+    expect(
+      taskProposalOf({ ...proposal, from: 'agent:wyat/a2a.acme' })
+    ).toBeNull();
+    expect(
+      taskProposalOf({
+        ...proposal,
+        data: { type: 'task-proposal', task: 't-a1b2c3' },
+      })
+    ).toBeNull();
   });
 });
 

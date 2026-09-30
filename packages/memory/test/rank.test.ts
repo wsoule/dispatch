@@ -101,4 +101,12 @@ describe('rank', () => {
       specificity(e({ epic: 'e-000009' }), { taskId: null, epic: null })
     ).toBe(1);
   });
+
+  // An epic's page lists the lessons its tasks' runs narrowed to it.
+  it('reaches the epic itself with an entry narrowed to it', () => {
+    const epic = { taskId: 'e-000001', epic: null };
+    expect(reaches(e({ epic: 'e-000001' }), epic, 'aaaaaaaaaaaa')).toBe(true);
+    expect(reaches(e({ epic: 'e-000009' }), epic, 'aaaaaaaaaaaa')).toBe(false);
+    expect(specificity(e({ epic: 'e-000001' }), epic)).toBe(2);
+  });
 });

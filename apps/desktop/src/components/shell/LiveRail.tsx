@@ -1,5 +1,5 @@
 import type { EpicProgress, RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { Bot } from 'lucide-react';
 import { useMemo } from 'react';
 
@@ -30,7 +30,7 @@ interface LiveRailProps {
   sessions?: EpicProgress[];
   /** The epic docs (`data.epics`) a section row takes its title from; a milestone with no
    * doc here is named by its id. */
-  epics?: TaskDoc[];
+  epics?: TaskListItem[];
   /** Opens the milestone view on that epic — where a section row leads. */
   onOpenMilestone?: (epicId: string) => void;
 }
@@ -174,7 +174,7 @@ function RunRow({
   return (
     <button
       type="button"
-      onClick={() => onOpenTask(run.taskId, 'chat', run.id)}
+      onClick={() => onOpenTask(run.taskId, 'run', run.id)}
       // The kind is in the name rather than on screen: "review" or "verify" matters
       // when there are two rows for one task, which the title alone can't tell apart.
       aria-label={

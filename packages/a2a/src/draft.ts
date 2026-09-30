@@ -37,17 +37,26 @@ function clientLabel(raw: string): string {
     .slice(0, 50)}`;
 }
 
-// The draft a handoff becomes: fenced client text with headings escaped,
-// critical risk, a priority that cannot jump the owner's queue, namespaced labels.
+// untrustedFenced with a bare closing bar, which CommonMark needs to close the
+// block, so client text renders as code and not as live markdown.
+function markdownFenced(label: string, text: string): string {
+  const fenced = untrustedFenced(label, text);
+  const bar = fenced.slice(0, fenced.indexOf(' '));
+  return `${fenced.slice(0, fenced.lastIndexOf('\n'))}\n${bar}`;
+}
+
+// A handoff's draft: client text and criteria in one closed fence, critical
+// risk, a priority that cannot jump the queue, namespaced labels.
 export function shapeDraft(
   work: HandoffRequest,
   text: string,
   client: Address,
-  rootId: string
+  rootId: string,
+  status: string
 ): CreateInput {
   const acceptance = work.acceptance ?? [];
-  const description = [
-    untrustedFenced('A2A request', untrustedBlock(text)),
+  const request = [
+    untrustedBlock(text),
     ...(acceptance.length === 0
       ? []
       : [
@@ -55,6 +64,9 @@ export function shapeDraft(
           'Acceptance criteria:',
           ...acceptance.map((a) => `- ${untrustedInline(a)}`),
         ]),
+  ].join('\n');
+  const description = [
+    markdownFenced('A2A request', request),
     '',
     provenanceLine(client, rootId),
   ].join('\n');
@@ -63,7 +75,7 @@ export function shapeDraft(
     .filter((l) => l !== 'a2a/');
   return {
     title: untrustedInline(work.title),
-    status: 'draft',
+    status,
     description,
     labels: [...new Set(['a2a', ...labels])],
     ...(work.writes === undefined ? {} : { writes: work.writes }),

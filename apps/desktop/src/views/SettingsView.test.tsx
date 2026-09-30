@@ -121,6 +121,7 @@ test('the rail groups every page, and the page title is the H1', () => {
     'Agents',
     'Checks',
     'Autonomy',
+    'Memory',
     'Previews',
     'Notifications',
     'Members',
@@ -141,6 +142,49 @@ test('the rail groups every page, and the page title is the H1', () => {
   );
   selectPage('Notifications');
   expect(screen.getByLabelText('Webhook URL')).toBeDefined();
+});
+
+// Memory's page reads the store's health on its own, beside its run settings.
+test('the Memory page shows the store and the run settings', async () => {
+  const memoryData = dataWith({
+    port: 4321,
+    client: {
+      memoryHealth: () =>
+        Promise.resolve({
+          available: true,
+          reason: null,
+          search: 'fts5',
+          entries: 3,
+          openProposals: 0,
+          ledgerImport: null,
+          configWarnings: [],
+          lastDecayAt: null,
+          personal: null,
+          pinnedOverflow: false,
+          claudeImport: null,
+        }),
+      memoryIdentity: () =>
+        Promise.resolve({
+          identity: 'self',
+          aliases: [],
+          placeholderEmail: false,
+        }),
+      listIngestProblems: () => Promise.resolve({ problems: [] }),
+    } as unknown as ApiClient,
+  });
+  render(
+    <SettingsView
+      activeProject={project}
+      data={memoryData}
+      initialPage="memory"
+    />,
+    { wrapper: withQueryClient() }
+  );
+  expect(screen.getByRole('heading', { level: 1 }).textContent).toBe('Memory');
+  expect(
+    await screen.findByText('3 entries · no open proposals · full-text search')
+  ).toBeDefined();
+  expect(screen.getByLabelText('Index budget')).toBeDefined();
 });
 
 // Each page is a stack of section headings over grouped cards.
@@ -398,7 +442,7 @@ function tierData(
     keySource: 'project',
     config: {
       ...testConfig,
-      linear: { ...testConfig.linear, teamId: 'team-1' },
+      linear: { ...testConfig.linear, teamId: 'team-1', teamIds: ['team-1'] },
     },
     linearStatus: {
       ...connected.linearStatus,
@@ -526,14 +570,17 @@ const CONFIG_PAGES: PageLocks[] = [
   },
   {
     page: 'integrations',
-    locked: ['Sync settings', 'Status mapping'],
+    locked: ['Sync settings', 'Teams', 'Status roles'],
     open: ['Connection', 'Sync'],
     controls: () => [
       screen.getByRole('switch', { name: 'Sync this project with Linear' }),
-      screen.getByRole('combobox', { name: 'Team' }),
       screen.getByRole('combobox', { name: 'Direction' }),
       screen.getByLabelText('Poll interval'),
-      screen.getByRole('combobox', { name: 'backlog maps to' }),
+      screen.getByRole('switch', {
+        name: 'Send Acceptance Criteria to Linear',
+      }),
+      screen.getByRole('checkbox', { name: 'Link Unknown team' }),
+      screen.getByRole('combobox', { name: 'Run finishes status' }),
     ],
   },
   {

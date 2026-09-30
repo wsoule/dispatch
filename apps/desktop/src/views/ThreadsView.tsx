@@ -194,6 +194,7 @@ export function ThreadsView({
               onOpen={onOpen}
               loadApprovalInput={loadApprovalInput}
               client={client}
+              port={port}
               route={replyRoute(
                 open.messages,
                 open.thread,

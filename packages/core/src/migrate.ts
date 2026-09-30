@@ -9,9 +9,10 @@ import {
 import type { Finding } from './findings.js';
 import { taskIdFromFilename } from './ids.js';
 import { scanFindingsJsonl, scanLedgerJsonl } from './jsonlRecords.js';
+import { isContainerKind } from './kinds.js';
 import { LEDGER_KINDS } from './ledger.js';
 import type { LedgerEntry } from './ledger.js';
-import { queryOne } from './sqliteDb.js';
+import { queryAll, queryOne } from './sqliteDb.js';
 import { SqliteTaskStore } from './sqliteTaskStore.js';
 import { DISPATCH_DIR, TaskStore } from './store.js';
 import type { ProjectStores, SqliteRecordStores } from './storeBackend.js';
@@ -198,7 +199,8 @@ function rowCounts(records: SqliteRecordStores): RowCounts {
     queryOne<{ n: number }>(records.db, sql, params)?.n ?? 0;
   return {
     tasks: count('SELECT COUNT(*) AS n FROM tasks WHERE kind = ?', ['task']),
-    epics: count('SELECT COUNT(*) AS n FROM tasks WHERE kind = ?', ['epic']),
+    // `epics` counts every container kind, legacy `epic` rows included.
+    epics: count("SELECT COUNT(*) AS n FROM tasks WHERE kind <> 'task'"),
     findings: count('SELECT COUNT(*) AS n FROM findings'),
     ledger: count('SELECT COUNT(*) AS n FROM ledger_entries'),
   };
@@ -261,6 +263,20 @@ function countFixLoops(rootDir: string): number {
   return taskIds.size;
 }
 
+// Comments across every task's `.dispatch/comments/<id>.jsonl`.
+function countComments(rootDir: string): number {
+  const dir = join(rootDir, DISPATCH_DIR, 'comments');
+  if (!existsSync(dir)) return 0;
+  let count = 0;
+  for (const file of readdirSync(dir)) {
+    if (!file.endsWith('.jsonl')) continue;
+    for (const line of readFileSync(join(dir, file), 'utf8').split('\n')) {
+      if (line.trim() !== '') count += 1;
+    }
+  }
+  return count;
+}
+
 // Notes are a single JSON array, whole-file rewritten on every mutation.
 function countNotes(rootDir: string): number {
   const file = join(rootDir, DISPATCH_DIR, 'notes.json');
@@ -313,6 +329,11 @@ export function retainedSources(rootDir: string): RetainedSource[] {
         'inboxes are per-actor markdown, still file-backed on both backends',
     },
     {
+      source: `${DISPATCH_DIR}/comments`,
+      found: countComments(rootDir),
+      reason: 'task comments are not imported into the database yet',
+    },
+    {
       source: '~/.dispatch/runs/<project>/*.jsonl',
       found: 0,
       reason:
@@ -321,18 +342,48 @@ export function retainedSources(rootDir: string): RetainedSource[] {
   ];
 }
 
+// Whether every task file in `tasksDir` is named for a row the database
+// already holds. A file whose name carries no id, or two files claiming one
+// id, fails this: those have to be read to know what they are.
+function everyFileImported(
+  tasksDir: string,
+  slugs: ReadonlyMap<string, string>,
+  imported: ReadonlyMap<string, string>
+): boolean {
+  const files = readdirSync(tasksDir).filter((file) => file.endsWith('.md'));
+  return (
+    files.length === slugs.size &&
+    [...slugs.keys()].every((id) => imported.has(id))
+  );
+}
+
 // Imports the markdown board, splitting the tally by kind. A file that will
 // not parse becomes a problem rather than aborting the run — listSafe() is
 // exactly that seam on the file backend, and a board with one hand-mangled
 // file must still be movable.
+//
+// `imported` is every task row's kind by id. When every file is named for one
+// of those rows (a project migrated in place, booting again) nothing could be
+// imported, so the files are tallied from the rows rather than parsed: on a
+// 2000-file board that parse cost a second of every daemon boot.
 function importTasks(
   source: TaskStore,
   target: SqliteTaskStore,
+  imported: ReadonlyMap<string, string>,
   tasks: MigrationTally,
   epics: MigrationTally,
   problems: MigrationProblem[]
 ): void {
   if (!source.isInitialized()) return;
+  const slugs = taskSlugsByFile(source.tasksDir);
+  if (everyFileImported(source.tasksDir, slugs, imported)) {
+    for (const id of slugs.keys()) {
+      const tally = isContainerKind(imported.get(id) ?? '') ? epics : tasks;
+      tally.found += 1;
+      tally.skipped += 1;
+    }
+    return;
+  }
   const { docs, errors } = source.listSafe();
   for (const error of errors) {
     // Attributed to `tasks` rather than split by kind on purpose: a file that
@@ -343,9 +394,8 @@ function importTasks(
       detail: `${error.file}: ${error.message}`,
     });
   }
-  const slugs = taskSlugsByFile(source.tasksDir);
   for (const doc of docs) {
-    const tally = doc.meta.kind === 'epic' ? epics : tasks;
+    const tally = isContainerKind(doc.meta.kind) ? epics : tasks;
     tally.found += 1;
     // Check-then-write rather than an upsert, because put() OVERWRITES: a
     // re-run must not clobber a task the daemon has edited since the first
@@ -512,7 +562,20 @@ export function importLegacyProject(
   let rowsAfter: RowCounts;
   try {
     rowsBefore = rowCounts(records);
-    importTasks(new TaskStore(sourceDir), target, tasks, epics, problems);
+    const imported = new Map(
+      queryAll<{ id: string; kind: string }>(
+        records.db,
+        'SELECT id, kind FROM tasks'
+      ).map((row) => [row.id, row.kind])
+    );
+    importTasks(
+      new TaskStore(sourceDir),
+      target,
+      imported,
+      tasks,
+      epics,
+      problems
+    );
     importJsonl(
       sourceDir,
       'findings.jsonl',

@@ -245,7 +245,7 @@ export function useTaskVerification(
   };
 }
 
-/** An epic's ledger — findings/decisions carried forward to its tasks.
+/** An epic's ledger receipts (its audit class; lessons live in memory).
  *  `error` must be checked the same way as `useTaskFindings`'s. */
 export function useEpicLedger(
   client: ApiClient | null,
@@ -258,7 +258,7 @@ export function useEpicLedger(
       if (client === null || epicId === undefined) {
         throw new Error('dispatchd client not ready');
       }
-      return client.fetchLedger({ epicId });
+      return client.fetchLedger({ epicId, class: 'audit' });
     },
     enabled: client !== null && epicId !== undefined,
     retry: false,
@@ -270,8 +270,8 @@ export function useEpicLedger(
   };
 }
 
-/** The project-wide ledger — entries filed with no epic, which is where a
- *  scope grant on a parentless task lands. */
+/** The project-wide ledger receipts — entries filed with no epic, which is
+ *  where a scope grant on a parentless task lands. */
 export function useProjectLedger(
   client: ApiClient | null,
   port: number | undefined,
@@ -281,7 +281,7 @@ export function useProjectLedger(
     queryKey: projectLedgerKey(port),
     queryFn: () => {
       if (client === null) throw new Error('dispatchd client not ready');
-      return client.fetchLedger({ epicId: null });
+      return client.fetchLedger({ epicId: null, class: 'audit' });
     },
     enabled: client !== null && enabled,
     retry: false,

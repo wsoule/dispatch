@@ -116,6 +116,23 @@ describe('docs bindings', () => {
     }
   });
 
+  it('builds the proposal list and view paths', async () => {
+    const s = stub(200, { proposals: [] });
+    try {
+      const c = createApiClient(BASE, 't');
+      await c.listDocProposals();
+      await c.listDocProposals({ doc: 'spec', state: ['open', 'failed'] });
+      await c.getDocProposal('rev-01K');
+      expect(s.calls.map((c2) => decodeURIComponent(c2.url))).toEqual([
+        `${BASE}/api/docs/proposals`,
+        `${BASE}/api/docs/proposals?doc=spec&state=open,failed`,
+        `${BASE}/api/docs/proposals/rev-01K`,
+      ]);
+    } finally {
+      s.restore();
+    }
+  });
+
   it('sends seal, reviewed, rename, revision and diff calls', async () => {
     const s = stub(200, {});
     try {
@@ -158,6 +175,19 @@ describe('docs bindings', () => {
       expect(new Headers(s.calls[0].init?.headers).get('content-type')).toBe(
         'application/json'
       );
+    } finally {
+      s.restore();
+    }
+  });
+
+  it('promotes a personal doc through a body-less POST', async () => {
+    const s = stub(201, { handle: 'notes' });
+    try {
+      expect(await createApiClient(BASE, 't').promoteDoc('~notes')).toEqual({
+        handle: 'notes',
+      } as never);
+      expect(s.calls[0].url).toBe(`${BASE}/api/docs/~notes/promote`);
+      expect(s.calls[0].init?.method).toBe('POST');
     } finally {
       s.restore();
     }

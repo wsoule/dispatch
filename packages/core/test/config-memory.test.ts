@@ -19,12 +19,12 @@ function rootWith(yaml: string): string {
 }
 
 describe('memory config', () => {
-  it('defaults every key, with claudeAutoMemory off until the probe passes', () => {
+  it('defaults every key, with claudeAutoMemory on export since the probe passed', () => {
     expect(parseMemoryConfig(undefined)).toEqual({
       config: DEFAULT_MEMORY,
       warnings: [],
     });
-    expect(DEFAULT_MEMORY.claudeAutoMemory).toBe('off');
+    expect(DEFAULT_MEMORY.claudeAutoMemory).toBe('export');
     expect(loadConfig(rootWith('')).memory).toEqual(DEFAULT_MEMORY);
   });
 
@@ -55,7 +55,7 @@ describe('memory config', () => {
     });
     expect(config.indexTokens).toBe(1000);
     expect(config.proposalsPerHour).toBe(10);
-    expect(config.claudeAutoMemory).toBe('off');
+    expect(config.claudeAutoMemory).toBe('export');
     // Must be above staleAfterDays (100).
     expect(config.retireAfterDays).toBe(180);
     expect(warnings.map((w) => w.key).sort()).toEqual([

@@ -1,8 +1,12 @@
 # Memory
 
-Status: **v0 built** (store, index, ledger import, read tools); v1 and v2 not
-yet. Designed 2026-09-25 and revised the same day after a feasibility critique
-and a consistency critique. Second of the six sub-projects in
+Status: **v1 built** (v0's store, index, ledger import and read tools, plus
+personal memory, the `memory` gate, the ledger cutover, decay, the Claude export
+and the one-time import); v2 not yet. The live Agent SDK probe passed on
+2026-09-28 on Claude Code 2.1.207 (bundled) and 2.1.283 (PATH), so
+`memory.claudeAutoMemory` defaults to `export` and 2.1.207 is the probed
+version. Designed 2026-09-25 and revised the same day after a feasibility
+critique and a consistency critique. Second of the six sub-projects in
 `docs/specs/2026-09-23-messaging-core-design.md` (:21-30), "MIT model, FSL
 host", depending on messaging (#1). Binding inputs: the owner decisions in
 `.agents/ignore/specs/2026-09-25-subprojects-2-3-decisions.md` and the option
@@ -101,7 +105,7 @@ This spec does two things:
 │  memory gate through the DeliveryEngine      │
 │  prompt index, Claude export/ingest          │
 │  ledger import, decay scheduler              │
-│  team/boardSync memory ops  (ELv2, v2)       │
+│  team memory ops: federation F3 (ELv2, v2)   │
 └───────────────────────▲──────────────────────┘
                         │ HTTP
    packages/mcp (runs + external agents), desktop app, CLI
@@ -131,7 +135,7 @@ Its dependencies:
 ```text
 $DISPATCH_HOME/.dispatch/runs/<projectKey>/memory.db                        project + team scopes, proposals
 $DISPATCH_HOME/.dispatch/runs/<projectKey>/claude-memory/<lineage>/         one run lineage's Claude export
-$DISPATCH_HOME/.dispatch/runs/<projectKey>/claude-memory/o-<conversation>/  one overseer conversation's export
+$DISPATCH_HOME/.dispatch/runs/<projectKey>/claude-memory/o-<conversation>/  an overseer export an older build left; closed, never ingested
 $DISPATCH_HOME/.dispatch/memory/identities.db                               personal identities and their aliases
 $DISPATCH_HOME/.dispatch/memory/<identity>.db                               one human's personal scope
 ```
@@ -260,20 +264,49 @@ interface MemoryHost {
 ### Who a run acts for
 
 `operatorOf` reads a new `RunMeta.operator` field: a human ref, or absent for
-none. It is fixed when a session lineage starts, and every successor inherits
-it. It is separate from `dispatchedBy`, which keeps its meaning: who pressed
-dispatch, used for claims and decision ownership
+none. Every new run, a successor in a session lineage included, acts for the
+principal that caused it: a human acts for itself, and the owner only on the
+owner's app token; an agent, a run or the system (the auto wake policy among
+them) acts for no one. A successor keeps its predecessor's operator only when
+that operator is who caused it. (Amended by ruling MEM-R6: a successor used to
+inherit its predecessor's operator whoever caused it.) An aux run follows the
+same rule (ruling MEM-R7): one a human starts acts for that human, and one the
+system starts after a run keeps that run's operator; it no longer copies the
+task's latest execute run's operator. It is separate from `dispatchedBy`, which
+keeps its meaning: who pressed dispatch, used for claims and decision ownership
 (`orchestrator/types.ts:322-327`).
 
-| How the run starts                                                                                                                    | `operator`                                                                                                          |
-| ------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `dispatch()` credited to a human (`orchestrator.ts:884-886`, stamped at `:903`)                                                       | `dispatchedBy`                                                                                                      |
-| `dispatch()` by the epic auto-fill, `actor: 'none'` (`orchestrator/epic.ts:846-848`)                                                  | the epic session's new `startedBy` (`EpicSession`, `epic.ts:72-86`) when a human started it; otherwise none         |
-| resume (`resumeRun`, `orchestrator.ts:4955-5016`) and request-changes (`requestChanges`, `:4826-4860`)                                | the predecessor's `operator`, whoever typed the follow-up. A continuing session already holds its operator's memory |
-| wake (`messaging/host.ts:111-119`, which passes `agent:dispatch` when an agent's message wakes it)                                    | the operator of the task's latest run                                                                               |
-| aux runs (`dispatchAuxRun`, `:956-1006`): review (`review.ts:836`), verify (`verify.ts:250`), fix-loop implementer (`fixLoop.ts:722`) | the operator of the run they review, verify or replace, passed as a new `operator` option                           |
-| any run of a task with A2A provenance (a row in `a2a.db` `tasks.dispatch_task`, a2a-bridge-design.md "Tables")                        | none, whoever dispatched it                                                                                         |
-| runs recorded before this field                                                                                                       | `dispatchedBy` if set, otherwise none                                                                               |
+Ruling MEM-R8 adds four points:
+
+- **Epic sessions.** Starting or resuming an epic session sets its `startedBy`
+  to the caller by the rule above. A teammate's resume re-keys it to the
+  teammate, and a resume on the agentToken clears it.
+- **Epic auto-fill.** A fill run acts for `startedBy` only on a task that human
+  created and last edited (title or body, Activity aside). Otherwise it acts for
+  no one. `TaskAuthorship` (`orchestrator/taskAuthorship.ts`, persisted beside
+  `epic-sessions.json`) records the creator and last editor. It is recorded by
+  `POST /api/tasks`, `PATCH /api/tasks/:id` and plan confirm. A task created any
+  other way, or changed since its last recorded edit, has no author.
+- **Messaging a live run.** A request-tier human may not deliver into a live run
+  whose operator is another human. This covers `POST /api/messages` to `run:`,
+  overseer `message_run`, and a review send-back or request-changes on a live
+  run. The refusal is a 403 that names the task and the operator to message
+  instead. The decide tier and the run's own operator may deliver.
+- **The owner's CLI acts for no one.** This is a behaviour change, documented
+  and not fixed. The CLI presents the daemon file's agentToken, so a run it
+  starts acts for no one unless the CLI is given the app token (`--token` or
+  `DISPATCH_APP_TOKEN`). The desktop app and the sign-in cookie act for the
+  owner.
+
+| How the run starts                                                                                                                                   | `operator`                                                                                                                                                                                                                                        |
+| ---------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dispatch()` credited to a human (`orchestrator.ts:884-886`, stamped at `:903`)                                                                      | `dispatchedBy`                                                                                                                                                                                                                                    |
+| `dispatch()` by the epic auto-fill, `actor: 'none'` (`orchestrator/epic.ts:846-848`)                                                                 | the epic session's `startedBy` (`EpicSession`, `epic.ts:72-86`: whoever last started or resumed it) on a task they created and last edited; otherwise none                                                                                        |
+| resume (`resumeRun`, `orchestrator.ts:4955-5016`), request-changes (`requestChanges`, `:4826-4860`), `dispatchOrResume` and overseer `dispatch_task` | whoever asked for it, by the rule above; a teammate continuing the owner's run acts for the teammate. The boot recovery sweep, with no one asking, keeps the run's own                                                                            |
+| wake (`messaging/host.ts`): a task or `run:` wake, or a gated wake a human approved                                                                  | the human sender, or the human who approved the gate, by the rule above; an agent or run wake under the auto policy has none                                                                                                                      |
+| aux runs (`dispatchAuxRun`, `:956-1006`): review (`review.ts:836`), verify (`verify.ts:250`), fix-loop implementer (`fixLoop.ts:722`)                | a required `operator` option: the human who started it (review, verify, Review & fix, fix-loop advance), by the rule above; one the system starts after a run (auto review, fix-loop continuation, policy verify retry) keeps that run's operator |
+| any run of a task with A2A provenance (a row in `a2a.db` `tasks.dispatch_task`, a2a-bridge-design.md "Tables")                                       | none, whoever dispatched it                                                                                                                                                                                                                       |
+| runs recorded before this field                                                                                                                      | `dispatchedBy` if set, otherwise none                                                                                                                                                                                                             |
 
 Today none of the successor `RunMeta`s carries attribution: the resume
 (`:4989-5016`), the follow-up (`:4838-4860`) and the aux run (`:990-1006`) copy
@@ -283,7 +316,8 @@ the model, effort, claims and session but not `dispatchedBy`.
   personal entries, a personal `memory_save` is `forbidden`, and the run uses
   `prompt` mode. No run ever falls back to the project owner.
 - **Other principals.**
-  - The owner's overseer acts for the owner.
+  - The owner's overseer reads memory as `agent:dispatch`, for no one: every
+    request-tier caller can read its transcripts (see Overseer).
   - `agent:<op>/<name>` acts for `human:<op>`. The exception is names starting
     with `a2a.`, which are reserved for A2A clients (a2a-bridge-design.md
     "Addresses"). They have no operator and are refused on every memory route
@@ -442,11 +476,11 @@ a store cannot be opened.
 Scope says who reads an entry and where it may travel. `epic` and `appliesTo`
 only narrow which tasks it is relevant to.
 
-| Scope    | Who reads it                                                                                                     | Who writes it directly                                               | Leaves the machine           |
-| -------- | ---------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ---------------------------- |
-| personal | its human; runs whose operator is that human; agents registered under them (never `a2a.` agents); their overseer | its human; runs and agents acting for them (undoable)                | never                        |
-| project  | every principal of this project on this daemon, except `a2a.` agents and A2A-provenance runs                     | decide-tier humans; everyone else proposes through the `memory` gate | never                        |
-| team     | as project, plus teammates' daemons once replicated (v2), minus `a2a.` agents                                    | as project                                                           | board sync and receipts (v2) |
+| Scope    | Who reads it                                                                                     | Who writes it directly                                               | Leaves the machine           |
+| -------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------- | ---------------------------- |
+| personal | its human; runs whose operator is that human; agents registered under them (never `a2a.` agents) | its human; runs and agents acting for them (undoable)                | never                        |
+| project  | every principal of this project on this daemon, except `a2a.` agents and A2A-provenance runs     | decide-tier humans; everyone else proposes through the `memory` gate | never                        |
+| team     | as project, plus teammates' daemons once replicated (v2), minus `a2a.` agents                    | as project                                                           | board sync and receipts (v2) |
 
 - **Project vs team.** Project scope exists because some shared facts are true
   only on one machine: "proto shims were missing here", "Homebrew pnpm shadows
@@ -609,16 +643,16 @@ as policy is (`policyEngine.ts:50-66`), so an edit takes effect without a
 restart. An invalid value falls back to its default, and Settings → Memory shows
 a warning naming the key.
 
-| Key                     | Default                             | Allowed                                 |
-| ----------------------- | ----------------------------------- | --------------------------------------- |
-| `indexTokens`           | 1000                                | integer 200–4000                        |
-| `personalWritesPerHour` | 50                                  | integer 1–500                           |
-| `proposalsPerHour`      | 10                                  | integer 1–100                           |
-| `maxOpenProposals`      | 50                                  | integer 1–500                           |
-| `proposalTtlDays`       | 14                                  | integer 1–90                            |
-| `staleAfterDays`        | 60                                  | integer 7–3650                          |
-| `retireAfterDays`       | 180                                 | integer, above `staleAfterDays`, ≤ 3650 |
-| `claudeAutoMemory`      | `export` once the live probe passes | `export` or `off`                       |
+| Key                     | Default                          | Allowed                                 |
+| ----------------------- | -------------------------------- | --------------------------------------- |
+| `indexTokens`           | 1000                             | integer 200–4000                        |
+| `personalWritesPerHour` | 50                               | integer 1–500                           |
+| `proposalsPerHour`      | 10                               | integer 1–100                           |
+| `maxOpenProposals`      | 50                               | integer 1–500                           |
+| `proposalTtlDays`       | 14                               | integer 1–90                            |
+| `staleAfterDays`        | 60                               | integer 7–3650                          |
+| `retireAfterDays`       | 180                              | integer, above `staleAfterDays`, ≤ 3650 |
+| `claudeAutoMemory`      | `export` (the live probe passed) | `export` or `off`                       |
 
 ## Recall
 
@@ -1069,12 +1103,15 @@ or in `deleted_origins`.
 **The cutover.** The first boot of the build that removes the ledger's lesson
 writers (v1) records `meta.ledger-cutover-at`.
 
-- Rows created before it import as `active` entries: parity with what prompts
-  already carried.
-- Rows created after it can only come from elsewhere: a teammate's older build
-  through a `git pull`, or a hand edit. They import as open `add` proposals,
-  authored `agent:dispatch`, showing the row's `authoredBy` as a claim. With no
-  task, they read as `elevated` and wait for a human.
+- Rows the first import after it finds, created before it, import as `active`
+  entries: parity with what prompts already carried. That import records
+  `meta.ledger-cutover-swept-at`.
+- Every other row can only come from elsewhere: a teammate's older build through
+  a `git pull`, or a hand edit. That covers a row created after the cutover, one
+  with no parseable `createdAt`, and any row the first import did not see,
+  whatever `createdAt` it claims. They import as open `add` proposals, authored
+  `agent:dispatch`, showing the row's `authoredBy` as a claim. With no task,
+  they read as `elevated` and wait for a human.
 - In v0 there is no cutover and no gate, and every row imports as `active` with
   `agent` trust. That is today's exposure (every lesson row already reaches
   every prompt), now marked `unreviewed`.
@@ -1283,13 +1320,14 @@ of the `## Memory` section:
 
 ### Other Claude sessions
 
-Every Claude SDK session Dispatch starts that is not a run or the overseer gets
-`autoMemoryEnabled: false` and `env.CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'`
-through one helper in `orchestrator/claudeCli.ts`. That covers the planner, the
-repo digest, the AI task filter, the inbox clusterer and commit-message
-generation (Why). Folding the setting into `floorGuard` would miss the last
-three, which do not call it. None of these sessions needs personal notes, and a
-teammate's plan session on a shared host must not load the owner's.
+Every Claude SDK session Dispatch starts that is not a run, the overseer
+included, gets `autoMemoryEnabled: false` and
+`env.CLAUDE_CODE_DISABLE_AUTO_MEMORY: '1'` through one helper in
+`orchestrator/claudeCli.ts`. That covers the planner, the repo digest, the AI
+task filter, the inbox clusterer and commit-message generation (Why). Folding
+the setting into `floorGuard` would miss the last three, which do not call it.
+None of these sessions needs personal notes, and a teammate's plan session on a
+shared host must not load the owner's.
 
 ### Export
 
@@ -1540,22 +1578,17 @@ as personal memory, because repointing would otherwise hide them from runs.
 
 ### Overseer
 
-- The owner's overseer (`agent:<owner>/overseer`) runs Claude in `rootDir` with
-  the same setting sources (`overseers/claude.ts:213`, `:280`).
-- It goes through the same mode procedure, with the owner as operator (step 2
-  does not apply).
-- Its directory is `claude-memory/o-<conversationId>/`. The conversation resumes
-  the same Claude session every turn (`overseers/claude.ts:291`), so the name is
-  fixed for the conversation's life.
-  - The directory is ingested after every turn.
-  - It is deleted after 24 hours without a turn, and re-exported under the same
-    name if the conversation resumes, so old paths in its history still resolve.
-  - Boot recovery treats `o-` directories by the same 24-hour rule.
-- Its index has no task context, so it ranks by specificity 1 for everything.
-- Its writes follow the same rules as a run's. Its proposals have no task, so
-  they always wait for a human (Proposals, step 5).
-- `memory_search` and `memory_read` join its status tools
-  (`overseerTools.ts:424-432`).
+Every request-tier caller can start an overseer conversation and read its
+transcript, so the overseer is not a personal reader until its conversations are
+private to the owner.
+
+- Its `memory_search` and `memory_read` read as `agent:dispatch`: project and
+  team scope only, never the owner's personal entries (`overseerTools.ts`).
+- Each turn runs with Claude's auto memory off (`autoMemoryEnabled: false`,
+  `CLAUDE_CODE_DISABLE_AUTO_MEMORY=1`), so it never loads the owner's native
+  Claude notes, and nothing is exported to it or ingested from it.
+- An `o-<conversation>` directory an older build left is closed by the same
+  24-hour rule as a run's, without being ingested.
 
 ## Decay jobs
 
@@ -1592,7 +1625,7 @@ Each transition appends a revision with cause `decay`. The pass emits one
 Personal memory belongs to one human:
 
 - **Readers.** Only that human, runs whose operator they are, agents registered
-  under them, and their own overseer can read it.
+  under them can read it. The overseer cannot (see Overseer).
   - Unlike messaging, where a deciding human acts as anyone (spec :451-453), a
     decide-tier human gets a 403 on another human's personal entries, and the
     project owner is no exception.
@@ -1803,15 +1836,16 @@ aliases, and require no live runs, as messaging's cutover did.
 
 ## Licensing
 
-| Code                                                                                                                                                                           | License |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| `packages/memory` (`@dispatch/memory`): types, validation, limits, `SqliteMemoryStore`, `MemoryEngine`, `MemoryHost`, rank/render, decay, Claude file format and manifest diff | MIT     |
-| `@dispatch/protocol`: the `memory` `GateData` variant; the `LINE_BREAK` export                                                                                                 | MIT     |
-| `@dispatch/core`: `PolicyGate` `memory`, the rung-4 label, `MemoryConfig`, the `memory` `NotificationKind`, `DISPATCH_MCP_TOOLS`                                               | MIT     |
-| `@dispatch/mcp`, `@dispatch/client`, `@dispatch/cli`: tools, API, commands                                                                                                     | MIT     |
-| `packages/server/src/memory/`: host, routes, identities, gate handler, ledger import, Claude export/ingest/import, decay scheduler, prompt wiring; desktop                     | FSL     |
-| `packages/server/src/receipts/exporter.ts`: the v2 export of team entries                                                                                                      | FSL     |
-| `packages/server/src/team/boardSync/`: `memory` ops                                                                                                                            | ELv2    |
+| Code                                                                                                                                                                           | License                                               |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------- |
+| `packages/memory` (`@dispatch/memory`): types, validation, limits, `SqliteMemoryStore`, `MemoryEngine`, `MemoryHost`, rank/render, decay, Claude file format and manifest diff | MIT                                                   |
+| `@dispatch/protocol`: the `memory` `GateData` variant; the `LINE_BREAK` export                                                                                                 | MIT                                                   |
+| `@dispatch/core`: `PolicyGate` `memory`, the rung-4 label, `MemoryConfig`, the `memory` `NotificationKind`, `DISPATCH_MCP_TOOLS`                                               | MIT                                                   |
+| `@dispatch/mcp`, `@dispatch/client`, `@dispatch/cli`: tools, API, commands                                                                                                     | MIT                                                   |
+| `packages/server/src/memory/`: host, routes, identities, gate handler, ledger import, Claude export/ingest/import, decay scheduler, prompt wiring; desktop                     | FSL                                                   |
+| `packages/server/src/receipts/exporter.ts`: the v2 export of team entries                                                                                                      | FSL                                                   |
+| The team-memory op's wire format (`MemoryBody` in `@dispatch/protocol/federation`; published in the protocol spec's App. F)                                                    | MIT in the package; Apache-2.0 as published in App. F |
+| Team replication machinery: `packages/server/src/team/federation/memory.ts` (federation F3, in place of `team/boardSync/` `memory` ops)                                        | ELv2                                                  |
 
 The new package, per AGENTS.md:
 
@@ -1964,7 +1998,9 @@ interface MemoryOp {
     gets 409;
   - run operators, table-driven over the "Who a run acts for" rows: dispatch,
     auto-fill with and without `startedBy`, resume, request-changes by a
-    different human, agent wake, fix loop, review, verify, A2A provenance;
+    different human (who becomes the operator), agent wake (none), fix loop,
+    review and verify by a teammate on the owner's task (the teammate) and after
+    the owner's run (the owner), A2A provenance;
   - the mode procedure, table-driven over every combination of executor, run
     kind, operator, import state, `claudeAutoMemory`, preflight and export
     write;
@@ -2031,6 +2067,18 @@ interface MemoryOp {
 
   If the probe fails, `memory.claudeAutoMemory` ships defaulting to `off` until
   it passes (Open question 5).
+
+  **Outcome (2026-09-28).** Every case passed on the bundled 2.1.207 and the
+  PATH 2.1.283, so 2.1.207 is `PROBED_CLAUDE_CODE_VERSION` and boot records it
+  as `meta.claude-probe-passed`. Both list the export's `MEMORY.md` with the
+  `memoryFiles` type `AutoMem` (2.1.283 also knows `AutoMemPinned`); the load
+  check counts any type outside CLAUDE.md's four as native. Writes landed with
+  no `canUseTool` call under `default`, `acceptEdits`, `auto` and
+  `bypassPermissions`. 2.1.207 has no `blockReadsOutsideWorkingDirectories`
+  setting; on 2.1.283 it refused a read outside while the topic file stayed
+  readable. The recall supervisor that emits `memory_recall` is behind a server
+  flag and did not run by default; forced on, both CLIs recalled from the export
+  directory only.
 
 - **Manual, before v0 lands:** ledger parity on this repo and on the audio-book
   project.
@@ -2129,6 +2177,7 @@ Each stage ships on its own.
    - **Recommendation:** accept as a temporary fallback, with the owner's
      confirmation, and turn export on in a point release once a probe passes on
      the CLI versions users run.
+   - **Resolved:** the probe passed (Testing), so v1 ships with `export` on.
 6. **Teammates' personal memory is per project until they link (clarifies
    decision Q2).**
    - Handles are per roster, so a teammate on a shared host cannot be recognised

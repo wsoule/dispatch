@@ -152,7 +152,8 @@ async function authenticate(
   port: BridgePort,
   options: HandleOptions
 ): Promise<{ caller: Caller; bearer: string } | Response> {
-  if (QUERY_CREDENTIALS.some((p) => url.searchParams.has(p))) {
+  const queryKeys = [...url.searchParams.keys()].map((k) => k.toLowerCase());
+  if (queryKeys.some((k) => QUERY_CREDENTIALS.includes(k))) {
     throw new MessagingError(
       'invalid',
       'send the token in the Authorization header, never in the query string',
@@ -314,9 +315,8 @@ async function admitStream(op: Op): Promise<(() => void) | Response> {
   return admitted.release ?? (() => {});
 }
 
-// Hands the admitted slot to an SSE stream of the task, which releases it, or
-// frees it here if the stream cannot start. A subscription runs until the task
-// is terminal; a streamed send ends at INPUT_REQUIRED too.
+// Streams the task on the admitted slot (freed here if the stream cannot
+// start); a streamed send also ends at INPUT_REQUIRED, a subscription does not.
 function openStream(
   op: Op,
   release: () => void,
@@ -471,10 +471,9 @@ async function listTasks(op: Op): Promise<Response> {
   const extensions = activatedExtensions(
     op.req.headers.get(HTTP_EXTENSION_HEADER)
   );
-  const pageSize = Math.min(
-    Math.max(intParam(op.url, 'pageSize') ?? 50, 1),
-    100
-  );
+  // Absent or 0 means the default page.
+  const asked = intParam(op.url, 'pageSize');
+  const pageSize = asked === null || asked === 0 ? 50 : Math.min(asked, 100);
   const statusRaw = param(op.url, 'status');
   const state =
     statusRaw === null ? undefined : (stateFromWire(statusRaw) ?? undefined);

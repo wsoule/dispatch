@@ -18,6 +18,22 @@ interface ListenerDeps {
   log?: (line: string) => void;
 }
 
+// A loopback port nothing holds right now: the OS picks it for a moment's bind.
+export function freeLoopbackPort(): number | null {
+  try {
+    const probe = Bun.serve({
+      port: 0,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(''),
+    });
+    const port = probe.port ?? null;
+    void probe.stop(true);
+    return port;
+  } catch {
+    return null;
+  }
+}
+
 // The A2A listener: its own Bun.serve, never one of the daemon's /api
 // listeners, answering only the agent card and the A2A routes.
 export class A2AListener {

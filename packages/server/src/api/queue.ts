@@ -9,6 +9,7 @@ import type { QueueFactorInfo } from '@dispatch/core';
 
 import type { ApiContext } from '../api.js';
 import { ReadinessStore } from '../judgments/readiness.js';
+import { statusModelFor } from '../statuses.js';
 import { errorResponse, jsonResponse, parseCountParam } from './http.js';
 
 // The GET /api/queue response body. Deliberately not exported: nothing outside
@@ -71,6 +72,7 @@ export function getQueue(ctx: ApiContext, url: URL): Response {
       now: generatedAt,
       limit: limit.value,
       readiness,
+      statuses: statusModelFor(ctx.rootDir),
     }),
   };
   return jsonResponse(snapshot);

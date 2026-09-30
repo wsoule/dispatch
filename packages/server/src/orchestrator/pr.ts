@@ -646,8 +646,8 @@ export class PrManager {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.cache.refresh(this.ctx.store, [meta.taskId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [meta.taskId] });
     return this.ctx.orchestrator.setRunPrUrl(runId, url);
   }
 
@@ -857,8 +857,8 @@ export class PrManager {
       },
       now
     );
-    this.ctx.cache.rebuild(this.ctx.store);
-    this.ctx.events.broadcast({ type: 'task.changed' });
+    this.ctx.cache.refresh(this.ctx.store, [epicId]);
+    this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
     return url;
   }
 
@@ -903,8 +903,8 @@ export class PrManager {
           },
           now
         );
-        this.ctx.cache.rebuild(this.ctx.store);
-        this.ctx.events.broadcast({ type: 'task.changed' });
+        this.ctx.cache.refresh(this.ctx.store, [epicId]);
+        this.ctx.events.broadcast({ type: 'task.changed', ids: [epicId] });
       }
     }
   }
