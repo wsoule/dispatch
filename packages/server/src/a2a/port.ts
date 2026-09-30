@@ -29,6 +29,7 @@ import {
 } from '@dispatch/a2a';
 import type {
   A2AConfig,
+  A2ASkill,
   CommandEvidence,
   CreateInput,
   TaskDoc,
@@ -59,6 +60,11 @@ const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 // The status skill reports at most this many handoffs, newest first.
 const STATUS_LIMIT = 50;
+const SKILL_REFUSALS: Record<A2ASkill, string> = {
+  ask: 'this project does not take questions or messages',
+  handoff: 'this project does not take handoffs',
+  status: 'this project does not offer the status skill',
+};
 
 // What the daemon's bridge reads and writes. `policy` is a function so a
 // config reload (or a test) can swap it; every call reads it afresh.
@@ -161,6 +167,23 @@ export class DaemonBridgePort implements BridgePort {
       if (!visible.has(ref.id))
         throw new MessagingError('not-found', 'unknown message', `refs[${i}]`);
     });
+  }
+
+  // The card's skills are the contract: an unoffered one is refused, not run.
+  private checkOffered(kind: OpenInput['kind']): void {
+    const skill =
+      kind === 'handoff' || kind === 'status' ? kind : ('ask' as const);
+    if (
+      offeredSkills(this.deps.policy().skills, this.deps.statuses()).includes(
+        skill
+      )
+    )
+      return;
+    throw new MessagingError(
+      'invalid',
+      SKILL_REFUSALS[skill],
+      skill === 'ask' ? 'message' : 'work.skill'
+    );
   }
 
   // Counted from the stores, so a restart does not reset them.
@@ -311,6 +334,7 @@ export class DaemonBridgePort implements BridgePort {
         await reconcileHandoff(this.deps, this.hub, row);
       return { kind: 'task', taskId: prior.id };
     }
+    this.checkOffered(input.kind);
     if (input.kind === 'status') return this.statusSkill(caller, input);
     this.checkDurableLimits(
       caller,

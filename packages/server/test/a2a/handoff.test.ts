@@ -6,6 +6,7 @@ import {
   wrapExternalData,
 } from '@dispatch/a2a';
 import {
+  DEFAULT_A2A,
   effectiveRung,
   loadConfig,
   POLICY_GATES,
@@ -480,6 +481,37 @@ describe('reconciliation', () => {
     await reconcileA2A(f.deps, f.watch).settled;
     expect(f.tasks.get(draft.meta.id)?.meta.status).toBe('ready');
     expect(f.messaging.engine.answerOf(id)).toMatchObject({ choice: 'accept' });
+  });
+});
+
+describe('skills the owner does not offer', () => {
+  const refused = async (input: OpenInput, message: string) => {
+    const err = await f.port.open(f.caller, input).catch((e: unknown) => e);
+    expect(err).toMatchObject({ code: 'invalid', message });
+  };
+
+  it('refuses a handoff and a status call when the card offers only ask', async () => {
+    f.deps.policy = () => ({ ...DEFAULT_A2A, skills: ['ask'] });
+    await refused(handoff(), 'this project does not take handoffs');
+    await refused(
+      statusInput(),
+      'this project does not offer the status skill'
+    );
+    expect(f.tasks.list()).toHaveLength(0);
+    const asked = await f.port.open(f.caller, {
+      ...handoff({ clientMessageId: 'c-a1', kind: 'ask', work: undefined }),
+    });
+    expect(asked.kind).toBe('task');
+  });
+
+  it('refuses an ask and a plain message when the card offers only handoff', async () => {
+    f.deps.policy = () => ({ ...DEFAULT_A2A, skills: ['handoff'] });
+    for (const kind of ['ask', 'message'] as const)
+      await refused(
+        handoff({ clientMessageId: `c-${kind}`, kind, work: undefined }),
+        'this project does not take questions or messages'
+      );
+    expect((await f.port.open(f.caller, handoff())).kind).toBe('task');
   });
 });
 
