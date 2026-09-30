@@ -256,6 +256,13 @@ export function gateNotification(
   if (kind === 'approval') {
     return { title: 'Approval needed', body: firstLine(message.body), kind };
   }
+  if (kind === 'memory') {
+    return {
+      title: 'Memory proposal to review',
+      body: firstLine(message.body),
+      kind,
+    };
+  }
   if (kind === 'scope-request') {
     return {
       title: 'An agent needs scope approval',

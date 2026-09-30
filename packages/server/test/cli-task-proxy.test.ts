@@ -193,6 +193,36 @@ describe('dispatch task, with a database-backed daemon running', () => {
     expect(tasks[0].meta.title).toBe('edited');
   });
 
+  it('files --milestone under the container the daemon finds by title', async () => {
+    const beta = await runCli(
+      root,
+      ['task', 'create', 'Beta', '--kind', 'milestone'],
+      cliEnv
+    );
+    const betaId = beta.stdout.trim().split(/\s+/)[1];
+    const created = await runCli(
+      root,
+      ['task', 'create', 'in beta', '--milestone', 'beta'],
+      cliEnv
+    );
+    expect(created.exitCode).toBe(0);
+    const id = created.stdout.trim().split(/\s+/)[1];
+    const tasks = await listTasksViaApi();
+    const task = tasks.find((t) => t.meta.id === id);
+    expect(task?.meta.parent).toBe(betaId);
+    expect(task?.meta.milestone).toBeNull();
+
+    const unknown = await runCli(
+      root,
+      ['task', 'create', 'nowhere', '--milestone', 'Gamma'],
+      cliEnv
+    );
+    expect(unknown.exitCode).toBe(1);
+    expect(unknown.stderr).toContain(
+      'no project or milestone is titled "Gamma"'
+    );
+  });
+
   it('reports ready work from the daemon', async () => {
     await runCli(root, ['task', 'create', 'ready one'], cliEnv);
     const result = await runCli(root, ['task', 'next'], cliEnv);

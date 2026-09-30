@@ -28,7 +28,10 @@ import type { DeliveryEngine } from '@dispatch/protocol';
 import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
-import type { OpenMemoryDeps } from '../../src/memory/service.js';
+import type {
+  MemoryService,
+  OpenMemoryDeps,
+} from '../../src/memory/service.js';
 import { GateHandlers } from '../../src/messaging/gates.js';
 
 // openMemory's daemon deps for a test with no live runs that raises no gate:
@@ -61,7 +64,11 @@ export function quietDaemon(
       isA2ATask: () => false,
       ...orchestrator,
     },
-    messaging: { engine: noGates, gates: new GateHandlers() },
+    messaging: {
+      engine: noGates,
+      gates: new GateHandlers(),
+      store: { getAgent: () => null },
+    },
     ownerRef: 'human:wyat',
     appendPolicyActivity: () => {},
     personalDir: join(root, 'personal'),
@@ -200,8 +207,18 @@ export function storedProposal(
   return p;
 }
 
-// A time before any test daemon's cutover, so a row seeded with it imports as an entry.
+// A time before any test daemon's cutover, so a row seeded with it imports as
+// an entry at the first import after the cutover.
 export const BEFORE_CUTOVER = '2026-01-01T00:00:00.000Z';
+
+// Imports the ledger as the first import after the cutover does, as though
+// the rows seeded since boot had been there all along.
+export function importAtCutover(
+  memory: Pick<MemoryService, 'shared' | 'importLedger'>
+): void {
+  memory.shared?.deleteMeta('ledger-cutover-swept-at');
+  memory.importLedger();
+}
 
 // Writes a ledger row into the project's own ledger (dispatch.db when the
 // daemon made one, else ledger.jsonl), as an older build or a pull would.

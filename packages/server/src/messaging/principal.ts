@@ -12,6 +12,8 @@ export interface Principal {
   address: string;
   canDecide: boolean;
   kind: 'human' | 'run' | 'agent';
+  // True only when the caller presented the daemon owner's app token.
+  ownerCredential?: boolean;
 }
 
 // `code` reuses the tier ladder's auth codes (auth_missing_token, seat_limit,
@@ -54,6 +56,9 @@ export function resolvePrincipal(
         address: lookup.identity.ref,
         canDecide: tierAllows(lookup.identity.tier, 'decide'),
         kind: 'human',
+        ...(timingSafeEqual(sha256(presented), sha256(ctx.tokens.appToken))
+          ? { ownerCredential: true }
+          : {}),
       },
     };
   }

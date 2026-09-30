@@ -22,6 +22,9 @@ export interface TokenIdentity {
   /** Serialized ActorRef — `human:<handle>` — ready for an attribution field. */
   ref: string;
   tier: AuthTier;
+  /** True for the built-in on-disk agent token, which every run's agent
+   *  reads: a request presenting it may be an agent, never provably a human. */
+  agentToken?: boolean;
 }
 
 // One of the two tokens the daemon mints at startup. They authenticate as the
@@ -40,6 +43,9 @@ export interface IssuedTokenSummary {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  /** A teammate token that can never authenticate: one for the operator's
+   *  handle, issued before that was refused. */
+  unusable: boolean;
 }
 
 /** What a presented token turned out to be: someone, a credential that has
@@ -104,7 +110,7 @@ export class TokenRegistry {
 
   constructor(
     pair: { agentToken: string; appToken: string },
-    operatorHandle: string,
+    private readonly operatorHandle: string,
     private readonly teammates: CredentialSource | null = null
   ) {
     // Highest tier first, so the app token still wins if the two were ever
@@ -123,6 +129,7 @@ export class TokenRegistry {
         handle: operatorHandle,
         ref,
         tier: 'request',
+        agentToken: true,
       },
     ];
   }
@@ -142,10 +149,23 @@ export class TokenRegistry {
     if (own !== undefined) {
       return {
         kind: 'valid',
-        identity: { handle: own.handle, ref: own.ref, tier: own.tier },
+        identity: {
+          handle: own.handle,
+          ref: own.ref,
+          tier: own.tier,
+          ...(own.agentToken === true ? { agentToken: true } : {}),
+        },
       };
     }
-    return this.teammates?.lookup(digest) ?? { kind: 'unknown' };
+    const teammate = this.teammates?.lookup(digest) ?? { kind: 'unknown' };
+    // Only the built-in pair speaks for the operator; a teammate token naming
+    // their handle matches no one.
+    if (
+      teammate.kind === 'valid' &&
+      teammate.identity.handle === this.operatorHandle
+    )
+      return { kind: 'unknown' };
+    return teammate;
   }
 
   /** Who currently holds credentials, without the credentials. */
@@ -159,8 +179,12 @@ export class TokenRegistry {
         expiresAt: null,
         lastUsedAt: null,
         expired: false,
+        unusable: false,
       })),
-      ...(this.teammates?.list() ?? []),
+      ...(this.teammates?.list() ?? []).map((t) => ({
+        ...t,
+        unusable: t.unusable || t.handle === this.operatorHandle,
+      })),
     ];
   }
 }

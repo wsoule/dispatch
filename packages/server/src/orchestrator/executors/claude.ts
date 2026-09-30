@@ -26,10 +26,12 @@ import { activeExperiments } from '../experiments.js';
 import type { ExperimentName } from '../experiments.js';
 import { floorGuard } from '../floorHook.js';
 import type { FloorPolicy } from '../floorHook.js';
+import { DEFAULT_EXECUTOR_PROFILE } from '../types.js';
 import type {
   ApprovalDecision,
   Executor,
   ExecutorEvents,
+  ExecutorProfile,
   ExecutorRun,
   ExecutorStartOptions,
   NormalizedEntry,
@@ -274,8 +276,8 @@ const MEMORY_PENDING_DENIAL =
 // How long the load check waits for the CLI to list the memory files it loaded.
 const MEMORY_CHECK_MS = 30_000;
 
-// The `memoryFiles` types of CLAUDE.md files in the bundled CLI (2.1.207). Any
-// other type outside the export, such as `AutoMem`, counts as native memory.
+// The `memoryFiles` types of CLAUDE.md files. Any other type outside the export
+// counts as native: the live probe saw `AutoMem`, and 2.1.283 adds `AutoMemPinned`.
 const CLAUDE_MD_FILE_TYPES: ReadonlySet<string> = new Set([
   'User',
   'Project',
@@ -807,6 +809,12 @@ function guardZeroTurnFinish(
  * raises the orchestrator's approval flow and waits for `approve()`.
  */
 export class ClaudeExecutor implements Executor {
+  // Claude's defaults, and it applies the memory mode a run starts in.
+  readonly profile: ExecutorProfile = {
+    ...DEFAULT_EXECUTOR_PROFILE,
+    autoMemory: true,
+  };
+
   // Defaults to the real SDK's `query()`; tests inject a stub that yields a
   // scripted `SDKMessage` stream instead of spinning up a real Agent SDK
   // session (which claude-executor.test.ts's DISPATCH_CLAUDE_SMOKE-gated

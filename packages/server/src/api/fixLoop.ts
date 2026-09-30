@@ -1,6 +1,7 @@
 import type { ApiContext } from '../api.js';
 import type { FixLoopVerdict } from '../orchestrator/fixLoop.js';
 import { ADJUDICATION_VERDICTS, capError } from '../orchestrator/fixLoop.js';
+import { humanOperator } from './caller.js';
 import {
   errorResponse,
   jsonResponse,
@@ -42,9 +43,10 @@ export async function advanceFixLoop(
     ctx.fixLoop.start(taskId, {
       baseSha: body.baseSha.trim(),
       cap: body.cap as number | undefined,
+      operator: humanOperator(ctx),
     });
   }
-  return jsonResponse(await ctx.fixLoop.advance(taskId));
+  return jsonResponse(await ctx.fixLoop.advance(taskId, humanOperator(ctx)));
 }
 
 // POST /api/tasks/:id/fix-loop/start — the task view's "Review & fix" button.
@@ -54,7 +56,7 @@ export async function startFixLoop(
   ctx: ApiContext,
   taskId: string
 ): Promise<Response> {
-  return jsonResponse(await ctx.fixLoop.ignite(taskId));
+  return jsonResponse(await ctx.fixLoop.ignite(taskId, humanOperator(ctx)));
 }
 
 // POST /api/tasks/:id/fix-loop/stop — the user's Stop button: caps the loop
@@ -103,6 +105,8 @@ export async function adjudicateFinding(
     body.ruling
   );
   const loop =
-    ctx.fixLoop.get(taskId) === null ? null : await ctx.fixLoop.advance(taskId);
+    ctx.fixLoop.get(taskId) === null
+      ? null
+      : await ctx.fixLoop.advance(taskId, humanOperator(ctx));
   return jsonResponse({ finding, fixLoop: loop });
 }

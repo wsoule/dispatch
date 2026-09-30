@@ -7,6 +7,7 @@ import {
 import type { MemoryEntry, MemoryStore } from '@dispatch/memory';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
 import {
+  existsSync,
   mkdirSync,
   mkdtempSync,
   realpathSync,
@@ -143,6 +144,19 @@ describe('PersonalStores', () => {
     save(stores.personal(ADA), 'mine');
     expect(stores.move(ADA, ADA)).toBe(0);
     expect(stores.personal(ADA).countEntries()).toBe(1);
+  });
+
+  // A failed read by id must not open, create or keep every store on the machine.
+  it('locates an entry without opening a store it was not already using', () => {
+    const first = storesAt();
+    const e = save(first.personal(ADA), 'hers');
+    first.close();
+    const stores = storesAt();
+    const BOB = `pid-${'B'.repeat(26)}`;
+    expect(stores.locate(e.id, [BOB, ADA])).toBe(ADA);
+    expect(stores.locate('mem-missing', [BOB, ADA])).toBeNull();
+    expect(stores.opened()).toEqual([]);
+    expect(existsSync(join(root, 'memory', `${BOB}.db`))).toBe(false);
   });
 
   it('retries a store that failed to open, and locate skips it meanwhile', () => {

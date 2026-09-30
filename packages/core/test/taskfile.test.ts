@@ -11,6 +11,7 @@ import {
 } from '../src/taskfile.js';
 import type { Amendment } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 describe('getSection', () => {
   const body =
@@ -219,6 +220,7 @@ const doc: TaskDoc = {
     risk: 'routine',
     model: null,
     exercised: false,
+    ...defaultTaskFields(),
   },
   body: '\n## Description\n\nStuff.\n\n## Acceptance Criteria\n\n## Activity\n',
 };

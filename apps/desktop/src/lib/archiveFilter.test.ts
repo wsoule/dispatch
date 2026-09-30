@@ -1,5 +1,6 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 import { describe, expect, test } from 'bun:test';
 
 import { hideArchivedRuns } from './archiveFilter';
@@ -51,6 +52,7 @@ function makeTask(
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       archivedAt,
     },
     body: '',

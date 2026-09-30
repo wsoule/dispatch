@@ -31,6 +31,8 @@ export class FakeMemoryHost implements MemoryHost {
   rejected: MemoryProposal[] = [];
   // Host calls that throw, as when policy, messaging or the ledger is down.
   failing = new Set<'rule' | 'raiseGate' | 'recordPolicyApproval'>();
+  // Proposals whose gate alone cannot be raised.
+  failingGates = new Set<string>();
 
   operatorOf(principal: Principal): Operator | null {
     return this.operators.get(principal.address) ?? null;
@@ -63,7 +65,7 @@ export class FakeMemoryHost implements MemoryHost {
     return this.ruling;
   }
   raiseGate(p: MemoryProposal): Promise<string> {
-    if (this.failing.has('raiseGate'))
+    if (this.failing.has('raiseGate') || this.failingGates.has(p.id))
       return Promise.reject(new Error('messaging is down'));
     this.gates.push(p);
     return Promise.resolve(`m-gate-${this.gates.length}`);

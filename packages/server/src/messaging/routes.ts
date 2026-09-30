@@ -1,4 +1,5 @@
 import { isClientAddress, isReservedName } from '@dispatch/a2a';
+import { canonicalKind } from '@dispatch/core';
 import type { TaskDoc } from '@dispatch/core';
 import type {
   AgentRecord,
@@ -30,7 +31,8 @@ import {
   readJsonBody,
   readJsonBodyOptional,
 } from '../api/http.js';
-import { openHumanDecisions } from './gates.js';
+import { runMessageRefusal } from '../orchestrator/types.js';
+import { answeringWith, openHumanDecisions } from './gates.js';
 import { implicitEpicMembers } from './host.js';
 import { isInternalAgent } from './internalAgents.js';
 import type { Principal } from './principal.js';
@@ -308,6 +310,28 @@ function parseReplyInput(raw: unknown):
   return { ok: true, value };
 }
 
+// MEM-R8(c): a request-tier human may not message a live run that acts for
+// another human; the task or that human is the way in.
+function liveRunRefusal(
+  ctx: ApiContext,
+  principal: Principal,
+  to: readonly string[]
+): string | null {
+  if (principal.kind !== 'human') return null;
+  for (const address of to) {
+    if (!address.startsWith('run:')) continue;
+    const runId = address.slice('run:'.length);
+    if (!ctx.orchestrator.isRunLive(runId)) continue;
+    const meta = ctx.orchestrator.list().find((r) => r.id === runId);
+    const refusal =
+      meta === undefined
+        ? null
+        : runMessageRefusal(meta, principal.address, principal.canDecide);
+    if (refusal !== null) return refusal;
+  }
+  return null;
+}
+
 // POST /api/messages as the resolved principal. The same principal repeating
 // an `Idempotency-Key` gets the first send back with 200, even after a restart.
 export async function sendMessage(
@@ -319,15 +343,19 @@ export async function sendMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseSendInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
+  const refusal = liveRunRefusal(ctx, principal, parsedInput.value.to);
+  if (refusal !== null) return errorResponse(403, refusal);
 
   // The engine keys (sender, Idempotency-Key) in messages.db, so a retry after
   // a restart still replays the first send.
   const idemKey = req.headers.get('idempotency-key');
-  const result = await ctx.messaging.engine.send(
-    idemKey === null
-      ? parsedInput.value
-      : { ...parsedInput.value, idempotencyKey: idemKey },
-    senderOf(principal)
+  const result = await answeringWith(principal.ownerCredential === true, () =>
+    ctx.messaging.engine.send(
+      idemKey === null
+        ? parsedInput.value
+        : { ...parsedInput.value, idempotencyKey: idemKey },
+      senderOf(principal)
+    )
   );
   return jsonResponse(result, result.replayed === true ? 200 : 201);
 }
@@ -358,11 +386,21 @@ export async function replyToMessage(
   if (!parsedBody.ok) return parsedBody.response;
   const parsedInput = parseReplyInput(parsedBody.value);
   if (!parsedInput.ok) return parsedInput.response;
-  const result = await ctx.messaging.engine.reply(
-    id,
-    parsedInput.value,
-    senderOf(principal)
+  const target = ctx.messaging.engine.getMessage(id);
+  const result = await answeringWith(principal.ownerCredential === true, () =>
+    ctx.messaging.engine.reply(id, parsedInput.value, senderOf(principal))
   );
+  // Only a reply that approves the registration can record an owner approval.
+  const gate = target === null ? null : gateOf(target);
+  if (
+    gate?.type === 'agent-registration' &&
+    result.message.kind === 'answer' &&
+    result.message.choice === 'approve'
+  )
+    ctx.memory.host.agentDecided(
+      gate.agent,
+      principal.ownerCredential === true
+    );
   return jsonResponse(result, 201);
 }
 
@@ -574,7 +612,10 @@ export function listChannels(ctx: ApiContext): Response {
   const childrenByParent = new Map<string, TaskDoc[]>();
   const epicIds: string[] = [];
   for (const task of ctx.store.list()) {
-    if (task.meta.kind === 'epic') epicIds.push(task.meta.id);
+    // A milestone is what an epic became; its channel keeps the `epic/` name.
+    if (canonicalKind(task.meta.kind) === 'milestone') {
+      epicIds.push(task.meta.id);
+    }
     if (task.meta.parent !== null) {
       const siblings = childrenByParent.get(task.meta.parent);
       if (siblings === undefined)
@@ -906,6 +947,7 @@ async function decideAgent(
       approvedBy: directStatus === 'approved' ? humanActor(ctx) : null,
     });
   }
+  ctx.memory.host.agentDecided(address, ctx.ownerCredential === true);
   const updated = ctx.messaging.store.getAgent(address) ?? agent;
   return jsonResponse(stripTokenHash(updated));
 }

@@ -97,9 +97,10 @@ export function validateVariants(
  * The task to create for one variant.
  *
  * Everything that scopes or gates the work is copied — `writes`, `risk`,
- * `selfReview`, `milestone`, `priority` — because a variant that ran under
- * looser rules than the original would not be comparable with the others, and
- * the whole point is to compare them.
+ * `selfReview`, `priority` — because a variant that ran under looser rules
+ * than the original would not be comparable with the others, and the whole
+ * point is to compare them. The clone sits under the original's `parent`; the
+ * legacy `milestone` string is never written to a new task.
  *
  * `blockedBy` is deliberately not copied: the clones are cut at the moment the
  * original is ready to run, and re-inheriting its blockers would park every
@@ -121,7 +122,6 @@ export function variantTaskInput(
     title: variantTitle(meta.title, variant),
     kind: meta.kind,
     ...(meta.parent === null ? {} : { parent: meta.parent }),
-    ...(meta.milestone === null ? {} : { milestone: meta.milestone }),
     labels: [...meta.labels, fanoutLabel(meta.id)],
     priority: meta.priority,
     ...(meta.writes === undefined ? {} : { writes: meta.writes }),

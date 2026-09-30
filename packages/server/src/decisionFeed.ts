@@ -441,14 +441,15 @@ export class DecisionFeed {
       const kind = notificationKindForMessage(message);
       if (kind === null) continue;
       const gate = gateOf(message);
+      // A doc gate comes from the system, so its run and task ride in its data.
       const runId =
-        gate?.type === 'tool-approval'
+        gate?.type === 'tool-approval' || gate?.type === 'doc'
           ? gate.runId
           : addressId(message.from, 'run:');
       const run = runId === undefined ? undefined : runs.get(runId);
-      const taskId =
-        run?.taskId ??
-        (gate?.type === 'wake' ? addressId(gate.target, 'task:') : undefined);
+      let taskId = run?.taskId;
+      if (gate?.type === 'wake') taskId ??= addressId(gate.target, 'task:');
+      else if (gate?.type === 'doc') taskId ??= gate.taskId;
       const taskTitle =
         run?.taskTitle ??
         (taskId === undefined ? undefined : this.taskTitle(taskId));
@@ -479,6 +480,11 @@ export class DecisionFeed {
           summary: `agent asked to edit outside its scope: ${paths}`,
           reason: oneLine(gate.reason),
           paths: gate.paths,
+        });
+      } else if (gate?.type === 'doc') {
+        items.push({
+          ...base,
+          summary: `${taskTitle ?? 'A task'}: an agent proposes an edit to an accepted doc`,
         });
       } else {
         items.push({ ...base, summary: oneLine(message.body) });

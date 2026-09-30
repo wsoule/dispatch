@@ -76,7 +76,12 @@ export function assigneeLabel(assignee: Assignee | null | undefined): string {
   return ref.kind === 'agent' ? 'Agent' : 'Human';
 }
 
-const KIND_LABEL: Record<TaskKind, string> = { task: 'Task', epic: 'Epic' };
+const KIND_LABEL: Record<TaskKind, string> = {
+  task: 'Task',
+  milestone: 'Milestone',
+  project: 'Project',
+  initiative: 'Initiative',
+};
 
 export function kindLabel(kind: TaskKind): string {
   return KIND_LABEL[kind];

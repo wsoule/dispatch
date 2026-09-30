@@ -31,7 +31,11 @@ import {
   OrchestratorConflictError,
   OrchestratorNotFoundError,
 } from '../src/orchestrator/types.js';
-import { initGitRepo, runGitSync } from './orchestrator/helpers.js';
+import {
+  initGitRepo,
+  runGitSync,
+  WatchedTaskStore,
+} from './orchestrator/helpers.js';
 
 let fakeHome: string;
 let repo: string;
@@ -148,7 +152,9 @@ function makeHarness(jj?: JjManager): Harness {
       },
     })
   );
-  return { rootDir: repo, orchestrator, store, cache, events };
+  // The test's own writes, seen the way a hand edit is: through a refresh.
+  const watched = new WatchedTaskStore(repo, cache);
+  return { rootDir: repo, orchestrator, store: watched, cache, events };
 }
 
 async function dispatchAndFinish(

@@ -30,6 +30,10 @@ describe('editableDraftFrom', () => {
     expect(draft.status).toBe('in-progress');
     expect(draft.parent).toBeNull();
   });
+
+  test('seeds the container the draft was started in', () => {
+    expect(editableDraftFrom(PLANNED, 'todo', 'e-1').parent).toBe('e-1');
+  });
 });
 
 describe('isDraftSaveable', () => {

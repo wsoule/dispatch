@@ -1,5 +1,6 @@
 import type { EpicProgress, EpicSession } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { StatusModel, TaskListItem } from '@dispatch/core/browser';
+import { isCompletedStatus } from '@dispatch/core/browser';
 import {
   ChevronsUp,
   GitMerge,
@@ -31,7 +32,9 @@ import { CountChip } from '@/ui/chrome/CountChip';
 import { StepStrip } from '@/ui/chrome/StepStrip';
 
 export interface FanoutControlsProps {
-  epic: TaskDoc;
+  epic: TaskListItem;
+  /** The project's statuses, which say the epic has landed. */
+  model: StatusModel;
   /** `undefined` until the epic's progress fetch resolves — the verbs still render, read
    * as "no session". */
   progress: EpicProgress | undefined;
@@ -61,6 +64,12 @@ export interface FanoutControlsProps {
   onOpenEpic: (epicId: string) => void;
   /** The trailing Open button; the board turns it off since its id chip opens the epic. */
   showOpen?: boolean;
+  /** An active session's phase chips; the Flight Plan turns them off since its header
+   * counts the same children. */
+  phases?: boolean;
+  /** An active session's wave strip; the Live view turns it off since its band draws the
+   * same waves. */
+  waves?: boolean;
 }
 
 /** No session, or one that has run its course — the caller's own live-run pill speaks
@@ -89,6 +98,7 @@ export function sessionIdle(session: EpicSession | null): boolean {
  */
 export function FanoutControls({
   epic,
+  model,
   progress,
   count,
   landable,
@@ -102,6 +112,8 @@ export function FanoutControls({
   onLand,
   onOpenEpic,
   showOpen = true,
+  phases = true,
+  waves = true,
 }: FanoutControlsProps) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -149,7 +161,8 @@ export function FanoutControls({
 
   let controls: ReactNode;
   if (active && progress !== undefined) {
-    const counts = phaseCounts(progressChildren);
+    // Counting nothing leaves no chips, for a caller that shows its own counts.
+    const counts = phaseCounts(phases ? progressChildren : []);
     const spend = progress.spend;
     const rulings = rulingsWaiting(progressChildren);
     controls = (
@@ -175,7 +188,7 @@ export function FanoutControls({
             Waiting on {rulings} ruling{rulings === 1 ? '' : 's'}
           </LabelPill>
         )}
-        {progress.waves.length > 1 && (
+        {waves && progress.waves.length > 1 && (
           <StepStrip steps={waveSteps(progress.waves)} className="w-16" />
         )}
         {onPause !== undefined && (
@@ -244,7 +257,7 @@ export function FanoutControls({
         Land
       </PillButton>
     );
-  } else if (epic.meta.status === 'landed' || count?.total === 0) {
+  } else if (isCompletedStatus(epic.meta.status, model) || count?.total === 0) {
     // Nothing to send: a landed epic is done, and an empty milestone would open a dialog
     // whose confirm is disabled.
     controls = null;

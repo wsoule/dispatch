@@ -3,13 +3,12 @@ import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
   isClientAddress,
-  namedStatusVocabulary,
   openA2ADb,
   SqliteA2AStore,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
 import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
-import { DEFAULT_A2A, loadConfig } from '@dispatch/core';
+import { DEFAULT_A2A, loadConfig, statusModelOf } from '@dispatch/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -117,9 +116,10 @@ interface OpenBridgeDeps {
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
 
-// The a2a: block, its warnings and the handoff statuses; an unparseable
-// config.yml falls back to the defaults instead of failing a request.
-function a2aConfig(rootDir: string): {
+// The a2a: block, its warnings and the handoff statuses, read from the
+// project's typed status model; an unparseable config.yml falls back to the
+// defaults instead of failing a request.
+export function a2aConfig(rootDir: string): {
   policy: A2AConfig;
   warnings: string[];
   statuses: HandoffStatuses;
@@ -129,7 +129,7 @@ function a2aConfig(rootDir: string): {
     return {
       policy: config.a2a ?? DEFAULT_A2A,
       warnings: config.a2aWarnings ?? [],
-      statuses: handoffStatuses(namedStatusVocabulary(config.statuses)),
+      statuses: handoffStatuses(statusModelOf(config)),
     };
   } catch (err) {
     return {

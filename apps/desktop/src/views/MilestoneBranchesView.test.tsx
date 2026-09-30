@@ -1,8 +1,15 @@
 import type { RunMeta } from '@dispatch/client';
 import type { TaskDoc } from '@dispatch/core/browser';
-import { fireEvent, render, screen } from '@testing-library/react';
-import { beforeEach, describe, expect, test } from 'bun:test';
-import type { ReactNode } from 'react';
+import { statusModelOf } from '@dispatch/core/browser';
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { type ReactNode, useEffect } from 'react';
 
 import { testConfig } from '../components/settings/fixtures.test-helper';
 import {
@@ -11,6 +18,7 @@ import {
   ShellActionsProvider,
 } from '../components/shell/ShellActionsContext';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { setActiveStatusModel } from '../lib/statusModel';
 import { DEFAULT_TASKS_DISPLAY } from '../lib/tasksPrefs';
 import {
   BRANCHES_TOGGLED_STORAGE_KEY,
@@ -20,6 +28,11 @@ import {
 
 // Collapse state is session-scoped; start every test with nothing folded.
 beforeEach(() => window.sessionStorage.clear());
+// Unmount before resetting, so the reset does not redraw a mounted view outside act.
+afterEach(() => {
+  cleanup();
+  setActiveStatusModel(null);
+});
 
 function task(
   id: string,
@@ -163,8 +176,8 @@ function summaries(root: ParentNode): string[] {
   ).map((el) => el.textContent ?? '');
 }
 
-const payments = task('e-1', 'Payments', { kind: 'epic' });
-const shipped = task('e-2', 'Shipped', { kind: 'epic' });
+const payments = task('e-1', 'Payments', { kind: 'milestone' });
+const shipped = task('e-2', 'Shipped', { kind: 'milestone' });
 
 // A → B, A → C, B,C → D under Payments; passed in reverse so the layout, not the input,
 // decides the order.
@@ -183,9 +196,9 @@ describe('MilestoneBranchesView', () => {
           payments,
           ...diamond,
           task('t-x', 'Loose task'),
-          task('e-3', 'Empty milestone', { kind: 'epic' }),
+          task('e-3', 'Empty milestone', { kind: 'milestone' }),
         ],
-        [payments, task('e-3', 'Empty milestone', { kind: 'epic' })]
+        [payments, task('e-3', 'Empty milestone', { kind: 'milestone' })]
       )
     );
 
@@ -468,6 +481,81 @@ describe('MilestoneBranchesView', () => {
     ).not.toBeNull();
   });
 
+  test('a mirrored workflow folds, sinks and tints a finished milestone on its first load', () => {
+    // A Linear workflow: none of these names is a built-in.
+    const linear = {
+      ...testConfig,
+      statuses: ['Todo', 'In Progress', 'Done', 'Canceled'],
+      statusDefinitions: [
+        { name: 'Todo', type: 'unstarted', color: null },
+        { name: 'In Progress', type: 'started', color: null },
+        { name: 'Done', type: 'completed', color: null },
+        { name: 'Canceled', type: 'canceled', color: null },
+      ],
+      statusRoles: {
+        ready: 'Todo',
+        dispatched: 'In Progress',
+        review: 'In Progress',
+        landing: null,
+        landed: 'Done',
+        dropped: 'Canceled',
+      },
+    } as unknown as DispatchProjectData['config'];
+    const tasks = [
+      shipped,
+      payments,
+      task('t-old', 'Done work', { parent: 'e-2', status: 'Done' }),
+      task('t-new', 'Old follow-up', {
+        parent: 'e-2',
+        status: 'Done',
+        blockedBy: ['t-old'],
+      }),
+      task('t-a', 'Schema', { parent: 'e-1', status: 'Todo' }),
+    ];
+    const Shell = shellWith({ presets: [], peeked: [] });
+    // As in useDispatchProject: config lands after the tasks, and the open project's model
+    // is set in an effect after the render that carries it.
+    function App({ config }: { config: DispatchProjectData['config'] }) {
+      useEffect(() => {
+        setActiveStatusModel(config === null ? null : statusModelOf(config));
+      }, [config]);
+      const data = {
+        ...dataWith(tasks, [shipped, payments]),
+        config,
+      } as DispatchProjectData;
+      return (
+        <Shell>
+          <MilestoneBranchesView data={data} onOpenTask={() => {}} />
+        </Shell>
+      );
+    }
+    const { container, rerender } = render(<App config={null} />);
+    act(() => rerender(<App config={linear} />));
+
+    const blocks = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-slot="milestone-branch"]')
+    );
+    expect(blocks.map((b) => b.dataset['groupKey'])).toEqual([
+      'milestone:e-1',
+      'milestone:e-2',
+    ]);
+    expect(blocks.map((b) => b.dataset['finished'])).toEqual([
+      undefined,
+      'true',
+    ]);
+    // Shipped starts folded: only Payments' line is drawn.
+    expect(lineIds(container)).toEqual(['t-a']);
+    const header = blocks[1]?.querySelector<HTMLElement>(
+      '[data-slot="group-header"]'
+    );
+    expect(header?.style.getPropertyValue('--tint')).toBe('var(--status-done)');
+    expect(
+      header
+        ?.querySelector('[data-status-shape]')
+        ?.getAttribute('data-status-shape')
+    ).toBe('done');
+  });
+
   test('a sub-task under a task is no milestone of its own', () => {
     const { container } = renderBranches(
       dataWith(
@@ -499,6 +587,24 @@ describe('MilestoneBranchesView', () => {
     expect(none.querySelector('[data-slot="group-header"]')).toBeNull();
   });
 
+  test('a filter that hides a parent issue draws its sub-issue on the milestone, not under the issue id', () => {
+    const schema = task('t-a', 'Schema', { parent: 'e-1' });
+    const migration = task('t-a-1', 'Migration', {
+      parent: 't-a',
+      status: 'working',
+    });
+    // The app's epics hold every task with children, the parent issue included.
+    const { container } = renderBranches(
+      dataWith([payments, schema, migration], [payments, schema]),
+      { taskFilter: (doc) => doc.meta.status === 'working' }
+    );
+    const blocks = Array.from(
+      container.querySelectorAll<HTMLElement>('[data-slot="milestone-branch"]')
+    );
+    expect(blocks.map((b) => b.dataset['groupKey'])).toEqual(['milestone:e-1']);
+    expect(lineIds(container)).toEqual(['t-a-1']);
+  });
+
   test('a taskFilter that drops a blocker still lays out and the header + presets the milestone', () => {
     const { container, log } = renderBranches(
       dataWith([payments, ...diamond], [payments]),
@@ -516,7 +622,7 @@ describe('MilestoneBranchesView', () => {
     fireEvent.click(
       screen.getByRole('button', { name: 'New task in Payments' })
     );
-    expect(log.presets).toEqual([{ milestone: 'e-1' }]);
+    expect(log.presets).toEqual([{ epic: 'e-1' }]);
   });
 
   test('the trailing slot is the live run mark, else the assignee avatar when shown', () => {
@@ -595,5 +701,60 @@ describe('MilestoneBranchesView', () => {
     );
     expect(container.textContent).toContain('No tasks match');
     expect(container.textContent).not.toContain('No milestones with tasks yet');
+  });
+
+  // A tabbed-to line's band unmounts once j walks the cursor a few bands away; focus
+  // left on its button would fall to the body and take j/k with it.
+  test('j away from a tabbed-to line keeps focus in the grid', () => {
+    const long = Array.from({ length: 300 }, (_, i) =>
+      task(`t-${String(i).padStart(3, '0')}`, `Step ${i}`, {
+        parent: 'e-1',
+        blockedBy: i === 0 ? [] : [`t-${String(i - 1).padStart(3, '0')}`],
+      })
+    );
+    const { container } = renderBranches(
+      dataWith([payments, ...long], [payments])
+    );
+    const focusedId = () =>
+      container.querySelector<HTMLElement>(
+        '[data-slot="branch-line"][data-focused]'
+      )?.dataset['taskId'];
+    const line = container.querySelector<HTMLElement>(
+      '[data-slot="branch-line"][data-task-id="t-001"]'
+    );
+    if (line === null) throw new Error('no line');
+    act(() => {
+      line.focus();
+    });
+    expect(focusedId()).toBe('t-001');
+    const pressJ = () =>
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: 'j' });
+    for (let i = 0; i < 60; i++) pressJ();
+    expect(focusedId()).toBe('t-061');
+    // Scrolled to the cursor, as the browser's scroll-into-view does: t-001's band goes.
+    act(() => {
+      grid().scrollTop = 1500;
+      fireEvent.scroll(grid());
+    });
+    expect(lineIds(container)).not.toContain('t-001');
+    expect(grid().contains(document.activeElement)).toBe(true);
+    pressJ();
+    expect(focusedId()).toBe('t-062');
+  });
+
+  test('a long milestone mounts only the bands of lines on screen', () => {
+    const long = Array.from({ length: 300 }, (_, i) =>
+      task(`t-${String(i).padStart(3, '0')}`, `Step ${i}`, {
+        parent: 'e-1',
+        blockedBy: i === 0 ? [] : [`t-${String(i - 1).padStart(3, '0')}`],
+      })
+    );
+    const { container } = renderBranches(
+      dataWith([payments, ...long], [payments])
+    );
+    const drawn = lineIds(container);
+    expect(drawn[0]).toBe('t-000');
+    expect(drawn.length).toBeGreaterThan(0);
+    expect(drawn.length).toBeLessThan(100);
   });
 });

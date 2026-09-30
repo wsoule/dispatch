@@ -385,6 +385,7 @@ reflog
 refmove
 refspec
 refspecs
+regate
 registrator
 rehome
 rehomed
@@ -393,6 +394,9 @@ reindenting
 reinstallable
 RELS
 renderable
+reparent
+reparented
+reparents
 reparsed
 replayable
 repoint
@@ -425,6 +429,8 @@ rusqlite
 rustls
 rustup
 sandboxing
+satteri
+Sätteri
 scandir
 scannability
 schedulable

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 
 import { computeStack } from '../src/graph.js';
 import type { TaskDoc } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 function mkTask(
   id: string,
@@ -28,6 +29,7 @@ function mkTask(
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '',
   };

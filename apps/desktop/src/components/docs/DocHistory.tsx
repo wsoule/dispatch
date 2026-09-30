@@ -4,7 +4,7 @@ import { useMemo, useState } from 'react';
 
 import { docsKey, useDocDiff, useDocRevisions } from '../../hooks/useDocs';
 import { describeError } from '../../lib/actionFeedback';
-import { docDiffCacheKey, docDiffPatch } from '../../lib/docs';
+import { docDiffCacheKey, docDiffPatch, revisionAuthor } from '../../lib/docs';
 import { relativeTime } from '../../lib/landingView';
 import { DiffSurface } from '../code/DiffSurface';
 import { Button } from '@/ui/button';
@@ -98,7 +98,7 @@ export function DocHistory({
               aria-label={`Compare rev ${r.n ?? '-'}`}
             />
             <span className="shrink-0 font-medium">{`rev ${r.n ?? '-'}`}</span>
-            <span className="shrink-0 font-mono">{r.author}</span>
+            <span className="shrink-0 font-mono">{revisionAuthor(r)}</span>
             <span className="shrink-0 text-[var(--color-muted-foreground)]">
               {r.cause}
             </span>

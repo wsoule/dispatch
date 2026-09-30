@@ -1,4 +1,4 @@
-import { appendAmendment } from '@dispatch/core';
+import { appendAmendment, defaultTaskFields } from '@dispatch/core';
 import type {
   CommandEvidence,
   Finding,
@@ -38,6 +38,7 @@ function task(overrides: Partial<TaskDoc['meta']> = {}): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...overrides,
     },
     body: '## Description\n\nAdd a rate limiter.\n\n## Activity\n',

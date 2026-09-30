@@ -64,16 +64,16 @@ team-server work has to cross.
 
 **In the repo, committed, synced by git** — `.dispatch/`:
 
-| Path              | Contents                                                   |
-| ----------------- | ---------------------------------------------------------- |
-| `tasks/*.md`      | One markdown file per task: frontmatter + body             |
-| `config.yml`      | Statuses, models, verify steps, orchestrator caps          |
-| `team.yml`        | Roster — handles, emails, display names                    |
-| `ledger.jsonl`    | Decisions, hazards, constraints, handoffs                  |
-| `findings.jsonl`  | Review findings and their verdicts                         |
-| `fix-loops.jsonl` | Fix-loop state per task                                    |
-| `notes.json`      | Triage notes and follow-ups                                |
-| `inbox/`          | Per-actor inbox (per-actor files, so merges don't collide) |
+| Path              | Contents                                                    |
+| ----------------- | ----------------------------------------------------------- |
+| `tasks/*.md`      | One markdown file per task: frontmatter + body              |
+| `config.yml`      | Statuses, models, verify steps, orchestrator caps           |
+| `team.yml`        | Roster — handles, emails, display names                     |
+| `ledger.jsonl`    | Audit receipts: policy approvals, floor holds, scope grants |
+| `findings.jsonl`  | Review findings and their verdicts                          |
+| `fix-loops.jsonl` | Fix-loop state per task                                     |
+| `notes.json`      | Triage notes and follow-ups                                 |
+| `inbox/`          | Per-actor inbox (per-actor files, so merges don't collide)  |
 
 **Outside the repo, machine-local, never committed** —
 `$DISPATCH_HOME/.dispatch/runs/<sha256(rootDir)[:12]>/`:
@@ -86,13 +86,19 @@ team-server work has to cross.
 - verify outputs and results
 - merge-queue state, epic PR records
 - `worktrees/` — one working tree per run
+- `memory.db` — project and team memory, and memory proposals
+- `claude-memory/<lineage>/` — a run's Claude memory export
+
+Personal memory lives outside every project, in
+`$DISPATCH_HOME/.dispatch/memory/`: `identities.db` (who each handle is) and one
+`<identity>.db` per human.
 
 Keying by a hash of the project root means several projects share one
 `DISPATCH_HOME` without colliding (`packages/server/src/orchestrator/paths.ts`).
 
-The consequence: **task state is portable and shared; run state is not.** A
-teammate who clones the repo sees every task, decision and finding, and none of
-your runs.
+The consequence: **task state is portable and shared; run state and memory are
+not.** A teammate who clones the repo sees every task, finding and receipt, and
+none of your runs or memory; replicating team memory is team-server work.
 
 ## Packages
 
@@ -100,9 +106,10 @@ your runs.
 | -------------------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
 | `@dispatch/core`     | ~11.5k                | Domain model. Task parse/serialize, `TaskStore`, actors, conflicts, timeline, ledger, findings, evidence, config, merge drivers, Carto binding |
 | `@dispatch/protocol` | ~2.0k                 | The message bus, MIT: addresses, the envelope and its validation, `MessageStore` over SQLite, `DeliveryEngine`                                 |
+| `@dispatch/memory`   | ~4.6k                 | The memory engine, MIT: entries and scopes, proposals, ranking, the prompt index, the SQLite store, Claude's memory file format                |
 | `@dispatch/server`   | ~56.8k                | `dispatchd` — HTTP API, event bus, orchestrator, git, Linear, board sync                                                                       |
 | `@dispatch/cli`      | ~6.4k                 | The `dispatch` binary                                                                                                                          |
-| `@dispatch/mcp`      | ~2.8k                 | Stdio MCP server, 17 tools                                                                                                                     |
+| `@dispatch/mcp`      | ~2.8k                 | Stdio MCP server, 20 tools                                                                                                                     |
 | `@dispatch/client`   | ~4.1k                 | Typed API client and React hooks over the daemon                                                                                               |
 | `@dispatch/ui`       | ~8.8k                 | Component library (shadcn-style) plus `ai/`, `chrome/`, `hooks/`, `lib/`                                                                       |
 | `@dispatch/tokens`   | —                     | The design token palette (`tokens.css`) the desktop app and the site share                                                                     |
@@ -294,9 +301,9 @@ plans, sessions, agents, impact, inbox/brain-dump, threads, settings, gallery.
 all. Every read command takes `--json`.
 
 **MCP** (`packages/mcp`) — stdio server registered into the project's
-`.mcp.json` by `dispatch init`. 17 tools. Five (`task_list`, `task_get`,
+`.mcp.json` by `dispatch init`. 20 tools. Five (`task_list`, `task_get`,
 `task_save`, `task_comment`, `task_next`) operate on `.dispatch/tasks/*.md`
-directly and need no daemon; the other twelve require a running `dispatchd` and
+directly and need no daemon; the other fifteen require a running `dispatchd` and
 return a clear error without one. A `workflow://onboarding` resource briefs a
 connecting agent on the conventions.
 

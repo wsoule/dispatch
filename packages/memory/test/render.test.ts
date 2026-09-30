@@ -188,5 +188,6 @@ describe('renderIndex', () => {
           expect(/^\s*(#{1,6}[ \t]|~{4,})/.test(line)).toBe(false);
       }
     }
-  });
+    // Hundreds of renders run past bun's 5 s default on a loaded machine.
+  }, 30_000);
 });

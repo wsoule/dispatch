@@ -17,10 +17,11 @@ import {
 } from './helpers.js';
 
 describe('WorktreeManager.defaultBaseBranch', () => {
-  it('falls back to the current branch of the main checkout when there is no remote', () => {
+  it('falls back to the current branch of the main checkout when there is no remote', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     expect(worktrees.defaultBaseBranch()).toBe('main');
+    expect(await worktrees.defaultBaseBranchAsync()).toBe('main');
   });
 
   it('prefers refs/remotes/origin/HEAD when a remote is configured', () => {
@@ -46,7 +47,7 @@ describe('WorktreeManager.defaultBaseBranch', () => {
   // M3: a default branch containing its own `/` (e.g. `release/v2`) must
   // come back intact — only the `refs/remotes/origin/` prefix should be
   // stripped, not every path segment up to the last one.
-  it('does not truncate a default branch name that itself contains a slash', () => {
+  it('does not truncate a default branch name that itself contains a slash', async () => {
     const upstream = initGitRepo();
     runGitSync(upstream, ['checkout', '-b', 'release/v2']);
     runGitSync(upstream, ['checkout', 'main']);
@@ -64,6 +65,7 @@ describe('WorktreeManager.defaultBaseBranch', () => {
     ]);
     const worktrees = new WorktreeManager(repo);
     expect(worktrees.defaultBaseBranch()).toBe('release/v2');
+    expect(await worktrees.defaultBaseBranchAsync()).toBe('release/v2');
   });
 });
 
@@ -591,13 +593,13 @@ describe('WorktreeManager.pruneOrphans', () => {
 // point of these methods is that they report git's actual state rather than
 // whatever the run registry believes.
 describe('WorktreeManager branch enumeration', () => {
-  it('lists dispatch refs with their tip commit date, ignoring other branches', () => {
+  it('lists dispatch refs with their tip commit date, ignoring other branches', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     worktrees.add(worktreeSiblingPath(repo, 'wt-a'), 'dispatch/t-a-r1', 'main');
     runGitSync(repo, ['branch', 'feature/unrelated', 'main']);
 
-    const refs = worktrees.listBranches('dispatch/');
+    const refs = await worktrees.listBranches('dispatch/');
 
     expect(refs.map((r) => r.branch)).toEqual(['dispatch/t-a-r1']);
     // iso-strict dates look like 2026-07-26T12:00:00-07:00 — assert the shape
@@ -607,7 +609,7 @@ describe('WorktreeManager branch enumeration', () => {
     );
   });
 
-  it('keeps a branch name containing slashes intact', () => {
+  it('keeps a branch name containing slashes intact', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     worktrees.add(
@@ -616,23 +618,25 @@ describe('WorktreeManager branch enumeration', () => {
       'main'
     );
 
-    expect(worktrees.listBranches('dispatch/').map((r) => r.branch)).toEqual([
-      'dispatch/t-a/nested-r1',
-    ]);
+    expect(
+      (await worktrees.listBranches('dispatch/')).map((r) => r.branch)
+    ).toEqual(['dispatch/t-a/nested-r1']);
   });
 
-  it('returns an empty list when no ref matches the prefix', () => {
+  it('returns an empty list when no ref matches the prefix', async () => {
     const repo = initGitRepo();
-    expect(new WorktreeManager(repo).listBranches('dispatch/')).toEqual([]);
+    expect(await new WorktreeManager(repo).listBranches('dispatch/')).toEqual(
+      []
+    );
   });
 
-  it('lists every worktree including the main checkout, with branch refs shortened', () => {
+  it('lists every worktree including the main checkout, with branch refs shortened', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     const wtPath = worktreeSiblingPath(repo, 'wt-list');
     worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
 
-    const listed = worktrees.listWorktrees();
+    const listed = await worktrees.listWorktrees();
 
     // The main checkout is always the first record git emits.
     expect(listed[0]?.branch).toBe('main');
@@ -643,7 +647,7 @@ describe('WorktreeManager branch enumeration', () => {
     expect(dispatchEntry?.path.endsWith('wt-list')).toBe(true);
   });
 
-  it('leaves branch undefined for a detached-HEAD worktree', () => {
+  it('leaves branch undefined for a detached-HEAD worktree', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     const head = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
@@ -655,9 +659,9 @@ describe('WorktreeManager branch enumeration', () => {
     const detached = worktreeSiblingPath(repo, 'wt-detached');
     runGitSync(repo, ['worktree', 'add', '--detach', detached, head]);
 
-    const entry = worktrees
-      .listWorktrees()
-      .find((w) => w.path.endsWith('wt-detached'));
+    const entry = (await worktrees.listWorktrees()).find((w) =>
+      w.path.endsWith('wt-detached')
+    );
 
     expect(entry).toBeDefined();
     expect(entry?.branch).toBeUndefined();
@@ -678,7 +682,7 @@ describe('WorktreeManager branch enumeration', () => {
     expect(worktrees.aheadCount('dispatch/t-a-r1', 'main')).toBe(2);
   });
 
-  it('counts how far the base has moved past a branch that stood still', () => {
+  it('counts how far the base has moved past a branch that stood still', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     worktrees.add(
@@ -694,7 +698,10 @@ describe('WorktreeManager branch enumeration', () => {
     runGitSync(repo, ['add', '-A']);
     runGitSync(repo, ['commit', '-m', 'main two']);
 
-    expect(worktrees.behindCount('dispatch/t-a-r1', 'main')).toBe(2);
+    expect(await worktrees.aheadBehind('dispatch/t-a-r1', 'main')).toEqual({
+      ahead: 0,
+      behind: 2,
+    });
     expect(worktrees.aheadCount('dispatch/t-a-r1', 'main')).toBe(0);
   });
 
@@ -720,6 +727,27 @@ describe('WorktreeManager branch enumeration', () => {
     );
 
     expect(worktrees.aheadCount('dispatch/t-a-r1', 'no-such-branch')).toBe(0);
+  });
+
+  it('counts both sides of a branch and its base in one walk, or null without the base', async () => {
+    const repo = initGitRepo();
+    const worktrees = new WorktreeManager(repo);
+    const wtPath = worktreeSiblingPath(repo, 'wt-both');
+    worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
+    writeFileSync(join(wtPath, 'one.txt'), 'one\n');
+    runGitSync(wtPath, ['add', '-A']);
+    runGitSync(wtPath, ['commit', '-m', 'one']);
+    writeFileSync(join(repo, 'main-one.txt'), 'one\n');
+    runGitSync(repo, ['add', '-A']);
+    runGitSync(repo, ['commit', '-m', 'main one']);
+
+    expect(await worktrees.aheadBehind('dispatch/t-a-r1', 'main')).toEqual({
+      ahead: 1,
+      behind: 1,
+    });
+    expect(
+      await worktrees.aheadBehind('dispatch/t-a-r1', 'no-such-branch')
+    ).toBeNull();
   });
 
   it('detects a branch whose commits already landed on base as merged', () => {
@@ -749,30 +777,32 @@ describe('WorktreeManager branch enumeration', () => {
     expect(worktrees.isMergedInto('dispatch/t-a-r1', 'main')).toBe(true);
   });
 
-  it('reports a worktree with uncommitted or untracked files as dirty', () => {
+  it('reports a worktree with uncommitted or untracked files as dirty', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     const wtPath = worktreeSiblingPath(repo, 'wt-dirty');
     worktrees.add(wtPath, 'dispatch/t-a-r1', 'main');
     expect(worktrees.isWorktreeDirty(wtPath)).toBe(false);
+    expect(await worktrees.isWorktreeDirtyAsync(wtPath)).toBe(false);
 
     writeFileSync(join(wtPath, 'scratch.txt'), 'untracked\n');
 
     expect(worktrees.isWorktreeDirty(wtPath)).toBe(true);
+    expect(await worktrees.isWorktreeDirtyAsync(wtPath)).toBe(true);
   });
 
-  it('reports a missing worktree path as clean instead of throwing', () => {
+  it('reports a missing worktree path as clean instead of throwing', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
+    const missing = worktreeSiblingPath(repo, 'never-existed');
 
-    expect(
-      worktrees.isWorktreeDirty(worktreeSiblingPath(repo, 'never-existed'))
-    ).toBe(false);
+    expect(worktrees.isWorktreeDirty(missing)).toBe(false);
+    expect(await worktrees.isWorktreeDirtyAsync(missing)).toBe(false);
   });
 });
 
 describe('WorktreeManager.removeWorktreeOnly', () => {
-  it('removes the directory but leaves the branch ref in place', () => {
+  it('removes the directory but leaves the branch ref in place', async () => {
     const repo = initGitRepo();
     const worktrees = new WorktreeManager(repo);
     const wtPath = worktreeSiblingPath(repo, 'wt-freed');
@@ -784,9 +814,9 @@ describe('WorktreeManager.removeWorktreeOnly', () => {
     worktrees.removeWorktreeOnly(wtPath);
 
     expect(existsSync(wtPath)).toBe(false);
-    expect(worktrees.listBranches('dispatch/').map((r) => r.branch)).toEqual([
-      'dispatch/t-a-r1',
-    ]);
+    expect(
+      (await worktrees.listBranches('dispatch/')).map((r) => r.branch)
+    ).toEqual(['dispatch/t-a-r1']);
     // The ref still resolving is what makes this action reversible.
     expect(() =>
       runGitSync(repo, ['rev-parse', 'dispatch/t-a-r1'])
@@ -800,7 +830,7 @@ describe('WorktreeManager origin ancestry', () => {
     expect(new WorktreeManager(repo).hasOriginRemote()).toBe(false);
   });
 
-  it('answers ancestry against the remote-tracking ref', () => {
+  it('answers ancestry against the remote-tracking ref', async () => {
     // Bare and empty — see initBareRepo for why initGitRepo is wrong here.
     const origin = initBareRepo();
     const repo = initGitRepo();
@@ -810,9 +840,28 @@ describe('WorktreeManager origin ancestry', () => {
     runGitSync(repo, ['fetch', 'origin', 'main']);
     const wt = new WorktreeManager(repo);
     expect(wt.hasOriginRemote()).toBe(true);
-    expect(wt.isOnOriginBase(pushed, 'main')).toBe(true);
+    expect(await wt.isOnOriginBase(pushed, 'main')).toBe(true);
     runGitSync(repo, ['commit', '--allow-empty', '-m', 'local-only']);
     const local = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
-    expect(wt.isOnOriginBase(local, 'main')).toBe(false);
+    expect(await wt.isOnOriginBase(local, 'main')).toBe(false);
+  });
+
+  it('lists the commits a tip lacks, one git no longer has among them', () => {
+    const origin = initBareRepo();
+    const repo = initGitRepo();
+    runGitSync(repo, ['remote', 'add', 'origin', origin]);
+    const pushed = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    runGitSync(repo, ['push', 'origin', 'main']);
+    runGitSync(repo, ['commit', '--allow-empty', '-m', 'local-only']);
+    const local = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
+    const gone = 'deadbeef'.repeat(5);
+    const wt = new WorktreeManager(repo);
+    const tip = wt.originBaseTip('main');
+    if (tip === null) throw new Error('expected origin/main');
+
+    expect(wt.commitsNotOn([pushed, local, gone], tip)).toEqual(
+      new Set([local, gone])
+    );
+    expect(wt.commitsNotOn([gone], tip)).toEqual(new Set([gone]));
   });
 });

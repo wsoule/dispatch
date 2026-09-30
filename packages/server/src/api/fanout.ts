@@ -9,7 +9,7 @@ import {
   variantTaskInput,
 } from '../fanout.js';
 import type { RunMeta } from '../orchestrator/types.js';
-import { humanCredentialRef } from './caller.js';
+import { humanOperator } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 /**
@@ -29,6 +29,8 @@ type FanoutRouteContext = Pick<
   | 'orchestrator'
   | 'caller'
   | 'viaAgentToken'
+  | 'ownerCredential'
+  | 'actorContext'
   | 'a2a'
 >;
 
@@ -82,18 +84,19 @@ export async function fanoutTask(
 
   for (const variant of variants) {
     const task = ctx.store.create(variantTaskInput(source, variant));
-    // Rebuilt per variant rather than once at the end: `dispatch` reads the
+    // Refreshed per variant rather than once at the end: `dispatch` reads the
     // task back through the store, and a cache that has not caught up would
     // make the second variant fail to find the task the first just created.
-    ctx.cache.rebuild(ctx.store);
+    ctx.cache.refresh(ctx.store, [task.meta.id]);
     try {
       const run = await ctx.orchestrator.dispatch(
         task.meta.id,
         variant.executor,
         {
           ...(variant.model === undefined ? {} : { model: variant.model }),
-          // Each variant acts for the caller's own credential, as a dispatch does.
-          operator: humanCredentialRef(ctx),
+          // Each variant acts for whoever the caller's credential names, as a
+          // dispatch does.
+          operator: humanOperator(ctx),
         }
       );
       result.variants.push({
@@ -117,8 +120,9 @@ export async function fanoutTask(
     }
   }
 
-  ctx.cache.rebuild(ctx.store);
-  ctx.events.broadcast({ type: 'task.changed' });
+  const ids = result.variants.map((v) => v.task.meta.id);
+  ctx.cache.refresh(ctx.store, ids);
+  ctx.events.broadcast({ type: 'task.changed', ids });
   ctx.events.broadcast({ type: 'run.changed' });
   return jsonResponse(result, 201);
 }

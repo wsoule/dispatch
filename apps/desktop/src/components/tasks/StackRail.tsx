@@ -1,5 +1,5 @@
 import type { RunMeta } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
 import { computeStack } from '@dispatch/core/graph';
 import type { TaskStack } from '@dispatch/core/graph';
 import { GitPullRequest } from 'lucide-react';
@@ -12,7 +12,7 @@ interface StackRailProps {
   /** Full project task list — the stack is derived from it internally (see
    * `getStackByTaskId` below), so callers never precompute or pass a `TaskStack` of
    * their own. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   /** The task whose stack to render — this task's own row is highlighted in the rail. */
   taskId: string;
   /** Per-task latest run, for the small run-state/PR mark next to each stack row's title. */
@@ -25,7 +25,7 @@ interface StackRailProps {
 // Per-(tasks array identity) cache of every task's `TaskStack`, keyed by task id — shared by
 // every `StackRail` instance rendered against the same `tasks` reference. See
 // `getStackByTaskId`'s own comment for why a plain per-call `computeStack` isn't used here.
-const stackCache = new WeakMap<TaskDoc[], Map<string, TaskStack>>();
+const stackCache = new WeakMap<TaskListItem[], Map<string, TaskStack>>();
 
 /**
  * Every task's `TaskStack`, keyed by task id, derived from `tasks` in one pass rather than
@@ -40,7 +40,9 @@ const stackCache = new WeakMap<TaskDoc[], Map<string, TaskStack>>();
  * `tasks` array's own identity, so a fresh task list (e.g. after a refetch) naturally
  * invalidates the old entry instead of ever serving a stale one.
  */
-export function getStackByTaskId(tasks: TaskDoc[]): Map<string, TaskStack> {
+export function getStackByTaskId(
+  tasks: TaskListItem[]
+): Map<string, TaskStack> {
   const cached = stackCache.get(tasks);
   if (cached !== undefined) return cached;
 

@@ -1,5 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { APP_TOKEN } from './paths';
+
 // Each shot opens its view from the sidebar row carrying its `data-nav-item`
 // (a `ProjectView` id), so a new rail row cannot shift which view a shot shows.
 const VIEWS = [
@@ -39,25 +41,29 @@ function requireToken(): string {
 
 // `baseURL` already carries `?root=&port=`. A relative `page.goto('/')` would
 // replace that whole path+query per WHATWG URL joining rules, so the token
-// has to be appended to the full URL string instead of joined onto it.
+// has to be appended to the full URL string instead of joined onto it. The app
+// token opens the window as the owner, which Threads needs to show its threads.
 function authedUrl(baseURL: string | undefined): string {
   if (!baseURL) throw new Error('baseURL is not configured');
-  return `${baseURL}&token=${requireToken()}`;
+  return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
 }
 
-// Every view boots on Overview first (appNav.ts's initialNavState), so
-// checking it here — before a test switches to whatever view it actually
-// screenshots — guards all of them against the same failure: an
+// The app opens on Home (appNav.ts's initialNavState), so this opens Overview
+// and checks its counts before a test switches to whatever view it actually
+// screenshots. That guards all of them against the same failure: an
 // unauthenticated fetch renders this exact empty state no matter which view
 // ends up on screen. A blank render must fail the suite, not become the new
 // baseline.
 async function assertFixtureDataLoaded(page: Page): Promise<void> {
+  await openView(page, 'overview');
   // Named by the ControlRibbon pills specifically (accessible name is
   // "<label>, <count>"), because "Failed"/"Review" alone also match the
   // feed's group header and per-row status text — this is the one spot that
   // pins down a real, non-zero fixture count rather than just some text.
+  // The seeded r-88bf02 question moves t-9b2d14 from Review to Answer for the owner.
+  await expect(page.getByRole('button', { name: 'Answer, 1' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Review, 4' })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Failed, 1' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Review, 5' })).toBeVisible();
   await expect(
     page.getByText('Nothing running, nothing waiting on you.')
   ).toHaveCount(0);

@@ -1,4 +1,7 @@
-import { MAX_CONCURRENCY_HARD_CAP, type TaskDoc } from '@dispatch/core/browser';
+import {
+  MAX_CONCURRENCY_HARD_CAP,
+  type TaskListItem,
+} from '@dispatch/core/browser';
 import { Zap } from 'lucide-react';
 import { type ChangeEvent, useId, useMemo, useState } from 'react';
 
@@ -38,7 +41,7 @@ import {
 
 interface DispatchDialogProps {
   /** What the user selected — every one of these appears in the preview. */
-  tasks: TaskDoc[];
+  tasks: TaskListItem[];
   readyIds: ReadonlySet<string>;
   /** Agents already working, which is what eats into the concurrency budget. */
   runningNow: number;

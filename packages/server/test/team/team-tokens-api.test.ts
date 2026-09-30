@@ -532,6 +532,31 @@ describe('seats over the API', () => {
     });
   }
 
+  it("a pre-fix token for the operator's handle is unusable and takes no seat", async () => {
+    const holders = async () =>
+      (await (
+        await rawFetch(`${baseUrl}/api/team/tokens`, {
+          headers: headers(handle.tokens.appToken),
+        })
+      ).json()) as { handle: string; builtIn: boolean; unusable: boolean }[];
+    const operator = (await holders()).find((h) => h.builtIn)?.handle;
+    if (operator === undefined) throw new Error('no built-in holder');
+    // Written before issuing refused the operator's handle.
+    handle.team.teammates.issue(operator, 'decide');
+    const listed = await holders();
+    expect(listed.filter((h) => !h.builtIn)).toEqual([
+      expect.objectContaining({ handle: operator, unusable: true }),
+    ]);
+    expect(listed.filter((h) => h.builtIn).map((h) => h.unusable)).toEqual([
+      false,
+      false,
+    ]);
+    expect(await license()).toMatchObject({ seats: 3, used: 1 });
+    expect((await invite({ email: 'ada@example.com' })).status).toBe(201);
+    expect((await invite({ email: 'grace@example.com' })).status).toBe(201);
+    expect(await license()).toMatchObject({ used: 3 });
+  });
+
   it('the free plan fits three people, and a fourth is told why', async () => {
     expect(await license()).toMatchObject({ kind: 'free', seats: 3, used: 1 });
     expect((await invite({ email: 'ada@example.com' })).status).toBe(201);

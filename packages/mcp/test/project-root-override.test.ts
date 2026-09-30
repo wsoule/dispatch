@@ -1,4 +1,4 @@
-import { TaskStore } from '@dispatch/core';
+import { FileCommentStore, TaskStore } from '@dispatch/core';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
@@ -17,8 +17,8 @@ import { createDispatchMcpServer } from '../src/index.js';
 // tools that must NOT resolve against the worktree — see its doc comment in
 // packages/mcp/src/tools.ts for why: run_list's daemon discovery (the daemon
 // file is keyed by a hash of the project root, not the worktree) and
-// task_comment's write (a comment written to the worktree's copy of a task
-// file is discarded the moment that run's branch is merged or discarded).
+// task_comment's write (a comment written into the worktree is discarded the
+// moment that run's branch is merged or discarded).
 
 interface ToolCallResult {
   structuredContent?: Record<string, unknown>;
@@ -83,8 +83,10 @@ describe('task_comment honors DISPATCH_PROJECT_ROOT', () => {
     })) as ToolCallResult;
 
     expect(result.isError).toBeUndefined();
-    const reread = new TaskStore(projectRoot).get(task.meta.id);
-    expect(reread?.body).toContain('hello from the override test');
+    expect(
+      new FileCommentStore(projectRoot).list(task.meta.id).map((c) => c.body)
+    ).toEqual(['hello from the override test']);
+    expect(new FileCommentStore(worktreeRoot).list(task.meta.id)).toEqual([]);
   });
 
   it('falls back to rootDir when DISPATCH_PROJECT_ROOT is unset', async () => {
@@ -98,8 +100,9 @@ describe('task_comment honors DISPATCH_PROJECT_ROOT', () => {
     })) as ToolCallResult;
 
     expect(result.isError).toBeUndefined();
-    const reread = new TaskStore(worktreeRoot).get(task.meta.id);
-    expect(reread?.body).toContain('plain rootDir write');
+    expect(
+      new FileCommentStore(worktreeRoot).list(task.meta.id).map((c) => c.body)
+    ).toEqual(['plain rootDir write']);
   });
 
   it('reports "task not found" for a task that only exists in the project root, when the override is unset', async () => {

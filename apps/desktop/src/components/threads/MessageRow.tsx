@@ -1,5 +1,6 @@
 import type { ApiClient, Message } from '@dispatch/client';
-import { memo, useState } from 'react';
+import type { TaskListItem } from '@dispatch/core/browser';
+import { memo, useEffect, useState } from 'react';
 
 import { isFromA2A } from '../../lib/a2a';
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
@@ -54,9 +55,15 @@ export interface MessageRowProps {
   onOpen: (action: RefAction) => void;
   /** Reads a parked call's full input, for a tool-approval preview that was cut short. */
   loadApprovalInput: (call: ParkedCall) => Promise<unknown>;
-  /** Declines an open question from an A2A client and reads a memory gate's
-   *  proposal; without it there is no Decline and no proposal to show. */
-  client?: Pick<ApiClient, 'declineA2ATask' | 'getMemoryProposal'> | null;
+  /** Declines an open question from an A2A client, reads a memory gate's
+   *  proposal and a task proposal's draft body; without it there is no
+   *  Decline and no proposal to show. */
+  client?: Pick<
+    ApiClient,
+    'declineA2ATask' | 'getMemoryProposal' | 'fetchTask'
+  > | null;
+  /** The daemon's port, keying the proposal read under memory's queries. */
+  port?: number;
 }
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
@@ -73,6 +80,7 @@ export const MessageRow = memo(function MessageRow({
   onOpen,
   loadApprovalInput,
   client = null,
+  port,
 }: MessageRowProps) {
   const [error, setError] = useState<string | null>(null);
   const mine = message.from === me;
@@ -170,6 +178,7 @@ export const MessageRow = memo(function MessageRow({
             answer={answer}
             loadApprovalInput={loadApprovalInput}
             client={client}
+            port={port}
           />
           {open && (
             <A2ADeclineAction
@@ -200,6 +209,7 @@ function Control({
   answer,
   loadApprovalInput,
   client,
+  port,
 }: {
   message: Message;
   control: RowControl;
@@ -210,6 +220,7 @@ function Control({
   answer: (reply: Reply) => Promise<void>;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
   client: MessageRowProps['client'];
+  port: number | undefined;
 }) {
   if (control.kind === 'read-only') {
     return (
@@ -219,9 +230,10 @@ function Control({
   // Drawn for every viewer; its answers wait on the decide tier.
   if (control.kind === 'task-proposal') {
     return (
-      <TaskProposalCard
+      <TaskProposalGate
         gate={message}
-        task={lookups.taskDoc(control.task)}
+        item={lookups.task(control.task)}
+        client={client ?? null}
         onAnswer={(choice) => answer({ body: '', choice })}
         onOpenTask={(taskId) => onOpen({ kind: 'task', taskId })}
         canDecide={control.canDecide}
@@ -267,6 +279,7 @@ function Control({
         <MemoryGateCard
           proposalId={control.proposalId}
           client={client}
+          port={port}
           availability={availability}
           onRestartDaemon={onRestartDaemon}
           onDecide={(choice) => answer({ body: '', choice })}
@@ -323,5 +336,54 @@ function Choices({
         </Button>
       ))}
     </div>
+  );
+}
+
+// The board list carries no bodies, so the proposal card fetches its draft's
+// body, again whenever the draft is edited.
+function TaskProposalGate({
+  item,
+  client,
+  ...card
+}: {
+  gate: Message;
+  item: TaskListItem | null;
+  client: Pick<ApiClient, 'fetchTask'> | null;
+  onAnswer: (choice: 'approve' | 'decline') => Promise<void>;
+  onOpenTask: (id: string) => void;
+  canDecide: boolean;
+}) {
+  const [body, setBody] = useState<{
+    key: string;
+    text: string | null;
+  } | null>(null);
+  const id = item?.meta.id ?? null;
+  const key = item === null ? '' : `${item.meta.id}@${item.meta.updated}`;
+  useEffect(() => {
+    if (id === null || client === null) return;
+    let live = true;
+    client.fetchTask(id).then(
+      (doc) => {
+        if (live) setBody({ key, text: doc.body });
+      },
+      () => {
+        // A draft that cannot be read shows as not on the board.
+        if (live) setBody({ key, text: null });
+      }
+    );
+    return () => {
+      live = false;
+    };
+  }, [client, id, key]);
+  const settled = body !== null && body.key === key;
+  const text = settled ? body.text : null;
+  return (
+    <TaskProposalCard
+      {...card}
+      task={
+        item === null || text === null ? null : { meta: item.meta, body: text }
+      }
+      loading={item !== null && !settled}
+    />
   );
 }

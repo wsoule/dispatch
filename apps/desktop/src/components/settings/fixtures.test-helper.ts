@@ -3,6 +3,7 @@ import {
   DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
   DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
@@ -38,6 +39,30 @@ export const testConfig: DispatchConfig = {
   repoDigest: DEFAULT_REPO_DIGEST,
   notifications: DEFAULT_NOTIFICATIONS,
   messaging: DEFAULT_MESSAGING,
+  memory: DEFAULT_MEMORY,
+};
+
+/** A Linear team's workflow mirrored into config: none of these names is a built-in,
+ *  so a surface still reading the built-in model gets every one of them wrong. */
+export const linearWorkflowConfig: DispatchConfig = {
+  ...testConfig,
+  statuses: ['Backlog', 'Todo', 'In Progress', 'QA', 'Done', 'Canceled'],
+  statusDefinitions: [
+    { name: 'Backlog', type: 'backlog', color: null },
+    { name: 'Todo', type: 'unstarted', color: null },
+    { name: 'In Progress', type: 'started', color: null },
+    { name: 'QA', type: 'started', color: null },
+    { name: 'Done', type: 'completed', color: null },
+    { name: 'Canceled', type: 'canceled', color: null },
+  ],
+  statusRoles: {
+    ready: 'Todo',
+    dispatched: 'In Progress',
+    review: 'QA',
+    landing: null,
+    landed: 'Done',
+    dropped: 'Canceled',
+  },
 };
 
 export const testProject = { path: '/tmp/demo', name: 'demo' };
@@ -73,7 +98,7 @@ export function dataWith(
       keySource,
       teamId: null,
       direction: 'both',
-      intervalSec: 300,
+      intervalSec: 30,
       statusMap: {},
       cursor: null,
       bootstrappedAt: null,
@@ -81,13 +106,19 @@ export function dataWith(
       lastError: null,
       lastSummary: null,
       syncing: false,
+      conflicts: { total: 0, recent: [] },
+      progress: null,
+      webhook: {
+        state: 'polling',
+        url: null,
+        lastDeliveryAt: null,
+        error: null,
+        pollSec: 30,
+      },
     },
     linearTeams: [],
     linearTeamsError: null,
     refetchLinearTeams: () => {},
-    linearStates: [],
-    linearStatesError: null,
-    refetchLinearStates: () => {},
     linearLinks: {},
     handleUpdateConfig: async () => {},
     handleConnectLinear: () =>

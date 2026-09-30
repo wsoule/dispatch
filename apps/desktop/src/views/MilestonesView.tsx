@@ -1,8 +1,9 @@
 import type { EpicProgressChild } from '@dispatch/client';
-import type { TaskDoc } from '@dispatch/core/browser';
+import type { TaskListItem } from '@dispatch/core/browser';
+import { isCompletedStatus, isDoneStatus } from '@dispatch/core/browser';
 import { Target } from 'lucide-react';
 import type { KeyboardEvent } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
   FanoutControls,
@@ -12,6 +13,10 @@ import { DaemonUnavailable } from '../components/shell/DaemonUnavailable';
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { DispatchDialog } from '../components/tasks/DispatchDialog';
 import { StatusIcon } from '../components/tasks/StatusIcon';
+import {
+  VirtualRows,
+  type VirtualRowsHandle,
+} from '../components/virtual/VirtualRows';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
 import type { TaskTab } from '../lib/appNav';
 import {
@@ -25,16 +30,24 @@ import {
   showsPhasePill,
   type WorkEpicOptions,
 } from '../lib/epicSession';
-import { groupTasks, visibleRowIds } from '../lib/listGrouping';
+import { landingStateByTaskId } from '../lib/landingBadge';
+import {
+  groupTasks,
+  type ListGroup,
+  type ListGroupRow,
+  visibleRowIds,
+} from '../lib/listGrouping';
 import {
   deriveMilestoneStatus,
   milestoneHealthPill,
 } from '../lib/milestoneRisk';
 import { isMilestoneFinished } from '../lib/milestoneRollup';
+import { useStatusModelOf } from '../lib/statusModel';
 import {
   DEFAULT_TASKS_DISPLAY,
   type TasksDisplayPrefs,
 } from '../lib/tasksPrefs';
+import { type FlatRow, flattenGroups, headerRowKey } from '../lib/virtualRows';
 import {
   handleTaskListKeyDown,
   type OpenPicker,
@@ -67,6 +80,17 @@ interface MilestonesViewProps {
   onRequestDisplay?: () => void;
 }
 
+// Stable fallback while the config loads, so rows' `statuses` prop never churns.
+const NO_STATUSES: string[] = [];
+
+/** One virtual row: a milestone's header or one of its task rows, both 36px. */
+type MilestoneRowModel = FlatRow<ListGroup, ListGroupRow>;
+
+const ROW_HEIGHT = 36;
+const rowHeight = () => ROW_HEIGHT;
+const milestoneRowKey = (row: MilestoneRowModel) => row.key;
+const taskRowKey = (row: ListGroupRow) => row.doc.meta.id;
+
 /** The DOM id `aria-activedescendant` points at for one row; the view prefix keeps ids
  * unique across view switches. */
 function rowDomId(id: string): string {
@@ -81,8 +105,9 @@ function rowDomId(id: string): string {
  * is — over the same 36px `TaskListRow`s the Tasks list renders, with the same pickers and
  * single-key shortcuts, each row carrying its fan-out phase while a session exists. A
  * finished milestone (every child landed/dropped) reads as landed and sinks to the bottom,
- * starting collapsed. Milestone = epic here, front-running the epic→milestone rename
- * (e-be4827).
+ * starting collapsed. Groups follow the real hierarchy (initiative › project ›
+ * milestone): a parent issue is a row with its sub-issues under it, and a header's "+"
+ * files the new task under that container.
  */
 export function MilestonesView({
   data,
@@ -93,6 +118,7 @@ export function MilestonesView({
   onRequestDisplay,
 }: MilestonesViewProps) {
   const shell = useShellActions();
+  const model = useStatusModelOf(data.config);
   const prefs = useMemo<TasksDisplayPrefs>(
     () => ({ ...(display ?? DEFAULT_TASKS_DISPLAY), grouping: 'milestone' }),
     [display]
@@ -112,18 +138,29 @@ export function MilestonesView({
     readCollapsedGroups(TOGGLED_MILESTONES_STORAGE_KEY)
   );
   const listRef = useRef<HTMLDivElement>(null);
+  // The scroller as state too: the virtual track needs it once it exists (see VirtualRows).
+  const [listEl, setListEl] = useState<HTMLDivElement | null>(null);
+  const attachList = useCallback((node: HTMLDivElement | null) => {
+    listRef.current = node;
+    setListEl(node);
+  }, []);
+  const virtualRef = useRef<VirtualRowsHandle>(null);
 
   const epicById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const epic of data.epics) map.set(epic.meta.id, epic);
     return map;
   }, [data.epics]);
 
   const taskById = useMemo(() => {
-    const map = new Map<string, TaskDoc>();
+    const map = new Map<string, TaskListItem>();
     for (const doc of data.tasks) map.set(doc.meta.id, doc);
     return map;
   }, [data.tasks]);
+  const landingByTaskId = useMemo(
+    () => landingStateByTaskId(data.mergeQueue),
+    [data.mergeQueue]
+  );
 
   // Each child's fan-out phase, by epic then child id, for the epics that have a session —
   // a row under any other milestone shows no phase, so those epics are left out.
@@ -145,24 +182,44 @@ export function MilestonesView({
         {
           statuses: data.config?.statuses ?? [],
           epics: data.epics,
+          model,
         }
       ).filter((g) => g.epicId !== null),
-    [data.tasks, data.config, data.epics, prefs]
+    [data.tasks, data.config, data.epics, prefs, model]
   );
 
   // A finished milestone's default is folded, so its key in `toggled` means "opened".
   const collapsed = useMemo(() => {
     const set = new Set<string>();
     for (const g of groups) {
-      const finished = isMilestoneFinished(g.rows.map((r) => r.doc));
+      const finished = isMilestoneFinished(
+        g.rows.map((r) => r.doc),
+        model
+      );
       if (finished !== toggled.has(g.key)) set.add(g.key);
     }
     return set;
-  }, [groups, toggled]);
+  }, [groups, toggled, model]);
 
   const orderedIds = useMemo(
     () => visibleRowIds(groups, collapsed),
     [groups, collapsed]
+  );
+
+  // Every milestone header and its rows as one flat, virtualized array.
+  const flatRows = useMemo<MilestoneRowModel[]>(
+    () =>
+      flattenGroups(
+        groups.map((g) => ({ key: g.key, header: g, items: g.rows })),
+        collapsed,
+        taskRowKey
+      ),
+    [groups, collapsed]
+  );
+  // The cursor's row stays mounted: the grid's `aria-activedescendant` points at it.
+  const pinnedKeys = useMemo(
+    () => (focusedTaskId === null ? [] : [focusedTaskId]),
+    [focusedTaskId]
   );
 
   useEffect(() => {
@@ -182,8 +239,8 @@ export function MilestonesView({
     if (showList) listRef.current?.focus();
   }, [showList]);
 
-  // A focus request waits for its group to exist (tasks may still be loading), then
-  // unfolds it — a finished milestone starts collapsed — scrolls to it and opens the
+  // A focus request waits for its group to exist (tasks may still be loading) and for the
+  // scroller to reach the virtual track (the render after mount), then unfolds it — a finished milestone starts collapsed — scrolls to it and opens the
   // dialog when asked. Each nonce is served once.
   const servedFocusNonce = useRef<number | null>(null);
   useEffect(() => {
@@ -191,9 +248,12 @@ export function MilestonesView({
       return;
     }
     const group = groups.find((g) => g.epicId === focusEpic.epicId);
-    if (group === undefined) return;
+    if (group === undefined || listEl === null) return;
     servedFocusNonce.current = focusEpic.nonce;
-    const finished = isMilestoneFinished(group.rows.map((r) => r.doc));
+    const finished = isMilestoneFinished(
+      group.rows.map((r) => r.doc),
+      model
+    );
     setToggled((prev) => {
       // Open means "flipped" for a finished milestone and "not flipped" otherwise.
       if (finished === prev.has(group.key)) return prev;
@@ -201,13 +261,36 @@ export function MilestonesView({
       writeCollapsedGroups(TOGGLED_MILESTONES_STORAGE_KEY, next);
       return next;
     });
-    listRef.current
-      ?.querySelector(`[data-group-key="${group.key}"]`)
-      ?.scrollIntoView({ block: 'start' });
+    virtualRef.current?.scrollToKey(headerRowKey(group.key), 'start');
     if (focusEpic.dispatch) {
       setDispatchEpic({ epicId: focusEpic.epicId, mode: 'start' });
     }
-  }, [focusEpic, groups]);
+  }, [focusEpic, groups, listEl, model]);
+
+  // Stable across renders so memo'd rows skip re-rendering on a cursor move.
+  const openRow = useCallback(
+    (id: string) => {
+      const parent = taskById.get(id)?.meta.parent ?? null;
+      const phase =
+        parent === null ? undefined : phaseByEpic.get(parent)?.get(id);
+      if (phase !== undefined && showsPhasePill(phase.phase)) {
+        const target = drillTargetFor(phase);
+        onOpenTask(id, target.tab, target.runId);
+        return;
+      }
+      onOpenTask(id);
+    },
+    [taskById, phaseByEpic, onOpenTask]
+  );
+  // The labels picker's vocabulary, gathered only while one is open.
+  const labelCandidates = useMemo(
+    () =>
+      picker?.kind === 'labels'
+        ? [...new Set(data.tasks.flatMap((t) => t.meta.labels))].sort()
+        : undefined,
+    [picker?.kind, data.tasks]
+  );
+  const statuses = data.config?.statuses ?? NO_STATUSES;
 
   if (!daemonReady) {
     return (
@@ -231,29 +314,15 @@ export function MilestonesView({
   // the pointer.
   function moveCursor(id: string | null) {
     setFocusedTaskId(id);
-    if (id === null) return;
-    listRef.current
-      ?.querySelector(`[data-row-id="${id}"]`)
-      ?.scrollIntoView({ block: 'nearest' });
+    if (id !== null) virtualRef.current?.scrollToKey(id);
   }
 
   // A row under a milestone with a session opens where its phase points (a failed run's
   // transcript, a capped loop's ruling on details); any other row opens plainly.
-  function phaseFor(doc: TaskDoc) {
+  function phaseFor(doc: TaskListItem) {
     const parent = doc.meta.parent;
     if (parent === null) return undefined;
     return phaseByEpic.get(parent)?.get(doc.meta.id);
-  }
-
-  function openRow(id: string) {
-    const doc = taskById.get(id);
-    const phase = doc === undefined ? undefined : phaseFor(doc);
-    if (phase !== undefined && showsPhasePill(phase.phase)) {
-      const target = drillTargetFor(phase);
-      onOpenTask(id, target.tab, target.runId);
-      return;
-    }
-    onOpenTask(id);
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLDivElement>) {
@@ -309,9 +378,12 @@ export function MilestonesView({
       <DispatchDialog
         title={`${dispatchEpic.mode === 'raise' ? 'Raise ceiling' : 'Send agents'} · ${dialogEpic.meta.title}`}
         tasks={
+          // What a fan-out works on: the container's own children. Sub-issues nest
+          // in its group but go with their parent issue.
           groups
             .find((g) => g.epicId === dispatchEpic.epicId)
-            ?.rows.map((r) => r.doc) ?? []
+            ?.rows.map((r) => r.doc)
+            .filter((doc) => doc.meta.parent === dispatchEpic.epicId) ?? []
         }
         readyIds={data.readyIds}
         runningNow={data.liveRunStateByTaskId.size}
@@ -342,9 +414,91 @@ export function MilestonesView({
       />
     ) : null;
 
+  // One milestone's header: rolled-up status glyph, title, then the fan-out controls.
+  function renderHeader(group: ListGroup, isCollapsed: boolean) {
+    const children = group.rows.map((r) => r.doc);
+    const done = children.filter((t) =>
+      isDoneStatus(t.meta.status, model)
+    ).length;
+    const finished = isMilestoneFinished(children, model);
+    const status = deriveMilestoneStatus(
+      children,
+      data.latestRunByTaskId,
+      finished
+    );
+    const health = milestoneHealthPill(status);
+    const epicId = group.epicId ?? '';
+    const epic = epicById.get(epicId);
+    const progress = data.epicProgressById.get(epicId);
+    const session = progress?.session ?? null;
+    // The server's own land rule (every child done or cancelled), read off its progress
+    // so the button never leads a 409 it could have predicted.
+    const progressTotal = progress?.children.length ?? 0;
+    const progressDone =
+      progress?.children.filter((c) => isDoneStatus(c.status, model)).length ??
+      0;
+    const landable =
+      epic !== undefined &&
+      session?.state !== 'active' &&
+      session?.state !== 'paused' &&
+      progressTotal > 0 &&
+      progressDone === progressTotal &&
+      !isCompletedStatus(epic.meta.status, model);
+    return (
+      <div data-group-key={group.key}>
+        <GroupHeader
+          tint={group.tint ?? undefined}
+          icon={
+            group.icon?.kind === 'milestone' ? (
+              <StatusIcon status={group.icon.status} />
+            ) : undefined
+          }
+          name={group.label}
+          collapsed={isCollapsed}
+          onToggle={() => toggle(group.key)}
+          onAdd={() => shell.openCreateTask(group.preset)}
+          addLabel={`New task in ${group.label}`}
+          actions={
+            epic !== undefined && (
+              <FanoutControls
+                epic={epic}
+                model={model}
+                progress={progress}
+                count={{ done, total: children.length }}
+                landable={landable}
+                onSendAgents={(id) =>
+                  setDispatchEpic({ epicId: id, mode: 'start' })
+                }
+                onPause={data.handlePauseEpic}
+                onResume={data.handleResumeEpic}
+                onRaiseCeiling={(id) =>
+                  setDispatchEpic({ epicId: id, mode: 'raise' })
+                }
+                onStop={data.handleStopEpic}
+                onLand={data.handleLandEpic}
+                onOpenEpic={(id) => onOpenTask(id, 'plan')}
+              >
+                {/* The health pill speaks for a milestone nobody is fanning out; a live
+                    session's phase chips replace it. */}
+                {health !== null && sessionIdle(session) && (
+                  <LabelPill
+                    color={health.tint}
+                    title={status.reason ?? undefined}
+                  >
+                    {health.label}
+                  </LabelPill>
+                )}
+              </FanoutControls>
+            )
+          }
+        />
+      </div>
+    );
+  }
+
   return (
     <div
-      ref={listRef}
+      ref={attachList}
       tabIndex={0}
       role="grid"
       aria-label="Milestones"
@@ -354,109 +508,46 @@ export function MilestonesView({
       onKeyDown={handleKeyDown}
       className="flex h-full min-h-0 flex-col overflow-y-auto px-2 pb-2 outline-none"
     >
-      {groups.map((group) => {
-        const children = group.rows.map((r) => r.doc);
-        const done = children.filter(
-          (t) => t.meta.status === 'landed' || t.meta.status === 'dropped'
-        ).length;
-        const finished = isMilestoneFinished(children);
-        const status = deriveMilestoneStatus(
-          children,
-          data.latestRunByTaskId,
-          finished
-        );
-        const health = milestoneHealthPill(status);
-        const isCollapsed = collapsed.has(group.key);
-        const epicId = group.epicId ?? '';
-        const epic = epicById.get(epicId);
-        const progress = data.epicProgressById.get(epicId);
-        const session = progress?.session ?? null;
-        // The server's own land rule (every child done or cancelled), read off its progress
-        // so the button never leads a 409 it could have predicted.
-        const progressTotal = progress?.children.length ?? 0;
-        const progressDone =
-          progress?.children.filter(
-            (c) => c.status === 'landed' || c.status === 'dropped'
-          ).length ?? 0;
-        const landable =
-          epic !== undefined &&
-          session?.state !== 'active' &&
-          session?.state !== 'paused' &&
-          progressTotal > 0 &&
-          progressDone === progressTotal &&
-          epic.meta.status !== 'landed';
-        return (
-          <div key={group.key} data-group-key={group.key}>
-            <GroupHeader
-              tint={group.tint ?? undefined}
-              icon={
-                group.icon?.kind === 'milestone' ? (
-                  <StatusIcon status={group.icon.status} />
-                ) : undefined
+      <VirtualRows
+        rows={flatRows}
+        rowKey={milestoneRowKey}
+        estimateSize={rowHeight}
+        scrollElement={listEl}
+        pinnedKeys={pinnedKeys}
+        handleRef={virtualRef}
+        renderRow={(row) =>
+          row.kind === 'header' ? (
+            renderHeader(row.header, row.collapsed)
+          ) : (
+            <TaskListRow
+              doc={row.item.doc}
+              prefs={prefs}
+              run={data.latestRunByTaskId.get(row.key)}
+              live={data.liveRunStateByTaskId.has(row.key)}
+              needsYou={data.attentionByTaskId.has(row.key)}
+              landing={landingByTaskId.get(row.key)}
+              fixLoop={data.fixLoops.get(row.key)}
+              statuses={statuses}
+              epics={data.epics}
+              labelCandidates={
+                picker?.taskId === row.key ? labelCandidates : undefined
               }
-              name={group.label}
-              collapsed={isCollapsed}
-              onToggle={() => toggle(group.key)}
-              onAdd={() => shell.openCreateTask(group.preset)}
-              addLabel={`New task in ${group.label}`}
-              actions={
-                epic !== undefined && (
-                  <FanoutControls
-                    epic={epic}
-                    progress={progress}
-                    count={{ done, total: children.length }}
-                    landable={landable}
-                    onSendAgents={(id) =>
-                      setDispatchEpic({ epicId: id, mode: 'start' })
-                    }
-                    onPause={data.handlePauseEpic}
-                    onResume={data.handleResumeEpic}
-                    onRaiseCeiling={(id) =>
-                      setDispatchEpic({ epicId: id, mode: 'raise' })
-                    }
-                    onStop={data.handleStopEpic}
-                    onLand={data.handleLandEpic}
-                    onOpenEpic={(id) => onOpenTask(id)}
-                  >
-                    {/* The health pill speaks for a milestone nobody is fanning out; a live
-                        session's phase chips replace it. */}
-                    {health !== null && sessionIdle(session) && (
-                      <LabelPill
-                        color={health.tint}
-                        title={status.reason ?? undefined}
-                      >
-                        {health.label}
-                      </LabelPill>
-                    )}
-                  </FanoutControls>
-                )
-              }
+              onUpdate={data.handleUpdate}
+              onMoveStatus={data.moveTaskStatus}
+              indent={row.item.indent}
+              showEpicChip={false}
+              picker={picker?.taskId === row.key ? picker : null}
+              onPickerChange={setPicker}
+              phase={phaseFor(row.item.doc)}
+              selected={false}
+              focused={focusedTaskId === row.key}
+              onOpen={openRow}
+              onFocus={setFocusedTaskId}
+              rowProps={{ domId: rowDomId(row.key) }}
             />
-            {!isCollapsed &&
-              group.rows.map((row) => {
-                const id = row.doc.meta.id;
-                return (
-                  <TaskListRow
-                    key={id}
-                    doc={row.doc}
-                    data={data}
-                    prefs={prefs}
-                    indent={row.indent}
-                    showEpicChip={false}
-                    picker={picker}
-                    onPickerChange={setPicker}
-                    phase={phaseFor(row.doc)}
-                    selected={false}
-                    focused={focusedTaskId === id}
-                    onOpen={() => openRow(id)}
-                    onFocus={() => setFocusedTaskId(id)}
-                    rowProps={{ domId: rowDomId(id) }}
-                  />
-                );
-              })}
-          </div>
-        );
-      })}
+          )
+        }
+      />
       {dialog}
     </div>
   );

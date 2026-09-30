@@ -88,6 +88,7 @@ export function NumberSetting({
   locked,
   value,
   min = 1,
+  max = Number.POSITIVE_INFINITY,
   integer = true,
   suffix,
   placeholder,
@@ -96,6 +97,7 @@ export function NumberSetting({
 }: FieldBase & {
   value: number | undefined;
   min?: number;
+  max?: number;
   integer?: boolean;
   suffix?: string;
   placeholder?: string;
@@ -137,6 +139,7 @@ export function NumberSetting({
                   trimmed !== '' &&
                   Number.isFinite(n) &&
                   n >= min &&
+                  n <= max &&
                   (!integer || Number.isInteger(n));
                 if (ok) onSave(n);
                 // Snap back rather than show what the config does not say.

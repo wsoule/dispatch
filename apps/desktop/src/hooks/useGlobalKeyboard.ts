@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import type { ChordPrefix, GlobalKeyCommand } from '../lib/keyboard';
 import {
   isTypingTagName,
+  resolveChordKey,
   resolveChordPrefix,
   resolveGlobalKeyCommand,
 } from '../lib/keyboard';
@@ -89,8 +90,13 @@ export function useGlobalKeyboard({
     function handleKeyDown(event: KeyboardEvent) {
       // A Base UI popup (Select/Menu/Dialog) already preventDefaults Escape when it dismisses
       // itself — without this guard the window-level listener below still saw the same
-      // keystroke and dispatched a second, unwanted "back" navigation on top of it.
-      if (event.defaultPrevented) return;
+      // keystroke and dispatched a second, unwanted "back" navigation on top of it. A key a
+      // view consumed (the Cockpit's own `g p`) still ends an armed chord, or the stale
+      // prefix would swallow the next `g`.
+      if (event.defaultPrevented) {
+        if (!isModifierKey(event.key)) clearPrefix();
+        return;
+      }
       const input = {
         key: event.key,
         metaKey: event.metaKey,
@@ -125,8 +131,29 @@ export function useGlobalKeyboard({
       onCommandRef.current(command);
     }
 
+    // An armed chord takes its second key in the capture phase, before any view's own
+    // handler can claim it (a focused list's `f` would open its filter instead of `g f`).
+    function handleChordKey(event: KeyboardEvent) {
+      if (pendingPrefix.current === null || event.defaultPrevented) return;
+      const command = resolveChordKey(
+        { key: event.key, metaKey: event.metaKey, ctrlKey: event.ctrlKey },
+        {
+          isTyping: isTypingTarget(event.target),
+          modalOpen: isAnyModalOpen(),
+          pendingPrefix: pendingPrefix.current,
+        }
+      );
+      if (command === null) return;
+      clearPrefix();
+      event.preventDefault();
+      event.stopPropagation();
+      onCommandRef.current(command);
+    }
+
+    window.addEventListener('keydown', handleChordKey, true);
     window.addEventListener('keydown', handleKeyDown);
     return () => {
+      window.removeEventListener('keydown', handleChordKey, true);
       window.removeEventListener('keydown', handleKeyDown);
       clearPrefix();
     };

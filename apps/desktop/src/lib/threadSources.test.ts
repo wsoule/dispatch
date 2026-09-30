@@ -841,8 +841,8 @@ describe('refs and labels', () => {
     open({ kind: 'message', messageId: 'm-01' });
     open({ kind: 'doc', docId: 'doc-01K', anchor: 'api' });
     expect(calls).toEqual([
-      ['task', 't-000001', 'details'],
-      ['task', 't-000001', 'chat', 'r-000001'],
+      ['task', 't-000001', 'auto'],
+      ['task', 't-000001', 'run', 'r-000001'],
       ['impact', { kind: 'file', id: 'src/a.ts' }],
       ['thread', 'm-01'],
       ['doc', 'doc-01K', 'api'],
@@ -857,8 +857,8 @@ describe('refs and labels', () => {
     expect(lookups.agentStatus('agent:wyat/old')).toBe('revoked');
     expect(lookups.agentStatus('agent:wyat/quiet')).toBe('muted');
     expect(lookups.agentStatus('agent:wyat/other')).toBeNull();
-    expect(lookups.taskDoc('t-000001')?.meta.title).toBe('Checkout');
-    expect(lookups.taskDoc('t-000404')).toBeNull();
+    expect(lookups.task('t-000001')?.meta.title).toBe('Checkout');
+    expect(lookups.task('t-000404')).toBeNull();
     expect(
       threadTitle(msg('m-01', { body: `${'x'.repeat(90)}\nsecond line` }))
     ).toBe(`${'x'.repeat(79)}…`);

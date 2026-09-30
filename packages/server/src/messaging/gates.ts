@@ -5,11 +5,27 @@ import type {
   Sender,
 } from '@dispatch/protocol';
 import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 export const SYSTEM_SENDER: Sender = {
   address: SYSTEM_ADDRESS,
   canDecide: true,
 };
+
+// Whether the human sending or answering in this request used the owner's app
+// token; gate handlers and wakes read it, and a replay or system answer reads false.
+const answering = new AsyncLocalStorage<boolean>();
+
+export function answeringWith<T>(
+  ownerCredential: boolean,
+  fn: () => Promise<T>
+): Promise<T> {
+  return answering.run(ownerCredential, fn);
+}
+
+export function answeredWithOwnerCredential(): boolean {
+  return answering.getStore() === true;
+}
 
 export type GateHandler = (question: Message, answer: Message) => Promise<void>;
 

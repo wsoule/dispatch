@@ -24,6 +24,7 @@ import { TaskStore } from '../src/store.js';
 import type { TaskStorePort } from '../src/store.js';
 import { getSection, serializeTaskFile } from '../src/taskfile.js';
 import type { TaskDoc } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 let root: string;
 const openDbs: SqliteDatabase[] = [];
@@ -731,7 +732,7 @@ describe('SqliteTaskStore rejects rows it cannot trust', () => {
 
   it('throws on an enum column outside its set', () => {
     for (const [column, bad] of [
-      ['kind', 'milestone'],
+      ['kind', 'saga'],
       ['priority', 'urgentish'],
       ['risk', 'spicy'],
     ]) {
@@ -839,6 +840,7 @@ function blankDoc(id: string, title: string): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
     },
     body: '\n## Description\n\n\n## Acceptance Criteria\n\n## Activity\n',
   };

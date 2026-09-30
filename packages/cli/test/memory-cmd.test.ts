@@ -46,6 +46,8 @@ let outcome: 'dry-run' | 'ok' | 'MISMATCH';
 let entries: FakeEntry[];
 // Confirms the fake answers without raising trust, as a confirm that did not take.
 let confirmsTake: boolean;
+// What the fake's Claude-notes import answers.
+let claudeReport: Record<string, unknown>;
 const originalDispatchHome = process.env.DISPATCH_HOME;
 const originalAppToken = process.env.DISPATCH_APP_TOKEN;
 
@@ -175,6 +177,13 @@ function startFakeDaemon(): ReturnType<typeof Bun.serve> {
         body: text === '' ? undefined : body,
       });
       if (url.pathname === '/api/health') return Response.json({ ok: true });
+      if (url.pathname === '/api/memory/import/claude') {
+        if (auth !== `Bearer ${APP_TOKEN}`)
+          return forbidden(
+            "only the daemon's own human imports its Claude notes"
+          );
+        return Response.json({ report: claudeReport });
+      }
       if (url.pathname === '/api/memory/import/ledger') {
         if (auth !== `Bearer ${APP_TOKEN}`)
           return forbidden('the ledger import needs the decide tier');
@@ -209,6 +218,17 @@ beforeEach(async () => {
   outcome = 'dry-run';
   entries = [];
   confirmsTake = true;
+  claudeReport = {
+    state: 'complete',
+    source: '/home/wyat/.claude/projects/-home-wyat-app/memory',
+    imported: 3,
+    updated: 1,
+    unchanged: 2,
+    duplicates: 0,
+    tombstoned: 1,
+    problems: ['huge.md: too-large'],
+    candidates: [],
+  };
   ctx = { cwd: root, log: (l) => lines.push(l) };
   await run('init');
   lines = [];
@@ -292,6 +312,97 @@ describe('dispatch memory import-ledger', () => {
     await expect(
       run('memory', 'import-ledger', '--dry-run', '--token', AGENT_TOKEN)
     ).rejects.toThrow(/needs the decide tier/);
+  });
+});
+
+describe('dispatch memory import-claude', () => {
+  const imports = () =>
+    received
+      .filter((r) => r.path === '/api/memory/import/claude')
+      .map((r) => [r.method, r.search]);
+
+  it('posts a dry run from an absolute --from and prints what it did', async () => {
+    await run(
+      'memory',
+      'import-claude',
+      '--from',
+      'notes',
+      '--dry-run',
+      '--token',
+      APP_TOKEN
+    );
+    expect(imports()).toEqual([
+      [
+        'POST',
+        `?${new URLSearchParams({ from: join(root, 'notes'), dryRun: '1' }).toString()}`,
+      ],
+    ]);
+    expect(lines).toEqual([
+      'dry run, complete from /home/wyat/.claude/projects/-home-wyat-app/memory: imported 3 · updated 1 · unchanged 2 · duplicates 0 · tombstoned 1',
+      'problem: huge.md: too-large',
+    ]);
+  });
+
+  it('records that there are no notes with --none, or prints the report as JSON', async () => {
+    await run(
+      'memory',
+      'import-claude',
+      '--none',
+      '--json',
+      '--token',
+      APP_TOKEN
+    );
+    expect(imports()).toEqual([['POST', '?none=1']]);
+    expect(JSON.parse(lines.join('\n'))).toEqual(claudeReport);
+  });
+
+  it('lists the candidates when no notes were found', async () => {
+    claudeReport = {
+      ...claudeReport,
+      state: 'unconfirmed',
+      source: null,
+      imported: 0,
+      problems: [],
+      candidates: ['/home/wyat/.claude/projects/-old-app/memory'],
+    };
+    await run('memory', 'import-claude', '--token', APP_TOKEN);
+    expect(imports()).toEqual([['POST', '']]);
+    expect(lines.slice(1)).toEqual([
+      'candidate: /home/wyat/.claude/projects/-old-app/memory',
+      'answer with `dispatch memory import-claude --from <dir>` or `--none`',
+    ]);
+  });
+
+  it('fails with the problem when the import failed', async () => {
+    claudeReport = {
+      ...claudeReport,
+      state: 'failed',
+      problems: ['.: unreadable'],
+    };
+    await expect(
+      run('memory', 'import-claude', '--token', APP_TOKEN)
+    ).rejects.toThrow(/Claude notes import failed: \.: unreadable/);
+  });
+
+  it('asks for --from or --none, not both, before calling the daemon', async () => {
+    await expect(
+      run(
+        'memory',
+        'import-claude',
+        '--from',
+        '/x',
+        '--none',
+        '--token',
+        APP_TOKEN
+      )
+    ).rejects.toThrow(/--from or --none, not both/);
+    expect(imports()).toEqual([]);
+  });
+
+  it('surfaces the daemon 403 for a teammate', async () => {
+    await expect(
+      run('memory', 'import-claude', '--token', TEAMMATE_TOKEN)
+    ).rejects.toThrow(/own human imports its Claude notes/);
   });
 });
 

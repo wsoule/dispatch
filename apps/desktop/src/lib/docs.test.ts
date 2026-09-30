@@ -9,6 +9,7 @@ import {
   docDiffPatch,
   docStatusLine,
   filterDocs,
+  revisionAuthor,
   revisionsSinceReview,
   sameRevisions,
 } from './docs';
@@ -204,6 +205,20 @@ describe('docDiffCacheKey', () => {
     );
     expect(pierreKey(diff('h5a', 'draft\n'))).toBe(
       pierreKey(diff('h5a', 'draft\n'))
+    );
+  });
+});
+
+describe('revisionAuthor', () => {
+  it('marks a restored revision author as taken from the receipt log', () => {
+    expect(revisionAuthor({ author: 'human:wyat', cause: 'restore' })).toBe(
+      'human:wyat · as recorded in the receipt log'
+    );
+  });
+
+  it('shows any other author as is', () => {
+    expect(revisionAuthor({ author: 'run:r-1', cause: 'save' })).toBe(
+      'run:r-1'
     );
   });
 });

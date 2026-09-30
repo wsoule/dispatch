@@ -74,6 +74,28 @@ describe('sqlite driver selection', () => {
       db.close();
     }
   });
+
+  it('reuses a prepared statement across calls, and still closes cleanly', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dispatch-stmt-'));
+    const path = join(dir, 'dispatch.db');
+    const db = openDispatchDb(path);
+    db.exec('CREATE TABLE probe (id TEXT PRIMARY KEY, label TEXT NOT NULL)');
+    const insert = 'INSERT INTO probe (id, label) VALUES (?, ?)';
+    expect(db.prepare(insert)).toBe(db.prepare(insert));
+    db.prepare(insert).run('p-1', 'one');
+    db.prepare(insert).run('p-2', 'two');
+    expect(
+      queryOne<{ n: number }>(db, 'SELECT count(*) AS n FROM probe')?.n
+    ).toBe(2);
+    db.close();
+    // Closed with its statements finalized, so it reopens with both rows.
+    const again = openDispatchDb(path);
+    expect(
+      queryOne<{ n: number }>(again, 'SELECT count(*) AS n FROM probe')?.n
+    ).toBe(2);
+    again.close();
+    rmSync(dir, { recursive: true, force: true });
+  });
 });
 
 // What a probe prints on stdout, whichever runtime runs it.
@@ -95,6 +117,8 @@ import { openDispatchDb } from ${JSON.stringify(SQLITE_DB_SRC)};
 const db = openDispatchDb(':memory:');
 db.exec('CREATE TABLE probe (id TEXT PRIMARY KEY, label TEXT NOT NULL)');
 db.prepare('INSERT INTO probe (id, label) VALUES (?, ?)').run('p-1', 'probe');
+// The same text again: the adapter hands back the statement it prepared.
+db.prepare('INSERT INTO probe (id, label) VALUES (?, ?)').run('p-2', 'again');
 console.log(
   JSON.stringify({
     driver: db.driver,

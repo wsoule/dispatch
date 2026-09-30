@@ -1,5 +1,6 @@
 // A full TaskDoc for tests that care about a few of its fields.
 import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
+import { defaultTaskFields } from '@dispatch/core/browser';
 
 export function taskDoc(
   meta: Pick<TaskMeta, 'id' | 'title'> & Partial<TaskMeta>,
@@ -23,6 +24,7 @@ export function taskDoc(
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...meta,
     },
     body,

@@ -14,28 +14,38 @@ function tree(): string {
 }
 
 describe('dirSizeBytes', () => {
-  it('sums files recursively', () => {
-    const result = dirSizeBytes(tree());
+  it('sums files recursively', async () => {
+    const result = await dirSizeBytes(tree());
     expect(result.bytes).toBeGreaterThanOrEqual(350);
     expect(result.truncated).toBe(false);
   });
 
-  it('returns zero for a directory that does not exist', () => {
+  it('returns zero for a directory that does not exist', async () => {
     // A worktree removed while the branch listing polls must not throw — the
     // whole page would go down over one stale path.
-    expect(dirSizeBytes('/nope/definitely/not/here')).toEqual({
+    expect(await dirSizeBytes('/nope/definitely/not/here')).toEqual({
       bytes: 0,
       truncated: false,
     });
   });
 
-  it('does not follow a symlink that points back up the tree', () => {
+  it('does not follow a symlink that points back up the tree', async () => {
     const root = tree();
     symlinkSync(root, join(root, 'loop'));
     // Without the symlink guard this recurses until it hits the entry cap, so
     // "finished, untruncated" is the assertion that proves it did not loop.
-    const result = dirSizeBytes(root);
+    const result = await dirSizeBytes(root);
     expect(result.truncated).toBe(false);
     expect(result.bytes).toBeGreaterThanOrEqual(350);
+  });
+
+  it('stops at the entry cap and says the total is a floor', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'dispatch-dirsize-'));
+    for (let i = 0; i < 5; i++) writeFileSync(join(root, `f${i}`), 'z');
+
+    const result = await dirSizeBytes(root, 3);
+
+    expect(result.truncated).toBe(true);
+    expect(result.bytes).toBe(3);
   });
 });

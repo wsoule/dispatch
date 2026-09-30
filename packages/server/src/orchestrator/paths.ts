@@ -48,6 +48,16 @@ export function memoryDbPath(rootDir: string): string {
   return join(runsDir(rootDir), 'memory.db');
 }
 
+// The Claude auto-memory export directories, one per session lineage.
+export function claudeMemoryRoot(rootDir: string): string {
+  return join(runsDir(rootDir), 'claude-memory');
+}
+
+// One lineage's export: `name` is a run lineage id or `o-<conversation>`.
+export function claudeMemoryDir(rootDir: string, name: string): string {
+  return join(claudeMemoryRoot(rootDir), name);
+}
+
 // Personal memory is cross-project, so it lives under DISPATCH_HOME, not a project's run-state.
 export function personalMemoryDir(): string {
   return join(dispatchHome(), '.dispatch', 'memory');
@@ -122,6 +132,11 @@ export function mergeQueuePath(rootDir: string): string {
 // beside the run registry it derives spend from.
 export function epicSessionsPath(rootDir: string): string {
   return join(runsDir(rootDir), 'epic-sessions.json');
+}
+
+// Who created and last wrote each task (see TaskAuthorship), for epic auto-fill.
+export function taskAuthorshipPath(rootDir: string): string {
+  return join(runsDir(rootDir), 'task-authorship.json');
 }
 
 // Where PrManager's epic-PR ledger lives: the PRs opened to land whole epic

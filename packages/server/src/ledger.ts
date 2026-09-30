@@ -10,6 +10,19 @@ import { dirname, join } from 'node:path';
 // Findings and decisions carried forward between tasks, one JSON line per
 // write in `.dispatch/ledger.jsonl`. Entries are never edited in place.
 
+// Titles of receipts Dispatch writes itself; the ledger import recognizes
+// them by these, so a rewording changes producer and reader together.
+export function scopeExtensionTitle(runId: string): string {
+  return `Scope extended for run ${runId}`;
+}
+export function undeclaredWritesTitle(count: number): string {
+  return `changed ${count} file${count === 1 ? '' : 's'} outside its declared writes`;
+}
+// Older builds named the one path instead of a count.
+export const UNDECLARED_WRITES_TITLE =
+  /^changed .+ outside its declared writes$/;
+export const DEP_MAP_DEGRADED_TITLE = 'dependency map degraded';
+
 // Re-exported rather than re-declared, same as findings.ts — core owns these
 // shapes so both backends take identical inputs.
 export type { AddLedgerInput, LedgerListFilter } from '@dispatch/core';

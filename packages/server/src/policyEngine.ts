@@ -31,6 +31,7 @@ import {
   OrchestratorClientError,
   OrchestratorConflictError,
   runKind,
+  runOperator,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type {
@@ -82,6 +83,7 @@ const DECISION_KIND_GATES: Readonly<Record<string, PolicyGate>> = {
   'scope-request': 'scope',
   approval: 'approval',
   memory: 'memory',
+  doc: 'doc',
 };
 
 export interface PolicyClassifierOptions {
@@ -135,12 +137,12 @@ export function policyDecisionClassifier(
  * Appends one Activity line to a task the way the orchestrator narrates its
  * own mechanics (orchestrator.ts appendTaskActivity): timestamped, credited to
  * 'none' — the policy is the project's standing instruction, not a person
- * acting in the moment — and followed by the cache rebuild every task write
+ * acting in the moment — and followed by the cache refresh every task write
  * owes the read surfaces.
  */
 export function policyActivityAppender(ctx: {
   store: TaskStorePort;
-  cache: Pick<TaskCache, 'rebuild'>;
+  cache: Pick<TaskCache, 'refresh'>;
   events: Pick<EventBus, 'broadcast'>;
 }): (taskId: string, text: string) => void {
   return (taskId, text) => {
@@ -150,8 +152,8 @@ export function policyActivityAppender(ctx: {
       { appendActivity: `${now} ${text}`, activityActor: 'none' },
       now
     );
-    ctx.cache.rebuild(ctx.store);
-    ctx.events.broadcast({ type: 'task.changed' });
+    ctx.cache.refresh(ctx.store, [taskId]);
+    ctx.events.broadcast({ type: 'task.changed', ids: [taskId] });
   };
 }
 
@@ -171,7 +173,7 @@ interface PolicyEngineRuns {
 
 interface PolicyEngineFixLoop {
   get(taskId: string): FixLoopState | null;
-  ignite(taskId: string): Promise<FixLoopState>;
+  ignite(taskId: string, operator: string | null): Promise<FixLoopState>;
 }
 
 interface PolicyEngineVerification {
@@ -179,6 +181,7 @@ interface PolicyEngineVerification {
   startVerification(opts: {
     taskId: string;
     head: string;
+    operator: string | null;
   }): Promise<StartVerificationResult>;
 }
 
@@ -374,6 +377,7 @@ export class PolicyEngine {
     if (this.configAutoIgnites()) return;
     await this.igniteFixLoop(
       meta.taskId,
+      runOperator(meta),
       `Review & fix loop auto-started for ${meta.taskId}`,
       `implementer run ${meta.id} finished; the loop was ignited in place of a "Review & fix" click, and its round cap still bounds the retries`
     );
@@ -395,6 +399,7 @@ export class PolicyEngine {
     if (result === null || result.pass) return;
     await this.igniteFixLoop(
       taskId,
+      this.operatorOfRun(result.runId),
       `Verify retry auto-started for ${taskId}`,
       `verification run ${result.runId} failed; the fix loop was ignited in place of a human review request, and its round cap still bounds the retries`
     );
@@ -405,6 +410,7 @@ export class PolicyEngine {
   // loop, open or capped, is left to its own machinery.
   private async igniteFixLoop(
     taskId: string,
+    operator: string | null,
     title: string,
     detail: string
   ): Promise<void> {
@@ -419,7 +425,7 @@ export class PolicyEngine {
     if (this.budgetFloorHolds(taskId, 'fix loop auto-ignite')) return;
     if (this.ctx.fixLoop.get(taskId) !== null) return;
     try {
-      await this.ctx.fixLoop.ignite(taskId);
+      await this.ctx.fixLoop.ignite(taskId, operator);
     } catch (err) {
       // Nothing to review (no implementer, no commits, a standing block) is a
       // quiet decline, not a failure — the manual route stays open.
@@ -437,15 +443,17 @@ export class PolicyEngine {
     if (loop === null || loop.state !== 'complete') return;
     const result = this.ctx.verificationRunner.getLatestResult(taskId);
     if (result !== null && !result.pass) {
-      await this.retryVerification(taskId, result);
+      await this.retryVerification(taskId, result, loop.operator ?? null);
     }
     const latest = this.latestFinishedExecuteRun(taskId);
     if (latest !== null) this.enqueueForMerge(latest);
   }
 
+  // `operator` is the completed loop's: the retry follows its last round.
   private async retryVerification(
     taskId: string,
-    failed: VerificationResult
+    failed: VerificationResult,
+    operator: string | null
   ): Promise<void> {
     const ruling = consultProjectPolicy(
       this.ctx.rootDir,
@@ -461,6 +469,7 @@ export class PolicyEngine {
     const started = await this.ctx.verificationRunner.startVerification({
       taskId,
       head: run.branch,
+      operator,
     });
     if (started.skipped) return;
     this.retriedVerifications.set(taskId, failed.createdAt);
@@ -470,6 +479,12 @@ export class PolicyEngine {
       `Verification auto-retried for ${taskId}`,
       `run ${failed.runId} verified red, the fix loop completed, and run ${started.meta.id} now re-verifies ${run.branch}`
     );
+  }
+
+  // Who a run acted for; no one once it has left the registry.
+  private operatorOfRun(runId: string): string | null {
+    const run = this.ctx.orchestrator.list().find((r) => r.id === runId);
+    return run === undefined ? null : runOperator(run);
   }
 
   private hasLiveVerifyRun(taskId: string): boolean {

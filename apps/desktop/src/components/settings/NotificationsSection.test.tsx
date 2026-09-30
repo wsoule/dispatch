@@ -44,6 +44,26 @@ test('memory proposals have their own toggle, on by default', () => {
   expect(saved).toEqual([{ notifications: { kinds: { memory: false } } }]);
 });
 
+test('doc proposals have their own toggle, on by default', () => {
+  const saved: unknown[] = [];
+  render(
+    <NotificationsSection
+      config={config}
+      onSave={(p) => Promise.resolve(void saved.push(p))}
+      canOperate
+    />
+  );
+  const name = 'An agent proposes an edit to an accepted doc';
+  expect(
+    screen.getByRole('switch', { name }).getAttribute('aria-checked')
+  ).toBe('true');
+  expect(
+    screen.getByText('No run reads the edit until you approve it.')
+  ).toBeDefined();
+  toggle(name);
+  expect(saved).toEqual([{ notifications: { kinds: { doc: false } } }]);
+});
+
 test('renders the saved toggle state', () => {
   render(
     <NotificationsSection

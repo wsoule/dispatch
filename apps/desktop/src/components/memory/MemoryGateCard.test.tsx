@@ -1,8 +1,16 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from '@testing-library/react';
 import { describe, expect, it, mock } from 'bun:test';
 
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { ProposalRead } from '../../lib/memory';
+import { memoryQueryRootKey } from '../../lib/memory';
 import {
   content,
   entry,
@@ -27,16 +35,22 @@ function renderCard(
 ) {
   const onDecide = mock((_choice: 'approve' | 'reject') => Promise.resolve());
   const onRestartDaemon = mock(() => Promise.resolve());
+  const queryClient = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
   render(
-    <MemoryGateCard
-      proposalId="mp-000001"
-      client={{ getMemoryProposal: load }}
-      availability={availability}
-      onRestartDaemon={onRestartDaemon}
-      onDecide={onDecide}
-    />
+    <QueryClientProvider client={queryClient}>
+      <MemoryGateCard
+        proposalId="mp-000001"
+        client={{ getMemoryProposal: load }}
+        port={4321}
+        availability={availability}
+        onRestartDaemon={onRestartDaemon}
+        onDecide={onDecide}
+      />
+    </QueryClientProvider>
   );
-  return { onDecide, onRestartDaemon };
+  return { onDecide, onRestartDaemon, queryClient };
 }
 
 describe('MemoryGateCard', () => {
@@ -82,6 +96,122 @@ describe('MemoryGateCard', () => {
     );
     expect(await screen.findByText('the old advice')).toBeTruthy();
     expect(screen.getByText('the new advice')).toBeTruthy();
+    expect(screen.queryByText('Proposed against')).toBeNull();
+  });
+
+  it('shows the version proposed against beside the current one once the entry changed', async () => {
+    renderCard(() =>
+      Promise.resolve(
+        read({
+          proposal: proposalView({
+            action: 'supersede',
+            target: 'mem-000001',
+            baseRev: 1,
+            content: content({ body: 'the agent version' }),
+          }),
+          base: entry({ rev: 1, body: 'the old advice' }),
+          current: entry({ rev: 2, body: 'a human fix' }),
+        })
+      )
+    );
+    const now = await screen.findByText('a human fix');
+    expect(now.closest('[data-slot="memory-version"]')?.textContent).toContain(
+      'Now'
+    );
+    const against = screen.getByText('the old advice');
+    expect(
+      against.closest('[data-slot="memory-version"]')?.textContent
+    ).toContain('Proposed against');
+    expect(screen.getByText('the agent version')).toBeTruthy();
+    expect(screen.getByText(/changed after this was proposed/)).toBeTruthy();
+  });
+
+  it('names each version’s title, so a title-only change shows', async () => {
+    renderCard(() =>
+      Promise.resolve(
+        read({
+          proposal: proposalView({
+            action: 'supersede',
+            target: 'mem-000001',
+            baseRev: 1,
+            content: content({ body: 'the agent version' }),
+          }),
+          base: entry({ rev: 1, title: 'pnpm builds' }),
+          current: entry({ rev: 2, title: 'pnpm 11 builds' }),
+        })
+      )
+    );
+    const against = await screen.findByText('pnpm builds');
+    expect(
+      against.closest('[data-slot="memory-version"]')?.textContent
+    ).toContain('Proposed against');
+    expect(
+      screen.getByText('pnpm 11 builds').closest('[data-slot="memory-version"]')
+        ?.textContent
+    ).toContain('Now');
+  });
+
+  it('says approving adds a new entry once the entry was retired since', async () => {
+    renderCard(() =>
+      Promise.resolve(
+        read({
+          proposal: proposalView({
+            action: 'supersede',
+            target: 'mem-000001',
+            baseRev: 1,
+            content: content({ body: 'the agent version' }),
+          }),
+          base: entry({ rev: 1, body: 'the old advice' }),
+          current: entry({
+            rev: 2,
+            body: 'the old advice',
+            status: 'retired',
+            statusReason: 'forgotten',
+            state: 'retired',
+          }),
+        })
+      )
+    );
+    const now = await screen.findByText('the old advice');
+    expect(now.closest('[data-slot="memory-version"]')?.textContent).toContain(
+      'Now (retired)'
+    );
+    expect(
+      screen.getByText(/retired after this was proposed/).textContent
+    ).toContain('as a new entry');
+    expect(screen.queryByText(/replaces the version it has now/)).toBeNull();
+  });
+
+  // memory.changed invalidates every memory query, so an open card catches
+  // a retire decided elsewhere.
+  it('refreshes when memory changes while it is open', async () => {
+    const supersede = {
+      proposal: proposalView({
+        action: 'supersede',
+        target: 'mem-000001',
+        baseRev: 1,
+        content: content({ body: 'the agent version' }),
+      }),
+      base: entry({ rev: 1, body: 'the old advice' }),
+    };
+    let current = entry({ rev: 1, body: 'the old advice' });
+    const { queryClient } = renderCard(() =>
+      Promise.resolve(read({ ...supersede, current }))
+    );
+    await screen.findByText('the agent version');
+    expect(screen.queryByText(/retired after this was proposed/)).toBeNull();
+    current = entry({
+      rev: 2,
+      body: 'the old advice',
+      status: 'retired',
+      state: 'retired',
+    });
+    await act(() =>
+      queryClient.invalidateQueries({ queryKey: memoryQueryRootKey(4321) })
+    );
+    expect(
+      await screen.findByText(/retired after this was proposed/)
+    ).toBeTruthy();
   });
 
   it('says a personal match exists, and why a retire was asked for', async () => {

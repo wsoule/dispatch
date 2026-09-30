@@ -149,8 +149,15 @@ describe('variantTaskInput', () => {
     expect(input.writes).toEqual(['src/auth/**']);
     expect(input.risk).toBe('elevated');
     expect(input.selfReview).toBe(true);
-    expect(input.milestone).toBe('auth');
     expect(input.priority).toBe('high');
+  });
+
+  it('files the clone by parent, never the legacy milestone string', () => {
+    const input = variantTaskInput(sourceTask({ parent: 'e-1' }), {
+      executor: 'claude',
+    });
+    expect(input.parent).toBe('e-1');
+    expect('milestone' in input).toBe(false);
   });
 
   it('labels the clone so the group stays findable', () => {

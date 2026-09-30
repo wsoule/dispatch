@@ -162,9 +162,12 @@ async function spoofedComment(): Promise<string> {
     }),
   });
   expect(res.status).toBe(200);
-  expect(TaskStore.init(root).get(plain.meta.id)!.body).toContain(
-    'Requested over A2A by'
-  );
+  // Comments live in their own store now, so the quote reaches the task only
+  // as a comment row.
+  const list = await fetch(`${base}/api/tasks/${plain.meta.id}/comments`, {
+    headers: json,
+  });
+  expect(JSON.stringify(await list.json())).toContain('Requested over A2A by');
   return plain.meta.id;
 }
 

@@ -1,4 +1,5 @@
-import type { RepoPr } from '@dispatch/client';
+import type { ApiClient, RepoPr } from '@dispatch/client';
+import { useQuery } from '@tanstack/react-query';
 import {
   AtSign,
   Check,
@@ -12,6 +13,7 @@ import {
 import type { KeyboardEvent, ReactNode } from 'react';
 import { useEffect, useMemo, useState } from 'react';
 
+import { MemoryActivityList } from '../components/memory/MemoryActivityList';
 import { ApprovalCard } from '../components/runs/ApprovalCard';
 import { QuestionCard } from '../components/runs/QuestionCard';
 import { ScopeRequestCard } from '../components/runs/ScopeRequestCard';
@@ -20,6 +22,7 @@ import { useNotificationInbox } from '../components/shell/NotificationInboxConte
 import { useShellActions } from '../components/shell/ShellActionsContext';
 import { TaskSpecView } from '../components/tasks/TaskSpecView';
 import type { DispatchProjectData } from '../hooks/useDispatchProject';
+import { useTaskDoc, withBody } from '../hooks/useTaskDoc';
 import type { TaskTab } from '../lib/appNav';
 import type { FeedState } from '../lib/feedState';
 import { tintForState } from '../lib/feedState';
@@ -48,6 +51,7 @@ import {
   unreadInboxCount,
 } from '../lib/inboxQueue';
 import { resolveListKeyCommand } from '../lib/keyboard';
+import { activityItems, memoryQueryKey } from '../lib/memory';
 import { latestFailedAttemptByRunId } from '../lib/queueHistory';
 import { cn } from '@/lib/utils';
 import { GroupHeader } from '@/ui/ai/group-header';
@@ -91,10 +95,10 @@ interface InboxViewProps {
   onOpenPr: (number: number) => void;
 }
 
-/** Which task tab a row's click lands on: asks about the diff go to the diff;
- * everything else lands in the conversation. */
+/** Which task mode a row's click lands on: asks about the diff go to the review;
+ * everything else lands in the run's transcript. */
 function tabFor(state: FeedState): TaskTab {
-  return state === 'review' || state === 'ruling' ? 'diff' : 'chat';
+  return state === 'review' || state === 'ruling' ? 'review' : 'run';
 }
 
 /** The live rows' read keys, tagged with the project they were loaded for so a project
@@ -256,7 +260,7 @@ export function InboxView({
         openTask(item.row.taskId, tabFor(item.row.state), item.row.runId);
         return;
       case 'landing':
-        openTask(item.row.taskId, 'diff', item.row.runId);
+        openTask(item.row.taskId, 'review', item.row.runId);
         return;
       case 'pr':
         onOpenPr(item.pr.number);
@@ -528,6 +532,7 @@ export function InboxView({
               ))
             )}
           </div>
+          <YourMemory client={client} port={project.port} />
         </div>
         <div
           data-slot="inbox-detail-pane"
@@ -554,6 +559,46 @@ export function InboxView({
         </div>
       </div>
     </div>
+  );
+}
+
+/** The caller's own personal-memory activity from the last day, each entry's
+ *  latest change with an Undo. Hidden when there is none, or when the daemon
+ *  answers no activity for this caller (no memory, or no human behind the window). */
+function YourMemory({
+  client,
+  port,
+}: {
+  client: Pick<ApiClient, 'memoryActivity' | 'undoMemory'>;
+  port: number | undefined;
+}) {
+  const { data } = useQuery({
+    queryKey: memoryQueryKey(port, 'activity'),
+    queryFn: () => client.memoryActivity(),
+    retry: false,
+  });
+  const items = activityItems(data?.activity ?? []);
+  if (items.length === 0) return null;
+  return (
+    <section
+      aria-label="Your memory"
+      className="shadow-hairline-top flex max-h-[40%] min-h-0 shrink-0 flex-col overflow-y-auto px-2 py-1"
+    >
+      <GroupHeader name="Your memory" count={items.length} />
+      <MemoryActivityList items={items} client={client} />
+      <p className="font-book text-muted-foreground px-2 py-1 text-[12px]">
+        Showing the last day. Undo reverts an entry’s latest change. For one
+        changed earlier, run{' '}
+        <code className="font-mono text-[12px]">
+          dispatch memory undo &lt;handle&gt;
+        </code>
+        ;{' '}
+        <code className="font-mono text-[12px]">
+          dispatch memory list --scope personal --state all
+        </code>{' '}
+        lists handles.
+      </p>
+    </section>
   );
 }
 
@@ -801,8 +846,11 @@ function TaskSummary({
   project: DispatchProjectData;
 }) {
   const tasks = project.tasksIncludingArchived ?? project.tasks ?? [];
-  const doc = tasks.find((t) => t.meta.id === taskId);
-  if (doc === undefined) {
+  const full = useTaskDoc(project.client, project.port, taskId);
+  const listed = tasks.some((t) => t.meta.id === taskId);
+  if (listed && full === undefined) return null;
+  const doc = withBody(tasks, taskId, full);
+  if (doc === null) {
     return (
       <EmptyState
         heading="Task not loaded"

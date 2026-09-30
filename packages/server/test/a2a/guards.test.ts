@@ -175,6 +175,7 @@ it('refuses an aux execute run of a gated draft (the FixLoop path), and every ot
         kind,
         head: 'HEAD',
         buildPrompt: () => 'x',
+        operator: null,
       })
     ).toThrow(/A2A proposal/);
   }

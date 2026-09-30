@@ -205,8 +205,36 @@ describe('the memory gate', () => {
         authorizedBy: 'rung',
       })
     ).toBe('auto-decided by policy rung 4 (memory gate)');
+    expect(POLICY_RUNGS.find((r) => r.rung === 4)?.name).toBe('auto-merge');
+  });
+});
+
+describe('the doc gate', () => {
+  it('puts doc edits at the top rung, capped by risk like every gate', () => {
+    expect(GATE_RUNGS.doc).toBe(4);
+    expect(POLICY_GATES).toContain('doc');
+    expect(consultPolicy({ rung: 4, gates: {} }, 'doc', 'routine')).toEqual({
+      mode: 'auto',
+      gate: 'doc',
+      rung: 4,
+      authorizedBy: 'rung',
+    });
+    expect(consultPolicy({ rung: 4, gates: {} }, 'doc', 'elevated')).toEqual({
+      mode: 'block',
+    });
+    expect(consultPolicy({ rung: 3, gates: {} }, 'doc', 'routine')).toEqual({
+      mode: 'block',
+    });
+    expect(
+      describePolicyAuthorization({
+        mode: 'auto',
+        gate: 'doc',
+        rung: 4,
+        authorizedBy: 'rung',
+      })
+    ).toBe('auto-decided by policy rung 4 (doc gate)');
     expect(POLICY_RUNGS.find((r) => r.rung === 4)?.label).toBe(
-      "Auto-merge on green and accept agents' team memory"
+      "Auto-merge on green and accept agents' team memory and doc edits"
     );
   });
 });

@@ -18,6 +18,9 @@ export type AliasResolution =
       currentEmail: string;
     };
 
+// The roster's stand-in email when git has none; it names no one.
+export const PLACEHOLDER_EMAIL = 'local@localhost';
+
 const IDENTITIES_DB_VERSION = 1;
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CODE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{8}$/;
@@ -35,6 +38,11 @@ CREATE TABLE IF NOT EXISTS link_codes (
   code_sha256 TEXT PRIMARY KEY, identity_id TEXT NOT NULL, expires_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS owner_agents (
+  project_key TEXT NOT NULL, agent TEXT NOT NULL, token_hash TEXT NOT NULL,
+  approved_by TEXT NOT NULL, credential TEXT NOT NULL, approved_at TEXT NOT NULL,
+  PRIMARY KEY (project_key, agent)
+);
 `;
 
 interface AliasRow {
@@ -48,6 +56,11 @@ function message(err: unknown): string {
 
 function normalizeEmail(email: string | null): string {
   return (email ?? '').trim().toLowerCase();
+}
+
+// An empty or placeholder email says nothing about who holds the handle.
+function unknownEmail(email: string): boolean {
+  return email === '' || email === PLACEHOLDER_EMAIL;
 }
 
 // Upper-cased with dashes and spaces gone; Crockford reads I and L as 1, O as 0.
@@ -111,10 +124,20 @@ export class MemoryIdentities {
         });
       return { ok: true, identity: 'self' };
     }
-    if (bound !== undefined) return checked(bound, email);
+    if (bound !== undefined && !this.adopts(bound, email))
+      return checked(bound, email);
     return this.transaction(() => {
       const raced = this.alias(input.projectKey, input.handle);
-      if (raced !== undefined) return checked(raced, email);
+      if (raced !== undefined) {
+        if (!this.adopts(raced, email)) return checked(raced, email);
+        this.bindAlias(
+          input.projectKey,
+          input.handle,
+          raced.identity_id,
+          email
+        );
+        return { ok: true, identity: raced.identity_id };
+      }
       const identity = this.newIdentity();
       this.bindAlias(input.projectKey, input.handle, identity, email);
       return { ok: true, identity };
@@ -141,7 +164,18 @@ export class MemoryIdentities {
           "handle: the owner's personal memory already reaches every project; there is nothing to link",
           'handle'
         );
-      const resolved = checked(bound, normalizeEmail(input.rosterEmail));
+      const email = normalizeEmail(input.rosterEmail);
+      const adopted = this.adopts(bound, email);
+      if (adopted)
+        this.bindAlias(
+          input.projectKey,
+          input.handle,
+          bound.identity_id,
+          email
+        );
+      const resolved = adopted
+        ? { ok: true as const, identity: bound.identity_id }
+        : checked(bound, email);
       if (!resolved.ok) throw reusedHandle();
       const nowMs = this.now().getTime();
       this.db
@@ -177,6 +211,12 @@ export class MemoryIdentities {
         'code'
       );
     return this.transaction(() => {
+      if (this.alias(input.projectKey, input.handle)?.identity_id === 'self')
+        throw new MemoryError(
+          'invalid',
+          "code: the owner's personal memory already reaches every project; there is nothing to link",
+          'code'
+        );
       const hash = codeHash(normalized);
       const row = queryOne<{ identity_id: string; expires_at: string }>(
         this.db,
@@ -201,8 +241,7 @@ export class MemoryIdentities {
       const previous =
         bound === undefined ||
         bound.identity_id === row.identity_id ||
-        bound.identity_id === 'self' ||
-        bound.email_at_bind !== email
+        (bound.email_at_bind !== email && !unknownEmail(bound.email_at_bind))
           ? null
           : bound.identity_id;
       this.bindAlias(input.projectKey, input.handle, row.identity_id, email);
@@ -228,6 +267,43 @@ export class MemoryIdentities {
     });
   }
 
+  // Records that the owner approved `agent` (at this token) with the app token.
+  recordOwnerApproval(input: {
+    projectKey: string;
+    agent: string;
+    tokenHash: string;
+    approvedBy: string;
+  }): void {
+    this.db
+      .prepare(
+        "INSERT OR REPLACE INTO owner_agents (project_key, agent, token_hash, approved_by, credential, approved_at) VALUES (?, ?, ?, ?, 'app-token', ?)"
+      )
+      .run(
+        input.projectKey,
+        input.agent,
+        input.tokenHash,
+        input.approvedBy,
+        this.now().toISOString()
+      );
+  }
+
+  // Forgets an owner approval, as any other decision on the agent does.
+  dropOwnerApproval(projectKey: string, agent: string): void {
+    this.db
+      .prepare('DELETE FROM owner_agents WHERE project_key = ? AND agent = ?')
+      .run(projectKey, agent);
+  }
+
+  // Whether the owner approved `agent`, holding this very token, with the app token.
+  ownerApproved(projectKey: string, agent: string, tokenHash: string): boolean {
+    const row = queryOne<{ token_hash: string }>(
+      this.db,
+      'SELECT token_hash FROM owner_agents WHERE project_key = ? AND agent = ?',
+      [projectKey, agent]
+    );
+    return row?.token_hash === tokenHash;
+  }
+
   identities(): string[] {
     return queryAll<{ id: string }>(
       this.db,
@@ -245,6 +321,16 @@ export class MemoryIdentities {
 
   close(): void {
     this.db.close();
+  }
+
+  // Whether a teammate's alias bound under an unknown email takes on this real one.
+  private adopts(bound: AliasRow, email: string): boolean {
+    return (
+      bound.identity_id !== 'self' &&
+      bound.email_at_bind !== email &&
+      unknownEmail(bound.email_at_bind) &&
+      !unknownEmail(email)
+    );
   }
 
   private alias(projectKey: string, handle: string): AliasRow | undefined {

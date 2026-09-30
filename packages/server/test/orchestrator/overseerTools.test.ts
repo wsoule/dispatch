@@ -830,9 +830,63 @@ describe('applyAction performs the real effect', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0].taskId).toBe(task.meta.id);
     expect(runs[0].executor).toBe('fake');
-    // The overseer acts for the daemon's owner.
-    expect(runs[0].operator).toBe('human:test');
+    // The run acts for the human who confirmed it.
+    expect(runs[0].operator).toBe('human:wyat');
   });
+
+  it.each([
+    [{ actor: 'human:test', ownerCredential: true }, 'human:test'],
+    [{ actor: 'human:test' }, null],
+    [{ actor: 'human:test', ownerCredential: false }, null],
+    [{ actor: 'human:ada', ownerCredential: true }, 'human:ada'],
+    [{ actor: 'agent:dispatch' }, null],
+  ] as const)(
+    'dispatch_task confirmed as %p runs for %p',
+    async (meta, operator) => {
+      const h = makeHarness();
+      const task = h.store.create({ title: 'Operator' });
+      h.cache.rebuild(h.store);
+      const action = h.registry.callMutatingTool('dispatch_task', {
+        taskId: task.meta.id,
+        executor: 'fake',
+      });
+      await h.registry.applyAction(action.id, meta);
+      expect(h.orchestrator.list()[0].operator).toBe(operator);
+    }
+  );
+
+  it.each([
+    [{ actor: 'human:ada' }, 'human:ada'],
+    [{ actor: 'human:test' }, null],
+    [{ actor: 'human:test', ownerCredential: true }, 'human:test'],
+  ] as const)(
+    "dispatch_task resuming the owner's failed run as %p runs for %p",
+    async (meta, operator) => {
+      const h = makeHarness();
+      h.orchestrator.registerExecutor(
+        'failing',
+        new FakeExecutor({
+          finish: { state: 'failed', sessionId: 'sess-f', error: 'limit' },
+        })
+      );
+      const task = h.store.create({ title: 'Resumable' });
+      h.cache.rebuild(h.store);
+      const failed = await h.orchestrator.dispatch(task.meta.id, 'failing', {
+        operator: 'human:test',
+      });
+      await waitFor(
+        () => h.orchestrator.getRun(failed.id)?.meta.state === 'failed'
+      );
+      const action = h.registry.callMutatingTool('dispatch_task', {
+        taskId: task.meta.id,
+      });
+      await h.registry.applyAction(action.id, meta);
+      const resumed = h.orchestrator
+        .list()
+        .find((r) => r.resumedFrom === failed.id);
+      expect(resumed?.operator).toBe(operator);
+    }
+  );
 
   it("approve_run answers the run's tool-approval gate as the confirming human", async () => {
     const h = makeHarness();
@@ -989,6 +1043,40 @@ describe('applyAction performs the real effect', () => {
           e.text?.includes('check the tests') === true
       )
     ).toBe(true);
+  });
+
+  it('message_run refuses a request-tier confirmation on a run acting for another human', async () => {
+    const h = makeHarness();
+    const messaging = await withBus(h);
+    const task = h.store.create({ title: 'Owned' });
+    h.cache.rebuild(h.store);
+    const meta = await h.orchestrator.dispatch(task.meta.id, 'slow', {
+      operator: 'human:owner',
+    });
+    await waitFor(
+      () => h.orchestrator.getRun(meta.id)?.meta.state === 'running'
+    );
+    const inbox = () =>
+      messaging.engine.inbox(`run:${meta.id}`).map((i) => i.message.body);
+
+    const refused = h.registry.callMutatingTool('message_run', {
+      runId: meta.id,
+      text: 'from ada',
+    });
+    await expect(
+      h.registry.applyAction(refused.id, { actor: 'human:ada' })
+    ).rejects.toThrow(`task:${task.meta.id}`);
+    expect(inbox()).not.toContain('from ada');
+
+    const decided = h.registry.callMutatingTool('message_run', {
+      runId: meta.id,
+      text: 'from bob',
+    });
+    await h.registry.applyAction(decided.id, {
+      actor: 'human:bob',
+      canDecide: true,
+    });
+    expect(inbox()).toContain('from bob');
   });
 });
 

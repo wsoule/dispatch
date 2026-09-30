@@ -2,12 +2,16 @@ import { describe, expect, it } from 'bun:test';
 
 import {
   dispatchableTasks,
+  fanoutWaitingOn,
   findDependencyCycles,
   isDone,
   isSatisfiedForDispatch,
   readyTasks,
+  releasesFanoutDependents,
 } from '../src/graph.js';
+import { DEFAULT_STATUS_MODEL } from '../src/status.js';
 import type { TaskDoc, TaskMeta } from '../src/types.js';
+import { defaultTaskFields } from '../src/types.js';
 
 function make(partial: Partial<TaskMeta>): TaskDoc {
   return {
@@ -30,6 +34,7 @@ function make(partial: Partial<TaskMeta>): TaskDoc {
       risk: 'routine',
       model: null,
       exercised: false,
+      ...defaultTaskFields(),
       ...partial,
     },
     body: '',
@@ -63,9 +68,16 @@ describe('readyTasks', () => {
     expect(ids).not.toContain('t-o00000'); // not todo
   });
   it('excludes epics and non-todo statuses', () => {
-    const epic = make({ id: 'e-100000', kind: 'epic' });
+    const epic = make({ id: 'e-100000', kind: 'milestone' });
     const review = make({ id: 't-200000', status: 'review' });
     expect(readyTasks([epic, review])).toEqual([]);
+  });
+  it('excludes any task with children, whatever its kind', () => {
+    const parent = make({ id: 't-300000' });
+    const child = make({ id: 't-400000', parent: 't-300000' });
+    expect(readyTasks([parent, child]).map((t) => t.meta.id)).toEqual([
+      't-400000',
+    ]);
   });
   it('treats dangling blocker ids as non-blocking', () => {
     const t = make({ id: 't-300000', blockedBy: ['t-ghost0'] });
@@ -224,6 +236,70 @@ describe('dispatchableTasks', () => {
   it('ignores dangling blocker ids, like readyTasks', () => {
     const dependent = make({ id: 't-b00000', blockedBy: ['t-missing'] });
     expect(dispatchableTasks([dependent])).toHaveLength(1);
+  });
+});
+
+describe('a fan-out’s blocker rule', () => {
+  const mine = { held: false, hasRunBranch: true };
+  it('releases on review or landing only with an own run branch to stack on', () => {
+    expect(releasesFanoutDependents('review', DEFAULT_STATUS_MODEL, mine)).toBe(
+      true
+    );
+    expect(
+      releasesFanoutDependents('landing', DEFAULT_STATUS_MODEL, mine)
+    ).toBe(true);
+    // A teammate's In Review, or one moved there by hand: no branch of it.
+    for (const blocker of [
+      { held: true, hasRunBranch: true },
+      { held: false, hasRunBranch: false },
+    ]) {
+      expect(
+        releasesFanoutDependents('review', DEFAULT_STATUS_MODEL, blocker)
+      ).toBe(false);
+      expect(
+        releasesFanoutDependents('landing', DEFAULT_STATUS_MODEL, blocker)
+      ).toBe(false);
+    }
+  });
+
+  it('releases on done whoever holds it, and never before review', () => {
+    const teammate = { held: true, hasRunBranch: false };
+    expect(
+      releasesFanoutDependents('landed', DEFAULT_STATUS_MODEL, teammate)
+    ).toBe(true);
+    expect(
+      releasesFanoutDependents('dropped', DEFAULT_STATUS_MODEL, teammate)
+    ).toBe(true);
+    expect(
+      releasesFanoutDependents('working', DEFAULT_STATUS_MODEL, mine)
+    ).toBe(false);
+    expect(releasesFanoutDependents('ready', DEFAULT_STATUS_MODEL, mine)).toBe(
+      false
+    );
+  });
+
+  it('lists the blockers still holding a task, skipping dangling ids', () => {
+    const own = make({ id: 't-000001', status: 'review' });
+    const samTask = make({
+      id: 't-000002',
+      status: 'review',
+      assignee: 'human:sam',
+    });
+    const dep = make({
+      id: 't-000003',
+      blockedBy: ['t-000001', 't-000002', 't-999999'],
+    });
+    const byId = new Map([own, samTask].map((t) => [t.meta.id, t]));
+    const waiting = fanoutWaitingOn(
+      dep,
+      (id) => byId.get(id),
+      DEFAULT_STATUS_MODEL,
+      (b) => ({
+        held: b.meta.assignee === 'human:sam',
+        hasRunBranch: b.meta.id === 't-000001',
+      })
+    );
+    expect(waiting).toEqual(['t-000002']);
   });
 });
 

@@ -230,9 +230,11 @@ export class VerificationRunner {
     });
   }
 
+  // `operator` is who the verify run acts for (see dispatchAuxRun).
   async startVerification(opts: {
     taskId: string;
     head: string;
+    operator: string | null;
   }): Promise<StartVerificationResult> {
     const task = this.ctx.store.get(opts.taskId);
     if (task === null) {
@@ -253,6 +255,7 @@ export class VerificationRunner {
       head: opts.head,
       executor,
       model: executorModels(config, executor).execute,
+      operator: opts.operator,
       buildPrompt: ({ runId, worktreePath }) => {
         const artifactsDir = verifyDir(this.ctx.rootDir, runId);
         mkdirSync(artifactsDir, { recursive: true });
@@ -331,8 +334,11 @@ export class VerificationRunner {
     );
     if (pass) {
       this.ctx.store.update(pending.taskId, { exercised: true });
-      this.ctx.cache.rebuild(this.ctx.store);
-      this.ctx.events.broadcast({ type: 'task.changed' });
+      this.ctx.cache.refresh(this.ctx.store, [pending.taskId]);
+      this.ctx.events.broadcast({
+        type: 'task.changed',
+        ids: [pending.taskId],
+      });
     }
     this.ctx.events.broadcast({
       type: 'verification.changed',
