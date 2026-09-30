@@ -1887,6 +1887,9 @@ export interface TeamTokenHolder {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  /** A token for the operator's handle, issued before that was refused; it
+   *  authenticates no one. Absent from older daemons. */
+  unusable?: boolean;
 }
 
 /** A just-issued teammate credential: the only response that carries one. */

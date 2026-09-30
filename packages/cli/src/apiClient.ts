@@ -819,6 +819,7 @@ interface TeamTokenHolder {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  unusable?: boolean;
 }
 
 // `token` is the credential every call presents: the agent token from the

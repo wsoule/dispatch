@@ -40,6 +40,9 @@ export interface IssuedTokenSummary {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  /** A teammate token that can never authenticate: one for the operator's
+   *  handle, issued before that was refused. */
+  unusable: boolean;
 }
 
 /** What a presented token turned out to be: someone, a credential that has
@@ -167,8 +170,12 @@ export class TokenRegistry {
         expiresAt: null,
         lastUsedAt: null,
         expired: false,
+        unusable: false,
       })),
-      ...(this.teammates?.list() ?? []),
+      ...(this.teammates?.list() ?? []).map((t) => ({
+        ...t,
+        unusable: t.unusable || t.handle === this.operatorHandle,
+      })),
     ];
   }
 }
