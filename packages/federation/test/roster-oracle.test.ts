@@ -541,25 +541,30 @@ describe('the resolution against the brute-force oracle', () => {
     }, 120_000);
 });
 
-describe('a component too large to search', () => {
-  // 19 admins each revoke the next below its revocation, and the last the
-  // first: one cycle no build searches, so a daemon pauses and the relay picks.
-  const ring = Array.from(
-    { length: 19 },
+// One more contested removal than a component search decides.
+const RING = 19;
+const ringOf = (at: number): string[] =>
+  Array.from(
+    { length: RING },
     (_, i) =>
-      `r${String(i).padStart(2, '0')}-${String(i + 100).padStart(8, '0')}`
+      `r${String(i).padStart(2, '0')}-${String(i + at).padStart(8, '0')}`
   );
+
+describe('a component too large to search', () => {
+  // Each ring admin revokes the next below its revocation, and the last the
+  // first: one cycle no build searches, so a daemon pauses and the relay picks.
+  const ring = ringOf(100);
   const w = team(A, keysFor([A, ...ring]));
   const ops = [
     ...ring.map((r, i) => admit(A, i + 2, i + 1, r, 'admin')),
-    ...ring.map((r, i) => revoke(r, 2, 100 + i, ring[(i + 1) % 19] ?? r, 1)),
+    ...ring.map((r, i) => revoke(r, 2, 100 + i, ring[(i + 1) % RING] ?? r, 1)),
   ];
 
-  // Rank picks go r00, r02, ... r18, whose cut of r00 leaves r02's removal the
-  // first whose publisher stands at it.
+  // Rank picks go r00, r02, ... and the last's cut of r00 leaves r02's
+  // removal the first whose publisher stands at it.
   it('pauses applying and names the component', () => {
     const v = w.fold(ops);
-    const first = ops[21];
+    const first = ops[RING + 2];
     expect(v.unknown).toEqual({
       hlc: first?.hlc,
       replica: first?.replica,
@@ -567,7 +572,9 @@ describe('a component too large to search', () => {
       hash: first?.hash,
     });
     const problem = v.problems.find((p) => p.message.includes('contest'));
-    expect(problem?.message).toStartWith('19 removals contest one another');
+    expect(problem?.message).toStartWith(
+      `${RING} removals contest one another`
+    );
   });
 
   it('never pauses the relay, which folds the same roster', () => {
@@ -586,5 +593,28 @@ describe('a component too large to search', () => {
     const lifted = w.fold([...ops, revoke(A, 21, 200, ring[5] ?? A, 1)]);
     expect(lifted.unknown).toBeNull();
     expect(lifted.revoked.get(ring[5] ?? A)?.afterSeq).toBe(1);
+  });
+});
+
+describe('a component too large to search whose publishers all fall', () => {
+  // G admits the ring; the last ring admin's second removal revokes G below
+  // those admits, so no publisher in the component stands in the result.
+  const G = 'gee-00000200';
+  const ring = ringOf(300);
+  const w = team(A, keysFor([A, G, ...ring]));
+  const last = ring[RING - 1] ?? A;
+  const ops = [
+    admit(A, 2, 1, G, 'admin'),
+    ...ring.map((r, i) => admit(G, i + 2, i + 2, r, 'admin')),
+    ...ring.map((r, i) => revoke(r, 2, 100 + i, ring[(i + 1) % RING] ?? r, 1)),
+    revoke(last, 3, 200, G, 1),
+  ];
+
+  it('pauses nothing, as every op it names is inert', () => {
+    const v = w.fold(ops);
+    expect(v.unknown).toBeNull();
+    expect(v.revoked.get(G)?.afterSeq).toBe(1);
+    expect(ring.filter((r) => v.members.has(r))).toEqual([]);
+    expect(v.problems.some((p) => p.message.includes('contest'))).toBe(false);
   });
 });

@@ -118,7 +118,7 @@ export interface RosterView {
   /**
    * Set while the fold keeps an unreadable op from a member or admin at it, no
    * observer, or while more removals contest one another than it decides at
-   * once (naming the first whose publisher stands at it); the caller then
+   * once and a publisher among them stands (naming the first); the caller then
    * applies nothing. Always null for the relay.
    */
   unknown: Paused | null;
@@ -1881,8 +1881,9 @@ function notesOf(
     });
   }
   for (const comp of oversized) {
-    // Named by its first removal whose publisher stands at it.
-    const first = (comp.find((r) => standsAt(ev, r.op)) ?? comp[0])?.op;
+    // Named by its first removal whose publisher stands at it; with none,
+    // every op it names is inert and it pauses nothing.
+    const first = comp.find((r) => standsAt(ev, r.op))?.op;
     if (first === undefined) continue;
     unknown ??= { ...positionOf(first), hash: first.hash };
     const ops = comp.map((r) => `${r.op.replica}:${r.op.seq}`).join(', ');
