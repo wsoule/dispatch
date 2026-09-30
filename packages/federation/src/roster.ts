@@ -307,6 +307,51 @@ export function unfoundedRemovals(
   return accepted.filter(unfounded).map((r) => r.op.hash);
 }
 
+/** The final fold's Known(1) removals, its decision, and rights under any cuts. */
+export interface ResolutionProbe {
+  removals: readonly RosterOpRef[];
+  accepted: readonly number[];
+  won: readonly number[];
+  under: (cuts: readonly number[]) => {
+    /** Whether removal i's publisher holds its right. */
+    had: (i: number) => boolean;
+    admins: number;
+    /** Removals i and j by their publishers' rank at each, then position. */
+    rank: (i: number, j: number) => number;
+  };
+}
+
+/** The fold's rights under chosen removals, for the brute-force oracle test. */
+export function resolutionProbe(
+  input: FoldInput,
+  later: LaterPairs
+): ResolutionProbe {
+  const { ctx, accepted, won } = finalFold(input, later).final;
+  const removals = ctx.items
+    .map(removalOf)
+    .filter((r): r is Removal => r !== null && !r.later);
+  // Matched by op: the fold built its own Removal objects.
+  const indexOf = (rs: Iterable<Removal>): number[] =>
+    [...rs]
+      .map((r) => removals.findIndex((x) => x.op === r.op))
+      .filter((i) => i >= 0);
+  const fold = foldsOf(ctx, removals);
+  const at = (i: number): Removal => removals[i];
+  return {
+    removals: removals.map((r) => r.op),
+    accepted: indexOf(accepted),
+    won: indexOf(won),
+    under: (cuts) => {
+      const ev = fold(cuts.map(at));
+      return {
+        had: (i) => hadRight(ctx, ev, at(i)),
+        admins: adminsOf(ev).length,
+        rank: (i, j) => byRank(ev, at(i), at(j)),
+      };
+    },
+  };
+}
+
 // The base fold leaves out every op an eligible dismiss names, valid or not;
 // the final fold only the ops valid ones name.
 function finalFold(
