@@ -785,14 +785,17 @@ function App() {
           openImpact: (subject) => dispatchNav({ type: 'openImpact', subject }),
           // Docs need a teammate or app token, as the Docs view does.
           openDoc: data.messageAccess.canMessage ? openDoc : undefined,
-          threadView: (taskId) => (
-            <TaskThreadTab
-              data={data}
-              taskId={taskId}
-              onOpenRef={openRef}
-              onOpenOverseer={() => setGlobalView('overseer')}
-            />
-          ),
+          // Threads need the same token; without it the page shows no Thread tab.
+          threadView: data.messageAccess.canMessage
+            ? (taskId) => (
+                <TaskThreadTab
+                  data={data}
+                  taskId={taskId}
+                  onOpenRef={openRef}
+                  onOpenOverseer={() => setGlobalView('overseer')}
+                />
+              )
+            : undefined,
         };
 
   // The Cockpit's `d`: dispatch without following the run (it moves into In flight in
