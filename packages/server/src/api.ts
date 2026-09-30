@@ -63,7 +63,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor, humanCredentialRef, humanOperator } from './api/caller.js';
+import { humanActor, humanOperator } from './api/caller.js';
 import {
   addComment,
   addLegacyTaskNote,
@@ -927,9 +927,9 @@ async function createRun(
     // Whoever pressed dispatch, so the run — and its claims, and the
     // decisions it later parks on — is theirs rather than the operator's.
     actor: humanActor(ctx),
-    // Who the run acts for: the credential's own human, never the shared
-    // agentToken, which humanActor credits to the owner.
-    operator: humanCredentialRef(ctx),
+    // Who the run acts for: the credential's own human (the owner only on
+    // the app token), never the shared agentToken.
+    operator: humanOperator(ctx),
   });
   return jsonResponse(meta, 201);
 }
@@ -2043,7 +2043,7 @@ function sendReviewToAgent(
       ? {
           resume: true,
           actor: humanActor(ctx),
-          operator: humanCredentialRef(ctx),
+          operator: humanOperator(ctx),
         }
       : {}
   );
@@ -5617,7 +5617,7 @@ export async function handleApi(
         return jsonResponse(
           ctx.orchestrator.resumeRun(segments[1], {
             actor: humanActor(ctx),
-            operator: humanCredentialRef(ctx),
+            operator: humanOperator(ctx),
           }),
           201
         );

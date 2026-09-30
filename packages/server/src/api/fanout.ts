@@ -9,7 +9,7 @@ import {
   variantTaskInput,
 } from '../fanout.js';
 import type { RunMeta } from '../orchestrator/types.js';
-import { humanCredentialRef } from './caller.js';
+import { humanOperator } from './caller.js';
 import { errorResponse, jsonResponse, readJsonBody } from './http.js';
 
 /**
@@ -29,6 +29,8 @@ type FanoutRouteContext = Pick<
   | 'orchestrator'
   | 'caller'
   | 'viaAgentToken'
+  | 'ownerCredential'
+  | 'actorContext'
   | 'a2a'
 >;
 
@@ -92,8 +94,9 @@ export async function fanoutTask(
         variant.executor,
         {
           ...(variant.model === undefined ? {} : { model: variant.model }),
-          // Each variant acts for the caller's own credential, as a dispatch does.
-          operator: humanCredentialRef(ctx),
+          // Each variant acts for whoever the caller's credential names, as a
+          // dispatch does.
+          operator: humanOperator(ctx),
         }
       );
       result.variants.push({
