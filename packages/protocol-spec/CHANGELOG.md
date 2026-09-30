@@ -62,6 +62,8 @@ vector ids (see §14.2).
   `core.gates.doc-needs-a-deciding-answer`,
   `env.envelope.a-doc-gate-names-its-doc-and-proposal`,
   `env.envelope.doc-gates-have-a-fixed-shape`.
+- [editorial] Appendix A, complete since draft 1, names memory and documents
+  among the daemon routes outside DMP, and no appendix is a stub.
 
 ## 1.0.0-draft.1 (2026-09-28)
 
