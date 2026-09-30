@@ -379,7 +379,8 @@ function decide(
   // Fight winners and removals accepted before any fight: their cuts hold in
   // every outcome.
   const settled = new Set<Removal>();
-  const firstOps = firstAdmissions(ctx, removals);
+  // Kept in first admissions so a right resting on a settled cut is never sure.
+  const bare = outcomesOf(ctx, [], removals).folds;
 
   for (;;) {
     // One accepted on a worst case that failed can lose its right: it waits
@@ -414,7 +415,15 @@ function decide(
     // One whose publisher holds its right however the undecided ones fall is
     // accepted first, so a removal its cut leaves no right never counts.
     const threats = having('accepted', 'open', 'waiting');
-    const sure = robustRights(ctx, firstOps, threats);
+    const admitted = firstAdmissions(ctx, [
+      ...bare,
+      ...outcomesOf(
+        ctx,
+        [...settled],
+        removals.filter((u) => !settled.has(u))
+      ).folds,
+    ]);
+    const sure = robustRights(ctx, admitted, threats);
     const first = open.filter(
       (r) => rightsAt(sure, r.op.replica, r.op.seq, r.op).admin
     );
@@ -1340,12 +1349,8 @@ function cutBelow(accepted: readonly Removal[], r: Removal): boolean {
   );
 }
 
-// The real folds some outcome of the resolution can reach: the one under the
-// `base` cuts, and each adding one of `more` whose publisher could hold its
-// right. Rights only shrink as cuts are accepted, except that a cut can void
-// an earlier admit, recover or recovery key and so let a later one stand. A
-// removal could hold its right when it does in `current` or under `base`, or
-// in the fold adding another removal that could; never by its own cut.
+// The real folds some outcome reaches: under the `base` cuts, and adding each of
+// `more` whose publisher could hold its right (now, or by another such cut).
 function outcomesOf(
   ctx: Context,
   base: readonly Removal[],
@@ -1377,15 +1382,13 @@ function outcomesOf(
   return { could, folds: [bare, ...[...could].map(at)] };
 }
 
-// Each replica's earliest admission, an observer's included, across the
-// grants-only fold and the folds outcomesOf adds to it: no fold the
-// resolution reaches admits it at an earlier op.
+// Each replica's earliest admission, an observer's included, in any of `folds`.
 function firstAdmissions(
   ctx: Context,
-  removals: readonly Removal[]
+  folds: readonly Evaluation[]
 ): ReadonlyMap<string, Position> {
   const first = new Map<string, Position>();
-  for (const ev of outcomesOf(ctx, [], removals).folds)
+  for (const ev of folds)
     for (const [replica, { since }] of ev.holders) {
       const seen = first.get(replica);
       if (seen === undefined || ctx.order(since, seen) < 0)

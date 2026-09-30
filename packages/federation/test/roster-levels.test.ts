@@ -1871,6 +1871,85 @@ describe('a revocation sure to stand', () => {
             s: expected,
           });
     });
+
+  // V's observer admit of T shadows T's admin admit once B's cut of E2 lands
+  // on the settled cut of E1; X's early cut of T keeps T's cut of B unsure.
+  const E1 = 'eo-00000031';
+  const E2 = 'et-00000032';
+  const XI = 'xi-00000016';
+  const V = 'vi-00000022';
+  const T = 'ty-00000033';
+  const s = team(A, keysFor([A, E1, E2, B, XI, V, T]));
+  const cutE2 = revoke(B, 2, 30, E2, 1);
+  const cutB = revoke(T, 2, 31, B, 1);
+  const shadowed = (early: RosterOpRef[]): RosterOpRef[] => [
+    admit(A, 2, 2, E1, 'admin'),
+    admit(A, 3, 3, E2, 'admin'),
+    admit(A, 4, 4, B, 'admin'),
+    admit(A, 5, 5, XI, 'admin'),
+    admit(E1, 2, 10, V, 'member', { observer: true }),
+    admit(E2, 2, 11, V, 'member', { observer: true }),
+    admit(A, 6, 12, V, 'admin'),
+    admit(V, 2, 13, T, 'member', { observer: true }),
+    admit(A, 7, 14, T, 'admin'),
+    ...early,
+    revoke(A, 8, 21, E1, 1),
+    revoke(A, 9, 22, XI, 1),
+    cutE2,
+    cutB,
+  ];
+  const SHADOWED: [
+    string,
+    RosterOpRef[],
+    { s: ReturnType<typeof summary>; cuts: string[] },
+  ][] = [
+    [
+      'finds a first admission a settled cut and one more would give',
+      shadowed([revoke(XI, 2, 20, T, 0)]),
+      {
+        s: {
+          admins: [A, B, V],
+          members: [T],
+          revoked: [
+            [E1, 1],
+            [E2, 1],
+            [XI, 1],
+          ],
+        },
+        cuts: ['accepted', 'void'],
+      },
+    ],
+    [
+      "takes T's cut of B as sure when no early cut delays it",
+      shadowed([]),
+      {
+        s: {
+          admins: [A, E2, T],
+          members: [V],
+          revoked: [
+            [B, 1],
+            [E1, 1],
+            [XI, 1],
+          ],
+        },
+        cuts: ['void', 'accepted'],
+      },
+    ],
+  ];
+
+  for (const [name, ops, expected] of SHADOWED)
+    it(name, () => {
+      for (const level of AT)
+        for (const relay of [false, true]) {
+          const v = s.at(level, ops, { relay });
+          expect({
+            level,
+            relay,
+            s: summary(v),
+            cuts: [cutE2, cutB].map((c) => String(v.resolution.get(c.hash))),
+          }).toEqual({ level, relay, ...expected });
+        }
+    });
 });
 
 // Hinge chains where most admins end cut, some by themselves, so the
