@@ -233,6 +233,19 @@ describe('a staged memory restore', () => {
     expect(p.gate).toBe('m-gate');
   });
 
+  it('skips a retired receipt', async () => {
+    const t = gatedEngine();
+    const old = lostEntry('superseded lesson');
+    stage({ ...old, status: 'retired', statusReason: 'superseded' });
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report).toMatchObject({ restored: 0, skipped: 1, problems: [] });
+    expect(t.shared.listProposals()).toEqual([]);
+  });
+
   it('skips an entry this store holds, or a restore it already made', async () => {
     const t = gatedEngine();
     const held = seed(t, 'team', 'held');

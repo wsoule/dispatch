@@ -279,16 +279,21 @@ export function parseMemoryFile(
   };
 }
 
-// A receipt file as restore reads it: the kind is kept only when Dispatch knows it.
+// A receipt file as restore reads it: the kind is kept only when Dispatch
+// knows it, and the status as written, for restore to skip retired entries.
 export function parseReceiptFile(
   text: string,
   fileName: string
-): ParsedMemoryFile & { kind: MemoryKind } {
+): ParsedMemoryFile & { kind: MemoryKind; status: string | undefined } {
   const dispatch = record(
     record(splitFrontmatter(text).front.metadata).dispatch
   );
   const kind = MEMORY_KINDS.find((k) => k === dispatch.kind) ?? 'fact';
-  return { ...parseMemoryFile(text, fileName), kind };
+  return {
+    ...parseMemoryFile(text, fileName),
+    kind,
+    status: nonEmpty(dispatch.status),
+  };
 }
 
 export function parsedHash(

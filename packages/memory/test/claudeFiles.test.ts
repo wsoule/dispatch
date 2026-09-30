@@ -413,6 +413,18 @@ describe('receipt files', () => {
     expect(parsed.title).toBe(entry.title);
     expect(parsed.body).toBe(entry.body);
     expect(parsed.kind).toBe('hazard');
+    expect(parsed.status).toBe('active');
+    expect(
+      parseReceiptFile(
+        renderReceiptFile({
+          ...entry,
+          status: 'retired',
+          statusReason: 'superseded',
+        }),
+        'x.md'
+      ).status
+    ).toBe('retired (superseded)');
+    expect(parseReceiptFile('just a body', 'x.md').status).toBeUndefined();
   });
 
   it('read an unknown or missing kind as a fact', () => {
