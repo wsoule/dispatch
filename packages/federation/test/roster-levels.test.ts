@@ -1873,7 +1873,7 @@ describe('a revocation sure to stand', () => {
     });
 
   // V's observer admit of T shadows T's admin admit once B's cut of E2 lands
-  // on the settled cut of E1; X's early cut of T keeps T's cut of B unsure.
+  // on the settled cut of E1, so T's cut of B is never sure and B wins on rank.
   const E1 = 'eo-00000031';
   const E2 = 'et-00000032';
   const XI = 'xi-00000016';
@@ -1920,19 +1920,19 @@ describe('a revocation sure to stand', () => {
       },
     ],
     [
-      "takes T's cut of B as sure when no early cut delays it",
+      "lets B win on rank when no early cut delays T's cut of B",
       shadowed([]),
       {
         s: {
-          admins: [A, E2, T],
-          members: [V],
+          admins: [A, B, V],
+          members: [T],
           revoked: [
-            [B, 1],
             [E1, 1],
+            [E2, 1],
             [XI, 1],
           ],
         },
-        cuts: ['void', 'accepted'],
+        cuts: ['accepted', 'void'],
       },
     ],
   ];
@@ -1947,6 +1947,106 @@ describe('a revocation sure to stand', () => {
             relay,
             s: summary(v),
             cuts: [cutE2, cutB].map((c) => String(v.resolution.get(c.hash))),
+          }).toEqual({ level, relay, ...expected });
+        }
+    });
+
+  // Two undecided cuts that shadow a right together leave it unsure: B's cuts
+  // of E1 and E2 void V's admits by them, so V's observer admit of T is first.
+  const Y = 'yu-00000041';
+  const w = team(A, keysFor([A, E1, E2, B, XI, V, T, Y]));
+  const twoCuts = [
+    revoke(B, 2, 30, E1, 1),
+    revoke(B, 3, 31, E2, 1),
+    revoke(T, 2, 32, B, 1),
+  ];
+  const shadowedByTwo = [
+    admit(A, 2, 2, E1, 'admin'),
+    admit(A, 3, 3, E2, 'admin'),
+    admit(A, 4, 4, B, 'admin'),
+    admit(E1, 2, 10, V, 'member', { observer: true }),
+    admit(E2, 2, 11, V, 'member', { observer: true }),
+    admit(A, 6, 12, V, 'admin'),
+    admit(V, 2, 13, T, 'member', { observer: true }),
+    admit(A, 7, 14, T, 'admin'),
+    ...twoCuts,
+  ];
+  // T cuts X instead, and Y (a member through X's admit) cuts B.
+  const cutsX = [
+    revoke(B, 2, 30, E1, 1),
+    revoke(B, 3, 31, E2, 1),
+    revoke(T, 2, 32, XI, 1),
+  ];
+  const cutByY = revoke(Y, 2, 40, B, 0);
+  const shadowedX = (extra: RosterOpRef[]): RosterOpRef[] => [
+    admit(A, 2, 2, E1, 'admin'),
+    admit(A, 3, 3, E2, 'admin'),
+    admit(A, 4, 4, B, 'admin'),
+    admit(A, 5, 5, XI, 'admin'),
+    admit(E1, 2, 10, V, 'member', { observer: true }),
+    admit(E2, 2, 11, V, 'member', { observer: true }),
+    admit(A, 8, 12, V, 'admin'),
+    admit(V, 2, 13, T, 'member', { observer: true }),
+    admit(A, 9, 14, T, 'admin'),
+    admit(XI, 2, 20, Y, 'member'),
+    admit(A, 10, 21, Y, 'admin'),
+    ...cutsX,
+    ...extra,
+  ];
+  const settledX = {
+    admins: [A, B, XI, V],
+    members: [T, Y],
+    revoked: [
+      [E1, 1],
+      [E2, 1],
+    ],
+  };
+  const TWO_CUTS: [
+    string,
+    RosterOpRef[],
+    RosterOpRef[],
+    { s: ReturnType<typeof summary>; cuts: string[] },
+  ][] = [
+    [
+      'keeps a right two undecided cuts remove together unsure',
+      shadowedByTwo,
+      twoCuts,
+      {
+        s: {
+          admins: [A, B, V],
+          members: [T],
+          revoked: [
+            [E1, 1],
+            [E2, 1],
+          ],
+        },
+        cuts: ['accepted', 'accepted', 'void'],
+      },
+    ],
+    [
+      'voids a cut whose publisher two undecided cuts leave rightless',
+      shadowedX([]),
+      cutsX,
+      { s: settledX, cuts: ['accepted', 'accepted', 'void'] },
+    ],
+    [
+      'changes nothing when a member only a void cut would promote cuts B',
+      shadowedX([cutByY]),
+      [...cutsX, cutByY],
+      { s: settledX, cuts: ['accepted', 'accepted', 'void', 'void'] },
+    ],
+  ];
+
+  for (const [name, ops, cuts, expected] of TWO_CUTS)
+    it(name, () => {
+      for (const level of AT)
+        for (const relay of [false, true]) {
+          const v = w.at(level, ops, { relay });
+          expect({
+            level,
+            relay,
+            s: summary(v),
+            cuts: cuts.map((c) => String(v.resolution.get(c.hash))),
           }).toEqual({ level, relay, ...expected });
         }
     });

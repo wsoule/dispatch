@@ -376,8 +376,8 @@ function decide(
   // or the removals they beat would return and never settle; and those sent back.
   const won = new Set<Removal>();
   const demoted = new Set<Removal>();
-  // Fight winners and removals accepted before any fight: their cuts hold in
-  // every outcome.
+  // Fight winners and removals accepted before any fight, less those that lose
+  // their right: their cuts hold in every outcome.
   const settled = new Set<Removal>();
   // Kept in first admissions so a right resting on a settled cut is never sure.
   const bare = outcomesOf(ctx, [], removals).folds;
@@ -393,6 +393,7 @@ function decide(
         if (hadRight(ctx, evaluate(ctx, others), s)) continue;
         status.set(s, demoted.has(s) ? 'void' : 'waiting');
         demoted.add(s);
+        settled.delete(s);
         lost = true;
       }
     }
@@ -416,6 +417,8 @@ function decide(
     // accepted first, so a removal its cut leaves no right never counts.
     const threats = having('accepted', 'open', 'waiting');
     const admitted = firstAdmissions(ctx, [
+      // Every threat at once: a right two cuts remove together is not sure.
+      evaluate(ctx, threats),
       ...bare,
       ...outcomesOf(
         ctx,
