@@ -466,6 +466,31 @@ describe('decline and revocation', () => {
     expect(handle.a2a.store!.getTask(two.taskId)?.state).toBe('FAILED');
   });
 
+  it('refuses to decline a handoff, which its proposal gate answers', async () => {
+    const { caller } = await approvedClient('acme');
+    const opened = await handle.a2a.port!.open(caller, {
+      clientMessageId: 'c-h1',
+      contextId: null,
+      kind: 'handoff',
+      to: null,
+      replyTo: null,
+      body: 'Please add limits.',
+      refs: [],
+      work: { skill: 'handoff', title: 'Rate-limit uploads' },
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const res = await fetch(`${base}/api/a2a/tasks/${opened.taskId}/decline`, {
+      method: 'POST',
+      headers: json,
+      body: '{}',
+    });
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as { error: string }).error).toContain(
+      'proposal gate'
+    );
+    expect(handle.a2a.store!.getTask(opened.taskId)?.declinedAt).toBeNull();
+  });
+
   it('refuses to decline a finished ask, an unknown one, and below the decide tier', async () => {
     const { caller } = await approvedClient('acme');
     const opened = await handle.a2a.port!.open(caller, {
