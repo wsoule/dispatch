@@ -24,6 +24,7 @@ import {
 import { join } from 'node:path';
 import { parse, stringify } from 'yaml';
 
+import { a2aConfig } from '../../src/a2a/bridge.js';
 import type { GuardDeps } from '../../src/a2a/guards.js';
 import {
   dispatchRefusal,
@@ -746,9 +747,26 @@ describe('a handoff in a Linear-style project', () => {
     const config = existsSync(path)
       ? (parse(readFileSync(path, 'utf8')) as Record<string, unknown>)
       : {};
-    config.statuses = LINEAR.definitions.map((d) => d.name);
+    // Typed statuses and roles, as a Linear sync writes them; the handoff
+    // code reads them through the bridge's own config reader.
+    config.statuses = LINEAR.definitions.map((d) => ({ ...d }));
+    config.statusRoles = { ...LINEAR.roles, dispatched: 'In Progress' };
     writeFileSync(path, stringify(config));
-    f.deps.statuses = () => handoffStatuses(LINEAR);
+    f.deps.statuses = () => a2aConfig(project.root()).statuses;
+  });
+
+  it('reads the project status model, not built-in names', () => {
+    const statuses = a2aConfig(project.root()).statuses;
+    expect(statuses).toMatchObject({
+      draft: 'Backlog',
+      ready: 'Todo',
+      landed: 'Done',
+      dropped: 'Canceled',
+    });
+    expect(statuses.phase('Triage')).toBe('draft');
+    expect(statuses.phase('Duplicate')).toBe('dropped');
+    expect(statuses.phase('In Review')).toBe('review');
+    expect(statuses.phase('In Progress')).toBe('working');
   });
 
   it('drafts in the backlog status and approves into the ready role', async () => {
