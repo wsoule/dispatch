@@ -241,6 +241,33 @@ describe('shared writes', () => {
     expect(t.shared.countEntries()).toBe(0);
   });
 
+  it('a run’s shared save defaults its epic to the task’s parent epic', async () => {
+    const t = setup();
+    t.host.tasks.set('t-1a2b3c', {
+      taskId: 't-1a2b3c',
+      title: 'x',
+      body: '',
+      writes: [],
+      epic: 'e-000001',
+      risk: 'routine',
+      a2a: false,
+    });
+    const lesson = { scope: 'team', kind: 'hazard', body: 'b' } as const;
+    const unnamed = (await t.engine.save(RUN, { ...lesson, title: 'a' })) as {
+      proposal: string;
+    };
+    const named = (await t.engine.save(RUN, {
+      ...lesson,
+      title: 'b',
+      epic: null,
+    })) as { proposal: string };
+    expect(
+      [unnamed, named].map(
+        (p) => t.shared.getProposal(p.proposal)?.content?.epic
+      )
+    ).toEqual(['e-000001', null]);
+  });
+
   it('promotes a personal entry by copying it; the source stays', async () => {
     const t = setup();
     const e = (await t.engine.save(RUN, {

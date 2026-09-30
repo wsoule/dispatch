@@ -515,7 +515,12 @@ export class MemoryEngine {
       input.scope === 'personal' && input.projectOnly === true
         ? this.deps.host.projectKey()
         : null;
-    const valid = validateMemoryInput({ ...input, projectKey });
+    // A run's shared save that names no epic reaches its task's parent epic.
+    const epic =
+      input.epic === undefined && input.scope !== 'personal'
+        ? this.rankContext(this.deps.host.taskOfPrincipal(principal)).epic
+        : input.epic;
+    const valid = validateMemoryInput({ ...input, epic, projectKey });
     if (valid.scope === 'personal')
       return this.savePersonal(viewer, valid, input);
     const scope = valid.scope;
