@@ -60,7 +60,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor, humanCredentialRef } from './api/caller.js';
+import { humanActor, humanCredentialRef, humanOperator } from './api/caller.js';
 import { fanoutTask } from './api/fanout.js';
 import {
   listDirectory,
@@ -3012,6 +3012,7 @@ async function dispatchPrAgentReview(
       // Findings belong on the PR, not on a run: this review has no run to
       // comment on — it reads the PR's head straight out of its own worktree.
       target: { kind: 'pr', number: pr.number },
+      operator: humanOperator(ctx),
     });
     ctx.events.broadcast({ type: 'task.changed' });
     return meta;

@@ -289,6 +289,7 @@ describe('openMessaging', () => {
       human
     );
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -332,6 +333,7 @@ describe('openMessaging', () => {
     const human = { address: 'human:wyat', canDecide: true };
 
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -555,6 +557,7 @@ describe('wake gate handler', () => {
     const task = store.create({ title: 'Under review' });
     const messaging = await openRecovered(project.root(), orchestrator, store);
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -632,6 +635,7 @@ describe('wake gate handler', () => {
     // human's wake sent now blocks as well.
     let duringRetry: (() => Promise<void>) | null = async () => {
       review = await orchestrator.dispatchAuxRun({
+        operator: null,
         taskId: task.meta.id,
         kind: 'review',
         head: 'main',

@@ -1,6 +1,13 @@
 import { gateOf } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import {
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -11,7 +18,11 @@ import type {
   ExecutorRun,
   ExecutorStartOptions,
 } from '../../src/orchestrator/types.js';
-import { initGitRepo, StallingExecutor } from '../orchestrator/helpers.js';
+import {
+  initGitRepo,
+  runGitSync,
+  StallingExecutor,
+} from '../orchestrator/helpers.js';
 import { rawFetch, useTestAuth } from '../testAuth.js';
 
 // Who a continued, resumed or woken run acts for over HTTP: whoever caused it
@@ -304,5 +315,97 @@ describe('who a continued, resumed or woken run acts for', () => {
     ).toBe('human:ada');
     const woken = await wakeAs(ada, `run:${runId}`, runId);
     expect(woken.operator).toBe('human:ada');
+  });
+});
+
+// Finishes the latest started run with one commit on its branch, so a review
+// has a range to read.
+async function finishWithCommit(runId: string): Promise<void> {
+  const run = handle.orchestrator.list().find((r) => r.id === runId);
+  if (run === undefined) throw new Error(`no run ${runId}`);
+  runGitSync(run.worktreePath, ['commit', '--allow-empty', '-m', 'work']);
+  executor.events
+    .at(-1)
+    ?.onFinish({ state: 'finished', sessionId: 'session-1' });
+  await waitFor(() => runState(runId) === 'finished');
+}
+
+function appendConfig(yaml: string): void {
+  const file = join(root, '.dispatch', 'config.yml');
+  const current = existsSync(file) ? readFileSync(file, 'utf8') : '';
+  writeFileSync(file, `${current}\n${yaml}`);
+}
+
+// Presses "Review & fix" as `token` and returns the review run it started.
+async function reviewAndFix(taskId: string, token: string) {
+  const res = await rawFetch(`${base}/api/tasks/${taskId}/fix-loop/start`, {
+    method: 'POST',
+    headers: authHeaders(token),
+  });
+  expect(res.status).toBe(200);
+  const loop = await json<{ reviewRunId?: string }>(res);
+  const review = handle.orchestrator
+    .list()
+    .find((r) => r.id === loop.reviewRunId);
+  if (review === undefined) throw new Error('no review run');
+  return review;
+}
+
+describe('who an auxiliary run acts for', () => {
+  it("a teammate's Review & fix on the owner's task acts for the teammate", async () => {
+    const secret = await saveSecret();
+    const { runId, taskId } = await liveRun('owner task');
+    await finishWithCommit(runId);
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const review = await reviewAndFix(taskId, ada);
+    expect(review.operator).toBe('human:ada');
+    await waitFor(() => runState(review.id) === 'running');
+    expect(await latestRunReads()).not.toContain(secret);
+  });
+
+  it("a teammate's verify of the owner's task acts for the teammate", async () => {
+    const secret = await saveSecret();
+    appendConfig('verify:\n  url: http://localhost:3000\n');
+    const { runId, taskId } = await liveRun('owner task');
+    await finishWithCommit(runId);
+    const branch = handle.orchestrator
+      .list()
+      .find((r) => r.id === runId)?.branch;
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const res = await rawFetch(`${base}/api/tasks/${taskId}/verify`, {
+      method: 'POST',
+      headers: authHeaders(ada),
+      body: JSON.stringify({ head: branch }),
+    });
+    expect(res.status).toBe(202);
+    const verify = await json<{ id: string; operator?: string | null }>(res);
+    expect(verify.operator).toBe('human:ada');
+    await waitFor(() => runState(verify.id) === 'running');
+    expect(await latestRunReads()).not.toContain(secret);
+  });
+
+  it("the owner's Review & fix with the app token acts for the owner", async () => {
+    const secret = await saveSecret();
+    const { runId, taskId } = await liveRun('owner task');
+    await finishWithCommit(runId);
+    const review = await reviewAndFix(taskId, handle.tokens.appToken);
+    expect(review.operator).toBe('human:test');
+    await waitFor(() => runState(review.id) === 'running');
+    expect(await latestRunReads()).toContain(secret);
+  });
+
+  it("an automatic review after the owner's run keeps the owner", async () => {
+    appendConfig('fixLoop:\n  auto: true\n');
+    const { runId, taskId } = await liveRun('owner task');
+    await finishWithCommit(runId);
+    await waitFor(() =>
+      handle.orchestrator
+        .list()
+        .some((r) => r.taskId === taskId && r.kind === 'review')
+    );
+    const review = handle.orchestrator
+      .list()
+      .find((r) => r.taskId === taskId && r.kind === 'review');
+    expect(review?.operator).toBe('human:test');
   });
 });

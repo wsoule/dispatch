@@ -1792,6 +1792,7 @@ describe('messaging routes — direct unit coverage', () => {
     );
 
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',
@@ -1821,6 +1822,7 @@ describe('messaging routes — direct unit coverage', () => {
   it('tells a review run it cannot join a channel, with or without a member', async () => {
     const task = store.create({ title: 'Reviewed task' });
     const review = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'main',

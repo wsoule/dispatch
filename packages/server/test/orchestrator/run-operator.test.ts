@@ -196,20 +196,21 @@ describe('who a run acts for', () => {
   });
 
   it.each(['review', 'verify', 'execute'] as const)(
-    'a %s aux run acts for the run it reviews, verifies or replaces',
+    'a %s aux run acts for the operator its starter names, not the task’s last run',
     async (kind) => {
       // `execute` is the fix loop's fresh implementer.
       const task = store.create({ title: `f-${kind}` });
       const exec = await finished(
         await orch.dispatch(task.meta.id, 'claude', {
-          actor: 'human:ada',
-          operator: 'human:ada',
+          actor: 'human:wyat',
+          operator: 'human:wyat',
         })
       );
       const aux = await orch.dispatchAuxRun({
         taskId: task.meta.id,
         kind,
         head: exec.branch,
+        operator: 'human:ada',
         buildPrompt: () => kind,
       });
       expect(runOperator(aux)).toBe('human:ada');
@@ -218,13 +219,19 @@ describe('who a run acts for', () => {
     }
   );
 
-  it('an aux run of a task whose last run acted for no one acts for no one', async () => {
+  it('an aux run started for no one acts for no one, whoever ran the task', async () => {
     const task = store.create({ title: 'f-none' });
-    const exec = await finished(await orch.dispatch(task.meta.id, 'claude'));
+    const exec = await finished(
+      await orch.dispatch(task.meta.id, 'claude', {
+        actor: 'human:wyat',
+        operator: 'human:wyat',
+      })
+    );
     const verify = await orch.dispatchAuxRun({
       taskId: task.meta.id,
       kind: 'verify',
       head: exec.branch,
+      operator: null,
       buildPrompt: () => 'verify',
     });
     expect(runOperator(verify)).toBeNull();

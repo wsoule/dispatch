@@ -265,6 +265,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -296,6 +297,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -334,7 +336,11 @@ describe('VerificationRunner', () => {
     const task = store.create({ title: 'harden sync' });
     const head = commitHead();
 
-    await runner.startVerification({ taskId: task.meta.id, head });
+    await runner.startVerification({
+      operator: null,
+      taskId: task.meta.id,
+      head,
+    });
 
     await waitFor(() => runner.getLatestResult(task.meta.id) !== null);
     expect(runner.getLatestResult(task.meta.id)?.pass).toBe(false);
@@ -352,7 +358,11 @@ describe('VerificationRunner', () => {
     const task = store.create({ title: 'harden sync' });
     const head = commitHead();
 
-    await runner.startVerification({ taskId: task.meta.id, head });
+    await runner.startVerification({
+      operator: null,
+      taskId: task.meta.id,
+      head,
+    });
 
     await waitFor(() => runner.getLatestResult(task.meta.id) !== null);
     const latest = runner.getLatestResult(task.meta.id);
@@ -373,6 +383,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -401,6 +412,7 @@ describe('VerificationRunner', () => {
     const head = commitHead();
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });
@@ -437,6 +449,7 @@ describe('VerificationRunner executor inheritance', () => {
     );
 
     const result = await runner.startVerification({
+      operator: null,
       taskId: task.meta.id,
       head,
     });

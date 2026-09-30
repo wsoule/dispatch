@@ -358,6 +358,7 @@ describe('aux run memory', () => {
     const task = t.store.create({ title: 'aux' });
     const aux = (kind: 'review' | 'execute', prompt: string) =>
       t.orchestrator.dispatchAuxRun({
+        operator: null,
         taskId: task.meta.id,
         kind,
         head: 'main',
@@ -389,6 +390,7 @@ describe('aux run memory', () => {
     const task = t.store.create({ title: 'fix loop' });
     expect(() =>
       t.orchestrator.dispatchAuxRun({
+        operator: null,
         taskId: task.meta.id,
         kind: 'execute',
         head: 'main',

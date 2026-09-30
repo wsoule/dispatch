@@ -103,6 +103,8 @@ export interface StartReviewOptions {
   // Where findings should be filed as comments. Omitted falls back to the
   // reviewed run, matching every caller that predates PR-targeted reviews.
   target?: ReviewTarget;
+  // Who the review run acts for (see Orchestrator.dispatchAuxRun).
+  operator: string | null;
 }
 
 export interface ReviewPromptInput {
@@ -836,6 +838,7 @@ export class ReviewRunner {
       head: opts.head,
       executor,
       model: reviewModelForRisk(task.meta.risk, models),
+      operator: opts.operator,
       buildPrompt: ({ runId, worktreePath }) => {
         const changed = changedFiles(this.ctx.rootDir, opts.base, opts.head);
         this.recordUndeclaredWrites(task, changed, opts.round);

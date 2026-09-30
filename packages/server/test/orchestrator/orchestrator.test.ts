@@ -172,6 +172,7 @@ describe('Orchestrator execute runs on a derived task', () => {
     // the caller's own `await` that turns this into a rejection).
     expect(() =>
       orchestrator.dispatchAuxRun({
+        operator: null,
         taskId: task.meta.id,
         kind: 'execute',
         head: 'HEAD',
@@ -196,6 +197,7 @@ describe('Orchestrator execute runs on a derived task', () => {
     });
 
     const meta = await orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: task.meta.id,
       kind: 'review',
       head: 'HEAD',

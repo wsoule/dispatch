@@ -870,6 +870,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     const meta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -921,6 +922,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     const reviewMeta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -975,6 +977,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     const reviewMeta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1031,6 +1034,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     const reviewMeta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1074,6 +1078,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     const meta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1101,6 +1106,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     const meta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1127,6 +1133,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     const meta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1150,6 +1157,7 @@ describe('ReviewRunner', () => {
 
     await expect(
       runner.startReview({
+        operator: null,
         taskId: task.meta.id,
         base: 'not-a-real-sha',
         head,
@@ -1171,6 +1179,7 @@ describe('ReviewRunner', () => {
     ).toBe('');
 
     const meta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base: runGitSync(repo, ['rev-parse', 'HEAD~1']).trim(),
       head,
@@ -1206,6 +1215,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1255,6 +1265,7 @@ describe('ReviewRunner', () => {
     const head = runGitSync(repo, ['rev-parse', 'HEAD']).trim();
 
     await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1278,6 +1289,7 @@ describe('ReviewRunner', () => {
     const { base, head } = commitRange();
 
     await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,
@@ -1366,6 +1378,7 @@ describe('ReviewRunner executor choice', () => {
     );
 
     const meta = await runner.startReview({
+      operator: null,
       taskId: task.meta.id,
       base,
       head,

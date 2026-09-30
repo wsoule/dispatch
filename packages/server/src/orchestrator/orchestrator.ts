@@ -936,6 +936,9 @@ export class Orchestrator {
     model?: string;
     effort?: EffortLevel;
     buildPrompt: (ctx: { runId: string; worktreePath: string }) => string;
+    // Who the run acts for: the human who started it, or for a run the
+    // system starts after another run, that run's operator.
+    operator: string | null;
   }): Promise<RunMeta> {
     const task = this.ctx.store.get(opts.taskId);
     if (task === null) {
@@ -976,10 +979,7 @@ export class Orchestrator {
       model: opts.model,
       ...this.effortField(opts.effort),
       kind: opts.kind,
-      // Acts for whoever the run it reviews, verifies or replaces acted for.
-      operator: this.a2a(opts.taskId)
-        ? null
-        : this.operatorForTask(opts.taskId),
+      operator: this.a2a(opts.taskId) ? null : opts.operator,
       memoryLineage: runId,
       claims: [...task.meta.writes],
     };
@@ -2189,15 +2189,6 @@ export class Orchestrator {
   // The same answer for memory, which keeps project scope from A2A runs.
   isA2ATask(taskId: string): boolean {
     return this.a2a(taskId);
-  }
-
-  // Who the task's latest execute run acts for: the operator of a wake, review,
-  // verify or fix-loop run of the same task.
-  operatorForTask(taskId: string): string | null {
-    const latest = this.registry
-      .list()
-      .find((r) => r.taskId === taskId && runKind(r) === 'execute');
-    return latest === undefined ? null : runOperator(latest);
   }
 
   // A human's wake of one ended execute run continues exactly that run, for `operator`.
