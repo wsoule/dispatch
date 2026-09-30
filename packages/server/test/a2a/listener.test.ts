@@ -337,6 +337,26 @@ describe('the A2A listener', () => {
     expect(h.a2a.status().suggestedPort).toBeNull();
   });
 
+  it('proposes a port nothing holds, not a fixed one', async () => {
+    const first = await boot();
+    const taken = first.a2a.status().suggestedPort;
+    expect(taken).not.toBeNull();
+    await first.stop();
+    handle = null;
+    const holder = Bun.serve({
+      port: taken!,
+      hostname: '127.0.0.1',
+      fetch: () => new Response(''),
+    });
+    try {
+      const next = (await boot()).a2a.status().suggestedPort;
+      expect(next).not.toBeNull();
+      expect(next).not.toBe(taken);
+    } finally {
+      await holder.stop(true);
+    }
+  });
+
   it('names the daemon’s team-local TLS files, and none without them', async () => {
     const plain = await boot();
     expect(plain.a2a.status().teamTls).toBeNull();

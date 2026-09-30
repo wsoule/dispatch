@@ -42,6 +42,15 @@ const handoffTask = (
   phase,
   approved,
 });
+it('reports an ask whose task was dropped with the drop sentence, not a late answer', () => {
+  const decision = decideState(facts({ recipientTaskDropped: true, answer }));
+  expect(decision.state).toBe('FAILED');
+  expect(decision.status).toMatchObject({
+    kind: 'fixed',
+    text: 'The task this was asked of was dropped.',
+  });
+});
+
 const view = {
   client: CLIENT,
   extensions: new Set<never>(),

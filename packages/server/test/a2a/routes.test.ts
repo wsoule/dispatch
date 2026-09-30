@@ -1,5 +1,6 @@
 import { decideState } from '@dispatch/a2a';
 import { openSqliteDb, TaskStore } from '@dispatch/core';
+import { MessagingError } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it, spyOn } from 'bun:test';
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -496,6 +497,34 @@ describe('decline and revocation', () => {
       spy.mockRestore();
     }
     expect(atClose).toEqual(expect.any(String));
+  });
+
+  it('takes the decline back when an answer wins the race to close', async () => {
+    const { caller } = await approvedClient('acme');
+    const port = handle.a2a.port!;
+    const opened = await port.open(caller, {
+      clientMessageId: 'c-1',
+      contextId: null,
+      kind: 'ask',
+      to: null,
+      replyTo: null,
+      body: 'q1',
+      refs: [],
+    });
+    if (opened.kind !== 'task') throw new Error('expected a task');
+    const spy = spyOn(port.deps.engine, 'close').mockImplementation(() => {
+      throw new MessagingError('conflict', 'already answered');
+    });
+    try {
+      const res = await fetch(
+        `${base}/api/a2a/tasks/${opened.taskId}/decline`,
+        { method: 'POST', headers: json, body: '{}' }
+      );
+      expect(res.status).toBe(409);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(handle.a2a.store!.getTask(opened.taskId)?.declinedAt).toBeNull();
   });
 
   it('refuses to decline a handoff, which its proposal gate answers', async () => {

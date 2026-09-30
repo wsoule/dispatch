@@ -31,7 +31,7 @@ import {
   ProposalGuard,
 } from '../../src/a2a/guards.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
-import { reconcileA2A } from '../../src/a2a/reconcile.js';
+import { reconcileA2A, reconcileHandoff } from '../../src/a2a/reconcile.js';
 import { consultProjectPolicy } from '../../src/policyEngine.js';
 import { HUMAN, useTempProject } from '../messaging/harness.js';
 import { bridgeFixture } from './fixture.js';
@@ -391,6 +391,33 @@ describe('a handoff', () => {
     }
     expect(atClose).toEqual(expect.any(String));
     expect(await state(one.id)).toBe('CANCELED');
+  });
+
+  // A retry's reconcile can build the draft while the first send settles.
+  it('builds one draft and gate when a retry links the root first', async () => {
+    const insert = f.store.insertTask.bind(f.store);
+    let racing: Promise<void> | null = null;
+    const spy = spyOn(f.store, 'insertTask').mockImplementation((row) => {
+      const inserted = insert(row);
+      if (row.skill === 'handoff' && racing === null)
+        racing = reconcileHandoff(f.deps, f.watch, f.store.getTask(row.id)!);
+      return inserted;
+    });
+    try {
+      await open();
+      await racing;
+    } finally {
+      spy.mockRestore();
+    }
+    expect(racing).not.toBeNull();
+    expect(
+      f.tasks.list().filter((t) => t.meta.labels.includes('a2a'))
+    ).toHaveLength(1);
+    expect(
+      f.messaging.engine
+        .openBlocking()
+        .filter((m) => gateOf(m)?.type === 'task-proposal')
+    ).toHaveLength(1);
   });
 
   // A crash between recording the cancel and closing the gate leaves the gate open.
