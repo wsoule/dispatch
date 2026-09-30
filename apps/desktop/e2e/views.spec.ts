@@ -1,5 +1,7 @@
 import { expect, type Page, test } from '@playwright/test';
 
+import { APP_TOKEN } from './paths';
+
 // Each shot opens its view from the sidebar row carrying its `data-nav-item`
 // (a `ProjectView` id), so a new rail row cannot shift which view a shot shows.
 const VIEWS = [
@@ -39,10 +41,11 @@ function requireToken(): string {
 
 // `baseURL` already carries `?root=&port=`. A relative `page.goto('/')` would
 // replace that whole path+query per WHATWG URL joining rules, so the token
-// has to be appended to the full URL string instead of joined onto it.
+// has to be appended to the full URL string instead of joined onto it. The app
+// token opens the window as the owner, which Threads needs to show its threads.
 function authedUrl(baseURL: string | undefined): string {
   if (!baseURL) throw new Error('baseURL is not configured');
-  return `${baseURL}&token=${requireToken()}`;
+  return `${baseURL}&token=${requireToken()}&appToken=${APP_TOKEN}`;
 }
 
 // The app opens on Home (appNav.ts's initialNavState), so this opens Overview
