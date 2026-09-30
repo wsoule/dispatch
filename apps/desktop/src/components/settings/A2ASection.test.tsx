@@ -38,6 +38,7 @@ const CLOSED: A2AListenerStatus = {
   legacyClients: [],
   settings: OFF,
   teamTls: null,
+  suggestedPort: 51234,
 };
 
 const WILDCARD: A2AListenerSettings = {
@@ -145,14 +146,14 @@ function mount(
   return client;
 }
 
-test('the listener is off by default and turning it on sends loopback settings', async () => {
+test('the listener is off by default and turning it on sends loopback on the proposed port', async () => {
   const client = mount();
   expect(await screen.findByText(/Off/)).toBeTruthy();
   fireEvent.click(screen.getByRole('switch', { name: 'A2A listener' }));
   fireEvent.click(screen.getByRole('button', { name: 'Save listener' }));
   await waitFor(() =>
     expect(client.setA2AListener).toHaveBeenCalledWith(
-      expect.objectContaining({ enabled: true, host: '127.0.0.1', port: 7450 })
+      expect.objectContaining({ enabled: true, host: '127.0.0.1', port: 51234 })
     )
   );
   expect(

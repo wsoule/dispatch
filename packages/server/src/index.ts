@@ -40,10 +40,12 @@ import type { ListenerOverrides } from './a2a/settings.js';
 import type { AiTaskFilterPort } from './aiTaskFilter.js';
 import {
   bearerToken,
+  createTaskChecked,
   handleApi,
   isTrustedOrigin,
   mintDaemonTokens,
   rejectUnauthorized,
+  validateTaskInput,
 } from './api.js';
 import type { ApiContext, DaemonTokenPair, DaemonTokens } from './api.js';
 import { spawnGitSync } from './blockingGit.js';
@@ -1305,8 +1307,7 @@ async function bootServer(
     // (opts.prCommandRunner) for the PR-head-ref delete a retiring review does.
     commandRunner: opts.prCommandRunner,
     autoResumeQuietMs: opts.autoResumeQuietMs,
-    // Memory and docs share one A2A-provenance answer: the a2a label or the
-    // bridge's provenance line, failing closed on an unparsable task.
+    // Docs' answer: the bridge's evidence once it has opened (see bindA2AOrigin).
     isA2ATask: (taskId) => docsHost.a2aOrigin(taskId),
   });
   orchestrator.setDocsPort(docs.service);
@@ -1395,10 +1396,29 @@ async function bootServer(
   orchestrator.setMemoryPort(memory);
   // After recovery, so the bridge reconciles against settled messaging state;
   // its listener opens only once the daemon's own ports are known (below).
+  // PrManager is built further down; until it is, no PR counts as open.
+  let prLookup: PrManager | null = null;
   const a2a = openA2ABridge({
     rootDir,
     messaging,
     tasks: store,
+    validateTask: (input) => validateTaskInput(rootDir, { ...input }),
+    // Validated by validateTask first, so a refusal here is a bug.
+    createTask: (input) => {
+      const created = createTaskChecked(
+        { rootDir, store, cache, events },
+        input
+      );
+      if (!created.ok) throw new Error(created.error);
+      return created.doc;
+    },
+    updateTask: (id, patch) => {
+      const doc = store.update(id, patch);
+      cache.rebuild(store);
+      events.broadcast({ type: 'task.changed' });
+      return doc;
+    },
+    prOpen: (url) => prLookup?.cachedPrByUrl(url) !== undefined,
     orchestrator,
     events,
     ownerRef: actorContext.humanRef,
@@ -1416,6 +1436,7 @@ async function bootServer(
     mark: (label) => watchdog.mark(label),
     track: (fn) => (idle === null ? fn() : idle.track(fn)),
   });
+  docsHost.bindA2AOrigin((taskId) => a2a.taskOrigin(taskId) === 'a2a');
 
   // Phase 5 P1, revised Phase 7: the planner registry (real ClaudePlanner
   // under 'claude' by default; tests/bin.ts's DISPATCH_ENABLE_FAKES override
@@ -1523,6 +1544,7 @@ async function bootServer(
     prCapability,
     opts.prCommandRunner
   );
+  prLookup = prManager;
 
   // Hand-merged run branches (a git merge/squash done in a plain checkout,
   // outside review() and outside any PR) never get their reviewedAt set by

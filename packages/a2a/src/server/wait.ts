@@ -8,9 +8,8 @@ function settled(facts: TaskFacts | null): boolean {
   return TERMINAL_STATES.has(state) || INTERRUPTED_STATES.has(state);
 }
 
-// Waits for a terminal or interrupted state, at most maxMs (the documented
-// MUST deviation); always unsubscribes, whichever way it ends. A watch that
-// throws rejects before the timer or abort listener is armed.
+// Waits at most maxMs for a terminal or interrupted state (a documented MUST
+// deviation), always unsubscribing however it ends.
 export async function waitForSettled(
   port: BridgePort,
   caller: Caller,

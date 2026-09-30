@@ -891,6 +891,15 @@ export class DeliveryEngine {
     return this.store.getMessage(id);
   }
 
+  /** What `address` sent at or after `sinceIso`, oldest first, optionally only these kinds. */
+  messagesFrom(
+    address: Address,
+    sinceIso: string,
+    kinds?: MessageKind[]
+  ): Message[] {
+    return this.store.messagesFrom(address, sinceIso, kinds);
+  }
+
   answerOf(questionId: string): Message | null {
     return this.store.answersTo(questionId)[0] ?? null;
   }

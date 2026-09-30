@@ -51,7 +51,7 @@ import {
 } from './toolApproval.js';
 
 // Gate types dispatchd implements a handler for; a sub-project adds its type
-// here with its handler.
+// here with its handler (task-proposal's is the A2A bridge's).
 const DISPATCH_GATE_TYPES = [
   'tool-approval',
   'scope',
@@ -59,6 +59,7 @@ const DISPATCH_GATE_TYPES = [
   'agent-registration',
   'overseer-action',
   'memory',
+  'task-proposal',
 ] as const;
 
 // What overseer gate answers apply to: the OverseerManager, once it exists.

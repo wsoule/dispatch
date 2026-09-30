@@ -11,6 +11,7 @@ import {
 import { memo, useMemo, useState } from 'react';
 
 import { useStickToBottom } from '../../hooks/useStickToBottom';
+import { isFromA2A } from '../../lib/a2a';
 import type { DecideAvailability } from '../../lib/daemonAuth';
 import type { RunQuestion, RunScopeRequest } from '../../lib/gates';
 import type { PendingApproval } from '../../lib/pendingApprovals';
@@ -143,6 +144,10 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
   const kind = delivered?.kind;
   const badge = kind === undefined ? undefined : kindLabel(kind);
   const sender = entry.fromLabel ?? delivered?.from;
+  // An A2A or external sender's body shows as typed, so it cannot load an image or link out.
+  const plain =
+    delivered?.external === true ||
+    isFromA2A({ from: delivered?.from ?? sender ?? '' });
   // Only the viewer's own line, or composer text with no sender, reads as "You" on the
   // right; a teammate's sits on the left with the other senders.
   const own = fromUser && (sender === undefined || sender === me);
@@ -175,10 +180,16 @@ const ChatMessageBubble = memo(function ChatMessageBubble({
           `${kind ?? 'message'} from ${sender ?? 'another agent'}`
         )}
       </div>
-      <Markdown
-        content={delivered?.body ?? text}
-        className="font-book text-[13px]"
-      />
+      {plain ? (
+        <p className="font-book text-[13px] break-words whitespace-pre-wrap">
+          {delivered?.body ?? text}
+        </p>
+      ) : (
+        <Markdown
+          content={delivered?.body ?? text}
+          className="font-book text-[13px]"
+        />
+      )}
       {notes.length > 0 && (
         <div className="text-muted-foreground font-book text-[12px]">
           {notes.map((line, i) => (

@@ -1259,6 +1259,8 @@ export interface A2AListenerStatus {
   settings: A2AListenerSettings;
   // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
   teamTls: { certPath: string; keyPath: string } | null;
+  // A free port for a listener whose settings name none; null once they do.
+  suggestedPort: number | null;
 }
 
 // One row of GET /api/a2a/clients: the clients row plus its agent's status.

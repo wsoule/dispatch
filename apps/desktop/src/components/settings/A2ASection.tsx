@@ -14,7 +14,6 @@ import { useState } from 'react';
 import type { DispatchProjectData } from '../../hooks/useDispatchProject';
 import type { ListenerForm } from '../../lib/a2a';
 import {
-  A2A_DEFAULT_PORT,
   a2aQueryKey,
   cardSummary,
   formFromStatus,
@@ -297,7 +296,6 @@ function ListenerGroup({
             id="a2a-port"
             value={form.port}
             inputMode="numeric"
-            placeholder={String(A2A_DEFAULT_PORT)}
             disabled={locked}
             className="w-24 text-right tabular-nums"
             onChange={(e) => update({ port: e.target.value })}

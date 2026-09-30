@@ -10,6 +10,7 @@ import { expect, mock, test } from 'bun:test';
 
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
 import { proposal } from '../../lib/memory.test-helper';
+import { taskDoc } from '../../lib/taskDoc.test-helper';
 import type { ParkedCall } from '../../lib/threadSources';
 import { threadLookups } from '../../lib/threadSources';
 import type { MessageRowProps } from './MessageRow';
@@ -42,8 +43,17 @@ const revoked: AgentSummary = {
   approvedBy: null,
   createdAt: '2026-09-25T10:00:00.000Z',
 };
+const DRAFT = taskDoc(
+  {
+    id: 't-a1b2c3',
+    title: 'Rate-limit uploads',
+    status: 'draft',
+    writes: ['src/upload.ts'],
+  },
+  'Cap uploads at 10 a minute per client.'
+);
 const lookups = threadLookups(
-  [{ meta: { id: 't-000002', title: 'Checkout' } }],
+  [taskDoc({ id: 't-000002', title: 'Checkout' }), DRAFT],
   [{ id: 'r-000001', taskId: 't-000002' }],
   [revoked]
 );
@@ -377,4 +387,68 @@ test('a ref of a type this build does not register is plain text, not a link', (
   });
   expect(screen.getByText('wiki:handbook')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'wiki:handbook' })).toBeNull();
+});
+
+const taskProposal = msg('m-tp', {
+  from: 'agent:dispatch',
+  kind: 'question',
+  blocking: true,
+  choices: ['approve', 'decline'],
+  body: 'agent:wyat/a2a.acme proposes a task over A2A: "Rate-limit uploads" (t-a1b2c3). Approve to move it to Ready; nothing runs until you do.',
+  data: {
+    type: 'task-proposal',
+    task: 't-a1b2c3',
+    proposedBy: 'agent:wyat/a2a.acme',
+    message: 'm-root',
+  },
+});
+
+test('shows a decider the proposed draft from the board, and answers its gate with the choice', async () => {
+  const onOpen = mock((_action: unknown) => {});
+  const onAnswer = renderRow(taskProposal, { onOpen });
+  expect(screen.getByText('Rate-limit uploads')).toBeTruthy();
+  expect(screen.getByText('src/upload.ts')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Open draft' }));
+  expect(onOpen).toHaveBeenCalledWith({ kind: 'task', taskId: 't-a1b2c3' });
+  fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+  await waitFor(() =>
+    expect(onAnswer).toHaveBeenCalledWith(taskProposal, {
+      body: '',
+      choice: 'approve',
+    })
+  );
+});
+
+test('renders a task-proposal gate’s body as plain text, so a client title cannot load an image', () => {
+  const body =
+    'agent:wyat/a2a.acme proposes a task over A2A: "![](https://host/beacon)" (t-a1b2c3).';
+  renderRow({ ...taskProposal, body });
+  expect(document.querySelector('img')).toBeNull();
+  expect(screen.getByText(body)).toBeTruthy();
+});
+
+test('shows a viewer below the decide tier the proposed draft, with its answers disabled', () => {
+  renderRow(taskProposal, { access: TEAMMATE });
+  expect(
+    screen.getByText('Cap uploads at 10 a minute per client.')
+  ).toBeTruthy();
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Approve' }).disabled
+  ).toBe(true);
+  expect(
+    screen.getByRole<HTMLButtonElement>('button', { name: 'Decline' }).disabled
+  ).toBe(true);
+});
+
+test('renders an A2A client’s or peer’s body as plain text, so it cannot load an image or link out', () => {
+  const body =
+    'Please ![x](https://evil/p.gif) and [Approve](https://evil/login)';
+  for (const from of ['agent:wyat/a2a.acme', 'a2a:acme']) {
+    renderRow(msg('m-a2a', { from, kind: 'question', blocking: true, body }));
+    expect(document.querySelector('img')).toBeNull();
+    expect(document.querySelector('a')).toBeNull();
+    expect(screen.getByText(body)).toBeTruthy();
+    cleanup();
+  }
 });

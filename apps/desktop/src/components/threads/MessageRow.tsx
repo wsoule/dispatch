@@ -1,8 +1,9 @@
 import type { ApiClient, Message } from '@dispatch/client';
 import { memo, useState } from 'react';
 
+import { isFromA2A } from '../../lib/a2a';
 import type { DecideAvailability, MessageAccess } from '../../lib/daemonAuth';
-import { approvalReply, isSystemMarker } from '../../lib/gates';
+import { approvalReply, isSystemMarker, taskProposalOf } from '../../lib/gates';
 import { formatShortDate } from '../../lib/taskDates';
 import type {
   ParkedCall,
@@ -23,6 +24,7 @@ import { ApprovalCard } from '../runs/ApprovalCard';
 import { Markdown } from '../runs/Markdown';
 import { ScopeRequestCard } from '../runs/ScopeRequestCard';
 import { A2ADeclineAction } from './A2ADeclineAction';
+import { TaskProposalCard } from './TaskProposalCard';
 import { cn } from '@/lib/utils';
 import { ChatMessage } from '@/ui/ai/chat';
 import { InitialsAvatar } from '@/ui/ai/initials-avatar';
@@ -126,7 +128,17 @@ export const MessageRow = memo(function MessageRow({
               {formatShortDate(message.createdAt)}
             </time>
           </header>
-          <Markdown content={message.body} className="font-book text-[13px]" />
+          {/* Text an A2A sender wrote, or a proposal quoting it, never renders as markdown. */}
+          {taskProposalOf(message) === null && !isFromA2A(message) ? (
+            <Markdown
+              content={message.body}
+              className="font-book text-[13px]"
+            />
+          ) : (
+            <p className="font-book text-[13px] break-words whitespace-pre-wrap">
+              {message.body}
+            </p>
+          )}
           {message.choice !== undefined && (
             <p className="text-muted-foreground text-[12px]">
               Chose {message.choice}
@@ -149,7 +161,10 @@ export const MessageRow = memo(function MessageRow({
             </div>
           )}
           <Control
+            message={message}
             control={rowControl(message, { me, open, access })}
+            lookups={lookups}
+            onOpen={onOpen}
             availability={availability}
             onRestartDaemon={onRestartDaemon}
             answer={answer}
@@ -176,14 +191,20 @@ export const MessageRow = memo(function MessageRow({
 
 // The row's answer affordance: a gate card, choice buttons, or why there are none.
 function Control({
+  message,
   control,
+  lookups,
+  onOpen,
   availability,
   onRestartDaemon,
   answer,
   loadApprovalInput,
   client,
 }: {
+  message: Message;
   control: RowControl;
+  lookups: ThreadLookups;
+  onOpen: (action: RefAction) => void;
   availability: DecideAvailability;
   onRestartDaemon: () => Promise<void>;
   answer: (reply: Reply) => Promise<void>;
@@ -193,6 +214,18 @@ function Control({
   if (control.kind === 'read-only') {
     return (
       <p className="text-muted-foreground text-[12px]">{control.reason}</p>
+    );
+  }
+  // Drawn for every viewer; its answers wait on the decide tier.
+  if (control.kind === 'task-proposal') {
+    return (
+      <TaskProposalCard
+        gate={message}
+        task={lookups.taskDoc(control.task)}
+        onAnswer={(choice) => answer({ body: '', choice })}
+        onOpenTask={(taskId) => onOpen({ kind: 'task', taskId })}
+        canDecide={control.canDecide}
+      />
     );
   }
   if (!offersAnswer(control)) return null;

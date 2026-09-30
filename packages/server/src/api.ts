@@ -653,39 +653,56 @@ function validateTaskFields(
   return null;
 }
 
-async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
-  const parsed = await readJsonBody(req);
-  if (!parsed.ok) return parsed.response;
-  const input = parsed.value as CreateInput;
-  if (typeof input.title !== 'string' || input.title.trim() === '') {
-    return errorResponse(400, 'invalid title: title is required');
-  }
-  const config = loadConfig(ctx.rootDir);
-  const fieldsError = validateTaskFields(
-    parsed.value as Record<string, unknown>,
-    config,
-    { includeKind: true, includeBody: false }
-  );
-  if (fieldsError) return errorResponse(400, fieldsError);
+// The title and field checks POST /api/tasks runs, shared with A2A handoffs.
+export function validateTaskInput(
+  rootDir: string,
+  input: Record<string, unknown>
+): string | null {
+  if (typeof input.title !== 'string' || input.title.trim() === '')
+    return 'invalid title: title is required';
+  return validateTaskFields(input, loadConfig(rootDir), {
+    includeKind: true,
+    includeBody: false,
+  });
+}
+
+// Creates a task as POST /api/tasks does: checked, a legacy `milestone`
+// resolved to a parent, stored, cached and broadcast as task.changed.
+export function createTaskChecked(
+  ctx: Pick<ApiContext, 'rootDir' | 'store' | 'cache' | 'events'>,
+  input: CreateInput
+): { ok: true; doc: TaskDoc } | { ok: false; error: string } {
+  const error = validateTaskInput(ctx.rootDir, { ...input });
+  if (error !== null) return { ok: false, error };
   const legacy = legacyMilestoneParent(
     ctx,
-    parsed.value as Record<string, unknown>,
+    { ...input } as Record<string, unknown>,
     input.kind ?? 'task'
   );
-  if (!legacy.ok) return errorResponse(400, legacy.error);
-
-  // Credit whoever made the request unless the caller names a creator (a
-  // sync importing someone else's issue).
+  if (!legacy.ok) return { ok: false, error: legacy.error };
   const doc = ctx.store.create({
     ...withoutLegacyMilestone(input),
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
     // Omitted, a task starts in the project's ready role.
     status: input.status ?? statusModelFor(ctx.rootDir).roles.ready,
-    creator: input.creator ?? humanActor(ctx),
   });
   ctx.cache.refresh(ctx.store, [doc.meta.id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [doc.meta.id] });
-  return jsonResponse(doc, 201);
+  return { ok: true, doc };
+}
+
+async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
+  const parsed = await readJsonBody(req);
+  if (!parsed.ok) return parsed.response;
+  const input = parsed.value as CreateInput;
+  // Credit whoever made the request unless the caller names a creator (a
+  // sync importing someone else's issue).
+  const created = createTaskChecked(ctx, {
+    ...input,
+    creator: input.creator ?? humanActor(ctx),
+  });
+  if (!created.ok) return errorResponse(400, created.error);
+  return jsonResponse(created.doc, 201);
 }
 
 // POST /api/tasks/draft — starts a background planner turn and returns the
@@ -793,6 +810,20 @@ async function updateTask(
     ...withoutLegacyMilestone(requested),
     ...(legacy.parent === undefined ? {} : { parent: legacy.parent }),
   };
+
+  // A gated A2A draft moves only through its gate; a decide-tier status
+  // change answers it.
+  if (ctx.a2a !== undefined) {
+    const caller = ctx.caller ?? {
+      tier: 'request' as const,
+      ref: humanActor(ctx),
+    };
+    const guard = await ctx.a2a.guardTaskPatch(id, patch, {
+      tier: caller.tier,
+      ref: caller.ref,
+    });
+    if (!guard.ok) return errorResponse(guard.status, guard.error);
+  }
 
   // PATCH /api/tasks/:id is only ever reached by a human — the web/desktop
   // task drawer, or a direct API call — so any Activity line it appends is
