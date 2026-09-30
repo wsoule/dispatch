@@ -75,6 +75,7 @@ const ALL_ON = {
   approval: true,
   'scope-request': true,
   memory: true,
+  doc: true,
   question: true,
   'fix-loop-capped': true,
   'run-stalled': true,
