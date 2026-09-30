@@ -55,10 +55,11 @@ A vector's profile is `core` unless it depends on any Dispatch value, which
 makes it `dispatch`: the narrowed id grammar
 ([Appendix C](appendix-c-dispatch-profile.md#sC.1)), `agent:dispatch` as a
 literal, the rendering format, the default limits, epic channels, a profile gate
-type, a profile marker, or the wording of a notice. `core` vectors use ids valid
-under both grammars (`t-4a8cce`, `r-9f2c01`), write the system address as
-`$system`, and set limits explicitly, so the reference and any other host run
-the same files. Appendix C is the rule set that `dispatch` vectors check.
+type, a profile ref type, a profile marker, or the wording of a notice. `core`
+vectors use ids valid under both grammars (`t-4a8cce`, `r-9f2c01`), write the
+system address as `$system`, and set limits explicitly, so the reference and any
+other host run the same files. Appendix C is the rule set that `dispatch`
+vectors check.
 
 ## 12.4 The kit
 

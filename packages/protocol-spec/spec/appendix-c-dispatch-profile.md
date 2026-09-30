@@ -28,6 +28,10 @@ outside these forms as `invalid` on the field that carried it
 `env.address.refuses-a-task-id-outside-the-dispatch-grammar`,
 `env.address.refuses-a-run-id-outside-the-dispatch-grammar`.
 
+The profile implements the `doc` ref type ([§4.3](04-messages.md#s4.3)): its
+`id` names a document by its `doc-` id, and its `at`, when present, a section
+anchor in it. Vector: `core.refs.a-local-doc-ref-is-accepted`.
+
 A ULID is 48 bits of milliseconds and 80 random bits, written as 26 characters
 of Crockford base 32. Dispatch writes them in lowercase and keeps each host's
 ids strictly increasing, even for sends in the same millisecond or after the

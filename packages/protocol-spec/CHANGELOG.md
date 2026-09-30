@@ -51,6 +51,10 @@ vector ids (see §14.2).
   `env.envelope.memory-gates-have-a-fixed-shape`.
 - [editorial] Appendix B lists the `memory_*` tools (§B.3), and Appendix C.4
   says the system's `x-expired` answer also expires a memory proposal.
+- [additive] The `doc` ref type is permanent, in the Dispatch profile: a local
+  send may ref a document by its id and a section anchor (§4.3, App. C.1), and a
+  vector that needs a profile ref type is a `dispatch` vector (§12.3). Vectors:
+  `core.refs.a-local-doc-ref-is-accepted`.
 
 ## 1.0.0-draft.1 (2026-09-28)
 

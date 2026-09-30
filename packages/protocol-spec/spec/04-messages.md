@@ -64,10 +64,13 @@ optional `at`.
 | `file`    | a file path  | the commit the path is read at |
 | `commit`  | a commit     | none                           |
 | `message` | a message id | none                           |
+| `doc`     | a document   | a section anchor               |
 
 A ref's `id` is required and non-empty. `id` and `at` are each one line of at
 most 512 bytes. A local send whose ref has a type the host does not know MUST
-fail `invalid` on `refs[i].type`. The registry of ref types is
+fail `invalid` on `refs[i].type`. `doc` is the Dispatch profile's
+([§C.1](appendix-c-dispatch-profile.md#sC.1)); a host that does not implement it
+refuses it as any unknown type. The registry of ref types is
 [§11.5](11-registries.md#s11.5); a host MAY implement any type it lists.
 
 ## 4.4 Refs received from other hosts

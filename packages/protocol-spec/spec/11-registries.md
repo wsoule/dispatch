@@ -57,14 +57,14 @@ This section is generated from `registries/registries.json` by
 
 ## 11.5 Ref types
 
-| Value     | Scope | Status      | Since         | Defined in                  | Vectors                                            |
-| --------- | ----- | ----------- | ------------- | --------------------------- | -------------------------------------------------- |
-| `task`    | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
-| `run`     | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
-| `file`    | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
-| `commit`  | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
-| `message` | core  | permanent   | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
-| `doc`     | docs  | provisional | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | none                                               |
+| Value     | Scope | Status    | Since         | Defined in                  | Vectors                                            |
+| --------- | ----- | --------- | ------------- | --------------------------- | -------------------------------------------------- |
+| `task`    | core  | permanent | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `run`     | core  | permanent | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `file`    | core  | permanent | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `commit`  | core  | permanent | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `message` | core  | permanent | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `env.envelope.a-local-ref-type-must-be-registered` |
+| `doc`     | docs  | permanent | 1.0.0-draft.1 | [§4.3](04-messages.md#s4.3) | `core.refs.a-local-doc-ref-is-accepted`            |
 
 ## 11.6 Gate types
 
