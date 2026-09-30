@@ -249,6 +249,33 @@ describe('ask', () => {
     expect(await state(open.id)).toBe('FAILED');
   });
 
+  it('keeps an ask failed when its task is dropped before the answer', async () => {
+    const task = f.tasks.create({ title: 'Asked of' });
+    const { message } = await f.messaging.engine.send(
+      {
+        to: [`task:${task.meta.id}`],
+        kind: 'question',
+        blocking: true,
+        body: 'Is it done?',
+        idempotencyKey: 'c-late',
+      },
+      { address: f.caller.address, canDecide: false }
+    );
+    reconcileA2A(f.deps, f.watch);
+    f.tasks.update(task.meta.id, { status: 'dropped' });
+    f.watch.recompute(message.id);
+    expect(f.store.getTask(message.id)?.state).toBe('FAILED');
+    await f.messaging.engine.reply(message.id, { body: 'Late yes.' }, HUMAN);
+    f.watch.recompute(message.id);
+    const facts = await f.port.facts(f.caller, message.id);
+    if (facts === null) throw new Error('expected facts');
+    expect(decideState(facts)).toMatchObject({
+      state: 'FAILED',
+      status: { text: 'The task this was asked of was dropped.' },
+    });
+    expect(f.store.getTask(message.id)?.state).toBe('FAILED');
+  });
+
   it('refuses mail to a client outside its tasks', async () => {
     await expect(
       f.messaging.engine.send(

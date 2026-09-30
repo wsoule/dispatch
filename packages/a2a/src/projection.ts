@@ -114,15 +114,13 @@ export function decideState(f: TaskFacts): Decision {
       'The project owner dropped this task.'
     );
   }
-  if (
-    !handoff &&
-    ((f.answer !== null && isSystemMarker(f.answer, 'x-closed')) ||
-      f.recipientTaskDropped)
-  ) {
+  const closed = f.answer !== null && isSystemMarker(f.answer, 'x-closed');
+  if (!handoff && (closed || f.recipientTaskDropped)) {
+    // A late answer to a dropped task's ask is not the reason it failed.
     return said(
       3,
       'FAILED',
-      f.answer,
+      closed ? f.answer : null,
       'The task this was asked of was dropped.'
     );
   }

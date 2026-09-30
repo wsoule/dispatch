@@ -143,8 +143,9 @@ export function gatherFacts(
     openGates: row.skill === 'handoff' ? openGatesOf(deps, row, link) : [],
     task,
     dropped: dropped ? (row.canceledAt === null ? 'other' : 'client') : null,
+    // A FAILED row was dropped before any answer; a late one does not revive it.
     recipientTaskDropped:
-      answer === null &&
+      (answer === null || row.state === 'FAILED') &&
       root.to.some((a) => {
         if (!a.startsWith('task:')) return false;
         const doc = deps.tasks.get(a.slice('task:'.length));
