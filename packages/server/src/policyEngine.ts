@@ -82,6 +82,7 @@ const DECISION_KIND_GATES: Readonly<Record<string, PolicyGate>> = {
   'scope-request': 'scope',
   approval: 'approval',
   memory: 'memory',
+  doc: 'doc',
 };
 
 export interface PolicyClassifierOptions {

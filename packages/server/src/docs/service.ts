@@ -3,6 +3,8 @@ import type {
   DocLink,
   DocLinking,
   DocOp,
+  DocProposal,
+  DocProposalView,
   DocRead,
   DocRecord,
   DocRevisionInfo,
@@ -16,6 +18,8 @@ import type {
   DocSummary,
   LinkRel,
   LinkTarget,
+  PolicyRuling,
+  ProposalState,
   RevisionCause,
 } from '@dispatch/core';
 import {
@@ -27,10 +31,11 @@ import {
   LINK_RELS,
   LINK_TARGET_TYPES,
   normalizeDocText,
+  untrustedInline,
 } from '@dispatch/core';
 import type { Operator } from '@dispatch/memory';
 import { isA2AAgent } from '@dispatch/memory';
-import { createUlidFactory } from '@dispatch/protocol';
+import { createUlidFactory, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
 
 import type { Principal } from '../messaging/principal.js';
@@ -163,6 +168,12 @@ interface RawHit {
 }
 
 const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+// A doc line to a run, as live notices are: at most 160 characters.
+const RUN_LINE_CHARS = 160;
+// Mergeability answers kept, per (proposal body, head).
+const MERGEABLE_CACHE = 256;
+const REOPENED = 'the doc was reopened as a draft; write to it directly';
 const MAX_OPEN_AGE_MS = HOUR_MS;
 const ANCESTOR_LEVELS = 8;
 const HITS_PER_DOC = 3;
@@ -311,6 +322,8 @@ export class DocsService {
   private outbox: DocChange[] = [];
   // Attached once the daemon builds live notices.
   private notices: DocReadRecorder | null = null;
+  // Whether a proposal merges cleanly onto a head, keyed by both bodies' revisions.
+  private readonly mergeable = new Map<string, boolean>();
 
   constructor(private readonly deps: DocsServiceDeps) {}
 
@@ -498,15 +511,16 @@ export class DocsService {
     return doc.scope === 'team' && doc.status === 'accepted';
   }
 
+  // Draft writers may write any live doc; on an accepted team doc anyone below
+  // decide tier writes through a proposal.
   private requireWritable(actor: DocsActor, doc: DocRow): void {
     this.requireDraftWriter(actor);
     if (doc.status === 'archived') throw archivedError();
-    if (this.gated(doc) && !actor.decider) {
-      throw forbidden(
-        'only decide-tier humans edit accepted docs directly',
-        'doc'
-      );
-    }
+  }
+
+  // Whether the actor's writes to `doc` become proposals rather than revisions.
+  private proposes(actor: DocsActor, doc: DocRow): boolean {
+    return this.gated(doc) && !actor.decider;
   }
 
   // Whether the actor is a personal doc's owner, acting as a human.
@@ -572,11 +586,14 @@ export class DocsService {
     return rev;
   }
 
-  // A numbered revision of `doc` by id or number (a digit string counts as a number).
+  // A numbered revision of `doc` by id or number (a digit string counts as a
+  // number). With a `viewer`, a proposal revision it may see counts too; one it
+  // may not see is not found.
   private revisionOf(
     doc: DocRow,
     ref: string | number,
-    field: string
+    field: string,
+    viewer: DocsActor | null = null
   ): RevisionRow {
     const store = this.store();
     let n: number | null = null;
@@ -584,6 +601,18 @@ export class DocsService {
     else if (/^\d+$/.test(ref)) n = Number(ref);
     const rev =
       n === null ? store.revision(String(ref)) : store.revisionByN(doc.id, n);
+    if (
+      rev !== null &&
+      rev.docId === doc.id &&
+      rev.n === null &&
+      viewer !== null
+    ) {
+      const p = store.proposalRows({ rev: rev.id })[0];
+      if (p !== undefined) {
+        if (this.canSeeProposal(viewer, p)) return rev;
+        throw new DocsError('not-found', `${field}: revision not found`, field);
+      }
+    }
     if (rev === null || rev.docId !== doc.id || rev.n === null) {
       throw new DocsError(
         'invalid',
@@ -1083,6 +1112,161 @@ export class DocsService {
     });
   }
 
+  // An accepted team doc takes direct writes from decide-tier humans only;
+  // anyone else's computed change becomes (or extends) their proposal.
+  private directOrPropose(
+    actor: DocsActor,
+    doc: DocRow,
+    next: {
+      body: string;
+      title: string;
+      summary: string;
+      cause: 'save' | 'edit' | 'revert';
+      restores?: RevisionMeta;
+    },
+    extra: Partial<DocSaveResult> = {}
+  ): DocSaveResult {
+    if (!this.proposes(actor, doc))
+      return this.commitDirect(actor, doc, next, extra);
+    const store = this.store();
+    const head = this.headOf(doc);
+    const now = this.host.now();
+    const at = now.toISOString();
+    const own = this.ownOpenProposal(actor, doc);
+    if (own !== null)
+      return this.amendProposal(doc, head, own, next, at, extra);
+    if (next.body === head.body && next.title === head.title)
+      return this.result(doc, head, 'unchanged', extra);
+    // A body equal to another open proposal's is a conflict naming it only when
+    // the caller may see that proposal; otherwise it is stored, revealing nothing.
+    const nextHash = sha256(next.body);
+    const twin = store
+      .proposalRows({ doc: doc.id, states: ['open'] })
+      .find((o) => store.revisionMeta(o.rev)?.hash === nextHash);
+    if (twin !== undefined && this.canSeeProposal(actor, twin)) {
+      throw new DocsError(
+        'conflict',
+        `the same change is already proposed as ${twin.rev}`,
+        'doc'
+      );
+    }
+    this.checkProposalLimits(actor, now);
+    const rev = this.makeRevision(doc.id, {
+      parents: [head.id],
+      title: next.title,
+      body: next.body,
+      author: actor.address,
+      cause: 'proposal',
+      summary: next.summary,
+      sealed: false,
+      numbered: false,
+      restores: next.restores,
+      at,
+    });
+    const p: DocProposal = {
+      rev: rev.id,
+      doc: doc.id,
+      base: head.id,
+      author: actor.address,
+      operator: actor.operator?.human ?? null,
+      runId: actor.runId,
+      taskId: actor.taskId,
+      origin: 'local',
+      gate: null,
+      state: 'open',
+      decidedBy: null,
+      decidedByPolicy: null,
+      reason: null,
+      result: null,
+      createdAt: at,
+      decidedAt: null,
+    };
+    // The base seals, so no amend in place can change what the proposal diffs against.
+    this.write(() => {
+      this.sealInTx(doc, head);
+      store.insertRevision(rev);
+      store.putProposal(p);
+    });
+    const task = p.taskId === null ? null : this.host.task(p.taskId);
+    const ruling = this.host.rule(task === null ? 'elevated' : task.risk);
+    if (ruling.mode === 'auto') {
+      const out = this.approveProposal(p.rev, SYSTEM_ADDRESS, {
+        rung: ruling.rung,
+        authorizedBy: ruling.authorizedBy,
+      });
+      if (out.ok) {
+        this.recordPolicyApproval(p.rev, ruling);
+        const fresh = store.doc(doc.id) ?? doc;
+        return this.result(fresh, this.headOf(fresh), 'saved', extra);
+      }
+    }
+    return {
+      ...this.result(doc, head, 'proposed', extra),
+      rev: { id: rev.id, n: null, hash: rev.hash },
+      proposal: rev.id,
+    };
+  }
+
+  // Rewrites the author's open proposal in place; its gate stays.
+  private amendProposal(
+    doc: DocRow,
+    head: RevisionRow,
+    own: DocProposal,
+    next: { body: string; title: string; summary: string },
+    at: string,
+    extra: Partial<DocSaveResult>
+  ): DocSaveResult {
+    const store = this.store();
+    const rev = this.proposalRevision(own);
+    const hash = sha256(next.body);
+    if (next.body !== rev.body || next.title !== rev.title) {
+      this.write(() =>
+        store.amendRevision(rev.id, {
+          title: next.title,
+          body: next.body,
+          hash,
+          bytes: utf8Bytes(next.body),
+          summary: cutUtf8(
+            `${rev.summary}; ${next.summary}`,
+            DOCS_LIMITS.summaryBytes
+          ),
+          updatedAt: at,
+        })
+      );
+    }
+    return {
+      ...this.result(doc, head, 'proposed', extra),
+      rev: { id: rev.id, n: null, hash },
+      proposal: rev.id,
+      ...(own.gate === null ? {} : { gate: own.gate }),
+    };
+  }
+
+  // Proposals per author per hour, and open proposals per project.
+  private checkProposalLimits(actor: DocsActor, now: Date): void {
+    const store = this.store();
+    const cfg = this.cfg();
+    const since = new Date(now.getTime() - HOUR_MS).toISOString();
+    if (
+      store.countProposalsSince(actor.address, since) >= cfg.proposalsPerHour
+    ) {
+      throw new DocsError(
+        'limited',
+        `at most ${cfg.proposalsPerHour} proposals per hour`,
+        'doc'
+      );
+    }
+    if (
+      store.proposalRows({ states: ['open'] }).length >= cfg.maxOpenProposals
+    ) {
+      throw new DocsError(
+        'limited',
+        `this project holds at most ${cfg.maxOpenProposals} open proposals`,
+        'doc'
+      );
+    }
+  }
+
   private baseChanged(head: RevisionRow): DocConflictError {
     return new DocConflictError({
       code: 'conflict',
@@ -1108,16 +1292,23 @@ export class DocsService {
       input.title === undefined
         ? undefined
         : this.checkTitle(input.title, 'title');
-    const base = this.revisionOf(doc, input.baseRev, 'baseRev');
+    // A proposer's own open proposal is a base too: saving on it extends it.
+    const own = this.proposes(actor, doc)
+      ? this.ownOpenProposal(actor, doc)
+      : null;
+    const base =
+      own !== null && input.baseRev === own.rev
+        ? this.proposalRevision(own)
+        : this.revisionOf(doc, input.baseRev, 'baseRev');
     let head = this.headOf(doc);
     if (input.baseHash !== undefined && base.hash !== input.baseHash) {
       this.sealIfOtherReads(actor, doc, head);
       throw this.baseChanged(head);
     }
-    if (base.id === head.id) {
-      return this.commitDirect(actor, doc, {
+    if (base.id === head.id || base.id === own?.rev) {
+      return this.directOrPropose(actor, doc, {
         body,
-        title: title ?? head.title,
+        title: title ?? base.title,
         summary: 'saved',
         cause: 'save',
       });
@@ -1158,6 +1349,14 @@ export class DocsService {
     }
     const mineTitle = title ?? base.title;
     const nextTitle = mineTitle !== base.title ? mineTitle : head.title;
+    if (this.proposes(actor, doc)) {
+      return this.directOrPropose(actor, doc, {
+        body: merged.body,
+        title: nextTitle,
+        summary: 'saved',
+        cause: 'save',
+      });
+    }
     // The head gains nothing, so store nothing: a writer holding the head's text is
     // based on it now, and one who changed nothing reloads it or keeps its base.
     if (merged.body === head.body && nextTitle === head.title) {
@@ -1222,7 +1421,12 @@ export class DocsService {
     const doc = this.resolve(actor, ref);
     this.requireWritable(actor, doc);
     const head = this.headOf(doc);
-    const out = applyOps({ body: head.body, title: head.title }, input.ops);
+    // A proposer's ops extend its open proposal; everyone else's apply to the head.
+    const own = this.proposes(actor, doc)
+      ? this.ownOpenProposal(actor, doc)
+      : null;
+    const start = own === null ? head : this.proposalRevision(own);
+    const out = applyOps({ body: start.body, title: start.title }, input.ops);
     const problem = docBodyProblem(out.body);
     if (problem !== null) throw new DocsError('invalid', problem, 'ops');
     let extra: Partial<DocSaveResult> = {};
@@ -1239,7 +1443,7 @@ export class DocsService {
         extra = { rebased: { since } };
       }
     }
-    return this.commitDirect(
+    return this.directOrPropose(
       actor,
       doc,
       { body: out.body, title: out.title, summary: out.summary, cause: 'edit' },
@@ -1255,13 +1459,387 @@ export class DocsService {
     const doc = this.resolve(actor, ref);
     this.requireWritable(actor, doc);
     const target = this.revisionOf(doc, revRef, 'rev');
-    return this.commitDirect(actor, doc, {
+    return this.directOrPropose(actor, doc, {
       body: target.body,
       title: target.title,
       summary: `reverted to rev ${target.n ?? 0}`,
       cause: 'revert',
       restores: target,
     });
+  }
+
+  // ---- proposals and the doc gate -------------------------------------------
+
+  // The actor's open proposal on `doc`, which its next write extends.
+  private ownOpenProposal(actor: DocsActor, doc: DocRow): DocProposal | null {
+    return (
+      this.store().proposalRows({
+        doc: doc.id,
+        author: actor.address,
+        states: ['open'],
+      })[0] ?? null
+    );
+  }
+
+  private proposalRevision(p: DocProposal): RevisionRow {
+    const rev = this.store().revision(p.rev);
+    if (rev === null) throw new Error(`proposal ${p.rev} has no revision`);
+    return rev;
+  }
+
+  // Decide tier sees every proposal; others their own, and a human also those
+  // of the runs and agents acting for them.
+  private canSeeProposal(actor: DocsActor, p: DocProposal): boolean {
+    if (actor.decider || p.author === actor.address) return true;
+    return (
+      actor.kind === 'human' &&
+      p.operator !== null &&
+      p.operator === actor.address
+    );
+  }
+
+  private proposalRow(rev: string): DocProposal {
+    const p = this.store().proposalRows({ rev })[0];
+    if (p === undefined)
+      throw new DocsError('not-found', `proposal ${rev} not found`, 'rev');
+    return p;
+  }
+
+  // For the gate handler: the proposal row with no actor or visibility filter.
+  proposalForGate(rev: string): DocProposal | null {
+    return this.deps.store?.proposalRows({ rev })[0] ?? null;
+  }
+
+  proposals(
+    actor: DocsActor,
+    filter: { doc?: string; state?: ProposalState[] }
+  ): DocProposal[] {
+    const docId =
+      filter.doc === undefined ? undefined : this.resolve(actor, filter.doc).id;
+    return this.store()
+      .proposalRows({ doc: docId, states: filter.state })
+      .filter((p) => this.canSeeProposal(actor, p));
+  }
+
+  // A proposal's text, its diff against its base, and whether it merges onto the head.
+  proposal(actor: DocsActor, rev: string): DocProposalView {
+    const store = this.store();
+    const p = store.proposalRows({ rev })[0];
+    const doc = p === undefined ? null : store.doc(p.doc);
+    if (
+      p === undefined ||
+      doc === null ||
+      !this.canSee(actor, doc) ||
+      !this.canSeeProposal(actor, p)
+    )
+      throw new DocsError('not-found', `proposal ${rev} not found`, 'rev');
+    const prop = this.proposalRevision(p);
+    const base = store.revision(prop.parents[0]);
+    const head = this.headOf(doc);
+    return {
+      proposal: p,
+      title: prop.title,
+      body: prop.body,
+      chunks: diffChunks(base?.body ?? '', prop.body).chunks,
+      mergeable: {
+        clean: this.mergesCleanly(prop, base, head),
+        headN: head.n ?? 0,
+      },
+    };
+  }
+
+  // One merge per (proposal body, head) pair, kept in a small LRU.
+  private mergesCleanly(
+    prop: RevisionRow,
+    base: RevisionRow | null,
+    head: RevisionRow
+  ): boolean {
+    if (base === null) return false;
+    if (base.id === head.id) return true;
+    const key = `${prop.id}:${prop.hash}:${head.id}`;
+    const hit = this.mergeable.get(key);
+    if (hit !== undefined) {
+      this.mergeable.delete(key);
+      this.mergeable.set(key, hit);
+      return hit;
+    }
+    const merged = merge3(base.body, head.body, prop.body, {
+      head: head.id,
+      base: base.id,
+      mine: prop.id,
+    });
+    const clean = merged.clean && docBodyProblem(merged.body) === null;
+    this.mergeable.set(key, clean);
+    if (this.mergeable.size > MERGEABLE_CACHE) {
+      const oldest = this.mergeable.keys().next().value;
+      if (oldest !== undefined) this.mergeable.delete(oldest);
+    }
+    return clean;
+  }
+
+  // Approves an open proposal: an `approve` revision with parents [head,
+  // proposal] and body diff3(base, head, proposal). A conflict or an
+  // over-limit result fails the proposal instead, with notices.
+  approveProposal(
+    revId: string,
+    by: string,
+    policy: { rung: number; authorizedBy: 'rung' | 'override' } | null
+  ): { ok: true } | { ok: false; reason: string } {
+    const store = this.store();
+    const p = this.proposalRow(revId);
+    if (p.state !== 'open')
+      return { ok: false, reason: `the proposal is ${p.state}` };
+    const doc = store.doc(p.doc);
+    const fail = (reason: string): { ok: false; reason: string } => {
+      this.write(() =>
+        store.putProposal({
+          ...p,
+          state: 'failed',
+          reason,
+          decidedBy: by,
+          decidedAt: this.nowIso(),
+        })
+      );
+      this.tell(
+        by === SYSTEM_ADDRESS ? this.deps.ownerRef : by,
+        p.gate,
+        `The doc edit could not be applied: ${reason}.`
+      );
+      this.tellRun(p, doc, `your proposal failed: ${reason}`);
+      return { ok: false, reason };
+    };
+    if (doc === null) return fail('the doc was deleted');
+    if (doc.status === 'archived') return fail('the doc was archived');
+    const open = this.headOf(doc);
+    if (!open.sealed) this.write(() => this.sealInTx(doc, open));
+    const head = this.headOf(doc);
+    const prop = store.revision(p.rev);
+    const base = prop === null ? null : store.revision(prop.parents[0]);
+    if (prop === null || base === null)
+      return fail('the proposal lost its base');
+    let body = prop.body;
+    if (head.id !== base.id) {
+      const merged = merge3(base.body, head.body, prop.body, {
+        head: head.id,
+        base: base.id,
+        mine: prop.id,
+      });
+      if (!merged.clean) return fail(`conflicts with rev ${head.n ?? 0}`);
+      body = merged.body;
+    }
+    if (docBodyProblem(body) !== null)
+      return fail('merged body over the limit');
+    const at = this.nowIso();
+    const approver = policy === null ? by : SYSTEM_ADDRESS;
+    this.write(() => {
+      store.setRevisionN(prop.id, store.maxN(doc.id) + 1);
+      store.sealRevision(prop.id);
+      const a = this.makeRevision(doc.id, {
+        parents: [head.id, prop.id],
+        title: prop.title,
+        body,
+        author: approver,
+        cause: 'approve',
+        summary: `approved: ${prop.summary}`,
+        sealed: true,
+        numbered: true,
+        at,
+        approval:
+          policy === null
+            ? { by }
+            : { by: SYSTEM_ADDRESS, policy: { rung: policy.rung } },
+      });
+      store.insertRevision(a);
+      this.setHead(doc, a, approver, at);
+      this.reindex(doc, a);
+      this.rebuildMentions(doc, a);
+      store.putDoc(doc);
+      store.putProposal({
+        ...p,
+        state: 'approved',
+        decidedBy: by,
+        decidedByPolicy: policy,
+        result: a.id,
+        decidedAt: at,
+      });
+      this.outbox.push({
+        doc: doc.id,
+        scope: doc.scope,
+        kind: 'sealed',
+        author: approver,
+        rev: a.id,
+        summary: a.summary,
+      });
+    });
+    if (p.gate !== null && policy !== null)
+      this.closeGateQuietly(p.gate, 'approved by policy');
+    return { ok: true };
+  }
+
+  // The answer's body is the reason; the author's live run hears it.
+  rejectProposal(revId: string, by: string, reason: string): void {
+    const store = this.store();
+    const p = this.proposalRow(revId);
+    if (p.state !== 'open') return;
+    this.write(() =>
+      store.putProposal({
+        ...p,
+        state: 'rejected',
+        reason,
+        decidedBy: by,
+        decidedAt: this.nowIso(),
+      })
+    );
+    this.tellRun(
+      p,
+      store.doc(p.doc),
+      `your proposal was rejected by ${by}: ${reason}`
+    );
+  }
+
+  // Marks every open proposal of `doc` withdrawn, inside the caller's write.
+  private withdrawInTx(doc: DocRow, reason: string, at: string): DocProposal[] {
+    const store = this.store();
+    const open = store.proposalRows({ doc: doc.id, states: ['open'] });
+    for (const p of open)
+      store.putProposal({ ...p, state: 'withdrawn', reason, decidedAt: at });
+    return open;
+  }
+
+  // After the withdrawal committed: close each gate and tell each author's run.
+  private afterWithdraw(
+    withdrawn: readonly DocProposal[],
+    doc: DocRow,
+    reason: string
+  ): void {
+    for (const p of withdrawn) {
+      if (p.gate !== null) this.closeGateQuietly(p.gate, reason);
+      this.tellRun(p, doc, `your proposal was withdrawn: ${reason}`);
+    }
+  }
+
+  // Expires open proposals older than proposalTtlDays: docs.db first, then the gate.
+  private expireProposals(now: Date): void {
+    const store = this.store();
+    const cutoff = now.getTime() - this.cfg().proposalTtlDays * DAY_MS;
+    for (const p of store.proposalRows({ states: ['open'] })) {
+      if (Date.parse(p.createdAt) > cutoff) continue;
+      const reason = 'proposal expired';
+      this.write(() =>
+        store.putProposal({
+          ...p,
+          state: 'expired',
+          reason,
+          decidedAt: now.toISOString(),
+        })
+      );
+      if (p.gate !== null) this.closeGateQuietly(p.gate, reason);
+      this.tellRun(p, store.doc(p.doc), 'your proposal expired');
+    }
+  }
+
+  // Raises a gate for an open proposal with none, and records it.
+  async ensureGate(rev: string): Promise<string | null> {
+    const store = this.deps.store;
+    if (store === null) return null;
+    const p = store.proposalRows({ rev })[0];
+    if (p === undefined || p.state !== 'open') return null;
+    if (p.gate !== null) return p.gate;
+    let id: string;
+    try {
+      id = await this.host.raiseGate(p);
+    } catch (err) {
+      // The proposal stays open with no gate; boot reconcile retries.
+      console.error(`docs: could not raise the gate for ${rev}`, err);
+      return null;
+    }
+    const now = store.proposalRows({ rev })[0];
+    if (now === undefined || now.state !== 'open') {
+      this.closeGateQuietly(id, `this doc proposal is ${now?.state ?? 'gone'}`);
+      return null;
+    }
+    if (now.gate !== null) return now.gate;
+    this.write(() => store.putProposal({ ...now, gate: id }));
+    return id;
+  }
+
+  // Clears the recorded gate and raises a fresh one that records its own id.
+  async regate(rev: string): Promise<void> {
+    const p = this.proposalRow(rev);
+    if (p.state !== 'open') return;
+    this.write(() => this.store().putProposal({ ...p, gate: null }));
+    await this.ensureGate(rev);
+  }
+
+  // Boot, after messaging.recover(): raise gates for open proposals with none,
+  // then close doc gates whose proposal is not open or records another gate.
+  async reconcileGates(): Promise<{ raised: number; closed: number }> {
+    const store = this.deps.store;
+    if (store === null) return { raised: 0, closed: 0 };
+    let raised = 0;
+    let closed = 0;
+    for (const p of store.proposalRows({ states: ['open'] })) {
+      if (p.gate !== null) continue;
+      if ((await this.ensureGate(p.rev)) !== null) raised++;
+    }
+    for (const g of this.host.openDocGates()) {
+      const p = store.proposalRows({ rev: g.proposal })[0];
+      if (p !== undefined && p.state === 'open' && p.gate === g.id) continue;
+      const reason =
+        p === undefined
+          ? 'this doc proposal no longer exists'
+          : `this doc proposal is ${p.state === 'open' ? 'held by another gate' : p.state}`;
+      if (this.closeGateQuietly(g.id, reason)) closed++;
+    }
+    return { raised, closed };
+  }
+
+  // The ledger receipt of a policy approval; a failure never undoes the write.
+  private recordPolicyApproval(
+    rev: string,
+    ruling: Extract<PolicyRuling, { mode: 'auto' }>
+  ): void {
+    try {
+      this.host.recordPolicyApproval(this.proposalRow(rev), ruling);
+    } catch (err) {
+      console.error(
+        `docs: could not record the policy approval of ${rev}`,
+        err
+      );
+    }
+  }
+
+  private closeGateQuietly(gate: string, reason: string): boolean {
+    try {
+      return this.host.closeGate(gate, reason);
+    } catch (err) {
+      console.error(`docs: could not close gate ${gate}`, err);
+      return false;
+    }
+  }
+
+  // A system notice that can fail without failing the decision it reports.
+  private tell(to: string, replyTo: string | null, body: string): void {
+    try {
+      this.host.notice(to, replyTo, body);
+    } catch (err) {
+      console.error('docs: notice failed', err);
+    }
+  }
+
+  // One line to the proposal's author run, if it is still live; else dropped.
+  private tellRun(p: DocProposal, doc: DocRow | null, text: string): void {
+    if (p.runId === null) return;
+    const handle = untrustedInline(doc?.handle ?? p.doc);
+    const line = `📄 doc · ${handle}: ${untrustedInline(text)}`;
+    try {
+      this.host.notifyRun(
+        p.runId,
+        Array.from(line).slice(0, RUN_LINE_CHARS).join('')
+      );
+    } catch {
+      // Not live, stopping, or an executor without mid-run input.
+    }
   }
 
   // ---- lifecycle ------------------------------------------------------------
@@ -1296,22 +1874,39 @@ export class DocsService {
     });
   }
 
+  // Accept seals and reviews the head and clears a restored mark; leaving
+  // accepted withdraws open proposals in docs.db, then closes their gates.
   setStatus(actor: DocsActor, ref: string, status: DocStatus): DocRecord {
     const doc = this.resolve(actor, ref);
     this.requireDecider(actor, doc, "change a doc's status");
-    if (status === 'accepted' && doc.scope === 'team') {
-      throw new DocsError(
-        'invalid',
-        'accepting needs the doc gate, which arrives in docs v1',
-        'status'
-      );
-    }
-    if (status === doc.status) return this.record(doc);
+    const restored = doc.restoredStatus !== null;
+    if (status === doc.status && !(status === 'accepted' && restored))
+      return this.record(doc);
     const at = this.nowIso();
-    return this.write(() => {
+    let reason: string | null = null;
+    if (status === 'archived') reason = 'the doc was archived';
+    else if (status === 'draft') reason = REOPENED;
+    const withdrawn: DocProposal[] = [];
+    const out = this.write(() => {
+      if (reason !== null)
+        withdrawn.push(...this.withdrawInTx(doc, reason, at));
       this.applyStatus(actor, doc, status, at);
+      if (status === 'accepted') this.acceptInTx(actor, doc, at);
       return this.record(doc);
     });
+    if (reason !== null) this.afterWithdraw(withdrawn, doc, reason);
+    return out;
+  }
+
+  // Reviews the (sealed) head as the accepting human and drops a restored mark.
+  private acceptInTx(actor: DocsActor, doc: DocRow, at: string): void {
+    const head = this.headOf(doc);
+    this.store().addReview(doc.id, head.id, actor.address, at);
+    doc.unreviewed = false;
+    doc.reviewedRev = head.id;
+    doc.restoredStatus = null;
+    doc.restoredAt = null;
+    this.store().putDoc(doc);
   }
 
   // Seals the head and moves the doc to `status`, remembering what archive left.
@@ -1375,10 +1970,15 @@ export class DocsService {
     return this.record(doc);
   }
 
+  // Withdraws open proposals and closes their gates while their rows still
+  // exist, so a replayed answer finds nothing; then removes every row.
   remove(actor: DocsActor, ref: string): void {
     const doc = this.resolve(actor, ref);
     this.requireDecider(actor, doc, 'delete a doc');
     const at = this.nowIso();
+    const reason = 'the doc was deleted';
+    const withdrawn = this.write(() => this.withdrawInTx(doc, reason, at));
+    this.afterWithdraw(withdrawn, doc, reason);
     this.write(() => {
       this.store().putTombstone({
         docId: doc.id,
@@ -2084,7 +2684,7 @@ export class DocsService {
     const rev =
       opts.rev === undefined
         ? this.headOf(doc)
-        : this.revisionOf(doc, opts.rev, 'rev');
+        : this.revisionOf(doc, opts.rev, 'rev', actor);
     const lines = splitLines(rev.body);
     const offsets = lineOffsets(lines);
     const sections = outline(rev.body, lines);
@@ -2129,7 +2729,7 @@ export class DocsService {
       offset: page.offset,
       nextOffset: page.nextOffset,
       total: page.total,
-      proposal: null,
+      proposal: this.ownOpenProposal(actor, doc)?.rev ?? null,
     };
   }
 
@@ -2481,7 +3081,7 @@ export class DocsService {
     revRef: string | number
   ): DocRevisionInfo & { body: string } {
     const doc = this.resolve(actor, ref);
-    const rev = this.revisionOf(doc, revRef, 'rev');
+    const rev = this.revisionOf(doc, revRef, 'rev', actor);
     this.sealIfOtherReads(actor, doc, rev);
     return {
       ...toInfo(this.store().revisionMeta(rev.id) ?? rev),
@@ -2501,8 +3101,8 @@ export class DocsService {
     spent: boolean;
   } {
     const doc = this.resolve(actor, ref);
-    const a = this.revisionOf(doc, from, 'from');
-    const b = this.revisionOf(doc, to, 'to');
+    const a = this.revisionOf(doc, from, 'from', actor);
+    const b = this.revisionOf(doc, to, 'to', actor);
     this.sealIfOtherReads(actor, doc, a);
     this.sealIfOtherReads(actor, doc, b);
     const { chunks, spent } = diffChunks(a.body, b.body);
@@ -2568,7 +3168,8 @@ export class DocsService {
       });
       reindexed++;
     }
-    const dayAgo = new Date(now.getTime() - 24 * HOUR_MS).toISOString();
+    this.expireProposals(now);
+    const dayAgo = new Date(now.getTime() - DAY_MS).toISOString();
     for (const id of store.idleImportSessions(dayAgo))
       store.deleteImportSession(id);
     store.setMeta('sweep:last', now.toISOString());

@@ -1,6 +1,8 @@
 import type {
+  DocProposal,
   DocScope,
   LinkTarget,
+  PolicyRuling,
   TaskRisk,
   TaskStorePort,
 } from '@dispatch/core';
@@ -14,6 +16,7 @@ import type { Principal } from '../messaging/principal.js';
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
 import type { RunMeta } from '../orchestrator/types.js';
 import { runKind } from '../orchestrator/types.js';
+import { DocsError } from './errors.js';
 
 // How DocsService reaches the rest of the daemon, so its tests run against a
 // recording fake.
@@ -44,7 +47,26 @@ export interface DocChange {
   summary: string;
 }
 
-export interface DocsHost {
+// What the doc gate needs from messaging, policy and the ledger; bound at boot
+// step 3, before messaging.recover() replays answers.
+export interface DocsGatePort {
+  // Whether a human address may decide now (the owner, or a decide-tier teammate).
+  canDecide(address: string): boolean;
+  rule(risk: TaskRisk | undefined): PolicyRuling;
+  // The gate id; an open gate for the same proposal is reused.
+  raiseGate(p: DocProposal): Promise<string>;
+  // False when an answer got there first.
+  closeGate(gate: string, reason: string): boolean;
+  // A system notice to `to`, in reply to `replyTo` when given; never throws.
+  notice(to: string, replyTo: string | null, body: string): void;
+  recordPolicyApproval(
+    p: DocProposal,
+    ruling: Extract<PolicyRuling, { mode: 'auto' }>
+  ): void;
+  openDocGates(): { id: string; proposal: string }[];
+}
+
+export interface DocsHost extends DocsGatePort {
   operatorOf(principal: Principal): Operator | null;
   // The task of an execute run; null for every other principal.
   taskOfPrincipal(principal: Principal): string | null;
@@ -123,6 +145,7 @@ export class DaemonDocsHost implements DocsHost {
   private runs: DocsRuns | null = null;
   private messages: DocsMessages | null = null;
   private memory: DocsMemoryPort | null = null;
+  private gates: DocsGatePort | null = null;
   private readonly listeners = new Set<(change: DocChange) => void>();
   private readonly endListeners = new Set<(runId: string) => void>();
   private readonly debounced = new Map<string, ReturnType<typeof setTimeout>>();
@@ -148,6 +171,48 @@ export class DaemonDocsHost implements DocsHost {
 
   bindMemory(port: DocsMemoryPort): void {
     this.memory = port;
+  }
+
+  bindGates(port: DocsGatePort): void {
+    this.gates = port;
+  }
+
+  // The bound gate port; before boot step 3 a gated write answers 503.
+  private gatePort(): DocsGatePort {
+    if (this.gates === null)
+      throw new DocsError('unavailable', 'messaging is not bound yet');
+    return this.gates;
+  }
+
+  canDecide(address: string): boolean {
+    return this.gatePort().canDecide(address);
+  }
+
+  rule(risk: TaskRisk | undefined): PolicyRuling {
+    return this.gatePort().rule(risk);
+  }
+
+  raiseGate(p: DocProposal): Promise<string> {
+    return this.gatePort().raiseGate(p);
+  }
+
+  closeGate(gate: string, reason: string): boolean {
+    return this.gatePort().closeGate(gate, reason);
+  }
+
+  notice(to: string, replyTo: string | null, body: string): void {
+    this.gatePort().notice(to, replyTo, body);
+  }
+
+  recordPolicyApproval(
+    p: DocProposal,
+    ruling: Extract<PolicyRuling, { mode: 'auto' }>
+  ): void {
+    this.gatePort().recordPolicyApproval(p, ruling);
+  }
+
+  openDocGates(): { id: string; proposal: string }[] {
+    return this.gatePort().openDocGates();
   }
 
   onChange(listener: (change: DocChange) => void): () => void {

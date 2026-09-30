@@ -145,6 +145,45 @@ export interface DocSaveResult {
   mine?: { id: string; n: number | null; hash: string };
 }
 
+export type ProposalState =
+  | 'open'
+  | 'approved'
+  | 'rejected'
+  | 'expired'
+  | 'withdrawn'
+  | 'failed';
+
+// An edit to an accepted team doc waiting on the doc gate; `rev` is its
+// unnumbered proposal revision, `base` the head it was made against.
+export interface DocProposal {
+  rev: string;
+  doc: string;
+  base: string;
+  author: string;
+  operator: string | null;
+  runId: string | null;
+  taskId: string | null;
+  origin: string;
+  gate: string | null;
+  state: ProposalState;
+  decidedBy: string | null;
+  decidedByPolicy: { rung: number; authorizedBy: 'rung' | 'override' } | null;
+  reason: string | null;
+  result: string | null;
+  createdAt: string;
+  decidedAt: string | null;
+}
+
+// GET /api/docs/proposals/:rev: the proposal's text, its diff against its
+// base, and whether it merges cleanly onto the current head.
+export interface DocProposalView {
+  proposal: DocProposal;
+  title: string;
+  body: string;
+  chunks: { equal: boolean; a: string[]; b: string[] }[];
+  mergeable: { clean: boolean; headN: number };
+}
+
 export interface DocConflict {
   code: 'conflict';
   reason: 'merge-conflict' | 'base-changed';

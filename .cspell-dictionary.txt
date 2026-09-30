@@ -385,6 +385,7 @@ reflog
 refmove
 refspec
 refspecs
+regate
 registrator
 rehome
 rehomed

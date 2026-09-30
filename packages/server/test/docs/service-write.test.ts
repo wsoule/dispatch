@@ -557,8 +557,8 @@ describe('review state, revert and lifecycle', () => {
     expect(service.list(as(OWNER), {}).total).toBe(0);
     expect(service.list(as(OWNER), { includeArchived: true }).total).toBe(1);
     expect(service.setStatus(as(OWNER), 'a', 'draft').status).toBe('draft');
-    expect(code(() => service.setStatus(as(OWNER), 'a', 'accepted'))).toBe(
-      'invalid'
+    expect(service.setStatus(as(OWNER), 'a', 'accepted').status).toBe(
+      'accepted'
     );
   });
 

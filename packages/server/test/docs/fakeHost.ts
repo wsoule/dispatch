@@ -1,4 +1,10 @@
-import type { DocsConfig, LinkTarget } from '@dispatch/core';
+import type {
+  DocProposal,
+  DocsConfig,
+  LinkTarget,
+  PolicyRuling,
+  TaskRisk,
+} from '@dispatch/core';
 import type { Operator } from '@dispatch/memory';
 
 import type {
@@ -97,6 +103,20 @@ export class FakeDocsHost implements DocsHost {
   notifyThrows = new Set<string>();
   runLines: { runId: string; line: string }[] = [];
   clock = new Date('2026-09-26T10:00:00.000Z');
+  // Overrides of DEFAULT_TEST_CONFIG, read on every use.
+  config: Partial<DocsConfig> = {};
+  // The doc gate's side: who may decide, the policy ruling, and what was raised, closed and told.
+  deciders = new Set<string>(['human:wyat', 'human:bob']);
+  ruling: (risk: TaskRisk | undefined) => PolicyRuling = () => ({
+    mode: 'block',
+  });
+  risksAsked: (TaskRisk | undefined)[] = [];
+  gatesRaised: string[] = [];
+  gatesClosed: { gate: string; reason: string }[] = [];
+  notices: { to: string; replyTo: string | null; body: string }[] = [];
+  policyApprovals: DocProposal[] = [];
+  openGates: { id: string; proposal: string }[] = [];
+  onCloseGate: (() => void) | null = null;
 
   constructor() {
     for (const id of ['t-1', 't-2', 'e-1', 'e-root']) {
@@ -181,6 +201,34 @@ export class FakeDocsHost implements DocsHost {
       throw new Error(`run ${runId} cannot take a notice`);
     this.runLines.push({ runId, line });
   }
+  canDecide(address: string): boolean {
+    return this.deciders.has(address);
+  }
+  rule(risk: TaskRisk | undefined): PolicyRuling {
+    this.risksAsked.push(risk);
+    return this.ruling(risk);
+  }
+  raiseGate(p: DocProposal): Promise<string> {
+    const id = `m-gate-${this.gatesRaised.length + 1}`;
+    this.gatesRaised.push(id);
+    this.openGates.push({ id, proposal: p.rev });
+    return Promise.resolve(id);
+  }
+  closeGate(gate: string, reason: string): boolean {
+    this.onCloseGate?.();
+    this.gatesClosed.push({ gate, reason });
+    this.openGates = this.openGates.filter((g) => g.id !== gate);
+    return true;
+  }
+  notice(to: string, replyTo: string | null, body: string): void {
+    this.notices.push({ to, replyTo, body });
+  }
+  recordPolicyApproval(p: DocProposal): void {
+    this.policyApprovals.push(p);
+  }
+  openDocGates(): { id: string; proposal: string }[] {
+    return this.openGates;
+  }
   now(): Date {
     return this.clock;
   }
@@ -218,6 +266,7 @@ export function makeService(
       config: {
         ...DEFAULT_TEST_CONFIG,
         coalesceMinutes: opts.coalesceMinutes ?? 10,
+        ...host.config,
       },
       warnings: [],
     }),
