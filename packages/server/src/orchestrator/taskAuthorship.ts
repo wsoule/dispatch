@@ -6,26 +6,34 @@ import { dirname } from 'node:path';
 
 interface AuthorshipRecord {
   createdBy: string;
-  /** Null once someone who acts for no one rewrote the title or body. */
-  editedBy: string | null;
-  /** The title and body (Activity aside) as that last tracked edit left them. */
-  digest: string;
+  /** Last writer of the title; null once someone who acts for no one did. */
+  titleBy: string | null;
+  /** Last writer of the body (Activity aside); null as for `titleBy`. */
+  bodyBy: string | null;
+  /** The title and body as the last tracked edit of each left them. */
+  titleDigest: string;
+  bodyDigest: string;
 }
 
-// The title and body a run is briefed from; Activity lines are appended by
-// comments and runs, so they never count as an edit.
-function contentDigest(doc: TaskDoc): string {
-  return createHash('sha256')
-    .update(doc.meta.title)
-    .update('\0')
-    .update(removeSection(doc.body, 'Activity'))
-    .digest('hex');
+function digest(text: string): string {
+  return createHash('sha256').update(text).digest('hex');
+}
+
+// The title a run is briefed from.
+function titleDigest(doc: TaskDoc): string {
+  return digest(doc.meta.title);
+}
+
+// The body a run is briefed from; Activity lines are appended by comments and
+// runs, so they never count as an edit.
+function bodyDigest(doc: TaskDoc): string {
+  return digest(removeSection(doc.body, 'Activity'));
 }
 
 /**
- * Who created each task and who last wrote its title or body, so an epic's
- * auto-fill acts for its operator only on work that operator wrote. A task
- * with no record, or changed since the last tracked edit, acts for no one.
+ * Who created each task and who last wrote its title and its body, so an
+ * epic's auto-fill acts for its operator only on work that operator wrote. A
+ * task with no record, or changed since the last tracked edit, acts for no one.
  */
 export class TaskAuthorship {
   private readonly records = new Map<string, AuthorshipRecord>();
@@ -41,32 +49,46 @@ export class TaskAuthorship {
     else
       this.records.set(doc.meta.id, {
         createdBy: operator,
-        editedBy: operator,
-        digest: contentDigest(doc),
+        titleBy: operator,
+        bodyBy: operator,
+        titleDigest: titleDigest(doc),
+        bodyDigest: bodyDigest(doc),
       });
     this.persist();
   }
 
-  /** An edit on behalf of `operator`; only a title or body change counts. */
+  /** An edit on behalf of `operator`; each of the title and body is claimed
+   *  only when this edit actually changed it. */
   edited(before: TaskDoc, after: TaskDoc, operator: string | null): void {
     const record = this.records.get(after.meta.id);
     if (record === undefined) return;
-    const digest = contentDigest(after);
-    if (digest === contentDigest(before)) return;
-    record.editedBy = operator;
-    record.digest = digest;
+    const title = titleDigest(after);
+    const body = bodyDigest(after);
+    const titleChanged = title !== titleDigest(before);
+    const bodyChanged = body !== bodyDigest(before);
+    if (!titleChanged && !bodyChanged) return;
+    if (titleChanged) {
+      record.titleBy = operator;
+      record.titleDigest = title;
+    }
+    if (bodyChanged) {
+      record.bodyBy = operator;
+      record.bodyDigest = body;
+    }
     this.persist();
   }
 
-  /** `operator` when they created the task and last wrote it as it reads
-   *  now; otherwise null. */
+  /** `operator` when they created the task and last wrote both its title and
+   *  its body as they read now; otherwise null. */
   actsFor(doc: TaskDoc, operator: string | null): string | null {
     if (operator === null) return null;
     const record = this.records.get(doc.meta.id);
     return record !== undefined &&
       record.createdBy === operator &&
-      record.editedBy === operator &&
-      record.digest === contentDigest(doc)
+      record.titleBy === operator &&
+      record.bodyBy === operator &&
+      record.titleDigest === titleDigest(doc) &&
+      record.bodyDigest === bodyDigest(doc)
       ? operator
       : null;
   }
@@ -86,7 +108,8 @@ export class TaskAuthorship {
     }
   }
 
-  // A missing or unreadable file starts empty: every task then acts for no one.
+  // A missing or unreadable file starts empty, and a record in an older shape
+  // is dropped: those tasks then act for no one.
   private hydrate(): void {
     if (this.path === null || !existsSync(this.path)) return;
     try {
@@ -97,13 +120,17 @@ export class TaskAuthorship {
       for (const [id, r] of Object.entries(parsed)) {
         if (
           typeof r.createdBy === 'string' &&
-          (typeof r.editedBy === 'string' || r.editedBy === null) &&
-          typeof r.digest === 'string'
+          (typeof r.titleBy === 'string' || r.titleBy === null) &&
+          (typeof r.bodyBy === 'string' || r.bodyBy === null) &&
+          typeof r.titleDigest === 'string' &&
+          typeof r.bodyDigest === 'string'
         )
           this.records.set(id, {
             createdBy: r.createdBy,
-            editedBy: r.editedBy,
-            digest: r.digest,
+            titleBy: r.titleBy,
+            bodyBy: r.bodyBy,
+            titleDigest: r.titleDigest,
+            bodyDigest: r.bodyDigest,
           });
       }
     } catch (err) {
