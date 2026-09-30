@@ -114,6 +114,21 @@ describe('personal writes', () => {
     ).toBe('ok');
   });
 
+  it('counts a run’s forgets against personalWritesPerHour', async () => {
+    const t = setup({ personalWritesPerHour: 2 });
+    const [a, b] = (await Promise.all(
+      ['a', 'b'].map((title) => t.engine.save(OWNER, { ...hazard, title }))
+    )) as { id: string }[];
+    await t.engine.save(RUN, { ...hazard, title: 'one' });
+    expect(await code(t.engine.forget(RUN, a.id, 'stale'))).toBe('ok');
+    expect(await code(t.engine.forget(RUN, b.id, 'stale'))).toBe('limited');
+    expect(
+      t.engine
+        .activity(OWNER, '1970-01-01T00:00:00.000Z')
+        .filter((x) => x.kind === 'throttled')
+    ).toHaveLength(1);
+  });
+
   it('supersedes within personal scope only', async () => {
     const t = setup();
     const first = (await t.engine.save(OWNER, hazard)) as { id: string };
