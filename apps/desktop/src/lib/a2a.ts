@@ -9,9 +9,6 @@ import type {
 
 import { gateOf } from './gates';
 
-/** The port the form proposes for a listener that has never been opened. */
-export const A2A_DEFAULT_PORT = 7450;
-
 const LOOPBACK_HOSTNAMES = new Set(['127.0.0.1', 'localhost', '[::1]']);
 // The listener hosts the daemon binds to this machine alone (its bindModeFor).
 const LOOPBACK_BINDS = new Set(['127.0.0.1', 'localhost', '::1']);
@@ -159,15 +156,15 @@ export function formToSettings(form: ListenerForm): FormResult {
   };
 }
 
-/** The form for the settings the listener opens from. A network host with no
- *  TLS of its own proposes the daemon's team-local cert. */
+/** The form for the settings the listener opens from. A listener with no port
+ *  proposes the daemon's free one; a network host with no TLS, its team cert. */
 export function formFromStatus(status: A2AListenerStatus): ListenerForm {
   const s = status.settings;
   const tls = s.tls ?? (isLoopbackHost(s.host) ? null : status.teamTls);
   return {
     enabled: s.enabled,
     host: s.host,
-    port: String(s.port ?? A2A_DEFAULT_PORT),
+    port: String(s.port ?? status.suggestedPort ?? ''),
     publicUrl: s.publicUrl ?? '',
     certPath: tls?.certPath ?? '',
     keyPath: tls?.keyPath ?? '',

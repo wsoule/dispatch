@@ -30,7 +30,7 @@ import {
   ProposalGuard,
 } from './guards.js';
 import { handleProposal } from './handoff.js';
-import { A2AListener } from './listener.js';
+import { A2AListener, freeLoopbackPort } from './listener.js';
 import type { BridgeDeps } from './port.js';
 import { DaemonBridgePort } from './port.js';
 import { reconcileA2A } from './reconcile.js';
@@ -56,6 +56,8 @@ interface ListenerStatus {
   settings: ListenerSettings;
   // The daemon's own `--tls-cert`/`--tls-key`, which a network listener may reuse.
   teamTls: { certPath: string; keyPath: string } | null;
+  // A free port for a listener whose settings name none; null once they do.
+  suggestedPort: number | null;
 }
 
 export interface A2ABridge {
@@ -266,6 +268,14 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     return next;
   }
 
+  // Probed once, so the form's proposal holds still between polls.
+  let suggested: number | null = null;
+  function suggestedPort(): number | null {
+    if (settings.port !== null) return null;
+    suggested ??= freeLoopbackPort();
+    return suggested;
+  }
+
   function status(): ListenerStatus {
     let legacyClients: string[] = [];
     try {
@@ -290,6 +300,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
       legacyClients,
       settings,
       teamTls: deps.teamTls ?? null,
+      suggestedPort: suggestedPort(),
     };
   }
 
