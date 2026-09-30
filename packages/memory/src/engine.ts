@@ -985,12 +985,21 @@ export class MemoryEngine {
 
   // Raises the gate of every open proposal left without one by a crash
   // between storing it and raising it; raiseGate finds a gate sent before.
+  // One failing gate never blocks the rest, and one past its TTL expires.
   async recover(): Promise<{ raised: number }> {
     const store = this.deps.stores.shared();
+    const ttlMs = this.deps.config().proposalTtlDays * 86_400_000;
+    const cutoff = new Date(this.deps.host.now().getTime() - ttlMs);
     let raised = 0;
     for (const p of store.listProposals({ states: ['open'] })) {
       if (p.gate !== null) continue;
-      this.recordGate(store, p.id, await this.deps.host.raiseGate(p));
+      if (p.createdAt < cutoff.toISOString()) {
+        this.expireUngated(p.id);
+        continue;
+      }
+      const gate = await this.raiseGateOrNull(p);
+      if (gate === null) continue;
+      this.recordGate(store, p.id, gate);
       raised++;
     }
     return { raised };
