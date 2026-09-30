@@ -9,6 +9,7 @@ import {
   cardJson,
   offeredSkills,
 } from '../src/card.js';
+import { handoffStatuses, namedStatusVocabulary } from '../src/statuses.js';
 import { ENVELOPE_URI, GATE_URI, WORK_URI } from '../src/uris.js';
 
 const inputs = {
@@ -101,25 +102,28 @@ describe('cardEtag', () => {
   });
 });
 
+const named = (names: string[]) =>
+  handoffStatuses(namedStatusVocabulary(names));
+
 describe('offeredSkills', () => {
   it('builds ask, handoff and status', () => {
     expect(BUILT_SKILLS).toEqual(['ask', 'handoff', 'status']);
   });
   const all = ['ask', 'handoff', 'status'] as const;
   it('omits handoff when the project lacks draft, ready, dropped or landed', () => {
-    expect(offeredSkills(null, ['todo', 'doing', 'done'], all)).toEqual([
+    expect(offeredSkills(null, named(['todo', 'doing', 'done']), all)).toEqual([
       'ask',
       'status',
     ]);
     expect(
-      offeredSkills(null, ['backlog', 'ready', 'landed', 'dropped'], all)
+      offeredSkills(null, named(['backlog', 'ready', 'landed', 'dropped']), all)
     ).toEqual(['ask', 'handoff', 'status']);
   });
   it('offers only what is both configured and built', () => {
     expect(
       offeredSkills(
         ['ask', 'handoff'],
-        ['draft', 'ready', 'landed', 'dropped'],
+        named(['draft', 'ready', 'landed', 'dropped']),
         ['ask']
       )
     ).toEqual(['ask']);

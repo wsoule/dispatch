@@ -12,7 +12,6 @@ import {
   unwrapExternalData,
   wrapExternalData,
 } from '@dispatch/a2a';
-import { canonicalStatus } from '@dispatch/core';
 import type { Address, Message } from '@dispatch/protocol';
 import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
@@ -44,7 +43,8 @@ export async function openHandoff(
       'hand off work with the work extension (skill: handoff)',
       'work.skill'
     );
-  if (!handoffSupported(deps.statuses()))
+  const statuses = deps.statuses();
+  if (!handoffSupported(statuses))
     throw new MessagingError(
       'invalid',
       'this project does not take handoffs',
@@ -65,7 +65,7 @@ export async function openHandoff(
   }
   // Checked before anything is stored, so a bad field leaves no orphan root.
   const invalid = deps.validateTask(
-    shapeDraft(work, input.body, caller.address, 'm-probe')
+    shapeDraft(work, input.body, caller.address, 'm-probe', statuses.draft)
   );
   if (invalid !== null) throw new MessagingError('invalid', invalid, 'work');
   const data = wrapExternalData([
@@ -92,7 +92,7 @@ export async function openHandoff(
   // A concurrent duplicate: the first send is building the draft and gate.
   if (sent.replayed === true) return { kind: 'task', taskId: root.id };
   const doc = deps.createTask(
-    shapeDraft(work, input.body, caller.address, root.id)
+    shapeDraft(work, input.body, caller.address, root.id, statuses.draft)
   );
   const row = { ...rowFor(caller.address, root), dispatchTask: doc.meta.id };
   deps.store.updateTask(root.id, { dispatchTask: doc.meta.id });
@@ -186,13 +186,15 @@ export async function handleProposal(
   )
     return;
   const task = deps.tasks.get(gate.task);
+  const statuses = deps.statuses();
+  const phase = task === null ? null : statuses.phase(task.meta.status);
   if (answer.choice === 'approve') {
-    if (task !== null && canonicalStatus(task.meta.status) === 'draft')
-      deps.updateTask(gate.task, { status: 'ready' });
+    if (phase === 'draft' && statuses.ready !== null)
+      deps.updateTask(gate.task, { status: statuses.ready });
     await answerRoot(deps, row, 'accept');
   } else {
-    if (task !== null && task.meta.status !== 'dropped')
-      deps.updateTask(gate.task, { status: 'dropped' });
+    if (phase !== null && phase !== 'dropped' && statuses.dropped !== null)
+      deps.updateTask(gate.task, { status: statuses.dropped });
     await answerRoot(deps, row, 'decline');
   }
   hub.recompute(row.id);

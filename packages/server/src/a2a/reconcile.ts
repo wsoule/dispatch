@@ -1,5 +1,10 @@
 import type { TaskRow } from '@dispatch/a2a';
-import { parseWorkExt, shapeDraft, unwrapExternalData } from '@dispatch/a2a';
+import {
+  handoffSupported,
+  parseWorkExt,
+  shapeDraft,
+  unwrapExternalData,
+} from '@dispatch/a2a';
 import type { Message } from '@dispatch/protocol';
 import {
   isDecidingAuthor,
@@ -42,9 +47,11 @@ function createDraft(
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload))
     return null;
   const work = parseWorkExt(payload.work);
-  if (work?.skill !== 'handoff') return null;
-  return deps.createTask(shapeDraft(work, root.body, row.client, root.id)).meta
-    .id;
+  const statuses = deps.statuses();
+  if (work?.skill !== 'handoff' || !handoffSupported(statuses)) return null;
+  return deps.createTask(
+    shapeDraft(work, root.body, row.client, root.id, statuses.draft)
+  ).meta.id;
 }
 
 // Brings one open handoff back to its draft, gate and effect: finds the draft

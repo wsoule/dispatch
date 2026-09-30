@@ -7,6 +7,7 @@ import type {
   CardInputs,
   ContinueInput,
   ContinueResult,
+  HandoffStatuses,
   ListPage,
   ListQuery,
   OpenInput,
@@ -70,7 +71,8 @@ export interface BridgeDeps {
   runs: Pick<Orchestrator, 'list' | 'taskIdOfRun'>;
   ownerRef: Address;
   policy: () => A2AConfig;
-  statuses: () => string[];
+  // How the project's statuses read to the handoff code.
+  statuses: () => HandoffStatuses;
   cardBase: () => { publicUrl: string; version: string };
   // Task writes as POST and PATCH /api/tasks make them: checked, stored,
   // cached and broadcast.
@@ -537,8 +539,13 @@ export class DaemonBridgePort implements BridgePort {
     });
     const task =
       row.dispatchTask === null ? null : this.deps.tasks.get(row.dispatchTask);
-    if (task !== null && task.meta.status !== 'dropped')
-      this.deps.updateTask(task.meta.id, { status: 'dropped' });
+    const { dropped, phase } = this.deps.statuses();
+    if (
+      task !== null &&
+      dropped !== null &&
+      phase(task.meta.status) !== 'dropped'
+    )
+      this.deps.updateTask(task.meta.id, { status: dropped });
     await answerRoot(this.deps, row, 'decline', 'Canceled by the client.');
     this.hub.recompute(row.id);
   }

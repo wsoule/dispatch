@@ -39,7 +39,7 @@ function runResults(deps: BridgeDeps, runId: string): RunResults {
 export function workFacts(
   deps: BridgeDeps,
   taskId: string,
-  taskStatus: string
+  landed: boolean
 ): TaskFacts['work'] {
   const run = deps.runs
     .list()
@@ -50,7 +50,7 @@ export function workFacts(
   const work: TaskFacts['work'] = {};
   if (run.prUrl !== undefined) {
     const pr = prFact(run.prUrl, {
-      landed: taskStatus === 'landed',
+      landed,
       open: deps.prOpen(run.prUrl),
     });
     if (pr !== null) work.pr = pr;

@@ -1,6 +1,10 @@
-import { openA2ADb, SqliteA2AStore } from '@dispatch/a2a';
+import {
+  DEFAULT_HANDOFF_STATUSES,
+  openA2ADb,
+  SqliteA2AStore,
+} from '@dispatch/a2a';
 import type { A2AConfig } from '@dispatch/core';
-import { CANONICAL_STATUSES, DEFAULT_A2A } from '@dispatch/core';
+import { DEFAULT_A2A } from '@dispatch/core';
 
 import { RunResultsMemo } from '../../src/a2a/artifacts.js';
 import { tokenHash } from '../../src/a2a/auth.js';
@@ -40,7 +44,7 @@ export async function bridgeFixture(
     runs: orchestrator,
     ownerRef: 'human:wyat',
     policy: () => ({ ...DEFAULT_A2A, ...policy }),
-    statuses: () => [...CANONICAL_STATUSES],
+    statuses: () => DEFAULT_HANDOFF_STATUSES,
     cardBase: () => ({ publicUrl: 'http://127.0.0.1:7450', version: 'test' }),
     validateTask: (input) => validateTaskInput(root, { ...input }),
     createTask: (input) => write(() => tasks.create(input)),

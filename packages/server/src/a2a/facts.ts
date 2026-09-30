@@ -6,6 +6,7 @@ import type {
   TaskRow,
 } from '@dispatch/a2a';
 import { GATE_SENTENCES, gateInScope, scopeOf } from '@dispatch/a2a';
+import type { HandoffStatuses } from '@dispatch/a2a';
 import { canonicalStatus } from '@dispatch/core';
 import type { Delivery, Message } from '@dispatch/protocol';
 import { gateOf } from '@dispatch/protocol';
@@ -48,7 +49,11 @@ function linkedTraffic(
 }
 
 // A handoff's Dispatch task as the projection reads it.
-function taskFact(deps: BridgeDeps, link: TaskLink | null): TaskFacts['task'] {
+function taskFact(
+  deps: BridgeDeps,
+  statuses: HandoffStatuses,
+  link: TaskLink | null
+): TaskFacts['task'] {
   if (link === null) return null;
   const doc = deps.tasks.get(link.taskId);
   if (doc === null) return 'deleted';
@@ -56,6 +61,7 @@ function taskFact(deps: BridgeDeps, link: TaskLink | null): TaskFacts['task'] {
     id: doc.meta.id,
     title: doc.meta.title,
     status: canonicalStatus(doc.meta.status),
+    phase: statuses.phase(doc.meta.status),
     approved: link.approved,
   };
 }
@@ -117,9 +123,10 @@ export function gatherFacts(
   );
   const own = scope.filter((m) => m.from === row.client).map((m) => m.id);
   const answer = deps.engine.answerOf(root.id);
-  const task = taskFact(deps, link);
+  const statuses = deps.statuses();
+  const task = taskFact(deps, statuses, link);
   const dropped =
-    task !== null && task !== 'deleted' && task.status === 'dropped';
+    task !== null && task !== 'deleted' && task.phase === 'dropped';
   return {
     id: row.id,
     contextId: row.contextId,
@@ -138,18 +145,18 @@ export function gatherFacts(
     dropped: dropped ? (row.canceledAt === null ? 'other' : 'client') : null,
     recipientTaskDropped:
       answer === null &&
-      root.to.some(
-        (a) =>
-          a.startsWith('task:') &&
-          deps.tasks.get(a.slice('task:'.length))?.meta.status === 'dropped'
-      ),
+      root.to.some((a) => {
+        if (!a.startsWith('task:')) return false;
+        const doc = deps.tasks.get(a.slice('task:'.length));
+        return doc !== null && statuses.phase(doc.meta.status) === 'dropped';
+      }),
     // An approved handoff's run results; a draft or a declined one shares none.
     work:
       opts.work !== false &&
       task !== null &&
       task !== 'deleted' &&
       task.approved
-        ? workFacts(deps, task.id, task.status)
+        ? workFacts(deps, task.id, task.phase === 'landed')
         : {},
     clientIds: Object.fromEntries(deps.messages.idemKeysFor(own)),
   };

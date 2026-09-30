@@ -1,13 +1,16 @@
-import type { A2AStore, TaskRow } from '@dispatch/a2a';
+import type { A2AStore, HandoffStatuses, TaskRow } from '@dispatch/a2a';
 import {
+  DEFAULT_HANDOFF_STATUSES,
+  handoffStatuses,
   hasA2AProvenance,
   isClientAddress,
+  namedStatusVocabulary,
   openA2ADb,
   SqliteA2AStore,
   TERMINAL_STATES,
 } from '@dispatch/a2a';
 import type { A2AConfig, TaskStorePort, UpdatePatch } from '@dispatch/core';
-import { CANONICAL_STATUSES, DEFAULT_A2A, loadConfig } from '@dispatch/core';
+import { DEFAULT_A2A, loadConfig } from '@dispatch/core';
 import { join } from 'node:path';
 
 import type { EventBus } from '../events.js';
@@ -112,25 +115,26 @@ interface OpenBridgeDeps {
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
 
-// The a2a: block and its warnings; a config.yml that does not parse leaves
-// the defaults rather than failing an A2A request.
+// The a2a: block, its warnings and how the handoff code reads the project's
+// statuses; a config.yml that does not parse leaves the defaults rather than
+// failing an A2A request.
 function a2aConfig(rootDir: string): {
   policy: A2AConfig;
   warnings: string[];
-  statuses: string[];
+  statuses: HandoffStatuses;
 } {
   try {
     const config = loadConfig(rootDir);
     return {
       policy: config.a2a ?? DEFAULT_A2A,
       warnings: config.a2aWarnings ?? [],
-      statuses: config.statuses,
+      statuses: handoffStatuses(namedStatusVocabulary(config.statuses)),
     };
   } catch (err) {
     return {
       policy: DEFAULT_A2A,
       warnings: [`${(err as Error).message}; the a2a: defaults apply`],
-      statuses: [...CANONICAL_STATUSES],
+      statuses: DEFAULT_HANDOFF_STATUSES,
     };
   }
 }
@@ -154,6 +158,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     tasks: deps.tasks,
     ownerRef: deps.ownerRef,
     updateTask: deps.updateTask,
+    statuses: () => a2aConfig(rootDir).statuses,
     store,
   };
   deps.orchestrator.setDispatchGuard((task) =>

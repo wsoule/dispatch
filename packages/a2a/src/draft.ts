@@ -38,12 +38,14 @@ function clientLabel(raw: string): string {
 }
 
 // The draft a handoff becomes: fenced client text with headings escaped,
-// critical risk, a priority that cannot jump the owner's queue, namespaced labels.
+// critical risk, a priority that cannot jump the owner's queue, namespaced
+// labels, in the project's draft status.
 export function shapeDraft(
   work: HandoffRequest,
   text: string,
   client: Address,
-  rootId: string
+  rootId: string,
+  status: string
 ): CreateInput {
   const acceptance = work.acceptance ?? [];
   const description = [
@@ -63,7 +65,7 @@ export function shapeDraft(
     .filter((l) => l !== 'a2a/');
   return {
     title: untrustedInline(work.title),
-    status: 'draft',
+    status,
     description,
     labels: [...new Set(['a2a', ...labels])],
     ...(work.writes === undefined ? {} : { writes: work.writes }),

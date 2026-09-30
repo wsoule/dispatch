@@ -1,4 +1,3 @@
-import { CANONICAL_STATUSES } from '@dispatch/core';
 import { isSystemMarker } from '@dispatch/protocol';
 import type { Address, JsonValue, Message } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
@@ -45,8 +44,6 @@ export const GATE_SENTENCES: Record<GateTypeName, string> = {
   wake: 'Waiting for the project owner to approve waking the task.',
 };
 const DEFAULT_HISTORY = 50;
-const WORKING_STATUSES = new Set(['working', 'review', 'landing']);
-const CANONICAL = new Set<string>(CANONICAL_STATUSES);
 
 type LinkedTask = Exclude<TaskFacts['task'], 'deleted' | null>;
 function linked(f: TaskFacts): LinkedTask | null {
@@ -132,7 +129,7 @@ export function decideState(f: TaskFacts): Decision {
     return fixed(4, 'FAILED', 'The task was deleted.');
   if (!handoff && f.answer !== null)
     return said(5, 'COMPLETED', f.answer, 'Answered.');
-  if (task?.status === 'landed') return fixed(6, 'COMPLETED', 'Landed.');
+  if (task?.phase === 'landed') return fixed(6, 'COMPLETED', 'Landed.');
   const get = lookupIn(f);
   const question = f.openQuestions.find((q) => !isGateTraffic(q, get));
   if (question !== undefined)
@@ -152,14 +149,12 @@ export function decideState(f: TaskFacts): Decision {
     };
   }
   if (task !== null) {
-    if (WORKING_STATUSES.has(task.status) || !CANONICAL.has(task.status)) {
-      const stage =
-        task.status === 'review' || task.status === 'landing'
-          ? task.status
-          : undefined;
+    const { phase } = task;
+    if (phase === 'working' || phase === 'review' || phase === 'landing') {
+      const stage = phase === 'working' ? undefined : phase;
       return said(9, 'WORKING', latestFromOthers(f, get), 'Working.', stage);
     }
-    if ((task.status === 'draft' || task.status === 'ready') && task.approved) {
+    if ((phase === 'draft' || phase === 'queued') && task.approved) {
       return fixed(10, 'SUBMITTED', 'Approved; waiting to be scheduled.');
     }
   }

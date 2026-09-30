@@ -1,5 +1,10 @@
-import type { OpenInput } from '@dispatch/a2a';
-import { decideState, wrapExternalData } from '@dispatch/a2a';
+import type { OpenInput, StatusVocabulary } from '@dispatch/a2a';
+import {
+  decideState,
+  handoffStatuses,
+  namedStatusVocabulary,
+  wrapExternalData,
+} from '@dispatch/a2a';
 import {
   effectiveRung,
   loadConfig,
@@ -8,9 +13,18 @@ import {
 } from '@dispatch/core';
 import { gateOf, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { appendFileSync, mkdirSync } from 'node:fs';
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  writeFileSync,
+} from 'node:fs';
 import { join } from 'node:path';
+import { parse, stringify } from 'yaml';
 
+import type { GuardDeps } from '../../src/a2a/guards.js';
+import { guardTaskPatch, ProposalGuard } from '../../src/a2a/guards.js';
 import { handleProposal } from '../../src/a2a/handoff.js';
 import { reconcileA2A } from '../../src/a2a/reconcile.js';
 import { consultProjectPolicy } from '../../src/policyEngine.js';
@@ -124,7 +138,8 @@ describe('a handoff', () => {
 
   it('is refused when the project’s statuses cannot carry it', async () => {
     const base = f.deps.statuses();
-    f.deps.statuses = () => ['todo', 'doing', 'done'];
+    f.deps.statuses = () =>
+      handoffStatuses(namedStatusVocabulary(['todo', 'doing', 'done']));
     await expect(open()).rejects.toMatchObject({
       code: 'invalid',
       field: 'work.skill',
@@ -461,5 +476,133 @@ describe('reconciliation', () => {
     await reconcileA2A(f.deps, f.watch).settled;
     expect(f.tasks.get(draft.meta.id)?.meta.status).toBe('ready');
     expect(f.messaging.engine.answerOf(id)).toMatchObject({ choice: 'accept' });
+  });
+});
+
+// A project whose statuses mirror Linear's workflow: no built-in names, so
+// every read and write goes through the status model's types and roles.
+const LINEAR: StatusVocabulary = {
+  definitions: [
+    { name: 'Triage', type: 'triage' },
+    { name: 'Backlog', type: 'backlog' },
+    { name: 'Todo', type: 'unstarted' },
+    { name: 'In Progress', type: 'started' },
+    { name: 'In Review', type: 'started' },
+    { name: 'Done', type: 'completed' },
+    { name: 'Canceled', type: 'canceled' },
+    { name: 'Duplicate', type: 'canceled' },
+  ],
+  roles: {
+    ready: 'Todo',
+    review: 'In Review',
+    landing: null,
+    landed: 'Done',
+    dropped: 'Canceled',
+  },
+};
+
+describe('a handoff in a Linear-style project', () => {
+  beforeEach(() => {
+    const path = join(project.root(), '.dispatch', 'config.yml');
+    const config = existsSync(path)
+      ? (parse(readFileSync(path, 'utf8')) as Record<string, unknown>)
+      : {};
+    config.statuses = LINEAR.definitions.map((d) => d.name);
+    writeFileSync(path, stringify(config));
+    f.deps.statuses = () => handoffStatuses(LINEAR);
+  });
+
+  it('drafts in the backlog status and approves into the ready role', async () => {
+    const { id, row, draft } = await open();
+    expect(draft.meta.status).toBe('Backlog');
+    await f.messaging.engine.reply(
+      row.gate!,
+      { body: '', choice: 'approve' },
+      HUMAN
+    );
+    expect(f.tasks.get(draft.meta.id)?.meta.status).toBe('Todo');
+    expect(await state(id)).toBe('SUBMITTED');
+  });
+
+  it('reads started, review and completed statuses by type and role', async () => {
+    const { id, row, draft } = await open();
+    await f.messaging.engine.reply(
+      row.gate!,
+      { body: '', choice: 'approve' },
+      HUMAN
+    );
+    f.deps.updateTask(draft.meta.id, { status: 'In Progress' });
+    expect(decideState((await f.port.facts(f.caller, id))!)).toMatchObject({
+      state: 'WORKING',
+    });
+    f.deps.updateTask(draft.meta.id, { status: 'In Review' });
+    expect(decideState((await f.port.facts(f.caller, id))!)).toMatchObject({
+      state: 'WORKING',
+      stage: 'review',
+    });
+    f.deps.updateTask(draft.meta.id, { status: 'Done' });
+    expect(await state(id)).toBe('COMPLETED');
+  });
+
+  it('declines into the dropped role and reads REJECTED', async () => {
+    const { id, row, draft } = await open();
+    await f.messaging.engine.reply(
+      row.gate!,
+      { body: 'not now', choice: 'decline' },
+      HUMAN
+    );
+    expect(f.tasks.get(draft.meta.id)?.meta.status).toBe('Canceled');
+    expect(await state(id)).toBe('REJECTED');
+  });
+
+  it('reads a task canceled on the board as dropped by the owner', async () => {
+    const { id, row, draft } = await open();
+    await f.messaging.engine.reply(
+      row.gate!,
+      { body: '', choice: 'approve' },
+      HUMAN
+    );
+    f.deps.updateTask(draft.meta.id, { status: 'Canceled' });
+    expect(await state(id)).toBe('REJECTED');
+  });
+
+  // The guards: a status patch at decide is the owner's answer, and a draft
+  // moved by anything else goes back to the backlog status.
+  const guardDeps = (): GuardDeps => ({
+    engine: f.messaging.engine,
+    tasks: f.tasks,
+    ownerRef: f.deps.ownerRef,
+    updateTask: f.deps.updateTask,
+    statuses: f.deps.statuses,
+    store: f.store,
+  });
+
+  it('answers the gate from a decide-tier move to the ready role or the canceled type', async () => {
+    const one = await open();
+    const two = await open({ clientMessageId: 'c-h2' });
+    const owner = { tier: 'decide' as const, ref: 'human:wyat' };
+    await guardTaskPatch(
+      guardDeps(),
+      one.draft.meta.id,
+      { status: 'Todo' },
+      owner
+    );
+    await guardTaskPatch(
+      guardDeps(),
+      two.draft.meta.id,
+      { status: 'Duplicate' },
+      owner
+    );
+    expect(f.messaging.engine.answerOf(one.row.gate!)?.choice).toBe('approve');
+    expect(f.messaging.engine.answerOf(two.row.gate!)?.choice).toBe('decline');
+  });
+
+  it('puts a gated draft moved to a started status back in the backlog status', async () => {
+    const { draft } = await open();
+    f.deps.updateTask(draft.meta.id, { status: 'In Progress' });
+    const guard = new ProposalGuard(guardDeps(), f.events);
+    expect(guard.revertIfMoved(draft.meta.id)).toBe(true);
+    expect(f.tasks.get(draft.meta.id)?.meta.status).toBe('Backlog');
+    expect(guard.revertIfMoved(draft.meta.id)).toBe(false);
   });
 });

@@ -1,4 +1,4 @@
-import type { A2AStore } from '@dispatch/a2a';
+import type { A2AStore, HandoffStatuses } from '@dispatch/a2a';
 import { hasA2AProvenance } from '@dispatch/a2a';
 import type {
   TaskDoc,
@@ -6,7 +6,6 @@ import type {
   TaskStorePort,
   UpdatePatch,
 } from '@dispatch/core';
-import { canonicalStatus } from '@dispatch/core';
 import type { Address, DeliveryEngine } from '@dispatch/protocol';
 import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
@@ -21,6 +20,7 @@ export interface GuardDeps {
   tasks: TaskStorePort;
   ownerRef: Address;
   updateTask(id: string, patch: UpdatePatch): TaskDoc;
+  statuses: () => HandoffStatuses;
   // Null when a2a.db could not be opened.
   store: A2AStore | null;
 }
@@ -91,10 +91,12 @@ export async function guardTaskPatch(
   const proposal = openProposalFor(deps, taskId);
   if (proposal !== null) {
     if (!deciding) return { ok: false, status: 409, error: awaiting(taskId) };
-    const status =
-      patch.status === undefined ? 'draft' : canonicalStatus(patch.status);
-    if (status !== 'draft') {
-      const choice = status === 'dropped' ? 'decline' : 'approve';
+    const phase =
+      patch.status === undefined
+        ? 'draft'
+        : deps.statuses().phase(patch.status);
+    if (phase !== 'draft') {
+      const choice = phase === 'dropped' ? 'decline' : 'approve';
       try {
         await deps.engine.reply(
           proposal.gateId,
@@ -185,10 +187,15 @@ export class ProposalGuard {
 
   private revert(proposal: OpenProposal): boolean {
     const task = this.deps.tasks.get(proposal.taskId);
-    if (task === null || canonicalStatus(task.meta.status) === 'draft')
+    const statuses = this.deps.statuses();
+    if (
+      task === null ||
+      statuses.draft === null ||
+      statuses.phase(task.meta.status) === 'draft'
+    )
       return false;
     this.deps.updateTask(proposal.taskId, {
-      status: 'draft',
+      status: statuses.draft,
       appendActivity: `${new Date().toISOString()} ${REVERT_LINE}`,
     });
     if (!this.told.has(proposal.gateId)) {
