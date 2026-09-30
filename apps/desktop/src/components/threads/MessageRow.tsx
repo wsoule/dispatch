@@ -373,7 +373,9 @@ function TaskProposalGate({
   return (
     <TaskProposalCard
       {...card}
-      task={item === null || text === null ? null : { meta: item.meta, body: text }}
+      task={
+        item === null || text === null ? null : { meta: item.meta, body: text }
+      }
       loading={item !== null && !settled}
     />
   );
