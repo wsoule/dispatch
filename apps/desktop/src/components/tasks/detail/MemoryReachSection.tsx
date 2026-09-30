@@ -5,6 +5,9 @@ import { entryProvenance, memoryQueryKey } from '../../../lib/memory';
 import { Markdown } from '../../runs/Markdown';
 import { MainSection } from './MainSection';
 
+// The daemon's largest list page; a full page may mean more reach the task.
+const LIST_LIMIT = 200;
+
 interface MemoryReachSectionProps {
   client: Pick<ApiClient, 'listMemory'>;
   port: number | undefined;
@@ -20,7 +23,7 @@ export function MemoryReachSection({
 }: MemoryReachSectionProps) {
   const { data, error } = useQuery({
     queryKey: [...memoryQueryKey(port, 'reach'), taskId],
-    queryFn: () => client.listMemory({ taskId }),
+    queryFn: () => client.listMemory({ taskId, limit: LIST_LIMIT }),
     retry: false,
   });
   if (error !== null) {
@@ -37,7 +40,9 @@ export function MemoryReachSection({
       title="Memory"
       trailing={
         <span className="text-muted-foreground font-book text-[12px] tabular-nums">
-          {entries.length}
+          {entries.length >= LIST_LIMIT
+            ? `first ${LIST_LIMIT}`
+            : entries.length}
         </span>
       }
     >
@@ -48,17 +53,22 @@ export function MemoryReachSection({
             data-slot="memory-entry"
             className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3"
           >
-            {/* Titles are author-written, so they render as plain text. */}
-            <span className="text-foreground text-[13px] font-medium break-words">
-              {entry.title}
-            </span>
-            <p className="text-muted-foreground font-book mt-0.5 text-[12px]">
-              {entryProvenance(entry)}
-            </p>
-            <Markdown
-              content={entry.body}
-              className="text-muted-foreground font-book mt-1 text-[13px]"
-            />
+            {/* The body stays collapsed under its title, so the list stays dense. */}
+            <details>
+              <summary className="cursor-pointer">
+                {/* Titles are author-written, so they render as plain text. */}
+                <span className="text-foreground text-[13px] font-medium break-words">
+                  {entry.title}
+                </span>
+                <span className="text-muted-foreground font-book mt-0.5 block text-[12px]">
+                  {entryProvenance(entry)}
+                </span>
+              </summary>
+              <Markdown
+                content={entry.body}
+                className="text-muted-foreground font-book mt-1 text-[13px]"
+              />
+            </details>
           </li>
         ))}
       </ul>

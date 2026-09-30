@@ -559,7 +559,7 @@ describe('TaskPage', () => {
     expect(screen.getByText('Receipts')).toBeDefined();
     expect(screen.queryByText('Ledger')).toBeNull();
     expect(reads.ledger).toEqual([{ epicId: null, class: 'audit' }]);
-    expect(reads.memory).toEqual([{ taskId: 't-8f2a' }]);
+    expect(reads.memory).toEqual([{ taskId: 't-8f2a', limit: 200 }]);
   });
 
   // The content column is the drop target, so a drop that bubbles up from any

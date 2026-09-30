@@ -43,8 +43,13 @@ describe('MemoryReachSection', () => {
     ]);
     renderSection(listMemory);
     expect(await screen.findByText('pnpm builds')).toBeTruthy();
-    expect(listMemory).toHaveBeenCalledWith({ taskId: 't-1a2b3c' });
-    expect(screen.getByText('Use allowBuilds.')).toBeTruthy();
+    expect(listMemory).toHaveBeenCalledWith({
+      taskId: 't-1a2b3c',
+      limit: 200,
+    });
+    // Bodies sit collapsed under their title, so the list stays dense.
+    const body = screen.getByText('Use allowBuilds.');
+    expect(body.closest('details')?.open).toBe(false);
     expect(
       screen.getByText('Team hazard · by human:wyat · human-written')
     ).toBeTruthy();
@@ -53,7 +58,20 @@ describe('MemoryReachSection', () => {
     ).toBeTruthy();
     expect(screen.getByText('Memory')).toBeTruthy();
     // Read-only: the task page offers nothing to change an entry with.
-    expect(screen.queryAllByRole('button')).toHaveLength(0);
+    expect(
+      screen.queryAllByRole('button').filter((b) => b.tagName !== 'SUMMARY')
+    ).toHaveLength(0);
+  });
+
+  it('says when more entries reach the task than it lists', async () => {
+    const full = Array.from({ length: 200 }, (_, i) =>
+      entry({
+        id: `mem-${String(i).padStart(6, '0')}`,
+        title: `lesson ${i}`,
+      })
+    );
+    renderSection(entries(full));
+    expect(await screen.findByText('first 200')).toBeTruthy();
   });
 
   it('renders nothing when no entry reaches the task', async () => {
