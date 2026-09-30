@@ -581,4 +581,10 @@ describe('a component too large to search', () => {
   it('searches one removal fewer', () => {
     expect(w.fold(ops.slice(0, -1)).unknown).toBeNull();
   });
+
+  it('lifts the pause once the founder revokes one publisher below its removal', () => {
+    const lifted = w.fold([...ops, revoke(A, 21, 200, ring[5] ?? A, 1)]);
+    expect(lifted.unknown).toBeNull();
+    expect(lifted.revoked.get(ring[5] ?? A)?.afterSeq).toBe(1);
+  });
 });

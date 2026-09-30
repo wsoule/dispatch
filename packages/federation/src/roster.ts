@@ -503,19 +503,39 @@ function couldHold(
   return could;
 }
 
-// Whether accepting r can change the right s needs, or s's target: r's cut
-// reaches s's publisher or target. A hosts cut changes no right.
+// Whether accepting r can change the right s needs: r's cut reaches s's
+// publisher, or s's target where a member may revoke its own handle's device.
+// A hosts cut changes no right.
 function affectsOf(ctx: Context): (r: Removal, s: Removal) => boolean {
+  const handles = new Map<string, Set<string>>();
+  for (const replica of ctx.input.keys.keys())
+    handles.set(replica, new Set([handleOf(ctx, replica)]));
+  for (const { body } of ctx.items)
+    if (isAction(body, 'admit')) {
+      const known = handles.get(body.replica);
+      if (known === undefined)
+        handles.set(body.replica, new Set([body.handle]));
+      else known.add(body.handle);
+    }
+  // Whether a and b can hold one handle, as some key or admit gives each.
+  const share = (a: string, b: string): boolean => {
+    const theirs = handles.get(b) ?? new Set([personOf(b)]);
+    return [...(handles.get(a) ?? [personOf(a)])].some((h) => theirs.has(h));
+  };
   return (r, s) => {
     if (r === s || r.kind === 'hosts') return false;
     const reach = ctx.reach(r);
-    return reach.has(s.op.replica) || reach.has(s.target);
+    if (reach.has(s.op.replica)) return true;
+    return (
+      s.kind === 'all' && reach.has(s.target) && share(s.op.replica, s.target)
+    );
   };
 }
 
 // A removal no undecided one affects is decided outright: void without its
-// right, else accepted, unless the no-admin rule could void it. The rest is
-// searched per connected component, as one when that rule couples them all.
+// right, else accepted, unless the no-admin rule could void it; one an
+// accepted revocation cuts below is void. The rest is searched per connected
+// component, as one when the no-admin rule couples them all.
 function decideAmong(
   ctx: Context,
   list: readonly Removal[],
@@ -525,12 +545,19 @@ function decideAmong(
   const safe = alwaysAdmin(ctx, list, fold);
   const accepted: Removal[] = [];
   const decided = new Set<Removal>();
+  // One an accepted revocation cuts below holds no right in any fold: void.
+  const cutBelow = (r: Removal): boolean =>
+    accepted.some(
+      (c) =>
+        c.kind === 'all' && c.target === r.op.replica && c.afterSeq < r.op.seq
+    );
   for (let grew = true; grew; ) {
     grew = false;
     for (const s of list) {
       if (decided.has(s)) continue;
-      if (list.some((r) => !decided.has(r) && affects(r, s))) continue;
-      const right = hadRight(ctx, fold(accepted), s);
+      const free = !list.some((r) => !decided.has(r) && affects(r, s));
+      if (!free && !cutBelow(s)) continue;
+      const right = free && hadRight(ctx, fold(accepted), s);
       if (right && !safe && s.kind !== 'hosts') continue;
       decided.add(s);
       grew = true;
