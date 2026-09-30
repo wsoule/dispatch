@@ -78,9 +78,14 @@ export function openProposalFor(
   return openProposals(deps).find((p) => p.taskId === taskId) ?? null;
 }
 
-// a2a.db answers when it links the task; otherwise messages.db must tie it to a handoff.
-function isA2ATask(deps: GuardDeps, taskId: string): boolean {
-  if ((deps.store?.taskForDispatchTask(taskId) ?? null) !== null) return true;
+// a2a.db answers when it links the task; otherwise (or while it fails) messages.db
+// must tie it to a handoff. Provenance text alone never counts.
+export function isA2ATask(deps: GuardDeps, taskId: string): boolean {
+  try {
+    if ((deps.store?.taskForDispatchTask(taskId) ?? null) !== null) return true;
+  } catch (err) {
+    console.error(`dispatchd: could not read ${taskId}'s A2A record`, err);
+  }
   const task = deps.tasks.get(taskId);
   return task !== null && handoffRoots(deps, task).length > 0;
 }

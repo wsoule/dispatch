@@ -2,7 +2,6 @@ import type { A2AStore, HandoffStatuses, TaskRow } from '@dispatch/a2a';
 import {
   DEFAULT_HANDOFF_STATUSES,
   handoffStatuses,
-  hasA2AProvenance,
   isClientAddress,
   namedStatusVocabulary,
   openA2ADb,
@@ -26,6 +25,7 @@ import type { GuardDeps, PatchGuard } from './guards.js';
 import {
   dispatchRefusal,
   guardTaskPatch,
+  isA2ATask,
   openProposalFor,
   ProposalGuard,
 } from './guards.js';
@@ -382,21 +382,8 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
     guardTaskPatch: (taskId, patch, caller) =>
       guardTaskPatch(guardDeps, taskId, patch, caller),
     proposalOpen: (taskId) => openProposalFor(guardDeps, taskId) !== null,
-    // a2a.db is the record; while it is down or failing, the task's own
-    // provenance answers instead, so a refused file never reads as local work.
-    taskOrigin(taskId) {
-      if (store !== null) {
-        try {
-          return store.taskForDispatchTask(taskId) === null ? null : 'a2a';
-        } catch (err) {
-          console.error(
-            `dispatchd: could not read ${taskId}'s A2A record`,
-            err
-          );
-        }
-      }
-      return hasA2AProvenance(deps.tasks.get(taskId)) ? 'a2a' : null;
-    },
+    // The guards' evidence: a2a.db's row, else a handoff messages.db ties to the task.
+    taskOrigin: (taskId) => (isA2ATask(guardDeps, taskId) ? 'a2a' : null),
     recheckProposals: () => proposals.recheck(),
     close: () =>
       serial(async () => {
@@ -406,6 +393,7 @@ export function openA2ABridge(deps: OpenBridgeDeps): A2ABridge {
         stopWatch = null;
         await listener?.close();
         messaging.setExternalPolicy(null);
+        guardDeps.store = null;
         store?.close();
       }),
   };

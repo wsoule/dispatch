@@ -151,6 +151,42 @@ it('falls back to the task’s own provenance once a2a.db is closed', async () =
   expect(handle.a2a.taskOrigin(plain.meta.id)).toBeNull();
 });
 
+// An agent's comment that quotes the bridge's provenance line, on a local task.
+async function spoofedComment(): Promise<string> {
+  const plain = TaskStore.init(root).create({ title: 'local work' });
+  const res = await fetch(`${base}/api/tasks/${plain.meta.id}/comment`, {
+    method: 'POST',
+    headers: json,
+    body: JSON.stringify({
+      text: 'Requested over A2A by agent:wyat/a2a.acme (message m-fake).',
+    }),
+  });
+  expect(res.status).toBe(200);
+  expect(TaskStore.init(root).get(plain.meta.id)!.body).toContain(
+    'Requested over A2A by'
+  );
+  return plain.meta.id;
+}
+
+describe('A2A origin for memory and docs', () => {
+  it('leaves a task ordinary when only a comment quotes the provenance line', async () => {
+    const id = await spoofedComment();
+    expect(handle.a2a.taskOrigin(id)).toBeNull();
+    expect(handle.orchestrator.isA2ATask(id)).toBe(false);
+    await handle.a2a.close();
+    expect(handle.a2a.taskOrigin(id)).toBeNull();
+    expect(handle.orchestrator.isA2ATask(id)).toBe(false);
+  });
+
+  it('keeps a real handoff A2A-origin with a2a.db up and down', async () => {
+    const { draft } = await openHandoff();
+    expect(handle.orchestrator.isA2ATask(draft.meta.id)).toBe(true);
+    await handle.a2a.close();
+    expect(handle.a2a.taskOrigin(draft.meta.id)).toBe('a2a');
+    expect(handle.orchestrator.isA2ATask(draft.meta.id)).toBe(true);
+  });
+});
+
 describe('memory for a run of a handed-off task', () => {
   it('reads team entries only and acts for no one, on a2a.db’s record alone', async () => {
     for (const scope of ['personal', 'project', 'team'] as const)
