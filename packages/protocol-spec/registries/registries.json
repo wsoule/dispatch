@@ -456,7 +456,7 @@
     {
       "value": "memory",
       "scope": "memory",
-      "status": "provisional",
+      "status": "permanent",
       "since": "1.0.0-draft.1",
       "section": "C.3",
       "reference": "spec/appendix-c-dispatch-profile.md#sC.3",
@@ -469,7 +469,15 @@
         "kind": "memory kind"
       },
       "effect": "apply or reject the memory proposal (C.3)",
-      "vectors": []
+      "vectors": [
+        "core.gates.memory-is-raised-by-the-system-or-a-deciding-human",
+        "core.gates.memory-is-refused-from-a-session-or-an-agent",
+        "core.gates.memory-needs-a-deciding-answer",
+        "env.envelope.a-memory-gate-names-a-proposal",
+        "env.envelope.a-memory-gate-has-a-project-or-team-scope",
+        "env.envelope.a-memory-gate-names-its-action-and-kind",
+        "env.envelope.memory-gates-have-a-fixed-shape"
+      ]
     },
     {
       "value": "task-proposal",

@@ -39,6 +39,18 @@ vector ids (see §14.2).
   `a2a.projection.row-9-a-status-of-the-hosts-own`,
   `a2a.projection.row-10-an-approved-draft-is-submitted`,
   `a2a.projection.row-10-needs-approval`.
+- [additive] The `memory` gate type is permanent: the system or a deciding human
+  raises it, never a session or an agent; its shape is fixed, naming a proposal
+  and never its text; and only a deciding principal answers it (App. C.3).
+  Vectors: `core.gates.memory-is-raised-by-the-system-or-a-deciding-human`,
+  `core.gates.memory-is-refused-from-a-session-or-an-agent`,
+  `core.gates.memory-needs-a-deciding-answer`,
+  `env.envelope.a-memory-gate-names-a-proposal`,
+  `env.envelope.a-memory-gate-has-a-project-or-team-scope`,
+  `env.envelope.a-memory-gate-names-its-action-and-kind`,
+  `env.envelope.memory-gates-have-a-fixed-shape`.
+- [editorial] Appendix B lists the `memory_*` tools (§B.3), and Appendix C.4
+  says the system's `x-expired` answer also expires a memory proposal.
 
 ## 1.0.0-draft.1 (2026-09-28)
 

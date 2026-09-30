@@ -55,3 +55,19 @@ it was sent, so a session hears the denial before its 30-minute wait ends
 
 The waits are the tool's own, outside the rules a host follows, and the kit does
 not test them ([§12.5](12-conformance.md#s12.5)).
+
+## B.3 Memory tools
+
+Four more tools read and write Dispatch's memory: the lessons, conventions and
+preferences it keeps for later work. They are not DMP messages, but a shared
+write reaches a human through a `memory` gate
+([Appendix C](appendix-c-dispatch-profile.md#sC.3)), so they are listed here.
+They use the same credentials as the tools of
+[§B.1](appendix-b-agent-tools.md#sB.1) and return JSON the same way.
+
+| Tool            | Parameters                                                                                          | What it does                                                                                                                                                                                                                                                                                                                                  |
+| --------------- | --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `memory_search` | `query`; optional `scope`, `kind`, `includeStale`, `limit`                                          | Searches the entries the caller may read, at most `limit` hits (at most 50). An empty query returns the caller's top entries. Stale entries are included and marked unless `includeStale` is false.                                                                                                                                           |
+| `memory_read`   | `id`                                                                                                | Returns one entry, by its handle or id: its body, who wrote it, how far it is trusted, and its revisions.                                                                                                                                                                                                                                     |
+| `memory_save`   | `scope`, `kind`, `title`, `body`; optional `refs`, `epic`, `appliesTo`, `supersedes`, `projectOnly` | Saves an entry. A `personal` entry, the caller's operator's own, is saved at once. A `project` or `team` entry becomes a proposal: unless the project's autonomy policy accepts it, the system raises a `memory` gate for it, which a deciding human approves or rejects. A dropped connection is retried once with the same idempotency key. |
+| `memory_forget` | `id`, `reason`                                                                                      | Retires an entry, with a one-line reason: at once for the operator's personal entry, and otherwise as a proposal, as `memory_save` does.                                                                                                                                                                                                      |

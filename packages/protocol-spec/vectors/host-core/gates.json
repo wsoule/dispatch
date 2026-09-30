@@ -849,6 +849,230 @@
         ],
         "gateEffects": ["$s1"]
       }
+    },
+    {
+      "id": "core.gates.memory-is-raised-by-the-system-or-a-deciding-human",
+      "title": "The system and a deciding human may raise a memory gate, whose raisedBy is system-or-decider; a human without the decide tier may not",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "input": {
+            "to": ["human:ada"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "human:ada", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": true },
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } }
+        ],
+        "messages": [
+          {
+            "id": "$s1",
+            "from": "$system",
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          },
+          {
+            "id": "$s2",
+            "from": "human:wyat",
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.gates.memory-is-refused-from-a-session-or-an-agent",
+      "title": "A session or an agent may not raise a memory gate: refused on data",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.3", "C.3"],
+      "given": {
+        "workItems": [{ "id": "t-4a8cce", "liveSession": "run:r-9f2c01" }],
+        "agents": [{ "address": "agent:wyat/claude", "status": "approved" }],
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "run:r-9f2c01", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "send",
+          "as": { "address": "agent:wyat/claude", "canDecide": false },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } },
+          { "ok": false, "error": { "code": "forbidden", "field": "data" } }
+        ],
+        "noOtherMessages": true
+      }
+    },
+    {
+      "id": "core.gates.memory-needs-a-deciding-answer",
+      "title": "A human without the decide tier may not answer a memory gate; a deciding human's approve applies its effect",
+      "class": "host-core",
+      "level": "MUST",
+      "profile": "dispatch",
+      "sections": ["5.2", "5.5", "C.3"],
+      "given": {
+        "owner": "human:wyat",
+        "limits": { "urgentPerHour": 10, "agentTurnsPerThreadPerHour": 20 }
+      },
+      "when": [
+        {
+          "op": "send",
+          "as": { "address": "$system", "canDecide": true },
+          "input": {
+            "to": ["human:wyat"],
+            "kind": "question",
+            "blocking": true,
+            "body": "Remember: exports go through the queue?",
+            "choices": ["approve", "reject"],
+            "data": {
+              "type": "memory",
+              "proposalId": "mp-01K6ABCDEFGHJKMNPQRSTVWXYZ",
+              "action": "add",
+              "scope": "project",
+              "kind": "convention"
+            }
+          }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": false },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        },
+        {
+          "op": "reply",
+          "as": { "address": "human:wyat", "canDecide": true },
+          "message": "$s1",
+          "input": { "body": "", "choice": "approve" }
+        }
+      ],
+      "then": {
+        "steps": [
+          { "ok": true },
+          { "ok": false, "error": { "code": "forbidden", "field": "replyTo" } },
+          { "ok": true }
+        ],
+        "messages": [
+          { "id": "$s1", "from": "$system", "data": { "type": "memory" } },
+          {
+            "id": "$s3",
+            "kind": "answer",
+            "replyTo": "$s1",
+            "choice": "approve"
+          }
+        ],
+        "noOtherMessages": true,
+        "callsInclude": [
+          { "hook": "onAnswered", "question": "$s1", "answer": "$s3" }
+        ],
+        "gateEffects": ["$s1"]
+      }
     }
   ]
 }

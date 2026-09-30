@@ -55,18 +55,19 @@ from the daemon's credential tiers
 
 ## C.3 Gate types
 
-Dispatch implements `wake` ([§5.9](05-gates.md#s5.9)) and the five permanent
-types below, and a host that claims the profile declares all six
+Dispatch implements `wake` ([§5.9](05-gates.md#s5.9)) and the six permanent
+types below, and a host that claims the profile declares all seven
 ([§12.1](12-conformance.md#s12.1)). Each effect is idempotent and applied as
 [§5.5](05-gates.md#s5.5) says.
 
-| Type                 | Raised by | Choices                        | Data besides `type`                                                            |
-| -------------------- | --------- | ------------------------------ | ------------------------------------------------------------------------------ |
-| `tool-approval`      | system    | approve, approve-session, deny | `requestId`, `runId` or `conversation`, `tool`, `input`, `truncated`?, `floor` |
-| `scope`              | session   | grant, deny                    | `paths`, `reason`                                                              |
-| `agent-registration` | system    | approve, deny                  | `agent`, `client`, `requestedBy`?                                              |
-| `overseer-action`    | system    | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
-| `task-proposal`      | system    | approve, decline               | `task`, `proposedBy`, `message`                                                |
+| Type                 | Raised by         | Choices                        | Data besides `type`                                                            |
+| -------------------- | ----------------- | ------------------------------ | ------------------------------------------------------------------------------ |
+| `tool-approval`      | system            | approve, approve-session, deny | `requestId`, `runId` or `conversation`, `tool`, `input`, `truncated`?, `floor` |
+| `scope`              | session           | grant, deny                    | `paths`, `reason`                                                              |
+| `agent-registration` | system            | approve, deny                  | `agent`, `client`, `requestedBy`?                                              |
+| `overseer-action`    | system            | confirm, cancel                | `conversation`, `actionId`, `summary`                                          |
+| `task-proposal`      | system            | approve, decline               | `task`, `proposedBy`, `message`                                                |
+| `memory`             | system-or-decider | approve, reject                | `proposalId`, `action`, `scope`, `kind`                                        |
 
 **`tool-approval`.** The system raises it to the owner as a blocking question
 when a session or the overseer parks a tool call for approval, with refs to the
@@ -122,14 +123,36 @@ and the client's task is rejected ([§8.7](08-a2a-binding.md#s8.7)). Vectors:
 `core.gates.task-proposal-needs-a-deciding-answer`,
 `core.gates.task-proposal-is-answered-with-approve-or-decline`.
 
-**Provisional types.** Two more types are registered as provisional
-([§11.6](11-registries.md#s11.6)), and join the profile when the Dispatch
-feature that raises each one ships with vectors:
+**`memory`.** A proposed memory entry waits on it
+([§B.3](appendix-b-agent-tools.md#sB.3)). The system raises it to the owner when
+a principal proposes to add, supersede or retire a `project` or `team` entry and
+the project's autonomy policy does not accept the proposal itself; a deciding
+human may raise one too. Its shape is fixed ([§5.3](05-gates.md#s5.3)): kind
+`question`, `blocking` true, `choices` exactly `approve` then `reject`, and data
+`{ "type": "memory", "proposalId", "action", "scope", "kind" }`. `proposalId` is
+`mp-` and an uppercase ULID, and names the proposal, whose text stays with the
+host and never travels in the gate. `action` is `add`, `supersede` or `retire`,
+`scope` is `project` or `team`, and `kind` is one of `preference`, `convention`,
+`constraint`, `hazard`, `decision`, `fact` or `reference`. Any other shape fails
+`invalid` on `data` or the field. `approve` applies the proposal; `reject`
+discards it. The system rejects a proposal no one decided within the project's
+`proposalTtlDays` (14 by default) with an `x-expired` marker
+([§C.4](appendix-c-dispatch-profile.md#sC.4)). Vectors:
+`core.gates.memory-is-raised-by-the-system-or-a-deciding-human`,
+`core.gates.memory-is-refused-from-a-session-or-an-agent`,
+`core.gates.memory-needs-a-deciding-answer`,
+`env.envelope.a-memory-gate-names-a-proposal`,
+`env.envelope.a-memory-gate-has-a-project-or-team-scope`,
+`env.envelope.a-memory-gate-names-its-action-and-kind`,
+`env.envelope.memory-gates-have-a-fixed-shape`.
 
-| Type     | Raised by         | Choices         | Data besides `type`                                                                            | Effect                                     |
-| -------- | ----------------- | --------------- | ---------------------------------------------------------------------------------------------- | ------------------------------------------ |
-| `memory` | system-or-decider | approve, reject | `proposalId`, `action` (`add`, `supersede` or `retire`), `scope` (`project` or `team`), `kind` | apply or reject a proposed memory entry    |
-| `doc`    | system            | approve, reject | `doc`, `proposal`, `taskId`?, `runId`?                                                         | apply or reject a proposed document change |
+**Provisional types.** One more type is registered as provisional
+([§11.6](11-registries.md#s11.6)), and joins the profile when the Dispatch
+feature that raises it ships with vectors:
+
+| Type  | Raised by | Choices         | Data besides `type`                    | Effect                                     |
+| ----- | --------- | --------------- | -------------------------------------- | ------------------------------------------ |
+| `doc` | system    | approve, reject | `doc`, `proposal`, `taskId`?, `runId`? | apply or reject a proposed document change |
 
 ## C.4 Markers
 
@@ -138,10 +161,10 @@ Besides the core system markers `x-closed` and `x-breaker`
 of its own. They are listed here for information, are not registry entries, and
 mean something only from the system address.
 
-| Marker      | Data                                                                         | Meaning                                                                                                            |
-| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `x-policy`  | `{ "type": "x-policy", "gate", "rung" }`, `gate` being `approval` or `scope` | on the system's answer to a `tool-approval` or `scope` gate: the project's autonomy policy decided it at that rung |
-| `x-expired` | `{ "type": "x-expired" }`                                                    | on the system's `deny` answer to a `scope` gate that no one decided within 29 minutes                              |
+| Marker      | Data                                                                         | Meaning                                                                                                                                                                        |
+| ----------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `x-policy`  | `{ "type": "x-policy", "gate", "rung" }`, `gate` being `approval` or `scope` | on the system's answer to a `tool-approval` or `scope` gate: the project's autonomy policy decided it at that rung                                                             |
+| `x-expired` | `{ "type": "x-expired" }`                                                    | on the system's `deny` answer to a `scope` gate that no one decided within 29 minutes, and its `reject` answer to a `memory` gate that no one decided within `proposalTtlDays` |
 
 Both are answers from the system address, so the gate's effect applies as for
 any deciding answer ([§5.5](05-gates.md#s5.5)). A close carries
