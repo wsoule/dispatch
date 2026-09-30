@@ -45,13 +45,14 @@ function authedUrl(baseURL: string | undefined): string {
   return `${baseURL}&token=${requireToken()}`;
 }
 
-// Every view boots on Overview first (appNav.ts's initialNavState), so
-// checking it here — before a test switches to whatever view it actually
-// screenshots — guards all of them against the same failure: an
+// The app opens on Home (appNav.ts's initialNavState), so this opens Overview
+// and checks its counts before a test switches to whatever view it actually
+// screenshots. That guards all of them against the same failure: an
 // unauthenticated fetch renders this exact empty state no matter which view
 // ends up on screen. A blank render must fail the suite, not become the new
 // baseline.
 async function assertFixtureDataLoaded(page: Page): Promise<void> {
+  await openView(page, 'overview');
   // Named by the ControlRibbon pills specifically (accessible name is
   // "<label>, <count>"), because "Failed"/"Review" alone also match the
   // feed's group header and per-row status text — this is the one spot that
