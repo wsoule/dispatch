@@ -582,6 +582,11 @@ describe('the docs a task links', () => {
   });
 });
 
+// A thread view whose render throws, as a broken ThreadsView would.
+function Boom(): ReactNode {
+  throw new Error('thread boom');
+}
+
 describe('the task thread', () => {
   // A host whose thread view names the task it was drawn for.
   function hostWithThreads(): TaskPageHost {
@@ -610,6 +615,26 @@ describe('the task thread', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
     expect(changes).toEqual(['thread']);
+  });
+
+  test('a crashing thread view is contained to its tab', () => {
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      mount({
+        ...fakeHost(newLog(), { tasks: [task('t-1')] }),
+        threadView: () => <Boom />,
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
+      expect(
+        screen.getByText('Something went wrong rendering this tab')
+      ).not.toBeNull();
+      fireEvent.click(screen.getByRole('button', { name: 'Thread' }));
+      expect(modeOf()).toBe('spec');
+      expect(screen.queryByText(/Something went wrong/)).toBeNull();
+    } finally {
+      console.error = quiet;
+    }
   });
 
   test('no Thread toggle, and a thread mode falls back to the state, without a thread view', () => {

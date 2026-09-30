@@ -704,7 +704,10 @@ function TaskPageLoaded({
       modeView = <PlanMode page={page} />;
       break;
     case 'thread':
-      modeView = threadView?.(taskId);
+      // Its own boundary, so a crashing thread view never strands the other modes.
+      modeView = threadView && (
+        <ErrorBoundary label="this tab">{threadView(taskId)}</ErrorBoundary>
+      );
       break;
     case 'preview':
       modeView = <TaskPreviewTab data={project} selectedRun={selectedRun} />;
