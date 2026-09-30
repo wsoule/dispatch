@@ -219,6 +219,23 @@ function printReport(ctx: CliContext, r: ImportReportInfo): void {
   );
 }
 
+const LIST_PAGE = 200;
+
+// Accepts every doc a receipts restore brought back as a former accepted doc,
+// answering their ids; a restored doc is trusted as accepted only once a human says so.
+export async function acceptRestored(api: DocsApi): Promise<string[]> {
+  const restored: string[] = [];
+  for (let offset = 0; ; ) {
+    const page = await api.list({ limit: LIST_PAGE, offset });
+    for (const d of page.docs)
+      if (d.restored?.status === 'accepted') restored.push(d.id);
+    offset += page.docs.length;
+    if (page.docs.length === 0 || offset >= page.total) break;
+  }
+  for (const id of restored) await api.setStatus(id, 'accepted');
+  return restored;
+}
+
 // "task:t-1:spec" is a target and its rel; a target with no rel links as context.
 function parseLinkOption(text: string): { target: string; rel: LinkRel } {
   const at = text.lastIndexOf(':');
@@ -531,7 +548,52 @@ export function registerDocsCommands(program: Command, ctx: CliContext): void {
       ctx.log(`${r.status} ${writtenHandle(r.doc)} rev ${r.rev.n ?? '-'}`);
     });
 
+  docs
+    .command('accept [ref]')
+    .description(
+      'Accept a doc: agents then propose edits instead of writing it (decide tier)'
+    )
+    .option('--restored', 'accept every doc restored as a former accepted doc')
+    .option(...tokenOpt)
+    .action(
+      async (
+        ref: string | undefined,
+        o: { restored?: boolean; token?: string }
+      ) => {
+        const api = await docsClient(ctx, o.token);
+        if (o.restored === true) {
+          const ids = await acceptRestored(api);
+          ctx.log(`accepted ${ids.length} restored docs`);
+          return;
+        }
+        if (ref === undefined)
+          throw new CliError('name a doc to accept, or pass --restored');
+        const r = await api.setStatus(ref, 'accepted');
+        ctx.log(`${ref}: ${r.status}`);
+      }
+    );
+
+  docs
+    .command('proposals')
+    .description('List proposed edits to accepted docs you may see')
+    .option('--doc <ref>', "one doc's proposals")
+    .option(...tokenOpt)
+    .action(async (o: { doc?: string; token?: string }) => {
+      const { proposals } = await (
+        await docsClient(ctx, o.token)
+      ).proposals({ doc: o.doc });
+      for (const p of proposals)
+        ctx.log(
+          `${p.rev}\t${p.state}\t${p.doc}\t${p.author}\tgate ${p.gate ?? '-'}\t${p.createdAt}`
+        );
+    });
+
   for (const [name, status, what] of [
+    [
+      'reopen',
+      'draft',
+      'Reopen an accepted doc as a draft, withdrawing open proposals',
+    ],
     ['archive', 'archived', 'Archive a doc (read-only until restored)'],
     ['restore', 'draft', 'Restore an archived doc'],
   ] as const) {

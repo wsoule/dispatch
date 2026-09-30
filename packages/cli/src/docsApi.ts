@@ -1,6 +1,7 @@
 import type {
   DocConflict,
   DocOp,
+  DocProposal,
   DocRead,
   DocRecord,
   DocRevisionInfo,
@@ -9,6 +10,7 @@ import type {
   DocStatus,
   DocSummary,
   LinkRel,
+  ProposalState,
 } from '@dispatch/core';
 
 import { CliError } from './context.js';
@@ -114,6 +116,11 @@ export interface DocsApi {
   setStatus(ref: string, status: DocStatus): Promise<DocRecord>;
   reviewed(ref: string): Promise<DocRecord>;
   remove(ref: string): Promise<void>;
+  // Proposals to accepted docs the caller may see.
+  proposals(params?: {
+    doc?: string;
+    state?: ProposalState[];
+  }): Promise<{ proposals: DocProposal[] }>;
   openImport(
     files: ImportFileInfo[],
     link?: string
@@ -230,6 +237,12 @@ export function createDocsApi(baseUrl: string, token: string): DocsApi {
     reviewed: (ref) => json('POST', `${docPath(ref)}/reviewed`, {}),
     remove: async (ref) => {
       await call('DELETE', docPath(ref));
+    },
+    proposals: (p = {}) => {
+      const q = new URLSearchParams();
+      if (p.doc !== undefined) q.set('doc', p.doc);
+      if (p.state !== undefined) q.set('state', p.state.join(','));
+      return json('GET', withQuery('/api/docs/proposals', q));
     },
     openImport: (files, link) =>
       json(

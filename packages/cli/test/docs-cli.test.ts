@@ -21,7 +21,12 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
 import { daemonFilePath } from '../src/commands/daemon.js';
-import { editLoop, exportDocs, importFiles } from '../src/commands/docs.js';
+import {
+  acceptRestored,
+  editLoop,
+  exportDocs,
+  importFiles,
+} from '../src/commands/docs.js';
 import type { CliContext } from '../src/context.js';
 import type { DocsApi, ImportReportInfo } from '../src/docsApi.js';
 import { makeProgram } from '../src/program.js';
@@ -239,6 +244,35 @@ describe('dispatch docs edit', () => {
       'proposed for review as rev-p (gate m-g)'
     );
     expect(seals()).toBe(0);
+  });
+});
+
+describe('dispatch docs accept --restored', () => {
+  it('accepts every doc restored as a former accepted doc, across pages', async () => {
+    const doc = (id: string, restored: string | null) => ({
+      id,
+      handle: id,
+      scope: 'team',
+      restored: restored === null ? null : { status: restored, at: 'x' },
+    });
+    const pages = [
+      [doc('a', 'accepted'), doc('b', null)],
+      [doc('c', 'draft'), doc('d', 'accepted')],
+    ];
+    const accepted: string[] = [];
+    const api = {
+      list: (p: { offset?: number }) =>
+        Promise.resolve({
+          docs: pages[(p.offset ?? 0) / 2] ?? [],
+          total: 4,
+        }),
+      setStatus: (ref: string, status: string) => {
+        accepted.push(`${ref}:${status}`);
+        return Promise.resolve({});
+      },
+    } as unknown as DocsApi;
+    expect(await acceptRestored(api)).toEqual(['a', 'd']);
+    expect(accepted).toEqual(['a:accepted', 'd:accepted']);
   });
 });
 
@@ -504,6 +538,26 @@ describe('dispatch docs handles', () => {
           return Response.json({ docs: [personal, team], total: 2 });
         if (pathname === '/api/docs/~notes/revert')
           return Response.json(saved(3));
+        if (pathname === '/api/docs/~notes/status' && req.method === 'POST')
+          return req.json().then((b) =>
+            Response.json({
+              ...personal,
+              status: (b as { status: string }).status,
+            })
+          );
+        if (pathname === '/api/docs/proposals')
+          return Response.json({
+            proposals: [
+              {
+                rev: 'rev-p',
+                doc: 'doc-t',
+                author: 'run:r-1',
+                state: 'open',
+                gate: 'm-g',
+                createdAt: '2026-09-29T10:00:00.000Z',
+              },
+            ],
+          });
         if (pathname === '/api/docs/~notes')
           return Response.json({
             doc: personal,
@@ -558,6 +612,18 @@ describe('dispatch docs handles', () => {
       '~notes\tdraft\trev 2\tNotes',
       'notes\tdraft\trev 2\tNotes',
       '~notes · draft · rev 2 by human:wyat · Notes',
+    ]);
+  });
+
+  it('accepts, reopens and lists proposals', async () => {
+    const token = ['--token', 'app-token'];
+    await run('docs', 'accept', '~notes', ...token);
+    await run('docs', 'reopen', '~notes', ...token);
+    await run('docs', 'proposals', ...token);
+    expect(lines).toEqual([
+      '~notes: accepted',
+      '~notes: draft',
+      'rev-p\topen\tdoc-t\trun:r-1\tgate m-g\t2026-09-29T10:00:00.000Z',
     ]);
   });
 });

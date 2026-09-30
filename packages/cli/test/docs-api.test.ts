@@ -129,6 +129,16 @@ describe('createDocsApi', () => {
     ]);
   });
 
+  it('lists proposals by doc and state', async () => {
+    const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
+    await api.proposals();
+    await api.proposals({ doc: 'spec', state: ['open'] });
+    expect(seen.map((s) => [s.method, s.path])).toEqual([
+      ['GET', '/api/docs/proposals'],
+      ['GET', '/api/docs/proposals?doc=spec&state=open'],
+    ]);
+  });
+
   it('throws a CliError naming the field for other failures', async () => {
     const api = createDocsApi(`http://127.0.0.1:${server.port}`, 'app-token');
     await expect(api.get('missing')).rejects.toThrow(

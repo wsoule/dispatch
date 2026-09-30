@@ -8,6 +8,8 @@ import type {
   DocLink,
   DocLinking,
   DocOp,
+  DocProposal,
+  DocProposalView,
   DocRead,
   DocRecord,
   DocRevisionInfo,
@@ -26,6 +28,7 @@ import type {
   ModelConfig,
   MutationEvidence,
   Priority,
+  ProposalState,
   TaskDoc,
   TaskRisk,
   UpdatePatch,
@@ -3459,6 +3462,13 @@ export interface ApiClient {
     opts?: { scope?: DocScope; includeArchived?: boolean; limit?: number }
   ): Promise<{ hits: DocHit[] }>;
   docsHealth(): Promise<DocsHealth>;
+  /** Proposals to accepted docs the caller may see; `doc` narrows to one doc. */
+  listDocProposals(params?: {
+    doc?: string;
+    state?: ProposalState[];
+  }): Promise<{ proposals: DocProposal[] }>;
+  /** A proposal's text, its diff against its base, and whether it merges onto the head. */
+  getDocProposal(rev: string): Promise<DocProposalView>;
   a2aListener(): Promise<A2AListenerStatus>;
   /** Writes the listener settings and (re)opens it (operator tier). */
   setA2AListener(settings: A2AListenerSettings): Promise<A2AListenerStatus>;
@@ -4415,6 +4425,16 @@ export function createApiClient(baseUrl: string, token?: string): ApiClient {
       return request(target, `/api/docs/search?${params.toString()}`);
     },
     docsHealth: () => request(target, '/api/docs/health'),
+    listDocProposals: (params = {}) => {
+      const query = new URLSearchParams();
+      if (params.doc !== undefined) query.set('doc', params.doc);
+      if (params.state !== undefined)
+        query.set('state', params.state.join(','));
+      const qs = query.toString();
+      return request(target, `/api/docs/proposals${qs === '' ? '' : `?${qs}`}`);
+    },
+    getDocProposal: (rev) =>
+      request(target, `/api/docs/proposals/${encodeURIComponent(rev)}`),
     a2aListener: () => request(target, '/api/a2a/listener'),
     setA2AListener: (settings) =>
       request(target, '/api/a2a/listener', {
