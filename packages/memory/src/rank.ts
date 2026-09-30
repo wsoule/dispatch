@@ -36,7 +36,9 @@ export function reaches(
   if (entry.scope === 'personal')
     return entry.projectKey === null || entry.projectKey === projectKey;
   if (ctx.taskId === null) return true;
-  const epicOk = entry.epic === null || entry.epic === ctx.epic;
+  // An entry narrowed to an epic reaches the epic's own tasks and the epic.
+  const epicOk =
+    entry.epic === null || entry.epic === ctx.epic || entry.epic === ctx.taskId;
   const taskOk =
     entry.appliesTo.length === 0 || entry.appliesTo.includes(ctx.taskId);
   return epicOk && taskOk;
@@ -44,7 +46,11 @@ export function reaches(
 
 export function specificity(entry: MemoryEntry, ctx: RankContext): 1 | 2 | 3 {
   if (ctx.taskId !== null && entry.appliesTo.includes(ctx.taskId)) return 3;
-  if (ctx.epic !== null && entry.epic === ctx.epic) return 2;
+  if (
+    entry.epic !== null &&
+    (entry.epic === ctx.epic || entry.epic === ctx.taskId)
+  )
+    return 2;
   return 1;
 }
 
