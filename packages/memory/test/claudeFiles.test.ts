@@ -275,14 +275,25 @@ describe('MEMORY.md', () => {
     expect(included).toEqual([short]);
   });
 
-  // A link line becomes its link text (the target and Dispatch's ` — kind · tags`
-  // suffix after it are dropped); a plain line keeps its text after `- `.
+  // Each link keeps its text inside the sentence; the bullet goes.
   it('finds lines Claude added that link to no file', () => {
     const written = renderClaudeIndex([entry], ctx, 1000).text;
     const current = `${written}\n- remember to run proto use first\n- [stale link](gone.md) — fact`;
     expect(
       newIndexLines(written, current, new Set([`${entry.id}.md`]))
-    ).toEqual(['remember to run proto use first', 'stale link']);
+    ).toEqual(['remember to run proto use first', 'stale link — fact']);
+  });
+
+  // The import reads MEMORY.md by the same rules: every link, a #fragment.
+  it('reads a line as the Claude import does', () => {
+    const current = [
+      '- see [docs](https://x.dev) and [note](note.md)',
+      '- Use [pnpm](https://pnpm.io) for installs, never npm',
+      '- [other](note.md#section)',
+    ].join('\n');
+    expect(newIndexLines('', current, new Set(['note.md']))).toEqual([
+      'Use pnpm for installs, never npm',
+    ]);
   });
 
   it('ignores blank lines, the header and links to files that exist', () => {
@@ -303,7 +314,7 @@ describe('MEMORY.md', () => {
       '- \\[escaped](note.md) is no link',
     ].join('\n');
     expect(newIndexLines('', current, new Set(['note.md']))).toEqual([
-      'other',
+      'see other first',
       '\\[escaped](note.md) is no link',
     ]);
   });

@@ -1,14 +1,13 @@
 import { resolveSettings } from '@anthropic-ai/claude-agent-sdk';
-import { untrustedInline } from '@dispatch/core';
 import {
-  cutUtf8,
+  claudeIndexLineTitle,
   insertFresh,
   kindFromClaudeType,
-  MEMORY_LIMITS,
   memoryContentHash,
   newMemoryEntry,
   parseMemoryFile,
   projectOnlyForClaudeType,
+  readClaudeIndex,
 } from '@dispatch/memory';
 import type {
   MemoryEntry,
@@ -16,7 +15,6 @@ import type {
   MemoryKind,
   MemoryStore,
 } from '@dispatch/memory';
-import { LINE_BREAK } from '@dispatch/protocol';
 import { createHash } from 'node:crypto';
 import { lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
@@ -72,10 +70,6 @@ interface Note {
 
 const INDEX_FILE = 'MEMORY.md';
 const ROLLBACK = Symbol('rollback');
-// Every `[text](target)` link in a line; a `[` behind a backslash opens none.
-const LINKS = /(?<!\\)\[((?:\\.|[^\\\][])*)\]\(([^()\s]*)\)/g;
-const BULLET = /^(?:[-*+]|\d+[.)])[ \t]+/;
-const HEADING = /^#{1,6}(?:[ \t]|$)/;
 const UTC_STAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,3})?Z$/;
 
 const stateKey = (projectKey: string): string => `claude-import:${projectKey}`;
@@ -301,52 +295,6 @@ function createdAtOf(
   }
 }
 
-// A MEMORY.md link target as a path relative to the notes directory.
-function linkTarget(raw: string): string {
-  const bare = raw.replace(/^<|>$/g, '').replace(/#.*$/, '');
-  let decoded = bare;
-  try {
-    decoded = decodeURIComponent(bare);
-  } catch {
-    // A malformed escape is matched as written.
-  }
-  return decoded.replace(/^\.\//, '');
-}
-
-const unescapeLinkText = (text: string): string =>
-  text.replace(/\\([\\[\]])/g, '$1');
-
-// Reads MEMORY.md: each file's first link text titles it, and every other
-// line (links to no file here, not blank, not a heading) is a fact.
-function readIndex(
-  text: string,
-  files: ReadonlySet<string>
-): { linkText: Map<string, string>; lines: string[] } {
-  const linkText = new Map<string, string>();
-  const lines = new Set<string>();
-  for (const raw of text.split(LINE_BREAK)) {
-    const line = raw.trim();
-    if (line === '' || HEADING.test(line)) continue;
-    let linked = false;
-    for (const match of line.matchAll(LINKS)) {
-      const file = linkTarget(match[2]);
-      if (!files.has(file)) continue;
-      linked = true;
-      if (!linkText.has(file)) linkText.set(file, unescapeLinkText(match[1]));
-    }
-    if (!linked) lines.add(line);
-  }
-  return { linkText, lines: [...lines] };
-}
-
-// A MEMORY.md line as a title: no bullet, each link reduced to its text.
-function lineTitle(line: string): string {
-  const text = line
-    .replace(BULLET, '')
-    .replace(LINKS, (_, label: string) => unescapeLinkText(label));
-  return cutUtf8(untrustedInline(text), MEMORY_LIMITS.titleBytes).trim();
-}
-
 // Title and body as the entry was last imported, so a Dispatch-side edit is
 // never mistaken for a change to the file.
 function lastImported(
@@ -384,7 +332,7 @@ function notesOf(
   at: string
 ): Note[] {
   const files = new Set(tree.files.map((f) => f.file));
-  const { linkText, lines } = readIndex(tree.index ?? '', files);
+  const { linkText, lines } = readClaudeIndex(tree.index ?? '', files);
   const notes: Note[] = [];
   for (const { file } of tree.files) {
     const parsed = parseMemoryFile(tree.text.get(file) ?? '', basename(file), {
@@ -401,7 +349,7 @@ function notesOf(
   }
   const indexAt = createdAtOf(undefined, join(dir, INDEX_FILE), at);
   for (const line of lines) {
-    const title = lineTitle(line);
+    const title = claudeIndexLineTitle(line);
     if (!/[\p{L}\p{N}]/u.test(title)) continue;
     notes.push({
       origin: `claude:${projectKey}/${INDEX_FILE}#${sha256(line).slice(0, 12)}`,
