@@ -326,18 +326,22 @@ export type {
 } from './config.js';
 export {
   clearCredential,
+  clearPeerCredential,
   clearProjectCredential,
   credentialsPath,
   readCredentials,
+  readPeerCredential,
   resolveLinearApiKey,
   resolveTypesafeApiKey,
   writeCredential,
+  writePeerCredential,
   writeProjectCredential,
 } from './credentials.js';
 export type {
   CredentialName,
   CredentialSource,
   CredentialsFile,
+  PeerCredential,
   ProjectCredentials,
 } from './credentials.js';
 export * from './linearContainers.js';

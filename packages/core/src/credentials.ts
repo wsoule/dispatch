@@ -11,10 +11,20 @@ import { resolve } from 'node:path';
 
 import { normalizeProjectPath } from './projectPath.js';
 
+/** How a daemon authenticates to one outbound A2A peer (the peer card's scheme). */
+export interface PeerCredential {
+  scheme: 'bearer' | 'api-key';
+  token: string;
+  /** The API key's header name; bearer tokens go in Authorization. */
+  header?: string;
+}
+
 /** One project's secrets, one key per integration. */
 export interface ProjectCredentials {
   linear?: { apiKey: string };
   typesafe?: { apiKey: string };
+  /** Outbound A2A peers' credentials by alias; never in config.yml or a2a.db. */
+  a2a?: { peers: Record<string, PeerCredential> };
 }
 
 /** User-level secrets. Never written to a project's `.dispatch/`. */
@@ -27,9 +37,9 @@ export interface CredentialsFile {
   projects?: Record<string, ProjectCredentials>;
 }
 
-// The integration name space, e.g. `'linear'` — not `keyof CredentialsFile`,
-// which would also admit `'projects'`.
-export type CredentialName = keyof ProjectCredentials;
+// The { apiKey } integrations, e.g. `'linear'`: not `'projects'`, and not
+// `'a2a'`, which has its own writers below.
+export type CredentialName = Exclude<keyof ProjectCredentials, 'a2a'>;
 
 // Same `DISPATCH_HOME`-or-homedir rule as registry.ts and daemonfile.ts; an
 // empty string counts as unset.
@@ -125,14 +135,89 @@ export function clearProjectCredential(
 
   const remaining: ProjectCredentials = { ...entry };
   delete remaining[name];
+  writeProjectEntry(file, key, remaining);
+}
 
+// Writes one project's entry, dropping it (and an emptied `projects`) when it
+// holds nothing, so the file never accumulates empty objects.
+function writeProjectEntry(
+  file: CredentialsFile,
+  key: string,
+  entry: ProjectCredentials
+): void {
   const projects = { ...file.projects };
-  if (Object.keys(remaining).length === 0) delete projects[key];
-  else projects[key] = remaining;
-
+  if (Object.keys(entry).length === 0) delete projects[key];
+  else projects[key] = entry;
   const next: CredentialsFile = { ...file, projects };
   if (Object.keys(projects).length === 0) delete next.projects;
   writeCredentials(next);
+}
+
+// The stored peers map as an own-keys record, or empty when the slot is malformed.
+function peersOf(
+  entry: ProjectCredentials | undefined
+): Record<string, unknown> {
+  const peers: unknown = entry?.a2a?.peers;
+  return typeof peers === 'object' && peers !== null && !Array.isArray(peers)
+    ? (peers as Record<string, unknown>)
+    : {};
+}
+
+function isPeerCredential(value: unknown): value is PeerCredential {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    (v.scheme === 'bearer' || v.scheme === 'api-key') &&
+    typeof v.token === 'string' &&
+    v.token !== '' &&
+    (v.header === undefined || typeof v.header === 'string')
+  );
+}
+
+/** One peer's stored credential, or null when it is absent or malformed. */
+export function readPeerCredential(
+  rootDir: string,
+  alias: string
+): PeerCredential | null {
+  const peers = peersOf(
+    readCredentials().projects?.[normalizeProjectPath(rootDir)]
+  );
+  if (!Object.hasOwn(peers, alias)) return null;
+  const raw = peers[alias];
+  if (!isPeerCredential(raw)) return null;
+  return {
+    scheme: raw.scheme,
+    token: raw.token,
+    ...(raw.header === undefined ? {} : { header: raw.header }),
+  };
+}
+
+export function writePeerCredential(
+  rootDir: string,
+  alias: string,
+  credential: PeerCredential
+): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const entry = file.projects?.[key] ?? {};
+  const peers = { ...peersOf(entry), [alias]: credential } as Record<
+    string,
+    PeerCredential
+  >;
+  writeProjectEntry(file, key, { ...entry, a2a: { peers } });
+}
+
+export function clearPeerCredential(rootDir: string, alias: string): void {
+  const file = readCredentials();
+  const key = normalizeProjectPath(rootDir);
+  const entry = file.projects?.[key];
+  const peers = { ...peersOf(entry) } as Record<string, PeerCredential>;
+  if (entry === undefined || !Object.hasOwn(peers, alias)) return;
+  delete peers[alias];
+  const next: ProjectCredentials = { ...entry };
+  if (Object.keys(peers).length === 0) delete next.a2a;
+  else next.a2a = { peers };
+  writeProjectEntry(file, key, next);
 }
 
 /** Where a resolved key came from — in precedence order — or `null` when there is none. */
