@@ -377,6 +377,8 @@ function IdentityGroup({
     expiresAt: string;
   } | null>(null);
   const me = identity.data;
+  // Only a teammate links or rebinds; the owner's memory reaches every project.
+  const teammate = me !== undefined && me.identity !== 'self';
   // A 409 means this handle was bound to someone else: link, or start fresh.
   const rebound =
     identity.error instanceof ApiError && identity.error.status === 409;
@@ -437,7 +439,7 @@ function IdentityGroup({
           }
         />
       )}
-      {me?.placeholderEmail === true && (
+      {teammate && me.placeholderEmail && (
         <SettingsRow
           title="Placeholder email"
           subtitle="Your email in this project's roster is local@localhost, so Dispatch cannot tell whether this handle is still you. Set a real git email."
@@ -450,7 +452,7 @@ function IdentityGroup({
           subtitle={`Linked as ${alias.handle}`}
         />
       ))}
-      {me !== undefined && (
+      {teammate && (
         <SettingsRow
           title="Link another project"
           subtitle="Get a one-time code here and enter it in the other project's Settings → Memory. It lasts 10 minutes."
@@ -473,34 +475,36 @@ function IdentityGroup({
           )}
         </SettingsRow>
       )}
-      <SettingsRow
-        title="Use a code from another project"
-        subtitle="Moves this project's personal entries into the identity that issued the code."
-        htmlFor="memory-link-code"
-        control={
-          <>
-            <Input
-              id="memory-link-code"
-              aria-label="Link code"
-              value={code}
-              spellCheck={false}
-              className="w-32 font-mono"
-              onChange={(e) => setCode(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') link();
-              }}
-            />
-            <Button
-              variant="outline"
-              size="sm"
-              disabled={action.pending !== null || code.trim() === ''}
-              onClick={link}
-            >
-              Link
-            </Button>
-          </>
-        }
-      />
+      {(teammate || rebound) && (
+        <SettingsRow
+          title="Use a code from another project"
+          subtitle="Moves this project's personal entries into the identity that issued the code."
+          htmlFor="memory-link-code"
+          control={
+            <>
+              <Input
+                id="memory-link-code"
+                aria-label="Link code"
+                value={code}
+                spellCheck={false}
+                className="w-32 font-mono"
+                onChange={(e) => setCode(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') link();
+                }}
+              />
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={action.pending !== null || code.trim() === ''}
+                onClick={link}
+              >
+                Link
+              </Button>
+            </>
+          }
+        />
+      )}
       <ActionError error={action.error} />
     </SettingsGroup>
   );

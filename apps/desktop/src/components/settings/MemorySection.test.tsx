@@ -25,6 +25,11 @@ const IDENTITY: Identity = {
   aliases: [{ projectKey: 'dispatch', handle: 'wyat' }],
   placeholderEmail: false,
 };
+const TEAMMATE: Identity = {
+  identity: 'pid-000001',
+  aliases: [{ projectKey: 'dispatch', handle: 'ada' }],
+  placeholderEmail: false,
+};
 
 const PROBLEM: MemoryIngestProblem = {
   id: 'ip-000001',
@@ -276,7 +281,7 @@ describe('MemorySection', () => {
 
   it('shows the identity, warns about the placeholder email, and issues a link code', async () => {
     const client = memoryClient({
-      identity: { ...IDENTITY, placeholderEmail: true },
+      identity: { ...TEAMMATE, placeholderEmail: true },
     });
     renderSection(client);
     expect(await screen.findByText(/local@localhost/)).toBeTruthy();
@@ -286,8 +291,22 @@ describe('MemorySection', () => {
     expect(client.startMemoryLink).toHaveBeenCalledWith();
   });
 
+  // The owner's memory already reaches every project, and their binding
+  // never depends on email.
+  it('offers the owner no linking and no placeholder warning', async () => {
+    renderSection(
+      memoryClient({ identity: { ...IDENTITY, placeholderEmail: true } })
+    );
+    expect(
+      await screen.findByText(/every project on this machine shares/)
+    ).toBeTruthy();
+    expect(screen.queryByText('Link another project')).toBeNull();
+    expect(screen.queryByText('Use a code from another project')).toBeNull();
+    expect(screen.queryByText('Placeholder email')).toBeNull();
+  });
+
   it('links this project with a code from another', async () => {
-    const client = memoryClient();
+    const client = memoryClient({ identity: TEAMMATE });
     renderSection(client);
     const input = await screen.findByRole('textbox', { name: 'Link code' });
     fireEvent.change(input, { target: { value: ' k7m2-q9xd ' } });

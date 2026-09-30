@@ -309,6 +309,28 @@ describe('MemoryIdentities', () => {
     ).toBe('invalid');
   });
 
+  // The owner's alias always resolves back to self, so a link would only
+  // burn the teammate's code.
+  it('refuses to link the owner’s alias, and keeps the code', () => {
+    const ids = open();
+    ids.resolve({
+      projectKey: P1,
+      handle: 'wyat',
+      isOwner: true,
+      rosterEmail: 'w@x.com',
+    });
+    identityOf(ids, P2, 'ada', 'a@x.com');
+    const { code } = ids.startLink({
+      projectKey: P2,
+      handle: 'ada',
+      rosterEmail: 'a@x.com',
+    });
+    const link = (handle: string, rosterEmail: string) =>
+      ids.completeLink({ code, projectKey: P1, handle, rosterEmail });
+    expect(codeError(() => link('wyat', 'w@x.com')).code).toBe('invalid');
+    expect(link('ada', 'a@x.com').identity).toMatch(IDENTITY_PATTERN);
+  });
+
   it('will not start a link from a handle someone else now holds', () => {
     const ids = open();
     identityOf(ids, P1, 'sam', 'sam@old.com');

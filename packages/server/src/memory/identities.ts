@@ -206,6 +206,12 @@ export class MemoryIdentities {
         'code'
       );
     return this.transaction(() => {
+      if (this.alias(input.projectKey, input.handle)?.identity_id === 'self')
+        throw new MemoryError(
+          'invalid',
+          "code: the owner's personal memory already reaches every project; there is nothing to link",
+          'code'
+        );
       const hash = codeHash(normalized);
       const row = queryOne<{ identity_id: string; expires_at: string }>(
         this.db,
@@ -230,7 +236,6 @@ export class MemoryIdentities {
       const previous =
         bound === undefined ||
         bound.identity_id === row.identity_id ||
-        bound.identity_id === 'self' ||
         (bound.email_at_bind !== email && !unknownEmail(bound.email_at_bind))
           ? null
           : bound.identity_id;
