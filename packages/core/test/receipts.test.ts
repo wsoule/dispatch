@@ -230,6 +230,24 @@ describe('materializeReceipts', () => {
     );
   });
 
+  it('leaves .dispatch/memory alone, so the core pass never prunes team memory', () => {
+    const stores = projectStores('project');
+    seed(stores);
+    const dir = receiptsDir();
+    mkdirSync(join(dir, '.dispatch', 'memory'), { recursive: true });
+    writeFileSync(join(dir, '.dispatch', 'memory', 'x.md'), 'a lesson\n');
+
+    const report = materializeReceipts(stores, dir);
+
+    expect(readFileSync(join(dir, '.dispatch', 'memory', 'x.md'), 'utf8')).toBe(
+      'a lesson\n'
+    );
+    expect(report.removed).toEqual([]);
+    expect(readFileSync(join(dir, 'README.md'), 'utf8')).toContain(
+      '.dispatch/memory/<id>.md'
+    );
+  });
+
   it('names a row it cannot read instead of failing the whole export', () => {
     const stores = projectStores('project');
     seed(stores);

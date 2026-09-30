@@ -245,10 +245,13 @@ const trustOf = (principal: Principal): MemoryTrust =>
 const runIdOf = (principal: Principal): string | null =>
   principal.kind === 'run' ? principal.address.slice('run:'.length) : null;
 
-// Ledger-import and sync proposals are bounded by what arrives, not by what an agent asks.
+// Ledger-import, sync and receipt-restore proposals are bounded by what
+// arrives, not by what an agent asks.
 const isExemptOrigin = (origin: string | null): boolean =>
   origin !== null &&
-  (origin.startsWith('ledger:') || origin.startsWith('sync:'));
+  (origin.startsWith('ledger:') ||
+    origin.startsWith('sync:') ||
+    origin.startsWith('receipts:'));
 
 const toProposalContent = (valid: ValidMemoryInput): ProposalContent => ({
   kind: valid.kind,

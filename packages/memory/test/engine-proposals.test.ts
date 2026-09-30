@@ -326,7 +326,27 @@ describe('proposals', () => {
     ).toBe('ok');
   });
 
-  // Only ledger: and sync: origins are exempt; any other origin counts.
+  it('never counts a receipt-log restore against the restoring agent', async () => {
+    const t = setup({ proposalsPerHour: 1 });
+    const system = {
+      address: 'agent:dispatch',
+      canDecide: false,
+      kind: 'agent',
+    } as const;
+    for (const n of [1, 2])
+      expect(
+        await conflictOf(
+          t.engine.submitProposal(system, {
+            action: 'add',
+            scope: 'team',
+            content: valid(`restored ${n}`),
+            origin: `receipts:mem-${n}`,
+          })
+        )
+      ).toBe('ok');
+  });
+
+  // Only ledger:, sync: and receipts: origins are exempt; any other origin counts.
   it('counts an amendment against its author’s hourly limit', async () => {
     const t = setup({ proposalsPerHour: 1 });
     // The shared agentToken's principal: attributed to the owner, never a human.

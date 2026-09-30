@@ -116,9 +116,11 @@ export {
   newIndexLines,
   parsedHash,
   parseMemoryFile,
+  parseReceiptFile,
   projectOnlyForClaudeType,
   readClaudeIndex,
   renderClaudeIndex,
+  renderReceiptFile,
   renderTopicFile,
   topicFileName,
 } from './claudeFiles.js';

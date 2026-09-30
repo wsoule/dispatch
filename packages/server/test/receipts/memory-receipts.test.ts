@@ -1,0 +1,298 @@
+import { MEMORY_RECEIPT_FILE_BYTES } from '@dispatch/core';
+import {
+  createMemoryIds,
+  newMemoryEntry,
+  renderReceiptFile,
+} from '@dispatch/memory';
+import type { MemoryEntry, MemoryScope } from '@dispatch/memory';
+import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import {
+  applyStagedMemoryRestore,
+  memoryReceiptsStep,
+} from '../../src/memory/receipts.js';
+import { isReceiptEvent } from '../../src/receipts/scheduler.js';
+import { testEngine } from '../memory/fixtures.js';
+
+let dir: string;
+let restoreDir: string;
+beforeEach(() => {
+  dir = realpathSync(mkdtempSync(join(tmpdir(), 'memory-receipts-')));
+  restoreDir = join(dir, 'staged');
+});
+afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+const ids = createMemoryIds();
+const memoryDir = (): string => join(dir, '.dispatch', 'memory');
+const files = (): string[] =>
+  existsSync(memoryDir()) ? readdirSync(memoryDir()).sort() : [];
+
+// An entry of `scope` written straight into `t.shared`, as a human's save leaves it.
+function seed(
+  t: ReturnType<typeof testEngine>,
+  scope: MemoryScope,
+  title: string,
+  over: Partial<MemoryEntry> = {}
+): MemoryEntry {
+  const entry = {
+    ...newMemoryEntry(
+      {
+        scope,
+        kind: 'hazard',
+        title,
+        body: `${title} body`,
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      ids.entry(Date.now()),
+      new Date().toISOString()
+    ),
+    ...over,
+  };
+  t.shared.insertEntry(entry, 'human:wyat', 'save');
+  return entry;
+}
+
+describe('the memory receipts step', () => {
+  it('exports each team entry as memory/<id>.md and never reads it back', () => {
+    const t = testEngine();
+    const e = seed(t, 'team', 'pnpm 11 ignores onlyBuiltDependencies');
+    const step = memoryReceiptsStep(() => t.shared, restoreDir);
+    expect(step(dir)).toEqual({ changed: 1, removed: 0, problems: [] });
+    const path = join(memoryDir(), `${e.id}.md`);
+    const text = readFileSync(path, 'utf8');
+    expect(text).toContain(`> Dispatch memory ${e.handle} · team hazard`);
+    expect(text).toContain('pnpm 11 ignores onlyBuiltDependencies body');
+    expect(step(dir).changed).toBe(0);
+    rmSync(path);
+    expect(step(dir).changed).toBe(1);
+    expect(readFileSync(path, 'utf8')).toBe(text);
+    // An edited receipt changes nothing in memory.db and is written over.
+    writeFileSync(path, text.replace('body', 'forged'));
+    expect(step(dir).changed).toBe(1);
+    expect(t.shared.getEntry(e.id)?.body).toBe(e.body);
+    expect(t.shared.revisions(e.id)).toHaveLength(1);
+    expect(readFileSync(path, 'utf8')).toBe(text);
+  });
+
+  it('never exports personal or project entries', () => {
+    const t = testEngine();
+    const team = seed(t, 'team', 'team lesson');
+    seed(t, 'project', 'project lesson');
+    seed(t, 'personal', 'my own lesson');
+    memoryReceiptsStep(() => t.shared, restoreDir)(dir);
+    expect(files()).toEqual([`${team.id}.md`]);
+  });
+
+  it('a retired team entry is exported with its status', () => {
+    const t = testEngine();
+    const e = seed(t, 'team', 'old lesson', {
+      status: 'retired',
+      statusReason: 'superseded',
+    });
+    memoryReceiptsStep(() => t.shared, restoreDir)(dir);
+    expect(readFileSync(join(memoryDir(), `${e.id}.md`), 'utf8')).toContain(
+      '    status: retired (superseded)\n'
+    );
+  });
+
+  it('removes a file only for an entry it exported, and names an unknown one', () => {
+    const t = testEngine();
+    const gone = seed(t, 'team', 'hard deleted');
+    const kept = seed(t, 'team', 'kept');
+    const step = memoryReceiptsStep(() => t.shared, restoreDir);
+    step(dir);
+    t.shared.deleteEntry(gone.id, 'human:wyat', new Date().toISOString());
+    const stranger = 'mem-01K00000000000000000000000.md';
+    writeFileSync(join(memoryDir(), stranger), 'from a lost memory.db\n');
+    const out = step(dir);
+    expect(out.removed).toBe(1);
+    expect(out.problems).toEqual([
+      `receipt file for unknown memory entry ${stranger}; run dispatch receipts restore, or delete the file`,
+    ]);
+    expect(files()).toEqual([`${kept.id}.md`, stranger].sort());
+  });
+
+  it('removes nothing while a staged restore is pending', () => {
+    const t = testEngine();
+    const gone = seed(t, 'team', 'hard deleted');
+    const step = memoryReceiptsStep(() => t.shared, restoreDir);
+    step(dir);
+    t.shared.deleteEntry(gone.id, 'human:wyat', new Date().toISOString());
+    mkdirSync(restoreDir);
+    writeFileSync(join(restoreDir, `${gone.id}.md`), 'staged\n');
+    const out = step(dir);
+    expect(out.removed).toBe(0);
+    expect(out.problems[0]).toStartWith('a staged memory restore is pending');
+    expect(files()).toEqual([`${gone.id}.md`]);
+    // Still exported by this store, so it goes once the restore is handled.
+    rmSync(restoreDir, { recursive: true });
+    expect(step(dir).removed).toBe(1);
+  });
+
+  it('leaves the log as it was while memory.db is unavailable', () => {
+    mkdirSync(memoryDir(), { recursive: true });
+    writeFileSync(join(memoryDir(), 'x.md'), 'kept\n');
+    const out = memoryReceiptsStep(() => null, restoreDir)(dir);
+    expect(out).toEqual({
+      changed: 0,
+      removed: 0,
+      problems: ['memory store unavailable; .dispatch/memory left as it was'],
+    });
+    expect(files()).toEqual(['x.md']);
+  });
+});
+
+describe('a staged memory restore', () => {
+  // An engine whose gates are sent, so each open proposal records one.
+  function gatedEngine(): ReturnType<typeof testEngine> {
+    const t = testEngine();
+    t.host.raise = () => Promise.resolve('m-gate');
+    return t;
+  }
+
+  // Writes `entry`'s receipt file into the staging directory, as the CLI copies it.
+  function stage(entry: MemoryEntry, text = renderReceiptFile(entry)): string {
+    mkdirSync(restoreDir, { recursive: true });
+    const file = `${entry.id}.md`;
+    writeFileSync(join(restoreDir, file), text);
+    return file;
+  }
+
+  function lostEntry(title: string, kind: MemoryEntry['kind'] = 'decision') {
+    return newMemoryEntry(
+      {
+        scope: 'team',
+        kind,
+        title,
+        body: `${title}\nsecond line`,
+        author: 'human:wyat',
+        trust: 'human',
+      },
+      ids.entry(Date.now()),
+      new Date().toISOString()
+    );
+  }
+
+  it('comes back as open agent proposals, never as entries', async () => {
+    const t = gatedEngine();
+    const lost = lostEntry('use allowBuilds');
+    stage(lost);
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report).toMatchObject({ restored: 1, skipped: 0, problems: [] });
+    expect(t.shared.countEntries()).toBe(0);
+    const [p] = t.shared.listProposals({ states: ['open'] });
+    expect(p).toMatchObject({
+      action: 'add',
+      scope: 'team',
+      author: 'agent:dispatch',
+      authorTrust: 'agent',
+      origin: `receipts:${lost.id}`,
+    });
+    expect(p.content).toMatchObject({
+      kind: 'decision',
+      title: lost.title,
+      body: lost.body,
+    });
+    expect(existsSync(restoreDir)).toBe(false);
+    // Nothing staged is nothing to report.
+    expect(
+      await applyStagedMemoryRestore(t.engine, t.shared, restoreDir)
+    ).toBeNull();
+  });
+
+  it('is approved by policy only as unreviewed agent entries', async () => {
+    const t = gatedEngine();
+    t.host.ruling = {
+      mode: 'auto',
+      gate: 'memory',
+      rung: 4,
+      authorizedBy: 'rung',
+    };
+    stage(lostEntry('auto approved'));
+    await applyStagedMemoryRestore(t.engine, t.shared, restoreDir);
+    const [entry] = t.shared.listEntries({ scopes: ['team'] });
+    expect(entry.trust).toBe('agent');
+  });
+
+  it('skips an entry this store holds, or a restore it already made', async () => {
+    const t = gatedEngine();
+    const held = seed(t, 'team', 'held');
+    const lost = lostEntry('restored once');
+    stage(held);
+    stage(lost);
+    await applyStagedMemoryRestore(t.engine, t.shared, restoreDir);
+    stage(lost);
+    const again = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(again).toMatchObject({ restored: 0, skipped: 1, problems: [] });
+    expect(t.shared.listProposals()).toHaveLength(1);
+  });
+
+  it('refuses symlinks, oversized files, foreign names and broken input, and keeps the staging', async () => {
+    const t = gatedEngine();
+    const good = lostEntry('good');
+    stage(good);
+    mkdirSync(restoreDir, { recursive: true });
+    const secret = join(dir, 'secret.md');
+    writeFileSync(secret, 'not a receipt\n');
+    const link = lostEntry('link');
+    symlinkSync(secret, join(restoreDir, `${link.id}.md`));
+    const huge = lostEntry('huge');
+    stage(huge, 'x'.repeat(MEMORY_RECEIPT_FILE_BYTES + 1));
+    writeFileSync(join(restoreDir, 'notes.md'), 'a stray file\n');
+    const long = lostEntry('long');
+    stage(long, renderReceiptFile({ ...long, body: 'y'.repeat(9000) }));
+    const report = await applyStagedMemoryRestore(
+      t.engine,
+      t.shared,
+      restoreDir
+    );
+    expect(report?.restored).toBe(1);
+    expect(report?.problems.map((p) => [p.file, p.detail]).sort()).toEqual(
+      [
+        [`${link.id}.md`, 'not a regular file'],
+        [`${huge.id}.md`, `over ${MEMORY_RECEIPT_FILE_BYTES} bytes`],
+        ['notes.md', 'not a memory receipt file name'],
+        [`${long.id}.md`, 'body: over the 8192-byte limit'],
+      ].sort()
+    );
+    expect(report?.pending).toContain(restoreDir);
+    expect(existsSync(restoreDir)).toBe(true);
+    expect(t.shared.listProposals()).toHaveLength(1);
+  });
+});
+
+describe('isReceiptEvent for memory', () => {
+  it('covers team memory changes only', () => {
+    expect(isReceiptEvent({ type: 'memory.changed', scope: 'team' })).toBe(
+      true
+    );
+    expect(isReceiptEvent({ type: 'memory.changed', scope: 'project' })).toBe(
+      false
+    );
+    expect(isReceiptEvent({ type: 'memory.changed', scope: 'personal' })).toBe(
+      false
+    );
+  });
+});

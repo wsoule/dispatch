@@ -95,6 +95,11 @@ import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
 import type { PreflightResult } from './memory/claudeModes.js';
+import {
+  applyStagedMemoryRestore,
+  memoryReceiptsStep,
+  memoryRestoreDir,
+} from './memory/receipts.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
@@ -155,6 +160,7 @@ import {
   previewResponseHeaders,
   previewUpstreamUrl,
 } from './previewHeaders.js';
+import type { ReceiptsStep } from './receipts/exporter.js';
 import { isReceiptEvent, ReceiptsScheduler } from './receipts/scheduler.js';
 import { ReviewCommentStore } from './reviewComments.js';
 import { sessionOrigins, sessionToken } from './session.js';
@@ -1107,6 +1113,8 @@ async function bootServer(
   // because nothing resolvable" case to log. Whether it runs at all is
   // config.yml's `receipts.enabled`, re-read on every pass rather than latched
   // here.
+  // Memory opens further down; until it does, its step writes nothing.
+  let memoryReceipts: ReceiptsStep | null = null;
   const receiptsScheduler =
     store instanceof TaskStore
       ? null
@@ -1118,7 +1126,11 @@ async function bootServer(
           events,
           debounceMs: opts.receiptsDebounceMs,
           sweepMs: opts.receiptsSweepMs,
-          steps: [docsReceiptsStep(docs.service, docsRestoreDir(rootDir))],
+          steps: [
+            docsReceiptsStep(docs.service, docsRestoreDir(rootDir)),
+            (dir) =>
+              memoryReceipts?.(dir) ?? { changed: 0, removed: 0, problems: [] },
+          ],
         });
   // Team doc changes that reach a sealed head (seals, reviews, status, links,
   // renames, deletes) export; open-revision amends and new heads wait for the seal.
@@ -1364,6 +1376,10 @@ async function bootServer(
       ? {}
       : { preflight: opts.memoryPreflight }),
   });
+  memoryReceipts = memoryReceiptsStep(
+    () => memory.shared,
+    memoryRestoreDir(rootDir)
+  );
   docsHost.bindRuns(orchestrator);
   docsHost.bindMessaging(messaging.store);
   docsHost.bindMemory(docsMemoryPort(memory));
@@ -1433,6 +1449,20 @@ async function bootServer(
   } catch (err) {
     console.error('dispatchd: boot ledger import failed', err);
   }
+  // Team memory staged by `dispatch receipts restore` returns as proposals,
+  // then the log is written again with memory in it.
+  try {
+    const restored = await applyStagedMemoryRestore(
+      memory.engine,
+      memory.shared,
+      memoryRestoreDir(rootDir)
+    );
+    for (const p of restored?.problems ?? [])
+      console.error(`dispatchd: memory restore: ${p.file}: ${p.detail}`);
+  } catch (err) {
+    console.error('dispatchd: memory restore failed', err);
+  }
+  receiptsScheduler?.notifyChanged();
   try {
     await memory.recover();
   } catch (err) {

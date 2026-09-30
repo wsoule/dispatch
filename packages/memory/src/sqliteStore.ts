@@ -640,13 +640,14 @@ export class SqliteMemoryStore implements MemoryStore {
     return row === undefined ? null : proposalFromRow(row);
   }
 
-  // Ledger-import and sync proposals are bounded by what arrives, so they never count.
+  // Ledger-import, sync and receipt-restore proposals are bounded by what arrives, so they never count.
   countProposalsBy(author: Address, sinceIso: string): number {
     return (
       queryOne<{ n: number }>(
         this.db,
         `SELECT COUNT(*) AS n FROM proposals WHERE author = ? AND created_at > ?
-         AND (origin IS NULL OR (origin NOT GLOB 'ledger:*' AND origin NOT GLOB 'sync:*'))`,
+         AND (origin IS NULL OR (origin NOT GLOB 'ledger:*' AND origin NOT GLOB 'sync:*'
+           AND origin NOT GLOB 'receipts:*'))`,
         [author, sinceIso]
       )?.n ?? 0
     );

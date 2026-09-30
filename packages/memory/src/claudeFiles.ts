@@ -6,6 +6,7 @@ import { parse as parseYaml } from 'yaml';
 import { cutUtf8, MEMORY_LIMITS, utf8Bytes } from './limits.js';
 import type { RankContext } from './rank.js';
 import { reachTags } from './render.js';
+import { displayState, MEMORY_KINDS } from './types.js';
 import type { MemoryEntry, MemoryKind } from './types.js';
 
 type ClaudeType = 'feedback' | 'project' | 'reference';
@@ -103,6 +104,22 @@ function trustNote(e: MemoryEntry): string {
 // Claude Code's own layout (type nested under metadata), plus Dispatch's
 // informational block; ingest never trusts any of it.
 export function renderTopicFile(e: MemoryEntry): string {
+  return renderEntryFile(e, []);
+}
+
+// The state a receipt shows: active, stale, or retired with its reason.
+function receiptStatus(e: MemoryEntry): string {
+  const state = displayState(e);
+  if (state !== 'retired') return state;
+  return `retired (${e.statusReason ?? 'expired'})`;
+}
+
+// The receipt log's copy of a team entry: the topic file plus its state.
+export function renderReceiptFile(e: MemoryEntry): string {
+  return renderEntryFile(e, [`    status: ${receiptStatus(e)}`]);
+}
+
+function renderEntryFile(e: MemoryEntry, extra: readonly string[]): string {
   return [
     '---',
     `name: ${e.id}`,
@@ -116,6 +133,7 @@ export function renderTopicFile(e: MemoryEntry): string {
     `    kind: ${e.kind}`,
     `    trust: ${e.trust}`,
     `    rev: ${e.rev}`,
+    ...extra,
     '---',
     '',
     `> Dispatch memory ${e.handle} · ${e.scope} ${e.kind} · by ${untrustedInline(e.author)} · ${trustNote(e)}`,
@@ -195,6 +213,28 @@ function cutBody(body: string): { body: string; truncated: boolean } {
   return { body: text + marker(size - utf8Bytes(text)), truncated: true };
 }
 
+// The parsed frontmatter and the text after it; unparseable YAML reads as body.
+function splitFrontmatter(text: string): {
+  front: Record<string, unknown>;
+  rest: string;
+} {
+  const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
+  const match = FRONTMATTER.exec(source);
+  if (match === null) return { front: {}, rest: source };
+  try {
+    const front = record(
+      parseYaml(match[1] ?? '', {
+        logLevel: 'error',
+        uniqueKeys: false,
+      }) as unknown
+    );
+    return { front, rest: source.slice(match[0].length) };
+  } catch {
+    // Unparseable frontmatter reads as body, never as a failed ingest.
+    return { front: {}, rest: source };
+  }
+}
+
 // Title and body as ingest reads them: frontmatter is informational, the
 // provenance line and untrustedBlock's escapes are removed. A MEMORY.md link's
 // text titles the file before Claude's `name`, a filename slug.
@@ -203,23 +243,7 @@ export function parseMemoryFile(
   fileName: string,
   opts: { linkText?: string } = {}
 ): ParsedMemoryFile {
-  const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
-  let front: Record<string, unknown> = {};
-  let rest = source;
-  const match = FRONTMATTER.exec(source);
-  if (match !== null) {
-    try {
-      front = record(
-        parseYaml(match[1] ?? '', {
-          logLevel: 'error',
-          uniqueKeys: false,
-        }) as unknown
-      );
-      rest = source.slice(match[0].length);
-    } catch {
-      // Unparseable frontmatter reads as body, never as a failed ingest.
-    }
-  }
+  const { front, rest } = splitFrontmatter(text);
   const meta = record(front.metadata);
   const lines = rest.replace(BREAKS, '\n').split('\n');
   while (lines.length > 0 && lines[0].trim() === '') lines.shift();
@@ -253,6 +277,18 @@ export function parseMemoryFile(
     modified: nonEmpty(meta.modified) ?? nonEmpty(front.modified),
     truncated,
   };
+}
+
+// A receipt file as restore reads it: the kind is kept only when Dispatch knows it.
+export function parseReceiptFile(
+  text: string,
+  fileName: string
+): ParsedMemoryFile & { kind: MemoryKind } {
+  const dispatch = record(
+    record(splitFrontmatter(text).front.metadata).dispatch
+  );
+  const kind = MEMORY_KINDS.find((k) => k === dispatch.kind) ?? 'fact';
+  return { ...parseMemoryFile(text, fileName), kind };
 }
 
 export function parsedHash(
