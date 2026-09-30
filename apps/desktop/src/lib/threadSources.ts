@@ -8,7 +8,7 @@ import type {
   Message,
   Ref,
 } from '@dispatch/client';
-import type { TaskDoc, TaskMeta } from '@dispatch/core/browser';
+import type { TaskListItem, TaskMeta } from '@dispatch/core/browser';
 import { canonicalStatus } from '@dispatch/core/browser';
 
 import type { MessageAccess } from './daemonAuth';
@@ -48,9 +48,9 @@ export function mergeThreadSources(
 /** What labels and refs need to know about the board, from data the view already has. */
 export interface ThreadLookups {
   taskTitle: (taskId: string) => string | null;
-  /** A board task's doc, for the proposal card. The lookups re-key on a
-   *  draft's edits only, since a proposal waits on a draft. */
-  taskDoc: (taskId: string) => TaskDoc | null;
+  /** A board task's metadata, for the proposal card (which fetches the body).
+   *  The lookups re-key on a draft's edits only, since a proposal waits on a draft. */
+  task: (taskId: string) => TaskListItem | null;
   taskIdOfRun: (runId: string) => string | null;
   agentStatus: (address: string) => 'revoked' | 'muted' | null;
   /** Whether an address is the daemon's own overseer (the Assistant). */
@@ -58,7 +58,7 @@ export interface ThreadLookups {
 }
 
 export function threadLookups(
-  tasks: readonly TaskDoc[],
+  tasks: readonly TaskListItem[],
   runs: readonly { id: string; taskId: string }[],
   agents: readonly AgentSummary[]
 ): ThreadLookups {
@@ -75,7 +75,7 @@ export function threadLookups(
   )?.address;
   return {
     taskTitle: (id) => docs.get(id)?.meta.title ?? null,
-    taskDoc: (id) => docs.get(id) ?? null,
+    task: (id) => docs.get(id) ?? null,
     taskIdOfRun: (id) => taskOfRun.get(id) ?? null,
     agentStatus: (address) => status.get(address) ?? null,
     // Until the roster loads, any overseer-named agent reads as the Assistant.

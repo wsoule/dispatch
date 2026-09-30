@@ -83,6 +83,7 @@ function clientWith(
   return {
     declineA2ATask: missing('declineA2ATask'),
     getMemoryProposal: missing('getMemoryProposal'),
+    fetchTask: missing('fetchTask'),
     ...calls,
   };
 }
@@ -389,6 +390,9 @@ test('a ref of a type this build does not register is plain text, not a link', (
   expect(screen.queryByRole('button', { name: 'wiki:handbook' })).toBeNull();
 });
 
+// The body the list leaves out comes from fetchTask.
+const DRAFT_CLIENT = clientWith({ fetchTask: () => Promise.resolve(DRAFT) });
+
 const taskProposal = msg('m-tp', {
   from: 'agent:dispatch',
   kind: 'question',
@@ -405,9 +409,9 @@ const taskProposal = msg('m-tp', {
 
 test('shows a decider the proposed draft from the board, and answers its gate with the choice', async () => {
   const onOpen = mock((_action: unknown) => {});
-  const onAnswer = renderRow(taskProposal, { onOpen });
+  const onAnswer = renderRow(taskProposal, { onOpen, client: DRAFT_CLIENT });
+  expect(await screen.findByText('src/upload.ts')).toBeTruthy();
   expect(screen.getByText('Rate-limit uploads')).toBeTruthy();
-  expect(screen.getByText('src/upload.ts')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'approve' })).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: 'Open draft' }));
   expect(onOpen).toHaveBeenCalledWith({ kind: 'task', taskId: 't-a1b2c3' });
@@ -428,10 +432,10 @@ test('renders a task-proposal gate’s body as plain text, so a client title can
   expect(screen.getByText(body)).toBeTruthy();
 });
 
-test('shows a viewer below the decide tier the proposed draft, with its answers disabled', () => {
-  renderRow(taskProposal, { access: TEAMMATE });
+test('shows a viewer below the decide tier the proposed draft, with its answers disabled', async () => {
+  renderRow(taskProposal, { access: TEAMMATE, client: DRAFT_CLIENT });
   expect(
-    screen.getByText('Cap uploads at 10 a minute per client.')
+    await screen.findByText('Cap uploads at 10 a minute per client.')
   ).toBeTruthy();
   expect(
     screen.getByRole<HTMLButtonElement>('button', { name: 'Approve' }).disabled

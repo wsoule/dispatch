@@ -14,6 +14,8 @@ export interface TaskProposalCardProps {
   gate: Message;
   /** The draft from the board; null while it is not there, which holds Approve. */
   task: TaskDoc | null;
+  /** The draft's body is still loading, which also holds Approve. */
+  loading?: boolean;
   onAnswer: (choice: Choice) => Promise<void>;
   onOpenTask: (id: string) => void;
   canDecide: boolean;
@@ -24,6 +26,7 @@ export interface TaskProposalCardProps {
 export function TaskProposalCard({
   gate,
   task,
+  loading = false,
   onAnswer,
   onOpenTask,
   canDecide,
@@ -64,7 +67,9 @@ export function TaskProposalCard({
       </div>
       {task === null ? (
         <p className="text-muted-foreground">
-          The draft {proposal.task} is not on the board.
+          {loading
+            ? 'Loading the draft…'
+            : `The draft ${proposal.task} is not on the board.`}
         </p>
       ) : (
         <>

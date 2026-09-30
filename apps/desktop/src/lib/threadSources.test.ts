@@ -857,8 +857,8 @@ describe('refs and labels', () => {
     expect(lookups.agentStatus('agent:wyat/old')).toBe('revoked');
     expect(lookups.agentStatus('agent:wyat/quiet')).toBe('muted');
     expect(lookups.agentStatus('agent:wyat/other')).toBeNull();
-    expect(lookups.taskDoc('t-000001')?.meta.title).toBe('Checkout');
-    expect(lookups.taskDoc('t-000404')).toBeNull();
+    expect(lookups.task('t-000001')?.meta.title).toBe('Checkout');
+    expect(lookups.task('t-000404')).toBeNull();
     expect(
       threadTitle(msg('m-01', { body: `${'x'.repeat(90)}\nsecond line` }))
     ).toBe(`${'x'.repeat(79)}…`);
