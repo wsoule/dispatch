@@ -50,6 +50,29 @@ const view = {
   includeArtifacts: true,
 };
 
+it('reports an approved handoff dropped later with the drop sentence, not its acceptance', () => {
+  const accepted = msg({
+    from: 'agent:dispatch',
+    kind: 'answer',
+    choice: 'accept',
+    body: 'Accepted as t-a1b2c3.',
+    replyTo: 'm-root',
+  });
+  const decision = decideState(
+    facts({
+      skill: 'handoff',
+      task: handoffTask('dropped'),
+      dropped: 'other',
+      answer: accepted,
+    })
+  );
+  expect(decision.state).toBe('REJECTED');
+  expect(decision.status).toMatchObject({
+    kind: 'fixed',
+    text: 'The project owner dropped this task.',
+  });
+});
+
 describe('decideState — one test per row of spec:400-413', () => {
   it.each([
     [

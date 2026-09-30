@@ -106,10 +106,11 @@ export function decideState(f: TaskFacts): Decision {
     f.declinedAt !== null ||
     (handoff && (f.answer?.choice === 'decline' || f.dropped === 'other'))
   ) {
+    // An acceptance answered the root before a later drop; it is not the reason.
     return said(
       2,
       'REJECTED',
-      f.answer,
+      f.answer?.choice === 'accept' ? null : f.answer,
       'The project owner dropped this task.'
     );
   }
