@@ -135,6 +135,7 @@ export function health(over: Partial<MemoryHealth> = {}): MemoryHealth {
       state: 'complete',
       source: '/Users/x/.claude/projects/-a/memory',
       candidates: [],
+      problems: [],
     },
     ...over,
   };

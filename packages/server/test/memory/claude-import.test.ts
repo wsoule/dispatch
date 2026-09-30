@@ -264,6 +264,34 @@ describe('importClaudeNotes', () => {
     rmSync(empty, { recursive: true, force: true });
   });
 
+  // A dotfile manager's ~/.claude symlink would make every candidate a
+  // refused --from; offering the real path lets the owner import it.
+  it('offers a candidate under a symlinked ~/.claude by its real path', async () => {
+    const at = realpathSync(mkdtempSync(join(tmpdir(), 'claude-home-')));
+    const real = join(at, 'dotfiles', 'claude');
+    const notes = join(
+      real,
+      'projects',
+      `-old-${sanitizeProjectDirName(basename(checkout))}`,
+      'memory'
+    );
+    mkdirSync(notes, { recursive: true });
+    writeFileSync(join(notes, 'note.md'), 'a note');
+    symlinkSync(real, join(at, '.claude'));
+    const search = await findClaudeMemorySource({
+      rootDir: checkout,
+      mainCheckout: checkout,
+      env: {},
+      home: at,
+    });
+    expect(search.candidates).toEqual([notes]);
+    expect(await run({ explicit: notes }, at)).toMatchObject({
+      state: 'complete',
+      imported: 1,
+    });
+    rmSync(at, { recursive: true, force: true });
+  });
+
   it('looks in CLAUDE_CONFIG_DIR under CLAUDE_CODE_PROJECT_DIR_NAME when they are set', async () => {
     const config = join(home, 'elsewhere');
     const named = join(config, 'projects', 'my-project', 'memory');
@@ -409,6 +437,7 @@ describe('the daemon’s one-time import', () => {
       state: 'complete',
       source: memoryDir,
       candidates: [],
+      problems: [],
     });
     const ada = handle.team.teammates.issue('ada', 'decide');
     const theirs = (await (

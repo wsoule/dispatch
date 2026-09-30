@@ -200,6 +200,23 @@ function claudeStateText(model: MemorySettingsModel): string {
   }
 }
 
+// Runs a Claude import; the daemon answers a refused or unreadable source
+// with a failed report rather than an error, so that becomes one here.
+async function importOrThrow(
+  client: MemoryClient,
+  opts?: { from?: string; none?: boolean }
+): Promise<void> {
+  const { report } = await (opts === undefined
+    ? client.importClaude()
+    : client.importClaude(opts));
+  if (report.state === 'failed')
+    throw new Error(
+      report.problems.length > 0
+        ? report.problems.join('; ')
+        : 'The import failed.'
+    );
+}
+
 function ClaudeImportGroup({
   client,
   port,
@@ -227,13 +244,19 @@ function ClaudeImportGroup({
             size="sm"
             disabled={busy}
             onClick={() =>
-              void action.run('again', () => client.importClaude())
+              void action.run('again', () => importOrThrow(client))
             }
           >
             {action.pending === 'again' ? 'Importing…' : 'Import again'}
           </Button>
         }
       />
+      {model.claudeImport === 'failed' &&
+        model.claudeProblems.map((problem) => (
+          <PanelRow key={problem} data-settings-row="" className="py-2">
+            <span className="text-red text-[12px]">{problem}</span>
+          </PanelRow>
+        ))}
       {model.claudeImport === 'unconfirmed' && (
         <>
           {model.candidates.map((candidate) => (
@@ -248,7 +271,7 @@ function ClaudeImportGroup({
                   disabled={busy}
                   onClick={() =>
                     void action.run(candidate, () =>
-                      client.importClaude({ from: candidate })
+                      importOrThrow(client, { from: candidate })
                     )
                   }
                 >
@@ -267,7 +290,7 @@ function ClaudeImportGroup({
                 disabled={busy}
                 onClick={() =>
                   void action.run('none', () =>
-                    client.importClaude({ none: true })
+                    importOrThrow(client, { none: true })
                   )
                 }
               >

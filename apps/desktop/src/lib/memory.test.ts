@@ -335,6 +335,7 @@ describe('memorySettingsModel', () => {
           state: 'unconfirmed',
           source: null,
           candidates: ['/Users/x/.claude/projects/-a/memory'],
+          problems: [],
         },
         personal: {
           available: false,
@@ -412,7 +413,14 @@ open proposals    0 → 0`);
     });
     expect(
       memorySettingsModel(
-        health({ claudeImport: { state: null, source: null, candidates: [] } })
+        health({
+          claudeImport: {
+            state: null,
+            source: null,
+            candidates: [],
+            problems: [],
+          },
+        })
       ).claudeImport
     ).toBe('unknown');
     expect(

@@ -183,6 +183,8 @@ export interface MemorySettingsModel {
   claudeSource: string | null;
   /** Where the notes may be, while the import is unconfirmed. */
   candidates: string[];
+  /** Why the last import failed or skipped files. */
+  claudeProblems: string[];
   /** Why the caller's own personal store is closed, when it is. */
   personalUnavailable: string | null;
   /** The caller's pinned entries alone exceed the index budget. */
@@ -251,6 +253,7 @@ export function memorySettingsModel(health: MemoryHealth): MemorySettingsModel {
     claudeImport: claude?.state ?? 'unknown',
     claudeSource: claude?.source ?? null,
     candidates: claude?.candidates ?? [],
+    claudeProblems: claude?.problems ?? [],
     personalUnavailable:
       health.personal !== null && !health.personal.available
         ? (health.personal.reason ?? 'personal memory is unavailable')

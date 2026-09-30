@@ -93,6 +93,7 @@ interface MemoryHealth {
     state: ImportState | null;
     source: string | null;
     candidates: string[];
+    problems: string[];
   } | null;
 }
 
@@ -727,6 +728,7 @@ export function openMemory(deps: OpenMemoryDeps): MemoryService {
             : importState(store, projectKey),
       source: last?.source ?? null,
       candidates: last?.candidates ?? [],
+      problems: last?.problems ?? [],
     };
   };
 

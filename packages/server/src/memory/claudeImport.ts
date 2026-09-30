@@ -173,7 +173,18 @@ function candidateDirs(configDir: string, mainCheckout: string): string[] {
   return names
     .filter((name) => name.endsWith(tail) || name.includes(whole))
     .map((name) => join(projects, name, 'memory'))
-    .filter(isDirectory);
+    .filter(isDirectory)
+    .map(realOrSelf);
+}
+
+// A candidate by its real path, since --from refuses one reached through a
+// symlink (a dotfile manager's ~/.claude, say).
+function realOrSelf(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
 }
 
 // Claude Code's override for the project directory name, when it is one plain path segment.
@@ -217,7 +228,10 @@ export async function findClaudeMemorySource(input: {
     return {
       found: null,
       needsConfirmation: true,
-      candidates: [dir, ...others.filter((c) => c !== dir)],
+      candidates: [
+        realOrSelf(dir),
+        ...others.filter((c) => c !== realOrSelf(dir)),
+      ],
     };
   }
   const name =

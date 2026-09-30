@@ -41,6 +41,7 @@ function memoryClient(
     health?: MemoryHealth;
     identity?: Identity | Error;
     problems?: MemoryIngestProblem[];
+    importReport?: { state: string; problems?: string[] };
   } = {}
 ) {
   return {
@@ -54,7 +55,7 @@ function memoryClient(
       Promise.resolve({ problems: over.problems ?? [] })
     ),
     importClaude: mock((_opts?: { from?: string; none?: boolean }) =>
-      Promise.resolve({ report: {} })
+      Promise.resolve({ report: over.importReport ?? { state: 'complete' } })
     ),
     acceptIngestProblem: mock((_id: string) =>
       Promise.resolve({ status: 'active', id: 'mem-1', handle: 'huge' })
@@ -162,6 +163,7 @@ describe('MemorySection', () => {
           state: 'unconfirmed',
           source: null,
           candidates: ['/Users/x/.claude/projects/-a/memory'],
+          problems: [],
         },
       }),
     });
@@ -183,6 +185,46 @@ describe('MemorySection', () => {
     );
   });
 
+  it('shows why the last import failed', async () => {
+    renderSection(
+      memoryClient({
+        health: health({
+          claudeImport: {
+            state: 'failed',
+            source: '/Users/x/notes',
+            candidates: [],
+            problems: ['.: cannot be read'],
+          },
+        }),
+      })
+    );
+    expect(await screen.findByText('.: cannot be read')).toBeTruthy();
+  });
+
+  it('says why an import from a candidate was refused', async () => {
+    const client = memoryClient({
+      health: health({
+        claudeImport: {
+          state: 'unconfirmed',
+          source: null,
+          candidates: ['/Users/x/.claude/projects/-a/memory'],
+          problems: [],
+        },
+      }),
+      importReport: {
+        state: 'failed',
+        problems: ['--from is reached through a symlink (/Users/x/.claude)'],
+      },
+    });
+    renderSection(client);
+    fireEvent.click(
+      await screen.findByRole('button', { name: 'Import from here' })
+    );
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'reached through a symlink'
+    );
+  });
+
   it('imports the Claude notes again', async () => {
     const client = memoryClient();
     renderSection(client);
@@ -198,7 +240,12 @@ describe('MemorySection', () => {
     renderSection(
       memoryClient({
         health: health({
-          claudeImport: { state: 'complete', source: null, candidates: [] },
+          claudeImport: {
+            state: 'complete',
+            source: null,
+            candidates: [],
+            problems: [],
+          },
         }),
       })
     );

@@ -905,6 +905,8 @@ export interface MemoryHealth {
     state: 'complete' | 'failed' | 'unconfirmed' | 'running' | null;
     source: string | null;
     candidates: string[];
+    /** Why the last import failed or skipped files. */
+    problems: string[];
   } | null;
 }
 
