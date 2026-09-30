@@ -104,13 +104,14 @@ describe('a handoff', () => {
     expect(await state(id)).toBe('AUTH_REQUIRED');
   });
 
-  it('escapes markdown in the client’s title where the gate body quotes it', async () => {
+  // Every surface shows a gate body as plain text, so escaping would only add backslashes.
+  it('quotes the client’s title verbatim in the gate body', async () => {
     const { row } = await open({
-      work: { skill: 'handoff', title: '![x](https://host/beacon)' },
+      work: { skill: 'handoff', title: '![x](https://host/beacon) *bold*' },
     });
     const body = gateQuestion(row).body;
-    expect(body).toContain('"\\!\\[x\\]\\(https://host/beacon\\)"');
-    expect(body).not.toContain('![x]');
+    expect(body).toContain('"![x](https://host/beacon) *bold*"');
+    expect(body).not.toContain('\\');
   });
 
   // The effective rung each gate uses for an A2A task is 1, in a project that

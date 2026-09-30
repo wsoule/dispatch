@@ -12,6 +12,7 @@ import {
   unwrapExternalData,
   wrapExternalData,
 } from '@dispatch/a2a';
+import { untrustedInline } from '@dispatch/core';
 import type { Address, Message } from '@dispatch/protocol';
 import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 
@@ -104,12 +105,8 @@ export async function openHandoff(
   return { kind: 'task', taskId: root.id };
 }
 
-// Backslash-escapes markdown syntax so a client's title quotes as text.
-function escapeMarkdown(text: string): string {
-  return text.replace(/[\\`*_~[\]()!<>|#]/g, '\\$&');
-}
-
 // Asks the owner to approve the row's draft, as the system, and records the gate.
+// Every surface shows its body as plain text, so the title is quoted unescaped.
 export async function sendProposalGate(
   deps: BridgeDeps,
   row: TaskRow,
@@ -125,7 +122,7 @@ export async function sendProposalGate(
       choices: ['approve', 'decline'],
       replyTo: row.id,
       idempotencyKey: proposalKey(row.id),
-      body: `${row.client} proposes a task over A2A: "${escapeMarkdown(title)}" (${task}). Approve to move it to Ready; nothing runs until you do.`,
+      body: `${row.client} proposes a task over A2A: "${untrustedInline(title)}" (${task}). Approve to move it to Ready; nothing runs until you do.`,
       data: {
         type: 'task-proposal',
         task,
