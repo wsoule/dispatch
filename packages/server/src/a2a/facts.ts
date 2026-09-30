@@ -83,9 +83,8 @@ function openGatesOf(
   return out;
 }
 
-// Everything the projection needs about one A2A task, read fresh. A dropped
-// recipient task fails only an unanswered ask, so a finished task stays final.
-// `work: false` leaves out the run results, for a caller that only decides.
+// Everything the projection needs about one A2A task, read fresh;
+// `work: false` skips run results for a caller that only decides state.
 export function gatherFacts(
   deps: BridgeDeps,
   row: TaskRow,

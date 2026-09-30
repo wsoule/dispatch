@@ -54,9 +54,8 @@ function createDraft(
   ).meta.id;
 }
 
-// Brings one open handoff back to its draft, gate and effect: finds the draft
-// by its provenance line or rebuilds it, adopts or sends the proposal gate,
-// and applies an owner's answer the bridge missed. Returns the send, if any.
+// Restores one open handoff's draft, proposal gate and any missed owner answer;
+// returns the gate send, if any.
 export function reconcileHandoff(
   deps: BridgeDeps,
   hub: BridgeWatch,
@@ -101,10 +100,8 @@ export function reconcileHandoff(
   return handleProposal(deps, hub, question, answer);
 }
 
-// Boot: gives every keyed question or handoff a client sent its row, which a
-// crash between the engine's commit and a2a.db can lose, brings each open
-// handoff back to its draft and gate, then recomputes open tasks; one that
-// fails is logged and skipped. `settled` resolves once any sends are through.
+// Boot: restores rows a crash lost, each open handoff's draft and gate, then
+// recomputes open tasks (failures logged); `settled` awaits the sends.
 export function reconcileA2A(
   deps: BridgeDeps,
   watch: BridgeWatch

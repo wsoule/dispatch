@@ -315,9 +315,8 @@ async function admitStream(op: Op): Promise<(() => void) | Response> {
   return admitted.release ?? (() => {});
 }
 
-// Hands the admitted slot to an SSE stream of the task, which releases it, or
-// frees it here if the stream cannot start. A subscription runs until the task
-// is terminal; a streamed send ends at INPUT_REQUIRED too.
+// Streams the task on the admitted slot (freed here if the stream cannot
+// start); a streamed send also ends at INPUT_REQUIRED, a subscription does not.
 function openStream(
   op: Op,
   release: () => void,

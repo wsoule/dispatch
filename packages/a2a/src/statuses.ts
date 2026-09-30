@@ -19,9 +19,8 @@ export type StatusKind =
   | 'completed'
   | 'canceled';
 
-// A project's status vocabulary: typed statuses plus the ones the machinery
-// writes on each lifecycle event. Shaped like core's StatusModel, so a host
-// that has one passes it straight in.
+// A project's typed statuses plus those written on each lifecycle event;
+// shaped like core's StatusModel so a host can pass one straight in.
 export interface StatusVocabulary {
   definitions: readonly { name: string; type: StatusKind }[];
   roles: {
@@ -61,9 +60,8 @@ const BUILT_IN_KINDS: Record<string, StatusKind> = {
   dropped: 'canceled',
 };
 
-// Classifies statuses by type and role, never by name, so a project mirroring
-// Linear's workflow hands off as well as one on the built-in names. A new
-// draft goes to the first backlog status (triage when there is none).
+// Classifies statuses by type and role, never name; a new draft goes to the
+// first backlog status (triage when there is none).
 export function handoffStatuses(v: StatusVocabulary): HandoffStatuses {
   const kinds = new Map(v.definitions.map((d) => [d.name, d.type]));
   const firstOf = (type: StatusKind) =>

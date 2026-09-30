@@ -117,9 +117,8 @@ interface OpenBridgeDeps {
   track?: (fn: () => Promise<Response>) => Promise<Response>;
 }
 
-// The a2a: block, its warnings and how the handoff code reads the project's
-// statuses; a config.yml that does not parse leaves the defaults rather than
-// failing an A2A request.
+// The a2a: block, its warnings and the handoff statuses; an unparseable
+// config.yml falls back to the defaults instead of failing a request.
 function a2aConfig(rootDir: string): {
   policy: A2AConfig;
   warnings: string[];

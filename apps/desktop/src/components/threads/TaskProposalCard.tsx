@@ -19,8 +19,7 @@ export interface TaskProposalCardProps {
   canDecide: boolean;
 }
 
-/** An A2A client's handoff waiting on the owner: the draft's title, its
- *  description as the client wrote it, its writes, who proposed it, and
+/** An A2A client's handoff awaiting the owner: the draft, its proposer, and
  *  Approve or Decline. Nothing runs until it is approved. */
 export function TaskProposalCard({
   gate,
