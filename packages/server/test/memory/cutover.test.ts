@@ -107,7 +107,7 @@ describe('the ledger cutover', () => {
 
   // Once the boot's import has run, every unseen row came from elsewhere,
   // whatever createdAt it claims.
-  it('proposes a row that arrives later claiming an old or empty createdAt', async () => {
+  it('proposes a row that arrives later claiming an old or empty createdAt', () => {
     for (const createdAt of ['2020-01-01T00:00:00.000Z', '']) {
       seedLedger(
         root,
