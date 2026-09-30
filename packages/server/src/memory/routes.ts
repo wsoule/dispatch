@@ -33,6 +33,7 @@ import {
   readJsonBodyOptional,
 } from '../api/http.js';
 import { rosterEmailOf } from './host.js';
+import { PLACEHOLDER_EMAIL } from './identities.js';
 import type { MemoryIdentities } from './identities.js';
 import { renderImportReport } from './ledgerImport.js';
 import type { MemoryService } from './service.js';
@@ -44,7 +45,6 @@ const ORIGIN_SOURCES = ['ledger', 'claude', 'amendment'] as const;
 const TRUST_LEVELS: readonly MemoryTrust[] = ['human', 'confirmed', 'agent'];
 const INGEST_PROBLEMS_SHOWN = 200;
 // The roster email `dispatch init` writes, which tells no two people apart.
-const PLACEHOLDER_EMAIL = 'local@localhost';
 const PROPOSAL_STATES: readonly ProposalState[] = [
   'open',
   'approved',

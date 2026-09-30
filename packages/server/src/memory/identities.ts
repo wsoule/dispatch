@@ -18,6 +18,9 @@ export type AliasResolution =
       currentEmail: string;
     };
 
+// The roster's stand-in email when git has none; it names no one.
+export const PLACEHOLDER_EMAIL = 'local@localhost';
+
 const IDENTITIES_DB_VERSION = 1;
 const CROCKFORD = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const CODE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{8}$/;
@@ -48,6 +51,11 @@ function message(err: unknown): string {
 
 function normalizeEmail(email: string | null): string {
   return (email ?? '').trim().toLowerCase();
+}
+
+// An empty or placeholder email says nothing about who holds the handle.
+function unknownEmail(email: string): boolean {
+  return email === '' || email === PLACEHOLDER_EMAIL;
 }
 
 // Upper-cased with dashes and spaces gone; Crockford reads I and L as 1, O as 0.
@@ -111,10 +119,20 @@ export class MemoryIdentities {
         });
       return { ok: true, identity: 'self' };
     }
-    if (bound !== undefined) return checked(bound, email);
+    if (bound !== undefined && !this.adopts(bound, email))
+      return checked(bound, email);
     return this.transaction(() => {
       const raced = this.alias(input.projectKey, input.handle);
-      if (raced !== undefined) return checked(raced, email);
+      if (raced !== undefined) {
+        if (!this.adopts(raced, email)) return checked(raced, email);
+        this.bindAlias(
+          input.projectKey,
+          input.handle,
+          raced.identity_id,
+          email
+        );
+        return { ok: true, identity: raced.identity_id };
+      }
       const identity = this.newIdentity();
       this.bindAlias(input.projectKey, input.handle, identity, email);
       return { ok: true, identity };
@@ -141,7 +159,18 @@ export class MemoryIdentities {
           "handle: the owner's personal memory already reaches every project; there is nothing to link",
           'handle'
         );
-      const resolved = checked(bound, normalizeEmail(input.rosterEmail));
+      const email = normalizeEmail(input.rosterEmail);
+      const adopted = this.adopts(bound, email);
+      if (adopted)
+        this.bindAlias(
+          input.projectKey,
+          input.handle,
+          bound.identity_id,
+          email
+        );
+      const resolved = adopted
+        ? { ok: true as const, identity: bound.identity_id }
+        : checked(bound, email);
       if (!resolved.ok) throw reusedHandle();
       const nowMs = this.now().getTime();
       this.db
@@ -202,7 +231,7 @@ export class MemoryIdentities {
         bound === undefined ||
         bound.identity_id === row.identity_id ||
         bound.identity_id === 'self' ||
-        bound.email_at_bind !== email
+        (bound.email_at_bind !== email && !unknownEmail(bound.email_at_bind))
           ? null
           : bound.identity_id;
       this.bindAlias(input.projectKey, input.handle, row.identity_id, email);
@@ -245,6 +274,16 @@ export class MemoryIdentities {
 
   close(): void {
     this.db.close();
+  }
+
+  // Whether a teammate's alias bound under an unknown email takes on this real one.
+  private adopts(bound: AliasRow, email: string): boolean {
+    return (
+      bound.identity_id !== 'self' &&
+      bound.email_at_bind !== email &&
+      unknownEmail(bound.email_at_bind) &&
+      !unknownEmail(email)
+    );
   }
 
   private alias(projectKey: string, handle: string): AliasRow | undefined {

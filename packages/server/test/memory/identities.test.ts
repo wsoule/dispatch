@@ -52,6 +52,51 @@ function codeError(fn: () => unknown): MemoryError {
 }
 
 describe('MemoryIdentities', () => {
+  // A placeholder or missing roster email named no one, so a real one later is the same person.
+  it.each([['local@localhost'], [null]])(
+    'keeps a handle bound under %p when its roster email becomes real',
+    (before) => {
+      const ids = open();
+      const first = identityOf(ids, P1, 'ada', before);
+      expect(identityOf(ids, P1, 'ada', 'ada@example.com')).toBe(first);
+      expect(
+        ids.startLink({
+          projectKey: P1,
+          handle: 'ada',
+          rosterEmail: 'ada@example.com',
+        }).code
+      ).toMatch(/^[0-9A-Z]{4}-[0-9A-Z]{4}$/);
+      // Now bound to the real email, a different one is a different person.
+      expect(
+        ids.resolve({
+          projectKey: P1,
+          handle: 'ada',
+          isOwner: false,
+          rosterEmail: 'eve@example.com',
+        }).ok
+      ).toBe(false);
+    }
+  );
+
+  it('moves a placeholder-bound handle’s entries when it completes a link', () => {
+    const ids = open();
+    const target = identityOf(ids, P2, 'ada', 'ada@example.com');
+    const { code } = ids.startLink({
+      projectKey: P2,
+      handle: 'ada',
+      rosterEmail: 'ada@example.com',
+    });
+    const old = identityOf(ids, P1, 'ada', 'local@localhost');
+    expect(
+      ids.completeLink({
+        code,
+        projectKey: P1,
+        handle: 'ada',
+        rosterEmail: 'ada@example.com',
+      })
+    ).toEqual({ identity: target, previous: old });
+  });
+
   it('binds every owner alias to self, whatever the handle', () => {
     const ids = open();
     expect(
