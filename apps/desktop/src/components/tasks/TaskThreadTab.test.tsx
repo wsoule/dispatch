@@ -11,6 +11,7 @@ import {
 import { expect, mock, test } from 'bun:test';
 
 import type { MessageAccess } from '../../lib/daemonAuth';
+import { proposal } from '../../lib/memory.test-helper';
 import type { RefAction } from '../../lib/threadSources';
 import { openRefWith } from '../../lib/threadSources';
 import { dataWith } from '../settings/fixtures.test-helper';
@@ -265,4 +266,47 @@ test('while a thread is open the new-message composer waits behind a button', as
     document.activeElement ===
       screen.getByRole('button', { name: 'New message' })
   ).toBe(true);
+});
+
+test('a memory gate in the task’s threads shows its proposal to a decider', async () => {
+  const gate: Message = {
+    ...root,
+    id: 'm-mem',
+    thread: 'm-mem',
+    from: 'agent:dispatch',
+    kind: 'question',
+    blocking: true,
+    choices: ['approve', 'reject'],
+    body: 'run:r-000001 proposes a team memory (hazard).',
+    data: {
+      type: 'memory',
+      proposalId: 'mp-000001',
+      action: 'add',
+      scope: 'team',
+      kind: 'hazard',
+    },
+  };
+  const getMemoryProposal = mock((_id: string) =>
+    Promise.resolve({ proposal: proposal(), base: null, current: null })
+  );
+  const client = {
+    ...clientWith([gate]),
+    openDecisions: mock(() => Promise.resolve({ items: [gate] })),
+    getMessage: mock(() => Promise.resolve(gate)),
+    getThread: mock(() =>
+      Promise.resolve({ messages: [gate], deliveries: [] })
+    ),
+    getMemoryProposal,
+  };
+  renderTab(client);
+  const list = screen.getByRole('complementary', { name: 'Thread list' });
+  fireEvent.click(
+    await within(list).findByRole('option', {
+      name: /proposes a team memory/,
+    })
+  );
+  expect(
+    await screen.findByText('pnpm 11 ignores onlyBuiltDependencies')
+  ).toBeDefined();
+  expect(getMemoryProposal).toHaveBeenCalledWith('mp-000001');
 });

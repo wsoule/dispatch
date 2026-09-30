@@ -296,4 +296,55 @@ describe('live notify', () => {
     ).toBe(1);
     expect(sent).toEqual([['r-000002', liveDigest(entry)]]);
   });
+
+  // Project scope never reaches an A2A run; review and finished runs hear nothing.
+  it('notifyLiveRuns skips A2A runs for project scope, and non-execute or finished runs', () => {
+    const t = testEngine();
+    const runs = [
+      { id: 'r-000001', taskId: 't-000001', state: 'running', a2a: true },
+      { id: 'r-000002', taskId: 't-000002', state: 'running', kind: 'review' },
+      { id: 'r-000003', taskId: 't-000003', state: 'finished' },
+      { id: 'r-000004', taskId: 't-000004', state: 'running' },
+    ];
+    for (const run of runs) {
+      t.host.runTasks.set(run.id, run.taskId);
+      t.host.tasks.set(run.taskId, {
+        taskId: run.taskId,
+        title: 'x',
+        body: '',
+        writes: [],
+        epic: null,
+        risk: 'routine',
+        a2a: run.a2a === true,
+      });
+    }
+    const sent: string[] = [];
+    const orchestrator = {
+      list: () => runs,
+      notifyRun: (id: string) => void sent.push(id),
+    } as unknown as Pick<Orchestrator, 'list' | 'notifyRun'>;
+    const heard = (scope: 'project' | 'team') => {
+      sent.length = 0;
+      const entry = newMemoryEntry(
+        {
+          scope,
+          kind: 'hazard',
+          title: 'watch out',
+          body: 'b',
+          author: 'human:wyat',
+          trust: 'human',
+        },
+        `mem-${'C'.repeat(26)}`,
+        new Date().toISOString()
+      );
+      notifyLiveRuns(
+        { orchestrator, engine: t.engine, host: t.host },
+        entry,
+        null
+      );
+      return [...sent];
+    };
+    expect(heard('project')).toEqual(['r-000004']);
+    expect(heard('team')).toEqual(['r-000001', 'r-000004']);
+  });
 });

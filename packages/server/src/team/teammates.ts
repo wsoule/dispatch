@@ -146,6 +146,9 @@ interface TeammateOptions {
   /** The sentence to refuse with when the seats are taken. */
   seatMessage?: (seats: number) => string;
   clock?: () => Date;
+  /** Whoever runs the daemon; a token for their handle (issued before that
+   *  was refused) authenticates no one and takes no seat. */
+  operatorHandle?: string;
 }
 
 /**
@@ -158,8 +161,10 @@ export class TeammateTokens implements CredentialSource {
   private readonly seats: () => number;
   private readonly seatMessage: (seats: number) => string;
   private readonly clock: () => Date;
+  private readonly operatorHandle: string | null;
 
   constructor(opts: TeammateOptions = {}) {
+    this.operatorHandle = opts.operatorHandle ?? null;
     this.store = opts.store ?? MEMORY_ONLY;
     this.seats = opts.seats ?? (() => Number.POSITIVE_INFINITY);
     this.seatMessage =
@@ -189,6 +194,11 @@ export class TeammateTokens implements CredentialSource {
     return e.expiresAt === null || now < Date.parse(e.expiresAt);
   }
 
+  // A live token that can authenticate: never one for the operator's handle.
+  private usable(e: Entry, now: number): boolean {
+    return e.handle !== this.operatorHandle && this.live(e, now);
+  }
+
   /**
    * The teammates the license covers right now: the earliest-invited handles
    * holding a live token, as many as fit beside the operator. Earliest first
@@ -199,7 +209,7 @@ export class TeammateTokens implements CredentialSource {
     const room = Math.max(this.seats() - 1, 0);
     const byFirstIssue = new Map<string, number>();
     for (const e of this.entries) {
-      if (!this.live(e, now)) continue;
+      if (!this.usable(e, now)) continue;
       const at = Date.parse(e.issuedAt);
       const seen = byFirstIssue.get(e.handle);
       if (seen === undefined || at < seen) byFirstIssue.set(e.handle, at);
@@ -216,7 +226,8 @@ export class TeammateTokens implements CredentialSource {
 
   lookup(digest: Buffer): TokenLookup {
     const entry = this.entries.find((e) => timingSafeEqual(digest, e.hash));
-    if (entry === undefined) return { kind: 'unknown' };
+    if (entry === undefined || entry.handle === this.operatorHandle)
+      return { kind: 'unknown' };
     const now = this.clock();
     if (!this.live(entry, now.getTime())) {
       return {
@@ -265,7 +276,7 @@ export class TeammateTokens implements CredentialSource {
     return (
       1 +
       new Set(
-        this.entries.filter((e) => this.live(e, now)).map((e) => e.handle)
+        this.entries.filter((e) => this.usable(e, now)).map((e) => e.handle)
       ).size
     );
   }
@@ -289,7 +300,7 @@ export class TeammateTokens implements CredentialSource {
     const now = this.clock().getTime();
     const others = new Set(
       this.entries
-        .filter((e) => e.handle !== handle && this.live(e, now))
+        .filter((e) => e.handle !== handle && this.usable(e, now))
         .map((e) => e.handle)
     );
     const seats = this.seats();
@@ -328,6 +339,7 @@ export class TeammateTokens implements CredentialSource {
       expiresAt: e.expiresAt,
       lastUsedAt: e.lastUsedAt,
       expired: !this.live(e, now),
+      unusable: e.handle === this.operatorHandle,
     }));
   }
 

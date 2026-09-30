@@ -5,6 +5,7 @@ import { gateOf, MessagingError, SYSTEM_ADDRESS } from '@dispatch/protocol';
 import { isAbsolute, posix, relative } from 'node:path';
 
 import { scopeRequestEscapesRepo } from '../floor.js';
+import { scopeExtensionTitle } from '../ledger.js';
 import type { LedgerStorePort } from '../ledger.js';
 import { consultProjectPolicy } from '../policyEngine.js';
 import { SYSTEM_SENDER } from './gates.js';
@@ -105,12 +106,12 @@ export function applyScopeAnswer(
   if (byPolicy)
     deps.appendPolicyActivity(
       run.taskId,
-      `[policy] Scope extended for run ${runId}: ${gate.paths.join(', ')} — ${answer.body}`
+      `[policy] ${scopeExtensionTitle(runId)}: ${gate.paths.join(', ')} — ${answer.body}`
     );
   const note = answer.body.trim() === '' ? '' : ` (${answer.body})`;
   deps.ledgerStore.add({
     kind: 'decision',
-    title: `Scope extended for run ${runId}`,
+    title: scopeExtensionTitle(runId),
     detail: `${gate.paths.join(', ')} — ${gate.reason}${note} [decided by ${answer.from}] ${tag}`,
     authoredBy: byPolicy ? deps.owner : answer.from,
     epicId: parent,

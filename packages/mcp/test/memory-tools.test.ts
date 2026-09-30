@@ -56,10 +56,6 @@ beforeEach(() => {
           { status: 'active', id: ENTRY.id, handle: ENTRY.handle },
           { status: 201 }
         );
-      if (url.pathname === '/api/runs/r-1')
-        return Response.json({ taskId: 't-1a2b3c' });
-      if (url.pathname === '/api/tasks/t-1a2b3c')
-        return Response.json({ meta: { parent: 'e-000001' } });
       if (url.pathname === '/api/memory/%237QX2K9PA/retire')
         return Response.json({
           status: 'proposed',
@@ -236,7 +232,8 @@ describe('memory tools', () => {
     );
   });
 
-  it('memory_save sends one Idempotency-Key, retries a dropped connection with it, and defaults epic to the task’s parent', async () => {
+  // The daemon defaults a run's epic from the task it already knows.
+  it('memory_save sends one Idempotency-Key, retries a dropped connection with it, and leaves an unnamed epic out', async () => {
     const res = await callDroppingFirstPost('/api/memory', 'memory_save', {
       scope: 'team',
       kind: 'hazard',
@@ -250,10 +247,10 @@ describe('memory tools', () => {
     expect(posts[0].key).toBeTruthy();
     expect(posts[1].key).toBe(posts[0].key);
     expect(posts[1].auth).toBe('Bearer rt-secret');
-    expect(JSON.parse(posts[1].body ?? '')).toMatchObject({
-      scope: 'team',
-      epic: 'e-000001',
-    });
+    const body = JSON.parse(posts[1].body ?? '') as Record<string, unknown>;
+    expect(body.scope).toBe('team');
+    expect('epic' in body).toBe(false);
+    expect(seen.some((s) => s.path.startsWith('/api/runs/'))).toBe(false);
   });
 
   it('memory_save sends an explicit epic: null, and no epic on a personal save', async () => {

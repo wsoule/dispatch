@@ -1,5 +1,6 @@
 import type { ApiContext } from '../api.js';
 import type { Principal } from '../messaging/principal.js';
+import { actingOperator } from '../orchestrator/types.js';
 import { tierAllows } from '../tiers.js';
 
 /**
@@ -29,6 +30,24 @@ export function humanCredentialRef(
 ): string | null {
   if (ctx.viaAgentToken === true || ctx.caller === undefined) return null;
   return ctx.caller.ref;
+}
+
+/** Who a run this request starts acts for: the credential's own human, the
+ *  owner only on the owner's app token; no one for the shared agentToken. */
+export function humanOperator(
+  ctx: Pick<
+    ApiContext,
+    'caller' | 'viaAgentToken' | 'ownerCredential' | 'actorContext'
+  >
+): string | null {
+  const ref = humanCredentialRef(ctx);
+  return ref === null
+    ? null
+    : actingOperator(
+        ref,
+        ctx.ownerCredential === true,
+        ctx.actorContext.humanRef
+      );
 }
 
 /** A memory principal for a route outside messaging: a human, or an

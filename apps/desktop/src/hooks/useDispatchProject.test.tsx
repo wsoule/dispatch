@@ -269,6 +269,7 @@ const { useDispatchProject } = await import('./useDispatchProject');
 const { ATTACHED_DAEMON_MESSAGING_EXPLANATION } =
   await import('../lib/daemonAuth');
 const { agentRosterKey } = await import('../lib/agentRoster');
+const { memoryQueryKey } = await import('../lib/memory');
 const { overseerKey } = await import('./useOverseerSession');
 const { threadKey } = await import('./useThreads');
 
@@ -1045,6 +1046,25 @@ test('an unscoped task.changed burst refetches the list once', async () => {
   });
   expect(taskListFetches).toBe(1);
   taskListFixture = null;
+});
+
+// A personal change carries no id, so every memory query of this daemon
+// refetches, and only those.
+test('memory.changed invalidates the memory queries and nothing else', async () => {
+  const queryClient = await mountConnected();
+  queryClient.setQueryData(memoryQueryKey(PORT, 'activity'), { activity: [] });
+  queryClient.setQueryData(memoryQueryKey(PORT, 'health'), {});
+  queryClient.setQueryData(agentRosterKey(PORT), { agents: [] });
+
+  act(() => {
+    sink?.onEvent({ type: 'memory.changed', scope: 'personal' });
+  });
+
+  const invalidated = (key: readonly unknown[]) =>
+    queryClient.getQueryState(key)?.isInvalidated;
+  expect(invalidated(memoryQueryKey(PORT, 'activity'))).toBe(true);
+  expect(invalidated(memoryQueryKey(PORT, 'health'))).toBe(true);
+  expect(invalidated(agentRosterKey(PORT))).toBe(false);
 });
 
 function runFixture(id: string, state: RunMeta['state']): RunMeta {

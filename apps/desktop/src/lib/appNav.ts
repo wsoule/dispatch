@@ -91,6 +91,7 @@ export type SettingsPage =
   | 'agents'
   | 'checks'
   | 'autonomy'
+  | 'memory'
   | 'previews'
   | 'notifications'
   | 'team'

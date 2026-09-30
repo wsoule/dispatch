@@ -62,9 +62,11 @@ const PROVENANCE = /^> Dispatch memory #[0-9A-Z]{8} /;
 // A heading or fence line behind backslashes: parse strips one, so render adds
 // one to a body line already shaped like this and the round trip is exact.
 const ESCAPED_STRUCTURE = /^\\+\s*(?:#{1,6}[ \t]|~{4,})/;
-// A `[text](target)` link anywhere in a line. A `[` behind a backslash opens no
+// Every `[text](target)` link in a line. A `[` behind a backslash opens no
 // link and link text holds no bare `[`, so no scan crosses another's start.
-const LINK = /(?<!\\)\[((?:\\.|[^\\\][])*)\]\(([^()\s]*)\)/;
+const LINKS = /(?<!\\)\[((?:\\.|[^\\\][])*)\]\(([^()\s]*)\)/g;
+const BULLET = /^(?:[-*+]|\d+[.)])[ \t]+/;
+const HEADING = /^#{1,6}(?:[ \t]|$)/;
 const HEADER_LINES = new Set(CLAUDE_INDEX_HEADER.split('\n'));
 
 // user and feedback notes become preferences; project and anything unknown are facts.
@@ -194,10 +196,12 @@ function cutBody(body: string): { body: string; truncated: boolean } {
 }
 
 // Title and body as ingest reads them: frontmatter is informational, the
-// provenance line and untrustedBlock's escapes are removed.
+// provenance line and untrustedBlock's escapes are removed. A MEMORY.md link's
+// text titles the file before Claude's `name`, a filename slug.
 export function parseMemoryFile(
   text: string,
-  fileName: string
+  fileName: string,
+  opts: { linkText?: string } = {}
 ): ParsedMemoryFile {
   const source = text.startsWith('\uFEFF') ? text.slice(1) : text;
   let front: Record<string, unknown> = {};
@@ -235,6 +239,7 @@ export function parseMemoryFile(
   const title = cutUtf8(
     untrustedInline(
       nonEmpty(front.description) ??
+        nonEmpty(opts.linkText) ??
         nonEmpty(front.name) ??
         firstLine ??
         fileName.replace(/\.md$/, '')
@@ -258,29 +263,71 @@ export function parsedHash(
     .digest('hex');
 }
 
-// Lines Claude added to MEMORY.md that link to no file here, each read as one
-// title: a link line keeps its link text, a plain line its text after the bullet.
+// A MEMORY.md link target as a path relative to the notes directory.
+function linkTarget(raw: string): string {
+  const bare = raw.replace(/^<|>$/g, '').replace(/#.*$/, '');
+  let decoded = bare;
+  try {
+    decoded = decodeURIComponent(bare);
+  } catch {
+    // A malformed escape is matched as written.
+  }
+  return decoded.replace(/^\.\//, '');
+}
+
+const unescapeLinkText = (text: string): string =>
+  text.replace(/\\([\\[\]])/g, '$1');
+
+/**
+ * Reads MEMORY.md, for the import and export ingest alike: each file's first
+ * link text titles it, and every other line (linking to no file here, not
+ * blank, not a heading) is a fact.
+ */
+export function readClaudeIndex(
+  text: string,
+  files: ReadonlySet<string>
+): { linkText: Map<string, string>; lines: string[] } {
+  const linkText = new Map<string, string>();
+  const lines = new Set<string>();
+  for (const raw of text.split(LINE_BREAK)) {
+    const line = raw.trim();
+    if (line === '' || HEADING.test(line)) continue;
+    let linked = false;
+    for (const match of line.matchAll(LINKS)) {
+      const file = linkTarget(match[2]);
+      if (!files.has(file)) continue;
+      linked = true;
+      if (!linkText.has(file)) linkText.set(file, unescapeLinkText(match[1]));
+    }
+    if (!linked) lines.add(line);
+  }
+  return { linkText, lines: [...lines] };
+}
+
+/** A MEMORY.md line as a title: no bullet, each link reduced to its text. */
+export function claudeIndexLineTitle(line: string): string {
+  const text = line
+    .replace(BULLET, '')
+    .replace(LINKS, (_, label: string) => unescapeLinkText(label));
+  return cutUtf8(untrustedInline(text), MEMORY_LIMITS.titleBytes).trim();
+}
+
+// Lines Claude added to MEMORY.md that link to no file here, each as a title.
 export function newIndexLines(
   written: string,
   current: string,
   files: ReadonlySet<string>
 ): string[] {
-  const split = (text: string) =>
-    text
+  const known = new Set(
+    written
       .replace(BREAKS, '\n')
       .split('\n')
-      .map((line) => line.trim());
-  const known = new Set(split(written));
+      .map((line) => line.trim())
+  );
   const titles = new Set<string>();
-  for (const line of split(current)) {
-    if (line === '' || known.has(line) || HEADER_LINES.has(line)) continue;
-    const link = LINK.exec(line);
-    if (link !== null && files.has(link[2].replace(/^\.\//, ''))) continue;
-    const text =
-      link === null
-        ? line.replace(/^[-*+][ \t]+/, '')
-        : link[1].replace(/\\([\\[\]])/g, '$1');
-    const title = cutUtf8(untrustedInline(text), MEMORY_LIMITS.titleBytes);
+  for (const line of readClaudeIndex(current, files).lines) {
+    if (known.has(line) || HEADER_LINES.has(line)) continue;
+    const title = claudeIndexLineTitle(line);
     if (title !== '') titles.add(title);
   }
   return [...titles];

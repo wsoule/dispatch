@@ -36,7 +36,12 @@ function registry(
   clock?: () => Date,
   seats?: () => number
 ) {
-  const teammates = new TeammateTokens({ store, clock, seats });
+  const teammates = new TeammateTokens({
+    store,
+    clock,
+    seats,
+    operatorHandle: 'wyat',
+  });
   const reg = new TokenRegistry(BUILT_IN, 'wyat', teammates);
   return Object.assign(reg, {
     issue: teammates.issue.bind(teammates),
@@ -493,5 +498,26 @@ describe('seats', () => {
       'refused',
       'refused',
     ]);
+  });
+
+  test("a pre-fix token for the operator's handle is unusable and takes no seat", () => {
+    const t = steppingClock();
+    const { store } = memoryStore();
+    const writer = new TeammateTokens({ store, clock: t.clock });
+    // Issued before the operator's handle was refused, and first in line.
+    const stale = writer.issue('wyat', 'decide');
+    t.step();
+
+    const reg = registry(store, t.clock, () => 2);
+    expect(reg.lookup(stale).kind).toBe('unknown');
+    expect(reg.peopleWithAccess()).toBe(1);
+    expect(reg.list().find((h) => !h.builtIn)).toMatchObject({
+      handle: 'wyat',
+      unusable: true,
+    });
+    const ada = reg.issue('ada', 'request');
+    expect(reg.resolve(ada)?.handle).toBe('ada');
+    expect(reg.peopleWithAccess()).toBe(2);
+    expect(reg.list().find((h) => h.handle === 'ada')?.unusable).toBe(false);
   });
 });

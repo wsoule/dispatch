@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { EventBus } from '../../src/events.js';
 import type { ServerEvent } from '../../src/events.js';
 import { LedgerStore } from '../../src/ledger.js';
+import { PROBED_CLAUDE_CODE_VERSION } from '../../src/memory/claudeModes.js';
 import { openMemory, overseerMemory } from '../../src/memory/service.js';
 import type { OpenMemoryDeps } from '../../src/memory/service.js';
 import { GateHandlers } from '../../src/messaging/gates.js';
@@ -31,7 +32,7 @@ function noOpenGates(): OpenMemoryDeps['messaging'] {
       },
     }
   ) as DeliveryEngine;
-  return { engine, gates: new GateHandlers() };
+  return { engine, gates: new GateHandlers(), store: { getAgent: () => null } };
 }
 
 function setup(over: Partial<OpenMemoryDeps> = {}) {
@@ -68,7 +69,8 @@ describe('openMemory', () => {
       BEFORE_CUTOVER
     );
     t.events.broadcast({ type: 'ledger.changed' });
-    expect(t.memory.shared?.countEntries()).toBe(1);
+    // After the first import, a row that arrives waits for a human.
+    expect(t.memory.shared?.countOpenProposals()).toBe(1);
     expect(t.seen).toContainEqual({ type: 'memory.changed', scope: 'team' });
     t.memory.close();
   });
@@ -153,6 +155,31 @@ describe('openMemory', () => {
     t.memory.personal.close();
   });
 
+  it('records the probed Claude Code version at boot, replacing an older one', () => {
+    const t = setup();
+    expect(t.memory.shared?.meta('claude-probe-passed')).toBe(
+      PROBED_CLAUDE_CODE_VERSION
+    );
+    t.memory.shared?.setMeta('claude-probe-passed', '0.0.1');
+    t.memory.close();
+    const reopened = setup({ dbPath: join(t.root, 'memory.db') });
+    expect(reopened.memory.shared?.meta('claude-probe-passed')).toBe(
+      PROBED_CLAUDE_CODE_VERSION
+    );
+    reopened.memory.close();
+  });
+
+  it('forgets a recorded probe when this build has none, so export is never chosen', () => {
+    const t = setup();
+    t.memory.close();
+    const reopened = setup({
+      dbPath: join(t.root, 'memory.db'),
+      probedClaudeVersion: null,
+    });
+    expect(reopened.memory.shared?.meta('claude-probe-passed')).toBeNull();
+    reopened.memory.close();
+  });
+
   it('never announces personal ids', () => {
     const t = setup();
     t.memory.host.changed({ scope: 'personal', id: 'mem-secret' });
@@ -173,6 +200,7 @@ describe('overseerMemory', () => {
       address: 'human:wyat',
       canDecide: true,
       kind: 'human',
+      ownerCredential: true,
     };
     const personal = await engine.save(owner, {
       scope: 'personal',
@@ -196,6 +224,40 @@ describe('overseerMemory', () => {
     );
     for (const ref of [personal.id, personal.handle])
       expect(() => port.read(ref)).toThrow(/you can see/);
+    t.memory.close();
+  });
+
+  // The same shape the MCP's memory_read returns: no revision snapshots, and
+  // the body fenced as untrusted text.
+  it('reads an entry without revision snapshots, its body fenced', async () => {
+    const t = setup();
+    const owner: Principal = {
+      address: 'human:wyat',
+      canDecide: true,
+      kind: 'human',
+      ownerCredential: true,
+    };
+    const saved = await t.memory.requireEngine().save(owner, {
+      scope: 'team',
+      kind: 'hazard',
+      title: 'watch the lockfile',
+      body: 'RAW-BODY-text',
+    });
+    if (saved.status !== 'active') throw new Error('expected an entry');
+    const read = overseerMemory(t.memory).read(saved.handle) as {
+      entry: Record<string, unknown>;
+      body: string;
+      revisions: Record<string, unknown>[];
+    };
+    expect(read.entry.body).toBeUndefined();
+    expect(read.body).toContain('RAW-BODY-text');
+    expect(read.body).not.toBe('RAW-BODY-text');
+    expect(Object.keys(read.revisions[0]).sort()).toEqual([
+      'at',
+      'by',
+      'cause',
+      'rev',
+    ]);
     t.memory.close();
   });
 });

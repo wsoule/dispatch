@@ -18,10 +18,10 @@ const LEDGER_KIND_LABEL: Record<LedgerEntry['kind'], string> = {
   handoff: 'Handoffs',
 };
 
-// Carried-forward findings/decisions — an epic's, or a plain task's own —
-// grouped by kind and attributed to the task that raised each one. Each entry
-// is a comment card; the source task id sits at its right edge in sans.
-export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
+// The ledger's audit receipts — an epic's, or a plain task's own: policy
+// decisions, scope grants, undeclared writes. Grouped by kind and attributed
+// to the task that raised each one; its lessons live in memory instead.
+export function ReceiptsSection({ entries }: { entries: LedgerEntry[] }) {
   if (entries.length === 0) return null;
   const groups = LEDGER_KIND_ORDER.map((kind) => ({
     kind,
@@ -29,7 +29,7 @@ export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
   })).filter((group) => group.entries.length > 0);
   return (
     <MainSection
-      title="Ledger"
+      title="Receipts"
       trailing={
         <span className="text-muted-foreground font-book text-[12px] tabular-nums">
           {entries.length}
@@ -40,7 +40,7 @@ export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
         {groups.map((group) => (
           <div
             key={group.kind}
-            data-slot="ledger-group"
+            data-slot="receipt-group"
             className="flex flex-col gap-1.5"
           >
             <span className="text-muted-foreground flex items-center gap-1.5 text-[12px] font-medium">
@@ -53,7 +53,7 @@ export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
               {group.entries.map((entry) => (
                 <li
                   key={entry.id}
-                  data-slot="ledger-entry"
+                  data-slot="receipt-entry"
                   className="bg-surface-quaternary rounded-card border-border-strong border-[0.5px] p-3"
                 >
                   <div className="flex items-center gap-2">
@@ -63,7 +63,7 @@ export function LedgerSection({ entries }: { entries: LedgerEntry[] }) {
                     <PolicyReceiptBadge entry={entry} />
                     {entry.sourceTaskId !== null && (
                       <span
-                        data-slot="ledger-source"
+                        data-slot="receipt-source"
                         className="text-muted-foreground font-book ml-auto shrink-0 text-[12px] tracking-(--id-tracking)"
                       >
                         {entry.sourceTaskId}

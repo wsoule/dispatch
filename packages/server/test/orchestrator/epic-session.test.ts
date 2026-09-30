@@ -462,6 +462,7 @@ describe('EpicEngine session transitions', () => {
     h.orchestrator.approve(runA.id, 'go', true);
     await waitFor(() => h.store.get(aId)?.meta.status === 'review');
     const review = await h.orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: aId,
       kind: 'review',
       head: 'HEAD',
@@ -760,6 +761,7 @@ describe('EpicEngine progress phases', () => {
     });
     const workingRun = await h.orchestrator.dispatch(working, 'fake');
     const reviewRun = await h.orchestrator.dispatchAuxRun({
+      operator: null,
       taskId: reviewing,
       kind: 'review',
       head: 'HEAD',

@@ -1,7 +1,7 @@
-import { TaskStore } from '@dispatch/core';
+import { TaskStore, updateConfig } from '@dispatch/core';
 import type { Message } from '@dispatch/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,9 +17,14 @@ import type {
 } from '../src/orchestrator/overseerBackend.js';
 import { FakeOverseer } from '../src/orchestrator/overseers/fake.js';
 import type { FakeOverseerScript } from '../src/orchestrator/overseers/fake.js';
+import { claudeMemoryDir, projectKeyOf } from '../src/orchestrator/paths.js';
 import type { ApprovalDecision } from '../src/orchestrator/types.js';
 import { json } from './json.js';
-import { BEFORE_CUTOVER, seedLedger } from './memory/fixtures.js';
+import {
+  BEFORE_CUTOVER,
+  importAtCutover,
+  seedLedger,
+} from './memory/fixtures.js';
 import { runGitSync } from './orchestrator/helpers.js';
 import { useTestAuth, wsUrl } from './testAuth.js';
 
@@ -360,9 +365,26 @@ describe('overseer action gates', () => {
     );
     const runs = await listRuns();
     expect(runs).toHaveLength(1);
-    // The overseer acts for the daemon's owner.
+    // Confirmed with the app token, the run acts for the owner.
     expect(runs[0].operator).toBe('human:test');
     expect(await openGates()).toEqual([]);
+  });
+
+  it("a teammate's confirm dispatches a run that acts for the teammate", async () => {
+    const { gate } = await startWithQueuedDispatch();
+    const ada = handle.team.teammates.issue('ada', 'decide');
+    const res = await fetch(`${baseUrl}/api/messages/${gate.id}/reply`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${ada}`,
+      },
+      body: JSON.stringify({ body: '', choice: 'confirm' }),
+    });
+    expect(res.status).toBe(201);
+    const runs = await listRuns();
+    expect(runs).toHaveLength(1);
+    expect(runs[0].operator).toBe('human:ada');
   });
 
   it('cancel records the refusal and dispatches nothing', async () => {
@@ -454,7 +476,7 @@ describe('overseer memory tools', () => {
       },
       BEFORE_CUTOVER
     );
-    handle.memory.importLedger();
+    importAtCutover(handle.memory);
 
     const { record } = await startConversation('what do we know about pnpm?');
     await settled(record.id);
@@ -468,6 +490,40 @@ describe('overseer memory tools', () => {
       ],
     });
     expect(ledger.result.content).toMatchObject({ entries: [], total: 0 });
+  });
+
+  // Request-tier callers read overseer transcripts, so no turn carries the
+  // owner's personal memory, even with the export on and the import complete.
+  it('writes no export for an overseer turn, whatever the Claude setting', async () => {
+    const seen: OverseerTurnOptions[] = [];
+    const backend: OverseerBackend = {
+      start: (_prompt, _toolset, options = {}) => {
+        seen.push(options);
+        return Promise.resolve({ reply: 'noted', sessionId: 's-o' });
+      },
+      sendMessage: () => Promise.resolve({ reply: 'ok' }),
+    };
+    updateConfig(root, { memory: { claudeAutoMemory: 'export' } });
+    handle = await startServer({
+      rootDir: root,
+      port: 0,
+      writeDaemonFile: false,
+      registerOverseers: (overseerManager) => {
+        overseerManager.registerBackend('claude', backend);
+      },
+      memoryPreflight: () => Promise.resolve({ ok: true, version: '2.1.210' }),
+    });
+    useTestAuth(handle);
+    baseUrl = `http://127.0.0.1:${handle.port}`;
+    handle.memory.personal
+      .personal('self')
+      .setMeta(`claude-import:${projectKeyOf(root)}`, 'complete');
+    await handle.memory.refreshPreflight();
+
+    const { record } = await startConversation('remember the queue order');
+    await settled(record.id);
+    expect(seen).toHaveLength(1);
+    expect(existsSync(claudeMemoryDir(root, `o-${record.id}`))).toBe(false);
   });
 });
 

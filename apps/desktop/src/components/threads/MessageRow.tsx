@@ -62,6 +62,8 @@ export interface MessageRowProps {
     ApiClient,
     'declineA2ATask' | 'getMemoryProposal' | 'fetchTask'
   > | null;
+  /** The daemon's port, keying the proposal read under memory's queries. */
+  port?: number;
 }
 
 /** One message in a thread: who, what kind, the body, its refs, and what this viewer may answer. */
@@ -78,6 +80,7 @@ export const MessageRow = memo(function MessageRow({
   onOpen,
   loadApprovalInput,
   client = null,
+  port,
 }: MessageRowProps) {
   const [error, setError] = useState<string | null>(null);
   const mine = message.from === me;
@@ -175,6 +178,7 @@ export const MessageRow = memo(function MessageRow({
             answer={answer}
             loadApprovalInput={loadApprovalInput}
             client={client}
+            port={port}
           />
           {open && (
             <A2ADeclineAction
@@ -205,6 +209,7 @@ function Control({
   answer,
   loadApprovalInput,
   client,
+  port,
 }: {
   message: Message;
   control: RowControl;
@@ -215,6 +220,7 @@ function Control({
   answer: (reply: Reply) => Promise<void>;
   loadApprovalInput: MessageRowProps['loadApprovalInput'];
   client: MessageRowProps['client'];
+  port: number | undefined;
 }) {
   if (control.kind === 'read-only') {
     return (
@@ -273,6 +279,7 @@ function Control({
         <MemoryGateCard
           proposalId={control.proposalId}
           client={client}
+          port={port}
           availability={availability}
           onRestartDaemon={onRestartDaemon}
           onDecide={(choice) => answer({ body: '', choice })}

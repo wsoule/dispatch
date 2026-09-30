@@ -2,7 +2,7 @@ import type { LedgerEntry } from '@dispatch/core/browser';
 import { render, screen } from '@testing-library/react';
 import { expect, test } from 'bun:test';
 
-import { LedgerSection } from './LedgerSection';
+import { ReceiptsSection } from './ReceiptsSection';
 
 const classesOf = (el: Element | null) =>
   (el?.getAttribute('class') ?? '').split(/\s+/);
@@ -22,9 +22,9 @@ function entry(overrides: Partial<LedgerEntry>): LedgerEntry {
   };
 }
 
-test('a policy auto-decision in the task ledger is marked as one', () => {
+test("a policy auto-decision among the task's receipts is marked as one", () => {
   render(
-    <LedgerSection
+    <ReceiptsSection
       entries={[
         entry({
           id: 'l-1',
@@ -47,7 +47,7 @@ test('a policy auto-decision in the task ledger is marked as one', () => {
 // no `·` separator — and the section heading carries the total on the right.
 test('groups under sentence-case sub-headings with a count', () => {
   const { container } = render(
-    <LedgerSection
+    <ReceiptsSection
       entries={[
         entry({ id: 'l-1', kind: 'constraint', title: 'Keep the API' }),
         entry({ id: 'l-2', kind: 'constraint', title: 'No new deps' }),
@@ -55,7 +55,7 @@ test('groups under sentence-case sub-headings with a count', () => {
       ]}
     />
   );
-  expect(screen.getByText('Ledger')).toBeDefined();
+  expect(screen.getByText('Receipts')).toBeDefined();
   const constraints = screen.getByText('Constraints');
   expect(classesOf(constraints)).toContain('text-[12px]');
   expect(classesOf(constraints)).toContain('font-medium');
@@ -63,18 +63,20 @@ test('groups under sentence-case sub-headings with a count', () => {
   expect(constraints.textContent).toBe('Constraints2');
   expect(screen.getByText('Hazards')).toBeDefined();
   expect(screen.queryByText(/CONSTRAINT/)).toBeNull();
-  expect(container.querySelectorAll('[data-slot="ledger-group"]')).toHaveLength(
-    2
-  );
+  expect(
+    container.querySelectorAll('[data-slot="receipt-group"]')
+  ).toHaveLength(2);
 });
 
 // Each entry is a comment card: quaternary surface, 8px radius, half-pixel
 // border; the source task id sits in sans, not mono.
 test('renders each entry as a comment card with a sans source id', () => {
   const { container } = render(
-    <LedgerSection entries={[entry({ id: 'l-1', sourceTaskId: 't-1a2b3c' })]} />
+    <ReceiptsSection
+      entries={[entry({ id: 'l-1', sourceTaskId: 't-1a2b3c' })]}
+    />
   );
-  const card = container.querySelector('[data-slot="ledger-entry"]');
+  const card = container.querySelector('[data-slot="receipt-entry"]');
   const classes = classesOf(card);
   expect(classes).toContain('bg-surface-quaternary');
   expect(classes).toContain('rounded-card');
@@ -85,7 +87,7 @@ test('renders each entry as a comment card with a sans source id', () => {
   expect(classesOf(source)).not.toContain('font-mono');
 });
 
-test('renders nothing for an empty ledger', () => {
-  const { container } = render(<LedgerSection entries={[]} />);
+test('renders nothing when the task has no receipts', () => {
+  const { container } = render(<ReceiptsSection entries={[]} />);
   expect(container.firstElementChild).toBeNull();
 });

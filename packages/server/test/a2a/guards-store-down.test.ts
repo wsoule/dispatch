@@ -93,6 +93,7 @@ it('still refuses to dispatch or move a gated draft when a2a.db is refused', asy
       kind: 'execute',
       head: 'HEAD',
       buildPrompt: () => 'x',
+      operator: null,
     })
   ).toThrow(/A2A proposal/);
   const res = await rawFetch(`${base}/api/tasks/${draftId}`, {

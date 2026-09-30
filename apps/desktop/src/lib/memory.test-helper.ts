@@ -1,5 +1,11 @@
-// Full MemoryProposalView and MemoryEntryView values for memory tests.
-import type { MemoryEntryView, MemoryProposalView } from '@dispatch/client';
+// Full memory view values (proposals, entries, health, the ledger import
+// report) for memory tests.
+import type {
+  LedgerImportReport,
+  MemoryEntryView,
+  MemoryHealth,
+  MemoryProposalView,
+} from '@dispatch/client';
 
 export type Content = NonNullable<MemoryProposalView['content']>;
 
@@ -76,6 +82,63 @@ export function entry(over: Partial<MemoryEntryView> = {}): MemoryEntryView {
     lastRecalledAt: null,
     recallCount: 0,
     state: 'active',
+    ...over,
+  };
+}
+
+export function report(
+  over: Partial<LedgerImportReport> = {}
+): LedgerImportReport {
+  return {
+    outcome: 'ok',
+    read: 330,
+    byKind: { constraint: 0, hazard: 319, decision: 11, handoff: 0 },
+    memory: {
+      total: 15,
+      imported: 15,
+      proposed: 0,
+      truncated: 0,
+      alreadyImported: 0,
+      alreadyDeleted: 0,
+    },
+    audit: {
+      total: 315,
+      policy: 0,
+      floor: 0,
+      scope: 1,
+      'undeclared-writes': 300,
+      'dep-map': 14,
+      handoff: 0,
+    },
+    damaged: 0,
+    memoryRows: { before: 0, after: 15 },
+    openProposals: { before: 0, after: 0 },
+    mismatches: [],
+    at: '2026-09-25T10:00:00.000Z',
+    ...over,
+  };
+}
+
+export function health(over: Partial<MemoryHealth> = {}): MemoryHealth {
+  return {
+    available: true,
+    reason: null,
+    search: 'fts5',
+    entries: 15,
+    openProposals: 2,
+    ledgerImport: null,
+    ledgerImportText: null,
+    configWarnings: [],
+    lastDecayAt: null,
+    personal: { available: true, reason: null },
+    pinnedOverflow: false,
+    exportBlocked: null,
+    claudeImport: {
+      state: 'complete',
+      source: '/Users/x/.claude/projects/-a/memory',
+      candidates: [],
+      problems: [],
+    },
     ...over,
   };
 }

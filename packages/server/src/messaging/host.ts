@@ -19,9 +19,18 @@ import type {
 } from '@dispatch/protocol';
 
 import type { Orchestrator } from '../orchestrator/orchestrator.js';
+import { actingOperator } from '../orchestrator/types.js';
 import { consultProjectPolicy } from '../policyEngine.js';
 import { statusModelFor } from '../statuses.js';
 import type { GateHandlers } from './gates.js';
+import { answeredWithOwnerCredential } from './gates.js';
+
+// Who caused a wake, and whether with the owner's app token: the sender of a
+// direct wake, or the human who approved a gated one.
+export interface WakeActor {
+  actor: Address;
+  ownerCredential: boolean;
+}
 
 export interface DaemonHostDeps {
   rootDir: string;
@@ -42,7 +51,7 @@ export interface DaemonHostDeps {
   gates: GateHandlers;
   onHumanMessage: (actor: string, message: Message) => void;
   // Told when a wake could not start a run, so the caller can retry it later.
-  onWakeFailed?: (target: Address, message: Message) => void;
+  onWakeFailed?: (target: Address, message: Message, acting: WakeActor) => void;
   now?: () => Date;
 }
 
@@ -148,15 +157,32 @@ export class DaemonMessagingHost implements MessagingHost {
 
   // Wakes a task as its local human sender (who may continue a finished run) or
   // as the system, or continues the one run a local human names; a throw fails.
-  async wake(target: Address, message: Message): Promise<WakeResult> {
+  // The run acts for `acting` (by default the sender, on this request's token).
+  async wake(
+    target: Address,
+    message: Message,
+    acting: WakeActor = {
+      actor: message.from,
+      ownerCredential: answeredWithOwnerCredential(),
+    }
+  ): Promise<WakeResult> {
     // A remote sender's wake runs as the system and continues nothing.
     const human =
       message.origin === undefined && message.from.startsWith('human:');
+    // A remote sender's own wake acts for no one; a local approver's for them.
+    const operator =
+      message.origin !== undefined && acting.actor === message.from
+        ? null
+        : actingOperator(
+            acting.actor,
+            acting.ownerCredential,
+            this.deps.ownerRef
+          );
     if (target.startsWith('run:') && human) {
       try {
         const meta = this.deps.orchestrator.wakeRun(
           target.slice('run:'.length),
-          { actor: message.from }
+          { actor: message.from, operator }
         );
         return { ok: true, runId: meta.id };
       } catch (err) {
@@ -173,10 +199,11 @@ export class DaemonMessagingHost implements MessagingHost {
       const meta = await this.deps.orchestrator.wakeTask(taskId, {
         actor: human ? message.from : 'agent:dispatch',
         continueFinished: human,
+        operator,
       });
       return { ok: true, runId: meta.id };
     } catch (err) {
-      this.deps.onWakeFailed?.(target, message);
+      this.deps.onWakeFailed?.(target, message, acting);
       return {
         ok: false,
         reason: err instanceof Error ? err.message : String(err),

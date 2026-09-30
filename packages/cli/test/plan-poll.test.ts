@@ -52,6 +52,7 @@ function makeClient(getPlan: ApiClient['getPlan']): ApiClient {
     getLicense: () => Promise.reject(new Error('not used')),
     installLicense: () => Promise.reject(new Error('not used')),
     importLedger: () => Promise.reject(new Error('not used')),
+    importClaude: () => Promise.reject(new Error('not used')),
     listMemory: () => Promise.reject(new Error('not used')),
     getMemory: () => Promise.reject(new Error('not used')),
     saveMemory: () => Promise.reject(new Error('not used')),

@@ -89,11 +89,12 @@ import {
   triageInbox,
 } from './judgments/inboxTriage.js';
 import { computeChecklist } from './judgments/landingChecklist.js';
-import { LedgerStore } from './ledger.js';
+import { DEP_MAP_DEGRADED_TITLE, LedgerStore } from './ledger.js';
 import type { LedgerStorePort } from './ledger.js';
 import type { LinearClient } from './linear/client.js';
 import { LinearSync } from './linear/sync.js';
 import { webhookUrlFor } from './linear/webhook.js';
+import type { PreflightResult } from './memory/claudeModes.js';
 import { openMemory, overseerMemory } from './memory/service.js';
 import type { MemoryService } from './memory/service.js';
 import {
@@ -121,7 +122,7 @@ import { Orchestrator } from './orchestrator/orchestrator.js';
 import { OverseerManager } from './orchestrator/overseer.js';
 import { ClaudeOverseer } from './orchestrator/overseers/claude.js';
 import { OverseerToolRegistry } from './orchestrator/overseerTools.js';
-import { boardSyncDir } from './orchestrator/paths.js';
+import { boardSyncDir, taskAuthorshipPath } from './orchestrator/paths.js';
 import { PlanManager } from './orchestrator/plan.js';
 import { ClaudePlanner } from './orchestrator/planners/claude.js';
 import type { CommandRunner } from './orchestrator/pr.js';
@@ -137,6 +138,7 @@ import {
   RepoDigestCache,
 } from './orchestrator/repoDigest.js';
 import { ReviewRunner } from './orchestrator/review.js';
+import { TaskAuthorship } from './orchestrator/taskAuthorship.js';
 import { runKind, TERMINAL_RUN_STATES } from './orchestrator/types.js';
 import { VerificationRunner } from './orchestrator/verify.js';
 import {
@@ -324,6 +326,9 @@ export interface StartServerOptions {
   // A main-thread heartbeat gap longer than this is logged as a stall, with
   // the section the daemon was in (see EventLoopWatchdog). Defaults to 5s.
   watchdogStallMs?: number;
+  // Replaces the Claude export preflight (CLI version, env, managed settings),
+  // so a test can choose export mode without a real Claude Code install.
+  memoryPreflight?: () => Promise<PreflightResult>;
   // Exit on its own after this long with no requests, no connected client
   // and no live work (see IdleShutdown for the full rule). Unset means never:
   // only a daemon the CLI spawned in the background sets it, since a
@@ -927,7 +932,7 @@ async function bootServer(
   // Elastic License 2.0); the registry asks it about any token that is not
   // one of the daemon's own two.
   const tokenPair = opts.tokens ?? mintDaemonTokens();
-  const team = createTeam(rootDir);
+  const team = createTeam(rootDir, actorContext.member.handle);
   const tokens: DaemonTokens = {
     ...tokenPair,
     registry: new TokenRegistry(
@@ -1248,7 +1253,7 @@ async function bootServer(
     onDegrade: ({ detail }) => {
       ledgerStore.add({
         kind: 'hazard',
-        title: 'dependency map degraded',
+        title: DEP_MAP_DEGRADED_TITLE,
         detail: `carto unavailable, using the built-in scanner: ${detail}`,
         // Detected by the dep-map cache itself, not raised by a teammate.
         authoredBy: 'none',
@@ -1355,6 +1360,9 @@ async function bootServer(
       stores.records === null
         ? join(rootDir, '.dispatch', 'ledger.jsonl')
         : null,
+    ...(opts.memoryPreflight === undefined
+      ? {}
+      : { preflight: opts.memoryPreflight }),
   });
   docsHost.bindRuns(orchestrator);
   docsHost.bindMessaging(messaging.store);
@@ -1374,6 +1382,12 @@ async function bootServer(
     })
   );
   messaging.gates.register('doc', docGateHandler(docs.service, docsHost));
+  // Before messaging.recover() too: a replayed wake or dispatch starts runs,
+  // and a run with no memory mode would load the host's native Claude memory.
+  orchestrator.setMemoryPort(memory);
+  // Before any run starts: the owner's runs stay in native mode until their
+  // Claude notes are imported, once per project.
+  await memory.importClaudeOnce();
   // A coding run that finished cleanly gets its diff checked against the
   // task's requirements (see judgments/landingChecklist.ts). Fire-and-forget
   // off the terminal transition: the checklist is an annotation on the
@@ -1424,7 +1438,6 @@ async function bootServer(
   } catch (err) {
     console.error('dispatchd: memory gate recovery failed', err);
   }
-  orchestrator.setMemoryPort(memory);
   // After recovery, so the bridge reconciles against settled messaging state;
   // its listener opens only once the daemon's own ports are known (below).
   // PrManager is built further down; until it is, no PR counts as open.
@@ -1486,6 +1499,7 @@ async function bootServer(
   } else {
     planManager.registerPlanner('claude', new ClaudePlanner(rootDir));
   }
+  const taskAuthorship = new TaskAuthorship(taskAuthorshipPath(rootDir));
   const epicEngine = new EpicEngine({
     rootDir,
     store,
@@ -1494,6 +1508,7 @@ async function bootServer(
     orchestrator,
     findingStore,
     actorContext,
+    authorship: taskAuthorship,
   });
 
   // Same one-time-at-boot treatment as prCapability below: whether the task
@@ -1901,6 +1916,7 @@ async function bootServer(
     planManager,
     overseerManager,
     epicEngine,
+    taskAuthorship,
     messaging,
     docs: docs.service,
     memory,

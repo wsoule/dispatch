@@ -489,7 +489,7 @@ export const DEFAULT_MEMORY: MemoryConfig = {
   proposalTtlDays: 14,
   staleAfterDays: 60,
   retireAfterDays: 180,
-  claudeAutoMemory: 'off',
+  claudeAutoMemory: 'export',
 };
 
 /** The skills an A2A agent card may offer. */

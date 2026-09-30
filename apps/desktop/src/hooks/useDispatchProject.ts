@@ -118,6 +118,7 @@ import {
   saveInbox,
 } from '../lib/inbox';
 import { applyLabelColors } from '../lib/labelColor';
+import { memoryQueryRootKey } from '../lib/memory';
 import { resolveExecuteModel } from '../lib/models';
 import { notify, setNotificationKinds } from '../lib/notifications';
 import {
@@ -1865,6 +1866,11 @@ export function useDispatchProject(
         } else if (event.type === 'ledger.changed') {
           void queryClient.invalidateQueries({
             queryKey: ledgerQueryRootKey(port),
+          });
+        } else if (event.type === 'memory.changed') {
+          // A personal change names no entry, so every memory query refetches.
+          void queryClient.invalidateQueries({
+            queryKey: memoryQueryRootKey(port),
           });
         } else if (event.type === 'fixloop.changed') {
           // The root covers the per-task query and the bulk by-task map.

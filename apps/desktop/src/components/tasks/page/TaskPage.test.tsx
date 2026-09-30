@@ -1,4 +1,4 @@
-import type { ApiClient } from '@dispatch/client';
+import type { ApiClient, LedgerEntry } from '@dispatch/client';
 import type { TaskComment } from '@dispatch/core/browser';
 import {
   act,
@@ -12,6 +12,7 @@ import { describe, expect, mock, test } from 'bun:test';
 import type { ReactNode } from 'react';
 
 import type { TaskTab } from '../../../lib/appNav';
+import { entry as memoryEntry } from '../../../lib/memory.test-helper';
 import { linearWorkflowConfig } from '../../settings/fixtures.test-helper';
 import {
   fakeHost,
@@ -181,6 +182,52 @@ describe('the mode follows the task', () => {
     expect(modeOf()).toBe('summary');
     expect(screen.getByText('Merged into main')).not.toBeNull();
     expect(screen.getByText('abc1234')).not.toBeNull();
+  });
+
+  // Lessons live in memory now: the summary lists what reaches the task under
+  // Memory, and reads only the ledger's audit class for its Receipts.
+  test('the summary splits the ledger into the memory that reaches the task and its receipts', async () => {
+    const reads = { ledger: [] as unknown[], memory: [] as unknown[] };
+    const ledger: LedgerEntry[] = [
+      {
+        id: 'l-000001',
+        epicId: null,
+        sourceTaskId: 't-1',
+        kind: 'decision',
+        title: 'Scope extended for run r-x',
+        detail: 'src/x.ts — needed',
+        appliesTo: [],
+        authoredBy: 'human:x',
+        createdAt: '2026-09-01T00:00:00.000Z',
+      },
+    ];
+    mount(
+      fakeHost(newLog(), {
+        tasks: [task('t-1', { status: 'landed' })],
+        runs: [run({ state: 'finished' })],
+        client: {
+          fetchLedger: (filter: unknown) => {
+            reads.ledger.push(filter);
+            return Promise.resolve(ledger);
+          },
+          listMemory: (q: unknown) => {
+            reads.memory.push(q);
+            return Promise.resolve({
+              entries: [memoryEntry({ title: 'pnpm builds' })],
+            });
+          },
+        } as Partial<ApiClient>,
+      })
+    );
+    expect(modeOf()).toBe('summary');
+    expect(await screen.findByText('pnpm builds')).not.toBeNull();
+    expect(
+      await screen.findByText('Scope extended for run r-x')
+    ).not.toBeNull();
+    expect(screen.getByText('Receipts')).not.toBeNull();
+    expect(screen.queryByText('Ledger')).toBeNull();
+    expect(reads.ledger).toEqual([{ epicId: null, class: 'audit' }]);
+    expect(reads.memory).toEqual([{ taskId: 't-1', limit: 200 }]);
   });
 
   test('a task reopened after it landed opens on its spec, with Dispatch', () => {

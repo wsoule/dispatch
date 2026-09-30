@@ -752,6 +752,13 @@ export interface ApiClient {
   importLedger(
     dryRun: boolean
   ): Promise<{ report: { outcome: string }; text: string }>;
+  /** The daemon's own human only: re-runs the import of their Claude notes;
+   *  `from` (absolute) or `none` answers an unconfirmed one. */
+  importClaude(opts: {
+    from?: string;
+    none?: boolean;
+    dryRun?: boolean;
+  }): Promise<{ report: ClaudeImportReport }>;
   // Memory refuses the agent token, as messaging does: build the client on
   // the app token or a teammate's token. `ref` is an id or a #handle.
   listMemory(q: {
@@ -797,6 +804,19 @@ export interface MemoryEntry {
   trust: string;
   author: string;
   rev: number;
+}
+
+/** Mirrors ClaudeImportReport in packages/server/src/memory/claudeImport.ts. */
+export interface ClaudeImportReport {
+  state: 'complete' | 'failed' | 'unconfirmed';
+  source: string | null;
+  imported: number;
+  updated: number;
+  unchanged: number;
+  duplicates: number;
+  tombstoned: number;
+  problems: string[];
+  candidates: string[];
 }
 
 /** Mirrors SaveResult in packages/memory/src/engine.ts. */
@@ -866,6 +886,7 @@ interface TeamTokenHolder {
   expiresAt: string | null;
   lastUsedAt: string | null;
   expired: boolean;
+  unusable?: boolean;
 }
 
 // `token` is the credential every call presents: the agent token from the
@@ -1011,6 +1032,16 @@ export function createApiClient(baseUrl: string, token: string): ApiClient {
       request(target, `/api/memory/import/ledger${dryRun ? '?dryRun=1' : ''}`, {
         method: 'POST',
       }),
+    importClaude: (opts) =>
+      request(
+        target,
+        `/api/memory/import/claude${memoryQuery({
+          from: opts.from,
+          none: opts.none === true ? 1 : undefined,
+          dryRun: opts.dryRun === true ? 1 : undefined,
+        })}`,
+        { method: 'POST' }
+      ),
     listMemory: (q) => request(target, `/api/memory${memoryQuery(q)}`),
     getMemory: (ref) => request(target, memoryPath(ref)),
     saveMemory: (input) => request(target, '/api/memory', jsonBody(input)),

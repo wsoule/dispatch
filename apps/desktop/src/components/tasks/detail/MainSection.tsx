@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 
 import { cn } from '@/lib/utils';
 
-// A titled block in the task page's main column (Acceptance criteria, Sessions, Ledger,
+// A titled block in the task page's main column (Acceptance criteria, Sessions, Memory,
 // Fix loop…): Linear's sentence-case 12px/500 muted heading over its content, separated
 // from its neighbours by whitespace rather than rules. `trailing` sits at the heading's
 // right edge (a count, an icon button).

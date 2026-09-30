@@ -40,6 +40,7 @@ export type {
   PeopleSnapshot,
   Person,
   TaskComment,
+  ClaudeImportReport,
   ConfirmResult,
   ConnectEventsOptions,
   CreateFindingInput,

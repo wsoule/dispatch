@@ -101,6 +101,7 @@ export interface MemoryStore {
   isTombstoned(origin: string): boolean;
   meta(key: string): string | null;
   setMeta(key: string, value: string): void;
+  deleteMeta(key: string): void;
   countEntries(): number;
   appendActivity(row: ActivityRow): void;
   /** Rows after `sinceIso`, newest first. */

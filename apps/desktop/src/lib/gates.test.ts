@@ -229,6 +229,25 @@ describe('gateNotification', () => {
       kind: 'question',
     });
   });
+  it('titles a memory gate as a proposal to review', () => {
+    const memory = msg('m-m', {
+      body: 'run:r-1 proposes a team memory (hazard). Review it in Needs you.',
+      refs: [{ type: 'run', id: 'r-1' }],
+      choices: ['approve', 'reject'],
+      data: {
+        type: 'memory',
+        proposalId: 'mp-1',
+        action: 'add',
+        scope: 'team',
+        kind: 'hazard',
+      },
+    });
+    expect(gateNotification(memory, () => 'Checkout')).toEqual({
+      title: 'Memory proposal to review',
+      body: 'run:r-1 proposes a team memory (hazard). Review it in Needs you.',
+      kind: 'memory',
+    });
+  });
   it('stays quiet for a gate no human is asked, and for an overseer tool approval', () => {
     expect(
       gateNotification({ ...approval, to: ['agent:wyat/codex'] }, () => 'x')

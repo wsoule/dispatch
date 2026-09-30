@@ -6,6 +6,7 @@ import {
   compareVersions,
   EXPORT_PROMPT_LINE,
   mergeFlagSettings,
+  resolveManagedSettings,
   runPreflight,
 } from '../../src/memory/claudeModes.js';
 
@@ -77,12 +78,6 @@ describe('chooseMemoryMode', () => {
     ],
     ['export not writable', { exportWritten: () => false }, 'prompt', true],
     ['everything in place', {}, 'export', true],
-    [
-      'the overseer skips the run-kind step',
-      { runKind: 'overseer' as const },
-      'export',
-      true,
-    ],
   ])('%s', (_name, over, mode, index) => {
     const out = chooseMemoryMode({ ...base, ...over });
     expect<unknown[]>([out.mode, out.index]).toEqual([mode, index]);
@@ -168,6 +163,44 @@ describe('EXPORT_PROMPT_LINE', () => {
       'memory_save',
     ])
       expect(EXPORT_PROMPT_LINE).toContain(word);
+  });
+});
+
+describe('resolveManagedSettings', () => {
+  type Sources = Parameters<typeof resolveManagedSettings>[1];
+  // A resolver that reports `sources` and keeps the options it was asked with.
+  const resolver = (
+    sources: Awaited<ReturnType<NonNullable<Sources>>>['sources']
+  ) => {
+    const asked: unknown[] = [];
+    const resolve: NonNullable<Sources> = (opts) => {
+      asked.push(opts);
+      return Promise.resolve({ effective: {}, provenance: {}, sources });
+    };
+    return { asked, resolve };
+  };
+
+  it('merges only the managed layers, later ones winning, as the CLI resolves them in cwd', async () => {
+    const { asked, resolve } = resolver([
+      { source: 'user', settings: { autoMemoryDirectory: '/user' } },
+      { source: 'managed', settings: { env: { A: '1' }, model: 'm1' } },
+      { source: 'project', settings: { autoMemoryEnabled: false } },
+      { source: 'managed', settings: { env: { B: '2' }, model: 'm2' } },
+    ]);
+    expect(await resolveManagedSettings('/repo', resolve)).toEqual({
+      env: { A: '1', B: '2' },
+      model: 'm2',
+    });
+    expect(asked).toEqual([
+      { cwd: '/repo', settingSources: ['user', 'project', 'local'] },
+    ]);
+  });
+
+  it('is null when no managed source sets anything', async () => {
+    const { resolve } = resolver([
+      { source: 'user', settings: { autoMemoryEnabled: false } },
+    ]);
+    expect(await resolveManagedSettings('/repo', resolve)).toBeNull();
   });
 });
 

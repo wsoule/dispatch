@@ -96,6 +96,7 @@ export {
 export * from './docs.js';
 export { DEFAULT_DOCS, parseDocsConfig, readDocsConfig } from './docsConfig.js';
 export type { DocsConfig, DocsConfigWarning } from './docsConfig.js';
+export { memoryReadView } from './memoryRead.js';
 export {
   parseTaskFile,
   serializeTaskFile,

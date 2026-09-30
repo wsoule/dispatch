@@ -63,7 +63,7 @@ import {
   screenshotBrowser,
   startBrowserPick,
 } from './api/browser.js';
-import { humanActor, humanCredentialRef } from './api/caller.js';
+import { humanActor, humanCredentialRef, humanOperator } from './api/caller.js';
 import {
   addComment,
   addLegacyTaskNote,
@@ -179,6 +179,7 @@ import {
   deleteMemoryRoute,
   getMemory,
   getProposalRoute,
+  importClaudeRoute,
   importLedgerRoute,
   ingestProblemsRoute,
   listMemory,
@@ -239,10 +240,12 @@ import {
 import type { PrWorktreeManager } from './orchestrator/prWorktree.js';
 import { toLandingWorktree } from './orchestrator/prWorktree.js';
 import type { ReviewRunner } from './orchestrator/review.js';
+import type { TaskAuthorship } from './orchestrator/taskAuthorship.js';
 import {
   OrchestratorClientError,
   OrchestratorConflictError,
   OrchestratorNotFoundError,
+  runMessageRefusal,
   TERMINAL_RUN_STATES,
 } from './orchestrator/types.js';
 import type { RunMeta } from './orchestrator/types.js';
@@ -304,6 +307,8 @@ export interface ApiContext {
   // alongside PlanManager in index.ts against the same shared peers.
   overseerManager: OverseerManager;
   epicEngine: EpicEngine;
+  /** Who created and last wrote each task; absent in hand-built test contexts. */
+  taskAuthorship?: TaskAuthorship;
   // dispatchd's own messaging engine host — messaging routes read/write
   // through it directly.
   messaging: Messaging;
@@ -431,6 +436,9 @@ export interface ApiContext {
   /** True when the request presented the shared agentToken: `caller` names
    *  the owner, but no human is behind it. Set per request by handleApi. */
   viaAgentToken?: boolean;
+  /** True when the request presented the owner's app token. Set per request
+   *  by handleApi. */
+  ownerCredential?: boolean;
   /** The messaging caller (run, agent or human) handleApi resolved; messaging
    *  handlers read this, never `caller`. */
   principal?: Principal;
@@ -702,6 +710,13 @@ async function createTask(req: Request, ctx: ApiContext): Promise<Response> {
     creator: input.creator ?? humanActor(ctx),
   });
   if (!created.ok) return errorResponse(400, created.error);
+  // A task imported on someone else's behalf is not the caller's writing.
+  ctx.taskAuthorship?.created(
+    created.doc,
+    input.creator === undefined || input.creator === humanActor(ctx)
+      ? humanOperator(ctx)
+      : null
+  );
   return jsonResponse(created.doc, 201);
 }
 
@@ -834,6 +849,7 @@ async function updateTask(
   }
 
   const doc = ctx.store.update(id, patch);
+  ctx.taskAuthorship?.edited(existing, doc, humanOperator(ctx));
   ctx.cache.refresh(ctx.store, [id]);
   ctx.events.broadcast({ type: 'task.changed', ids: [id] });
   return jsonResponse(doc);
@@ -2011,7 +2027,8 @@ function deleteChatMessage(
 // Sends the review back to the agent wherever the agent is. A run is
 // reviewed AFTER it finishes, so the normal case is terminal — and only
 // `{ resume: true }` re-dispatches one; without it sendMessage refuses with
-// "run is not live". A still-live run keeps the mid-run message path.
+// "run is not live". A still-live run keeps the mid-run message path. A
+// resumed run acts for the reviewer's own credential, never the shared token.
 function sendReviewToAgent(
   ctx: ApiContext,
   runId: string,
@@ -2022,7 +2039,25 @@ function sendReviewToAgent(
   return ctx.orchestrator.sendMessage(
     runId,
     message,
-    resume ? { resume: true, actor: humanActor(ctx) } : {}
+    resume
+      ? {
+          resume: true,
+          actor: humanActor(ctx),
+          operator: humanCredentialRef(ctx),
+        }
+      : {}
+  );
+}
+
+// MEM-R8(c): a request-tier reviewer may not send into a live run that acts
+// for another human; resuming a finished one acts for the reviewer instead.
+function reviewSendRefusal(ctx: ApiContext, runId: string): string | null {
+  const meta = runMetaFor(ctx, runId);
+  if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return null;
+  return runMessageRefusal(
+    meta,
+    humanOperator(ctx),
+    tierAllows(ctx.caller?.tier ?? 'request', 'decide')
   );
 }
 
@@ -2338,6 +2373,11 @@ async function submitReview(
     );
   }
 
+  if (verdict === 'request-changes') {
+    const refusal = reviewSendRefusal(ctx, runId);
+    if (refusal !== null) return errorResponse(403, refusal);
+  }
+
   // Requesting changes with nothing to say would resume the agent to tell it nothing, burning a
   // run. The other two verdicts are meaningful on their own.
   const pendingBefore = ctx.reviewComments.pendingCount(target);
@@ -2435,6 +2475,8 @@ async function sendBackRun(
   if (!parsed.ok) return parsed.response;
   const body = parsed.value as { note?: unknown };
   const note = typeof body.note === 'string' ? body.note.trim() : '';
+  const refusal = reviewSendRefusal(ctx, runId);
+  if (refusal !== null) return errorResponse(403, refusal);
   const threads = formatCommentsForAgent(
     ctx.reviewComments.list(commentTargetForRun(ctx, runId))
   );
@@ -3162,6 +3204,7 @@ async function dispatchPrAgentReview(
       // Findings belong on the PR, not on a run: this review has no run to
       // comment on — it reads the PR's head straight out of its own worktree.
       target: { kind: 'pr', number: pr.number },
+      operator: humanOperator(ctx),
     });
     ctx.events.broadcast({ type: 'task.changed', ids: [task.meta.id] });
     return meta;
@@ -3571,6 +3614,11 @@ async function confirmPlan(
   // promote a note whose task already exists.
   const sourceNoteId = ctx.planManager.get(planId).sourceNoteId;
   const result = ctx.planManager.confirm(planId, body.proposal);
+  // The confirm body is the human's own text, so they wrote these tasks.
+  for (const id of [result.epicId, ...result.taskIds]) {
+    const doc = id === undefined ? null : ctx.store.get(id);
+    if (doc !== null) ctx.taskAuthorship?.created(doc, humanOperator(ctx));
+  }
   if (sourceNoteId !== undefined && result.taskIds.length > 0) {
     linkNoteToTask(ctx, sourceNoteId, result.taskIds[0]);
   }
@@ -3733,8 +3781,9 @@ async function startEpic(
   const checked = parseEpicSessionBody(parsed.value);
   if (!checked.ok) return checked.response;
   // The caller, never the body: their teammates' tasks stay theirs. Only a
-  // human credential gives the auto-fill runs someone to act for.
-  const operator = humanCredentialRef(ctx);
+  // human credential (the owner's only as the app token) gives the auto-fill
+  // runs someone to act for.
+  const operator = humanOperator(ctx);
   const session = await ctx.epicEngine.start(epicId, {
     ...checked.body,
     startedBy: humanActor(ctx),
@@ -3751,7 +3800,7 @@ function pauseEpic(ctx: ApiContext, epicId: string): Response {
 
 // POST /api/epics/:id/resume — optionally re-ceilings the session on the way
 // back to `active`; `executor` is fixed for the session's life so it is
-// dropped here even when sent.
+// dropped here even when sent. The session now acts for whoever resumed it.
 async function resumeEpic(
   req: Request,
   ctx: ApiContext,
@@ -3766,6 +3815,7 @@ async function resumeEpic(
     concurrency,
     maxSpendUsd,
     maxRuns,
+    operator: humanOperator(ctx),
   });
   return jsonResponse(session);
 }
@@ -4603,6 +4653,7 @@ const SELF_AUTHENTICATED_ROUTES: ReadonlyArray<{
   { method: 'GET', segments: ['memory'] },
   { method: 'GET', segments: ['memory', '*'] },
   { method: 'POST', segments: ['memory', 'import', 'ledger'] },
+  { method: 'POST', segments: ['memory', 'import', 'claude'] },
   { method: 'POST', segments: ['memory'] },
   { method: 'POST', segments: ['memory', 'link'] },
   { method: 'POST', segments: ['memory', 'link', '*'] },
@@ -4829,8 +4880,11 @@ export async function handleApi(
   const viaAgentToken =
     presented !== null &&
     timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.agentToken));
+  const ownerCredential =
+    presented !== null &&
+    timingSafeEqual(sha256(presented), sha256(daemonCtx.tokens.appToken));
   let ctx: ApiContext = daemonCtx;
-  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken };
+  if (caller !== null) ctx = { ...ctx, caller, viaAgentToken, ownerCredential };
   if (principal !== undefined) ctx = { ...ctx, principal };
 
   try {
@@ -5561,7 +5615,10 @@ export async function handleApi(
         method === 'POST'
       ) {
         return jsonResponse(
-          ctx.orchestrator.resumeRun(segments[1], { actor: humanActor(ctx) }),
+          ctx.orchestrator.resumeRun(segments[1], {
+            actor: humanActor(ctx),
+            operator: humanCredentialRef(ctx),
+          }),
           201
         );
       }
@@ -5806,6 +5863,9 @@ export async function handleApi(
       if (segments.length === 3 && method === 'POST') {
         if (segments[1] === 'import' && segments[2] === 'ledger') {
           return importLedgerRoute(ctx, url);
+        }
+        if (segments[1] === 'import' && segments[2] === 'claude') {
+          return await importClaudeRoute(ctx, url);
         }
         if (segments[1] === 'link') {
           return await completeLinkRoute(req, ctx, segments[2]);

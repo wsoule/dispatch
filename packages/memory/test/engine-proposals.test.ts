@@ -570,6 +570,42 @@ describe('proposals', () => {
     expect(t.engine.proposals(OWNER, 'open')[0].gate).toBe('m-gate-1');
   });
 
+  it('recover raises the rest when one gate fails', async () => {
+    const t = setup();
+    await ledgerRow(t, 'ledger:l-1@t', 'first');
+    await ledgerRow(t, 'ledger:l-2@t', 'second');
+    const open = t.engine.proposals(OWNER, 'open');
+    for (const p of open) t.shared.updateProposal({ ...p, gate: null });
+    t.host.failingGates.add(open[0].id);
+    const errors = spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(await t.engine.recover()).toEqual({ raised: 1 });
+    } finally {
+      errors.mockRestore();
+    }
+    const gates = t.engine
+      .proposals(OWNER, 'open')
+      .map((p) => [p.id, p.gate !== null]);
+    expect(gates).toEqual(
+      expect.arrayContaining([
+        [open[0].id, false],
+        [open[1].id, true],
+      ])
+    );
+  });
+
+  it('recover expires an ungated proposal past proposalTtlDays', async () => {
+    const t = setup({ proposalTtlDays: 14 });
+    await ledgerRow(t, 'ledger:l-3@t');
+    const [p] = t.engine.proposals(OWNER, 'open');
+    t.shared.updateProposal({ ...p, gate: null });
+    const raisedBefore = t.host.gates.length;
+    t.host.clock = new Date(t.host.clock.getTime() + 15 * 86_400_000);
+    expect(await t.engine.recover()).toEqual({ raised: 0 });
+    expect(t.host.gates).toHaveLength(raisedBefore);
+    expect(t.engine.proposal(OWNER, p.id).proposal.state).toBe('expired');
+  });
+
   it('accepts an answer that arrives before the gate id is recorded', async () => {
     const t = setup();
     await ledgerRow(t, 'ledger:l-8@t');

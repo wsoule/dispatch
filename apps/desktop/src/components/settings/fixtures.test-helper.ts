@@ -3,6 +3,7 @@ import {
   DEFAULT_CARTO,
   DEFAULT_FIX_LOOP,
   DEFAULT_LINEAR,
+  DEFAULT_MEMORY,
   DEFAULT_MESSAGING,
   DEFAULT_MODELS,
   DEFAULT_NOTIFICATIONS,
@@ -38,6 +39,7 @@ export const testConfig: DispatchConfig = {
   repoDigest: DEFAULT_REPO_DIGEST,
   notifications: DEFAULT_NOTIFICATIONS,
   messaging: DEFAULT_MESSAGING,
+  memory: DEFAULT_MEMORY,
 };
 
 /** A Linear team's workflow mirrored into config: none of these names is a built-in,

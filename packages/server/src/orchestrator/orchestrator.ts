@@ -94,11 +94,14 @@ import type {
   Executor,
   ExecutorEvents,
   ExecutorInfo,
+  ExecutorMemoryOptions,
   ExecutorProfile,
   ExecutorRun,
   ExecutorStartOptions,
+  MemoryMode,
   MemoryPromptPort,
   NormalizedEntry,
+  PreparedMemory,
   ReviewFailure,
   RunKind,
   RunMeta,
@@ -178,7 +181,7 @@ export interface OrchestratorContext {
   // back cannot wait out the real half-minute quiet window per attempt.
   autoResumeQuietMs?: number;
   autoResumeMaxAttempts?: number;
-  // The repo-map cache injected into run prompts (see promptForTask). Defaults
+  // The repo-map cache injected into run prompts (see taskBrief). Defaults
   // to one over `rootDir`, same pattern as `jj`. A test that wants no
   // model call at all can pass one built with a stubbed generator.
   digestCache?: RepoDigestCache;
@@ -339,6 +342,18 @@ function humanOwner(ref: string | undefined): string | undefined {
   return ref?.startsWith('human:') === true ? ref : undefined;
 }
 
+// A run's memory with auto memory off and no section, for when the port cannot say.
+const PROMPT_ONLY: PreparedMemory = {
+  text: null,
+  indexSection: null,
+  memory: { mode: 'prompt' },
+};
+
+// A caller-built prompt with a memory section after it; unchanged when there is none.
+function withSection(prompt: string, section: string | null): string {
+  return section === null ? prompt : `${prompt}\n\n${section}`;
+}
+
 // How a reviewed run was closed out, for refusal messages: a run merged by
 // hand and picked up by the external-merge reconciler reads "merged as
 // <sha>", which tells the operator why their resume was refused far better
@@ -397,7 +412,7 @@ export class Orchestrator {
   // unblocked dispatch never touches jj at all.
   private readonly jj: JjManager;
   private readonly findingStore: FindingStorePort;
-  // The repo map injected into every run prompt (see promptForTask). Held on
+  // The repo map injected into every run prompt (see taskBrief). Held on
   // the orchestrator rather than built per dispatch so its single-flight
   // background refresh really is one refresh, not one per concurrent dispatch.
   private readonly digestCache: RepoDigestCache;
@@ -427,7 +442,7 @@ export class Orchestrator {
   private mintRunId: (now: string) => string = (now) => generateRunId(now);
   // Raises and settles the gate a parked tool call waits on (see setApprovalGate).
   private approvalGate: ApprovalGatePort | null = null;
-  // Renders each dispatch prompt's memory section (see setMemoryPort); null keeps the ledger section.
+  // Chooses each run's memory mode and prompt section (see setMemoryPort); null leaves both out.
   private memoryPort: MemoryPromptPort | null = null;
   // Renders each dispatch prompt's `## Docs` section (see setDocsPort); null leaves it out.
   private docsPort: DocsPromptPort | null = null;
@@ -474,6 +489,9 @@ export class Orchestrator {
   // see needsQuietProof, which is what stops a re-dispatch from resuming into
   // a checkout an orphaned agent may still own.
   private readonly observedQuiet = new Set<string>();
+  // Who a re-armed boot sweep resumes a run for: the caller whose dispatch
+  // re-armed it. Absent keeps the run's own operator.
+  private readonly autoResumeOperators = new Map<string, string | null>();
   // Set by shutdown(); see it for what this is protecting against.
   private stopped = false;
 
@@ -549,7 +567,7 @@ export class Orchestrator {
     this.approvalGate = port;
   }
 
-  // Installed by the memory service at boot; until then prompts carry the ledger section.
+  // Installed by the memory service at boot; until then runs start with no memory mode.
   setMemoryPort(port: MemoryPromptPort | null): void {
     this.memoryPort = port;
   }
@@ -1039,8 +1057,7 @@ export class Orchestrator {
           }
         : {}),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta);
 
     this.ctx.store.update(
       taskId,
@@ -1056,18 +1073,20 @@ export class Orchestrator {
 
     this.transition(runId, 'running');
     const caps = this.orchestratorCaps();
+    const brief = this.taskBrief(task, executorName, runId);
     this.startAndRegister(
       runId,
       {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt: this.promptForTask(task, executorName, runId),
+        prompt: brief(prepared?.text ?? null),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, brief),
       },
       executor
     );
@@ -1087,6 +1106,9 @@ export class Orchestrator {
     model?: string;
     effort?: EffortLevel;
     buildPrompt: (ctx: { runId: string; worktreePath: string }) => string;
+    // Who the run acts for: the human who started it, or for a run the
+    // system starts after another run, that run's operator.
+    operator: string | null;
   }): Promise<RunMeta> {
     const task = this.ctx.store.get(opts.taskId);
     if (task === null) {
@@ -1136,16 +1158,12 @@ export class Orchestrator {
       model: opts.model,
       ...this.effortField(opts.effort),
       kind: opts.kind,
-      // Acts for whoever the run it reviews, verifies or replaces acted for.
-      operator: this.a2a(opts.taskId)
-        ? null
-        : this.operatorForTask(opts.taskId),
+      operator: this.a2a(opts.taskId) ? null : opts.operator,
       memoryLineage: runId,
       claims: [...task.meta.writes],
       ...(owner === undefined ? {} : { dispatchedBy: owner }),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta);
 
     // A throwing buildPrompt would otherwise strand this run in `provisioning`,
     // which counts as live: the task could never be dispatched again.
@@ -1157,6 +1175,7 @@ export class Orchestrator {
       this.transition(runId, 'failed', {
         error: `failed to prepare ${opts.kind} run: ${message}`,
       });
+      this.endRunMemory(runId);
       this.worktrees.remove(wtPath, branch, runId);
       throw new OrchestratorClientError(
         `failed to prepare ${opts.kind} run: ${message}`
@@ -1170,12 +1189,15 @@ export class Orchestrator {
         cwd: wtPath,
         projectRoot: this.ctx.rootDir,
         runId,
-        prompt,
+        prompt: withSection(prompt, prepared?.text ?? null),
         permissionMode: caps.permissionMode,
         maxTurns: caps.maxTurns,
         maxBudgetUsd: caps.maxBudgetUsd,
         model: opts.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, (section) =>
+          withSection(prompt, section)
+        ),
       },
       executor
     );
@@ -1570,11 +1592,12 @@ export class Orchestrator {
   // `actor` (resume path only) credits who asked for the redispatch: the API
   // passes its caller, and omitted defaults to the daemon's human; FixLoop's
   // own automatic escalation passes 'none' explicitly — no one typed
-  // anything, the loop just moved to its next round.
+  // anything, the loop just moved to its next round. `operator` is who the
+  // follow-up acts for; absent means no one.
   sendMessage(
     runId: string,
     text: string,
-    opts: { resume?: boolean; actor?: string } = {}
+    opts: { resume?: boolean; actor?: string; operator?: string | null } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
 
@@ -1623,7 +1646,8 @@ export class Orchestrator {
       return this.requestChanges(
         meta,
         text,
-        opts.actor ?? this.ctx.actorContext?.humanRef
+        opts.actor ?? this.ctx.actorContext?.humanRef,
+        opts.operator ?? null
       );
     }
 
@@ -2272,7 +2296,7 @@ export class Orchestrator {
       effort?: EffortLevel;
       fresh?: boolean;
       actor?: string;
-      // Who a fresh run acts for; a resume keeps its predecessor's.
+      // Who the run acts for, fresh or resumed; absent means no one.
       operator?: string | null;
       /** Whom the run is for, when not the actor (see dispatch()). */
       dispatchedBy?: string;
@@ -2288,7 +2312,11 @@ export class Orchestrator {
     if (request.fresh !== true) {
       const resumable = this.resumableRunForTask(taskId);
       if (resumable !== null && this.resumeHonoursRequest(resumable, request)) {
-        return this.resumeForRedispatch(resumable, request);
+        return this.resumeForRedispatch(resumable, {
+          actor: request.actor,
+          dispatchedBy: request.dispatchedBy,
+          operator: request.operator ?? null,
+        });
       }
     }
     const executorName =
@@ -2322,11 +2350,11 @@ export class Orchestrator {
     return meta;
   }
 
-  // A wake's next run. Only a human's wake may continue a finished run's session
-  // (request changes); anything else dispatches or resumes. A done task never wakes.
+  // A wake's next run, acting for `operator`. Only a human's wake may continue
+  // a finished run's session (request changes); anything else dispatches or resumes.
   async wakeTask(
     taskId: string,
-    opts: { actor: string; continueFinished: boolean }
+    opts: { actor: string; continueFinished: boolean; operator: string | null }
   ): Promise<RunMeta> {
     const task = this.ctx.store.get(taskId);
     if (task !== null && isDoneStatus(task.meta.status, this.statuses())) {
@@ -2345,11 +2373,16 @@ export class Orchestrator {
       this.registry.liveRunForTask(taskId) === undefined &&
       this.resumeBlockReason(latest) !== null
     ) {
-      return this.requestChanges(latest, WAKE_PROMPT, opts.actor);
+      return this.requestChanges(
+        latest,
+        WAKE_PROMPT,
+        opts.actor,
+        opts.operator
+      );
     }
     return this.dispatchOrResume(taskId, {
       actor: opts.actor,
-      operator: this.operatorForTask(taskId),
+      operator: opts.operator,
     });
   }
 
@@ -2363,21 +2396,15 @@ export class Orchestrator {
     return this.a2a(taskId);
   }
 
-  // Who the task's latest execute run acts for: the operator of a wake, review,
-  // verify or fix-loop run of the same task.
-  operatorForTask(taskId: string): string | null {
-    const latest = this.registry
-      .list()
-      .find((r) => r.taskId === taskId && runKind(r) === 'execute');
-    return latest === undefined ? null : runOperator(latest);
-  }
-
-  // A human's wake of one ended execute run continues exactly that run.
-  wakeRun(runId: string, opts: { actor: string }): RunMeta {
+  // A human's wake of one ended execute run continues exactly that run, for `operator`.
+  wakeRun(
+    runId: string,
+    opts: { actor: string; operator: string | null }
+  ): RunMeta {
     const meta = this.requireRun(runId);
     const reason = this.continueBlockReason(meta);
     if (reason !== null) throw new OrchestratorConflictError(reason);
-    return this.requestChanges(meta, WAKE_PROMPT, opts.actor);
+    return this.requestChanges(meta, WAKE_PROMPT, opts.actor, opts.operator);
   }
 
   // The model a fresh dispatch runs on. Anything the caller NAMED wins, so
@@ -2453,9 +2480,11 @@ export class Orchestrator {
   // saying so in terms the caller can act on.
   private resumeForRedispatch(
     run: RunMeta,
-    who: { actor?: string; dispatchedBy?: string }
+    who: { actor?: string; dispatchedBy?: string; operator: string | null }
   ): RunMeta {
     if (this.needsQuietProof(run)) {
+      // The sweep's resume then acts for this caller, not the run's operator.
+      this.autoResumeOperators.set(run.id, who.operator);
       this.scheduleAutoResume(run.id);
       throw new OrchestratorConflictError(
         `run ${run.id} is still being recovered after a daemon restart — waiting for the agent it orphaned to stop writing to ${run.branch}. It will resume on its own; dispatch with fresh=true to start over instead.`
@@ -2464,6 +2493,7 @@ export class Orchestrator {
     return this.resumeRun(run.id, {
       actor: who.actor,
       dispatchedBy: who.dispatchedBy,
+      operator: who.operator,
     });
   }
 
@@ -2510,6 +2540,7 @@ export class Orchestrator {
       .finally(() => {
         if (this.scheduledAutoResumes.get(runId) === done) {
           this.scheduledAutoResumes.delete(runId);
+          this.autoResumeOperators.delete(runId);
         }
       });
     this.scheduledAutoResumes.set(runId, done);
@@ -2586,7 +2617,12 @@ export class Orchestrator {
     // hazard the quiet window upstream of here exists to prevent.
     if (meta === undefined || this.resumeBlockReason(meta) !== null) return;
     try {
-      this.resumeRun(runId, { auto: true });
+      this.resumeRun(runId, {
+        auto: true,
+        ...(this.autoResumeOperators.has(runId)
+          ? { operator: this.autoResumeOperators.get(runId) ?? null }
+          : {}),
+      });
     } catch (err) {
       console.error(
         `dispatchd: could not auto-resume run ${runId}: ${(err as Error).message}`
@@ -4687,7 +4723,18 @@ export class Orchestrator {
     if (meta === undefined) return;
     // Nothing will ever refresh a terminal run's claims again.
     this.lastClaimsCheck.delete(runId);
+    this.endRunMemory(runId);
     this.invokeHooksSafely(this.terminalHooks, meta);
+  }
+
+  // Tells the memory port a run ended, so it stops following the run's export.
+  private endRunMemory(runId: string): void {
+    const meta = this.registry.get(runId);
+    const port = this.memoryPort;
+    if (meta === undefined || port === null) return;
+    this.bestEffort(`ending memory for run ${runId}`, () => {
+      port.runEnded(meta);
+    });
   }
 
   // C2(b): runs every hook in `hooks` against `meta`, isolating each call —
@@ -4794,8 +4841,43 @@ export class Orchestrator {
         this.stoppingRuns.add(runId);
         this.releaseParkedApprovals(runId, 'the run ended');
       },
+      onMemoryMode: (mode, detail) =>
+        this.recordMemoryMode(runId, mode, detail),
+      onMemoryRecall: (paths, via) => {
+        const meta = this.registry.get(runId);
+        if (meta === undefined || this.memoryPort === null) return;
+        const port = this.memoryPort;
+        this.bestEffort(`recording memory recalls for run ${runId}`, () => {
+          port.recall(runId, runLineage(meta), paths, via);
+        });
+      },
       onFinish: (finish) => this.handleFinish(runId, finish),
     };
+  }
+
+  // Export mode's load check moved the run to another memory mode: kept on a
+  // state line, with the executor's reason in the Session log.
+  private recordMemoryMode(
+    runId: string,
+    mode: MemoryMode,
+    detail: string
+  ): void {
+    const meta = this.registry.get(runId);
+    if (meta === undefined || TERMINAL_RUN_STATES.has(meta.state)) return;
+    const now = new Date().toISOString();
+    this.registry.updateMeta(runId, { memoryMode: mode, updatedAt: now });
+    const entry: NormalizedEntry = {
+      ts: now,
+      kind: 'system',
+      text: `Memory mode ${mode}: ${detail}`,
+    };
+    this.bestEffort(`recording memory mode for run ${runId}`, () => {
+      const transcript = this.transcriptFor(runId);
+      transcript.appendState(meta.state, now, { memoryMode: mode });
+      transcript.appendEntry(entry);
+    });
+    this.ctx.events.broadcast({ type: 'run.log', runId, entry });
+    this.ctx.events.broadcast({ type: 'run.changed' });
   }
 
   // Keeps RunMeta.subagents current from the `agent` entries as they are
@@ -5019,7 +5101,8 @@ export class Orchestrator {
   private requestChanges(
     oldMeta: RunMeta,
     text: string,
-    actor: string | undefined
+    actor: string | undefined,
+    operator: string | null
   ): RunMeta {
     const {
       executor,
@@ -5053,8 +5136,8 @@ export class Orchestrator {
       // follow-up must not look like it has never touched anything.
       claims: oldMeta.claims,
       resumedFrom: oldMeta.id,
-      // The session already holds its operator's memory, whoever typed this.
-      operator: this.a2a(oldMeta.taskId) ? null : runOperator(oldMeta),
+      // Acts for whoever asked for it, never the predecessor's operator as such.
+      operator: this.a2a(oldMeta.taskId) ? null : operator,
       memoryLineage: runLineage(oldMeta),
       ...(owner === undefined ? {} : { dispatchedBy: owner }),
       // The resumed run inherits the same worktree and the same BRANCH, so it
@@ -5073,8 +5156,7 @@ export class Orchestrator {
         ? { stackBaseCommit: oldMeta.stackBaseCommit }
         : {}),
     };
-    this.registry.create(meta);
-    this.transcriptFor(runId).writeHeader(meta);
+    const prepared = this.registerRun(meta, true);
 
     // The user's feedback is this run's opening conversation turn — record
     // it on the NEW run's transcript (mirroring the live-run branch of
@@ -5124,6 +5206,9 @@ export class Orchestrator {
         maxBudgetUsd: caps.maxBudgetUsd,
         model: oldMeta.model,
         effort: oldMeta.effort,
+        ...this.memoryOption(prepared, (section) =>
+          this.freshPromptFor(oldMeta.taskId, executorName, runId, section)
+        ),
       },
       executor
     );
@@ -5154,9 +5239,17 @@ export class Orchestrator {
   // auto-fill, credits 'none' exactly as its dispatch does). The successor is
   // for `dispatchedBy` when given, else whoever pressed resume, else — the
   // boot sweep, an automatic caller — whomever its predecessor was for.
+  // `operator` is who the successor acts for, absent meaning no one; only the
+  // boot sweep (`auto`) with none named keeps the run's own, as no new
+  // principal is acting.
   resumeRun(
     runId: string,
-    opts: { auto?: boolean; actor?: string; dispatchedBy?: string } = {}
+    opts: {
+      auto?: boolean;
+      actor?: string;
+      dispatchedBy?: string;
+      operator?: string | null;
+    } = {}
   ): RunMeta {
     const meta = this.requireRun(runId);
     if (!TERMINAL_RUN_STATES.has(meta.state)) {
@@ -5216,8 +5309,14 @@ export class Orchestrator {
       // its predecessor had already claimed.
       claims: meta.claims,
       resumedFrom: meta.id,
-      // A fresh session starts its own lineage; the operator carries either way.
-      operator: this.a2a(meta.taskId) ? null : runOperator(meta),
+      // A fresh session starts its own lineage.
+      operator: this.a2a(meta.taskId)
+        ? null
+        : opts.operator !== undefined
+          ? opts.operator
+          : opts.auto === true
+            ? runOperator(meta)
+            : null,
       memoryLineage: continuing ? runLineage(meta) : newRunId,
       ...(owner === undefined ? {} : { dispatchedBy: owner }),
       ...(meta.stackParents !== undefined
@@ -5227,8 +5326,7 @@ export class Orchestrator {
         ? { stackBaseCommit: meta.stackBaseCommit }
         : {}),
     };
-    this.registry.create(newMeta);
-    this.transcriptFor(newRunId).writeHeader(newMeta);
+    const prepared = this.registerRun(newMeta, continuing);
 
     // A fresh start opens the successor's Session log with the reason, so a
     // reader of that log is never left inferring from an agent that orients
@@ -5252,9 +5350,19 @@ export class Orchestrator {
       });
     }
 
-    const prompt = continuing
-      ? renderContinuationPrompt(meta, newRunId)
-      : `${this.promptForTask(task, executorName, newRunId)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
+    // A continuing session's prompt is the continuation, and its fallback the
+    // brief when that builds; a fresh one gets the brief with the notice.
+    const brief = continuing
+      ? null
+      : this.taskBrief(task, executorName, newRunId);
+    const briefing = (section: string | null): string | null =>
+      brief === null
+        ? this.freshPromptFor(meta.taskId, executorName, newRunId, section)
+        : `${brief(section)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
+    const prompt =
+      brief === null
+        ? renderContinuationPrompt(meta, newRunId)
+        : `${brief(prepared?.text ?? null)}\n\n${renderFreshSessionNotice(meta, newRunId)}`;
 
     const substitutionNote = substituted
       ? ` (executor '${meta.executor}' is no longer registered — substituted '${executorName}')`
@@ -5297,6 +5405,7 @@ export class Orchestrator {
         maxBudgetUsd: caps.maxBudgetUsd,
         model: meta.model,
         effort: meta.effort,
+        ...this.memoryOption(prepared, briefing),
       },
       executor
     );
@@ -5326,11 +5435,13 @@ export class Orchestrator {
   // exact text is unit-testable independent of the orchestrator. A corrupt
   // parent epic file degrades to "no epic context" rather than failing the
   // whole dispatch — the task being dispatched is still perfectly valid.
-  private promptForTask(
+  // The epic and orientation are read once; each call renders with its own
+  // memory section, so a run's prompt and its fallback share them.
+  private taskBrief(
     task: TaskDoc,
     executorName: string,
     runId: string
-  ): string {
+  ): (memorySection: string | null) => string {
     let parentEpic: TaskDoc | null = null;
     if (task.meta.parent !== null) {
       try {
@@ -5341,31 +5452,40 @@ export class Orchestrator {
     }
     const dispatchTools =
       this.executorProfile(executorName).dispatchMcp !== false;
-    return buildTaskPrompt(
-      task,
-      parentEpic,
-      this.memorySection(task.meta.id, runId, dispatchTools),
-      this.orientationFor(task.meta.id),
-      dispatchTools,
-      this.ctx.actorContext?.humanRef ?? null,
-      this.docsSection(task.meta.id, runId, dispatchTools),
-      this.commentsFor(task.meta.id)
-    );
+    const orientation = this.orientationFor(task.meta.id);
+    const humanRef = this.ctx.actorContext?.humanRef ?? null;
+    const docs = this.docsSection(task.meta.id, runId, dispatchTools);
+    const comments = this.commentsFor(task.meta.id);
+    return (memorySection) =>
+      buildTaskPrompt(
+        task,
+        parentEpic,
+        memorySection,
+        orientation,
+        dispatchTools,
+        humanRef,
+        docs,
+        comments
+      );
   }
 
-  // The run's `## Memory` text, or null. Never throws: a broken memory store
-  // costs the section, never the dispatch.
-  private memorySection(
+  // The task's brief with `section` as its memory, for a restart that has only
+  // the brief to open with; null when the task is gone or will not read.
+  private freshPromptFor(
     taskId: string,
+    executorName: string,
     runId: string,
-    dispatchTools: boolean
+    section: string | null
   ): string | null {
-    if (this.memoryPort === null) return null;
     try {
-      return this.memoryPort.promptSection({ runId, taskId, dispatchTools })
-        .text;
+      const task = this.ctx.store.get(taskId);
+      return task === null
+        ? null
+        : this.taskBrief(task, executorName, runId)(section);
     } catch (err) {
-      console.error(`dispatchd: memory index for run ${runId} failed`, err);
+      console.error(
+        `dispatchd: no fallback prompt for task ${taskId}: ${(err as Error).message}`
+      );
       return null;
     }
   }
@@ -5394,12 +5514,82 @@ export class Orchestrator {
     }
   }
 
+  // Records a new run, asks the memory port once how it carries memory, and
+  // writes its transcript header with the chosen mode.
+  private registerRun(meta: RunMeta, continues = false): PreparedMemory | null {
+    this.registry.create(meta);
+    const prepared = this.prepareMemory(meta, continues);
+    this.transcriptFor(meta.id).writeHeader(this.registry.get(meta.id) ?? meta);
+    return prepared;
+  }
+
+  // How a new run carries memory, recorded on it; null for a non-Claude run
+  // with no port. A missing or throwing port leaves auto memory off.
+  private prepareMemory(
+    meta: RunMeta,
+    continues: boolean
+  ): PreparedMemory | null {
+    const port = this.memoryPort;
+    const profile = this.executorProfile(meta.executor);
+    // Only the port may choose native, so a Claude run started without one gets prompt.
+    if (port === null && profile.autoMemory !== true) return null;
+    const prepared =
+      port === null
+        ? PROMPT_ONLY
+        : this.askMemoryPort(port, meta, profile, continues);
+    this.registry.updateMeta(meta.id, { memoryMode: prepared.memory.mode });
+    return prepared;
+  }
+
+  // The port's answer, or prompt mode with no section when it throws.
+  private askMemoryPort(
+    port: MemoryPromptPort,
+    meta: RunMeta,
+    profile: ExecutorProfile,
+    continues: boolean
+  ): PreparedMemory {
+    try {
+      return port.prepare({
+        runId: meta.id,
+        taskId: meta.taskId,
+        lineage: runLineage(meta),
+        runKind: runKind(meta),
+        isClaude: profile.autoMemory === true,
+        dispatchTools: profile.dispatchMcp !== false,
+        continues,
+      });
+    } catch (err) {
+      console.error(
+        `dispatchd: preparing memory for run ${meta.id} failed`,
+        err
+      );
+      return PROMPT_ONLY;
+    }
+  }
+
+  // The start option a prepared run passes; export mode adds the prompt a
+  // prompt-mode restart opens with, which carries the index section instead.
+  private memoryOption(
+    prepared: PreparedMemory | null,
+    fallbackPrompt: (section: string | null) => string | null
+  ): { memory?: ExecutorMemoryOptions } {
+    if (prepared === null) return {};
+    if (prepared.memory.mode !== 'export') return { memory: prepared.memory };
+    const fallback = fallbackPrompt(prepared.indexSection);
+    return {
+      memory:
+        fallback === null
+          ? prepared.memory
+          : { ...prepared.memory, fallbackPrompt: fallback },
+    };
+  }
+
   // The repo facts injected into this task's prompt (see orientation.ts): the
   // workspace map, skills index, root scripts, cross-run file hotspots, the
   // cached repo map, and who else is running right now. Collecting reads a
   // handful of small files and this project's own transcripts; a failure
   // anywhere in there costs the section, never the dispatch, because a
-  // throwing promptForTask strands the run in `provisioning`.
+  // throwing taskBrief strands the run in `provisioning`.
   private orientationFor(taskId: string): RepoOrientation | null {
     try {
       return collectOrientation({
