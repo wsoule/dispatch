@@ -360,8 +360,8 @@ const blank = (o: RosterOpRef): RosterOpRef =>
 
 const SEEDS = 700;
 
-// All accepted, these removals leave no admin; P's revoke of B is what makes C
-// an admin, so voiding it voids C's revoke of the founder too.
+// All accepted, these removals leave no admin; P's revoke of B makes C an
+// admin, and C's revoke of the founder, which would leave none, is void.
 const NO_ADMIN_LEFT = (() => {
   const [B, C, D] = MEMBERS;
   return [
@@ -634,9 +634,9 @@ describe('the level table', () => {
         pauses: false,
       },
       {
-        // With no admin left, P's revoke is voided, and D, the cut's
-        // publisher, ends pending.
-        later: cutBy(D, 2, 60),
+        // C's revoke of the founder is void as it would leave no admin, so
+        // P's revoke of B stands below B's cut.
+        later: cutBy(B, 3, 60),
         rest: NO_ADMIN_LEFT,
         target: M,
         hosts: ['mx', 'my'],
@@ -862,14 +862,14 @@ describe('a later removal among a revocation fight', () => {
       revoke(C, 5, 47, P, 2),
       revoke(A, 15, 59, B, 2),
     ],
-    // The founder's revokes of B lose their right twice, as each lets D
-    // revoke the founder, so B's counter-revocation stands.
+    // The founder's revokes of B stand: D's revoke of the founder needs C's
+    // revoke of P, which needs B's cut, so it defeats itself.
     expected: {
-      admins: [B, P],
-      members: [C],
+      admins: [A, C, D],
+      members: [],
       revoked: [
-        [A, 13],
-        [D, 1],
+        [B, 2],
+        [P, 2],
       ],
     },
   };
@@ -932,7 +932,7 @@ describe('a later removal among a revocation fight', () => {
   });
 
   it('judges a dismiss the same at every level, however another names the cut', () => {
-    // C, a member, names B's junk; P, an admin, names the revoked founder's.
+    // C, an admin, names the revoked B's junk; the revoked P names the founder's.
     const U = junk(B, 7, 65);
     const V = junk(A, 17, 66);
     const set = [
@@ -949,16 +949,16 @@ describe('a later removal among a revocation fight', () => {
       for (const level of AT)
         expect({ level, dismissed: t.at(level, ops).dismissed }).toEqual({
           level,
-          dismissed: [{ replica: A, seq: 17, hash: V.hash, by: P }],
+          dismissed: [{ replica: B, seq: 7, hash: U.hash, by: C }],
         });
   });
 
   it('lets no dismiss of the later cut move the fight', () => {
     const ops = [...PICK.rest, PICK.later];
-    // The revoked founder's dismiss is invalid, and B's valid.
-    const byB = dismiss(B, 6, 70, PICK.later);
-    expect(t.at(1, [...ops, byB]).dismissed.map((d) => d.by)).toEqual([B]);
-    for (const named of [dismiss(A, 17, 70, PICK.later), byB])
+    // The revoked B's dismiss is invalid, and the founder's valid.
+    const byA = dismiss(A, 17, 70, PICK.later);
+    expect(t.at(1, [...ops, byA]).dismissed.map((d) => d.by)).toEqual([A]);
+    for (const named of [byA, dismiss(B, 6, 70, PICK.later)])
       for (const level of AT)
         expect({
           level,
@@ -1713,9 +1713,9 @@ describe('a removal whose publisher holds no right at it', () => {
     }
   }, 60_000);
 
-  // P's demotion of the founder contests the founder's revoke of X, so X holds
-  // its right until that fight is decided, and its removal counts until then.
-  it('counts a removal by an admin whose revocation is still contested', () => {
+  // P's demotion of the founder would cut the founder's revoke of X, but P's
+  // own demotion of itself cuts it first, so X's removal never counts.
+  it('decides a removal by an admin whose revocation is contested exactly', () => {
     const contested = [
       admit(A, 2, 16, P, 'admin'),
       admit(P, 2, 20, C, 'member'),
@@ -1738,7 +1738,7 @@ describe('a removal whose publisher holds no right at it', () => {
           level,
           relay,
           with: { admins: [A, C], members: [P], revoked: [[X, 1]] },
-          without: { admins: [C], members: [A, P], revoked: [[X, 1]] },
+          without: { admins: [A, C], members: [P], revoked: [[X, 1]] },
         });
       }
   });
@@ -1786,7 +1786,7 @@ describe('a revocation sure to stand', () => {
   // Each set's standing, the same at every level and on the relay.
   const SURE: [string, RosterOpRef[], ReturnType<typeof summary>][] = [
     [
-      'keeps a doomed removal in the check of the revocation that cuts it below',
+      "accepts the one stable set, where the founder's revoke of D stands",
       [
         admit(A, 2, 10, P, 'admin'),
         admit(P, 2, 16, D, 'member'),
@@ -1800,10 +1800,10 @@ describe('a revocation sure to stand', () => {
         revoke(C, 3, 56, P, 1),
       ],
       {
-        admins: [D, B],
-        members: [C],
+        admins: [A, C],
+        members: [],
         revoked: [
-          [A, 6],
+          [D, 1],
           [P, 1],
         ],
       },
@@ -2052,6 +2052,125 @@ describe('a revocation sure to stand', () => {
     });
 });
 
+describe('the exact resolution', () => {
+  const [B, , D] = MEMBERS;
+  const E1 = 'eo-00000031';
+  const E2 = 'et-00000032';
+  const V = 'vi-00000022';
+  const T = 'ty-00000033';
+  const K = 'ka-00000034';
+  const r = team(A, keysFor([A, B, E1, E2, V, T, K, D]));
+  const check = (
+    ops: RosterOpRef[],
+    cuts: RosterOpRef[],
+    expected: { s: ReturnType<typeof summary>; cuts: string[] }
+  ): void => {
+    for (const level of AT)
+      for (const relay of [false, true]) {
+        const v = r.at(level, ops, { relay });
+        expect({
+          level,
+          relay,
+          s: summary(v),
+          cuts: cuts.map((c) => String(v.resolution.get(c.hash))),
+        }).toEqual({ level, relay, ...expected });
+      }
+  };
+
+  // B's cuts of E1 and E2 make V an admin, whose observer admit of T then
+  // shadows T's admin admit; a third cut of V would restore T's right.
+  const shadow = [
+    admit(A, 2, 2, E1, 'admin'),
+    admit(A, 3, 3, E2, 'admin'),
+    admit(A, 4, 4, B, 'admin'),
+    admit(A, 5, 5, K, 'admin'),
+    admit(A, 6, 6, D, 'admin'),
+    admit(E1, 2, 10, V, 'member', { observer: true }),
+    admit(E2, 2, 11, V, 'member', { observer: true }),
+    admit(A, 7, 12, V, 'admin'),
+    admit(V, 2, 13, T, 'member', { observer: true }),
+    admit(A, 8, 14, T, 'admin'),
+  ];
+  const c1 = revoke(B, 2, 30, E1, 1);
+  const c2 = revoke(B, 3, 31, E2, 1);
+  const cT = revoke(T, 2, 32, B, 1);
+  const kV = revoke(K, 2, 33, V, 1);
+  const dK = revoke(D, 2, 34, K, 1);
+  const tV = revoke(T, 3, 35, V, 1);
+  const bWins = (revoked: [string, number][]) => ({
+    admins: revoked.some(([x]) => x === K) ? [A, B, D, V] : [A, B, K, D, V],
+    members: [T],
+    revoked,
+  });
+  const RESTORED: [string, RosterOpRef[], string[], [string, number][]][] = [
+    [
+      "lets B win on rank though K's cut of V, void once D revokes K, restores T",
+      [c1, c2, cT, kV, dK],
+      ['accepted', 'accepted', 'void', 'void', 'accepted'],
+      [
+        [E1, 1],
+        [E2, 1],
+        [K, 1],
+      ],
+    ],
+    [
+      'lets B win on rank when D revokes K and K cuts no one',
+      [c1, c2, cT, dK],
+      ['accepted', 'accepted', 'void', 'accepted'],
+      [
+        [E1, 1],
+        [E2, 1],
+        [K, 1],
+      ],
+    ],
+    [
+      'lets B win on rank though T cuts V to restore its own right',
+      [c1, c2, cT, tV],
+      ['accepted', 'accepted', 'void', 'void'],
+      [
+        [E1, 1],
+        [E2, 1],
+      ],
+    ],
+  ];
+  for (const [name, cuts, decisions, revoked] of RESTORED)
+    it(name, () => {
+      check([...shadow, ...cuts], cuts, {
+        s: bWins(revoked),
+        cuts: decisions,
+      });
+    });
+
+  // B's cut of E makes V an admin, which shadows T; E's demotion of V, void
+  // once B's cut stands, would restore T's right only were it accepted too.
+  const doomed = [
+    admit(A, 2, 2, B, 'admin'),
+    admit(A, 3, 3, E1, 'admin'),
+    admit(E1, 2, 10, V, 'member', { observer: true }),
+    admit(A, 4, 12, V, 'admin'),
+    admit(V, 2, 13, T, 'member', { observer: true }),
+    admit(A, 5, 14, T, 'admin'),
+  ];
+  const cB = revoke(B, 2, 30, E1, 1);
+  const cTB = revoke(T, 2, 31, B, 0);
+  const cE = demote(E1, 3, 32, V, 1);
+  const DOOMED: [string, RosterOpRef[], string[]][] = [
+    ["lets B win on rank against T's cut", [cB, cTB], ['accepted', 'void']],
+    [
+      "lets B win on rank though E's demotion of V would restore T",
+      [cB, cTB, cE],
+      ['accepted', 'void', 'void'],
+    ],
+  ];
+  for (const [name, cuts, decisions] of DOOMED)
+    it(name, () => {
+      check([...doomed, ...cuts], cuts, {
+        s: { admins: [A, B, V], members: [T], revoked: [[E1, 1]] },
+        cuts: decisions,
+      });
+    });
+});
+
 // Hinge chains where most admins end cut, some by themselves, so the
 // resolution often leaves no admin; later hosts cuts of M ride along.
 function adminlessOps(rand: () => number): RosterOpRef[] {
@@ -2128,15 +2247,17 @@ const NO_ADMIN = 'would leave the team with no admin; void';
 
 describe('a resolution that would leave no admin', () => {
   const [B, C, D] = MEMBERS;
-  // Sets whose removals, all accepted, leave no admin, and what each folds to.
+  // Sets whose removals, all accepted, leave no admin, and what each folds to:
+  // the rank-lexicographic stable set, which voids the removal that would.
   const SETS: [string, RosterOpRef[], ReturnType<typeof summary> | null][] = [
     [
-      'one voided revoke made C an admin',
+      "C's revoke of the founder, once P's revoke of B makes C an admin",
       NO_ADMIN_LEFT,
       {
-        admins: [A, B],
-        members: [M],
+        admins: [A],
+        members: [M, D],
         revoked: [
+          [B, 1],
           [C, 3],
           [P, 2],
         ],
@@ -2156,7 +2277,14 @@ describe('a resolution that would leave no admin', () => {
         demote(A, 5, 60, C, 2),
         demote(A, 6, 62, P, 3),
       ],
-      { admins: [A, B, D], members: [C], revoked: [] },
+      {
+        admins: [D],
+        members: [C, P],
+        revoked: [
+          [A, 6],
+          [B, 1],
+        ],
+      },
     ],
     [
       "D's revoke of B makes C an admin",
@@ -2170,7 +2298,14 @@ describe('a resolution that would leave no admin', () => {
         demote(C, 3, 55, D, 2),
         demote(A, 5, 60, C, 3),
       ],
-      { admins: [A, B, D], members: [C], revoked: [] },
+      {
+        admins: [D],
+        members: [C],
+        revoked: [
+          [A, 5],
+          [B, 1],
+        ],
+      },
     ],
     [
       "B's revoke of D, a fight's pick, makes C an admin",
@@ -2184,21 +2319,23 @@ describe('a resolution that would leave no admin', () => {
         revoke(B, 2, 43, D, 1),
         demote(A, 6, 51, C, 4),
       ],
-      { admins: [A, D, B], members: [C], revoked: [] },
+      { admins: [A], members: [C, B], revoked: [[D, 1]] },
     ],
     ['a generated hinge chain', opsFor(55610, mulberry32(55610)), null],
   ];
 
-  it('voids the latest-ranked removal and re-runs, leaving none unfounded', () => {
+  it('voids a removal that would leave no admin, leaving none unfounded', () => {
     for (const [name, ops, expected] of SETS)
       for (const level of AT)
         for (const relay of [false, true]) {
           const v = t.at(level, ops, { relay });
+          // The generated chain's rank-lexicographic set needs no such void.
+          const voided = v.problems.some((p) => p.message.endsWith(NO_ADMIN));
           expect({
             name,
             level,
             relay,
-            voided: v.problems.some((p) => p.message.endsWith(NO_ADMIN)),
+            voided: voided || expected === null,
             unfounded: t.unfounded(level, ops, { relay }),
           }).toEqual({ name, level, relay, voided: true, unfounded: [] });
           if (expected !== null) expect(summary(v)).toEqual(expected);

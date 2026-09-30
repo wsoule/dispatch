@@ -203,11 +203,21 @@
   "expect": {
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
-      ["bob-0000000b", "admin", 2, [], false, false],
-      ["cy-0000000c", "member", null, [], false, false],
-      ["dee-0000000d", "admin", 1, [], false, false]
+      ["bob-0000000b", "member", null, [], false, false],
+      ["cy-0000000c", "member", null, [], false, false]
     ],
-    "revoked": [],
+    "revoked": [
+      [
+        "dee-0000000d",
+        {
+          "afterSeq": 1,
+          "afterHash": "h-dee-0000000d-1",
+          "handle": "dee",
+          "hosts": [],
+          "observer": false
+        }
+      ]
+    ],
     "hostCuts": [],
     "resolution": [
       [
@@ -216,7 +226,7 @@
       ],
       [
         "e8516b285e412e5705c50afcc7e6f8fef9335e5bbc8e06c5976802292b0d7635",
-        "void"
+        "accepted"
       ],
       [
         "ee80add9bb85f46dfc4b873caed4bc45607f6b17349536f8568a9f0fcbcb6022",
@@ -227,8 +237,8 @@
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "dee", "cy", "bob"],
-    "covered": ["ada", "cy", "dee"],
+    "people": ["ada", "cy", "bob"],
+    "covered": ["ada", "bob", "cy"],
     "closedBy": null,
     "transport": {
       "kind": "git"

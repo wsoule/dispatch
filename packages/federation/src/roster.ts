@@ -117,7 +117,9 @@ export interface RosterView {
   problems: readonly Problem[];
   /**
    * Set while the fold keeps an unreadable op from a member or admin at it, no
-   * observer; the caller then applies nothing. Always null for the relay.
+   * observer, or while more removals contest one another than it decides at
+   * once (naming the first whose publisher stands at it); the caller then
+   * applies nothing. Always null for the relay.
    */
   unknown: Paused | null;
 }
@@ -136,8 +138,6 @@ type Action<A extends RosterBody['action']> = Extract<
   { action: A }
 >;
 type CutKind = 'all' | 'admin' | 'hosts';
-// A removal's state in the resolution loop; `waiting` lacks the right for now.
-type Status = 'open' | 'waiting' | Resolution;
 
 interface Item {
   op: RosterOpRef;
@@ -186,13 +186,15 @@ interface Eligible extends Dismiss {
 interface Context {
   input: FoldInput;
   items: readonly Item[];
+  /** The items that can grant a right, all a fold of rights alone walks. */
+  granting: readonly Item[];
   found: { op: RosterOpRef; body: Action<'found'> };
   teamId: string;
   deadlineMs: number;
   /** Each replica's lowest Known(1) roster op seq, where a pending recover goes. */
   firstSeq: ReadonlyMap<string, number>;
-  /** The replicas whose rights a cut of `replica` can change, itself included. */
-  reach: (replica: string) => ReadonlySet<string>;
+  /** The replicas whose rights a removal's cut can change, its target included. */
+  reach: (cut: Removal) => ReadonlySet<string>;
   /** comparePositions, by index for the ops being folded. */
   order: (a: Position, b: Position) => number;
   /** Whether a recover's proof verifies against a recovery key, memoized. */
@@ -226,11 +228,25 @@ interface Evaluation {
 // What reading a replica's rights needs: its grants, the cuts on it, the order.
 type Granted = Pick<Evaluation, 'cutsOn' | 'order' | 'grants'>;
 
-// Folds some outcome of the resolution can reach, and the removals whose
-// publisher holds its right in one of them.
-interface Outcomes {
-  could: ReadonlySet<Removal>;
-  folds: readonly Evaluation[];
+// Evaluations under sets of removals, memoized by set.
+type Folds = (cuts: readonly Removal[]) => Evaluation;
+
+// The decision on the Known(1) removals: those accepted, the rank picks among
+// them, and the components too large to search.
+interface Decision {
+  accepted: Removal[];
+  won: ReadonlySet<Removal>;
+  oversized: readonly (readonly Removal[])[];
+}
+
+// What a component's search reads: the folds, which removals affect which,
+// whether some admin stands in every fold, and the cuts decided outside it.
+interface Given {
+  ctx: Context;
+  fold: Folds;
+  affects: (r: Removal, s: Removal) => boolean;
+  safe: boolean;
+  outside: readonly Removal[];
 }
 
 // One fold of every op but `without`, its removals resolved.
@@ -245,9 +261,13 @@ interface Resolved {
   resolution: Map<string, Resolution>;
   accepted: readonly Removal[];
   won: ReadonlySet<Removal>;
+  oversized: Decision['oversized'];
 }
 
 const NO_ADMIN = 'would leave the team with no admin; void';
+
+// The most contested removals one search decides; a larger component pauses.
+const MAX_CONTESTED = 18;
 
 const NEWER_ROSTER =
   "a teammate's newer Dispatch changed the roster in a way this build cannot read; upgrade to continue";
@@ -330,11 +350,12 @@ function resolve(ctx: Context): Resolved {
   // Only Known(1) removals fight; a later one never changes a right, so it is
   // decided on the result.
   const known = all.filter((r) => !r.later);
-  // A result with no admin voids its latest-ranked accepted removal, and the
-  // fight is fought again with every removal so voided held void.
+  const fold = foldsOf(ctx, known);
+  // A result with no admin (only after a rank pick) voids its latest-ranked
+  // accepted removal, and the fight is fought again with it held void.
   const held: Removal[] = [];
-  let fight = decide(ctx, known);
-  let ev = evaluate(ctx, fight.accepted);
+  let fight = decide(ctx, known, fold);
+  let ev = fold(fight.accepted);
   while (adminsOf(ev).length === 0 && fight.accepted.length > 0) {
     const last = fight.accepted.reduce((w, r) =>
       byRank(ev, r, w) > 0 ? r : w
@@ -342,9 +363,10 @@ function resolve(ctx: Context): Resolved {
     held.push(last);
     fight = decide(
       ctx,
-      known.filter((r) => !held.includes(r))
+      known.filter((r) => !held.includes(r)),
+      fold
     );
-    ev = evaluate(ctx, fight.accepted);
+    ev = fold(fight.accepted);
   }
   // A later removal stands only where its publisher holds its right in the
   // result, where a build that cannot read it pauses rather than differs.
@@ -355,130 +377,492 @@ function resolve(ctx: Context): Resolved {
   for (const r of all)
     resolution.set(r.op.hash, upheld.has(r) ? 'accepted' : 'void');
   const final = evaluate(ctx, accepted, true);
-  for (const r of held)
+  // Held void by the re-run, or void holding its right as accepting it would
+  // leave no admin.
+  const noAdmin = known.filter(
+    (r) =>
+      held.includes(r) ||
+      (!upheld.has(r) &&
+        hadRight(ctx, ev, r) &&
+        adminsOf(fold([...fight.accepted, r])).length === 0)
+  );
+  for (const r of noAdmin)
     note(
       final,
       r.op,
       `${r.op.replica}'s removal at seq ${r.op.seq} ${NO_ADMIN}`
     );
-  return { ev: final, resolution, accepted, won: fight.won };
+  const { won, oversized } = fight;
+  return { ev: final, resolution, accepted, won, oversized };
 }
 
-// The fight over `removals`: which it accepts, and which of those won a pick.
+// Memoizes a fold of rights alone by the set of removals, in fold order.
+function foldsOf(ctx: Context, removals: readonly Removal[]): Folds {
+  const index = new Map(removals.map((r, i) => [r, i]));
+  const memo = new Map<string, Evaluation>();
+  return (cuts) => {
+    const at = (r: Removal): number => index.get(r) ?? -1;
+    const sorted = [...cuts].sort((a, b) => at(a) - at(b));
+    const key = sorted.map(at).join(',');
+    const known = memo.get(key);
+    if (known !== undefined) return known;
+    const ev = evaluate(ctx, sorted, false, ctx.granting);
+    memo.set(key, ev);
+    return ev;
+  };
+}
+
+// FW-R16: the rank-lexicographic grounded, self-consistent decision. Removals
+// whose publisher could hold its right are searched; one left out rejoins
+// when it holds its right in the result.
 function decide(
   ctx: Context,
-  removals: readonly Removal[]
-): { accepted: Removal[]; won: ReadonlySet<Removal> } {
-  const status = new Map<Removal, Status>(removals.map((r) => [r, 'open']));
-  const having = (...wanted: Status[]) =>
-    removals.filter((r) => wanted.includes(status.get(r) ?? 'void'));
-  // Fight winners stand, even if a later accepted removal cuts their publisher,
-  // or the removals they beat would return and never settle; and those sent back.
-  const won = new Set<Removal>();
-  const demoted = new Set<Removal>();
-  // Fight winners and removals accepted before any fight, less those that lose
-  // their right: their cuts hold in every outcome.
-  const settled = new Set<Removal>();
-  // Kept in first admissions so a right resting on a settled cut is never sure.
-  const bare = outcomesOf(ctx, [], removals).folds;
-
+  removals: readonly Removal[],
+  fold: Folds
+): Decision {
+  const joined = couldHold(ctx, removals, fold);
   for (;;) {
-    // One accepted on a worst case that failed can lose its right: it waits
-    // again, a second loss voids it, and checks repeat until none loses.
-    for (let lost = true; lost; ) {
-      lost = false;
-      for (const s of having('accepted')) {
-        if (won.has(s)) continue;
-        const others = having('accepted').filter((o) => o !== s);
-        if (hadRight(ctx, evaluate(ctx, others), s)) continue;
-        status.set(s, demoted.has(s) ? 'void' : 'waiting');
-        demoted.add(s);
-        settled.delete(s);
-        lost = true;
+    const decision = decideAmong(
+      ctx,
+      removals.filter((r) => joined.has(r)),
+      fold
+    );
+    const ev = fold(decision.accepted);
+    const missed = removals.filter(
+      (r) => !joined.has(r) && hadRight(ctx, ev, r)
+    );
+    if (missed.length === 0) return decision;
+    for (const r of missed) joined.add(r);
+  }
+}
+
+// FW-R14: the removals whose publisher holds its right in the real fold with
+// no cut, or with one cut by another such removal (a least fixed point).
+function couldHold(
+  ctx: Context,
+  removals: readonly Removal[],
+  fold: Folds
+): Set<Removal> {
+  const bare = fold([]);
+  const could = new Set(removals.filter((r) => hadRight(ctx, bare, r)));
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const u of removals) {
+      if (could.has(u)) continue;
+      if (![...could].some((c) => c !== u && hadRight(ctx, fold([c]), u)))
+        continue;
+      could.add(u);
+      grew = true;
+    }
+  }
+  return could;
+}
+
+// Whether accepting r can change the right s needs, or s's target: r's cut
+// reaches s's publisher or target. A hosts cut changes no right.
+function affectsOf(ctx: Context): (r: Removal, s: Removal) => boolean {
+  return (r, s) => {
+    if (r === s || r.kind === 'hosts') return false;
+    const reach = ctx.reach(r);
+    return reach.has(s.op.replica) || reach.has(s.target);
+  };
+}
+
+// A removal no undecided one affects is decided outright: void without its
+// right, else accepted, unless the no-admin rule could void it. The rest is
+// searched per connected component, as one when that rule couples them all.
+function decideAmong(
+  ctx: Context,
+  list: readonly Removal[],
+  fold: Folds
+): Decision {
+  const affects = affectsOf(ctx);
+  const safe = alwaysAdmin(ctx, list, fold);
+  const accepted: Removal[] = [];
+  const decided = new Set<Removal>();
+  for (let grew = true; grew; ) {
+    grew = false;
+    for (const s of list) {
+      if (decided.has(s)) continue;
+      if (list.some((r) => !decided.has(r) && affects(r, s))) continue;
+      const right = hadRight(ctx, fold(accepted), s);
+      if (right && !safe && s.kind !== 'hosts') continue;
+      decided.add(s);
+      grew = true;
+      if (right) accepted.push(s);
+    }
+  }
+  const won = new Set<Removal>();
+  const oversized: Removal[][] = [];
+  const rest = list.filter((r) => !decided.has(r));
+  const comps = safe ? componentsOf(rest, affects) : [rest];
+  for (const comp of comps.filter((c) => c.length > 0)) {
+    const large = comp.length > MAX_CONTESTED;
+    if (large) oversized.push(comp);
+    const given: Given = { ctx, fold, affects, safe, outside: [...accepted] };
+    const out = solve(given, comp, !large);
+    accepted.push(...out.accepted);
+    for (const r of out.won) won.add(r);
+  }
+  return { accepted, won, oversized };
+}
+
+// Whether some admin holds its rights in every fold, as no cut reaches it.
+function alwaysAdmin(
+  ctx: Context,
+  removals: readonly Removal[],
+  fold: Folds
+): boolean {
+  const reached = new Set(removals.flatMap((r) => [...ctx.reach(r)]));
+  return adminsOf(fold([])).some((a) => !reached.has(a));
+}
+
+// The connected components of `rs` under `affects` either way, in fold order.
+function componentsOf(
+  rs: readonly Removal[],
+  affects: (r: Removal, s: Removal) => boolean
+): Removal[][] {
+  const root = rs.map((_, i) => i);
+  const find = (i: number): number => {
+    let j = i;
+    while (root[j] !== j) j = root[j] ?? j;
+    return j;
+  };
+  for (let i = 0; i < rs.length; i++)
+    for (let j = i + 1; j < rs.length; j++) {
+      const a = rs[i];
+      const b = rs[j];
+      if (a === undefined || b === undefined) continue;
+      if (affects(a, b) || affects(b, a)) root[find(j)] = find(i);
+    }
+  const groups = new Map<number, Removal[]>();
+  rs.forEach((r, i) => {
+    const g = groups.get(find(i));
+    if (g === undefined) groups.set(find(i), [r]);
+    else g.push(r);
+  });
+  return [...groups.values()];
+}
+
+// One component's decision: the first grounded, self-consistent assignment in
+// priority order. With none (odd cycles), or too many removals to search, the
+// best-ranked removal holding its right wins a rank pick and stands, and the
+// rest is decided again (FW-R7: a later cut of the winner's publisher stands).
+function solve(
+  given: Given,
+  comp: readonly Removal[],
+  searching: boolean
+): { accepted: Removal[]; won: Removal[] } {
+  const { ctx, fold, outside } = given;
+  const won: Removal[] = [];
+  for (;;) {
+    const rest = comp.filter((r) => !won.includes(r));
+    const base = [...outside, ...won];
+    const found = searching ? search({ ...given, outside: base }, rest) : null;
+    if (found !== null) return { accepted: [...won, ...found], won };
+    const ev = fold(base);
+    const live = rest.filter((r) => hadRight(ctx, ev, r));
+    const pick = live.reduce<Removal | null>(
+      (best, r) => (best === null || byRank(ev, r, best) < 0 ? r : best),
+      null
+    );
+    if (pick === null) return { accepted: won, won };
+    won.push(pick);
+  }
+}
+
+// Depth-first over accept/void in priority order (the best-ranked undecided
+// removal, accept first), so the first stable assignment is the
+// rank-lexicographic one. Subsets are bitmasks over `comp`. A failure returns
+// the removals whose values caused it, and the search jumps back past any
+// decision not among them, as no assignment keeping them can succeed.
+function search(given: Given, comp: readonly Removal[]): Removal[] | null {
+  const { ctx, fold, affects, safe, outside } = given;
+  const bit = (i: number): number => 1 << i;
+  const all = comp.map((_, i) => i);
+  const maskOf = (pred: (i: number) => boolean): number =>
+    all.filter(pred).reduce((m, i) => m | bit(i), 0);
+  const removal = (i: number): Removal => comp[i];
+  // sources[i]: the removals whose cut can change i's right; reaches[i]: the
+  // removals whose right i's cut can change.
+  const sources = all.map((i) =>
+    maskOf((j) => affects(removal(j), removal(i)))
+  );
+  const reaches = all.map((i) =>
+    maskOf((j) => affects(removal(i), removal(j)))
+  );
+  // part[i]: i's connected part; rights, cascades and grounding stay in one.
+  const part = all.map((i) => {
+    let m = bit(i);
+    for (let grew = true; grew; ) {
+      const next = all.reduce(
+        (out, j) => ((m & bit(j)) !== 0 ? out | sources[j] | reaches[j] : out),
+        m
+      );
+      grew = next !== m;
+      m = next;
+    }
+    return m;
+  });
+  const parts = [...new Set(part)];
+  const folds = new Map<number, Evaluation>();
+  const at = (m: number): Evaluation => {
+    const known = folds.get(m);
+    if (known !== undefined) return known;
+    const ev = fold([...outside, ...comp.filter((_, i) => (m & bit(i)) !== 0)]);
+    folds.set(m, ev);
+    return ev;
+  };
+  const rights = new Map<number, boolean>();
+  const had = (m: number, i: number): boolean => {
+    const key = m * 32 + i;
+    const known = rights.get(key);
+    if (known !== undefined) return known;
+    const right = hadRight(ctx, at(m), removal(i));
+    rights.set(key, right);
+    return right;
+  };
+  const adminsAt = new Map<number, string[]>();
+  const adminsOfMask = (m: number): string[] => {
+    const known = adminsAt.get(m);
+    if (known !== undefined) return known;
+    const admins = adminsOf(at(m));
+    adminsAt.set(m, admins);
+    return admins;
+  };
+  const adminless = (m: number): boolean =>
+    !safe && adminsOfMask(m).length === 0;
+  const reaching = new Map<string, number>();
+  // The removals whose cut reaches replica x, so decide whether it is an admin.
+  const reachingOf = (x: string): number => {
+    const known = reaching.get(x);
+    if (known !== undefined) return known;
+    const m = maskOf(
+      (j) => removal(j).kind !== 'hosts' && ctx.reach(removal(j)).has(x)
+    );
+    reaching.set(x, m);
+    return m;
+  };
+  // Of the admins under m that no removal in `open` reaches, the fewest
+  // removals deciding one; null when every admin is open to a cut.
+  const standing = (m: number, open: number): number | null => {
+    let best: number | null = null;
+    for (const x of adminsOfMask(m)) {
+      const r = reachingOf(x);
+      if ((r & open) !== 0) continue;
+      if (best === null || bitCount(r) < bitCount(best)) best = r;
+    }
+    return best;
+  };
+  // dooms[i]: the removals whose cut leaves i's publisher no right at i in any
+  // fold: a revocation below i, or a demotion no later grant can make up for.
+  const grantedAgain = (r: Removal, c: Removal): boolean =>
+    ctx.items.some(
+      ({ op, body }) =>
+        ctx.order(c.op, op) < 0 &&
+        (isAction(body, 'recover')
+          ? op.replica === r.op.replica
+          : (isAction(body, 'admit') || isAction(body, 'role')) &&
+            body.replica === r.op.replica &&
+            body.role === 'admin')
+    );
+  const dooms = all.map((i) => {
+    const r = removal(i);
+    return maskOf((j) => {
+      const c = removal(j);
+      if (j === i || c.target !== r.op.replica || c.afterSeq >= r.op.seq)
+        return false;
+      if (c.kind === 'all') return true;
+      return c.kind === 'admin' && r.kind !== 'all' && !grantedAgain(r, c);
+    });
+  });
+  // Grounded: some order accepts each removal of m while its publisher holds
+  // its right under those before it.
+  const groundedMemo = new Map<number, boolean>();
+  const grounded = (m: number): boolean => {
+    const known = groundedMemo.get(m);
+    if (known !== undefined) return known;
+    // Most sets ground in any order that takes whatever holds its right.
+    let greedy = 0;
+    for (let grew = true; grew && greedy !== m; ) {
+      grew = false;
+      for (const r of all)
+        if ((m & ~greedy & bit(r)) !== 0 && had(greedy, r)) {
+          greedy |= bit(r);
+          grew = true;
+        }
+    }
+    if (greedy === m) {
+      groundedMemo.set(m, true);
+      return true;
+    }
+    const seen = new Set([0]);
+    const stack: number[] = [0];
+    let ok = false;
+    for (let g = stack.pop(); g !== undefined && !ok; g = stack.pop()) {
+      if (g === m) ok = true;
+      for (const r of all) {
+        const grown: number = g | bit(r);
+        if ((m & bit(r)) === 0 || grown === g || seen.has(grown)) continue;
+        if (!had(g, r)) continue;
+        seen.add(grown);
+        stack.push(grown);
       }
     }
-    const accepted = having('accepted');
-    const ev = evaluate(ctx, accepted);
-    const { could } = outcomesOf(
-      ctx,
-      [...settled],
-      having('accepted', 'open', 'waiting').filter((u) => !settled.has(u)),
-      ev
-    );
-    // A removal whose publisher lacks the right waits while some outcome could
-    // give it, as a cut first admit lets a later admit stand; else it is void.
-    for (const r of having('open', 'waiting')) {
-      if (hadRight(ctx, ev, r)) status.set(r, 'open');
-      else status.set(r, could.has(r) ? 'waiting' : 'void');
+    groundedMemo.set(m, ok);
+    return ok;
+  };
+  // Accepting void i into m drops, in turn, each accepted removal left
+  // without its right; what remains.
+  const cascade = (m: number, i: number): number => {
+    let cur = m | bit(i);
+    for (let changed = true; changed; ) {
+      changed = false;
+      for (const j of all) {
+        if (j === i || (cur & bit(j)) === 0 || had(cur & ~bit(j), j)) continue;
+        cur &= ~bit(j);
+        changed = true;
+      }
     }
-    const open = having('open');
-    if (open.length === 0) break;
-    // One whose publisher holds its right however the undecided ones fall is
-    // accepted first, so a removal its cut leaves no right never counts.
-    const threats = having('accepted', 'open', 'waiting');
-    const admitted = firstAdmissions(ctx, [
-      // Every threat at once: a right two cuts remove together is not sure.
-      evaluate(ctx, threats),
-      ...bare,
-      ...outcomesOf(
-        ctx,
-        [...settled],
-        removals.filter((u) => !settled.has(u))
-      ).folds,
-    ]);
-    const sure = robustRights(ctx, admitted, threats);
-    const first = open.filter(
-      (r) => rightsAt(sure, r.op.replica, r.op.seq, r.op).admin
-    );
-    for (const r of first) {
-      status.set(r, 'accepted');
-      settled.add(r);
+    return cur;
+  };
+  // A void removal holding its right is void only when accepting it leaves no
+  // admin, or its cut cascades into removals its own right rests on.
+  const excused = (m: number, i: number): boolean => {
+    if (adminless(m | bit(i))) return true;
+    const cur = cascade(m, i);
+    return !had(cur & ~bit(i), i) || !grounded(cur);
+  };
+
+  let acc = 0;
+  let dec = 0;
+  // Removals decided by propagation, and the removals each was decided by.
+  let forced = 0;
+  const why = all.map(() => 0);
+  const close = (c: number): number => {
+    let out = c & dec;
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const x of all) {
+        if ((out & forced & bit(x)) === 0 || (why[x] & ~out) === 0) continue;
+        out |= why[x];
+        grew = true;
+      }
     }
-    if (first.length > 0) continue;
-    let progress = false;
-    // A removal that would undo the accepted removals its own right rests on
-    // is void,
-    const holding = new Map<Removal, boolean>();
-    const holds = (s: Removal): boolean => {
-      const known = holding.get(s);
-      if (known !== undefined) return known;
-      const others = accepted.filter((o) => o !== s);
-      const held = hadRight(ctx, evaluate(ctx, others), s);
-      holding.set(s, held);
-      return held;
+    return out;
+  };
+  const doomed = (i: number): boolean => (dooms[i] & acc) !== 0;
+  // Whether nothing undecided can change i's right any more.
+  const settled = (i: number): boolean =>
+    (sources[i] & ~dec) === 0 || doomed(i);
+  // What decides i's right: its sources and any doom among them.
+  const rightOf = (i: number): number => bit(i) | sources[i] | dooms[i];
+  // Why void i, holding its right, has no excuse: no accepted or undecided
+  // removal for its cut to cascade into, and an admin sure to stand; or null.
+  const inexcusable = (i: number): number | null => {
+    if ((reaches[i] & ~(dec & ~acc)) !== 0) return null;
+    const sure = standing(acc, ~dec | bit(i));
+    return sure === null ? null : sure | rightOf(i) | reaches[i];
+  };
+  // Decides i; a conflict when an accepted removal whose right is settled
+  // lacks it without its own cut.
+  const assign = (i: number, accept: boolean): number | null => {
+    dec |= bit(i);
+    if (accept) acc |= bit(i);
+    const touched = (bit(i) | reaches[i]) & acc;
+    for (const j of all) {
+      if ((touched & bit(j)) === 0 || !settled(j)) continue;
+      if (doomed(j) || !had(acc & ~bit(j), j)) return close(rightOf(j));
+    }
+    return null;
+  };
+  // Decides every removal only one way can decide, until none is left.
+  const propagate = (): number | null => {
+    for (let grew = true; grew; ) {
+      grew = false;
+      for (const i of all) {
+        if (!settled(i) || (acc & bit(i)) !== 0) continue;
+        const right = !doomed(i) && had(acc, i);
+        const blame = right ? inexcusable(i) : rightOf(i);
+        if ((dec & bit(i)) !== 0) {
+          if (right && blame !== null) return close(blame);
+          continue;
+        }
+        if (blame === null) continue;
+        why[i] = close(blame);
+        forced |= bit(i);
+        const conflict = assign(i, right);
+        if (conflict !== null) return conflict;
+        grew = true;
+      }
+    }
+    return null;
+  };
+  // Why the complete assignment is unstable, or null when it is stable.
+  const unstable = (): number | null => {
+    if (adminless(acc)) return dec;
+    for (const i of all) {
+      if ((acc & bit(i)) !== 0 || !had(acc, i) || excused(acc, i)) continue;
+      const sure = standing(acc | bit(i), 0) ?? dec;
+      // With nothing dropped, m plus i is grounded as m is: only i's right,
+      // which removals its cut reaches, and their rights decide it.
+      if (cascade(acc, i) !== (acc | bit(i))) return close(part[i] | sure);
+      const reached = all.filter((j) => (reaches[i] & acc & bit(j)) !== 0);
+      const blame = rightOf(i) | reaches[i] | sure;
+      return close(reached.reduce((c, j) => c | rightOf(j), blame));
+    }
+    for (const p of parts) if (!grounded(acc & p)) return close(p);
+    return null;
+  };
+  const next = (): number => {
+    const ev = at(acc);
+    let best = -1;
+    for (const i of all) {
+      if ((dec & bit(i)) !== 0) continue;
+      if (best < 0 || byRank(ev, removal(i), removal(best)) < 0) best = i;
+    }
+    return best;
+  };
+  const dfs = (): number | null => {
+    const saved = [acc, dec, forced] as const;
+    const restore = (): void => {
+      [acc, dec, forced] = saved;
     };
-    for (const r of open) {
-      if (!undoes(ctx, accepted, holds, r)) continue;
-      status.set(r, 'void');
-      progress = true;
+    const stuck = propagate();
+    if (stuck !== null) {
+      restore();
+      return stuck;
     }
-    if (progress) continue;
-    // A removal a sure revocation cuts below never cuts in a worst case nor
-    // takes a pick,
-    const doomed = doomedBy(ctx, accepted, open, having('waiting'));
-    const live = open.filter((r) => !doomed.has(r));
-    // and one held were every undecided removal that could cut it accepted is.
-    const waiting = having('waiting').filter((r) => !doomed.has(r));
-    const cutters = [
-      ...accepted,
-      ...live,
-      ...couldCut(ctx, accepted, live, waiting),
-    ];
-    for (const r of live) {
-      const worst = cutters.filter((o) => o !== r);
-      if (!hadRight(ctx, evaluate(ctx, worst), r)) continue;
-      status.set(r, 'accepted');
-      progress = true;
+    const i = next();
+    if (i < 0) {
+      const why = unstable();
+      if (why !== null) restore();
+      return why;
     }
-    if (progress) continue;
-    // Only removals that cut each other remain: the earliest-ranked publisher's
-    // is accepted and wins the fight.
-    const pick = live.reduce((best, r) => (byRank(ev, r, best) < 0 ? r : best));
-    status.set(pick, 'accepted');
-    won.add(pick);
-    settled.add(pick);
-  }
-  return { accepted: having('accepted'), won };
+    const branch = [acc, dec, forced] as const;
+    let conflict = 0;
+    for (const accept of [true, false]) {
+      const c = assign(i, accept) ?? dfs();
+      if (c === null) return null;
+      [acc, dec, forced] = branch;
+      if ((c & bit(i)) === 0) {
+        restore();
+        return c;
+      }
+      conflict |= c;
+    }
+    restore();
+    return conflict & ~bit(i);
+  };
+  if (comp.length === 0) return [];
+  return dfs() === null ? comp.filter((_, i) => (acc & bit(i)) !== 0) : null;
+}
+
+// The set bits of m.
+function bitCount(m: number): number {
+  let n = 0;
+  for (let x = m; x !== 0; x &= x - 1) n++;
+  return n;
 }
 
 // Every Known(1) dismiss, and the op it names among the deduplicated ops.
@@ -553,7 +937,7 @@ function foundingOf(input: FoldInput, items: readonly Item[]): Founding {
 }
 
 // What every fold of one op set shares: the founding, first seqs and the order.
-interface Shared extends Omit<Context, 'items' | 'reach'> {
+interface Shared extends Omit<Context, 'items' | 'granting' | 'reach'> {
   all: readonly Item[];
 }
 
@@ -606,44 +990,64 @@ function provesOf(input: FoldInput, teamId: string): Context['proves'] {
 function foldWithout(shared: Shared, without: ReadonlySet<Item>): Folded {
   const { all, ...rest } = shared;
   const items = all.filter((i) => !without.has(i));
-  const ctx: Context = { ...rest, items, reach: reachOf(items) };
+  const granting = items.filter(({ body }) =>
+    GRANTING.some((a) => isAction(body, a))
+  );
+  const reach = reachOf(items, rest.order);
+  const ctx: Context = { ...rest, items, granting, reach };
   return { ctx, without, ...resolve(ctx) };
 }
 
 // Admissions and promotions link a publisher to its targets; a recover or a
-// recovery key links to every recovering replica.
+// recovery key links to every recovering replica. A cut reaches its target and
+// all that the target's ops it exposes link to: those above afterSeq, and for
+// a revocation those after it, whose later grants it refuses.
 function reachOf(
-  items: readonly Item[]
-): (replica: string) => ReadonlySet<string> {
-  const links = new Map<string, Set<string>>();
-  const link = (from: string, to: string): void => {
-    const set = links.get(from);
-    if (set === undefined) links.set(from, new Set([to]));
-    else set.add(to);
+  items: readonly Item[],
+  order: Context['order']
+): (cut: Removal) => ReadonlySet<string> {
+  const links = new Map<string, { op: RosterOpRef; to: string }[]>();
+  const link = (op: RosterOpRef, to: string): void => {
+    const list = links.get(op.replica);
+    if (list === undefined) links.set(op.replica, [{ op, to }]);
+    else list.push({ op, to });
   };
   const recovering = items
     .filter((i) => isAction(i.body, 'recover'))
     .map((i) => i.op.replica);
   for (const { op, body } of items) {
     if (isAction(body, 'admit') || isAction(body, 'role'))
-      link(op.replica, body.replica);
+      link(op, body.replica);
     else if (isAction(body, 'recover') || isAction(body, 'recovery-key'))
-      for (const r of recovering) link(op.replica, r);
+      for (const r of recovering) link(op, r);
   }
-  const memo = new Map<string, ReadonlySet<string>>();
-  return (replica) => {
-    const known = memo.get(replica);
+  const full = new Map<string, ReadonlySet<string>>();
+  // Every replica `replica`'s ops link to, transitively, itself included.
+  const fullReach = (replica: string): ReadonlySet<string> => {
+    const known = full.get(replica);
     if (known !== undefined) return known;
     const seen = new Set([replica]);
     const queue = [replica];
     for (let q = queue.pop(); q !== undefined; q = queue.pop())
-      for (const n of links.get(q) ?? [])
-        if (!seen.has(n)) {
-          seen.add(n);
-          queue.push(n);
+      for (const { to } of links.get(q) ?? [])
+        if (!seen.has(to)) {
+          seen.add(to);
+          queue.push(to);
         }
-    memo.set(replica, seen);
+    full.set(replica, seen);
     return seen;
+  };
+  const memo = new Map<Removal, ReadonlySet<string>>();
+  return (cut) => {
+    const known = memo.get(cut);
+    if (known !== undefined) return known;
+    const exposed = (op: RosterOpRef): boolean =>
+      op.seq > cut.afterSeq || (cut.kind === 'all' && order(cut.op, op) < 0);
+    const out = new Set([cut.target]);
+    for (const { op, to } of links.get(cut.target) ?? [])
+      if (exposed(op)) for (const r of fullReach(to)) out.add(r);
+    memo.set(cut, out);
+    return out;
   };
 }
 
@@ -842,21 +1246,25 @@ function rightsAt(
   seq: number,
   pos: Position | null
 ): Rights {
-  const cuts = ev.cutsOn.get(replica) ?? [];
-  const killed = (g: Grant, kind: CutKind): boolean => {
-    for (const c of cuts)
-      if (c.kind === kind && c.afterSeq < seq && ev.order(g.pos, c.op) < 0)
-        return true;
-    return false;
-  };
+  // Only the cuts below seq count; a grant after a cut's position outlives it.
+  const cuts = (ev.cutsOn.get(replica) ?? []).filter(
+    (c) => c.afterSeq < seq && c.kind !== 'hosts'
+  );
   let firstGrant: Grant | null = null;
   let firstAdmin: Grant | null = null;
   // Grants are recorded in fold order, so the ones before pos are a prefix.
   for (const g of ev.grants.get(replica) ?? []) {
     if (pos !== null && ev.order(g.pos, pos) >= 0) break;
-    if (killed(g, 'all')) continue;
+    let revoked = false;
+    let demoted = false;
+    for (const c of cuts) {
+      if (ev.order(g.pos, c.op) >= 0) continue;
+      if (c.kind === 'all') revoked = true;
+      else demoted = true;
+    }
+    if (revoked) continue;
     firstGrant ??= g;
-    if (g.admin && !killed(g, 'admin')) {
+    if (g.admin && !demoted) {
       firstAdmin = g;
       break;
     }
@@ -900,10 +1308,16 @@ function byTarget(cuts: readonly Removal[]): Map<string, Removal[]> {
   return out;
 }
 
+// The actions that can grant a right; the rest never change one.
+const GRANTING = ['found', 'admit', 'role', 'recover', 'recovery-key'] as const;
+
+// A walk over the ops under `cuts`; `items` may be ctx.granting when only
+// rights are read.
 function evaluate(
   ctx: Context,
   cuts: readonly Removal[],
-  notes = false
+  notes = false,
+  items = ctx.items
 ): Evaluation {
   const ev: Evaluation = {
     cuts,
@@ -924,7 +1338,7 @@ function evaluate(
     problems: [],
   };
   const accepted = new Set(cuts.map((c) => c.op));
-  for (const item of ctx.items) step(ctx, ev, accepted, item);
+  for (const item of items) step(ctx, ev, accepted, item);
   return ev;
 }
 
@@ -1257,183 +1671,6 @@ function hadRight(ctx: Context, ev: Evaluation, r: Removal): boolean {
   return rights.admin || (rights.member && !needsAdmin(ctx, ev, r));
 }
 
-// Whether accepting r would take the right from accepted removals that r's own
-// right rests on; each is judged without its own cut, and `holds` without r.
-function undoes(
-  ctx: Context,
-  accepted: readonly Removal[],
-  holds: (s: Removal) => boolean,
-  r: Removal
-): boolean {
-  // Cutting r's target changes rights only where that target's grants reach.
-  const reach = ctx.reach(r.target);
-  const exposed = accepted.filter(
-    (s) => reach.has(s.op.replica) || reach.has(s.target)
-  );
-  if (exposed.length === 0) return false;
-  const withIt = [...accepted, r];
-  const loses = (s: Removal): boolean => {
-    const others = withIt.filter((o) => o !== s);
-    return !hadRight(ctx, evaluate(ctx, others), s) && holds(s);
-  };
-  const undone = exposed.filter(loses);
-  if (undone.length === 0) return false;
-  const kept = accepted.filter((s) => !undone.includes(s));
-  return !hadRight(ctx, evaluate(ctx, kept), r);
-}
-
-// The waiting removals that cut in a worst case: those whose publisher holds
-// its right, own cut included, with every open removal accepted or with none.
-function couldCut(
-  ctx: Context,
-  accepted: readonly Removal[],
-  open: readonly Removal[],
-  waiting: readonly Removal[]
-): Removal[] {
-  const holds = (w: Removal, cuts: readonly Removal[]): boolean =>
-    hadRight(ctx, evaluate(ctx, [...accepted, ...cuts, w]), w);
-  return waiting.filter(
-    (w) => !cutBelow(accepted, w) && (holds(w, open) || holds(w, []))
-  );
-}
-
-// The undecided removals a sure revocation cuts below: one held with no cut and
-// with every other undecided removal accepted, bar those other sure ones cut.
-function doomedBy(
-  ctx: Context,
-  accepted: readonly Removal[],
-  open: readonly Removal[],
-  waiting: readonly Removal[]
-): Set<Removal> {
-  const undecided = [...open, ...waiting].filter((r) => !cutBelow(accepted, r));
-  const cutBy = (by: readonly Removal[]): Set<Removal> =>
-    new Set(
-      undecided.filter((o) => by.some((u) => u !== o && cutBelow([u], o)))
-    );
-  const holds = (u: Removal, shut: ReadonlySet<Removal>): boolean => {
-    const others = undecided.filter((o) => o !== u && !shut.has(o));
-    return hadRight(ctx, evaluate(ctx, [...accepted, ...others]), u);
-  };
-  // Only a revocation that cuts another undecided removal below it can doom one.
-  const cutting = open.filter((u) => cutBy([u]).size > 0);
-  if (cutting.length === 0) return new Set();
-  const bare = evaluate(ctx, []);
-  const firm = cutting.filter((u) => hadRight(ctx, bare, u));
-  // Each pass starts from what the last one doomed, never left out of the check
-  // of a revocation that cuts it, and drops any revocation held only by a cut.
-  let doomed = new Set<Removal>();
-  for (let pass = 0; pass <= firm.length; pass++) {
-    const given = (u: Removal): Set<Removal> =>
-      new Set([...doomed].filter((o) => !cutBelow([u], o)));
-    let sure = firm.filter((u) => holds(u, given(u)));
-    for (;;) {
-      const held = sure.filter((u) => {
-        const others = cutBy(sure.filter((v) => v !== u));
-        return holds(u, new Set([...given(u), ...others]));
-      });
-      if (held.length === sure.length) break;
-      sure = held;
-    }
-    const next = cutBy(sure);
-    const same =
-      next.size === doomed.size && [...next].every((o) => doomed.has(o));
-    doomed = next;
-    if (same) break;
-  }
-  return doomed;
-}
-
-// Whether an accepted revocation cuts r's publisher below r, which then holds
-// no right at r in any fold: a revoked replica is never granted again.
-function cutBelow(accepted: readonly Removal[], r: Removal): boolean {
-  return accepted.some(
-    (c) =>
-      c.kind === 'all' && c.target === r.op.replica && c.afterSeq < r.op.seq
-  );
-}
-
-// The real folds some outcome reaches: under the `base` cuts, and adding each of
-// `more` whose publisher could hold its right (now, or by another such cut).
-function outcomesOf(
-  ctx: Context,
-  base: readonly Removal[],
-  more: readonly Removal[],
-  current?: Evaluation
-): Outcomes {
-  const bare = evaluate(ctx, base);
-  const now = current ?? bare;
-  const folds = new Map<Removal, Evaluation>();
-  const at = (c: Removal): Evaluation => {
-    const known = folds.get(c);
-    if (known !== undefined) return known;
-    const ev = evaluate(ctx, [...base, c]);
-    folds.set(c, ev);
-    return ev;
-  };
-  const could = new Set(
-    more.filter((u) => hadRight(ctx, now, u) || hadRight(ctx, bare, u))
-  );
-  for (let grew = true; grew; ) {
-    grew = false;
-    for (const u of more) {
-      if (could.has(u)) continue;
-      if (![...could].some((c) => c !== u && hadRight(ctx, at(c), u))) continue;
-      could.add(u);
-      grew = true;
-    }
-  }
-  return { could, folds: [bare, ...[...could].map(at)] };
-}
-
-// Each replica's earliest admission, an observer's included, in any of `folds`.
-function firstAdmissions(
-  ctx: Context,
-  folds: readonly Evaluation[]
-): ReadonlyMap<string, Position> {
-  const first = new Map<string, Position>();
-  for (const ev of folds)
-    for (const [replica, { since }] of ev.holders) {
-      const seen = first.get(replica);
-      if (seen === undefined || ctx.order(since, seen) < 0)
-        first.set(replica, since);
-    }
-  return first;
-}
-
-// The admin grants valid in every fold that accepts any of `cuts`, none resting
-// on a cut: the founding, an admin's admit at the replica's `first` admission,
-// and an admin's promotion of a replica so admitted.
-function robustRights(
-  ctx: Context,
-  first: ReadonlyMap<string, Position>,
-  cuts: readonly Removal[]
-): Granted {
-  const s: Granted = {
-    cutsOn: byTarget(cuts),
-    order: ctx.order,
-    grants: new Map(),
-  };
-  const found = ctx.found.op;
-  grant(s, found.replica, { pos: found, admin: true, source: 'found' });
-  for (const { op, body } of ctx.items) {
-    let target: string;
-    if (isAction(body, 'admit')) {
-      const since = first.get(body.replica);
-      if (since === undefined || body.observer === true) continue;
-      if (comparePositions(since, op) !== 0) continue;
-      target = body.replica;
-    } else if (isAction(body, 'role') && body.role === 'admin') {
-      if (!s.grants.has(body.replica)) continue;
-      target = body.replica;
-    } else continue;
-    if (!rightsAt(s, op.replica, op.seq, op).admin) continue;
-    if (revokedBefore(s, target, op)) continue;
-    const admin = !isAction(body, 'admit') || body.role === 'admin';
-    grant(s, target, { pos: op, admin, source: 'grant' });
-  }
-  return s;
-}
-
 // A member may revoke replicas with their own handle; every other removal
 // needs an admin.
 function needsAdmin(ctx: Context, ev: Evaluation, r: Removal): boolean {
@@ -1543,7 +1780,7 @@ function dismissNote(
 
 // The pause, which names who can lift it, and what became of each dismiss.
 function notesOf(
-  { ctx, ev }: Folded,
+  { ctx, ev, oversized }: Folded,
   dismisses: readonly Dismiss[],
   valid: ReadonlySet<Dismiss>,
   admins: readonly string[]
@@ -1569,6 +1806,17 @@ function notesOf(
     problems.push({
       subject: at(op),
       message: `${NEWER_ROSTER}, ${dismiss}an admin can revoke ${op.replica} below seq ${op.seq}`,
+    });
+  }
+  for (const comp of oversized) {
+    // Named by its first removal whose publisher stands at it.
+    const first = (comp.find((r) => standsAt(ev, r.op)) ?? comp[0])?.op;
+    if (first === undefined) continue;
+    unknown ??= { ...positionOf(first), hash: first.hash };
+    const ops = comp.map((r) => `${r.op.replica}:${r.op.seq}`).join(', ');
+    problems.push({
+      subject: at(first),
+      message: `${comp.length} removals contest one another, more than this build decides at once (${ops}); applying is paused until admins revoke some of their publishers below them`,
     });
   }
   return { unknown, problems };

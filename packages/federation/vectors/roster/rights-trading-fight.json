@@ -217,8 +217,7 @@
   "expect": {
     "members": [
       ["ada-0000000a", "admin", 0, [], false, false],
-      ["bob-0000000b", "admin", 2, [], false, false],
-      ["cy-0000000c", "admin", 1, [], false, false]
+      ["bob-0000000b", "admin", 1, [], false, false]
     ],
     "revoked": [
       [
@@ -227,6 +226,16 @@
           "afterSeq": 1,
           "afterHash": "h-ada-0000000e-1",
           "handle": "ada",
+          "hosts": [],
+          "observer": false
+        }
+      ],
+      [
+        "cy-0000000c",
+        {
+          "afterSeq": 1,
+          "afterHash": "h-cy-0000000c-1",
+          "handle": "cy",
           "hosts": [],
           "observer": false
         }
@@ -258,15 +267,15 @@
       ],
       [
         "7e1b012d2bf71a55678c8d07c021f3c876531e6e5a96c30527bd0eecc7ab4dc8",
-        "void"
+        "accepted"
       ]
     ],
     "pending": ["bob-0000000f", "obs-00000010"],
     "invites": [],
     "invitedBy": [],
     "seats": 3,
-    "people": ["ada", "cy", "bob"],
-    "covered": ["ada", "bob", "cy"],
+    "people": ["ada", "bob"],
+    "covered": ["ada", "bob"],
     "closedBy": null,
     "transport": {
       "kind": "git"

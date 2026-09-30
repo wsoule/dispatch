@@ -373,6 +373,7 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(B, 2, 410, C, 1),
     revoke(A2, 2, 420, B, 1),
   ]),
+  // C's revocation of B cuts B's self-demotion and B's revocations.
   scenario('self-demotion-wins', [
     admit(A, 2, 100, B, 'admin'),
     admit(A, 3, 110, C, 'admin'),
@@ -412,6 +413,8 @@ export const SCENARIOS: readonly RosterScenario[] = [
     revoke(C, 2, 448, D, 1),
     demote(A, 5, 496, B, 1),
   ]),
+  // B, C and A2 cut each other in turn with no stable outcome: C's wins the
+  // rank pick and stands, and B's cut of C is still accepted.
   scenario('rights-trading-fight', [
     admit(A, 2, 105, C, 'admin'),
     admit(A, 3, 115, D, 'admin'),
@@ -445,8 +448,8 @@ export const SCENARIOS: readonly RosterScenario[] = [
     admit(B2, 2, 40, B2, 'admin'),
     revoke(B2, 3, 41, A, 2),
   ]),
-  // All accepted, these leave no admin: B's revoke of D, which makes C an
-  // admin, is voided, and the re-run voids C's revoke of the founder too.
+  // All accepted, these leave no admin: C's revoke of the founder, which
+  // would leave none, is void, and B's revoke of D stands.
   scenario('no-admin-rerun', [
     admit(A, 2, 9, D, 'admin'),
     admit(D, 2, 15, C, 'member'),

@@ -677,7 +677,7 @@ describe('foldRoster', () => {
     expect(roles(v)).toEqual({ [A]: 'admin', [C]: 'admin', [A2]: 'admin' });
   });
 
-  it('accepts a revocation of a self-demotion that won a fight once nothing left cuts it', () => {
+  it("voids a self-demotion that C's revocation of its publisher cuts", () => {
     const selfDemotion = demote(B, 2, 200, B, 1);
     const byC = revoke(C, 2, 210, B, 1);
     const byBofC = revoke(B, 3, 220, C, 1);
@@ -694,9 +694,9 @@ describe('foldRoster', () => {
       byBofA2,
       byA2,
     ]);
-    // B's self-demotion wins the pick and voids B's revocations, so nothing
-    // cuts C's revocation of B any more.
-    expect(v.resolution.get(selfDemotion.hash)).toBe('accepted');
+    // C's revocation of B stands in the one stable outcome, cutting B's
+    // self-demotion and B's revocations with it.
+    expect(v.resolution.get(selfDemotion.hash)).toBe('void');
     expect(v.resolution.get(byBofC.hash)).toBe('void');
     expect(v.resolution.get(byBofA2.hash)).toBe('void');
     expect(v.resolution.get(byC.hash)).toBe('accepted');
@@ -781,7 +781,7 @@ describe('foldRoster', () => {
     expect(v.revoked.has(B2)).toBe(false);
   });
 
-  it('ends a fight whose removals keep trading rights by voiding one on its second loss', () => {
+  it('ends a fight with no stable outcome by rank, the winner standing', () => {
     const byB = revoke(B, 2, 400, C, 1);
     const byC = revoke(C, 2, 411, A2, 1);
     const selfRevoke = revoke(D, 3, 429, D, 1);
@@ -798,11 +798,13 @@ describe('foldRoster', () => {
       selfRevoke,
       byA2,
     ]);
+    // B, C and A2 cut each other in turn: C's wins the pick, A2's is then
+    // void, and B's, which cuts C after the pick, still stands.
     expect(v.resolution.get(byC.hash)).toBe('accepted');
     expect(v.resolution.get(selfRevoke.hash)).toBe('accepted');
-    expect(v.resolution.get(byB.hash)).toBe('void');
+    expect(v.resolution.get(byB.hash)).toBe('accepted');
     expect(v.resolution.get(byA2.hash)).toBe('void');
-    expect(roles(v)).toEqual({ [A]: 'admin', [B]: 'admin', [C]: 'admin' });
+    expect(roles(v)).toEqual({ [A]: 'admin', [B]: 'admin' });
   });
 
   it('never makes an observer an admin, so the last admin cannot hand the team to one', () => {
